@@ -588,6 +588,18 @@ LEAKABLE_ENV_NAMES = (
     "TALARIA_STATUS_INTERVAL_SECONDS",
     "TALARIA_COMPOSER_PASTE_COLLAPSE_LINES",
     "TALARIA_COMPOSER_PASTE_COLLAPSE_BYTES",
+    # CFG v0.6.2 D12: the new bindable chords keep the existing convention —
+    # every [keys] chord has an env alias, because no single default survives
+    # every terminal multiplexer.
+    "TALARIA_KEYS_AGENTS",
+    "TALARIA_KEYS_COMMANDS",
+    "TALARIA_KEYS_MODELS",
+    "TALARIA_KEYS_PROFILES",
+    "TALARIA_KEYS_CONFIG",
+    "TALARIA_KEYS_FOLLOW",
+    "TALARIA_KEYS_REPLAY_PAUSE",
+    "TALARIA_KEYS_REPLAY_SLOWER",
+    "TALARIA_KEYS_REPLAY_FASTER",
 )
 
 
@@ -964,3 +976,274 @@ def test_setting_scopes_still_names_the_layer_that_supplied_an_invalid_value(
     scopes = setting_scopes(cwd=tmp_path)
 
     assert scopes[("status", "interval_seconds")] == "user"
+
+
+# ── CFG v0.6.2 D11/D12: new Talaria settings (unimplemented until B2) ─────
+#
+# Every assertion below reads through ``load_config``/``cfg.get``, which
+# answer None for absent keys — so each test fails cleanly on the current
+# DEFAULTS rather than erroring.
+
+
+def test_d12_ui_defaults_match_current_fixed_behavior(tmp_path: Path) -> None:
+    """Defaults are today's hardcoded values (inspector geometry, diff
+    breakpoint, no timestamps): adopting the file changes nothing."""
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("ui", "inspector_width") == 36
+    assert cfg.get("ui", "inspector_open_at_start") is False
+    assert cfg.get("ui", "inspector_dock_min_columns") == 120
+    assert cfg.get("ui", "diff_side_by_side_min_columns") == 112
+    assert cfg.get("ui", "show_timestamps") is False
+    assert cfg.notices == ()
+
+
+def test_d12_new_chord_defaults_match_current_fixed_bindings(
+    tmp_path: Path,
+) -> None:
+    """Each default is the binding the action already has in
+    ``talaria/ui/app.py`` — priority aliases where the desktop delivers
+    several, so the pinned default works in every focus context."""
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", "agents") == "ctrl+g"
+    assert cfg.get("keys", "commands") == "f3"
+    assert cfg.get("keys", "models") == "f11"
+    assert cfg.get("keys", "profiles") == "f12"
+    assert cfg.get("keys", "config") == "ctrl+k"
+    assert cfg.get("keys", "follow") == "f5"
+    assert cfg.get("keys", "replay_pause") == "f8"
+    assert cfg.get("keys", "replay_slower") == "f9"
+    assert cfg.get("keys", "replay_faster") == "f10"
+    assert cfg.notices == ()
+
+
+def test_d12_composer_and_notification_defaults(tmp_path: Path) -> None:
+    """16 MB mirrors the Desktop attachment cap; transcript_line True keeps
+    today's rendering until the operator opts out."""
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("composer", "attachment_max_mb") == 16
+    assert cfg.get("notifications", "transcript_line") is True
+    assert cfg.notices == ()
+
+
+def test_d11_connections_default_to_no_inventory(tmp_path: Path) -> None:
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("connections") == {}
+
+
+def test_d11_profiles_endpoints_remain_the_compatibility_alias(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    """D11 adds ``[connections.*]``; it does not remove ``profiles.endpoints``.
+    Both resolve side by side with no migration rewrite."""
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[profiles.endpoints]\n"
+        'alpha-fixture = "ws://127.0.0.1:9119/api/ws"\n'
+        "[connections.office]\n"
+        'url = "http://10.220.1.139:8765"\n'
+        'auth = "gated"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert config_module.profile_endpoints(cfg) == {
+        "alpha-fixture": "ws://127.0.0.1:9119/api/ws"
+    }
+    assert cfg.get("connections", "office", "url") == "http://10.220.1.139:8765"
+    assert cfg.get("connections", "office", "auth") == "gated"
+
+
+@pytest.mark.parametrize(
+    ("key", "bad", "fallback", "valid"),
+    [
+        ("inspector_width", 27, 36, 48),
+        ("inspector_width", 49, 36, 28),
+        ("inspector_width", True, 36, 40),
+        ("inspector_dock_min_columns", 0, 120, 100),
+        ("inspector_dock_min_columns", "120", 120, 140),
+        ("diff_side_by_side_min_columns", -1, 112, 90),
+        ("diff_side_by_side_min_columns", 112.0, 112, 130),
+    ],
+)
+def test_d12_ui_geometry_validates_type_and_range_after_precedence(
+    tmp_path: Path,
+    key: str,
+    bad: object,
+    fallback: int,
+    valid: int,
+) -> None:
+    """Inspector width keeps its 28–48 clamp from ``ui/inspector.py``; the
+    breakpoints take any positive integer."""
+    invalid = load_config(cli_overrides={"ui": {key: bad}}, cwd=tmp_path)
+    accepted = load_config(cli_overrides={"ui": {key: valid}}, cwd=tmp_path)
+
+    assert invalid.get("ui", key) == fallback
+    assert any(f"ui.{key}" in notice for notice in invalid.notices)
+    assert accepted.get("ui", key) == valid
+    assert not any(f"ui.{key}" in notice for notice in accepted.notices)
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "fallback"),
+    [
+        ("ui", "inspector_open_at_start", False),
+        ("ui", "show_timestamps", False),
+        ("notifications", "transcript_line", True),
+    ],
+)
+def test_d12_bool_settings_reject_non_bools_visibly(
+    tmp_path: Path, section: str, key: str, fallback: bool
+) -> None:
+    cfg = load_config(cli_overrides={section: {key: "yes"}}, cwd=tmp_path)
+
+    assert cfg.get(section, key) is fallback
+    assert any(f"{section}.{key}" in notice for notice in cfg.notices)
+
+
+@pytest.mark.parametrize("bad", (0, -1, "lots", 16.5, True))
+def test_d12_attachment_cap_takes_positive_integers_only(
+    tmp_path: Path, bad: object
+) -> None:
+    cfg = load_config(
+        cli_overrides={"composer": {"attachment_max_mb": bad}}, cwd=tmp_path
+    )
+
+    assert cfg.get("composer", "attachment_max_mb") == 16
+    assert any("composer.attachment_max_mb" in notice for notice in cfg.notices)
+
+
+def test_d12_new_chord_toml_override_takes_effect(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[keys]\nagents = "ctrl+a"\nconfig = "f1"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", "agents") == "ctrl+a"
+    assert cfg.get("keys", "config") == "f1"
+    assert cfg.notices == ()
+
+
+def test_d12_new_chord_environment_override_beats_the_toml_file(
+    isolated_global_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[keys]\nagents = "ctrl+a"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("TALARIA_KEYS_AGENTS", "alt+g")
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", "agents") == "alt+g"
+    assert cfg.notices == ()
+
+
+@pytest.mark.parametrize(
+    ("body", "key", "fallback", "notice_fragment"),
+    [
+        ('[keys]\nagents = ""\n', "agents", "ctrl+g", "keys.agents"),
+        ('[keys]\nmodels = "ctrl+banana"\n', "models", "f11", "keys.models"),
+        ('[keys]\nconfig = "ctrl+q"\n', "config", "ctrl+k", "reserved for quitting"),
+        (
+            '[keys]\nagents = "ctrl+x"\ncommands = "ctrl+x"\n',
+            "agents",
+            "ctrl+g",
+            "are both",
+        ),
+    ],
+)
+def test_d12_new_chords_keep_the_existing_fallback_rules(
+    isolated_global_config_dir: Path,
+    tmp_path: Path,
+    body: str,
+    key: str,
+    fallback: str,
+    notice_fragment: str,
+) -> None:
+    """Invalid, reserved, and duplicated chords fall back with a notice —
+    the same three rules the two existing chords follow."""
+    (isolated_global_config_dir / "config.toml").write_text(body, encoding="utf-8")
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", key) == fallback
+    assert any(notice_fragment in notice for notice in cfg.notices), cfg.notices
+
+
+def test_d12_duplicate_chords_reset_both_sides_to_defaults(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        '[keys]\nagents = "ctrl+x"\ncommands = "ctrl+x"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("keys", "agents") == "ctrl+g"
+    assert cfg.get("keys", "commands") == "f3"
+
+
+def test_d11_connection_entry_parses_url_auth_and_label(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[connections.office]\n"
+        'url = "http://10.220.1.139:8765"\n'
+        'auth = "gated"\n'
+        'label = "office dashboard"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("connections", "office", "url") == "http://10.220.1.139:8765"
+    assert cfg.get("connections", "office", "auth") == "gated"
+    assert cfg.get("connections", "office", "label") == "office dashboard"
+    assert cfg.notices == ()
+
+
+def test_d11_unknown_auth_mode_falls_back_to_loopback_with_a_notice(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[connections.office]\n"
+        'url = "http://10.220.1.139:8765"\n'
+        'auth = "kerberos"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("connections", "office", "auth") == "loopback"
+    assert any("connections.office" in notice for notice in cfg.notices)
+
+
+def test_d11_credentialed_connection_url_is_dropped_never_loaded(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    """Loads never raise, so a credentialed URL unloads to empty with a
+    notice — the dial then fails closed as unaddressable rather than
+    carrying the secret."""
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[connections.office]\n"
+        'url = "http://user:pass@10.220.1.139:8765"\n'
+        'auth = "gated"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("connections", "office", "auth") == "gated"
+    assert cfg.get("connections", "office", "url") in (None, "")
+    assert any(
+        "connections.office" in notice and "credential" in notice.lower()
+        for notice in cfg.notices
+    )

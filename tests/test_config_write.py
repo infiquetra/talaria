@@ -468,3 +468,96 @@ def test_status_save_targets_the_repository_scope_explicitly(tmp_path: Path) -> 
     assert tomllib.loads(path.read_text(encoding="utf-8")) == {
         "status": {"command": "repo-status"}
     }
+
+
+# ── CFG v0.6.2 D10: the generalized writer preserves these writers ────────
+#
+# ``save_settings`` extends the surgical rewrite to every DEFAULTS table; for
+# the two tables that already have writers it must produce byte-identical
+# results, so the generalization cannot silently change what operators'
+# files look like. Unimplemented until B2 (dev-3).
+
+
+def _save_settings() -> object:
+    save: object = getattr(config_module, "save_settings", None)
+    if save is None:
+        pytest.fail("unimplemented interface talaria.config.save_settings (CFG B2)")
+    return save
+
+
+def test_generalized_status_write_matches_the_dedicated_writer(
+    tmp_path: Path,
+) -> None:
+    before = (
+        b"# operator comment\n"
+        b"[status]\n"
+        b'command = "git status"\n'
+        b"interval_seconds = 5\n"
+    )
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "config.toml").write_bytes(before)
+    save_status_settings({"interval_seconds": 30}, config_dir=user_dir)
+    expected = (user_dir / "config.toml").read_bytes()
+
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    (other_dir / "config.toml").write_bytes(before)
+    save_settings = _save_settings()
+    assert callable(save_settings)
+    save_settings("status", {"interval_seconds": 30}, config_dir=other_dir)
+
+    assert (other_dir / "config.toml").read_bytes() == expected
+    assert expected != before
+
+
+def test_generalized_theme_write_matches_the_dedicated_writer(
+    tmp_path: Path,
+) -> None:
+    user_dir = tmp_path / "user"
+    user_dir.mkdir()
+    (user_dir / "config.toml").write_bytes(b'[theme]\nname = "refined-default"\n')
+    save_theme("neutral-dark", config_dir=user_dir)
+    expected = (user_dir / "config.toml").read_bytes()
+
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    (other_dir / "config.toml").write_bytes(b'[theme]\nname = "refined-default"\n')
+    save_settings = _save_settings()
+    assert callable(save_settings)
+    save_settings("theme", {"name": "neutral-dark"}, config_dir=other_dir)
+
+    assert (other_dir / "config.toml").read_bytes() == expected
+
+
+def test_generalized_writer_refuses_each_unsupported_shape(
+    tmp_path: Path,
+) -> None:
+    save_settings = _save_settings()
+    assert callable(save_settings)
+
+    inline = tmp_path / "inline"
+    inline.mkdir()
+    (inline / "config.toml").write_bytes(b'status = { command = "old" }\n')
+    with pytest.raises(ConfigError, match="inline table"):
+        save_settings("status", {"command": "new"}, config_dir=inline)
+
+    comment = tmp_path / "comment"
+    comment.mkdir()
+    (comment / "config.toml").write_bytes(
+        b'[status]\nsegments = [\n  "cwd",  # keep\n]\n'
+    )
+    with pytest.raises(ConfigError, match="comment inside"):
+        save_settings("status", {"segments": ("version",)}, config_dir=comment)
+
+    mixed = tmp_path / "mixed"
+    mixed.mkdir()
+    (mixed / "config.toml").write_bytes(b'status.command = "old"\n')
+    with pytest.raises(ConfigError, match="mix dotted assignments"):
+        save_settings("status", {"segments": ("cwd",)}, config_dir=mixed)
+
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "config.toml").write_bytes(b"[status\n")
+    with pytest.raises(ConfigError, match="not valid TOML"):
+        save_settings("status", {"command": "new"}, config_dir=broken)

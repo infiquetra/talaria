@@ -509,3 +509,194 @@ def test_the_decoded_result_is_frozen() -> None:
     result = decode_model_assignment_result({"ok": True})
     with pytest.raises(FrozenInstanceError):
         result.ok = False  # type: ignore[misc]
+
+
+# ── CFG v0.6.2: settings records (unimplemented until B2, dev-1-3) ─────────
+#
+# The settings workspace needs three more decodes from this module: profile
+# display names (A1-16's canonical-id rule), auxiliary task slots, and MoA
+# presets. Wire shapes below are read at Hermes 3236f440
+# (``web_routers/models.py``, ``web_routers/profiles.py:88``,
+# ``moa_config.normalize_moa_config``).
+
+
+def _require_catalog_attr(name: str) -> Any:
+    import talaria.domain.models_catalog as catalog_module
+
+    try:
+        return getattr(catalog_module, name)
+    except AttributeError:
+        pytest.fail(
+            f"unimplemented interface talaria.domain.models_catalog.{name} (CFG B2)"
+        )
+
+
+def test_a_profile_display_name_decodes_alongside_its_canonical_id() -> None:
+    """After ``PATCH /api/profiles/default`` the row carries
+    ``name: "default"`` with a ``display_name``; the workspace shows the
+    canonical id and may additionally show this — so the decode must keep
+    both, never merge them."""
+    directory = decode_profile_directory(
+        {"profiles": [{"name": "default", "display_name": "Main"}]}
+    )
+    entry = directory.profiles[0]
+
+    assert hasattr(entry, "display_name"), "ProfileEntry has no display_name (CFG B2)"
+    assert entry.name == "default"
+    assert entry.display_name == "Main"
+
+
+def test_a_missing_or_mistyped_display_name_reads_as_absent() -> None:
+    for row in (
+        {"name": "alpha-fixture"},
+        {"name": "alpha-fixture", "display_name": None},
+        {"name": "alpha-fixture", "display_name": 7},
+    ):
+        entry = decode_profile_directory({"profiles": [row]}).profiles[0]
+        assert hasattr(entry, "display_name"), "ProfileEntry has no display_name (CFG B2)"
+        assert entry.display_name == ""
+
+
+def _auxiliary_body() -> dict[str, Any]:
+    return {
+        "tasks": [
+            {
+                "task": "summarize",
+                "provider": "example-provider",
+                "model": "example-small",
+                "base_url": "",
+                "reasoning_effort": None,
+                "local_endpoint": False,
+            }
+        ],
+        "main": {"provider": "example-provider", "model": "example-large"},
+    }
+
+
+def test_auxiliary_slots_decode_task_provider_model_and_main() -> None:
+    catalog = _require_catalog_attr("decode_auxiliary_catalog")(_auxiliary_body())
+
+    (slot,) = catalog.tasks
+    assert (slot.task, slot.provider, slot.model) == (
+        "summarize",
+        "example-provider",
+        "example-small",
+    )
+    assert slot.reasoning_effort is None
+    assert slot.local_endpoint is False
+    assert (catalog.main_provider, catalog.main_model) == (
+        "example-provider",
+        "example-large",
+    )
+
+
+def test_auxiliary_slots_tolerate_an_empty_or_absent_task_list() -> None:
+    decode = _require_catalog_attr("decode_auxiliary_catalog")
+
+    assert decode({"tasks": [], "main": {}}).tasks == ()
+    assert decode({}).tasks == ()
+    assert decode({}).main_model == ""
+
+
+def test_an_auxiliary_slot_without_a_task_is_refused() -> None:
+    """The task name is the slot's identity; Hermes always emits it."""
+    decode = _require_catalog_attr("decode_auxiliary_catalog")
+
+    with pytest.raises(CatalogError):
+        decode({"tasks": [{"provider": "example-provider"}], "main": {}})
+
+
+def test_auxiliary_cosmetic_mistypes_read_as_absent() -> None:
+    decode = _require_catalog_attr("decode_auxiliary_catalog")
+
+    (slot,) = decode(
+        {
+            "tasks": [
+                {
+                    "task": "summarize",
+                    "provider": 7,
+                    "model": None,
+                    "base_url": None,
+                    "reasoning_effort": 7,
+                    "local_endpoint": "yes",
+                }
+            ],
+            "main": {},
+        }
+    ).tasks
+
+    assert slot.provider == "auto"
+    assert slot.model == ""
+    assert slot.base_url == ""
+    assert slot.reasoning_effort is None
+    assert slot.local_endpoint is False
+
+
+def test_auxiliary_decode_refuses_a_body_that_is_not_a_json_object() -> None:
+    decode = _require_catalog_attr("decode_auxiliary_catalog")
+
+    with pytest.raises(CatalogError):
+        decode(["tasks"])
+    with pytest.raises(CatalogError):
+        decode({"tasks": "summarize"})
+
+
+def _moa_body() -> dict[str, Any]:
+    return {
+        "default_preset": "balanced",
+        "active_preset": "balanced",
+        "presets": {
+            "balanced": {
+                "reference_models": [
+                    {"provider": "example-provider", "model": "example-small"}
+                ],
+                "aggregator": {
+                    "provider": "example-provider",
+                    "model": "example-large",
+                },
+                "enabled": True,
+            }
+        },
+    }
+
+
+def test_moa_presets_decode_with_reference_models_and_aggregator() -> None:
+    config = _require_catalog_attr("decode_moa_config")(_moa_body())
+
+    assert config.default_preset == "balanced"
+    assert config.active_preset == "balanced"
+    (preset,) = config.presets
+    assert preset.name == "balanced"
+    assert preset.enabled is True
+    assert [(slot.provider, slot.model) for slot in preset.reference_models] == [
+        ("example-provider", "example-small")
+    ]
+    assert (preset.aggregator.provider, preset.aggregator.model) == (
+        "example-provider",
+        "example-large",
+    )
+
+
+def test_a_legacy_flat_moa_config_decodes_to_a_single_preset() -> None:
+    """The server folds flat configs into one preset
+    (``normalize_moa_config``); the decoder honors the same shape without
+    pinning the server's preset name."""
+    config = _require_catalog_attr("decode_moa_config")(
+        {
+            "reference_models": [
+                {"provider": "example-provider", "model": "example-small"}
+            ],
+            "aggregator": {"provider": "example-provider", "model": "example-large"},
+            "enabled": True,
+        }
+    )
+
+    assert len(config.presets) == 1
+    assert config.default_preset == config.presets[0].name
+
+
+def test_moa_decode_refuses_a_body_that_is_not_a_json_object() -> None:
+    decode = _require_catalog_attr("decode_moa_config")
+
+    with pytest.raises(CatalogError):
+        decode(["presets"])

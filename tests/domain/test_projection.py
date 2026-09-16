@@ -14,7 +14,12 @@ means.
 
 from __future__ import annotations
 
+import inspect
 import json
+import re
+from typing import Any, cast
+
+import pytest
 
 from talaria.domain.projection import (
     SNAPSHOT_REGIONS,
@@ -289,3 +294,86 @@ def test_a_snapshot_is_immutable_and_comparable() -> None:
 def test_change_marker_names_are_a_closed_published_set() -> None:
     """A UI keyed off a typo would silently never re-render."""
     assert project(_long_turn()).changed <= SNAPSHOT_REGIONS
+
+
+# ── CFG v0.6.2 D12: timestamps and notification control (B5, dev-4) ────────
+#
+# ``ui.show_timestamps`` prefixes transcript lines with their entry times;
+# ``notifications.transcript_line`` decides whether ``notification.show``
+# renders at all. Both default to today's behavior (off/True).
+
+
+def _notification_state() -> SessionState:
+    return replay(
+        [
+            raw_event(
+                "notification.show",
+                {"key": "credits.warn90", "text": "90% of credits used"},
+            ),
+            raw_event("status.update", {"text": "status line stays"}),
+        ]
+    )
+
+
+def _require_view_flags() -> None:
+    """Fail as missing behavior (not a TypeError) until B5 lands the flags."""
+    params = inspect.signature(transcript_view).parameters
+    if "show_timestamps" not in params or "include_notifications" not in params:
+        pytest.fail("unimplemented interface transcript_view flags (CFG B5)")
+
+
+def test_transcript_view_accepts_timestamp_and_notification_flags() -> None:
+    params = inspect.signature(transcript_view).parameters
+
+    assert "show_timestamps" in params, "transcript_view has no show_timestamps (CFG B5)"
+    assert params["show_timestamps"].default is False
+    assert "include_notifications" in params, (
+        "transcript_view has no include_notifications (CFG B5)"
+    )
+    assert params["include_notifications"].default is True
+
+
+def test_timestamps_prefix_every_line_with_entry_times() -> None:
+    """The stamp is the entry's committed time, not render time: the first
+    and last lines of an eight-frame turn differ, which a render clock
+    could not produce. The stamp leads the line, ahead of any kind marker,
+    so stamped lines align in the buffer."""
+    _require_view_flags()
+    state = _long_turn()
+
+    # cast: the flags do not exist until B5; a type: ignore here would
+    # become an unused-ignore error the moment they land.
+    view = cast(Any, transcript_view)(state, show_timestamps=True)
+
+    assert view.entry_count == len(state.transcript)
+    assert len(view.lines) > 1
+    for line in view.lines:
+        assert re.match(r"^\d{2}:\d{2}:\d{2} ", line), f"unstamped line: {line!r}"
+    assert view.lines[0][:8] < view.lines[-1][:8]
+
+
+def test_timestamps_are_absent_by_default() -> None:
+    view = transcript_view(_long_turn())
+
+    for line in view.lines:
+        assert re.match(r"^\d{2}:\d{2}:\d{2} ", line) is None
+
+
+def test_notification_lines_render_by_default() -> None:
+    view = transcript_view(_notification_state())
+    rendered = " ".join(view.lines)
+
+    assert "90% of credits used" in rendered
+    assert "status line stays" in rendered
+
+
+def test_excluding_notifications_keeps_other_system_lines() -> None:
+    _require_view_flags()
+    view = cast(Any, transcript_view)(
+        _notification_state(), include_notifications=False
+    )
+    rendered = " ".join(view.lines)
+
+    assert "90% of credits used" not in rendered
+    assert "status line stays" in rendered
+    assert len(view.kinds) == len(view.lines)

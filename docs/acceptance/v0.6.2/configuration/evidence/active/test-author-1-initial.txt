@@ -1,0 +1,351 @@
+CFG-T1A initial expected-failure log — Test Author One
+==============================================
+
+Assignment: CFG-T1A (B1/T1 exclusive tests, CFG-A1 items 1-10 + UI contracts)
+Branch: feat/v0.6.2-cfg-b1-ta1
+Baseline: c87c7901e563346913a2764a57f6c4e47bf45f8f (clean main, per assignment)
+Hermes pin cited by tests: 3236f4405 (verified read-only, no Hermes change)
+Recorded: 2026-09-16T05:36:32Z
+
+Dispatchable plans verified by SHA-256 before use:
+- CFG-P1-implementation-plan.md ce61b768829781dae322f874e1c6e773e44d04364afb58da3b76795ba7194323 MATCH
+- CFG-P1-test-plan.md          a8c5972c48de87189449a7117a7027fe6b0e65558fe725493cc6e60dae925710 MATCH
+- CFG-PR3-plan-review.md       5c1e6981f600c2f4428dd2c00ceade6b2d5fa2d651a8b21d273c7b27007c6663 MATCH
+
+Command (targeted owned paths):
+  uv run pytest tests/domain/test_settings_target.py \
+    tests/domain/test_settings_schema.py \
+    tests/domain/test_settings_projection.py \
+    tests/test_settings_config_write.py \
+    tests/recorder/test_settings_http_redaction.py \
+    tests/ui/test_settings_workspace.py \
+    tests/ui/test_config_view.py tests/test_config_write.py tests/test_config.py \
+    tests/domain/test_models_catalog.py tests/domain/test_projection.py \
+    tests/domain/test_normalize.py -p no:cacheprovider --tb=no -q -rf
+
+Result: 243 failed, 264 passed, 0 errors. Collection clean, no skips in owned
+paths, no network access, no fixture failures. Every failure identifies absent
+production behavior or an unimplemented interface (representative messages
+below). Exit code 1 is the expected T1 signal.
+
+Failures per owned file:
+  tests/domain/test_settings_target.py        48  (A1-1, A1-2, A1-3, A1-6 Hermes half)
+  tests/domain/test_settings_schema.py        31  (A1-7 domain half)
+  tests/domain/test_settings_projection.py    22  (A1-4, A1-5, A1-8, A1-10 + effect vocabulary)
+  tests/test_settings_config_write.py         31  (D10/D11 writes, A1-6 Talaria half)
+  tests/recorder/test_settings_http_redaction.py 36 (A1-9)
+  tests/ui/test_settings_workspace.py         26  (A1-3/4/7/10 UI halves, 21-26/journey contracts)
+  tests/ui/test_config_view.py                 3  (rewritten /config seam: workspace mount)
+  tests/test_config_write.py                   3  (save_settings equivalence + refusal parity)
+  tests/test_config.py                        28  (D11/D12 loads)
+  tests/domain/test_models_catalog.py         10  (display_name, auxiliary, MoA)
+  tests/domain/test_projection.py              3  (timestamps + notification flags)
+  tests/domain/test_normalize.py               2  (timestamp formatter)
+
+A1-1-10 disposition (fail = missing behavior, blocked = cannot proceed):
+  A1-1  FAIL  ConfigTarget/SettingsScopeError, 14 typed commands, rest/rpc
+              spec builders (talaria.domain.settings*) absent.
+  A1-2  FAIL  SettingsState select/begin/apply reducer absent.
+  A1-3  FAIL  request_settings_switch + TargetSwitchOverlay absent.
+  A1-4  FAIL  HermesConnection/project_target_header + header rendering absent.
+  A1-5  FAIL  partition_settings_keys + ownership grouping absent.
+  A1-6  FAIL  build/apply_config_patch + talaria.config.save_settings absent.
+  A1-7  FAIL  decode_settings_schema/validate/catalog + rows/Reset/wake UI absent.
+  A1-8  FAIL  project_field_row + provenance rendering absent.
+  A1-9  FAIL  is_sensitive_http_route/redact_http_body/
+              http_response_persistable/project_secret_row absent.
+  A1-10 FAIL  compute_restart_plan + restart overlay rendering absent.
+  Blocked: none.
+
+Representative failure messages (all failures are one of these shapes):
+  Failed: unimplemented interface talaria.domain.settings (CFG v0.6.2 B2):
+    No module named 'talaria.domain.settings'
+  Failed: unimplemented interface talaria.domain.settings_catalog (CFG B2) ...
+  Failed: unimplemented interface talaria.domain.settings_commands (CFG B2) ...
+  Failed: unimplemented interface talaria.ui.settings_workspace (CFG B2/B5) ...
+  Failed: unimplemented interface talaria.ui.settings_overlays (CFG B2/B5) ...
+  Failed: unimplemented interface talaria.config.save_settings (CFG B2)
+  Failed: unimplemented interface talaria.domain.normalize.
+    format_transcript_timestamp (CFG B5)
+  Failed: unimplemented interface transcript_view flags (CFG B5)
+  Failed: unimplemented interface talaria.domain.redaction.
+    is_sensitive_http_route (CFG B2)
+  AssertionError: assert None == 36            (D12 key absent from DEFAULTS)
+  AssertionError: ProfileEntry has no display_name (CFG B2)
+
+Passing pins inside owned paths (264, all pre-existing or preservation pins):
+- Every pre-existing test in the six updated files passes unmodified, except
+  the three rewritten /config seam tests (now failing for the workspace).
+- Two D11 load tests pass pre-implementation because load_config passes
+  unknown [connections.*] tables through unvalidated; B2 normalization must
+  preserve their values while adding auth/credential rules. They are kept as
+  regression pins, not counted as A1 evidence.
+- test_notification_lines_render_by_default passes pre-implementation: it
+  pins today's rendering that include_notifications=False must subtract from.
+
+Frozen-test verification (full suite):
+  Full suite: 243 failed, 3345 passed, 7 skipped, 0 errors.
+  The 7 skips are pre-existing TS-bridge/corpus skips in
+  tests/recorder/test_equivalence.py (toolchain/corpus absent on this
+  checkout), unrelated to this assignment.
+  Containment VERIFIED 2026-09-16T05:50Z: full-suite -rfs FAILED set is
+  identical to the targeted owned-paths FAILED set (243 == 243, diff empty,
+  0 errors). One transient extra failure observed mid-run
+  (test_committed_acceptance_evidence_passes_portable_privacy_scan) was
+  caused by a Herdr pane identifier in this log's own header; removed, and
+  the scan passes. All frozen unlisted tests are green.
+
+Quality gates on this worktree (T1-relevant subset):
+  uv run ruff check .   -> All checks passed
+  uv run mypy           -> Success: no issues found in 233 source files
+  (bandit/pytest-full/project-check run at candidate time per the test plan;
+  this worktree changes test files only, and bandit excludes tests.)
+
+No secrets, credentials, or private profile content in tests, logs, or
+evidence. All profile/connection names are synthetic fixtures.
+
+Full FAILED list (targeted owned-paths run):
+FAILED tests/domain/test_settings_target.py::test_a_selected_profile_survives_construction_verbatim
+FAILED tests/domain/test_settings_target.py::test_a_missing_or_blank_profile_is_refused_before_any_io[]
+FAILED tests/domain/test_settings_target.py::test_a_missing_or_blank_profile_is_refused_before_any_io[   ]
+FAILED tests/domain/test_settings_target.py::test_a_missing_or_blank_profile_is_refused_before_any_io[\t\n]
+FAILED tests/domain/test_settings_target.py::test_a_missing_connection_is_refused_before_any_io[]
+FAILED tests/domain/test_settings_target.py::test_a_missing_connection_is_refused_before_any_io[   ]
+FAILED tests/domain/test_settings_target.py::test_the_literal_current_profile_is_refused
+FAILED tests/domain/test_settings_target.py::test_a_target_is_frozen_and_hashable_for_use_as_a_cache_key
+FAILED tests/domain/test_settings_target.py::test_scope_refusal_is_a_value_error
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[LoadTarget-rest-query-GET /api/config]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[SaveConfig-rest-query-PUT /api/config]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[SetEnv-rest-query-PUT /api/env]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[ClearEnv-rest-query-DELETE /api/env]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[RevealEnv-rest-query-POST /api/env/reveal]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[SetModel-rest-query-POST /api/model/set]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[ResetConfig-rest-query-PUT /api/config]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[RestartGateway-rest-query-POST /api/gateway/restart]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[CloneProfile-rest-body-POST /api/profiles]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[RenameProfile-rest-path-PATCH /api/profiles/{name}]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[DeleteProfile-rest-path-DELETE /api/profiles/{name}]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[ProbeConnection-rest-host-GET /api/health]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[WakeWord-rpc-params-wake.start]
+FAILED tests/domain/test_settings_target.py::test_every_command_builds_a_spec_carrying_explicit_scope[LiveApply-rpc-params-config.set]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[LoadTarget]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[SaveConfig]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[SetEnv]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[ClearEnv]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[RevealEnv]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[SetModel]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[ResetConfig]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[RestartGateway]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[WakeWord]
+FAILED tests/domain/test_settings_target.py::test_every_profile_scoped_command_exposes_its_selected_target[LiveApply]
+FAILED tests/domain/test_settings_target.py::test_wake_word_accepts_only_start_stop_and_status
+FAILED tests/domain/test_settings_target.py::test_live_apply_names_the_config_set_key_and_value
+FAILED tests/domain/test_settings_target.py::test_save_put_body_is_the_sparse_patch_under_config
+FAILED tests/domain/test_settings_target.py::test_a_reply_for_the_previous_profile_is_dropped_after_a_switch
+FAILED tests/domain/test_settings_target.py::test_a_reply_for_the_same_profile_on_another_connection_is_dropped
+FAILED tests/domain/test_settings_target.py::test_a_late_first_reply_is_dropped_once_a_second_request_began
+FAILED tests/domain/test_settings_target.py::test_a_current_reply_for_the_selected_target_lands
+FAILED tests/domain/test_settings_target.py::test_stay_keeps_edits_on_the_old_target_and_does_not_switch
+FAILED tests/domain/test_settings_target.py::test_discard_removes_old_edits_and_switches
+FAILED tests/domain/test_settings_target.py::test_save_issues_a_write_to_the_old_target_only
+FAILED tests/domain/test_settings_target.py::test_an_unknown_switch_choice_is_refused
+FAILED tests/domain/test_settings_target.py::test_building_a_patch_keeps_only_changed_keys
+FAILED tests/domain/test_settings_target.py::test_an_edit_equal_to_the_saved_value_produces_no_patch_entry
+FAILED tests/domain/test_settings_target.py::test_applying_a_patch_preserves_every_unchanged_saved_value
+FAILED tests/domain/test_settings_target.py::test_a_nested_patch_merges_rather_than_replacing_the_parent_table
+FAILED tests/domain/test_settings_schema.py::test_all_five_known_types_decode_with_their_metadata
+FAILED tests/domain/test_settings_schema.py::test_category_order_and_field_order_follow_the_server_verbatim
+FAILED tests/domain/test_settings_schema.py::test_an_unknown_type_decodes_and_is_not_a_known_type
+FAILED tests/domain/test_settings_schema.py::test_the_known_type_set_is_exactly_the_five_renderable_types
+FAILED tests/domain/test_settings_schema.py::test_a_malformed_schema_body_is_refused[list]
+FAILED tests/domain/test_settings_schema.py::test_a_malformed_schema_body_is_refused[string]
+FAILED tests/domain/test_settings_schema.py::test_a_malformed_schema_body_is_refused[null]
+FAILED tests/domain/test_settings_schema.py::test_a_malformed_schema_body_is_refused[fields-not-an-object]
+FAILED tests/domain/test_settings_schema.py::test_a_malformed_schema_body_is_refused[category-order-absent]
+FAILED tests/domain/test_settings_schema.py::test_a_field_entry_missing_shape_is_refused[type-absent]
+FAILED tests/domain/test_settings_schema.py::test_a_field_entry_missing_shape_is_refused[no-description]
+FAILED tests/domain/test_settings_schema.py::test_a_field_entry_missing_shape_is_refused[category-absent]
+FAILED tests/domain/test_settings_schema.py::test_a_field_entry_missing_shape_is_refused[entry-not-an-object]
+FAILED tests/domain/test_settings_schema.py::test_the_decoded_schema_is_frozen
+FAILED tests/domain/test_settings_schema.py::test_a_select_accepts_only_its_options
+FAILED tests/domain/test_settings_schema.py::test_a_number_parses_numerics_and_refuses_the_rest
+FAILED tests/domain/test_settings_schema.py::test_a_boolean_accepts_only_booleans
+FAILED tests/domain/test_settings_schema.py::test_a_string_accepts_only_strings
+FAILED tests/domain/test_settings_schema.py::test_a_list_accepts_sequences_but_never_a_string
+FAILED tests/domain/test_settings_schema.py::test_an_unknown_type_is_never_editable
+FAILED tests/domain/test_settings_schema.py::test_every_tier1_entry_is_fully_dispositioned
+FAILED tests/domain/test_settings_schema.py::test_curated_desktop_keys_are_tier1[display.resume_last_session]
+FAILED tests/domain/test_settings_schema.py::test_curated_desktop_keys_are_tier1[approvals.mode]
+FAILED tests/domain/test_settings_schema.py::test_curated_desktop_keys_are_tier1[agent.max_turns]
+FAILED tests/domain/test_settings_schema.py::test_curated_desktop_keys_are_tier1[tts.provider]
+FAILED tests/domain/test_settings_schema.py::test_curated_desktop_keys_are_tier1[model_context_length]
+FAILED tests/domain/test_settings_schema.py::test_a_hermes_tui_presentation_key_is_tier2
+FAILED tests/domain/test_settings_schema.py::test_an_uncurated_schema_key_falls_through_to_tier2
+FAILED tests/domain/test_settings_schema.py::test_pet_keys_are_excluded_with_the_recorded_rationale
+FAILED tests/domain/test_settings_schema.py::test_a_reset_patch_restores_only_values_that_differ_from_defaults
+FAILED tests/domain/test_settings_schema.py::test_a_reset_command_always_names_its_target
+FAILED tests/domain/test_settings_projection.py::test_a_connection_whose_current_differs_from_selected_shows_both
+FAILED tests/domain/test_settings_projection.py::test_equal_current_and_selected_still_send_an_explicit_profile
+FAILED tests/domain/test_settings_projection.py::test_no_talaria_setting_appears_under_hermes_and_vice_versa
+FAILED tests/domain/test_settings_projection.py::test_every_key_is_placed_exactly_once
+FAILED tests/domain/test_settings_projection.py::test_the_owner_vocabulary_is_exactly_the_five_documented_owners
+FAILED tests/domain/test_settings_projection.py::test_disagreeing_layers_show_the_chip_and_all_three_values
+FAILED tests/domain/test_settings_projection.py::test_a_pending_edit_outranks_saved_provenance
+FAILED tests/domain/test_settings_projection.py::test_an_at_default_row_says_default
+FAILED tests/domain/test_settings_projection.py::test_an_unknown_typed_row_is_read_only_with_its_type_named
+FAILED tests/domain/test_settings_projection.py::test_an_invalid_pending_value_carries_the_validator_message
+FAILED tests/domain/test_settings_projection.py::test_an_own_gateway_projects_the_profile_only_sentence
+FAILED tests/domain/test_settings_projection.py::test_a_multiplexed_profile_names_the_shared_gateway_and_both_siblings
+FAILED tests/domain/test_settings_projection.py::test_no_gateway_projects_start_instead_without_a_restart_claim
+FAILED tests/domain/test_settings_projection.py::test_the_restart_plan_is_frozen
+FAILED tests/domain/test_settings_projection.py::test_every_timing_class_has_its_exact_summary_sentence[live-saved + active]
+FAILED tests/domain/test_settings_projection.py::test_every_timing_class_has_its_exact_summary_sentence[next-session-takes effect for new sessions]
+FAILED tests/domain/test_settings_projection.py::test_every_timing_class_has_its_exact_summary_sentence[gateway-restart-awaiting gateway restart]
+FAILED tests/domain/test_settings_projection.py::test_every_timing_class_has_its_exact_summary_sentence[dashboard-restart-no-api-requires a dashboard restart; no API performs it]
+FAILED tests/domain/test_settings_projection.py::test_every_timing_class_has_its_exact_summary_sentence[unverified-applies on next session or gateway restart \u2014 unverified]
+FAILED tests/domain/test_settings_projection.py::test_an_unknown_timing_class_is_refused
+FAILED tests/domain/test_settings_projection.py::test_the_save_summary_groups_fields_by_timing_and_keeps_server_detail
+FAILED tests/domain/test_settings_projection.py::test_a_failed_save_never_paints_success
+FAILED tests/test_settings_config_write.py::test_a_ui_width_writes_surgically_beside_its_siblings
+FAILED tests/test_settings_config_write.py::test_a_missing_table_appends_without_touching_existing_tables
+FAILED tests/test_settings_config_write.py::test_a_new_notifications_table_writes_its_bool
+FAILED tests/test_settings_config_write.py::test_a_keybinding_writes_and_normalizes_case
+FAILED tests/test_settings_config_write.py::test_the_composer_cap_writes_as_an_integer
+FAILED tests/test_settings_config_write.py::test_crlf_and_comments_survive_a_new_table_write
+FAILED tests/test_settings_config_write.py::test_dotted_assignments_rewrite_in_place
+FAILED tests/test_settings_config_write.py::test_a_repository_scoped_write_targets_the_repository_file
+FAILED tests/test_settings_config_write.py::test_a_connection_entry_writes_url_auth_and_label
+FAILED tests/test_settings_config_write.py::test_a_connection_write_preserves_sibling_entries
+FAILED tests/test_settings_config_write.py::test_a_connection_url_carrying_a_credential_is_refused
+FAILED tests/test_settings_config_write.py::test_an_unknown_connection_key_is_refused
+FAILED tests/test_settings_config_write.py::test_an_unknown_auth_mode_is_refused
+FAILED tests/test_settings_config_write.py::test_the_profiles_endpoint_map_stays_hand_edited
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[ui-changes0-between 28 and 48]
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[ui-changes1-between 28 and 48]
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[ui-changes2-must be an integer]
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[ui-changes3-must be a boolean]
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[keys-changes4-not a key]
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[keys-changes5-reserved for quitting]
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[composer-changes6-positive]
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[composer-changes7-must be an integer]
+FAILED tests/test_settings_config_write.py::test_invalid_values_are_refused_with_the_key_named[notifications-changes8-must be a boolean]
+FAILED tests/test_settings_config_write.py::test_a_duplicate_chord_across_keys_is_refused_with_both_named
+FAILED tests/test_settings_config_write.py::test_an_unknown_table_is_refused
+FAILED tests/test_settings_config_write.py::test_an_unknown_key_is_refused_with_table_and_key_named
+FAILED tests/test_settings_config_write.py::test_an_empty_change_set_is_refused
+FAILED tests/test_settings_config_write.py::test_an_inline_table_refuses_rather_than_reformats
+FAILED tests/test_settings_config_write.py::test_an_invalid_existing_file_is_never_replaced
+FAILED tests/test_settings_config_write.py::test_the_write_is_all_or_nothing_across_tables_and_keys
+FAILED tests/test_settings_config_write.py::test_the_semantic_diff_guard_watches_neighboring_tables
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[PUT-/api/env]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[DELETE-/api/env]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[POST-/api/env/reveal]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[POST-/api/providers/validate]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[POST-/api/providers/custom-endpoints/validate]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[POST-/api/providers/oauth/example/start]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[POST-/auth/native/token]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[POST-/auth/native/refresh]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[POST-/api/auth/ws-ticket]
+FAILED tests/recorder/test_settings_http_redaction.py::test_credential_routes_are_denied_independent_of_key_names[POST-/api/credentials/pool/rotate]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[GET-/api/env]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[GET-/api/config]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[PUT-/api/config]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[GET-/api/config/schema]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[POST-/api/model/set]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[GET-/api/model/info]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[GET-/api/profiles]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[POST-/api/gateway/restart]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[GET-/api/health]
+FAILED tests/recorder/test_settings_http_redaction.py::test_ordinary_routes_are_not_denied[GET-/api/status]
+FAILED tests/recorder/test_settings_http_redaction.py::test_an_env_put_body_is_withheld_whole_with_a_recorded_reason
+FAILED tests/recorder/test_settings_http_redaction.py::test_a_reveal_response_is_withheld_despite_its_innocent_key
+FAILED tests/recorder/test_settings_http_redaction.py::test_a_config_put_keeps_its_keys_but_loses_a_credential_shaped_value
+FAILED tests/recorder/test_settings_http_redaction.py::test_a_token_response_body_is_withheld_whole
+FAILED tests/recorder/test_settings_http_redaction.py::test_reveal_and_token_responses_are_never_persisted[POST-/api/env/reveal]
+FAILED tests/recorder/test_settings_http_redaction.py::test_reveal_and_token_responses_are_never_persisted[POST-/auth/native/token]
+FAILED tests/recorder/test_settings_http_redaction.py::test_reveal_and_token_responses_are_never_persisted[POST-/auth/native/refresh]
+FAILED tests/recorder/test_settings_http_redaction.py::test_reveal_and_token_responses_are_never_persisted[POST-/api/auth/ws-ticket]
+FAILED tests/recorder/test_settings_http_redaction.py::test_denied_request_bodies_still_persist_as_markers[PUT-/api/env]
+FAILED tests/recorder/test_settings_http_redaction.py::test_denied_request_bodies_still_persist_as_markers[DELETE-/api/env]
+FAILED tests/recorder/test_settings_http_redaction.py::test_denied_request_bodies_still_persist_as_markers[GET-/api/env]
+FAILED tests/recorder/test_settings_http_redaction.py::test_denied_request_bodies_still_persist_as_markers[PUT-/api/config]
+FAILED tests/recorder/test_settings_http_redaction.py::test_denied_request_bodies_still_persist_as_markers[GET-/api/status]
+FAILED tests/recorder/test_settings_http_redaction.py::test_a_secret_row_admits_no_plaintext_and_renders_masked
+FAILED tests/recorder/test_settings_http_redaction.py::test_an_unset_secret_row_says_unset_without_a_value
+FAILED tests/recorder/test_settings_http_redaction.py::test_a_save_summary_names_the_secret_key_and_changed_never_the_value
+FAILED tests/ui/test_settings_workspace.py::test_the_header_names_connection_current_selected_auth_and_version
+FAILED tests/ui/test_settings_workspace.py::test_the_canonical_default_id_is_shown_for_the_default_profile
+FAILED tests/ui/test_settings_workspace.py::test_a_row_shows_owner_provenance_effect_and_help
+FAILED tests/ui/test_settings_workspace.py::test_a_talaria_row_never_renders_under_a_hermes_heading
+FAILED tests/ui/test_settings_workspace.py::test_an_unknown_typed_row_is_read_only_with_its_type_named
+FAILED tests/ui/test_settings_workspace.py::test_appearance_resume_last_session_is_a_first_class_row
+FAILED tests/ui/test_settings_workspace.py::test_host_status_rows_are_read_only_and_offer_no_mutation
+FAILED tests/ui/test_settings_workspace.py::test_save_requests_a_sparse_typed_write_to_the_selected_target
+FAILED tests/ui/test_settings_workspace.py::test_discard_issues_no_command_and_restores_saved_values
+FAILED tests/ui/test_settings_workspace.py::test_an_invalid_row_blocks_save_and_keeps_its_message_visible
+FAILED tests/ui/test_settings_workspace.py::test_a_failed_save_shows_server_detail_and_retains_edits
+FAILED tests/ui/test_settings_workspace.py::test_the_switch_prompt_offers_exactly_save_discard_and_stay
+FAILED tests/ui/test_settings_workspace.py::test_stay_closes_the_prompt_and_issues_no_command
+FAILED tests/ui/test_settings_workspace.py::test_switch_save_writes_the_old_target_only
+FAILED tests/ui/test_settings_workspace.py::test_the_reset_confirmation_names_its_target_profile
+FAILED tests/ui/test_settings_workspace.py::test_the_restart_overlay_renders_the_truthful_plan[facts0-Restart the gateway for profile alpha-fixture]
+FAILED tests/ui/test_settings_workspace.py::test_the_restart_overlay_renders_the_truthful_plan[facts1-Restart the shared default gateway \u2014 this also restarts the gateways serving beta-fixture, gamma-fixture]
+FAILED tests/ui/test_settings_workspace.py::test_the_restart_overlay_renders_the_truthful_plan[facts2-No gateway is running for alpha-fixture; start it instead]
+FAILED tests/ui/test_settings_workspace.py::test_the_wake_toggle_requests_a_scoped_wake_command
+FAILED tests/ui/test_settings_workspace.py::test_no_wake_toggle_is_offered_when_the_capability_is_absent
+FAILED tests/ui/test_settings_workspace.py::test_the_model_overlay_applies_a_scoped_assignment
+FAILED tests/ui/test_settings_workspace.py::test_the_reveal_overlay_shows_masked_and_requests_one_shot
+FAILED tests/ui/test_settings_workspace.py::test_search_filters_rows_by_label_help_and_key
+FAILED tests/ui/test_settings_workspace.py::test_slash_focuses_search - Faile...
+FAILED tests/ui/test_settings_workspace.py::test_the_target_header_stays_visible_at_80x24
+FAILED tests/ui/test_settings_workspace.py::test_escape_cancels_an_overlay_without_a_command
+FAILED tests/ui/test_config_view.py::test_the_real_app_mounts_the_workspace_with_its_own_state
+FAILED tests/ui/test_config_view.py::test_the_theme_row_closes_the_workspace_and_the_app_opens_the_picker
+FAILED tests/ui/test_config_view.py::test_an_apply_through_the_real_app_writes_the_user_file
+FAILED tests/test_config_write.py::test_generalized_status_write_matches_the_dedicated_writer
+FAILED tests/test_config_write.py::test_generalized_theme_write_matches_the_dedicated_writer
+FAILED tests/test_config_write.py::test_generalized_writer_refuses_each_unsupported_shape
+FAILED tests/test_config.py::test_d12_ui_defaults_match_current_fixed_behavior
+FAILED tests/test_config.py::test_d12_new_chord_defaults_match_current_fixed_bindings
+FAILED tests/test_config.py::test_d12_composer_and_notification_defaults - As...
+FAILED tests/test_config.py::test_d11_connections_default_to_no_inventory - A...
+FAILED tests/test_config.py::test_d12_ui_geometry_validates_type_and_range_after_precedence[inspector_width-27-36-48]
+FAILED tests/test_config.py::test_d12_ui_geometry_validates_type_and_range_after_precedence[inspector_width-49-36-28]
+FAILED tests/test_config.py::test_d12_ui_geometry_validates_type_and_range_after_precedence[inspector_width-True-36-40]
+FAILED tests/test_config.py::test_d12_ui_geometry_validates_type_and_range_after_precedence[inspector_dock_min_columns-0-120-100]
+FAILED tests/test_config.py::test_d12_ui_geometry_validates_type_and_range_after_precedence[inspector_dock_min_columns-120-120-140]
+FAILED tests/test_config.py::test_d12_ui_geometry_validates_type_and_range_after_precedence[diff_side_by_side_min_columns--1-112-90]
+FAILED tests/test_config.py::test_d12_ui_geometry_validates_type_and_range_after_precedence[diff_side_by_side_min_columns-112.0-112-130]
+FAILED tests/test_config.py::test_d12_bool_settings_reject_non_bools_visibly[ui-inspector_open_at_start-False]
+FAILED tests/test_config.py::test_d12_bool_settings_reject_non_bools_visibly[ui-show_timestamps-False]
+FAILED tests/test_config.py::test_d12_bool_settings_reject_non_bools_visibly[notifications-transcript_line-True]
+FAILED tests/test_config.py::test_d12_attachment_cap_takes_positive_integers_only[0]
+FAILED tests/test_config.py::test_d12_attachment_cap_takes_positive_integers_only[-1]
+FAILED tests/test_config.py::test_d12_attachment_cap_takes_positive_integers_only[lots]
+FAILED tests/test_config.py::test_d12_attachment_cap_takes_positive_integers_only[16.5]
+FAILED tests/test_config.py::test_d12_attachment_cap_takes_positive_integers_only[True]
+FAILED tests/test_config.py::test_d12_new_chord_toml_override_takes_effect - ...
+FAILED tests/test_config.py::test_d12_new_chord_environment_override_beats_the_toml_file
+FAILED tests/test_config.py::test_d12_new_chords_keep_the_existing_fallback_rules[[keys]\nagents = ""\n-agents-ctrl+g-keys.agents]
+FAILED tests/test_config.py::test_d12_new_chords_keep_the_existing_fallback_rules[[keys]\nmodels = "ctrl+banana"\n-models-f11-keys.models]
+FAILED tests/test_config.py::test_d12_new_chords_keep_the_existing_fallback_rules[[keys]\nconfig = "ctrl+q"\n-config-ctrl+k-reserved for quitting]
+FAILED tests/test_config.py::test_d12_new_chords_keep_the_existing_fallback_rules[[keys]\nagents = "ctrl+x"\ncommands = "ctrl+x"\n-agents-ctrl+g-are both]
+FAILED tests/test_config.py::test_d12_duplicate_chords_reset_both_sides_to_defaults
+FAILED tests/test_config.py::test_d11_unknown_auth_mode_falls_back_to_loopback_with_a_notice
+FAILED tests/test_config.py::test_d11_credentialed_connection_url_is_dropped_never_loaded
+FAILED tests/domain/test_models_catalog.py::test_a_profile_display_name_decodes_alongside_its_canonical_id
+FAILED tests/domain/test_models_catalog.py::test_a_missing_or_mistyped_display_name_reads_as_absent
+FAILED tests/domain/test_models_catalog.py::test_auxiliary_slots_decode_task_provider_model_and_main
+FAILED tests/domain/test_models_catalog.py::test_auxiliary_slots_tolerate_an_empty_or_absent_task_list
+FAILED tests/domain/test_models_catalog.py::test_an_auxiliary_slot_without_a_task_is_refused
+FAILED tests/domain/test_models_catalog.py::test_auxiliary_cosmetic_mistypes_read_as_absent
+FAILED tests/domain/test_models_catalog.py::test_auxiliary_decode_refuses_a_body_that_is_not_a_json_object
+FAILED tests/domain/test_models_catalog.py::test_moa_presets_decode_with_reference_models_and_aggregator
+FAILED tests/domain/test_models_catalog.py::test_a_legacy_flat_moa_config_decodes_to_a_single_preset
+FAILED tests/domain/test_models_catalog.py::test_moa_decode_refuses_a_body_that_is_not_a_json_object
+FAILED tests/domain/test_projection.py::test_transcript_view_accepts_timestamp_and_notification_flags
+FAILED tests/domain/test_projection.py::test_timestamps_prefix_every_line_with_entry_times
+FAILED tests/domain/test_projection.py::test_excluding_notifications_keeps_other_system_lines
+FAILED tests/domain/test_normalize.py::test_transcript_timestamps_render_zero_padded_hours_minutes_seconds
+FAILED tests/domain/test_normalize.py::test_transcript_timestamps_render_a_naive_datetime_verbatim
+exit=1

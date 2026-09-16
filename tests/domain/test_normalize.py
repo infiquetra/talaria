@@ -11,6 +11,7 @@ transcript — because the failure mode is a diagnostic that helpfully includes
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -503,3 +504,42 @@ def test_frame_time_parses_iso_and_never_reads_a_clock() -> None:
     expected = datetime(2026, 8, 2, 12, 21, 35, 16_000, tzinfo=UTC).timestamp()
     assert parse_frame_time("2026-08-02T12:21:35.016Z") == pytest.approx(expected)
     assert parse_frame_time("not a time") == 0.0
+
+
+# ── CFG v0.6.2 D12: transcript timestamps (B5, dev-4) ──────────────────────
+
+
+def _timestamp_formatter() -> Any:
+    """The B5 formatter, failing as missing behavior until it lands.
+
+    ``getattr`` rather than a static import: ``from … import
+    format_transcript_timestamp`` would fail mypy (and collection) before
+    B5, while this fails only the tests that need it.
+    """
+    from talaria.domain import normalize
+
+    formatter = getattr(normalize, "format_transcript_timestamp", None)
+    assert formatter is not None, (
+        "unimplemented interface "
+        "talaria.domain.normalize.format_transcript_timestamp (CFG B5)"
+    )
+    return formatter
+
+
+def test_transcript_timestamps_render_zero_padded_hours_minutes_seconds() -> None:
+    """The formatter behind ``ui.show_timestamps``: pure, total, and fixed
+    width, so stamped lines align in the line buffer."""
+    formatter = _timestamp_formatter()
+
+    assert (
+        formatter(datetime(2026, 9, 16, 7, 5, 9, tzinfo=UTC)) == "07:05:09"
+    )
+    assert (
+        formatter(datetime(2026, 9, 16, 22, 13, 20, tzinfo=UTC)) == "22:13:20"
+    )
+
+
+def test_transcript_timestamps_render_a_naive_datetime_verbatim() -> None:
+    """No timezone conversion and no clock read: the caller supplies the
+    instant, the formatter renders its fields."""
+    assert _timestamp_formatter()(datetime(2026, 9, 16, 0, 0, 0)) == "00:00:00"

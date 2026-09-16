@@ -11,12 +11,21 @@ display). The mounting seam's tests against the real
 The writes go through the real :func:`~talaria.config.save_status_settings`
 against the autouse ``isolated_global_config_dir`` redirection, so every
 "nothing was written" assertion is about bytes on disk, not a stub.
+
+CFG v0.6.2 replacement contract: ``/config`` mounts the settings workspace
+(``talaria.ui.settings_workspace``), and this screen's rows persist as the
+workspace's Talaria-owned branch — same effective/source/mode sentences,
+same ``#interval``/``#apply-user``/``#theme-picker`` hooks. The direct-screen
+tests above pin that branch contract; the mounting-seam tests below pin the
+workspace mount.
 """
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
@@ -27,6 +36,18 @@ from talaria.config import setting_scopes
 from talaria.domain.commands import LocalInvocation, resolve_command
 from talaria.ui.config_view import ConfigViewResult, ConfigViewScreen
 from tests.ui.conftest import event, paused_app, screen_text
+
+
+def _workspace_screen_type() -> Any:
+    """The B5 workspace screen, failing as missing behavior until it lands."""
+    try:
+        module = importlib.import_module("talaria.ui.settings_workspace")
+    except ImportError as exc:
+        pytest.fail(f"unimplemented interface (CFG v0.6.2 B5): {exc}")
+    try:
+        return module.SettingsWorkspaceScreen
+    except AttributeError:
+        pytest.fail("unimplemented interface SettingsWorkspaceScreen (CFG B5)")
 
 #: The startup bundle every render-and-write test passes: what a process
 #: launched on ``USER_CONFIG`` below would have resolved.
@@ -535,55 +556,55 @@ def test_status_write_keys_order_is_the_append_order() -> None:
 
 
 # ── the mounting seam, against the real application ─────────────────────
+#
+# CFG v0.6.2 replacement: /config mounts the settings workspace, fed the
+# process's own state (restart-to-apply still holds for Talaria rows).
 
 
 @pytest.mark.asyncio
-async def test_the_real_app_mounts_the_view_with_its_own_state() -> None:
-    """``/config`` resolves, dispatches, and mounts over the real app — fed
-    the process's own state, not a fresh file read (restart-to-apply)."""
+async def test_the_real_app_mounts_the_workspace_with_its_own_state() -> None:
+    """/config resolves, dispatches, and mounts the settings workspace over
+    the real app — and the workspace's Talaria-owned branch reads the
+    process's own state, not a fresh file read."""
+    workspace_type = _workspace_screen_type()
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=SIZE) as pilot:
         invocation = resolve_command("/config", None)
         assert isinstance(invocation, LocalInvocation)
         assert app.perform_local_command(invocation) is True
         await pilot.pause()
-        view = app.screen
-        assert isinstance(view, ConfigViewScreen)
+        assert isinstance(app.screen, workspace_type)
         # Replay runs no status script and no files are configured here: the
-        # honest rows say default-sourced, and the command row says none runs.
-        assert view.command_sub_text == (
-            "effective: (no status script) · source: default · mode: restart"
-        )
-        assert view.interval_sub_text == (
-            "effective: 5 · source: default · mode: restart"
-        )
-        assert view.segments_sub_text == (
-            "effective: cwd, git_branch, agent_model, context, task_progress, "
-            "connection, version · source: default · mode: restart"
-        )
+        # honest branch rows say default-sourced, in the same sentences the
+        # direct-screen tests pin above.
+        text = screen_text(app)
+        assert "theme.name" in text
+        assert "refined-default" in text
+        assert "source: default" in text
+        assert "(no status script)" in text
         await pilot.press("escape")
         await pilot.pause()
-        assert not isinstance(app.screen, ConfigViewScreen)
+        assert not isinstance(app.screen, workspace_type)
 
 
 @pytest.mark.asyncio
-async def test_the_theme_row_closes_the_view_and_the_app_opens_the_picker() -> None:
-    """The row's dismiss asks the seam for the picker, and the seam opens the
-    real W1 path: the palette's theme mode over the transcript."""
+async def test_the_theme_row_closes_the_workspace_and_the_app_opens_the_picker() -> None:
+    """The branch row's dismiss asks the seam for the picker, and the seam
+    opens the real W1 path: the palette's theme mode over the transcript."""
+    workspace_type = _workspace_screen_type()
     app, _ = paused_app([event("gateway.ready", {})])
     async with app.run_test(size=SIZE) as pilot:
         invocation = resolve_command("/config", None)
         assert isinstance(invocation, LocalInvocation)
         assert app.perform_local_command(invocation) is True
         await pilot.pause()
-        view = app.screen
-        assert isinstance(view, ConfigViewScreen)
+        assert isinstance(app.screen, workspace_type)
 
         await pilot.click("#theme-picker")
         for _ in range(3):
             await pilot.pause()
 
-        assert not isinstance(app.screen, ConfigViewScreen)
+        assert not isinstance(app.screen, workspace_type)
         assert app.palette.is_theme_active is True
 
 
@@ -591,9 +612,11 @@ async def test_the_theme_row_closes_the_view_and_the_app_opens_the_picker() -> N
 async def test_an_apply_through_the_real_app_writes_the_user_file(
     isolated_global_config_dir: Path,
 ) -> None:
-    """The whole path: edit a row in the mounted view, apply, and the real
-    byte-preserving write lands in the user configuration file; the view's
-    own message surfaces through the app when the view closes."""
+    """The whole path: edit a Talaria-branch row in the mounted workspace,
+    apply, and the real byte-preserving write lands in the user
+    configuration file; the branch's own message surfaces through the app
+    when the workspace closes."""
+    workspace_type = _workspace_screen_type()
     app, _ = paused_app([event("gateway.ready", {})])
     user_config = isolated_global_config_dir / "config.toml"
     async with app.run_test(size=SIZE) as pilot:
@@ -601,22 +624,19 @@ async def test_an_apply_through_the_real_app_writes_the_user_file(
         assert isinstance(invocation, LocalInvocation)
         assert app.perform_local_command(invocation) is True
         await pilot.pause()
-        view = app.screen
-        assert isinstance(view, ConfigViewScreen)
-        view.query_one("#interval", Input).value = "9"
+        assert isinstance(app.screen, workspace_type)
+        app.screen.query_one("#interval", Input).value = "9"
 
         await pilot.click("#apply-user")
         await pilot.pause()
 
         assert user_config.read_bytes() == b"[status]\ninterval_seconds = 9\n"
-        assert view.interval_sub_text == (
-            "saved: 9 · effective now: 5 · takes effect on restart"
-        )
+        assert "saved to user configuration" in screen_text(app)
 
         await pilot.press("escape")
         for _ in range(2):
             await pilot.pause()
-        assert not isinstance(app.screen, ConfigViewScreen)
+        assert not isinstance(app.screen, workspace_type)
         assert "saved to user configuration" in screen_text(app)
 
 
