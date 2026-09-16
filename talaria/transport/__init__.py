@@ -25,4 +25,52 @@ are imported lazily inside the methods that dial. So the replay path — the one
 R30 says runs the whole interface with no socket open — never loads a socket
 library at all, which ``tests/transport/test_source_equivalence.py`` verifies in
 a fresh interpreter rather than by inspection.
+
+Settings exports (:class:`~talaria.transport.settings.SettingsClient` and
+:class:`~talaria.transport.settings_surfaces.SettingsSurfaces`) are resolved
+lazily so ``import talaria.transport`` still loads no HTTP client.
 """
+
+from __future__ import annotations
+
+import importlib
+from typing import Any
+
+__all__ = [
+    "HostPathResult",
+    "HostScope",
+    "SettingsClient",
+    "SettingsError",
+    "SettingsFailure",
+    "SettingsRestartResult",
+    "SettingsSurfaces",
+    "SurfaceNote",
+]
+
+_LAZY: dict[str, tuple[str, str]] = {
+    "HostPathResult": ("talaria.transport.settings_surfaces", "HostPathResult"),
+    "HostScope": ("talaria.transport.settings_surfaces", "HostScope"),
+    "SettingsSurfaces": ("talaria.transport.settings_surfaces", "SettingsSurfaces"),
+    "SurfaceNote": ("talaria.transport.settings_surfaces", "SurfaceNote"),
+    "SettingsClient": ("talaria.transport.settings", "SettingsClient"),
+    "SettingsError": ("talaria.transport.settings", "SettingsError"),
+    "SettingsFailure": ("talaria.transport.settings", "SettingsFailure"),
+    "SettingsRestartResult": (
+        "talaria.transport.settings",
+        "SettingsRestartResult",
+    ),
+}
+
+
+def __getattr__(name: str) -> Any:
+    target = _LAZY.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(target[0])
+    value = getattr(module, target[1])
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *__all__})
