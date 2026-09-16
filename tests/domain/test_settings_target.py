@@ -669,3 +669,64 @@ def test_a_nested_patch_merges_rather_than_replacing_the_parent_table() -> None:
     )
 
     assert reread == {"agent": {"max_turns": 40, "api_max_retries": 3}}
+
+
+# ── P3-1: document behavior the remount relies on (dev-4 preserves) ─────────
+#
+# The P3 remount reconciles widgets from freshly landed documents. These pins
+# lock the two reducer properties that makes authoritative: a landed reply
+# replaces its target's document wholesale (no key-level merge with the
+# previous target's shape), and generations advance per target, so one
+# target's load never invalidates another's in-flight reply.
+
+
+def test_a_landed_reply_replaces_the_whole_document() -> None:
+    """R2 at the reducer: a different-schema reply replaces the document —
+    no previous-target key survives to be rendered beside the new rows."""
+    settings = _settings()
+    state_type, select, begin, apply, _ = _state_helpers(settings)
+    target = _target(settings, "local-fixture", "alpha-fixture")
+
+    state = select(state_type.empty(), target)
+    state, first = begin(state, target)
+    state = apply(
+        state,
+        target=target,
+        generation=first,
+        saved={"agent": {"max_turns": 25}},
+        effective={"agent": {"max_turns": 25}},
+    )
+    state, second = begin(state, target)
+    after = apply(
+        state,
+        target=target,
+        generation=second,
+        saved={"agent": {"api_max_retries": 3}},
+        effective={"agent": {"api_max_retries": 3}},
+    )
+
+    assert after.documents[target].saved == {"agent": {"api_max_retries": 3}}
+    assert after.documents[target].effective == {"agent": {"api_max_retries": 3}}
+
+
+def test_generations_advance_independently_per_target() -> None:
+    """R3 at the reducer: beginning a load for one target leaves every
+    other target's generation — and its in-flight reply — untouched."""
+    settings = _settings()
+    state_type, select, begin, apply, _ = _state_helpers(settings)
+    old = _target(settings, "local-fixture", "alpha-fixture")
+    new = _target(settings, "local-fixture", "beta-fixture")
+
+    state = select(state_type.empty(), old)
+    state, old_generation = begin(state, old)
+    state, _ = begin(state, new)
+    state, _ = begin(state, new)
+    after = apply(
+        state,
+        target=old,
+        generation=old_generation,
+        saved={"agent": {"max_turns": 40}},
+        effective={"agent": {"max_turns": 40}},
+    )
+
+    assert after.documents[old].saved == {"agent": {"max_turns": 40}}

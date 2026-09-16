@@ -379,3 +379,34 @@ def test_only_error_metadata_persists_for_reveal_responses(
         )
         is persistable
     )
+
+
+# ── P3-2: denial is per exchange, never a sticky state ─────────────────────
+#
+# Target switches interleave denied reveal traffic with recordable config
+# traffic for the newly selected profile. Denial must be decided fresh per
+# exchange: a denied reveal must not poison the redactor into withholding
+# the next target's ordinary bodies.
+
+
+def test_denial_does_not_leak_across_exchanges() -> None:
+    recorder = _recorder_redact()
+    redacted_marker = _require_attr(recorder, "REDACTED")
+    canary = _canary()
+
+    denied = _require_attr(recorder, "redact_http_body")(
+        method="POST", path="/api/env/reveal", body={"value": canary}
+    )
+    assert denied.frame == redacted_marker
+
+    kept = _require_attr(recorder, "redact_http_body")(
+        method="GET",
+        path="/api/config",
+        body={"agent": {"max_turns": 40}, "model": {"name": "example-large"}},
+    )
+
+    assert kept.frame == {
+        "agent": {"max_turns": 40},
+        "model": {"name": "example-large"},
+    }
+    assert kept.redactions == []

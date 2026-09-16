@@ -1,0 +1,103 @@
+CFG-P3-T1A initial expected-failure log — Test Author One
+========================================================
+
+Assignment: CFG-P3-T1A (live schema remount and reveal failures, P3-1 + P3-2)
+Branch: feat/v0.6.4-cfg-p3-ta1
+Baseline: a63db5ed6500ddcd128a543e0ea0acbb75273fa2 (published v0.6.3, clean)
+Hermes pin cited by tests: 3236f4405 (read-only; no Hermes change)
+Recorded: 2026-09-16T19:54:14Z
+
+Dispatchable plans verified by SHA-256 before use (CFG-PR5 pair):
+- CFG-P3-implementation-plan.md b65d453e0e6810c00da0b26a1938e18f771fc3799148316838904ca12793c7fe MATCH
+- CFG-P3-test-plan.md          0a0067420b4c32432d9499698576a65dd348e2dc92bf4d3f6db184dc87ff155c MATCH
+
+Command (exclusive owned paths):
+  uv run pytest tests/ui/test_cfg_p3_live_schema.py \
+    tests/ui/test_cfg_p2_live_settings.py \
+    tests/ui/test_settings_workspace.py \
+    tests/domain/test_settings_target.py \
+    tests/recorder/test_settings_http_redaction.py \
+    -p no:cacheprovider --tb=no -q
+
+Result: 17 failed, 138 passed, 0 skipped, 0 errors. Collection clean.
+Every failure identifies the absent P3 production behavior on v0.6.3:
+`apply_loaded_view` refreshes only already-mounted rows, so a selected
+target's new schema group and Environment row never mount (header moves,
+widgets do not), and target loading temporarily rewrites session
+current_profile. Exit code 1 is the expected T1 signal.
+
+Failures per owned file:
+  tests/ui/test_cfg_p3_live_schema.py            13  (P3-1 x8, P3-2 x5 real-app)
+  tests/ui/test_cfg_p2_live_settings.py           1  (different-schema remount)
+  tests/ui/test_settings_workspace.py             3  (mount new, remove stale, search/focus)
+  tests/domain/test_settings_target.py            0  (2 new pins pass)
+  tests/recorder/test_settings_http_redaction.py  0  (1 new pin passes)
+
+P3-1 disposition (selected schema/switch matrix): all FAIL for missing
+behavior. Remount mounts new rows/groups, removes stale rows/groups,
+never rewrites session home mid-flight, preserves/applies search;
+Stay/Discard/Save-success/Save-failure/delayed-drop proven through
+real controls on remounted rows with write-log hard-fail scans clean.
+Blocked: none.
+P3-2 disposition (reachable reveal after load): all FAIL for missing
+behavior. Environment row + Reveal mount after load; confirm sends one
+profile-explicit request; value shown once with in-process equality;
+close wipes with no plaintext in widgets/view/notices/recordings;
+reopen masked with no refetch; no secret survives a switch; sixth
+reveal shows rate-limit state without stale value. Blocked: none.
+
+Representative failure messages (all failures are one of these shapes):
+  AssertionError: selected testA header moved but its editable schema
+    row never mounted (P3-1 residual: apply_loaded_view creates nothing)
+  AssertionError: target load rewrites session current_profile mid-flight
+  Failed: live /config renders no secret row for EXAMPLE_P3_KEY
+    (P3-2 residual: selected target Environment not mounted)
+  Failed: apply_loaded_view mounted no new schema row (P3-1 residual:
+    in-place updates cannot create widgets)
+  AssertionError: stale old-target row survives the loaded view (P3-1)
+
+Passing pins inside owned paths (138, all pre-existing or preservation):
+- Every pre-existing test in the four updated files passes unmodified,
+  including all 11 P2 acceptance tests and all 42 redaction tests (the
+  v0.6.3 tree implements the status-aware 429 record: d1d51ae).
+- New passing pins: source guard (opener prohibition enforced by AST),
+  document wholesale replacement, per-target generation independence,
+  redaction per-exchange independence.
+
+Frozen-test verification (full suite, --tb=no -rfs):
+  Full-suite FAILED set is identical to the targeted owned-paths FAILED
+  set (17 == 17, diff empty, 0 errors). All frozen unlisted tests green.
+  Owned paths: zero skips.
+
+Quality gates on this worktree (T1-relevant subset):
+  uv run ruff check .   -> All checks passed
+  uv run mypy           -> Success: no issues found in 255 source files
+  (bandit/full-project-check run at candidate time per the test plan;
+  this worktree changes test files only, and bandit excludes tests.)
+
+Acceptance-file prohibition verified: the P3 acceptance file contains
+zero references to the switch/reveal opener methods (grep clean; the
+AST source guard passes).
+
+No secrets, credentials, or revealed plaintext in tests, logs, or
+evidence. Secret values are random in-memory canaries; visibility recorded
+as booleans only. All profile names are P2-legal active-family names.
+
+Full FAILED list (targeted owned-paths run):
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_select_load_mounts_new_schema_and_environment_rows
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_target_load_never_rewrites_session_current_profile
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_search_text_survives_and_applies_to_remounted_rows
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_stay_preserves_remounted_target_and_edit_without_io
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_discard_replaces_rows_with_new_target
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_save_success_writes_old_then_loads_new_rows
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_failed_save_retains_selected_rows_and_edit
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_delayed_old_response_cannot_repaint_new_rows
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_reveal_reachable_after_load_sends_one_request
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_revealed_value_clears_on_close_and_stays_out_of_state
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_reopen_starts_masked_with_no_background_refetch
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_no_secret_state_survives_a_target_switch
+FAILED tests/ui/test_cfg_p3_live_schema.py::test_sixth_reveal_in_30s_shows_rate_limit_without_plaintext
+FAILED tests/ui/test_cfg_p2_live_settings.py::test_discard_mounts_new_schema_and_removes_stale_rows
+FAILED tests/ui/test_settings_workspace.py::test_apply_loaded_view_mounts_new_rows_and_secret_controls
+FAILED tests/ui/test_settings_workspace.py::test_apply_loaded_view_removes_rows_and_groups_it_replaces
+FAILED tests/ui/test_settings_workspace.py::test_apply_loaded_view_reapplies_search_and_keeps_focus_attached

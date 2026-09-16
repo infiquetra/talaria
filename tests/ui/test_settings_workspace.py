@@ -45,6 +45,7 @@ from textual.pilot import Pilot
 from textual.widgets import Button, Input, Static
 
 from talaria.ui.app import TalariaApp
+from talaria.ui.settings_widgets import row_widget_id
 from tests.ui.conftest import screen_text
 
 
@@ -1130,3 +1131,142 @@ def test_the_reveal_display_interval_is_bounded() -> None:
         "settings overlays define no REVEAL_DISPLAY_SECONDS (P2-2)"
     )
     assert isinstance(bound, (int, float)) and 1 <= bound <= 60
+
+
+# ── P3-1: loaded-view group reconciliation (dev-4, KTD1/KTD2) ──────────────
+
+
+def _row_present(view: Any, key: str) -> bool:
+    try:
+        view.query_one(f"#{row_widget_id(key)}")
+    except NoMatches:
+        return False
+    return True
+
+
+def _loaded_view(settings: Any, **overrides: Any) -> Any:
+    """A second-target view: different schema row plus a secret row."""
+    groups = (
+        _require_attr(settings, "SettingsRowGroupView")(
+            owner="hermes-profile",
+            title="Hermes profile",
+            rows=(
+                _row(
+                    settings,
+                    key="agent.api_max_retries",
+                    label="Maximum API retries",
+                    help_text="Cap on API retries.",
+                    saved_value=3,
+                    effective_value=3,
+                ),
+            ),
+        ),
+        _require_attr(settings, "SettingsRowGroupView")(
+            owner="hermes-profile",
+            title="Environment",
+            rows=(
+                _row(
+                    settings,
+                    key="EXAMPLE_P3_KEY",
+                    label="EXAMPLE_P3_KEY",
+                    help_text="P3 test key.",
+                    type="string",
+                    provenance="saved",
+                    default_value="",
+                    saved_value="sk-…p3ab",
+                    effective_value="sk-…p3ab",
+                    effect="next-session",
+                    tier=1,
+                    read_only=True,
+                ),
+            ),
+        ),
+    )
+    fields: dict[str, Any] = {
+        "groups": groups,
+        "secrets": {"EXAMPLE_P3_KEY": (True, "sk-…p3ab")},
+    }
+    fields.update(overrides)
+    return _view(settings, **fields)
+
+
+@pytest.mark.asyncio
+async def test_apply_loaded_view_mounts_new_rows_and_secret_controls() -> None:
+    """KTD1: the loaded view is authoritative — rows and groups absent from
+    the old screen mount with editors and Reveal controls intact."""
+    settings = _settings()
+    requested: list[Any] = []
+    host = _Host(lambda: _screen(settings, requested))
+
+    async with host.run_test(size=SIZE) as pilot:
+        view = await _mounted(pilot, host)
+        view.apply_loaded_view(_loaded_view(settings), "local-fixture")
+        for _ in range(5):
+            await pilot.pause()
+
+        try:
+            new_row = view.query_one(f"#{row_widget_id('agent.api_max_retries')}")
+        except NoMatches:
+            pytest.fail(
+                "apply_loaded_view mounted no new schema row (P3-1 residual: "
+                "in-place updates cannot create widgets)"
+            )
+        assert new_row.query_one(Input).value == "3"
+        try:
+            secret_row = view.query_one(f"#{row_widget_id('EXAMPLE_P3_KEY')}")
+        except NoMatches:
+            pytest.fail(
+                "apply_loaded_view mounted no secret row (P3-2 residual)"
+            )
+        revealers = [
+            button
+            for button in secret_row.query(Button)
+            if str(button.label).strip().lower() == "reveal"
+        ]
+        assert len(revealers) == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_loaded_view_removes_rows_and_groups_it_replaces() -> None:
+    """R2: no previous target's schema or mask survives — old-only rows
+    and groups disappear instead of lingering beside the new ones."""
+    settings = _settings()
+    requested: list[Any] = []
+    host = _Host(lambda: _screen(settings, requested))
+
+    async with host.run_test(size=SIZE) as pilot:
+        view = await _mounted(pilot, host)
+        assert _row_present(view, "agent.max_turns")
+        view.apply_loaded_view(_loaded_view(settings), "local-fixture")
+        for _ in range(5):
+            await pilot.pause()
+
+        assert not _row_present(view, "agent.max_turns"), (
+            "stale old-target row survives the loaded view (P3-1)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_apply_loaded_view_reapplies_search_and_keeps_focus_attached() -> None:
+    """KTD5: the search text survives remounting and filters the new rows;
+    focus never points at a removed widget."""
+    settings = _settings()
+    requested: list[Any] = []
+    host = _Host(lambda: _screen(settings, requested))
+
+    async with host.run_test(size=SIZE) as pilot:
+        view = await _mounted(pilot, host)
+        view.query_one("#settings-search", Input).value = "retries"
+        await pilot.pause()
+        view.apply_loaded_view(_loaded_view(settings), "local-fixture")
+        for _ in range(5):
+            await pilot.pause()
+
+        assert view.query_one("#settings-search", Input).value == "retries"
+        assert _row_present(view, "agent.api_max_retries"), (
+            "remounted row missing, so search has nothing to apply to (P3-1)"
+        )
+        row = view.query_one(f"#{row_widget_id('agent.api_max_retries')}")
+        assert row.display
+        focused = view.focused
+        assert focused is None or focused.is_mounted
