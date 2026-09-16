@@ -1338,6 +1338,50 @@ RECEIPT_SCHEMA = RecordSchema(
     },
 )
 
+V062_CFG_ITEMS = frozenset({
+    "cfg-cr4",
+    "cfg-project-check",
+    "cfg-t6",
+    "cfg-cleanup",
+})
+V062_CFG_RECEIPT_SCHEMA = RecordSchema(
+    name="v062-cfg-receipt",
+    declared_keys={
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "release": ValueCategory.CLOSED_VOCABULARY,
+        "checklist_item": ValueCategory.CLOSED_VOCABULARY,
+        "tester": ValueCategory.CLOSED_VOCABULARY,
+        "verdict": ValueCategory.CLOSED_VOCABULARY,
+        "candidate_commit_sha": ValueCategory.DIGEST,
+        "applies_to_candidate": ValueCategory.STRING,
+        "evidence": ValueCategory.OBJECT,
+    },
+    nested_schemas={
+        "evidence": {
+            "source": ValueCategory.STRING,
+            "observation": ValueCategory.STRING,
+            "review_artifact_sha256": ValueCategory.DIGEST,
+            "project_check_sha256": ValueCategory.DIGEST,
+            "smoke_receipt_sha256": ValueCategory.DIGEST,
+            "cleanup_receipt_sha256": ValueCategory.DIGEST,
+        },
+    },
+    digest_preimages={
+        "candidate_commit_sha": "git-commit",
+        "evidence.review_artifact_sha256": "artifact",
+        "evidence.project_check_sha256": "artifact",
+        "evidence.smoke_receipt_sha256": "receipt",
+        "evidence.cleanup_receipt_sha256": "receipt",
+    },
+    vocabularies={
+        "schema_version": frozenset({V062_ITEM_SCHEMA}),
+        "release": frozenset({V062_RELEASE}),
+        "checklist_item": V062_CFG_ITEMS,
+        "tester": frozenset(V061_ROLE_LABELS),
+        "verdict": frozenset(VERDICTS),
+    },
+)
+
 INSTALL_RECEIPT_SCHEMA = RecordSchema(
     name="install-receipt",
     declared_keys={
@@ -2690,6 +2734,8 @@ class SchemaRegistry:
         | None
     ):
         if path.name == "receipt.json" or path.name.endswith("-receipt.json"):
+            if isinstance(doc, dict) and doc.get("schema_version") == V062_ITEM_SCHEMA:
+                return V062_CFG_RECEIPT_SCHEMA
             if isinstance(doc, dict) and (
                 doc.get("schema_version") == V061_INSTALL_SCHEMA
                 or "candidate" in doc
@@ -2712,6 +2758,8 @@ class SchemaRegistry:
                 or ("candidate" in doc and "install" in doc and "tester" in doc)
             ):
                 return INSTALL_RECEIPT_SCHEMA
+            if doc.get("schema_version") == V062_ITEM_SCHEMA:
+                return V062_CFG_RECEIPT_SCHEMA
             if "checklist_item" in doc and "verdict" in doc:
                 return RECEIPT_SCHEMA
             if (
