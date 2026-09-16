@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infiquetra.github.io/talaria/acceptance/v0.6.4/artifact-manifest.schema.json",
+  "title": "Talaria v0.6.4 generated acceptance artifact manifest",
+  "description": "The v0.6.4 record binds the product candidate, one configuration UI residual receipt, and the configuration UI residuals READY gate. Install receipts are intentionally empty until post-publication acceptance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "gate_id",
+    "generated_command",
+    "status",
+    "recorded_at",
+    "harness_commit",
+    "candidate",
+    "counts",
+    "receipts",
+    "install_receipts",
+    "results_document",
+    "notes_document"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "./artifact-manifest.schema.json"
+    },
+    "schema_version": {
+      "const": "talaria-v0.6.4-artifact-manifest-v1"
+    },
+    "gate_id": {
+      "const": "v0-6-4-configuration-ui-residuals"
+    },
+    "generated_command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "const": "complete"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "harness_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "version",
+        "wheel_filename",
+        "wheel_sha256"
+      ],
+      "properties": {
+        "commit": {
+          "const": "7b73f8864941b65ab47a685f859f32992986211b"
+        },
+        "version": {
+          "const": "0.6.4"
+        },
+        "wheel_filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wheel_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "install_receipts",
+        "item_receipts",
+        "item_verdicts"
+      ],
+      "properties": {
+        "install_receipts": {
+          "const": 0
+        },
+        "item_receipts": {
+          "const": 1
+        },
+        "item_verdicts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "blocked",
+            "fail",
+            "pass",
+            "reserved"
+          ],
+          "properties": {
+            "blocked": {
+              "const": 0
+            },
+            "fail": {
+              "const": 0
+            },
+            "pass": {
+              "const": 1
+            },
+            "reserved": {
+              "const": 0
+            }
+          }
+        }
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt_path",
+          "receipt_sha256",
+          "checklist_item",
+          "tester",
+          "verdict",
+          "candidate_commit_sha",
+          "applies_to_candidate"
+        ],
+        "properties": {
+          "receipt_path": {
+            "type": "string",
+            "pattern": "^docs/acceptance/v0\\.6\\.4/evidence/[^/]+/receipts/receipt\\.json$"
+          },
+          "receipt_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "checklist_item": {
+            "const": "cfg-p3"
+          },
+          "tester": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "const": "pass"
+          },
+          "candidate_commit_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "applies_to_candidate": {
+            "type": "string",
+            "minLength": 4
+          }
+        }
+      }
+    },
+    "install_receipts": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "results_document": {
+      "type": "string",
+      "minLength": 1
+    },
+    "notes_document": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "talaria-v0.6.4-receipt-v1",
+  "release": "0.6.4",
+  "checklist_item": "cfg-p3",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "b7ec4ef1795e1496baeafab05d6c962113539c1b",
+  "applies_to_candidate": "Production-identical to 7b73f88 except tests and docs.",
+  "evidence": {
+    "source": "CFG-P3-CR accepted review artifact",
+    "observation": "The CFG-P3 candidate was accepted; product SHA 7b73f88 is the release candidate.",
+    "review_artifact_sha256": "30caf1e2b25ed81632fc2aa0b6ff81449ef9bf1571f95b26e6364c48d2997de0"
+  }
+}
