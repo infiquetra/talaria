@@ -1,0 +1,66 @@
+{
+  "$schema": "./artifact-manifest.schema.json",
+  "schema_version": "talaria-v0.6.2-artifact-manifest-v1",
+  "gate_id": "v0-6-2-configuration",
+  "generated_command": "uv build --wheel; assemble the v0.6.2 CFG acceptance record",
+  "status": "complete",
+  "recorded_at": "2026-09-16T07:41:02Z",
+  "harness_commit": "fbaa534622c26fc3f1e370cc6d2d9b057bb2f5e0",
+  "candidate": {
+    "commit": "fbaa534622c26fc3f1e370cc6d2d9b057bb2f5e0",
+    "version": "0.6.2",
+    "wheel_filename": "talaria-0.6.2-py3-none-any.whl",
+    "wheel_sha256": "d33496fd80f894cd28b304e441bb36f467e6abeb21bdbefc54646143fe454a96"
+  },
+  "counts": {
+    "install_receipts": 0,
+    "item_receipts": 4,
+    "item_verdicts": {
+      "blocked": 0,
+      "fail": 0,
+      "pass": 4,
+      "reserved": 0
+    }
+  },
+  "receipts": [
+    {
+      "receipt_path": "docs/acceptance/v0.6.2/evidence/cfg-cr4/receipts/receipt.json",
+      "receipt_sha256": "802c5a954bc77c8f382d7ae791b7bfb67b366ecce0b0c541eaa8a0dedb4c6469",
+      "checklist_item": "cfg-cr4",
+      "tester": "controller",
+      "verdict": "pass",
+      "candidate_commit_sha": "fbaa534622c26fc3f1e370cc6d2d9b057bb2f5e0",
+      "applies_to_candidate": "same"
+    },
+    {
+      "receipt_path": "docs/acceptance/v0.6.2/evidence/cfg-project-check/receipts/receipt.json",
+      "receipt_sha256": "c54bcde5bfd9cb9bc905498be3b512031f660fa0cd6fb74f93d8606988f0d507",
+      "checklist_item": "cfg-project-check",
+      "tester": "controller",
+      "verdict": "pass",
+      "candidate_commit_sha": "fbaa534622c26fc3f1e370cc6d2d9b057bb2f5e0",
+      "applies_to_candidate": "same"
+    },
+    {
+      "receipt_path": "docs/acceptance/v0.6.2/evidence/cfg-t6/receipts/receipt.json",
+      "receipt_sha256": "3cec7b3f4a8b6b75afd65bc31c6498a760fe0c951bf32331be1819b28b91d222",
+      "checklist_item": "cfg-t6",
+      "tester": "controller",
+      "verdict": "pass",
+      "candidate_commit_sha": "0f9e52f3018af99eda5f2464c97a0a81df24255a",
+      "applies_to_candidate": "Production-identical to fbaa534 except for the T1AR5 tests and the U4R3 SettingsError repair."
+    },
+    {
+      "receipt_path": "docs/acceptance/v0.6.2/evidence/cfg-cleanup/receipts/receipt.json",
+      "receipt_sha256": "497b66c2c9d78150979acc302d39c19c3041c51c15c27c6db7ec68124377c8c4",
+      "checklist_item": "cfg-cleanup",
+      "tester": "controller",
+      "verdict": "pass",
+      "candidate_commit_sha": "fbaa534622c26fc3f1e370cc6d2d9b057bb2f5e0",
+      "applies_to_candidate": "same"
+    }
+  ],
+  "install_receipts": [],
+  "results_document": "docs/acceptance/v0.6.2/results.md",
+  "notes_document": "docs/acceptance/v0.6.2/notes.md"
+}

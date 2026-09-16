@@ -1,0 +1,14 @@
+{
+  "schema_version": "talaria-v0.6.2-receipt-v1",
+  "release": "0.6.2",
+  "checklist_item": "cfg-project-check",
+  "tester": "controller",
+  "verdict": "pass",
+  "candidate_commit_sha": "fbaa534622c26fc3f1e370cc6d2d9b057bb2f5e0",
+  "applies_to_candidate": "same",
+  "evidence": {
+    "source": "project-check-fbaa534.txt",
+    "observation": "Every listed command exited 0; pytest reported 3663 passed and 31 skipped.",
+    "project_check_sha256": "578e9783c154ccc135555d145da3310467daca51a20ca5ba38d6844dd37e32a5"
+  }
+}
