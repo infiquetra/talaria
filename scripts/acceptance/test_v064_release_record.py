@@ -1,8 +1,8 @@
 """v0.6.4 verify_run contract.
 
-Fixture-only except the committed-record placeholder. Teaching verify_run
-``talaria-v0.6.4-receipt-v1`` and ``v0-6-4-configuration-ui-residuals``
-flips the schema/gate tests. Do not invent the real record here.
+Fixture tests plus the committed-record cleanliness gate bound to published
+4497048. Teaching verify_run ``talaria-v0.6.4-receipt-v1`` and
+``v0-6-4-configuration-ui-residuals`` flips the schema/gate tests.
 """
 
 from __future__ import annotations
@@ -209,33 +209,18 @@ def test_verify_run_rejects_prior_gate_id_on_a_v064_manifest(tmp_path: Path) -> 
 
 
 def test_verify_run_is_clean_for_committed_v064_record() -> None:
-    """Publication gate once a later owner writes the v0.6.4 record.
+    """Publication gate: the committed v0.6.4 record binds to published 4497048.
 
-    Encode the missing files. Do not invent the record.
+    Do not bind this check to HEAD. A later product SHA is a different
+    release; the published v0.6.4 record stays valid against 4497048 (or
+    a docs-only descendant of product SHA 7b73f88).
     """
     repo_root = Path(__file__).resolve().parents[2]
-    version_dir = repo_root / "docs" / "acceptance" / "v0.6.4"
-    required = (
-        version_dir / "artifact-manifest.json",
-        version_dir / "artifact-manifest.schema.json",
-        version_dir / "evidence",
-    )
-    missing = [
-        path.relative_to(repo_root).as_posix()
-        for path in required
-        if not path.exists()
-    ]
-    assert not missing, (
-        "v0.6.4 release record is missing: "
-        + ", ".join(missing)
-        + "; later owner writes the record for verify-run --expect-candidate HEAD"
-    )
-
     errors = verify_run(
-        version_dir / "artifact-manifest.json",
-        evidence_root=version_dir / "evidence",
+        repo_root / "docs" / "acceptance" / "v0.6.4" / "artifact-manifest.json",
+        evidence_root=repo_root / "docs" / "acceptance" / "v0.6.4" / "evidence",
         repo_root=repo_root,
-        expected_candidate_commit=_head(repo_root),
+        expected_candidate_commit="4497048a77f1ebcdf855ed541ead340d10ac42df",
     )
     assert errors == [], errors
     assert _PRODUCT_SHA == "7b73f8864941b65ab47a685f859f32992986211b"
