@@ -28,7 +28,7 @@ _FORBIDDEN_GATE_IDS = frozenset(
         "v0-6-1-daily-driver",
     }
 )
-_PRODUCT_SHA = "a83238541bb0228f18e4ef3a911bf238f7b7d0bd"
+_PRODUCT_SHA = "a7cbeeca1a25696bc25900d74eaa3c4b335a1e11"
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -144,7 +144,7 @@ def test_verify_run_accepts_named_v065_receipt_schema(tmp_path: Path) -> None:
 
 
 def test_verify_run_accepts_docs_only_descendant_of_product_sha(tmp_path: Path) -> None:
-    """Tag SHA may be a docs-only descendant of product SHA a832385."""
+    """Tag SHA may be a docs-only descendant of product SHA a7cbeec."""
     product = _init_repo(tmp_path)
     manifest_path, evidence_root = _write_v065_run(tmp_path, candidate_commit=product)
     (tmp_path / "docs-note.txt").write_text("record only\n", encoding="utf-8")
@@ -262,4 +262,4 @@ def test_verify_run_is_clean_for_committed_v065_record() -> None:
         expected_candidate_commit=_head(repo_root),
     )
     assert errors == [], errors
-    assert _PRODUCT_SHA == "a83238541bb0228f18e4ef3a911bf238f7b7d0bd"
+    assert _PRODUCT_SHA == "a7cbeeca1a25696bc25900d74eaa3c4b335a1e11"

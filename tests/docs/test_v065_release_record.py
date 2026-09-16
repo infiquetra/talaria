@@ -23,7 +23,7 @@ _VERSION_DIR = _REPO_ROOT / "docs" / "acceptance" / "v0.6.5"
 _MANIFEST_PATH = _VERSION_DIR / "artifact-manifest.json"
 _SCHEMA_PATH = _VERSION_DIR / "artifact-manifest.schema.json"
 
-_PRODUCT_SHA = "a83238541bb0228f18e4ef3a911bf238f7b7d0bd"
+_PRODUCT_SHA = "a7cbeeca1a25696bc25900d74eaa3c4b335a1e11"
 _MANIFEST_SCHEMA_VERSION = "talaria-v0.6.5-artifact-manifest-v1"
 _GATE_ID = "v0-6-5-configuration-ui-residuals"
 _FORBIDDEN_GATE_IDS = frozenset(
