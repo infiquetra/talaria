@@ -275,6 +275,8 @@ class PlannedConnection:
     endpoint: str
     credential_profile: str | None
     problem: str = ""
+    auth: str = "loopback"
+    credential_kind: str = "loopback"
 
     @property
     def dialable_endpoint(self) -> bool:
@@ -299,6 +301,7 @@ def plan_connections(
     default_endpoint: str,
     config_endpoints: Mapping[str, str] | None = None,
     default_profile: str = DEFAULT_PROFILE_NAME,
+    connections: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[PlannedConnection, ...]:
     """The inventory before credentials are consulted (KTD1).
 
@@ -311,9 +314,32 @@ def plan_connections(
     supplies that entry's endpoint, because ``config.toml`` is where endpoints
     live (KTD5) and the credential file's ``url`` key is only the fallback for
     a profile nobody configured.
+
+    ``connections`` is the D11 configuration inventory: one dashboard origin
+    plus an auth mode. When present it is the planned set; session profile
+    endpoints remain the ``config_endpoints`` path.
     """
+    if connections is not None:
+        members: list[PlannedConnection] = []
+        for name, spec in connections.items():
+            raw_url = spec.get("url", "")
+            auth = spec.get("auth", "loopback")
+            url, problem = _normalize(raw_url)
+            credential_kind = "ticket" if auth == "gated" else "loopback"
+            members.append(
+                PlannedConnection(
+                    name=name,
+                    endpoint=url,
+                    credential_profile=name,
+                    problem=problem,
+                    auth=auth,
+                    credential_kind=credential_kind,
+                )
+            )
+        return tuple(members)
+
     rows = dict(config_endpoints or {})
-    members: list[PlannedConnection] = []
+    members = []
 
     default_url, default_problem = _normalize(rows.pop(default_profile, default_endpoint))
     members.append(

@@ -55,6 +55,7 @@ __all__ = [
     "fetch_dashboard_index",
     "refresh_credential",
     "require_fetchable_origin",
+    "write_connection_tokens",
     "write_profile_token",
     "write_token",
 ]
@@ -403,6 +404,115 @@ def write_profile_token(
 
     _atomic_write(path, content)
     return created, tightened, preserved
+
+
+def write_connection_tokens(
+    path: Path,
+    connection_id: str,
+    *,
+    access_token: str,
+    refresh_token: str,
+) -> tuple[bool, bool, tuple[str, ...]]:
+    """Write ``[connections.<id>]`` access/refresh tokens at ``0600``.
+
+    Loopback ``token`` lines stay untouched. The gated table is appended (or
+    replaced in place) so a refresh of remote credentials cannot rewrite the
+    dashboard session token the loopback provider still reads.
+    """
+    from talaria.transport.credentials import CredentialError, validate_profile_name
+
+    try:
+        validate_profile_name(connection_id)
+    except CredentialError as exc:
+        raise RefreshError(str(exc)) from exc
+
+    block = (
+        f"[connections.{connection_id}]\n"
+        f"access_token = {json.dumps(access_token)}\n"
+        f"refresh_token = {json.dumps(refresh_token)}\n"
+    )
+    created = not path.exists()
+    tightened = False
+    preserved: tuple[str, ...] = ()
+
+    if created:
+        content = block
+    else:
+        tightened = bool(path.stat().st_mode & 0o177)
+        existing = path.read_text(encoding="utf-8")
+        preserved = _preserved_keys(existing)
+        content = _rewrite_connection_tokens(existing, connection_id, block)
+        _verify_connection_tokens_changed(
+            existing, content, connection_id, access_token, refresh_token
+        )
+
+    _atomic_write(path, content)
+    return created, tightened, preserved
+
+
+def _rewrite_connection_tokens(existing: str, connection_id: str, block: str) -> str:
+    """Set ``[connections.<id>]`` without touching any other table."""
+    lines = existing.splitlines()
+    wanted = ("connections", connection_id)
+    start: int | None = None
+    end = len(lines)
+    for index, text in enumerate(lines):
+        if _TABLE_BOUNDARY_LINE.match(text) is None:
+            continue
+        table = _table_path(text)
+        if start is None and table == wanted:
+            start = index
+            end = len(lines)
+            continue
+        if start is not None and index > start:
+            end = index
+            break
+
+    if start is None:
+        separator = "" if not existing or existing.endswith("\n") else "\n"
+        blank = "" if not existing.strip() else "\n"
+        return f"{existing}{separator}{blank}{block}"
+
+    replacement = block.rstrip("\n").splitlines()
+    rewritten = [*lines[:start], *replacement, *lines[end:]]
+    return "\n".join(rewritten) + "\n"
+
+
+def _verify_connection_tokens_changed(
+    existing: str,
+    content: str,
+    connection_id: str,
+    access_token: str,
+    refresh_token: str,
+) -> None:
+    """Refuse a rewrite that touched anything but this connection's tokens."""
+    try:
+        before = tomllib.loads(existing)
+    except tomllib.TOMLDecodeError:
+        return
+    try:
+        after = tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        raise RefreshError(
+            "refusing to write: the edit would leave the credential file unparseable "
+            f"({exc}). Nothing was written; the file on disk is unchanged"
+        ) from exc
+
+    expected: dict[str, Any] = _deep_copy_document(before)
+    connections = expected.get("connections")
+    if not isinstance(connections, dict):
+        connections = {}
+        expected["connections"] = connections
+    previous = connections.get(connection_id)
+    entry = dict(previous) if isinstance(previous, dict) else {}
+    entry["access_token"] = access_token
+    entry["refresh_token"] = refresh_token
+    connections[connection_id] = entry
+    if after != expected:
+        raise RefreshError(
+            f"refusing to write: the edit changed more than connections.{connection_id}. "
+            "Nothing was written, and the file on disk is unchanged"
+        )
 
 
 def _rewrite_profile_token(existing: str, profile: str, line: str) -> str:

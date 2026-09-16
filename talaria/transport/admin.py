@@ -158,6 +158,7 @@ __all__ = [
     "fetch_admin_json",
     "post_admin_json",
     "probe_health_route",
+    "request_admin_json",
 ]
 
 #: Every header name the credential is written into. Named once so the tests
@@ -208,10 +209,12 @@ AdminFailure = Literal[
     "credential_unavailable",
     "invalid_request",
     "http_error",
+    "conflict",
+    "timeout",
 ]
 
 
-class AdminError(Exception):
+class AdminError(RuntimeError):
     """An admin call that did not produce a value, with a branchable reason.
 
     Carries no credential and no whole endpoint. ``reason`` is the
@@ -273,6 +276,55 @@ def _build_url(origin: str, path: str, params: dict[str, str] | None) -> str:
     return f"{candidate}?{urlencode(params)}" if params else candidate
 
 
+def request_admin_json(
+    origin: str,
+    path: str,
+    *,
+    method: str,
+    token: str,
+    params: dict[str, str] | None = None,
+    body: Mapping[str, Any] | None = None,
+    timeout: float = 15.0,
+) -> Any:
+    """Send one same-origin admin request and return its decoded JSON.
+
+    The generic verb primitive U2 adds on top of GET/POST: same origin
+    discipline, same size cap, same failure vocabulary, and the same refusal
+    to follow a redirect that would carry :data:`CREDENTIAL_HEADERS` off this
+    origin. ``method`` is required so a caller cannot accidentally GET a write.
+    """
+    try:
+        require_fetchable_origin(origin)
+    except RefreshError as exc:
+        raise AdminError("refused_origin", str(exc)) from exc
+
+    verb = method.upper()
+    url = _build_url(origin, path, params)
+    headers = {"Accept": "application/json", **_credential_headers(token)}
+    payload: bytes | None = None
+    if verb in {"POST", "PUT", "PATCH"} or body is not None:
+        payload = json.dumps(body if body is not None else {}).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=payload, headers=headers, method=verb)
+    try:
+        return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
+    except AdminError as exc:
+        profile = (params or {}).get("profile")
+        # ``is not None`` — presence, not truthiness. ``?profile=`` (an empty
+        # value) is still a profile-carrying request from the gateway's point
+        # of view; a truthiness check treated it as if no ``profile`` param
+        # had been sent at all, so the required disambiguation was skipped
+        # and a bare-route-exists case reported ``absent_capability`` instead
+        # of ``unknown_profile``.
+        if exc.reason == "absent_capability" and profile is not None:
+            resolved = _disambiguate_absent_capability(
+                exc, origin=origin, path=path, profile=profile, token=token, timeout=timeout
+            )
+            if resolved is not exc:
+                raise resolved from exc
+        raise
+
+
 def fetch_admin_json(
     origin: str,
     path: str,
@@ -296,34 +348,9 @@ def fetch_admin_json(
     body that hits the cap is ``oversized_response``. See :func:`_perform_admin_request`
     for the shared read/decode path a POST takes too.
     """
-    try:
-        require_fetchable_origin(origin)
-    except RefreshError as exc:
-        raise AdminError("refused_origin", str(exc)) from exc
-
-    url = _build_url(origin, path, params)
-    request = urllib.request.Request(
-        url,
-        headers={"Accept": "application/json", **_credential_headers(token)},
-        method="GET",
+    return request_admin_json(
+        origin, path, method="GET", token=token, params=params, timeout=timeout
     )
-    try:
-        return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
-    except AdminError as exc:
-        profile = (params or {}).get("profile")
-        # ``is not None`` — presence, not truthiness. ``?profile=`` (an empty
-        # value) is still a profile-carrying request from the gateway's point
-        # of view; a truthiness check treated it as if no ``profile`` param
-        # had been sent at all, so the required disambiguation was skipped
-        # and a bare-route-exists case reported ``absent_capability`` instead
-        # of ``unknown_profile``.
-        if exc.reason == "absent_capability" and profile is not None:
-            resolved = _disambiguate_absent_capability(
-                exc, origin=origin, path=path, profile=profile, token=token, timeout=timeout
-            )
-            if resolved is not exc:
-                raise resolved from exc
-        raise
 
 
 def post_admin_json(
@@ -345,40 +372,15 @@ def post_admin_json(
     differ from a GET. ``MODEL_SET_PATH`` is the one path this module ever
     calls this with; see the module docstring for why.
     """
-    try:
-        require_fetchable_origin(origin)
-    except RefreshError as exc:
-        raise AdminError("refused_origin", str(exc)) from exc
-
-    url = _build_url(origin, path, params)
-    payload = json.dumps(body if body is not None else {}).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=payload,
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            **_credential_headers(token),
-        },
+    return request_admin_json(
+        origin,
+        path,
         method="POST",
+        token=token,
+        params=params,
+        body=body,
+        timeout=timeout,
     )
-    try:
-        return _perform_admin_request(request, path=path, host=_host_of(origin), timeout=timeout)
-    except AdminError as exc:
-        profile = (params or {}).get("profile")
-        # ``is not None`` — presence, not truthiness. ``?profile=`` (an empty
-        # value) is still a profile-carrying request from the gateway's point
-        # of view; a truthiness check treated it as if no ``profile`` param
-        # had been sent at all, so the required disambiguation was skipped
-        # and a bare-route-exists case reported ``absent_capability`` instead
-        # of ``unknown_profile``.
-        if exc.reason == "absent_capability" and profile is not None:
-            resolved = _disambiguate_absent_capability(
-                exc, origin=origin, path=path, profile=profile, token=token, timeout=timeout
-            )
-            if resolved is not exc:
-                raise resolved from exc
-        raise
 
 
 def _disambiguate_absent_capability(
@@ -632,13 +634,19 @@ def _perform_admin_request(
         # nosec B310 - both callers already ran require_fetchable_origin and
         # _build_url, which together allowlist the scheme to http/https and
         # forbid the join from leaving that origin — which is what B310 asks
-        # to be audited.
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
+        # to be audited. The opener refuses redirects so a 3xx cannot
+        # re-send credential headers to a Location of the response's choosing.
+        with _PROBE_OPENER.open(request, timeout=timeout) as response:  # nosec B310
             # One byte past the cap, so a body sitting exactly at the limit is
             # accepted and one over it is detected. Reading exactly the cap
             # cannot tell a full read from a truncated one.
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             charset = response.headers.get_content_charset() or "utf-8"
+    except TimeoutError as exc:
+        raise AdminError(
+            "timeout",
+            f"{path} timed out waiting for {host}",
+        ) from exc
     except http.client.HTTPException as exc:
         raise AdminError(
             "malformed_response",
@@ -665,6 +673,12 @@ def _perform_admin_request(
             pass
         raise _http_error(exc.code, path) from exc
     except OSError as exc:
+        cause = getattr(exc, "reason", exc)
+        if isinstance(exc, TimeoutError) or isinstance(cause, TimeoutError):
+            raise AdminError(
+                "timeout",
+                f"{path} timed out waiting for {host}",
+            ) from exc
         raise AdminError(
             "unreachable",
             f"no gateway answered at {host} for {path} ({exc})",
@@ -701,6 +715,11 @@ def _http_error(code: int, path: str) -> AdminError:
         return AdminError(
             "invalid_request",
             f"the gateway refused the request to {path} as malformed (HTTP 400)",
+        )
+    if code == 409:
+        return AdminError(
+            "conflict",
+            f"the gateway reported a conflict at {path} (HTTP 409)",
         )
     return AdminError("http_error", f"the gateway answered HTTP {code} at {path}")
 
