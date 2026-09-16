@@ -30,6 +30,8 @@ LEDGER_SCHEMA_PATH = (
 )
 EVIDENCE_ROOT_REL = "docs/acceptance/v0.6.2/configuration"
 LEDGER_SCHEMA_VERSION = "talaria-v0.6.2-configuration-ledger-v1"
+CLEANUP_SCHEMA_VERSION = "talaria-v0.6.2-configuration-cleanup-v1"
+CLEANUP_RECORD_TYPE = "configuration-cleanup"
 
 ConnectionLabel = Literal["local", "remote", "stub", "installed"]
 StageName = Literal["active", "installed"]
@@ -281,6 +283,12 @@ def validate_coverage_document(document: Mapping[str, Any]) -> None:
 
 
 def validate_cleanup_receipt(receipt: Mapping[str, Any], *, stage: StageName) -> None:
+    if receipt.get("schema_version") != CLEANUP_SCHEMA_VERSION:
+        raise HarnessError(
+            f"cleanup receipt schema_version must be {CLEANUP_SCHEMA_VERSION}"
+        )
+    if receipt.get("record_type") != CLEANUP_RECORD_TYPE:
+        raise HarnessError(f"cleanup receipt record_type must be {CLEANUP_RECORD_TYPE}")
     if receipt.get("stage") != stage:
         raise HarnessError(f"cleanup receipt stage must be {stage}")
     names = receipt.get("absent_names")
@@ -289,6 +297,8 @@ def validate_cleanup_receipt(receipt: Mapping[str, Any], *, stage: StageName) ->
     test_b = receipt.get("testB")
     if not isinstance(test_b, Mapping) or test_b.get("unchanged") is not True:
         raise HarnessError("cleanup receipt must prove testB unchanged")
+    if "safe_hash" in test_b:
+        raise HarnessError("cleanup receipt must not invent a testB digest")
     if receipt.get("created_ids_deleted") is not True:
         raise HarnessError("cleanup receipt must delete only run-created server IDs")
     _refuse_secret_payload(receipt)
