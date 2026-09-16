@@ -276,6 +276,29 @@ def _build_url(origin: str, path: str, params: dict[str, str] | None) -> str:
     return f"{candidate}?{urlencode(params)}" if params else candidate
 
 
+def _require_admin_origin(origin: str, *, auth: str) -> None:
+    """Loopback admin stays on ``require_fetchable_origin``; gated uses RFC1918."""
+    if auth == "gated":
+        from talaria.transport.gated_auth import GatedAuthError, require_gated_origin
+
+        try:
+            require_gated_origin(origin, auth="gated")
+        except GatedAuthError as exc:
+            raise AdminError("refused_origin", str(exc)) from exc
+        return
+    try:
+        require_fetchable_origin(origin)
+    except RefreshError as exc:
+        raise AdminError("refused_origin", str(exc)) from exc
+
+
+def _admin_headers(token: str, *, auth: str) -> dict[str, str]:
+    """Bearer-only for gated REST; loopback still sends both accepted forms."""
+    if auth == "gated":
+        return {"Authorization": f"Bearer {token}"}
+    return _credential_headers(token)
+
+
 def request_admin_json(
     origin: str,
     path: str,
@@ -285,6 +308,7 @@ def request_admin_json(
     params: dict[str, str] | None = None,
     body: Mapping[str, Any] | None = None,
     timeout: float = 15.0,
+    auth: str = "loopback",
 ) -> Any:
     """Send one same-origin admin request and return its decoded JSON.
 
@@ -292,15 +316,14 @@ def request_admin_json(
     discipline, same size cap, same failure vocabulary, and the same refusal
     to follow a redirect that would carry :data:`CREDENTIAL_HEADERS` off this
     origin. ``method`` is required so a caller cannot accidentally GET a write.
+    ``auth="gated"`` uses :func:`~talaria.transport.gated_auth.require_gated_origin`
+    and a Bearer header; the default stays loopback ``require_fetchable_origin``.
     """
-    try:
-        require_fetchable_origin(origin)
-    except RefreshError as exc:
-        raise AdminError("refused_origin", str(exc)) from exc
+    _require_admin_origin(origin, auth=auth)
 
     verb = method.upper()
     url = _build_url(origin, path, params)
-    headers = {"Accept": "application/json", **_credential_headers(token)}
+    headers = {"Accept": "application/json", **_admin_headers(token, auth=auth)}
     payload: bytes | None = None
     if verb in {"POST", "PUT", "PATCH"} or body is not None:
         payload = json.dumps(body if body is not None else {}).encode("utf-8")
@@ -318,7 +341,13 @@ def request_admin_json(
         # of ``unknown_profile``.
         if exc.reason == "absent_capability" and profile is not None:
             resolved = _disambiguate_absent_capability(
-                exc, origin=origin, path=path, profile=profile, token=token, timeout=timeout
+                exc,
+                origin=origin,
+                path=path,
+                profile=profile,
+                token=token,
+                timeout=timeout,
+                auth=auth,
             )
             if resolved is not exc:
                 raise resolved from exc
@@ -332,6 +361,7 @@ def fetch_admin_json(
     token: str,
     params: dict[str, str] | None = None,
     timeout: float = 15.0,
+    auth: str = "loopback",
 ) -> Any:
     """GET one admin endpoint and return its decoded JSON, or raise :class:`AdminError`.
 
@@ -349,7 +379,13 @@ def fetch_admin_json(
     for the shared read/decode path a POST takes too.
     """
     return request_admin_json(
-        origin, path, method="GET", token=token, params=params, timeout=timeout
+        origin,
+        path,
+        method="GET",
+        token=token,
+        params=params,
+        timeout=timeout,
+        auth=auth,
     )
 
 
@@ -361,6 +397,7 @@ def post_admin_json(
     params: dict[str, str] | None = None,
     body: Mapping[str, Any] | None = None,
     timeout: float = 15.0,
+    auth: str = "loopback",
 ) -> Any:
     """POST one admin endpoint and return its decoded JSON, or raise :class:`AdminError`.
 
@@ -380,6 +417,7 @@ def post_admin_json(
         params=params,
         body=body,
         timeout=timeout,
+        auth=auth,
     )
 
 
@@ -391,6 +429,7 @@ def _disambiguate_absent_capability(
     profile: str,
     token: str,
     timeout: float,
+    auth: str = "loopback",
 ) -> AdminError:
     """U4: a 404 that carried ``profile`` might mean "unknown profile", not
     "this gateway predates the endpoint".
@@ -407,7 +446,7 @@ def _disambiguate_absent_capability(
     original ``absent_capability`` error is returned unchanged rather than
     guessed at.
     """
-    if _probe_route_exists(origin, path, token=token, timeout=timeout):
+    if _probe_route_exists(origin, path, token=token, timeout=timeout, auth=auth):
         return AdminError(
             "unknown_profile",
             f"the gateway does not recognize profile {profile!r} at {path}",
@@ -451,7 +490,9 @@ class _NoRedirects(urllib.request.HTTPRedirectHandler):
 _PROBE_OPENER = urllib.request.build_opener(_NoRedirects)
 
 
-def _probe_route_exists(origin: str, path: str, *, token: str, timeout: float) -> bool:
+def _probe_route_exists(
+    origin: str, path: str, *, token: str, timeout: float, auth: str = "loopback"
+) -> bool:
     """The disambiguation probe itself (U4): a single bare GET, nothing else.
 
     GET only, on purpose — this function must never be called with a method
@@ -494,12 +535,13 @@ def _probe_route_exists(origin: str, path: str, *, token: str, timeout: float) -
     url = _build_url(origin, path, None)
     request = urllib.request.Request(
         url,
-        headers={"Accept": "application/json", **_credential_headers(token)},
+        headers={"Accept": "application/json", **_admin_headers(token, auth=auth)},
         method="GET",
     )
     try:
         # nosec B310 - origin was already validated by the caller's
-        # require_fetchable_origin, and _build_url forbids leaving it; this is
+        # require_fetchable_origin or require_gated_origin, and _build_url
+        # forbids leaving it; this is
         # the same allowlisted GET shape _perform_admin_request already sends,
         # through an opener that refuses to follow a redirect off that origin.
         with _PROBE_OPENER.open(request, timeout=timeout) as response:  # nosec B310
@@ -754,12 +796,14 @@ class AdminClient:
         provider: CredentialProvider,
         *,
         timeout: float = 15.0,
+        auth: str = "loopback",
     ) -> None:
         #: Derived from the gateway endpoint at construction, so a bad endpoint
         #: fails once and loudly rather than on each call.
         self.origin = admin_origin_for(endpoint)
         self._provider = provider
         self._timeout = timeout
+        self._auth = auth if auth == "gated" else "loopback"
 
     def __repr__(self) -> str:
         """Name the origin and nothing else.
@@ -791,6 +835,7 @@ class AdminClient:
             token=credential.value,
             params=params,
             timeout=self._timeout,
+            auth=self._auth,
         )
 
     async def _post(
@@ -810,6 +855,7 @@ class AdminClient:
             params=params,
             body=body,
             timeout=self._timeout,
+            auth=self._auth,
         )
 
     async def probe_health(self) -> HealthAnswer:

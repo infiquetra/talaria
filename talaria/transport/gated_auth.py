@@ -29,9 +29,16 @@ from talaria.transport.credentials import Credential, CredentialError
 __all__ = [
     "GatedAuthError",
     "GatedAuthSession",
+    "GatedBearerProvider",
     "GatedTicketProvider",
     "require_gated_origin",
 ]
+
+_RFC1918_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
 
 
 class _NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -68,14 +75,22 @@ def _host_of(origin: str) -> str:
         return "an unnamed host"
 
 
+def _is_literal_rfc1918(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True only for the three RFC1918 IPv4 prefixes, never ``is_private`` extras."""
+    if address.version != 4:
+        return False
+    return any(address in network for network in _RFC1918_NETWORKS)
+
+
 def require_gated_origin(origin: str, *, auth: str) -> None:
     """Refuse anything but HTTPS, or explicit gated HTTP to a literal RFC1918 host.
 
     Distinct from :func:`~talaria.transport.refresh.require_fetchable_origin`.
     Loopback token refresh stays HTTPS-or-this-machine. Gated sessions may use
-    plain HTTP only when ``auth="gated"`` and the hostname is a literal private
-    address — not a DNS name, public address, CGNAT, link-local, multicast, or
-    unspecified address.
+    plain HTTP only when ``auth="gated"`` and the hostname is a literal
+    RFC1918 address (``10/8``, ``172.16/12``, ``192.168/16``) — not a DNS
+    name, loopback, documentation, benchmarking, ULA, public, CGNAT,
+    link-local, multicast, or unspecified address.
     """
     parts = urlsplit(origin)
     scheme = parts.scheme.lower()
@@ -108,12 +123,42 @@ def require_gated_origin(origin: str, *, auth: str) -> None:
             f"refusing to use hostname {host} over plain HTTP; use https, "
             "or a literal RFC1918 address with auth=gated",
         ) from exc
-    if address.is_private and not address.is_link_local and not address.is_unspecified:
+    if _is_literal_rfc1918(address):
         return
     raise GatedAuthError(
         "refused_origin",
         f"refusing to use {host} over plain HTTP; only a literal RFC1918 "
         "address is accepted for gated cleartext",
+    )
+
+
+_LOOPBACK_HTTP_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _require_session_origin(origin: str) -> None:
+    """RFC1918 gated HTTP, HTTPS, or same-machine HTTP. Not public cleartext.
+
+    ``require_gated_origin`` stays RFC1918-literal. Native login and ticket
+    mint also run against a loopback dashboard in tests and on this machine;
+    that is not RFC1918 and is allowed here only for loopback hosts.
+    """
+    try:
+        require_gated_origin(origin, auth="gated")
+        return
+    except GatedAuthError:
+        pass
+    parts = urlsplit(origin)
+    try:
+        host = (parts.hostname or "").lower()
+    except ValueError as exc:
+        raise GatedAuthError(
+            "refused_origin", f"the dashboard address is not usable: {exc}"
+        ) from exc
+    if parts.scheme.lower() == "http" and host in _LOOPBACK_HTTP_HOSTS:
+        return
+    raise GatedAuthError(
+        "refused_origin",
+        f"refusing to use {host or 'an unnamed host'} over plain HTTP",
     )
 
 
@@ -141,7 +186,7 @@ def _request_json(
     token: str | None = None,
     timeout: float = 15.0,
 ) -> Any:
-    require_gated_origin(origin, auth="gated")
+    _require_session_origin(origin)
 
     url = _build_url(origin, path, params)
     headers = {"Accept": "application/json"}
@@ -226,7 +271,7 @@ def _get_authorize(
     redirect; the Location is returned so a loopback ``code`` can be read
     without inventing one.
     """
-    require_gated_origin(origin, auth="gated")
+    _require_session_origin(origin)
 
     url = _build_url(origin, "/auth/native/authorize", params)
     request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
@@ -449,6 +494,27 @@ class GatedAuthSession:
                 "malformed_response", "/api/auth/ws-ticket did not return a ticket"
             )
         return Credential(parameter="ticket", value=payload["ticket"], source="file")
+
+    def bearer_credential(self) -> Credential:
+        """The stored access token for REST, or raise if none was persisted."""
+        if not self._access_token:
+            raise CredentialError(
+                "gated access token is unavailable; re-authenticate this connection"
+            )
+        return Credential(parameter="token", value=self._access_token, source="file")
+
+
+class GatedBearerProvider:
+    """REST Bearer source for one gated dashboard. Tokens stay off ``repr``."""
+
+    def __init__(self, session: GatedAuthSession) -> None:
+        self._session = session
+
+    def __repr__(self) -> str:
+        return "GatedBearerProvider(value=<withheld>)"
+
+    async def acquire(self) -> Credential:
+        return self._session.bearer_credential()
 
 
 class GatedTicketProvider:

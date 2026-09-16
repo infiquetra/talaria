@@ -81,6 +81,7 @@ __all__ = [
     "TaggedFrame",
     "build_source_factory",
     "credential_provider_factory",
+    "gated_bearer_provider",
     "plan_connections",
     "recorded_connections",
     "resolve_connections",
@@ -516,7 +517,27 @@ def _gated_ticket_provider(
     Tokens come from the credentials file when present. Nothing here invents
     an access token, refresh token, cookie, or authorization code.
     """
-    from talaria.transport.gated_auth import GatedAuthSession, GatedTicketProvider
+    from talaria.transport.gated_auth import GatedTicketProvider
+
+    return GatedTicketProvider(_gated_session(entry, credentials_path))
+
+
+def gated_bearer_provider(
+    entry: ConnectionEntry | PlannedConnection,
+    credentials_path: Path | None,
+) -> CredentialProvider:
+    """REST Bearer source for one gated inventory row. Does not mint WS tickets."""
+    from talaria.transport.gated_auth import GatedBearerProvider
+
+    return GatedBearerProvider(_gated_session(entry, credentials_path))
+
+
+def _gated_session(
+    entry: ConnectionEntry | PlannedConnection,
+    credentials_path: Path | None,
+) -> Any:
+    """One GatedAuthSession loaded from persisted tokens. Never invents values."""
+    from talaria.transport.gated_auth import GatedAuthSession
     from talaria.transport.refresh import RefreshError, dashboard_origin_for, read_connection_tokens
 
     endpoint = entry.endpoint
@@ -533,8 +554,7 @@ def _gated_ticket_provider(
     refresh = ""
     if credentials_path is not None and connection_id:
         access, refresh = read_connection_tokens(credentials_path, connection_id)
-    session = GatedAuthSession(origin, access_token=access or None, refresh_token=refresh or None)
-    return GatedTicketProvider(session)
+    return GatedAuthSession(origin, access_token=access or None, refresh_token=refresh or None)
 
 
 def recorded_connections(

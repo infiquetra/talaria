@@ -763,17 +763,20 @@ def build_live_app(
     up.
     """
     from talaria.recorder.framelog import FrameRecorder, default_log_path
-    from talaria.transport.admin import AdminClient, AdminError
+    from talaria.transport.admin import AdminClient, AdminError, admin_origin_for
     from talaria.transport.attach import AttachTarget
     from talaria.transport.connection_set import (
         ConnectionSet,
+        PlannedConnection,
         build_source_factory,
         credential_provider_factory,
+        gated_bearer_provider,
         plan_connections,
-    recorded_connections,
+        recorded_connections,
         resolve_connections,
     )
-    from talaria.transport.credentials import LoopbackTokenProvider
+    from talaria.transport.credentials import CredentialProvider, LoopbackTokenProvider
+    from talaria.transport.refresh import RefreshError, dashboard_origin_for
     from talaria.transport.settings import SettingsClient, SettingsError
     from talaria.transport.source import LiveSource
     from talaria.ui.app import TalariaApp
@@ -781,6 +784,22 @@ def build_live_app(
     credentials = config_module.credentials_path(cfg.config_dir)
     target = AttachTarget.from_environment(credentials_path=credentials)
     credential_provider = LoopbackTokenProvider(credentials_path=credentials)
+    planned: list[PlannedConnection] = []
+
+    def _planned_member(endpoint: str) -> PlannedConnection | None:
+        try:
+            origin = admin_origin_for(endpoint)
+        except AdminError:
+            origin = endpoint
+        for member in planned:
+            if member.endpoint == endpoint:
+                return member
+            try:
+                if dashboard_origin_for(member.endpoint) == origin:
+                    return member
+            except RefreshError:
+                continue
+        return None
 
     # U2's admin HTTP surface (KTD1). Origin derivation can refuse an endpoint
     # ``LiveSource`` would happily dial over WebSocket (``refused_origin``,
@@ -788,18 +807,32 @@ def build_live_app(
     # the picker alone and must not take the whole launch down with it, so it
     # is caught here and the picker instead renders "unavailable" (R7).
     def admin_for(endpoint: str) -> AdminClient | None:
+        member = _planned_member(endpoint)
         try:
+            if member is not None and member.auth == "gated":
+                return AdminClient(
+                    endpoint,
+                    gated_bearer_provider(member, credentials),
+                    auth="gated",
+                )
             return AdminClient(endpoint, credential_for(endpoint))
         except AdminError:
             return None
 
     def settings_for(endpoint: str) -> SettingsClient | None:
+        member = _planned_member(endpoint)
         try:
+            if member is not None and member.auth == "gated":
+                return SettingsClient(
+                    endpoint,
+                    gated_bearer_provider(member, credentials),
+                    auth="gated",
+                )
             return SettingsClient(endpoint, credential_for(endpoint))
         except (AdminError, SettingsError, ValueError):
             return None
 
-    def credential_for(endpoint: str) -> LoopbackTokenProvider:
+    def credential_for(endpoint: str) -> CredentialProvider:
         """KTD6: a fresh provider bound to the endpoint about to be dialled.
 
         Fresh, and never the one already in hand. Each profile's dashboard
@@ -816,14 +849,35 @@ def build_live_app(
         the file therefore surfaces as ``credential_unavailable`` with the
         reason on screen, which is the named state U4 requires.
 
-        ``endpoint`` is unused today and named anyway: the moment the
-        credential file grows a per-endpoint form (explicitly out of scope,
-        Scope Boundaries), this is the one signature that has to change, and a
-        parameter that is already there makes that a body edit instead of a
-        call-site hunt.
+        A gated inventory row receives its ticket provider from
+        :func:`credential_provider_factory`; this factory matches that so a
+        later switch to the same endpoint does not silently fall back to
+        loopback.
         """
-        del endpoint
+        member = _planned_member(endpoint)
+        if member is not None and member.auth == "gated":
+            return credential_provider_factory(credentials)(member)
         return LoopbackTokenProvider(credentials_path=credentials, allow_prompt=False)
+
+    # ── U7's composition root ────────────────────────────────────────────
+    #
+    # U2 built the whole assembly kit — ``plan_connections``, ``resolve_connections``,
+    # ``build_source_factory``, ``ConnectionSet`` — and nothing ever called it, so
+    # ``TalariaApp.connections`` was permanently ``None``, every multi-connection
+    # branch was dead, and U2's goal sentence ("Talaria dials every configured
+    # profile endpoint concurrently") was not true of the running program. This is
+    # the call. Pinned by
+    # ``test_the_live_app_is_assembled_on_a_connection_set``, which fails if this
+    # entry point ever reverts to handing the app a lone ``LiveSource``.
+    # Planned before admin/settings factories run so a gated RFC1918 row
+    # receives a Bearer bundle rather than LoopbackTokenProvider (CFG-P2 C1).
+    provider_for = credential_provider_factory(credentials)
+    members = plan_connections(
+        default_endpoint=target.url,
+        config_endpoints=config_module.profile_endpoints(cfg),
+        connections=config_module.connection_inventory(cfg),
+    )
+    planned[:] = list(members)
 
     admin_client: AdminClient | None = admin_for(target.url)
 
@@ -838,23 +892,6 @@ def build_live_app(
         target,
         credential_provider,
         credential_factory=credential_for,
-    )
-
-    # ── U7's composition root ────────────────────────────────────────────
-    #
-    # U2 built the whole assembly kit — ``plan_connections``, ``resolve_connections``,
-    # ``build_source_factory``, ``ConnectionSet`` — and nothing ever called it, so
-    # ``TalariaApp.connections`` was permanently ``None``, every multi-connection
-    # branch was dead, and U2's goal sentence ("Talaria dials every configured
-    # profile endpoint concurrently") was not true of the running program. This is
-    # the call. Pinned by
-    # ``test_the_live_app_is_assembled_on_a_connection_set``, which fails if this
-    # entry point ever reverts to handing the app a lone ``LiveSource``.
-    provider_for = credential_provider_factory(credentials)
-    members = plan_connections(
-        default_endpoint=target.url,
-        config_endpoints=config_module.profile_endpoints(cfg),
-        connections=config_module.connection_inventory(cfg),
     )
     # Synchronous launcher, asynchronous resolution — the same shape
     # :func:`_prime_credential` already uses, and for the same reason: reading a
