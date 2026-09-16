@@ -20,6 +20,7 @@ from textual.widgets import Button, Input, Static
 
 from talaria.domain.settings import (
     ConfigTarget,
+    FieldSaveResult,
     ResetConfirmView,
     RestartConfirmView,
     RestartPlan,
@@ -28,7 +29,10 @@ from talaria.domain.settings import (
     SettingsState,
     SettingsWorkspaceView,
     TargetSwitchPrompt,
+    apply_settings_response,
+    begin_settings_request,
     build_config_patch,
+    project_save_summary,
     request_settings_switch,
     select_settings_target,
     stage_settings_edit,
@@ -251,16 +255,12 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
                         id="settings-talaria-branch",
                     )
                     yield self._talaria
-                # The Talaria branch already fills the 44-row /config host.
-                # Hermes groups stay on the view (C2) and mount when this
-                # screen is the workspace-only surface.
-                if self._talaria is None:
-                    for group in self._view.groups:
-                        widget = SettingsGroupWidget(
-                            group.owner, group.title, group.rows
-                        )
-                        self._groups.append(widget)
-                        yield widget
+                for group in self._view.groups:
+                    widget = SettingsGroupWidget(
+                        group.owner, group.title, group.rows
+                    )
+                    self._groups.append(widget)
+                    yield widget
             with Horizontal(id="settings-footer"):
                 yield Button("Save", id="settings-save", compact=True)
                 yield Button("Discard", id="settings-discard", compact=True)
@@ -310,6 +310,41 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
 
     def _dismiss_from_branch(self, result: ConfigViewResult | None) -> None:
         self.dismiss(result)
+
+    def begin_settings_reread(self, target: ConfigTarget) -> int:
+        """Open a generation so the post-save GET can land (R9 / C10)."""
+        self._settings_state, generation = begin_settings_request(
+            self._settings_state, target
+        )
+        return generation
+
+    def apply_settings_reread(
+        self,
+        target: ConfigTarget,
+        generation: int,
+        saved: Mapping[str, Any],
+        effective: Mapping[str, Any],
+        defaults: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._settings_state = apply_settings_response(
+            self._settings_state,
+            target=target,
+            generation=generation,
+            saved=saved,
+            effective=effective,
+            defaults=defaults,
+        )
+
+    def paint_save_summary(
+        self, results: Sequence[FieldSaveResult], *, notice: str
+    ) -> None:
+        self.update_view(
+            replace(
+                self._view,
+                summary=project_save_summary(results=results),
+                notice=notice,
+            )
+        )
 
     def update_view(self, view: SettingsWorkspaceView) -> None:
         """Refresh header, notice, and summary. Editors keep their values."""
