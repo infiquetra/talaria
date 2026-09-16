@@ -1,0 +1,78 @@
+CFG-T4A final owned suite — Test Author One
+===========================================
+
+Assignment: CFG-T4A (final owned suite on assembled candidate)
+Branch: feat/v0.6.2-cfg-t4-ta1
+Candidate: 764119bce0deb7742f0fe8736b28cec8951c80d8
+  (feat(config): integrate CFG-B5-U4 settings workspace onto candidate base)
+Hermes pin cited by tests: 3236f4405 (read-only; no Hermes change)
+Recorded: 2026-09-16T06:23:48Z
+
+Dispatchable plans verified by SHA-256 before use (CFG-PR3 pair):
+- CFG-P1-implementation-plan.md ce61b768829781dae322f874e1c6e773e44d04364afb58da3b76795ba7194323 MATCH
+- CFG-P1-test-plan.md          a8c5972c48de87189449a7117a7027fe6b0e65558fe725493cc6e60dae925710 MATCH
+- CFG-PR3-plan-review.md       5c1e6981f600c2f4428dd2c00ceade6b2d5fa2d651a8b21d273c7b27007c6663 MATCH
+
+Command (exclusive owned paths):
+  uv run pytest tests/domain/test_settings_target.py \
+    tests/domain/test_settings_schema.py \
+    tests/domain/test_settings_projection.py \
+    tests/test_settings_config_write.py \
+    tests/recorder/test_settings_http_redaction.py \
+    tests/ui/test_settings_workspace.py \
+    tests/ui/test_config_view.py tests/test_config_write.py tests/test_config.py \
+    tests/domain/test_models_catalog.py tests/domain/test_projection.py \
+    tests/domain/test_normalize.py -p no:cacheprovider --tb=no -q
+
+Result: 507 passed, 0 failed, 0 skipped, 0 errors in ~14s.
+Zero unexpected skips. No network access. No secrets in this log.
+
+Passes per owned file:
+  tests/domain/test_settings_target.py        48 passed
+  tests/domain/test_settings_schema.py        31 passed
+  tests/domain/test_settings_projection.py    22 passed
+  tests/test_settings_config_write.py         31 passed
+  tests/recorder/test_settings_http_redaction.py 36 passed
+  tests/ui/test_settings_workspace.py         26 passed
+  tests/ui/test_config_view.py                25 passed
+  tests/test_config_write.py                  42 passed
+  tests/test_config.py                       115 passed
+  tests/domain/test_models_catalog.py         58 passed
+  tests/domain/test_projection.py             24 passed
+  tests/domain/test_normalize.py              49 passed
+
+A1-1-10 dispositions (all pass on candidate 764119b):
+  A1-1  PASS  Explicit selected profile on every profile-scoped command;
+              missing/empty/current refused before I/O.
+  A1-2  PASS  Stale (c1,p1) and foreign (c2,p1) replies dropped; live reply lands.
+  A1-3  PASS  Stay keeps edits without switching; Discard clears; Save writes
+              old target only (domain reducer + switch overlay).
+  A1-4  PASS  current!=selected shows both; equal still sends explicit profile.
+  A1-5  PASS  Ownership partition exact; Talaria/Hermes rows never cross.
+  A1-6  PASS  Sparse PUT bodies; re-read preserves unrelated saved values
+              (Hermes patch pair + Talaria semantic-diff guard).
+  A1-7  PASS  Five schema types editable/validated; unknown read-only;
+              display.resume_last_session Tier 1; profile-explicit Reset;
+              scoped wake verbs.
+  A1-8  PASS  Provenance chips with full default/saved/effective/pending values.
+  A1-9  PASS  Env PUT/reveal/token bodies denied by route with recorded
+              reasons; reveal/token responses never persisted; write-only
+              secret rows; secret-safe summaries.
+  A1-10 PASS  Exactly the three D8 restart sentences (domain plans + overlay).
+  Blocked: none. Remaining fails in owned paths: none.
+
+Frozen-test verification (full suite, --tb=no -rfs):
+  Full suite: 1 failed, remainder passed, 31 skipped, 0 errors.
+  The single failure is
+  scripts/acceptance/...::test_committed_acceptance_evidence_passes_portable_privacy_scan,
+  flagging 3 items all inside Test Author Two's committed
+  evidence/active/test-author-2-initial.txt (absolute worktree path, home
+  path). That file is outside Test Author One ownership; not edited here.
+  This log (test-author-1-final.txt) is scan-clean, as is the T1 initial log.
+  The 31 skips are all expected/documented and outside owned paths: 20 in
+  TA2's tests/integration/test_hermes_configuration.py (blocked: no
+  authenticated local/remote Hermes access, per test-plan stop conditions),
+  4 in tests/docs/test_acceptance_versions.py (no artifact-manifest.json
+  pre-release), 7 pre-existing TS-bridge/corpus skips in
+  tests/recorder/test_equivalence.py. Owned paths: zero skips.
+  Every other frozen unlisted test is green. No owned-path failures remain.
