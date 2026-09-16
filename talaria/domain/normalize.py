@@ -446,3 +446,12 @@ def push_unique(items: Sequence[str], value: str, limit: int = DETAIL_LIMIT) -> 
     if items and items[-1] == value:
         return tuple(items)
     return tuple([*items, value])[-limit:]
+
+
+def format_transcript_timestamp(value: datetime) -> str:
+    """Fixed-width ``HH:MM:SS`` from the supplied instant.
+
+    No timezone conversion and no clock read: the caller owns the instant,
+    this function renders its hour, minute, and second fields.
+    """
+    return f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}"

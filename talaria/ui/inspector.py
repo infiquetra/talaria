@@ -313,14 +313,22 @@ class Inspector(VerticalScroll):
 
     can_focus = True
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        panel_width: int = DEFAULT_INSPECTOR_WIDTH,
+        dock_min_columns: int = INSPECTOR_DOCK_BREAKPOINT,
+        open_at_start: bool = True,
+        **kwargs: object,
+    ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
-        self.panel_width = DEFAULT_INSPECTOR_WIDTH
-        self.requested_collapsed = False
+        self.panel_width = panel_width
+        self.requested_collapsed = not open_at_start
         self.auto_collapsed = False
         self.overlay_open = False
         self._diff_open = False
-        self._terminal_width = INSPECTOR_DOCK_BREAKPOINT
+        self._dock_min_columns = dock_min_columns
+        self._terminal_width = dock_min_columns
         self._previous_focus: Widget | None = None
         self._view: InspectorView | None = None
         #: The region holding the caret, reported as the context section's first
@@ -572,7 +580,7 @@ class Inspector(VerticalScroll):
         width = max(0, width)
         was_auto_collapsed = self.auto_collapsed
         self._terminal_width = width
-        self.auto_collapsed = width < INSPECTOR_DOCK_BREAKPOINT
+        self.auto_collapsed = width < self._dock_min_columns
         if self.auto_collapsed and not was_auto_collapsed:
             if self.overlay_open:
                 self._close_overlay(restore_focus=True)

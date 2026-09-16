@@ -1,6 +1,10 @@
 """The ``/config`` view: what is in effect, where it came from, and the
 allowlist write that changes it (issue #149, D8 recorded).
 
+CFG v0.6.2: ``/config`` mounts :class:`~talaria.ui.settings_workspace.SettingsWorkspaceScreen`.
+This screen's rows persist as that workspace's Talaria-owned branch and remain
+the contract for the direct-screen tests in ``tests/ui/test_config_view.py``.
+
 One modal screen in the theme-picker family. It displays exactly the four
 :data:`~talaria.config.CONFIG_VIEW_KEYS` settings with each one's effective
 value and source scope, and it edits the three status keys through

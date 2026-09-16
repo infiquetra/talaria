@@ -231,7 +231,7 @@ aliases where the desktop delivers them.
 | `/models`; `F11` from every focus; `F6` only outside composer focus | Open models | live; gateway-changing actions are refused in replay |
 | `/profiles`; `F12` from every focus; `F7` only outside composer focus | Open profiles | live; gateway-changing actions are refused in replay |
 | `/attach [<path>]`, or drop a path onto the terminal | Stage a file for the agent | live; refused in replay |
-| `/config` | Open the configuration view | live and replay |
+| `/config` | Open the settings workspace | live and replay |
 | `F8` | Pause/resume playback | replay only |
 | `F9` / `F10` | Slower / faster playback | replay only |
 
@@ -259,15 +259,23 @@ The help footer always labels cancel-turn beside quit-client, so the two can nev
 for one another. `Ctrl+C` left the interrupt action; pressed out of habit it reaches the text
 area's copy binding or the framework's quit hint, never the turn and never the exit.
 
-## Configuration view
+## Settings workspace
 
-`/config` opens the configuration view (issue #149): a modal screen in the theme-picker family
-that shows what is in effect, where each value came from, and the narrow write that changes it.
-Exactly four settings appear — `theme.name`, `status.command`, `status.interval_seconds`,
-`status.segments` — with each row's effective value and source scope (default, user file,
-repository file, environment, or session) and a mode label. Nothing else is displayed or edited
-there: no credentials, connection settings, environment allowlist, column limits, or Hermes
-agent identity ever reaches this view.
+`/config` opens the settings workspace: a three-region screen (target header, searchable
+rows, footer actions) that replaces the narrow `/config` modal. The header always names the
+connection, the server `current` profile, the selected profile, auth mode, and Hermes
+version. Canonical id `default` is shown as `default` and may additionally show a display
+name. Below 100 columns the owner/category navigation collapses; the selected target stays
+visible, including at 80×24.
+
+Talaria-owned rows remain the existing theme and status branch — `theme.name`,
+`status.command`, `status.interval_seconds`, `status.segments` — with each row's effective
+value and source scope (default, user file, repository file, environment, or session) and
+a mode label. Hermes profile and host fields render from the live schema: known types are
+editable, unknown types are read-only, Appearance's `display.resume_last_session` is a
+Tier-1 row, and the Host category is status-only (no update, local-model, or migrate
+action). Overlay cancellation never commits. Stay keeps pending edits and does not switch;
+Save writes only the old target.
 
 - **Theme row.** Shows the effective theme and its source, labelled `live`. The only edit path
   is the existing theme picker, which the row opens by closing this view first — the picker is

@@ -686,6 +686,14 @@ def run_replay(args: argparse.Namespace) -> int:
         theme_config_dir=cfg.config_dir,
         launch_cwd=Path.cwd(),
         keybindings=cfg.get("keys", default={}),
+        inspector_width=int(cfg.get("ui", "inspector_width")),
+        inspector_open_at_start=cast(bool, cfg.get("ui", "inspector_open_at_start")),
+        inspector_dock_min_columns=int(cfg.get("ui", "inspector_dock_min_columns")),
+        diff_side_by_side_min_columns=int(
+            cfg.get("ui", "diff_side_by_side_min_columns")
+        ),
+        show_timestamps=cast(bool, cfg.get("ui", "show_timestamps")),
+        include_notifications=cast(bool, cfg.get("notifications", "transcript_line")),
     )
     app.run()
     return 0
@@ -953,6 +961,14 @@ def build_live_app(
         theme_config_dir=cfg.config_dir,
         launch_cwd=Path.cwd(),
         keybindings=cfg.get("keys", default={}),
+        inspector_width=int(cfg.get("ui", "inspector_width")),
+        inspector_open_at_start=cast(bool, cfg.get("ui", "inspector_open_at_start")),
+        inspector_dock_min_columns=int(cfg.get("ui", "inspector_dock_min_columns")),
+        diff_side_by_side_min_columns=int(
+            cfg.get("ui", "diff_side_by_side_min_columns")
+        ),
+        show_timestamps=cast(bool, cfg.get("ui", "show_timestamps")),
+        include_notifications=cast(bool, cfg.get("notifications", "transcript_line")),
     )
     holder.append(app)
     # ``source`` is no longer bound, and the removal is the point rather than an
