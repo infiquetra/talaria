@@ -126,6 +126,7 @@ from talaria.domain.projection import (
     TranscriptView,
     entry_scoped_view,
     project,
+    project_settings_workspace,
     status_payload,
     terminal_read,
 )
@@ -141,7 +142,20 @@ from talaria.domain.session_list import (
     decode_active_list,
     decode_session_list,
 )
-from talaria.domain.settings import SettingsWorkspaceView, TargetHeaderView
+from talaria.domain.settings import (
+    ConfigTarget,
+    FieldSaveResult,
+    decode_settings_schema,
+    project_save_summary,
+)
+from talaria.domain.settings_commands import (
+    ResetConfig,
+    RestartGateway,
+    RevealEnv,
+    SaveConfig,
+    SetModel,
+    WakeWord,
+)
 from talaria.domain.startup import StartupSelection
 from talaria.domain.state import (
     APPROVAL_COMMAND_LABEL,
@@ -1316,6 +1330,19 @@ def build_app_bindings(
     ]
 
 
+def _flatten_patch_keys(tree: Mapping[str, Any], prefix: str = "") -> Iterator[str]:
+    if not isinstance(tree, Mapping) or not tree:
+        if prefix:
+            yield prefix
+        return
+    for key, value in tree.items():
+        dotted = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, Mapping):
+            yield from _flatten_patch_keys(value, dotted)
+        else:
+            yield dotted
+
+
 class TalariaApp(App[None]):
     """The replay-driven shell: transcript, sub-agent rows, status region, composer."""
 
@@ -1378,6 +1405,7 @@ class TalariaApp(App[None]):
         diff_side_by_side_min_columns: int = 112,
         show_timestamps: bool = False,
         include_notifications: bool = True,
+        settings_factory: Callable[[str], Any] | None = None,
     ) -> None:
         super().__init__()
         #: The resolved inspector/interrupt chords (#120 U1). The class table
@@ -1450,6 +1478,12 @@ class TalariaApp(App[None]):
         #: do it silently — the worst shape of wrong, since the listing still
         #: renders and still looks current.
         self.admin_factory = admin_factory
+        #: Builds a :class:`~talaria.transport.settings.SettingsClient` for one
+        #: dashboard origin. ``None`` in replay and in tests that do not wire
+        #: settings I/O; ``on_command`` still runs and refuses to drop the typed
+        #: command on a missing callback.
+        self.settings_factory = settings_factory
+        self.settings_client: Any = None
         #: The live transport, when it can be retargeted (U4). ``None`` in
         #: replay and in every test that has no second gateway to reach.
         self.switcher = switcher
@@ -5735,21 +5769,12 @@ class TalariaApp(App[None]):
             # its operative clause: the command, the file, the parse error.
             self._notice(f"/config: {exc}")
             return
-        profile = self.current_profile or "default"
-        view = SettingsWorkspaceView(
-            header=TargetHeaderView(
-                connection_label="local",
-                current_profile=profile,
-                selected_profile=profile,
-                auth_mode="",
-                hermes_version="",
-                shows_both_names=False,
-            ),
-            groups=(),
-        )
+        identity = await self._settings_workspace_identity()
         self.push_screen(
             SettingsWorkspaceScreen(
-                view,
+                identity.view,
+                on_command=self._on_settings_command,
+                connection_id=identity.connection_id,
                 theme_name=self.theme,
                 status_command=status_command,
                 status_interval_seconds=int(self.status_interval),
@@ -5759,6 +5784,154 @@ class TalariaApp(App[None]):
             ),
             self._config_view_closed,
         )
+
+    def _settings_connection_id(self) -> str:
+        if self.connections is not None:
+            home = getattr(self.connections, "home", "") or ""
+            if home.strip():
+                return home
+        if self.current_profile.strip():
+            return self.current_profile
+        return "default"
+
+    def _settings_endpoint(self) -> str:
+        profile = self.current_profile or self._settings_connection_id()
+        if profile and profile in self.profile_endpoints:
+            return self.profile_endpoints[profile]
+        connections = self.connections
+        if connections is not None and hasattr(connections, "entry_for"):
+            entry = connections.entry_for(self._settings_connection_id())
+            if entry is not None:
+                return str(entry.endpoint)
+        return ""
+
+    def _ensure_settings_client(self) -> Any:
+        if self.settings_client is not None:
+            return self.settings_client
+        if self.settings_factory is None:
+            return None
+        endpoint = self._settings_endpoint()
+        if not endpoint:
+            return None
+        self.settings_client = self.settings_factory(endpoint)
+        return self.settings_client
+
+    async def _settings_workspace_identity(self) -> Any:
+        from talaria.domain.settings import ModelPickerOption, ModelPickerView
+
+        connection_id = self._settings_connection_id()
+        profile = self.current_profile or connection_id
+        target = ConfigTarget(connection_id=connection_id, profile_name=profile)
+        schema = None
+        saved: dict[str, Any] = {}
+        effective: dict[str, Any] = {}
+        defaults: dict[str, Any] = {}
+        client = self._ensure_settings_client()
+        if client is not None:
+            try:
+                raw_schema = await client.get_schema(target)
+                schema = decode_settings_schema(raw_schema)
+            except Exception:
+                schema = None
+            try:
+                raw_config = await client.get_config(target)
+                if isinstance(raw_config, Mapping):
+                    if "saved" in raw_config or "effective" in raw_config:
+                        saved = dict(raw_config.get("saved") or {})
+                        effective = dict(raw_config.get("effective") or saved)
+                        defaults = dict(raw_config.get("defaults") or {})
+                    else:
+                        saved = dict(raw_config)
+                        effective = saved
+            except Exception:
+                pass
+        picker = None
+        catalog = self.model_catalog
+        if catalog is not None:
+            options = tuple(
+                ModelPickerOption(provider=provider.slug, model=model)
+                for provider in catalog.providers
+                for model in provider.models
+            )
+            if options:
+                picker = ModelPickerView(
+                    target=target,
+                    options=options,
+                    current_provider=catalog.current_provider,
+                    current_model=catalog.current_model,
+                )
+        return project_settings_workspace(
+            connection_id=connection_id,
+            connection_label=connection_id,
+            current_profile=profile,
+            selected_profile=profile,
+            auth_mode="",
+            hermes_version="",
+            schema=schema,
+            saved=saved,
+            effective=effective,
+            defaults=defaults,
+            model_picker=picker,
+        )
+
+    def _on_settings_command(self, command: object) -> None:
+        """Typed settings commands never land on a ``None`` callback."""
+        self._spawn_live(self._dispatch_settings_command(command))
+
+    async def _dispatch_settings_command(self, command: object) -> None:
+        from talaria.transport.settings import SettingsError
+        from talaria.transport.settings_surfaces import SettingsSurfaces
+
+        client = self._ensure_settings_client()
+        if client is None:
+            self._notice(
+                "settings: no dashboard client — command not sent"
+            )
+            return
+        surfaces = SettingsSurfaces(client)
+        try:
+            if isinstance(command, SaveConfig):
+                await client.put_config(command.target, command.patch)
+            elif isinstance(command, ResetConfig):
+                await surfaces.reset_profile(command.target, command.patch)
+            elif isinstance(command, RevealEnv):
+                await client.reveal_env(command.target, command.key)
+            elif isinstance(command, SetModel):
+                await client.set_model(
+                    command.target,
+                    provider=command.provider,
+                    model=command.model,
+                    confirm_expensive_model=False,
+                )
+            elif isinstance(command, WakeWord):
+                await surfaces.wake(command)
+            elif isinstance(command, RestartGateway):
+                await client.restart_gateway(command.target, command.plan)
+            else:
+                self._notice(f"settings: unsupported command {type(command).__name__}")
+                return
+        except SettingsError as exc:
+            if isinstance(command, SaveConfig) and isinstance(
+                self.screen, SettingsWorkspaceScreen
+            ):
+                key = next(_flatten_patch_keys(command.patch), "config")
+                summary = project_save_summary(
+                    results=(
+                        FieldSaveResult(
+                            key=key, outcome="rejected", detail=str(exc)
+                        ),
+                    )
+                )
+                self.screen.update_view(
+                    replace(
+                        self.screen._view,
+                        summary=summary,
+                        notice="save rejected — edits retained",
+                    )
+                )
+            else:
+                self._notice(f"settings: {exc}")
+            return
 
     def _config_view_closed(self, result: ConfigViewResult | None) -> None:
         """Surface the view's message, and open the picker when it asked."""
