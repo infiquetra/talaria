@@ -17,8 +17,10 @@ import secrets
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 from typing import Any
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlsplit
 
 from talaria.transport.admin import MAX_RESPONSE_BYTES
 from talaria.transport.credentials import Credential
@@ -148,6 +150,63 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+def _code_from_location(location: str, *, expected_state: str, callback_origin: str) -> str | None:
+    """Return the authorization code if ``location`` is our loopback callback."""
+    parts = urlsplit(location)
+    callback = urlsplit(callback_origin)
+    if (parts.scheme, parts.hostname) != (callback.scheme, callback.hostname):
+        return None
+    if parts.port != callback.port:
+        return None
+    query = parse_qs(parts.query, keep_blank_values=True)
+    states = query.get("state") or []
+    codes = query.get("code") or []
+    if not codes or not states or states[0] != expected_state:
+        return None
+    code = codes[0]
+    return code or None
+
+
+def _get_authorize(
+    origin: str,
+    *,
+    params: dict[str, str],
+    timeout: float = 15.0,
+) -> tuple[int, str | None]:
+    """GET ``/auth/native/authorize`` without following redirects.
+
+    Returns ``(status, Location-or-None)``. A 3xx is the RFC 8252 user-agent
+    redirect; the Location is returned so a loopback ``code`` can be read
+    without inventing one.
+    """
+    try:
+        require_fetchable_origin(origin)
+    except RefreshError as exc:
+        raise GatedAuthError("refused_origin", str(exc)) from exc
+
+    url = _build_url(origin, "/auth/native/authorize", params)
+    request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+    try:
+        with _OPENER.open(request, timeout=timeout) as response:  # nosec B310
+            response.read(MAX_RESPONSE_BYTES + 1)
+            return int(response.status), response.headers.get("Location")
+    except urllib.error.HTTPError as exc:
+        try:
+            exc.read(MAX_RESPONSE_BYTES)
+        except (OSError, http.client.HTTPException):
+            pass
+        return int(exc.code), exc.headers.get("Location") if exc.headers is not None else None
+    except TimeoutError as exc:
+        raise GatedAuthError(
+            "timeout", f"/auth/native/authorize timed out waiting for {_host_of(origin)}"
+        ) from exc
+    except OSError as exc:
+        raise GatedAuthError(
+            "unreachable",
+            f"no gateway answered at {_host_of(origin)} for /auth/native/authorize",
+        ) from exc
+
+
 class GatedAuthSession:
     """One dashboard origin's Bearer/refresh/ticket session."""
 
@@ -188,33 +247,94 @@ class GatedAuthSession:
         cls, origin: str, *, redirect_host: str = "127.0.0.1"
     ) -> GatedAuthSession:
         verifier, challenge = _pkce_pair()
-        await asyncio.to_thread(
-            _request_json,
-            origin,
-            "/auth/native/authorize",
-            params={
-                "response_type": "code",
-                "code_challenge": challenge,
-                "code_challenge_method": "S256",
-                "redirect_uri": f"http://{redirect_host}/callback",
-            },
-        )
-        tokens = await asyncio.to_thread(
-            _request_json,
-            origin,
-            "/auth/native/token",
-            method="POST",
-            body={"grant_type": "authorization_code", "code_verifier": verifier},
-        )
+        state = secrets.token_urlsafe(32)
+        loop = asyncio.get_running_loop()
+        delivered: asyncio.Future[str] = loop.create_future()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                codes = query.get("code") or []
+                states = query.get("state") or []
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+                if codes and states and states[0] == state and codes[0]:
+                    code = codes[0]
+
+                    def _set() -> None:
+                        if not delivered.done():
+                            delivered.set_result(code)
+
+                    loop.call_soon_threadsafe(_set)
+
+            def log_message(self, format: str, *args: Any) -> None:
+                return
+
+        server = HTTPServer((redirect_host, 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        redirect_uri = f"http://{redirect_host}:{server.server_port}/callback"
+        try:
+            _status, location = await asyncio.to_thread(
+                _get_authorize,
+                origin,
+                params={
+                    "response_type": "code",
+                    "code_challenge": challenge,
+                    "code_challenge_method": "S256",
+                    "redirect_uri": redirect_uri,
+                    "state": state,
+                },
+            )
+            code: str | None = None
+            if location:
+                code = _code_from_location(
+                    location, expected_state=state, callback_origin=redirect_uri
+                )
+            if code is None:
+                try:
+                    code = await asyncio.wait_for(delivered, timeout=0.25)
+                except TimeoutError:
+                    code = None
+            if not code:
+                raise GatedAuthError(
+                    "absent_capability",
+                    "authorization code was not delivered to the loopback callback; "
+                    "refusing to invent one",
+                )
+            tokens = await asyncio.to_thread(
+                _request_json,
+                origin,
+                "/auth/native/token",
+                method="POST",
+                body={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "code_verifier": verifier,
+                    "redirect_uri": redirect_uri,
+                },
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
         if not isinstance(tokens, dict):
             raise GatedAuthError(
                 "malformed_response", "/auth/native/token did not answer with JSON"
             )
         access = tokens.get("access_token")
         refresh = tokens.get("refresh_token")
+        if not isinstance(access, str) or not access:
+            raise GatedAuthError(
+                "malformed_response", "/auth/native/token did not return an access token"
+            )
         return cls(
             origin,
-            access_token=access if isinstance(access, str) else "",
+            access_token=access,
             refresh_token=refresh if isinstance(refresh, str) else "",
         )
 

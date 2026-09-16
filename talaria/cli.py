@@ -774,6 +774,7 @@ def build_live_app(
         resolve_connections,
     )
     from talaria.transport.credentials import LoopbackTokenProvider
+    from talaria.transport.settings import SettingsClient, SettingsError
     from talaria.transport.source import LiveSource
     from talaria.ui.app import TalariaApp
 
@@ -790,6 +791,12 @@ def build_live_app(
         try:
             return AdminClient(endpoint, credential_for(endpoint))
         except AdminError:
+            return None
+
+    def settings_for(endpoint: str) -> SettingsClient | None:
+        try:
+            return SettingsClient(endpoint, credential_for(endpoint))
+        except (AdminError, SettingsError, ValueError):
             return None
 
     def credential_for(endpoint: str) -> LoopbackTokenProvider:
@@ -928,6 +935,7 @@ def build_live_app(
         dispatcher=_HomeDispatcher(connections),
         admin_client=admin_client,
         admin_factory=admin_for,
+        settings_factory=settings_for,
         # ``None`` on purpose: ``switch_to_endpoint`` retargets one socket and
         # therefore drops whatever it was connected to, which a fleet client must
         # never do — the connection it dropped is the only feed for that gateway's

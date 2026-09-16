@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 
@@ -27,6 +27,7 @@ ACCESS_CANARY = "canary-v062-access-do-not-leak"
 REFRESH_CANARY = "canary-v062-refresh-do-not-leak"
 TICKET_ONE = "canary-v062-ticket-one-do-not-leak"
 TICKET_TWO = "canary-v062-ticket-two-do-not-leak"
+AUTH_CODE = "canary-v062-auth-code-do-not-leak"
 
 
 @dataclass
@@ -87,7 +88,19 @@ def auth_gateway(
                 )
                 return
             if path == "/auth/native/authorize":
-                self._send(200, {"ok": True})
+                query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                redirect_uri = (query.get("redirect_uri") or [""])[0]
+                state = (query.get("state") or [""])[0]
+                if redirect_uri and state:
+                    location = (
+                        f"{redirect_uri}?{urlencode({'code': AUTH_CODE, 'state': state})}"
+                    )
+                    self.send_response(302)
+                    self.send_header("Location", location)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self._send(400, {"detail": "redirect_uri and state are required"})
                 return
             if path in {"/api/profiles", "/api/config", "/api/auth/me"}:
                 self._send(401, {"detail": "Unauthorized"})
@@ -98,6 +111,9 @@ def auth_gateway(
             body = self._record("POST")
             path = urlparse(self.path).path
             if path == "/auth/native/token":
+                if body.get("code") != AUTH_CODE:
+                    self._send(400, {"detail": "authorization code required"})
+                    return
                 self._send(
                     200,
                     {"access_token": ACCESS_CANARY, "refresh_token": REFRESH_CANARY},
@@ -198,6 +214,11 @@ async def test_native_authorization_uses_pkce_and_withholds_tokens() -> None:
     query = parse_qs(urlparse(authorize.path).query)
     assert "code_challenge" in query
     assert "code_challenge_method" in query
+    token = next(
+        item for item in recorder if urlparse(item.path).path == "/auth/native/token"
+    )
+    assert token.body.get("code") == AUTH_CODE
+    assert AUTH_CODE not in repr(session)
     assert ACCESS_CANARY not in repr(session)
     assert REFRESH_CANARY not in repr(session)
 

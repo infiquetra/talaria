@@ -154,7 +154,7 @@ class SettingsClient:
             "PUT",
             "/api/config",
             params={"profile": profile},
-            body=dict(patch),
+            body={"config": dict(patch)},
         )
 
     async def get_schema(self, target: ConfigTarget) -> Any:
@@ -194,7 +194,7 @@ class SettingsClient:
                 body={"key": key},
             )
         except SettingsError as exc:
-            if "429" in str(exc) or exc.reason == "http_error":
+            if "429" in str(exc):
                 raise SettingsError(
                     "rate_limited",
                     f"env reveal is rate limited (429) for profile {profile!r}",
@@ -269,9 +269,19 @@ class SettingsClient:
         profile = _require_explicit_profile(target)
         _ = plan
         await self._request("POST", "/api/gateway/restart", params={"profile": profile})
-        await self._request("GET", "/api/actions/gateway-restart/status")
+        action = await self._request("GET", "/api/actions/gateway-restart/status")
         await self._request("GET", "/api/status", params={"profile": profile})
-        return SettingsRestartResult(dashboard_restarted=False, verified=True)
+        done = isinstance(action, Mapping) and action.get("done") is True
+        re_read = False
+        try:
+            await self._request("GET", "/api/config", params={"profile": profile})
+            re_read = True
+        except SettingsError:
+            re_read = False
+        return SettingsRestartResult(
+            dashboard_restarted=False,
+            verified=done and re_read,
+        )
 
     async def wake_start(self, target: ConfigTarget) -> Any:
         profile = _require_explicit_profile(target)

@@ -19,6 +19,7 @@ elapsed seconds are a function of the corpus rather than of when the test ran.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -916,3 +917,188 @@ def terminal_read(
         viewport_rows=rows,
         text=text,
     )
+
+
+# ── CFG v0.6.2 settings workspace projection (U4 / C9) ────────────────────
+
+
+@dataclass(frozen=True)
+class SettingsWorkspaceIdentity:
+    """Workspace snapshot plus the connection id writes must use.
+
+    ``TargetHeaderView.connection_label`` is display text. ``connection_id`` is
+    the ``ConfigTarget`` key and must not be taken from that label.
+    """
+
+    connection_id: str
+    view: Any
+
+
+_HOST_STATUS = (
+    ("host.hermes_update", "Hermes update", "Read-only update status."),
+    ("host.local_models", "Local models", "Catalog status."),
+    ("host.migrate_plan", "Gateway migration", "Read-only migration plan."),
+)
+
+_OWNER_TITLES = {
+    "hermes-profile": "Hermes profile",
+    "hermes-host": "Host",
+    "talaria-user": "Talaria",
+    "talaria-repository": "Talaria repository",
+    "talaria-session": "Talaria session",
+}
+
+
+def project_settings_workspace(
+    *,
+    connection_id: str,
+    connection_label: str,
+    current_profile: str,
+    selected_profile: str,
+    auth_mode: str = "",
+    hermes_version: str = "",
+    schema: Any = None,
+    saved: Mapping[str, Any] | None = None,
+    effective: Mapping[str, Any] | None = None,
+    defaults: Mapping[str, Any] | None = None,
+    pending: Mapping[str, Any] | None = None,
+    notice: str = "",
+    wake_state: str | None = None,
+    reset_patch: Mapping[str, Any] | None = None,
+    secrets: Mapping[str, tuple[bool, str]] | None = None,
+    model_picker: Any = None,
+) -> SettingsWorkspaceIdentity:
+    """Project a settings workspace. ``connection_id`` is the write key."""
+    from talaria.domain.settings import (
+        FieldRowView,
+        SettingsField,
+        SettingsRowGroupView,
+        SettingsWorkspaceView,
+        TargetHeaderView,
+        project_field_row,
+    )
+    from talaria.domain.settings_catalog import surface_disposition, tier_of
+
+    if not connection_id.strip():
+        raise ValueError("settings workspace requires an explicit connection_id")
+
+    header = TargetHeaderView(
+        connection_label=connection_label or connection_id,
+        current_profile=current_profile,
+        selected_profile=selected_profile,
+        auth_mode=auth_mode,
+        hermes_version=hermes_version,
+        shows_both_names=current_profile != selected_profile,
+    )
+    saved_doc = dict(saved or {})
+    effective_doc = dict(effective or saved_doc)
+    defaults_doc = dict(defaults or {})
+    pending_doc = dict(pending or {})
+
+    fields: list[SettingsField] = []
+    if schema is not None:
+        fields.extend(schema.fields)
+
+    profile_rows: list[FieldRowView] = []
+    if fields:
+        for item in fields:
+            if surface_disposition(item.key) == "excluded":
+                continue
+            profile_rows.append(
+                project_field_row(
+                    field=item,
+                    default_value=_nested_get(defaults_doc, item.key),
+                    saved_value=_nested_get(saved_doc, item.key),
+                    effective_value=_nested_get(effective_doc, item.key),
+                    pending_value=pending_doc.get(item.key),
+                    ownership="hermes-profile",
+                    effect=_catalog_effect(item.key),
+                    tier=tier_of(item.key),
+                )
+            )
+    else:
+        # Compact placeholder so /config never mounts empty Hermes groups
+        # (C2) without inventing a full catalog of editors before schema.
+        profile_rows.append(
+            FieldRowView(
+                key="hermes.schema",
+                label="Profile schema",
+                help_text=(
+                    "Dashboard schema is unavailable; profile fields appear "
+                    "when it answers."
+                ),
+                type="string",
+                provenance="default",
+                default_value="",
+                saved_value="",
+                effective_value="",
+                pending_value=None,
+                effect="unverified",
+                tier=1,
+                read_only=True,
+                ownership="hermes-profile",
+            )
+        )
+
+    host_rows = tuple(
+        FieldRowView(
+            key=key,
+            label=label,
+            help_text=help_text,
+            type="string",
+            provenance="default",
+            default_value="",
+            saved_value="",
+            effective_value="",
+            pending_value=None,
+            effect="unverified",
+            tier=1,
+            read_only=True,
+            ownership="hermes-host",
+        )
+        for key, label, help_text in _HOST_STATUS
+    )
+
+    groups = (
+        SettingsRowGroupView(
+            owner="hermes-profile",
+            title=_OWNER_TITLES["hermes-profile"],
+            rows=tuple(profile_rows),
+        ),
+        SettingsRowGroupView(
+            owner="hermes-host",
+            title=_OWNER_TITLES["hermes-host"],
+            rows=host_rows,
+        ),
+    )
+    return SettingsWorkspaceIdentity(
+        connection_id=connection_id,
+        view=SettingsWorkspaceView(
+            header=header,
+            groups=groups,
+            notice=notice
+            or " · ".join(group.title for group in groups if group.title),
+            wake_state=wake_state,
+            reset_patch=dict(reset_patch or {}),
+            secrets=dict(secrets or {}),
+            model_picker=model_picker,
+        ),
+    )
+
+
+def _catalog_effect(key: str) -> str:
+    from talaria.domain.settings_catalog import TIER1
+
+    for entry in TIER1:
+        if entry.key == key:
+            return entry.effect
+    return "unverified"
+
+
+def _nested_get(tree: Mapping[str, Any], dotted: str) -> object:
+    current: object = tree
+    for part in dotted.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return None
+        current = current[part]
+    return current

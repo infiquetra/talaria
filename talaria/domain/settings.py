@@ -168,6 +168,7 @@ class SettingsState:
     documents: Mapping[ConfigTarget, SettingsDocument] = field(default_factory=dict)
     pending: Mapping[ConfigTarget, Mapping[str, Any]] = field(default_factory=dict)
     generations: Mapping[ConfigTarget, int] = field(default_factory=dict)
+    awaiting_save: frozenset[ConfigTarget] = frozenset()
 
     @classmethod
     def empty(cls) -> SettingsState:
@@ -523,8 +524,18 @@ def apply_settings_response(
     effective: Mapping[str, Any],
     defaults: Mapping[str, Any] | None = None,
 ) -> SettingsState:
-    """Land a reply only when it still matches the selected target and generation."""
-    if state.selected != target or state.generations.get(target) != generation:
+    """Land a reply whose generation is still current.
+
+    A reply for the selected target lands as a load. A reply for a target
+    marked ``awaiting_save`` lands even after selection moved — that is the
+    Save-then-switch re-read (R9). Any other unselected reply is dropped so
+    A1-2 stale/foreign responses cannot mutate another target.
+    """
+    if state.generations.get(target) != generation:
+        return state
+    selected = state.selected == target
+    save_reread = target in state.awaiting_save
+    if not selected and not save_reread:
         return state
     document = SettingsDocument(
         target=target,
@@ -533,7 +544,17 @@ def apply_settings_response(
         defaults=dict(defaults or {}),
     )
     documents = {**dict(state.documents), target: document}
-    return replace(state, documents=documents)
+    pending = dict(state.pending)
+    awaiting = set(state.awaiting_save)
+    if save_reread:
+        pending.pop(target, None)
+        awaiting.discard(target)
+    return replace(
+        state,
+        documents=documents,
+        pending=pending,
+        awaiting_save=frozenset(awaiting),
+    )
 
 
 def stage_settings_edit(
@@ -567,7 +588,10 @@ def request_settings_switch(
     saved = document.saved if document is not None else {}
     patch = build_config_patch(saved=saved, edits=state.pending.get(old, {}))
     issued = (SaveConfig(target=old, patch=patch),)
-    return replace(state, selected=new_target, pending=pending), issued
+    awaiting = frozenset(state.awaiting_save | {old})
+    return replace(
+        state, selected=new_target, pending=pending, awaiting_save=awaiting
+    ), issued
 
 
 def project_target_header(

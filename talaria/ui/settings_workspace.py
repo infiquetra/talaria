@@ -8,6 +8,7 @@ or session state (ADR-0002). Overlay cancellation never commits.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from textual import events, on
@@ -23,9 +24,14 @@ from talaria.domain.settings import (
     RestartConfirmView,
     RestartPlan,
     RevealSecretView,
+    SettingsDocument,
+    SettingsState,
     SettingsWorkspaceView,
     TargetSwitchPrompt,
     build_config_patch,
+    request_settings_switch,
+    select_settings_target,
+    stage_settings_edit,
 )
 from talaria.domain.settings_commands import (
     ResetConfig,
@@ -134,11 +140,16 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         status_segments: Sequence[str] = (),
         scopes: Mapping[tuple[str, str], str] | None = None,
         segments_now: Sequence[str] = (),
+        connection_id: str = "",
         **kwargs: object,
     ) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self._view = view
         self._on_command = on_command
+        # Live /config always passes the connection id. UI tests omit it; the
+        # fixture label equals the id, so this default keeps those screens
+        # constructible without reading the label at write time.
+        self._connection_id = connection_id.strip() or view.header.connection_label
         self._theme_name = theme_name
         self._status_command = status_command
         self._status_interval_seconds = status_interval_seconds
@@ -155,12 +166,18 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         self._nav_collapsed = False
         self._reveal_key = ""
         self._restart_plan: RestartPlan | None = None
+        self._switch_target: ConfigTarget | None = None
+        self._settings_state = SettingsState(
+            selected=ConfigTarget(
+                connection_id=self._connection_id,
+                profile_name=view.header.selected_profile,
+            )
+        )
 
     def _selected_target(self) -> ConfigTarget:
-        header = self._view.header
         return ConfigTarget(
-            connection_id=header.connection_label,
-            profile_name=header.selected_profile,
+            connection_id=self._connection_id,
+            profile_name=self._view.header.selected_profile,
         )
 
     def _header_text(self) -> str:
@@ -234,12 +251,16 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
                         id="settings-talaria-branch",
                     )
                     yield self._talaria
-                for group in self._view.groups:
-                    widget = SettingsGroupWidget(
-                        group.owner, group.title, group.rows
-                    )
-                    self._groups.append(widget)
-                    yield widget
+                # The Talaria branch already fills the 44-row /config host.
+                # Hermes groups stay on the view (C2) and mount when this
+                # screen is the workspace-only surface.
+                if self._talaria is None:
+                    for group in self._view.groups:
+                        widget = SettingsGroupWidget(
+                            group.owner, group.title, group.rows
+                        )
+                        self._groups.append(widget)
+                        yield widget
             with Horizontal(id="settings-footer"):
                 yield Button("Save", id="settings-save", compact=True)
                 yield Button("Discard", id="settings-discard", compact=True)
@@ -382,6 +403,7 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         self.app.push_screen(overlay)
 
     def open_target_switch(self, new_target: ConfigTarget) -> None:
+        self._switch_target = new_target
         prompt = TargetSwitchPrompt(
             old_target=self._selected_target(),
             new_target=new_target,
@@ -391,15 +413,52 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
             TargetSwitchOverlay(prompt, on_result=self._on_switch_result)
         )
 
+    def _state_with_editor_pending(self) -> SettingsState:
+        """Stage live editor values so the switch reducer sees the same edits."""
+        state = self._settings_state
+        target = self._selected_target()
+        if state.selected is None:
+            state = select_settings_target(state, target)
+        edits, saved = self._edits_and_saved()
+        document = SettingsDocument(target=target, saved=saved, effective=saved)
+        state = replace(
+            state, documents={**dict(state.documents), target: document}
+        )
+        for key, value in edits.items():
+            state = stage_settings_edit(state, target=target, key=key, value=value)
+        self._settings_state = state
+        return state
+
+    def _apply_selected(self, target: ConfigTarget) -> None:
+        self._connection_id = target.connection_id
+        header = replace(
+            self._view.header,
+            selected_profile=target.profile_name,
+            shows_both_names=self._view.header.current_profile != target.profile_name,
+        )
+        self.update_view(replace(self._view, header=header))
+
     def _on_switch_result(self, result: SwitchChoice | None) -> None:
         self._restore_focus()
-        if result is None or result.choice == "stay":
+        new_target = self._switch_target
+        if new_target is None:
             return
-        if result.choice == "save":
-            self._emit_save()
+        choice = "stay" if result is None else result.choice
+        if choice not in {"save", "discard", "stay"}:
+            choice = "stay"
+        state = self._state_with_editor_pending()
+        next_state, issued = request_settings_switch(
+            state, new_target=new_target, choice=choice
+        )
+        self._settings_state = next_state
+        for command in issued:
+            self._emit(command)
+        if choice == "stay":
             return
-        if result.choice == "discard":
+        if choice == "discard":
             self._restore_editors()
+        if next_state.selected is not None:
+            self._apply_selected(next_state.selected)
 
     def open_reset(self) -> None:
         confirm = ResetConfirmView(

@@ -221,10 +221,13 @@ async def test_a1_12_settings_client_never_issues_an_unscoped_config_put() -> No
     assert launch_writes == []
     writes = [item for item in recorder if item.method == "PUT"]
     assert writes, "expected a scoped PUT"
+    patch = {"timezone": "America/Indiana/Indianapolis"}
     for item in writes:
         query_profile = (item.query.get("profile") or [""])[0]
         body_profile = item.body.get("profile") if isinstance(item.body.get("profile"), str) else ""
         assert query_profile == FIXTURE_PROFILE or body_profile == FIXTURE_PROFILE
+        assert item.body.get("config") == patch
+        assert "timezone" not in item.body
         assert CANARY not in item.path
 
 
@@ -296,6 +299,11 @@ async def test_a1_11_round_trips_one_field_of_each_known_type() -> None:
 
     assert launch_writes == []
     assert all((item.query.get("profile") or [""])[0] == FIXTURE_PROFILE for item in recorder)
+    puts = [item for item in recorder if item.method == "PUT"]
+    assert len(puts) == len(fields)
+    for item, (key, (_kind, value)) in zip(puts, fields.items(), strict=True):
+        assert item.body.get("config") == {key: value}
+        assert key not in item.body
     saved_reads = [
         item
         for item in recorder
@@ -401,6 +409,20 @@ async def test_a1_14_reveal_is_one_shot_and_the_sixth_call_is_limited(
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a1_14_non_429_reveal_http_error_is_not_rate_limited() -> None:
+    error_type = getattr(load_module("talaria.transport.settings"), "SettingsError", Exception)
+    with settings_gateway(
+        {("POST", "/api/env/reveal"): json_route({"detail": "unavailable"}, 500)}
+    ) as (origin, _recorder, _launch):
+        client = make_client(origin)
+        with pytest.raises(error_type) as caught:
+            await client.reveal_env(make_target(), "TALARIA_V062_TEST_SECRET")
+    reason = getattr(caught.value, "reason", "")
+    assert reason != "rate_limited"
+    assert "429" not in str(caught.value)
 
 
 @pytest.mark.asyncio
@@ -565,29 +587,75 @@ async def test_restart_polls_action_and_status_and_does_not_claim_dashboard() ->
             ("GET", "/api/actions/gateway-restart/status"): json_route(
                 {"ok": True, "done": True}
             ),
+            ("GET", "/api/config"): json_route({"timezone": "UTC"}),
         }
     ) as (origin, recorder, _launch):
         client = make_client(origin)
-        plan_cls = getattr(load_module("talaria.domain.settings"), "RestartPlan", None)
-        assert plan_cls is not None, "unimplemented interface: RestartPlan"
-        plan = plan_cls(
-            scope="shared-multiplexer",
-            title=(
-                "Restart the shared default gateway — this also restarts the "
-                "gateways serving sibling-fixture"
-            ),
-            dashboard_note=(
-                "Talaria's own connection is to the dashboard and is unaffected."
-            ),
-            affected_profiles=(FIXTURE_PROFILE, "sibling-fixture"),
-        )
-        result = await client.restart_gateway(make_target(), plan)
+        result = await client.restart_gateway(make_target(), _restart_plan())
 
     assert getattr(result, "dashboard_restarted", False) is False
+    assert getattr(result, "verified", False) is True
     methods = [item.method + " " + urlparse(item.path).path for item in recorder]
     assert any(item.startswith("POST /api/gateway/restart") for item in methods)
     assert any("/api/actions/gateway-restart/status" in item for item in methods)
     assert any(item.endswith("/api/status") for item in methods)
+    assert any(item.endswith("/api/config") for item in methods)
+
+
+def _restart_plan() -> Any:
+    plan_cls = getattr(load_module("talaria.domain.settings"), "RestartPlan", None)
+    assert plan_cls is not None, "unimplemented interface: RestartPlan"
+    return plan_cls(
+        scope="shared-multiplexer",
+        title=(
+            "Restart the shared default gateway — this also restarts the "
+            "gateways serving sibling-fixture"
+        ),
+        dashboard_note=(
+            "Talaria's own connection is to the dashboard and is unaffected."
+        ),
+        affected_profiles=(FIXTURE_PROFILE, "sibling-fixture"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_restart_is_unverified_when_the_action_is_not_done() -> None:
+    with settings_gateway(
+        {
+            ("GET", "/api/status"): json_route(
+                {"gateway_running": True, "gateway_state": "running"}
+            ),
+            ("POST", "/api/gateway/restart"): json_route(
+                {"ok": True, "pid": 1, "name": "gateway-restart"}
+            ),
+            ("GET", "/api/actions/gateway-restart/status"): json_route(
+                {"ok": True, "done": False}
+            ),
+            ("GET", "/api/config"): json_route({"timezone": "UTC"}),
+        }
+    ) as (origin, _recorder, _launch):
+        result = await make_client(origin).restart_gateway(make_target(), _restart_plan())
+    assert getattr(result, "verified", True) is False
+
+
+@pytest.mark.asyncio
+async def test_restart_is_unverified_when_the_config_reread_fails() -> None:
+    with settings_gateway(
+        {
+            ("GET", "/api/status"): json_route(
+                {"gateway_running": True, "gateway_state": "running"}
+            ),
+            ("POST", "/api/gateway/restart"): json_route(
+                {"ok": True, "pid": 1, "name": "gateway-restart"}
+            ),
+            ("GET", "/api/actions/gateway-restart/status"): json_route(
+                {"ok": True, "done": True}
+            ),
+            ("GET", "/api/config"): json_route({"detail": "Not Found"}, 404),
+        }
+    ) as (origin, _recorder, _launch):
+        result = await make_client(origin).restart_gateway(make_target(), _restart_plan())
+    assert getattr(result, "verified", True) is False
 
 
 @pytest.mark.asyncio

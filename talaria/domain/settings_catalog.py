@@ -10,12 +10,53 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 __all__ = [
+    "CONFIG_SET_KEYS",
     "CatalogEntry",
     "TIER1",
     "coverage_denominator_keys",
+    "live_apply_allowed",
     "surface_disposition",
     "tier_of",
 ]
+
+
+#: CFG-A1 D5 / R10: the only keys ``config.set`` may apply live. Model writes
+#: use ``POST /api/model/set`` instead of this RPC. ``details_mode.*`` is a
+#: prefix; see :func:`live_apply_allowed`.
+CONFIG_SET_KEYS: frozenset[str] = frozenset(
+    {
+        "model",
+        "fast",
+        "busy",
+        "verbose",
+        "focus",
+        "approval_mode",
+        "approvals.mode",
+        "yolo",
+        "reasoning",
+        "thinking_mode",
+        "density",
+        "battery",
+        "theme",
+        "statusbar",
+        "mouse",
+        "indicator",
+        "voice.voice_chat_mode",
+        "cwd",
+        "terminal.cwd",
+        "workdir",
+        "prompt",
+        "personality",
+        "skin",
+    }
+)
+
+_CONFIG_SET_PREFIXES: tuple[str, ...] = ("details_mode.",)
+
+
+def live_apply_allowed(key: str) -> bool:
+    """True only for the CFG-A1 D5 ``config.set`` allowlist."""
+    return key in CONFIG_SET_KEYS or key.startswith(_CONFIG_SET_PREFIXES)
 
 
 @dataclass(frozen=True)
