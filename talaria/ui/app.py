@@ -5838,6 +5838,23 @@ class TalariaApp(App[None]):
                 return str(entry.endpoint)
         return ""
 
+    def _settings_dashboard_origin(self) -> str:
+        """HTTP/HTTPS dashboard origin for gated probe and re-auth.
+
+        Inventory rows carry a WebSocket URL. ``GatedAuthSession`` requires
+        ``http``/``https``; ``dashboard_origin_for`` is the existing conversion
+        the ticket provider already uses.
+        """
+        endpoint = self._settings_endpoint()
+        if not endpoint:
+            return ""
+        from talaria.transport.refresh import RefreshError, dashboard_origin_for
+
+        try:
+            return dashboard_origin_for(endpoint)
+        except RefreshError:
+            return ""
+
     def _ensure_settings_client(self) -> Any:
         if self.settings_client is not None:
             return self.settings_client
@@ -5979,7 +5996,7 @@ class TalariaApp(App[None]):
             from talaria.transport.refresh import read_connection_tokens
         except ImportError:
             return ""
-        origin = self._settings_endpoint()
+        origin = self._settings_dashboard_origin()
         if not origin:
             return ""
         access, refresh = "", ""
@@ -6018,7 +6035,7 @@ class TalariaApp(App[None]):
         from talaria.transport.refresh import write_connection_tokens
         from talaria.transport.settings import SettingsClient
 
-        origin = self._settings_endpoint()
+        origin = self._settings_dashboard_origin()
         if not origin:
             self._notice("settings: no gated origin for re-authenticate")
             return
