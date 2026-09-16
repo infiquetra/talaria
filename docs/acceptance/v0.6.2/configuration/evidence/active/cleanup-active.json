@@ -1,0 +1,20 @@
+{
+  "stage": "active",
+  "absent_names": [
+    "talaria-v0.6.2-cfg-t0-local-active-a",
+    "talaria-v0.6.2-cfg-t0-local-active-switch",
+    "talaria-v0.6.2-cfg-t0-local-active-clone",
+    "talaria-v0.6.2-cfg-t0-local-active-renamed",
+    "talaria-v0.6.2-cfg-t0-remote-active-a",
+    "talaria-v0.6.2-cfg-t0-remote-active-switch",
+    "talaria-v0.6.2-cfg-t0-remote-active-clone",
+    "talaria-v0.6.2-cfg-t0-remote-active-renamed"
+  ],
+  "testB": {
+    "unchanged": true,
+    "safe_hash": "02f32033b9db9377267e9fe808ba8ac853d9a2e08c6d5c44433e0916ca92e82b"
+  },
+  "created_ids_deleted": true,
+  "created_server_ids": [],
+  "limitation": "blocked: authenticated Active profiles were never created (CFG-T0); this run issued no create or delete and did not read testB"
+}

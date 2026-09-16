@@ -1,0 +1,64 @@
+CFG-T4B Test Author Two — final owned suite
+Date: 2026-09-16
+Worktree: /Users/jefcox/workspace/infiquetra/talaria-cfg-t4-ta2
+Branch: feat/v0.6.2-cfg-t4-ta2
+Candidate: 764119bce0deb7742f0fe8736b28cec8951c80d8
+
+Plans hashed before use (match CFG-PR3):
+  CFG-P1-implementation-plan.md  ce61b768829781dae322f874e1c6e773e44d04364afb58da3b76795ba7194323
+  CFG-P1-test-plan.md            a8c5972c48de87189449a7117a7027fe6b0e65558fe725493cc6e60dae925710
+
+No production code was added. No tests were edited. No session settings were changed.
+No credential values, live tokens, or private profile content are in this log.
+Live Hermes flags were unset; fixtures did not read ~/.talaria.
+No Active disposable profiles were created.
+
+Command (exclusive suite):
+  uv run pytest \
+    tests/transport/test_settings_api.py \
+    tests/transport/test_gated_auth.py \
+    tests/integration/test_hermes_configuration.py \
+    scripts/acceptance/test_v062_configuration.py \
+    tests/transport/test_admin.py \
+    tests/transport/test_connection_set.py \
+    tests/transport/test_attach.py \
+    tests/transport/test_refresh.py \
+    -rs --tb=line
+
+Result: 297 passed, 0 failed, 20 skipped
+Collection succeeded. No syntax errors. No accidental live-network dials.
+Remaining exclusive-suite fails: none.
+
+A1-11–20 stub-server / mocked (never skip):
+  A1-11  PASS  test_a1_11_round_trips_one_field_of_each_known_type
+  A1-12  PASS  unscoped PUT refused; empty/current profile performs no I/O;
+               fixture-hazard documentation test
+  A1-13  PASS  test_a1_13_model_set_then_info_names_the_same_target
+  A1-14  PASS  test_a1_14_reveal_is_one_shot_and_the_sixth_call_is_limited
+  A1-15  PASS  test_a1_15_clone_strips_channels_and_does_not_copy_sessions
+  A1-16  PASS  test_a1_16_default_rename_keeps_canonical_id
+  A1-17  PASS  test_a1_17_default_delete_is_400_and_disposable_delete_is_gone
+  A1-18  PASS  test_a1_18_unknown_profile_disables_target_writes
+  A1-19  PASS  test_restart_polls_action_and_status_and_does_not_claim_dashboard
+               multiplexer preflight is A1-19-only and is not a batch gate
+  A1-20  PASS  wrong-token reauth; public health/schema load without a token
+
+A1-11–20 real-Hermes (CFG-T0 access absent; blocked, not passed):
+  A1-11..A1-20 local  SKIPPED/blocked  authenticated local Hermes access is absent (CFG-T0)
+  (10 parametrized rows; fixture skips before any client I/O)
+
+Remote reuse hooks (not A1-11–20; recorded for the harness):
+  A1-27 (A1-11–19 remote)  SKIPPED/blocked  authenticated remote Hermes access is absent (CFG-T0)
+  A1-28 (12 switch pairs)  SKIPPED/blocked  authenticated local Hermes access is absent (CFG-T0)
+                                           (dual-connection fixture; local gate fires first)
+
+SKIPPED excerpt (sanitized; 20 total, all expected CFG-T0 blocks):
+  SKIPPED [10] tests/integration/test_hermes_configuration.py:39
+    blocked: authenticated local Hermes access is absent (CFG-T0)
+  SKIPPED [9] tests/integration/test_hermes_configuration.py:54
+    blocked: authenticated remote Hermes access is absent (CFG-T0)
+  SKIPPED [1] tests/integration/test_hermes_configuration.py:65
+    blocked: authenticated local Hermes access is absent (CFG-T0)
+
+Cleanup: authenticated Active profiles were never created. See cleanup-active.json.
+Do not treat skipped real-Hermes rows as passed.
