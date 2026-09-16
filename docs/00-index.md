@@ -24,10 +24,11 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 
 ## Releases
 
-v0.6.3 is the residual-configuration release: live Stay/Save/Discard, one-shot
-reveal, gated composition, and product Start/Stop. Installed remote login
-without live access stays blocked.
+v0.6.4 remounts a selected `/config` target's schema and Environment
+rows so Stay/Save/Discard and one-shot Reveal are reachable after a
+switch. Installed remote login without live access stays blocked.
 
+- [Talaria v0.6.4](releases/v0.6.4.md)
 - [Talaria v0.6.3](releases/v0.6.3.md)
 - [Talaria v0.6.2](releases/v0.6.2.md)
 - [Talaria v0.6.1](releases/v0.6.1.md)

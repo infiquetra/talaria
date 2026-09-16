@@ -270,10 +270,13 @@ visible, including at 80×24.
 
 The header `#settings-target` control lists configured `(connection, profile)`
 pairs as `"<connection> / <profile>"` and routes a choice through Stay / Save /
-Discard. Save keeps the old target selected until its re-read lands, then loads
-the new target. Discard loads the new target without a write. Stay keeps edits.
-Secret rows fetched from `/api/env` expose a Reveal control; plaintext is
-overlay-only, one-shot, and clears on close or a bounded timeout.
+Discard. Selecting a target remounts that profile's Hermes schema and
+Environment groups; the Talaria-owned branch stays put, and session
+`current_profile` is not rewritten. Save keeps the old target selected until
+its re-read lands, then loads the new target. Discard loads the new target
+without a write. Stay keeps edits. Secret rows fetched from `/api/env` mount
+on the selected target and expose a Reveal control; plaintext is overlay-only,
+one-shot, and clears on close or a bounded timeout.
 Start and Stop render from observed `gateway_running`, confirm the named
 profile, then emit `StartGateway` / `StopGateway` — never wake `/api/rpc`.
 A gated 401 keeps pending edits and offers Re-authenticate through U1's

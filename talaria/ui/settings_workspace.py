@@ -37,6 +37,7 @@ from talaria.domain.settings import (
     build_config_patch,
     fail_settings_save,
     project_save_summary,
+    record_settings_load,
     request_settings_switch,
     select_settings_target,
     stage_settings_edit,
@@ -73,6 +74,7 @@ from talaria.ui.settings_widgets import (
     TalariaOwnedSettings,
     coerce_row_value,
     display_row_value,
+    group_widget_id,
     nested_assign,
 )
 
@@ -118,6 +120,10 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
     }
     SettingsWorkspaceScreen #settings-body {
         height: 1fr;
+    }
+    SettingsWorkspaceScreen #settings-dynamic-groups {
+        height: auto;
+        width: 100%;
     }
     SettingsWorkspaceScreen .settings--title {
         color: $accent;
@@ -186,6 +192,8 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         self._lifecycle_action = ""
         self._target_picker: Vertical | None = None
         self._picker_open = False
+        self._pending_loaded_view: SettingsWorkspaceView | None = None
+        self._reconcile_seq = 0
         self._settings_state = SettingsState(
             selected=ConfigTarget(
                 connection_id=self._connection_id,
@@ -273,16 +281,21 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
                         id="settings-talaria-branch",
                     )
                     yield self._talaria
-                for group in self._view.groups:
-                    widget = SettingsGroupWidget(
-                        group.owner,
-                        group.title,
-                        group.rows,
-                        secrets=self._view.secrets,
-                        on_reveal=self.open_reveal,
-                    )
-                    self._groups.append(widget)
-                    yield widget
+                with Vertical(id="settings-dynamic-groups"):
+                    used_ids: set[str] = set()
+                    for group in self._view.groups:
+                        widget = SettingsGroupWidget(
+                            group.owner,
+                            group.title,
+                            group.rows,
+                            secrets=self._view.secrets,
+                            on_reveal=self.open_reveal,
+                            widget_id=group_widget_id(
+                                group.owner, group.title, used=used_ids
+                            ),
+                        )
+                        self._groups.append(widget)
+                        yield widget
             with Horizontal(id="settings-footer"):
                 yield Button("Save", id="settings-save", compact=True)
                 yield Button("Discard", id="settings-discard", compact=True)
@@ -565,8 +578,11 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         self._return_focus = focused if isinstance(focused, Widget) else None
 
     def _restore_focus(self) -> None:
-        if self._return_focus is not None:
-            self._return_focus.focus()
+        widget = self._return_focus
+        if widget is not None and widget.is_mounted:
+            widget.focus()
+        elif widget is not None:
+            self._return_focus = None
 
     def _push_overlay(self, overlay: ModalScreen[Any]) -> None:
         self._remember_focus()
@@ -614,26 +630,94 @@ class SettingsWorkspaceScreen(ModalScreen[ConfigViewResult | None]):
         )
 
     def apply_loaded_view(self, view: SettingsWorkspaceView, connection_id: str) -> None:
-        """Refresh Hermes editors after a live target load. Talaria branch stays."""
+        """Reconcile the dynamic Hermes subtree. The Talaria branch stays."""
+        self._bind_loaded_view(view, connection_id)
+        self._reconcile_seq += 1
+        if self.is_attached:
+            self.run_worker(
+                self._reconcile_dynamic_groups(self._reconcile_seq),
+                exclusive=True,
+                group="settings-reconcile",
+            )
+
+    async def reconcile_loaded_view(
+        self, view: SettingsWorkspaceView, connection_id: str
+    ) -> None:
+        """Await group remount before a target load reports complete."""
+        self._bind_loaded_view(view, connection_id)
+        self._reconcile_seq += 1
+        await self._reconcile_dynamic_groups(self._reconcile_seq)
+
+    def _bind_loaded_view(
+        self, view: SettingsWorkspaceView, connection_id: str
+    ) -> None:
         self._connection_id = connection_id
-        self._settings_state = replace(
+        saved: dict[str, Any] = {}
+        for group in view.groups:
+            for row in group.rows:
+                nested_assign(saved, row.key, row.saved_value)
+        self._settings_state = record_settings_load(
             self._settings_state,
-            selected=ConfigTarget(
+            target=ConfigTarget(
                 connection_id=connection_id,
                 profile_name=view.header.selected_profile,
             ),
+            saved=saved,
+            effective=saved,
         )
-        rows_by_key = {
-            row.key: row for group in view.groups for row in group.rows
-        }
-        for widget in self._row_widgets():
-            row = rows_by_key.get(widget.row.key)
-            if row is None:
-                continue
-            widget.row = row
-            if widget.editor is not None:
-                widget.editor.value = display_row_value(row)
+        self._pending_loaded_view = view
+
+    async def _reconcile_dynamic_groups(self, seq: int) -> None:
+        if seq != self._reconcile_seq:
+            return
+        view = self._pending_loaded_view or self._view
+        self._wipe_active_reveal()
+        try:
+            container = self.query_one("#settings-dynamic-groups")
+        except NoMatches:
+            self.update_view(view)
+            return
+        await container.remove_children()
+        if seq != self._reconcile_seq:
+            return
+        self._groups = []
+        used_ids: set[str] = set()
+        for group in view.groups:
+            widget = SettingsGroupWidget(
+                group.owner,
+                group.title,
+                group.rows,
+                secrets=view.secrets,
+                on_reveal=self.open_reveal,
+                widget_id=group_widget_id(group.owner, group.title, used=used_ids),
+            )
+            self._groups.append(widget)
+            await container.mount(widget)
+        if seq != self._reconcile_seq:
+            return
         self.update_view(view)
+        search = self._search.value if self._search is not None else view.search_text
+        self._apply_search(search)
+        self._repair_focus_after_remount()
+
+    def _wipe_active_reveal(self) -> None:
+        screen = self.app.screen
+        if isinstance(screen, RevealSecretOverlay):
+            screen.abandon()
+
+    def _repair_focus_after_remount(self) -> None:
+        if self._return_focus is not None and not self._return_focus.is_mounted:
+            self._return_focus = None
+        focused = self.focused
+        if focused is not None and focused.is_mounted:
+            return
+        try:
+            self.query_one("#settings-target", Button).focus()
+        except NoMatches:
+            for widget in self._row_widgets():
+                if widget.editor is not None and widget.display:
+                    widget.editor.focus()
+                    return
 
     def _on_switch_result(self, result: SwitchChoice | None) -> None:
         self._restore_focus()

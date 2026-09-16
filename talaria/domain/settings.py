@@ -60,6 +60,7 @@ __all__ = [
     "project_secret_rows",
     "project_target_header",
     "project_target_options",
+    "record_settings_load",
     "request_settings_switch",
     "select_settings_target",
     "stage_settings_edit",
@@ -603,6 +604,27 @@ def apply_settings_response(
         pending=pending,
         awaiting_save=frozenset(awaiting),
         pending_target=pending_target,
+    )
+
+
+def record_settings_load(
+    state: SettingsState,
+    *,
+    target: ConfigTarget,
+    saved: Mapping[str, Any],
+    effective: Mapping[str, Any],
+    defaults: Mapping[str, Any] | None = None,
+) -> SettingsState:
+    """Record a completed target load and retire older generations for it."""
+    next_state, generation = begin_settings_request(state, target)
+    next_state = select_settings_target(next_state, target)
+    return apply_settings_response(
+        next_state,
+        target=target,
+        generation=generation,
+        saved=saved,
+        effective=effective,
+        defaults=defaults,
     )
 
 

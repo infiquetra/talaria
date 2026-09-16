@@ -30,6 +30,7 @@ __all__ = (
     "TalariaOwnedSettings",
     "coerce_row_value",
     "display_row_value",
+    "group_widget_id",
     "nested_assign",
     "row_widget_id",
 )
@@ -46,6 +47,26 @@ _SEGMENTS_HINT = "space toggles · shift+↑↓ reorders the shown set"
 
 def row_widget_id(key: str) -> str:
     return "settings-row-" + key.replace(".", "-")
+
+
+def group_widget_id(
+    owner: str, title: str = "", *, used: set[str] | None = None
+) -> str:
+    """Stable ``#settings-group-<owner>`` unless that owner is already mounted."""
+    claimed = used if used is not None else set()
+    base = f"settings-group-{owner}"
+    if base not in claimed:
+        claimed.add(base)
+        return base
+    slug = "".join(char if char.isalnum() else "-" for char in title.lower())
+    slug = "-".join(part for part in slug.split("-") if part)
+    candidate = f"settings-group-{slug}" if slug else f"{base}-extra"
+    index = 2
+    while candidate in claimed:
+        candidate = f"{base}-{index}"
+        index += 1
+    claimed.add(candidate)
+    return candidate
 
 
 def display_row_value(row: FieldRowView) -> str:
@@ -189,9 +210,10 @@ class SettingsGroupWidget(Vertical):
         *,
         secrets: Mapping[str, tuple[bool, str]] | None = None,
         on_reveal: Callable[[str], None] | None = None,
+        widget_id: str | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init__(id=f"settings-group-{owner}", **kwargs)  # type: ignore[arg-type]
+        super().__init__(id=widget_id or group_widget_id(owner, title), **kwargs)  # type: ignore[arg-type]
         self.owner = owner
         self.title = title
         self.rows = rows

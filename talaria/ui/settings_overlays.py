@@ -364,6 +364,12 @@ class RevealSecretOverlay(ModalScreen[RevealSecretResult | None]):
         if self._status_line is not None:
             self._status_line.update(literal_text(message))
 
+    def abandon(self) -> None:
+        """Wipe plaintext and close without reporting a reveal choice."""
+        self._wipe()
+        if self.is_attached:
+            self.dismiss(None)
+
     def _timeout_wipe(self) -> None:
         self._wipe()
         if self.is_attached:

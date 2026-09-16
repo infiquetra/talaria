@@ -9,9 +9,9 @@ Talaria connects to that gateway; it does not install or start Hermes for you.
 
 macOS is the supported platform for Talaria. Published tags through v0.6.2 have been
 exercised there with the real terminal interface and with Python 3.12 and 3.13.
-v0.6.3 is the residual-configuration release: live target switching, one-shot
-reveal, gated composition, and product Start/Stop. Install it from its tag
-once that tag is published.
+v0.6.4 remounts a selected profile's schema and Environment rows on
+`/config` so Stay/Save/Discard and one-shot Reveal are reachable after
+a switch. Install it from its tag once that tag is published.
 
 Linux is not supported for interactive use in this release. The test suite runs on Linux in
 continuous integration, but no person has driven Talaria on Linux. That hands-on path was parked
@@ -57,10 +57,10 @@ uv run talaria --version
 uv run talaria --help
 ```
 
-A successful v0.6.3 install prints this version line:
+A successful v0.6.4 install prints this version line:
 
 ```text
-talaria 0.6.3
+talaria 0.6.4
 ```
 
 The help output identifies Talaria as a `Hermes-native terminal UI client` and lists `record`,

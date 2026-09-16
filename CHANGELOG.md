@@ -10,6 +10,22 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-09-16
+
+Selected `/config` target loads remount that profile's schema and
+Environment rows, so Stay / Discard / Save and one-shot Reveal are
+reachable after a switch. See the [v0.6.4 release notes](docs/releases/v0.6.4.md).
+
+### Fixed
+
+- Target selection rebuilds the dynamic Hermes group subtree instead of
+  updating only already-mounted row keys. New schema and secret rows
+  mount; stale rows from the previous target disappear.
+- Target loads use the requested `ConfigTarget` and its connection
+  client. Session `current_profile` is not rewritten as a routing trick.
+- Reveal stays a one-shot overlay on the remounted Environment row.
+  Plaintext is not added to domain state, notices, logs, or recordings.
+
 ## [0.6.3] — 2026-09-16
 
 Residual configuration after v0.6.2: live target switching, one-shot reveal,
@@ -536,7 +552,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.4.md
 [0.6.3]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.3.md
 [0.6.2]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.2.md
 [0.6.1]: https://github.com/infiquetra/talaria/releases/tag/v0.6.1

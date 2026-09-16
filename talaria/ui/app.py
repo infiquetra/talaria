@@ -5866,13 +5866,45 @@ class TalariaApp(App[None]):
         self.settings_client = self.settings_factory(endpoint)
         return self.settings_client
 
-    async def _settings_workspace_identity(self) -> Any:
+    def _settings_client_for(self, target: ConfigTarget) -> Any:
+        """Client for one target's connection. Does not rewrite session home."""
+        if self.settings_client is not None:
+            return self.settings_client
+        if self.settings_factory is None:
+            return None
+        endpoint = ""
+        if target.profile_name in self.profile_endpoints:
+            endpoint = self.profile_endpoints[target.profile_name]
+        if not endpoint:
+            endpoint = self._settings_endpoint()
+        if not endpoint:
+            return None
+        self.settings_client = self.settings_factory(endpoint)
+        return self.settings_client
+
+    async def _settings_workspace_identity(
+        self,
+        target: ConfigTarget | None = None,
+        *,
+        current_profile: str | None = None,
+    ) -> Any:
         from talaria.domain.settings import ModelPickerOption, ModelPickerView
         from talaria.transport.settings import SettingsError
 
-        connection_id = self._settings_connection_id()
-        profile = self.current_profile or connection_id
+        connection_id = (
+            target.connection_id if target is not None else self._settings_connection_id()
+        )
+        profile = (
+            target.profile_name
+            if target is not None
+            else (self.current_profile or connection_id)
+        )
         target = ConfigTarget(connection_id=connection_id, profile_name=profile)
+        session_current = (
+            current_profile
+            if current_profile is not None
+            else (self.current_profile or profile)
+        )
         schema = None
         saved: dict[str, Any] = {}
         effective: dict[str, Any] = {}
@@ -5880,7 +5912,7 @@ class TalariaApp(App[None]):
         secrets: dict[str, tuple[bool, str]] = {}
         gateway_running: bool | None = None
         auth_state = ""
-        client = self._ensure_settings_client()
+        client = self._settings_client_for(target)
         if client is not None:
             try:
                 raw_schema = await client.get_schema(target)
@@ -5942,7 +5974,7 @@ class TalariaApp(App[None]):
         return project_settings_workspace(
             connection_id=connection_id,
             connection_label=connection_id,
-            current_profile=profile,
+            current_profile=session_current,
             selected_profile=profile,
             auth_mode=self._connection_auth(connection_id),
             hermes_version="",
@@ -6210,20 +6242,30 @@ class TalariaApp(App[None]):
                 self._notice(f"settings: {exc}")
             return
 
+    def _settings_workspace_screen(self) -> Any:
+        """The live /config screen, even when an overlay is on top."""
+        if isinstance(self.screen, SettingsWorkspaceScreen):
+            return self.screen
+        for screen in getattr(self, "screen_stack", ()):
+            if isinstance(screen, SettingsWorkspaceScreen):
+                return screen
+        return None
+
     async def _reread_after_save(self, client: Any, command: SaveConfig) -> None:
         """GET /api/config after PUT and land it on the workspace (R9 / C10)."""
-        workspace = (
-            self.screen if isinstance(self.screen, SettingsWorkspaceScreen) else None
-        )
+        workspace = self._settings_workspace_screen()
         generation = 0
         if workspace is not None:
             generation = workspace.begin_settings_reread(command.target)
         raw_config = await client.get_config(command.target)
         saved, effective, defaults = _split_config_documents(raw_config)
         if workspace is not None:
+            previous = workspace._settings_state
             workspace.apply_settings_reread(
                 command.target, generation, saved, effective, defaults
             )
+            if workspace._settings_state is previous:
+                return
             results = tuple(
                 FieldSaveResult(key=key, outcome=_save_outcome_for(key))
                 for key in _flatten_patch_keys(command.patch)
@@ -6236,39 +6278,26 @@ class TalariaApp(App[None]):
         self._notice("settings: saved")
 
     async def _load_settings_target(self, target: ConfigTarget) -> None:
-        workspace = (
-            self.screen if isinstance(self.screen, SettingsWorkspaceScreen) else None
-        )
+        workspace = self._settings_workspace_screen()
         current = (
             workspace._view.header.current_profile
             if workspace is not None
             else (self.current_profile or target.profile_name)
         )
-        identity = await self._settings_workspace_identity_for(
+        generation = 0
+        if workspace is not None:
+            generation = workspace.begin_settings_reread(target)
+        identity = await self._settings_workspace_identity(
             target, current_profile=current
         )
-        if workspace is not None:
-            workspace.apply_loaded_view(identity.view, identity.connection_id)
-
-    async def _settings_workspace_identity_for(
-        self, target: ConfigTarget, *, current_profile: str
-    ) -> Any:
-        """Reload one target while keeping the session's current profile."""
-        original = self.current_profile
-        self.current_profile = target.profile_name
-        try:
-            identity = await self._settings_workspace_identity()
-        finally:
-            self.current_profile = original
-        view = identity.view
-        header = replace(
-            view.header,
-            current_profile=current_profile or view.header.current_profile,
-            selected_profile=target.profile_name,
-            shows_both_names=(current_profile or view.header.current_profile)
-            != target.profile_name,
-        )
-        return replace(identity, view=replace(view, header=header))
+        if workspace is None:
+            return
+        if workspace._settings_state.generations.get(target) != generation:
+            return
+        selected = workspace._settings_state.selected
+        if selected is not None and selected != target:
+            return
+        await workspace.reconcile_loaded_view(identity.view, identity.connection_id)
 
     def _present_reveal(self, key: str, raw_reveal: object) -> None:
         from talaria.ui.settings_overlays import RevealSecretOverlay
