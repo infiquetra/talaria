@@ -13,6 +13,8 @@ import pytest
 from scripts.acceptance.v062_configuration import (
     A1_LOCAL_CONTRACT_IDS,
     A1_REMOTE_REUSE_IDS,
+    CLEANUP_RECORD_TYPE,
+    CLEANUP_SCHEMA_VERSION,
     FORBIDDEN_MUTATIONS,
     LEDGER_SCHEMA_PATH,
     LIVE_CREDENTIALS_PATH_FLAG,
@@ -225,9 +227,11 @@ def test_cleanup_receipt_requires_absent_names_and_unchanged_testb() -> None:
     names = list(stage_name_set("local", "active").values())
     validate_cleanup_receipt(
         {
+            "schema_version": CLEANUP_SCHEMA_VERSION,
+            "record_type": CLEANUP_RECORD_TYPE,
             "stage": "active",
             "absent_names": names,
-            "testB": {"unchanged": True, "safe_hash": sha256_text("count-only")},
+            "testB": {"unchanged": True},
             "created_ids_deleted": True,
         },
         stage="active",
@@ -235,9 +239,23 @@ def test_cleanup_receipt_requires_absent_names_and_unchanged_testb() -> None:
     with pytest.raises(HarnessError, match="testB"):
         validate_cleanup_receipt(
             {
+                "schema_version": CLEANUP_SCHEMA_VERSION,
+                "record_type": CLEANUP_RECORD_TYPE,
                 "stage": "active",
                 "absent_names": names,
                 "testB": {"unchanged": False},
+                "created_ids_deleted": True,
+            },
+            stage="active",
+        )
+    with pytest.raises(HarnessError, match="digest"):
+        validate_cleanup_receipt(
+            {
+                "schema_version": CLEANUP_SCHEMA_VERSION,
+                "record_type": CLEANUP_RECORD_TYPE,
+                "stage": "active",
+                "absent_names": names,
+                "testB": {"unchanged": True, "safe_hash": sha256_text("count-only")},
                 "created_ids_deleted": True,
             },
             stage="active",

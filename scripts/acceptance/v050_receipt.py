@@ -768,6 +768,32 @@ READ_CONFIRMATION_RECORD_SCHEMA = RecordSchema(
     },
 )
 
+CONFIGURATION_CLEANUP_SCHEMA_VERSION = "talaria-v0.6.2-configuration-cleanup-v1"
+CONFIGURATION_CLEANUP_RECORD_TYPE = "configuration-cleanup"
+CONFIGURATION_CLEANUP_SCHEMA = RecordSchema(
+    name="configuration-cleanup",
+    declared_keys={
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "record_type": ValueCategory.CLOSED_VOCABULARY,
+        "stage": ValueCategory.CLOSED_VOCABULARY,
+        "absent_names": ValueCategory.LIST,
+        "testB": ValueCategory.OBJECT,
+        "created_ids_deleted": ValueCategory.BOOLEAN,
+        "created_server_ids": ValueCategory.LIST,
+        "limitation": ValueCategory.STRING,
+    },
+    nested_schemas={
+        "testB": {
+            "unchanged": ValueCategory.BOOLEAN,
+        },
+    },
+    vocabularies={
+        "schema_version": frozenset({CONFIGURATION_CLEANUP_SCHEMA_VERSION}),
+        "record_type": frozenset({CONFIGURATION_CLEANUP_RECORD_TYPE}),
+        "stage": frozenset({"active", "installed"}),
+    },
+)
+
 _SENTINEL_PATTERN = re.compile(r"\[redacted:([a-z0-9_-]+):(\d+)\]")
 _SENTINEL_CANDIDATE_PATTERN = re.compile(r"\[redacted:[^\]]*\]")
 
@@ -2667,6 +2693,12 @@ class SchemaRegistry:
                 return INSTALL_RECEIPT_SCHEMA
             return RECEIPT_SCHEMA
         if isinstance(doc, dict):
+            if (
+                path.name == "cleanup-active.json"
+                or doc.get("record_type") == CONFIGURATION_CLEANUP_RECORD_TYPE
+                or doc.get("schema_version") == CONFIGURATION_CLEANUP_SCHEMA_VERSION
+            ):
+                return CONFIGURATION_CLEANUP_SCHEMA
             if "redactions_confirmed" in doc and "witnessed_element" in doc:
                 return READ_CONFIRMATION_RECORD_SCHEMA
             if "covered_class" in doc and "twin_span" in doc and "region" in doc:

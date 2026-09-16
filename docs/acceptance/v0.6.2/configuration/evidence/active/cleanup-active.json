@@ -1,4 +1,6 @@
 {
+  "schema_version": "talaria-v0.6.2-configuration-cleanup-v1",
+  "record_type": "configuration-cleanup",
   "stage": "active",
   "absent_names": [
     "talaria-v0.6.2-cfg-t0-local-active-a",
@@ -11,8 +13,7 @@
     "talaria-v0.6.2-cfg-t0-remote-active-renamed"
   ],
   "testB": {
-    "unchanged": true,
-    "safe_hash": "02f32033b9db9377267e9fe808ba8ac853d9a2e08c6d5c44433e0916ca92e82b"
+    "unchanged": true
   },
   "created_ids_deleted": true,
   "created_server_ids": [],
