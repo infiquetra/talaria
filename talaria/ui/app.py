@@ -6030,10 +6030,8 @@ class TalariaApp(App[None]):
     async def _reauthenticate_gated(self, target: ConfigTarget) -> None:
         """Run U1 native PKCE (password only if the server advertises it)."""
         from talaria.config import credentials_path
-        from talaria.transport.credentials import Credential
         from talaria.transport.gated_auth import GatedAuthError, GatedAuthSession
         from talaria.transport.refresh import write_connection_tokens
-        from talaria.transport.settings import SettingsClient
 
         origin = self._settings_dashboard_origin()
         if not origin:
@@ -6072,17 +6070,9 @@ class TalariaApp(App[None]):
             )
         except Exception as exc:
             self._notice(f"settings: gated token write failed ({exc})")
-        class _Bearer:
-            def __init__(self, token: str) -> None:
-                self._token = token
-
-            async def acquire(self) -> Credential:
-                return Credential(parameter="token", value=self._token, source="file")
-
-        try:
-            self.settings_client = SettingsClient(origin, _Bearer(access))
-        except Exception:
-            self.settings_client = None
+        self.settings_client = self._gated_settings_client_after_reauth(
+            origin, access
+        )
         if isinstance(self.screen, SettingsWorkspaceScreen):
             self.screen.update_view(
                 replace(
@@ -6091,6 +6081,39 @@ class TalariaApp(App[None]):
                     notice="re-authenticated — pending edits retained",
                 )
             )
+
+    def _gated_settings_client_after_reauth(
+        self, origin: str, access: str
+    ) -> Any:
+        """Keep RFC1918 HTTP admin on ``require_gated_origin`` after PKCE.
+
+        Prefer the composition-root factory so a later re-auth does not
+        replace a working gated client with loopback origin policy.
+        """
+        from talaria.transport.credentials import Credential
+        from talaria.transport.settings import SettingsClient
+
+        factory = self.settings_factory
+        endpoint = self._settings_endpoint()
+        if factory is not None and endpoint:
+            try:
+                rebuilt = factory(endpoint)
+            except Exception:
+                rebuilt = None
+            if rebuilt is not None:
+                return rebuilt
+
+        class _Bearer:
+            def __init__(self, token: str) -> None:
+                self._token = token
+
+            async def acquire(self) -> Credential:
+                return Credential(parameter="token", value=self._token, source="file")
+
+        try:
+            return SettingsClient(origin, _Bearer(access), auth="gated")
+        except Exception:
+            return None
 
     def _on_settings_command(self, command: object) -> None:
         """Typed settings commands never land on a ``None`` callback."""
