@@ -145,10 +145,13 @@ from talaria.domain.session_list import (
 from talaria.domain.settings import (
     ConfigTarget,
     FieldSaveResult,
+    RevealDisplayValue,
+    decode_env_listing,
     decode_settings_schema,
     project_save_summary,
 )
 from talaria.domain.settings_commands import (
+    LoadTarget,
     ResetConfig,
     RestartGateway,
     RevealEnv,
@@ -5854,6 +5857,7 @@ class TalariaApp(App[None]):
         saved: dict[str, Any] = {}
         effective: dict[str, Any] = {}
         defaults: dict[str, Any] = {}
+        secrets: dict[str, tuple[bool, str]] = {}
         client = self._ensure_settings_client()
         if client is not None:
             try:
@@ -5863,16 +5867,18 @@ class TalariaApp(App[None]):
                 schema = None
             try:
                 raw_config = await client.get_config(target)
-                if isinstance(raw_config, Mapping):
-                    if "saved" in raw_config or "effective" in raw_config:
-                        saved = dict(raw_config.get("saved") or {})
-                        effective = dict(raw_config.get("effective") or saved)
-                        defaults = dict(raw_config.get("defaults") or {})
-                    else:
-                        saved = dict(raw_config)
-                        effective = saved
+                saved, effective, defaults = _split_config_documents(raw_config)
             except SettingsError:
                 saved, effective, defaults = {}, {}, {}
+            getter = getattr(client, "get_env", None)
+            if getter is not None:
+                try:
+                    raw_env = await getter(target)
+                    secrets = decode_env_listing(raw_env)
+                except SettingsError:
+                    secrets = {}
+                except Exception:
+                    secrets = {}
         picker = None
         catalog = self.model_catalog
         if catalog is not None:
@@ -5899,7 +5905,29 @@ class TalariaApp(App[None]):
             saved=saved,
             effective=effective,
             defaults=defaults,
+            secrets=secrets,
             model_picker=picker,
+            targets=self._visible_settings_targets(connection_id),
+        )
+
+    def _visible_settings_targets(self, connection_id: str) -> tuple[ConfigTarget, ...]:
+        profiles: list[str] = []
+        for name in self.profile_endpoints:
+            if name.strip() and name not in profiles:
+                profiles.append(name)
+        if self.current_profile.strip() and self.current_profile not in profiles:
+            profiles.insert(0, self.current_profile)
+        directory = getattr(self, "profiles", None)
+        entries = getattr(directory, "profiles", None) if directory is not None else None
+        if entries:
+            for entry in entries:
+                name = getattr(entry, "name", "") or getattr(entry, "id", "")
+                if name and name not in profiles:
+                    profiles.append(name)
+        return tuple(
+            ConfigTarget(connection_id=connection_id, profile_name=name)
+            for name in profiles
+            if name.strip() and name != "current"
         )
 
     def _on_settings_command(self, command: object) -> None:
@@ -5924,7 +5952,10 @@ class TalariaApp(App[None]):
             elif isinstance(command, ResetConfig):
                 await surfaces.reset_profile(command.target, command.patch)
             elif isinstance(command, RevealEnv):
-                await client.reveal_env(command.target, command.key)
+                raw_reveal = await client.reveal_env(command.target, command.key)
+                self._present_reveal(command.key, raw_reveal)
+            elif isinstance(command, LoadTarget):
+                await self._load_settings_target(command.target)
             elif isinstance(command, SetModel):
                 await client.set_model(
                     command.target,
@@ -5951,13 +5982,18 @@ class TalariaApp(App[None]):
                         ),
                     )
                 )
+                self.screen.fail_save(command.target)
                 self.screen.update_view(
                     replace(
                         self.screen._view,
                         summary=summary,
-                        notice="save rejected — edits retained",
+                        notice=f"save rejected — edits retained ({exc})",
                     )
                 )
+            elif isinstance(command, RevealEnv) and hasattr(
+                self.screen, "show_error"
+            ):
+                self.screen.show_error(str(exc))
             else:
                 self._notice(f"settings: {exc}")
             return
@@ -5981,8 +6017,60 @@ class TalariaApp(App[None]):
                 for key in _flatten_patch_keys(command.patch)
             ) or (FieldSaveResult(key="config", outcome="saved"),)
             workspace.paint_save_summary(results, notice="saved")
+            pending = workspace._settings_state.selected
+            if pending is not None and pending != command.target:
+                await self._load_settings_target(pending)
             return
         self._notice("settings: saved")
+
+    async def _load_settings_target(self, target: ConfigTarget) -> None:
+        workspace = (
+            self.screen if isinstance(self.screen, SettingsWorkspaceScreen) else None
+        )
+        current = (
+            workspace._view.header.current_profile
+            if workspace is not None
+            else (self.current_profile or target.profile_name)
+        )
+        identity = await self._settings_workspace_identity_for(
+            target, current_profile=current
+        )
+        if workspace is not None:
+            workspace.apply_loaded_view(identity.view, identity.connection_id)
+
+    async def _settings_workspace_identity_for(
+        self, target: ConfigTarget, *, current_profile: str
+    ) -> Any:
+        """Reload one target while keeping the session's current profile."""
+        original = self.current_profile
+        self.current_profile = target.profile_name
+        try:
+            identity = await self._settings_workspace_identity()
+        finally:
+            self.current_profile = original
+        view = identity.view
+        header = replace(
+            view.header,
+            current_profile=current_profile or view.header.current_profile,
+            selected_profile=target.profile_name,
+            shows_both_names=(current_profile or view.header.current_profile)
+            != target.profile_name,
+        )
+        return replace(identity, view=replace(view, header=header))
+
+    def _present_reveal(self, key: str, raw_reveal: object) -> None:
+        from talaria.ui.settings_overlays import RevealSecretOverlay
+
+        value = ""
+        if isinstance(raw_reveal, Mapping):
+            raw_value = raw_reveal.get("value")
+            if isinstance(raw_value, str):
+                value = raw_value
+        if not value:
+            return
+        screen = self.screen
+        if isinstance(screen, RevealSecretOverlay):
+            screen.show_plaintext(RevealDisplayValue(key=key, value=value))
 
     def _config_view_closed(self, result: ConfigViewResult | None) -> None:
         """Surface the view's message, and open the picker when it asked."""

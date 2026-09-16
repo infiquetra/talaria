@@ -40,6 +40,7 @@ __all__ = [
     "SettingsState",
     "SettingsWorkspaceView",
     "TargetHeaderView",
+    "TargetOption",
     "TargetSwitchPrompt",
     "apply_config_patch",
     "apply_settings_response",
@@ -48,17 +49,22 @@ __all__ = [
     "build_reset_patch",
     "compute_restart_plan",
     "coverage_denominator",
+    "decode_env_listing",
     "decode_settings_schema",
     "effect_summary_label",
+    "fail_settings_save",
     "partition_settings_keys",
     "project_field_row",
     "project_save_summary",
     "project_secret_row",
+    "project_secret_rows",
     "project_target_header",
+    "project_target_options",
     "request_settings_switch",
     "select_settings_target",
     "stage_settings_edit",
     "validate_settings_value",
+    "RevealDisplayValue",
 ]
 
 
@@ -169,6 +175,7 @@ class SettingsState:
     pending: Mapping[ConfigTarget, Mapping[str, Any]] = field(default_factory=dict)
     generations: Mapping[ConfigTarget, int] = field(default_factory=dict)
     awaiting_save: frozenset[ConfigTarget] = frozenset()
+    pending_target: ConfigTarget | None = None
 
     @classmethod
     def empty(cls) -> SettingsState:
@@ -271,6 +278,16 @@ class SecretRow:
 
 
 @dataclass(frozen=True)
+class TargetOption:
+    """One picker row: a configured (connection, profile) pair."""
+
+    connection_id: str
+    profile_name: str
+    is_current: bool = False
+    is_selected: bool = False
+
+
+@dataclass(frozen=True)
 class TargetSwitchPrompt:
     """Save / Discard / Stay prompt when leaving a target with edits."""
 
@@ -335,6 +352,7 @@ class SettingsWorkspaceView:
     reset_patch: Mapping[str, Any] = field(default_factory=dict)
     secrets: Mapping[str, tuple[bool, str]] = field(default_factory=dict)
     model_picker: ModelPickerView | None = None
+    target_options: tuple[TargetOption, ...] = ()
 
 
 def decode_settings_schema(body: object) -> SettingsSchema:
@@ -549,11 +567,18 @@ def apply_settings_response(
     if save_reread:
         pending.pop(target, None)
         awaiting.discard(target)
+    selected_target = state.selected
+    pending_target = state.pending_target
+    if save_reread and pending_target is not None:
+        selected_target = pending_target
+        pending_target = None
     return replace(
         state,
+        selected=selected_target,
         documents=documents,
         pending=pending,
         awaiting_save=frozenset(awaiting),
+        pending_target=pending_target,
     )
 
 
@@ -590,8 +615,41 @@ def request_settings_switch(
     issued = (SaveConfig(target=old, patch=patch),)
     awaiting = frozenset(state.awaiting_save | {old})
     return replace(
-        state, selected=new_target, pending=pending, awaiting_save=awaiting
+        state,
+        selected=old,
+        pending=pending,
+        awaiting_save=awaiting,
+        pending_target=new_target,
     ), issued
+
+
+def fail_settings_save(state: SettingsState, *, target: ConfigTarget) -> SettingsState:
+    """Abandon an in-flight Save: keep selection and edits, drop the switch."""
+    awaiting = set(state.awaiting_save)
+    awaiting.discard(target)
+    return replace(
+        state,
+        awaiting_save=frozenset(awaiting),
+        pending_target=None,
+    )
+
+
+def project_target_options(
+    targets: Sequence[ConfigTarget],
+    *,
+    selected: ConfigTarget,
+    current: ConfigTarget,
+) -> tuple[TargetOption, ...]:
+    """Stable-order picker rows with current/selected flags, no reordering."""
+    return tuple(
+        TargetOption(
+            connection_id=item.connection_id,
+            profile_name=item.profile_name,
+            is_current=item == current,
+            is_selected=item == selected,
+        )
+        for item in targets
+    )
 
 
 def project_target_header(
@@ -734,6 +792,27 @@ def project_save_summary(*, results: Sequence[FieldSaveResult]) -> SaveSummaryVi
     return SaveSummaryView(groups=groups)
 
 
+def decode_env_listing(body: object) -> dict[str, tuple[bool, str]]:
+    """Decode ``GET /api/env`` to ``{key: (is_set, masked)}``. Never a value."""
+    if not isinstance(body, Mapping):
+        raise SettingsDecodeError(
+            f"env listing is {type(body).__name__}, not a JSON object"
+        )
+    listing: dict[str, tuple[bool, str]] = {}
+    for raw_key, entry in body.items():
+        key = str(raw_key)
+        if not isinstance(entry, Mapping):
+            listing[key] = (False, "")
+            continue
+        is_set = entry.get("is_set") is True
+        masked = entry.get("redacted_value")
+        listing[key] = (
+            True,
+            masked if isinstance(masked, str) else "",
+        ) if is_set else (False, "")
+    return listing
+
+
 def project_secret_row(
     *, key: str, is_set: bool, redacted_value: str
 ) -> SecretRow:
@@ -743,6 +822,42 @@ def project_secret_row(
         masked=redacted_value if is_set else "",
         provenance="saved" if is_set else "default",
     )
+
+
+def project_secret_rows(
+    listing: Mapping[str, tuple[bool, str]],
+) -> tuple[SecretRow, ...]:
+    return tuple(
+        project_secret_row(key=key, is_set=is_set, redacted_value=masked)
+        for key, (is_set, masked) in sorted(listing.items())
+    )
+
+
+class RevealDisplayValue:
+    """Presentation-ephemeral plaintext. Take once; never appear in ``repr``."""
+
+    def __init__(self, key: str, value: str) -> None:
+        self.key = key
+        self._value: str | None = value
+        self._cleared = False
+
+    @property
+    def is_cleared(self) -> bool:
+        return self._cleared
+
+    def take(self) -> str | None:
+        if self._cleared:
+            return None
+        value = self._value
+        self.clear()
+        return value
+
+    def clear(self) -> None:
+        self._value = None
+        self._cleared = True
+
+    def __repr__(self) -> str:
+        return f"RevealDisplayValue(key={self.key!r}, cleared={self._cleared})"
 
 
 def coverage_denominator(schema: SettingsSchema) -> frozenset[str]:

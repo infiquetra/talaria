@@ -95,15 +95,30 @@ def nested_assign(tree: dict[str, Any], dotted: str, value: object) -> None:
 class FieldRowWidget(Vertical):
     """One projected field: label, help, chips, and an editor or read-only."""
 
-    def __init__(self, row: FieldRowView, owner: str, **kwargs: object) -> None:
+    def __init__(
+        self,
+        row: FieldRowView,
+        owner: str,
+        *,
+        secret: bool = False,
+        on_reveal: Callable[[str], None] | None = None,
+        **kwargs: object,
+    ) -> None:
         super().__init__(id=row_widget_id(row.key), **kwargs)  # type: ignore[arg-type]
         self.row = row
         self.owner = owner
         self.editor: Input | None = None
+        self._secret = secret
+        self._on_reveal = on_reveal
 
     def compose(self) -> ComposeResult:
+        label = self.row.label
+        if self._secret:
+            masked = display_row_value(self.row)
+            if masked:
+                label = f"{label}  {masked}"
         yield Static(
-            literal_text(self.row.label), markup=False, classes="settings--label"
+            literal_text(label), markup=False, classes="settings--label"
         )
         if self.row.help_text:
             yield Static(
@@ -141,6 +156,8 @@ class FieldRowWidget(Vertical):
                 yield Static(
                     literal_text(shown), markup=False, classes="settings--value"
                 )
+            if self._secret:
+                yield Button("Reveal", compact=True)
         else:
             self.editor = Input(value=display_row_value(self.row))
             yield self.editor
@@ -151,18 +168,36 @@ class FieldRowWidget(Vertical):
                 classes="settings--validation",
             )
 
+    @on(Button.Pressed)
+    def _reveal_pressed(self, event: Button.Pressed) -> None:
+        if not self._secret or self._on_reveal is None:
+            return
+        if str(event.button.label).strip().lower() != "reveal":
+            return
+        event.stop()
+        self._on_reveal(self.row.key)
+
 
 class SettingsGroupWidget(Vertical):
     """Ownership group. Host groups mount no action buttons."""
 
     def __init__(
-        self, owner: str, title: str, rows: Sequence[FieldRowView], **kwargs: object
+        self,
+        owner: str,
+        title: str,
+        rows: Sequence[FieldRowView],
+        *,
+        secrets: Mapping[str, tuple[bool, str]] | None = None,
+        on_reveal: Callable[[str], None] | None = None,
+        **kwargs: object,
     ) -> None:
         super().__init__(id=f"settings-group-{owner}", **kwargs)  # type: ignore[arg-type]
         self.owner = owner
         self.title = title
         self.rows = rows
         self.row_widgets: list[FieldRowWidget] = []
+        self._secrets = dict(secrets or {})
+        self._on_reveal = on_reveal
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -172,7 +207,12 @@ class SettingsGroupWidget(Vertical):
             literal_text(self.owner), markup=False, classes="settings--owner"
         )
         for row in self.rows:
-            widget = FieldRowWidget(row, self.owner)
+            widget = FieldRowWidget(
+                row,
+                self.owner,
+                secret=row.key in self._secrets,
+                on_reveal=self._on_reveal,
+            )
             self.row_widgets.append(widget)
             yield widget
 
