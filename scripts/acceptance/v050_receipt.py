@@ -320,6 +320,17 @@ V063_FORBIDDEN_GATE_IDS = frozenset(
         "v0-6-1-daily-driver",
     }
 )
+V064_ITEM_SCHEMA = "talaria-v0.6.4-receipt-v1"
+V064_MANIFEST_SCHEMA = "talaria-v0.6.4-artifact-manifest-v1"
+V064_GATE_ID = "v0-6-4-configuration-ui-residuals"
+V064_RELEASE = "0.6.4"
+V064_FORBIDDEN_GATE_IDS = frozenset(
+    {
+        "v0-6-3-configuration-residuals",
+        "v0-6-2-configuration",
+        "v0-6-1-daily-driver",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1430,6 +1441,45 @@ V063_CFG_RECEIPT_SCHEMA = RecordSchema(
         "schema_version": frozenset({V063_ITEM_SCHEMA}),
         "release": frozenset({V063_RELEASE}),
         "checklist_item": V063_CFG_ITEMS,
+        "tester": frozenset(V061_ROLE_LABELS),
+        "verdict": frozenset(VERDICTS),
+    },
+)
+
+V064_CFG_ITEMS = frozenset({"cfg-p3"})
+V064_CFG_RECEIPT_SCHEMA = RecordSchema(
+    name="v064-cfg-receipt",
+    declared_keys={
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "release": ValueCategory.CLOSED_VOCABULARY,
+        "checklist_item": ValueCategory.CLOSED_VOCABULARY,
+        "tester": ValueCategory.CLOSED_VOCABULARY,
+        "verdict": ValueCategory.CLOSED_VOCABULARY,
+        "candidate_commit_sha": ValueCategory.DIGEST,
+        "applies_to_candidate": ValueCategory.STRING,
+        "evidence": ValueCategory.OBJECT,
+    },
+    nested_schemas={
+        "evidence": {
+            "source": ValueCategory.STRING,
+            "observation": ValueCategory.STRING,
+            "review_artifact_sha256": ValueCategory.DIGEST,
+            "project_check_sha256": ValueCategory.DIGEST,
+            "smoke_receipt_sha256": ValueCategory.DIGEST,
+            "cleanup_receipt_sha256": ValueCategory.DIGEST,
+        },
+    },
+    digest_preimages={
+        "candidate_commit_sha": "git-commit",
+        "evidence.review_artifact_sha256": "artifact",
+        "evidence.project_check_sha256": "artifact",
+        "evidence.smoke_receipt_sha256": "receipt",
+        "evidence.cleanup_receipt_sha256": "receipt",
+    },
+    vocabularies={
+        "schema_version": frozenset({V064_ITEM_SCHEMA}),
+        "release": frozenset({V064_RELEASE}),
+        "checklist_item": V064_CFG_ITEMS,
         "tester": frozenset(V061_ROLE_LABELS),
         "verdict": frozenset(VERDICTS),
     },
@@ -2791,6 +2841,8 @@ class SchemaRegistry:
                 return V062_CFG_RECEIPT_SCHEMA
             if isinstance(doc, dict) and doc.get("schema_version") == V063_ITEM_SCHEMA:
                 return V063_CFG_RECEIPT_SCHEMA
+            if isinstance(doc, dict) and doc.get("schema_version") == V064_ITEM_SCHEMA:
+                return V064_CFG_RECEIPT_SCHEMA
             if isinstance(doc, dict) and (
                 doc.get("schema_version") == V061_INSTALL_SCHEMA
                 or "candidate" in doc
@@ -2817,6 +2869,8 @@ class SchemaRegistry:
                 return V062_CFG_RECEIPT_SCHEMA
             if doc.get("schema_version") == V063_ITEM_SCHEMA:
                 return V063_CFG_RECEIPT_SCHEMA
+            if doc.get("schema_version") == V064_ITEM_SCHEMA:
+                return V064_CFG_RECEIPT_SCHEMA
             if "checklist_item" in doc and "verdict" in doc:
                 return RECEIPT_SCHEMA
             if (
@@ -4819,6 +4873,33 @@ def _validate_v063_receipt(receipt: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _is_v064_cfg_manifest(
+    manifest: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
+    return (
+        manifest.get("schema_version") == V064_MANIFEST_SCHEMA
+        or candidate.get("version") == V064_RELEASE
+    )
+
+
+def _validate_v064_receipt(receipt: dict[str, Any]) -> list[str]:
+    """Return defects in a v0.6.4 CFG receipt.
+
+    The named schema is the five-field stub: ``schema_version``, ``release``,
+    ``checklist_item``, ``tester``, ``verdict``. Extra keys are ignored.
+    """
+    errors: list[str] = []
+    if receipt.get("schema_version") != V064_ITEM_SCHEMA:
+        errors.append(f"schema_version is not {V064_ITEM_SCHEMA}")
+    if receipt.get("release") != V064_RELEASE:
+        errors.append(f"release is not {V064_RELEASE}")
+    for key in ("checklist_item", "tester", "verdict"):
+        value = receipt.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{key} must be a non-empty string")
+    return errors
+
+
 def verify_run(
     manifest_path: Path = _MANIFEST_PATH,
     *,
@@ -4867,6 +4948,19 @@ def verify_run(
             errors.append(
                 f"gate_id must be {V063_GATE_ID}; "
                 "must not reuse v0-6-2-configuration or v0-6-1-daily-driver"
+            )
+    v064_cfg = _is_v064_cfg_manifest(manifest, candidate)
+    if v064_cfg and manifest.get("gate_id") != V064_GATE_ID:
+        reused = manifest.get("gate_id")
+        if reused in V064_FORBIDDEN_GATE_IDS:
+            errors.append(
+                f"gate_id must be {V064_GATE_ID}; must not reuse {reused}"
+            )
+        else:
+            errors.append(
+                f"gate_id must be {V064_GATE_ID}; "
+                "must not reuse v0-6-3-configuration-residuals, "
+                "v0-6-2-configuration, or v0-6-1-daily-driver"
             )
 
     try:
@@ -4956,6 +5050,8 @@ def verify_run(
             validator = _validate_v062_receipt(receipt)
         elif schema_version == V063_ITEM_SCHEMA:
             validator = _validate_v063_receipt(receipt)
+        elif schema_version == V064_ITEM_SCHEMA:
+            validator = _validate_v064_receipt(receipt)
         elif schema_version == V050_ITEM_SCHEMA:
             validator = validate_receipt(
                 receipt,
@@ -4973,7 +5069,7 @@ def verify_run(
             errors.append(
                 f"{relative}: unknown receipt schema_version {schema_version!r}; expected one of "
                 f"{V050_ITEM_SCHEMA}, {V060_ITEM_SCHEMA}, {V061_ITEM_SCHEMA}, "
-                f"{V062_ITEM_SCHEMA}, or {V063_ITEM_SCHEMA}"
+                f"{V062_ITEM_SCHEMA}, {V063_ITEM_SCHEMA}, or {V064_ITEM_SCHEMA}"
             )
             continue
         for error in validator:
