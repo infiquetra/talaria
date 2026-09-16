@@ -10,6 +10,21 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-09-16
+
+Typed schema and env load outcomes, plus `summarize_schema_shape` for
+metadata-only diagnosis. The live T3R probe found no-failure-class;
+the accepted remount was not rewritten. See the
+[v0.6.5 release notes](docs/releases/v0.6.5.md).
+
+### Added
+
+- Named transport and decode outcomes for schema and env loads. A
+  placeholder names the phase and failure class instead of collapsing
+  every error into a silent unlabeled state.
+- `summarize_schema_shape` reports field/category counts and sorted
+  top-level keys only. Non-objects raise `SettingsDecodeError`.
+
 ## [0.6.4] — 2026-09-16
 
 Selected `/config` target loads remount that profile's schema and
@@ -552,7 +567,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.5.md
 [0.6.4]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.4.md
 [0.6.3]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.3.md
 [0.6.2]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.2.md

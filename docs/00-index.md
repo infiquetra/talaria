@@ -24,10 +24,12 @@ Architecture decisions are canon. Analysis is evidence for them, not a substitut
 
 ## Releases
 
-v0.6.4 remounts a selected `/config` target's schema and Environment
-rows so Stay/Save/Discard and one-shot Reveal are reachable after a
-switch. Installed remote login without live access stays blocked.
+v0.6.5 types schema and env load failures and ships
+`summarize_schema_shape` for metadata-only diagnosis. The live T3R
+probe found no-failure-class; remount was not rewritten. Installed
+remote login without live access stays blocked.
 
+- [Talaria v0.6.5](releases/v0.6.5.md)
 - [Talaria v0.6.4](releases/v0.6.4.md)
 - [Talaria v0.6.3](releases/v0.6.3.md)
 - [Talaria v0.6.2](releases/v0.6.2.md)
