@@ -10,8 +10,8 @@ fixed-value assumption, and adding remote support later means rewriting
 reconnect — the subtlest concurrency work in the transport. So the seam is one
 method, called per dial, returning a ``(query parameter name, value)`` pair.
 
-**v0.1 ships :class:`LoopbackTokenProvider` only.** ``GatedTicketProvider`` is
-specified in ``docs/engineering-journal/QUEUED.md`` and deliberately not built.
+**v0.1 shipped :class:`LoopbackTokenProvider` only.** Gated Bearer/refresh and
+per-dial WS tickets live in :mod:`talaria.transport.gated_auth`.
 
 **The credential rides the URL query string, never argv (KTD13, R1, R9).** At
 Hermes ``7f4d15515`` the WebSocket upgrade credential is read exclusively from
