@@ -5845,6 +5845,7 @@ class TalariaApp(App[None]):
 
     async def _settings_workspace_identity(self) -> Any:
         from talaria.domain.settings import ModelPickerOption, ModelPickerView
+        from talaria.transport.settings import SettingsError
 
         connection_id = self._settings_connection_id()
         profile = self.current_profile or connection_id
@@ -5870,8 +5871,8 @@ class TalariaApp(App[None]):
                     else:
                         saved = dict(raw_config)
                         effective = saved
-            except Exception:
-                pass
+            except SettingsError:
+                saved, effective, defaults = {}, {}, {}
         picker = None
         catalog = self.model_catalog
         if catalog is not None:
