@@ -264,6 +264,50 @@ def _sensitive_free_text_key(key: str) -> bool:
     )
 
 
+#: Admin HTTP routes whose request or response bodies are withheld whole
+#: (KTD8). Denial is by method+path, independent of key-name heuristics:
+#: ``POST /api/env/reveal`` returns ``{"value": ...}`` under an innocent key.
+_SENSITIVE_HTTP_ROUTES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("PUT", "/api/env"),
+        ("DELETE", "/api/env"),
+        ("POST", "/api/env/reveal"),
+        ("POST", "/api/providers/validate"),
+        ("POST", "/api/providers/custom-endpoints/validate"),
+        ("POST", "/auth/native/token"),
+        ("POST", "/auth/native/refresh"),
+        ("POST", "/api/auth/ws-ticket"),
+        ("POST", "/api/credentials/pool/rotate"),
+        ("POST", "/api/vault"),
+        ("PUT", "/api/vault"),
+        ("DELETE", "/api/vault"),
+        ("POST", "/api/vault/reveal"),
+    }
+)
+_SENSITIVE_HTTP_PATH_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("POST", re.compile(r"^/api/providers/oauth/[^/]+/start$")),
+    ("POST", re.compile(r"^/api/vault(?:/.*)?$")),
+    ("PUT", re.compile(r"^/api/vault(?:/.*)?$")),
+    ("DELETE", re.compile(r"^/api/vault(?:/.*)?$")),
+)
+
+
+def _normalize_http_path(path: str) -> str:
+    return path.split("?", 1)[0].split("#", 1)[0]
+
+
+def is_sensitive_http_route(method: str, path: str) -> bool:
+    """True when this HTTP exchange is denied by route, not by key name."""
+    normalized = (method.upper(), _normalize_http_path(path))
+    if normalized in _SENSITIVE_HTTP_ROUTES:
+        return True
+    verb, route = normalized
+    return any(
+        verb == pattern_method and pattern.fullmatch(route) is not None
+        for pattern_method, pattern in _SENSITIVE_HTTP_PATH_PATTERNS
+    )
+
+
 def redact_probe_detail(value: Any) -> str:
     """Bound and de-credential one gateway-supplied diagnostic sentence (R22).
 

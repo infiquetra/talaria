@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from talaria.status.contract import (
     DEFAULT_AGENT_MODEL_MAX_COLUMNS,
@@ -71,6 +72,17 @@ class ConfigError(Exception):
 DEFAULT_INSPECTOR_KEY = "ctrl+o"
 #: Default chord for cancelling the in-flight turn (#120, decision B).
 DEFAULT_INTERRUPT_KEY = "ctrl+s"
+#: D12 remaining named app bindings — each default is the chord the action
+#: already has in ``talaria/ui/app.py``.
+DEFAULT_AGENTS_KEY = "ctrl+g"
+DEFAULT_COMMANDS_KEY = "f3"
+DEFAULT_MODELS_KEY = "f11"
+DEFAULT_PROFILES_KEY = "f12"
+DEFAULT_CONFIG_KEY = "ctrl+k"
+DEFAULT_FOLLOW_KEY = "f5"
+DEFAULT_REPLAY_PAUSE_KEY = "f8"
+DEFAULT_REPLAY_SLOWER_KEY = "f9"
+DEFAULT_REPLAY_FASTER_KEY = "f10"
 #: The replaced inspector default. Herdr captures ``Ctrl+B`` before Talaria
 #: sees it when nested, so it stays named here as the replaced default — it is
 #: documentation, not a binding, and nothing binds it anymore.
@@ -133,12 +145,38 @@ def _valid_key(value: Any) -> str | None:
     return None
 
 
+#: Ordered ``[keys]`` defaults. Collision checks walk this map so a new
+#: bindable action cannot be added to DEFAULTS without joining the rule.
+KEY_SETTING_DEFAULTS: dict[str, str] = {
+    "toggle_inspector": DEFAULT_INSPECTOR_KEY,
+    "interrupt": DEFAULT_INTERRUPT_KEY,
+    "agents": DEFAULT_AGENTS_KEY,
+    "commands": DEFAULT_COMMANDS_KEY,
+    "models": DEFAULT_MODELS_KEY,
+    "profiles": DEFAULT_PROFILES_KEY,
+    "config": DEFAULT_CONFIG_KEY,
+    "follow": DEFAULT_FOLLOW_KEY,
+    "replay_pause": DEFAULT_REPLAY_PAUSE_KEY,
+    "replay_slower": DEFAULT_REPLAY_SLOWER_KEY,
+    "replay_faster": DEFAULT_REPLAY_FASTER_KEY,
+}
+
+
 @dataclass(frozen=True)
 class KeyBindings:
-    """The resolved inspector/interrupt chords after fallback normalization."""
+    """The resolved bindable chords after fallback normalization."""
 
     toggle_inspector: str
     interrupt: str
+    agents: str = DEFAULT_AGENTS_KEY
+    commands: str = DEFAULT_COMMANDS_KEY
+    models: str = DEFAULT_MODELS_KEY
+    profiles: str = DEFAULT_PROFILES_KEY
+    config: str = DEFAULT_CONFIG_KEY
+    follow: str = DEFAULT_FOLLOW_KEY
+    replay_pause: str = DEFAULT_REPLAY_PAUSE_KEY
+    replay_slower: str = DEFAULT_REPLAY_SLOWER_KEY
+    replay_faster: str = DEFAULT_REPLAY_FASTER_KEY
 
 
 def resolve_keybindings(
@@ -147,54 +185,51 @@ def resolve_keybindings(
     """Resolve a ``[keys]`` mapping to chords, falling back safely.
 
     Every failure mode — a missing table, an empty, null, or non-string value,
-    an unknown key name, a reserved collision, or both actions assigned the
+    an unknown key name, a reserved collision, or two actions assigned the
     same chord — resolves to a default and is named in the returned notices.
     A duplicate assignment resets *both* actions to their defaults: falling
     back only one of them could land on the other's still-duplicate value.
     """
     source = dict(raw) if isinstance(raw, Mapping) else {}
     notices: list[str] = []
+    resolved: dict[str, str] = {}
 
-    inspector = _valid_key(source.get("toggle_inspector"))
-    if inspector is None:
-        if "toggle_inspector" in source:
+    for name, default in KEY_SETTING_DEFAULTS.items():
+        value = _valid_key(source.get(name))
+        if value is None:
+            if name in source:
+                notices.append(
+                    f"keys.{name} {source.get(name)!r} is not a key Talaria "
+                    f"recognizes; using {default}"
+                )
+            value = default
+        if value in RESERVED_KEYS:
             notices.append(
-                "keys.toggle_inspector "
-                f"{source.get('toggle_inspector')!r} is not a key Talaria "
-                f"recognizes; using {DEFAULT_INSPECTOR_KEY}"
+                f"keys.{name} {value!r} is reserved for quitting; using {default}"
             )
-        inspector = DEFAULT_INSPECTOR_KEY
-    interrupt = _valid_key(source.get("interrupt"))
-    if interrupt is None:
-        if "interrupt" in source:
+            value = default
+        resolved[name] = value
+
+    grouped: dict[str, list[str]] = {}
+    for name, chord in resolved.items():
+        grouped.setdefault(chord, []).append(name)
+    for chord, names in grouped.items():
+        if len(names) < 2:
+            continue
+        for name in names:
+            resolved[name] = KEY_SETTING_DEFAULTS[name]
+        if len(names) == 2:
+            first, second = names
             notices.append(
-                f"keys.interrupt {source.get('interrupt')!r} is not a key "
-                f"Talaria recognizes; using {DEFAULT_INTERRUPT_KEY}"
+                f"keys.{first} and keys.{second} are both {chord!r}; "
+                f"using {KEY_SETTING_DEFAULTS[first]} and "
+                f"{KEY_SETTING_DEFAULTS[second]}"
             )
-        interrupt = DEFAULT_INTERRUPT_KEY
+        else:
+            listed = ", ".join(f"keys.{name}" for name in names)
+            notices.append(f"{listed} are all {chord!r}; using defaults")
 
-    if inspector in RESERVED_KEYS:
-        notices.append(
-            f"keys.toggle_inspector {inspector!r} is reserved for quitting; "
-            f"using {DEFAULT_INSPECTOR_KEY}"
-        )
-        inspector = DEFAULT_INSPECTOR_KEY
-    if interrupt in RESERVED_KEYS:
-        notices.append(
-            f"keys.interrupt {interrupt!r} is reserved for quitting; "
-            f"using {DEFAULT_INTERRUPT_KEY}"
-        )
-        interrupt = DEFAULT_INTERRUPT_KEY
-
-    if inspector == interrupt:
-        notices.append(
-            f"keys.toggle_inspector and keys.interrupt are both {inspector!r}; "
-            f"using {DEFAULT_INSPECTOR_KEY} and {DEFAULT_INTERRUPT_KEY}"
-        )
-        inspector = DEFAULT_INSPECTOR_KEY
-        interrupt = DEFAULT_INTERRUPT_KEY
-
-    return KeyBindings(toggle_inspector=inspector, interrupt=interrupt), tuple(notices)
+    return KeyBindings(**resolved), tuple(notices)
 
 
 #: Built-in defaults. Every key a later unit reads must have an entry here so
@@ -203,7 +238,14 @@ def resolve_keybindings(
 #: to, so a default of ``None`` means "string-valued, no default".
 DEFAULTS: dict[str, Any] = {
     "theme": {"name": REFINED_DEFAULT.slug},
-    "ui": {"reduced_motion": False},
+    "ui": {
+        "reduced_motion": False,
+        "inspector_width": 36,
+        "inspector_open_at_start": False,
+        "inspector_dock_min_columns": 120,
+        "diff_side_by_side_min_columns": 112,
+        "show_timestamps": False,
+    },
     "status": {
         "command": None,
         "interval_seconds": 5,
@@ -213,15 +255,16 @@ DEFAULTS: dict[str, Any] = {
         "agent_model_max_columns": DEFAULT_AGENT_MODEL_MAX_COLUMNS,
     },
     "environment": {"allowlist": []},
-    "composer": {"paste_collapse_lines": 6, "paste_collapse_bytes": 512},
-    # #120's keybinding surface: the inspector toggle and the turn-cancel
-    # chords, configurable because no single default survives every terminal
-    # multiplexer. Normalized in _normalize_config, so an invalid value falls
-    # back with a notice rather than binding a dead or dangerous key.
-    "keys": {
-        "toggle_inspector": DEFAULT_INSPECTOR_KEY,
-        "interrupt": DEFAULT_INTERRUPT_KEY,
+    "composer": {
+        "paste_collapse_lines": 6,
+        "paste_collapse_bytes": 512,
+        "attachment_max_mb": 16,
     },
+    "notifications": {"transcript_line": True},
+    # #120's keybinding surface plus D12's remaining named app bindings.
+    # Normalized in _normalize_config, so an invalid value falls back with a
+    # notice rather than binding a dead or dangerous key.
+    "keys": dict(KEY_SETTING_DEFAULTS),
     # U4's profile endpoints: a name-to-gateway-URL map the operator writes.
     # It has no environment-variable override and never will — a map cannot be
     # expressed as one ``TALARIA_*`` scalar, and inventing an encoding for it
@@ -229,6 +272,9 @@ DEFAULTS: dict[str, Any] = {
     # listed profile renders as "no endpoint configured" until the operator
     # says otherwise; that is the honest starting state rather than a guess.
     "profiles": {"endpoints": {}},
+    # D11: dashboard connection inventory. Not keyed by profile; credentials
+    # stay in the 0600 credentials file, never beside the URL.
+    "connections": {},
 }
 
 #: Maps a TALARIA_* environment variable to its (section, key) location in the
@@ -241,6 +287,15 @@ _ENV_KEY_MAP: dict[str, tuple[str, str]] = {
     "TALARIA_COMPOSER_PASTE_COLLAPSE_BYTES": ("composer", "paste_collapse_bytes"),
     "TALARIA_KEYS_TOGGLE_INSPECTOR": ("keys", "toggle_inspector"),
     "TALARIA_KEYS_INTERRUPT": ("keys", "interrupt"),
+    "TALARIA_KEYS_AGENTS": ("keys", "agents"),
+    "TALARIA_KEYS_COMMANDS": ("keys", "commands"),
+    "TALARIA_KEYS_MODELS": ("keys", "models"),
+    "TALARIA_KEYS_PROFILES": ("keys", "profiles"),
+    "TALARIA_KEYS_CONFIG": ("keys", "config"),
+    "TALARIA_KEYS_FOLLOW": ("keys", "follow"),
+    "TALARIA_KEYS_REPLAY_PAUSE": ("keys", "replay_pause"),
+    "TALARIA_KEYS_REPLAY_SLOWER": ("keys", "replay_slower"),
+    "TALARIA_KEYS_REPLAY_FASTER": ("keys", "replay_faster"),
 }
 
 _TRUE_LITERALS = frozenset({"1", "true", "yes", "on"})
@@ -470,6 +525,103 @@ def profile_endpoints(cfg: Config) -> Mapping[str, str]:
     }
 
 
+_INSPECTOR_WIDTH_BOUNDS = (28, 48)
+_CONNECTION_AUTH_MODES = frozenset({"loopback", "gated"})
+_CONNECTION_FILE_KEYS = frozenset({"url", "auth", "label"})
+
+
+def _url_has_userinfo(url: str) -> bool:
+    """True when ``url`` carries credentials in the userinfo position."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return parts.username is not None or parts.password is not None
+
+
+def _normalize_bool_setting(
+    table: dict[str, Any],
+    key: str,
+    fallback: bool,
+    path: str,
+    notices: list[str],
+) -> None:
+    if not isinstance(table.get(key), bool):
+        table[key] = fallback
+        notices.append(f"{path} must be a boolean; using {str(fallback).lower()}")
+
+
+def _normalize_positive_int(
+    table: dict[str, Any],
+    key: str,
+    fallback: int,
+    path: str,
+    notices: list[str],
+) -> None:
+    value = table.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        table[key] = fallback
+        notices.append(f"{path} must be a positive integer; using {fallback}")
+
+
+def _normalize_ui_geometry(ui: dict[str, Any], notices: list[str]) -> None:
+    width = ui.get("inspector_width")
+    low, high = _INSPECTOR_WIDTH_BOUNDS
+    if isinstance(width, bool) or not isinstance(width, int) or not low <= width <= high:
+        ui["inspector_width"] = 36
+        notices.append(
+            f"ui.inspector_width must be an integer between {low} and {high}; using 36"
+        )
+    _normalize_positive_int(
+        ui,
+        "inspector_dock_min_columns",
+        120,
+        "ui.inspector_dock_min_columns",
+        notices,
+    )
+    _normalize_positive_int(
+        ui,
+        "diff_side_by_side_min_columns",
+        112,
+        "ui.diff_side_by_side_min_columns",
+        notices,
+    )
+
+
+def _normalize_connections(merged: dict[str, Any]) -> tuple[str, ...]:
+    """Validate the D11 inventory; loads never raise."""
+    notices: list[str] = []
+    source = merged.get("connections")
+    if not isinstance(source, Mapping):
+        merged["connections"] = {}
+        if source is not None:
+            notices.append("connections must be a table; using an empty inventory")
+        return tuple(notices)
+
+    normalized: dict[str, Any] = {}
+    for conn_id, entry in source.items():
+        name = str(conn_id)
+        if not isinstance(entry, Mapping):
+            notices.append(f"connections.{name} must be a table; ignoring the entry")
+            continue
+        item = dict(entry)
+        auth = item.get("auth")
+        if auth is not None and auth not in _CONNECTION_AUTH_MODES:
+            item["auth"] = "loopback"
+            notices.append(
+                f"connections.{name} auth {auth!r} is not recognized; using loopback"
+            )
+        url = item.get("url")
+        if isinstance(url, str) and _url_has_userinfo(url):
+            item["url"] = ""
+            notices.append(
+                f"connections.{name} url carries a credential; dropping the url"
+            )
+        normalized[name] = item
+    merged["connections"] = normalized
+    return tuple(notices)
+
+
 def _normalize_config(
     merged: dict[str, Any],
     *,
@@ -494,14 +646,16 @@ def _normalize_config(
         merged["theme"] = dict(theme)
 
     ui_source = merged.get("ui")
-    reduced_motion = (
-        ui_source.get("reduced_motion") if isinstance(ui_source, Mapping) else None
-    )
-    if not isinstance(reduced_motion, bool):
-        ui = dict(ui_source) if isinstance(ui_source, Mapping) else {}
+    ui = dict(ui_source) if isinstance(ui_source, Mapping) else {}
+    if not isinstance(ui.get("reduced_motion"), bool):
         ui["reduced_motion"] = False
-        merged["ui"] = ui
         notices.append("ui.reduced_motion must be a boolean; using false")
+    _normalize_ui_geometry(ui, notices)
+    _normalize_bool_setting(
+        ui, "inspector_open_at_start", False, "ui.inspector_open_at_start", notices
+    )
+    _normalize_bool_setting(ui, "show_timestamps", False, "ui.show_timestamps", notices)
+    merged["ui"] = ui
 
     status_source = merged.get("status")
     normalized_status = normalize_status_settings(status_source)
@@ -523,6 +677,33 @@ def _normalize_config(
     if command_notice is not None:
         notices.append(command_notice)
 
+    composer_source = merged.get("composer")
+    composer = dict(composer_source) if isinstance(composer_source, Mapping) else {}
+    attachment = composer.get("attachment_max_mb")
+    if (
+        isinstance(attachment, bool)
+        or not isinstance(attachment, int)
+        or attachment <= 0
+    ):
+        composer["attachment_max_mb"] = 16
+        notices.append(
+            "composer.attachment_max_mb must be a positive integer; using 16"
+        )
+    merged["composer"] = composer
+
+    notifications_source = merged.get("notifications")
+    notifications = (
+        dict(notifications_source) if isinstance(notifications_source, Mapping) else {}
+    )
+    _normalize_bool_setting(
+        notifications,
+        "transcript_line",
+        True,
+        "notifications.transcript_line",
+        notices,
+    )
+    merged["notifications"] = notifications
+
     keys_source = merged.get("keys")
     bindings, key_notices = resolve_keybindings(
         keys_source if isinstance(keys_source, Mapping) else None
@@ -533,10 +714,12 @@ def _normalize_config(
             f"using {DEFAULT_INSPECTOR_KEY} and {DEFAULT_INTERRUPT_KEY}"
         )
     merged["keys"] = {
-        "toggle_inspector": bindings.toggle_inspector,
-        "interrupt": bindings.interrupt,
+        name: getattr(bindings, name) for name in KEY_SETTING_DEFAULTS
     }
     notices.extend(key_notices)
+
+    connection_notices = _normalize_connections(merged)
+    notices.extend(connection_notices)
     return merged, tuple(notices)
 
 
@@ -1105,6 +1288,448 @@ def save_status_settings(
     return path
 
 
+# ── D10/D11 generalized surgical writer ──────────────────────────────────
+
+
+_WRITABLE_TABLES = frozenset(
+    {
+        "theme",
+        "ui",
+        "status",
+        "environment",
+        "composer",
+        "keys",
+        "notifications",
+    }
+)
+_TABLE_WRITE_KEYS: dict[str, frozenset[str]] = {
+    "theme": frozenset({"name"}),
+    "ui": frozenset(
+        {
+            "reduced_motion",
+            "inspector_width",
+            "inspector_open_at_start",
+            "inspector_dock_min_columns",
+            "diff_side_by_side_min_columns",
+            "show_timestamps",
+        }
+    ),
+    "status": frozenset(STATUS_WRITE_KEYS),
+    "environment": frozenset({"allowlist"}),
+    "composer": frozenset(
+        {"paste_collapse_lines", "paste_collapse_bytes", "attachment_max_mb"}
+    ),
+    "keys": frozenset(KEY_SETTING_DEFAULTS),
+    "notifications": frozenset({"transcript_line"}),
+}
+
+
+class _RenderedTable(dict[str, bytes]):
+    """A key→TOML-value map that also names the table being rewritten."""
+
+    def __init__(self, table: str, values: Mapping[str, bytes]) -> None:
+        super().__init__(values)
+        self.table = table
+
+
+def _table_header_pattern(table: str) -> re.Pattern[bytes]:
+    raw = re.escape(table.encode("ascii"))
+    return re.compile(rb"(?m)^[ \t]*\[" + raw + rb"\][ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)")
+
+
+def _inline_table_pattern(table: str) -> re.Pattern[bytes]:
+    raw = re.escape(table.encode("ascii"))
+    quoted = rb"(?:" + raw + rb"|\"" + raw + rb"\"|'" + raw + rb"')"
+    return re.compile(
+        rb"(?m)^[ \t]*"
+        + quoted
+        + rb"[ \t]*=[ \t]*\{[^\r\n]*\}[ \t]*(?:\#[^\r\n]*)?(?:\r?\n|$)"
+    )
+
+
+def _any_dotted_table_pattern(table: str) -> re.Pattern[bytes]:
+    parts = [re.escape(part.encode("ascii")) for part in table.split(".")]
+    dotted = rb"[ \t]*\.[ \t]*".join(parts)
+    return re.compile(rb"(?m)^[ \t]*" + dotted + rb"[ \t]*\.")
+
+
+def _dotted_table_key_pattern(table: str, key: str) -> re.Pattern[bytes]:
+    pieces = [re.escape(part.encode("ascii")) for part in (*table.split("."), key)]
+    quoted = [
+        rb"(?:" + piece + rb"|\"" + piece + rb"\"|'" + piece + rb"')" for piece in pieces
+    ]
+    return re.compile(
+        rb"(?m)^[ \t]*" + rb"[ \t]*\.[ \t]*".join(quoted) + rb"[ \t]*="
+    )
+
+
+def _table_key_pattern(key: str) -> re.Pattern[bytes]:
+    raw = re.escape(key.encode("ascii"))
+    return re.compile(
+        rb"(?m)^[ \t]*(?:" + raw + rb"|\"" + raw + rb"\"|'" + raw + rb"')[ \t]*="
+    )
+
+
+def _render_toml_value(value: Any) -> bytes:
+    if isinstance(value, bool):
+        return b"true" if value else b"false"
+    if isinstance(value, int):
+        return str(value).encode()
+    if isinstance(value, str):
+        return _toml_basic_string(value).encode()
+    if isinstance(value, (bytes, bytearray)) or not isinstance(value, Sequence):
+        raise ConfigError(f"cannot render {value!r} as a TOML value")
+    names = tuple(value)
+    if not names:
+        return b"[]"
+    lines = [b"["]
+    lines.extend(b"  " + _toml_basic_string(str(name)).encode() + b"," for name in names)
+    lines.append(b"]")
+    return b"\n".join(lines)
+
+
+def _rewrite_dotted_or_append_named_table(
+    content: bytes, table: str, rendered: Mapping[str, bytes]
+) -> bytes:
+    dotted = {key: _dotted_table_key_pattern(table, key).search(content) for key in rendered}
+    missing = [key for key, match in dotted.items() if match is None]
+    if missing:
+        if any(match is not None for match in dotted.values()) or (
+            _any_dotted_table_pattern(table).search(content) is not None
+        ):
+            raise ConfigError(
+                f"this file's {table} settings mix dotted assignments with keys "
+                "that would have to be appended; edit the file by hand"
+            )
+        separator = b"" if not content or content.endswith((b"\n", b"\r")) else b"\n"
+        blank = b"" if not content or content.endswith((b"\n\n", b"\r\n\r\n")) else b"\n"
+        block = f"[{table}]\n".encode("ascii") + b"".join(
+            key.encode("ascii") + b" = " + rendered[key] + b"\n" for key in rendered
+        )
+        return content + separator + blank + block
+
+    replacements: list[tuple[int, int, bytes]] = []
+    for key, match in dotted.items():
+        if match is None:
+            raise ConfigError(
+                f"this file's {table} settings mix dotted assignments with keys "
+                "that would have to be appended; edit the file by hand"
+            )
+        span = _status_value_span(content, match)
+        replacements.append((*span, _status_replacement(content, span, rendered[key])))
+    for start, end, replacement in sorted(replacements, reverse=True):
+        content = content[:start] + replacement + content[end:]
+    return content
+
+
+def _rewrite_named_table(
+    content: bytes, table: str, rendered: Mapping[str, bytes]
+) -> bytes:
+    if not rendered:
+        return content
+    if _inline_table_pattern(table).search(content):
+        raise ConfigError(
+            f"{table} is written as an inline table; Talaria will not reformat "
+            "it — edit the file by hand"
+        )
+
+    header = _table_header_pattern(table).search(content)
+    if header is None:
+        return _rewrite_dotted_or_append_named_table(content, table, rendered)
+
+    next_header = _TABLE_HEADER_RE.search(content, header.end())
+    table_end = next_header.start() if next_header is not None else len(content)
+    replacements: list[tuple[int, int, bytes]] = []
+    appends: list[tuple[str, bytes]] = []
+    for key in rendered:
+        match = _table_key_pattern(key).search(content, header.end(), table_end)
+        if match is None:
+            appends.append((key, rendered[key]))
+            continue
+        span = _status_value_span(content, match)
+        replacements.append((*span, _status_replacement(content, span, rendered[key])))
+
+    if appends:
+        newline = b"\r\n" if b"\r\n" in content[header.end() : table_end] else b"\n"
+        prefix = content[:table_end]
+        if prefix and not prefix.endswith((b"\n", b"\r")):
+            prefix += newline
+        block = b"".join(
+            key.encode("ascii") + b" = " + value_bytes + newline
+            for key, value_bytes in appends
+        )
+        content = prefix + block + content[table_end:]
+
+    for start, end, replacement in sorted(replacements, reverse=True):
+        content = content[:start] + replacement + content[end:]
+    return content
+
+
+def _rewrite_settings_table(content: bytes, rendered: Mapping[str, bytes]) -> bytes:
+    """Byte-preserving rewrite used by :func:`save_settings`.
+
+    ``rendered`` is a :class:`_RenderedTable` (or any mapping with a ``table``
+    attribute). The two-argument signature is the monkeypatch seam the
+    semantic-diff guard test replaces.
+    """
+    table = getattr(rendered, "table", None)
+    if not isinstance(table, str) or not table:
+        raise ConfigError("internal rewrite is missing its table name")
+    return _rewrite_named_table(content, table, rendered)
+
+
+def _require_int(
+    path: str,
+    value: Any,
+    *,
+    positive: bool = False,
+    bounds: tuple[int, int] | None = None,
+) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{path} must be an integer; refusing {value!r}")
+    if positive and value <= 0:
+        raise ConfigError(f"{path} must be a positive integer; refusing {value}")
+    if bounds is not None and not bounds[0] <= value <= bounds[1]:
+        raise ConfigError(
+            f"{path} must be between {bounds[0]} and {bounds[1]}; refusing {value}"
+        )
+
+
+def _require_bool(path: str, value: Any) -> None:
+    if not isinstance(value, bool):
+        raise ConfigError(f"{path} must be a boolean; refusing {value!r}")
+
+
+def _validate_settings_change(table: str, key: str, value: Any) -> Any:
+    """Strict write-time validation. Returns the value that will be persisted."""
+    path = f"{table}.{key}"
+    if table == "ui":
+        if key == "inspector_width":
+            _require_int(path, value, bounds=_INSPECTOR_WIDTH_BOUNDS)
+            return value
+        if key in {"inspector_dock_min_columns", "diff_side_by_side_min_columns"}:
+            _require_int(path, value, positive=True)
+            return value
+        if key in {
+            "reduced_motion",
+            "inspector_open_at_start",
+            "show_timestamps",
+        }:
+            _require_bool(path, value)
+            return value
+    if table == "composer":
+        if key == "attachment_max_mb":
+            _require_int(path, value, positive=True)
+            return value
+        if key in {"paste_collapse_lines", "paste_collapse_bytes"}:
+            _require_int(path, value)
+            return value
+    if table == "notifications" and key == "transcript_line":
+        _require_bool(path, value)
+        return value
+    if table == "keys":
+        normalized = _valid_key(value)
+        if normalized is None:
+            raise ConfigError(f"{path} {value!r} is not a key Talaria recognizes")
+        if normalized in RESERVED_KEYS:
+            raise ConfigError(f"{path} {normalized!r} is reserved for quitting")
+        return normalized
+    if table == "environment" and key == "allowlist":
+        if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+            raise ConfigError(f"{path} must be a list of strings; refusing {value!r}")
+        if any(not isinstance(item, str) for item in value):
+            raise ConfigError(f"{path} must be a list of strings; refusing {value!r}")
+        return list(value)
+    if table == "status":
+        _validate_status_change(key, value)
+        return value
+    if table == "theme" and key == "name":
+        if not isinstance(value, str) or not _THEME_SLUG_RE.fullmatch(value):
+            raise ConfigError(f"invalid theme name: {value!r}")
+        return value
+    raise ConfigError(f"unknown key {path}")
+
+
+def _validate_connection_changes(conn_id: str, changes: Mapping[str, Any]) -> dict[str, Any]:
+    unknown = [key for key in changes if key not in _CONNECTION_FILE_KEYS]
+    if unknown:
+        raise ConfigError(
+            f"connections.{conn_id}.{unknown[0]}"
+        )
+    validated: dict[str, Any] = {}
+    if "url" in changes:
+        url = changes["url"]
+        if not isinstance(url, str) or not url.strip():
+            raise ConfigError(f"connections.{conn_id}.url must be a string")
+        if _url_has_userinfo(url):
+            raise ConfigError(
+                f"connections.{conn_id}.url carries a credential; "
+                "refusing to write the secret"
+            )
+        validated["url"] = url
+    if "auth" in changes:
+        auth = changes["auth"]
+        if auth not in _CONNECTION_AUTH_MODES:
+            raise ConfigError(
+                f"connections.{conn_id}.auth {auth!r} is not a recognized auth mode"
+            )
+        validated["auth"] = auth
+    if "label" in changes:
+        label = changes["label"]
+        if not isinstance(label, str):
+            raise ConfigError(f"connections.{conn_id}.label must be a string")
+        validated["label"] = label
+    return validated
+
+
+def _expected_after_write(
+    before: dict[str, Any], table: str, changes: Mapping[str, Any]
+) -> dict[str, Any]:
+    expected = deepcopy(before)
+    if table.startswith("connections."):
+        conn_id = table.split(".", 1)[1]
+        inventory = expected.setdefault("connections", {})
+        if not isinstance(inventory, dict):
+            raise ConfigError("connections must be a table before it can be saved")
+        entry = inventory.setdefault(conn_id, {})
+        if not isinstance(entry, dict):
+            raise ConfigError(f"{table} must be a table before it can be saved")
+        entry.update(changes)
+        return expected
+    section = expected.setdefault(table, {})
+    if not isinstance(section, dict):
+        raise ConfigError(f"{table} must be a table before it can be saved")
+    updated = dict(changes)
+    if table == "status" and "segments" in updated:
+        updated["segments"] = list(updated["segments"])
+    if table == "environment" and "allowlist" in updated:
+        updated["allowlist"] = list(updated["allowlist"])
+    section.update(updated)
+    return expected
+
+
+def save_settings(
+    table: str,
+    changes: Mapping[str, Any],
+    scope: ConfigSaveScope = "user",
+    *,
+    config_dir: Path | None = None,
+    cwd: Path | None = None,
+) -> Path:
+    """Persist only the changed keys of one DEFAULTS table, surgically.
+
+    ``table`` is a top-level DEFAULTS table or ``connections.<id>`` for one
+    inventory entry. Validation is strict: loads fall back with a notice,
+    writes refuse. Theme and status writes reuse the dedicated byte-preserving
+    writers so an existing operator file does not change shape.
+    """
+    if not changes:
+        raise ConfigError("save_settings needs at least one changed key")
+    if table == "profiles" or table.startswith("profiles."):
+        raise ConfigError(
+            "profiles.endpoints is a compatibility alias; edit the file by hand"
+        )
+    if table.startswith("connections."):
+        conn_id = table.split(".", 1)[1]
+        if not conn_id or "." in conn_id:
+            raise ConfigError(table)
+        connection_changes = _validate_connection_changes(conn_id, changes)
+        return _write_settings_table(
+            table, connection_changes, scope, config_dir=config_dir, cwd=cwd
+        )
+    if table not in _WRITABLE_TABLES:
+        raise ConfigError(table)
+    allowed = _TABLE_WRITE_KEYS[table]
+    unknown = [key for key in changes if key not in allowed]
+    if unknown:
+        raise ConfigError(f"{table}.{unknown[0]}")
+    if table == "theme":
+        return save_theme(str(changes["name"]), scope, config_dir=config_dir, cwd=cwd)
+    if table == "status":
+        return save_status_settings(changes, scope, config_dir=config_dir, cwd=cwd)
+
+    validated: dict[str, Any] = {}
+    for key, value in changes.items():
+        validated[key] = _validate_settings_change(table, key, value)
+
+    path = theme_config_path(scope, config_dir=config_dir, cwd=cwd)
+    try:
+        before_bytes = path.read_bytes() if path.is_file() else b""
+    except OSError as exc:
+        raise ConfigError(f"{path} could not be read: {exc}") from exc
+    before = _parse_toml_bytes(path, before_bytes)
+
+    if table == "keys":
+        existing = before.get("keys")
+        existing_map = dict(existing) if isinstance(existing, Mapping) else {}
+        merged_keys = {**KEY_SETTING_DEFAULTS, **existing_map, **validated}
+        by_chord: dict[str, list[str]] = {}
+        for name, chord in merged_keys.items():
+            if name not in KEY_SETTING_DEFAULTS:
+                continue
+            normalized = _valid_key(chord) or str(chord)
+            by_chord.setdefault(normalized, []).append(name)
+        for chord, names in by_chord.items():
+            if len(names) > 1:
+                raise ConfigError(
+                    f"keys.{names[0]} and keys.{names[1]} are both {chord!r}"
+                )
+
+    return _write_settings_table(table, validated, scope, config_dir=config_dir, cwd=cwd)
+
+
+def _write_settings_table(
+    table: str,
+    changes: Mapping[str, Any],
+    scope: ConfigSaveScope,
+    *,
+    config_dir: Path | None,
+    cwd: Path | None,
+) -> Path:
+    path = theme_config_path(scope, config_dir=config_dir, cwd=cwd)
+    try:
+        before_bytes = path.read_bytes() if path.is_file() else b""
+    except OSError as exc:
+        raise ConfigError(f"{path} could not be read: {exc}") from exc
+    before = _parse_toml_bytes(path, before_bytes)
+    existing = before.get(table.split(".", 1)[0] if table.startswith("connections.") else table)
+    if existing is not None and table.startswith("connections."):
+        inventory = existing
+        if not isinstance(inventory, Mapping):
+            raise ConfigError(f"{path} connections must be a table before it can be saved")
+        conn_id = table.split(".", 1)[1]
+        entry = inventory.get(conn_id)
+        if entry is not None and not isinstance(entry, Mapping):
+            raise ConfigError(f"{path} {table} must be a table before it can be saved")
+    elif existing is not None and not isinstance(existing, Mapping):
+        raise ConfigError(f"{path} {table} must be a table before it can be saved")
+
+    rendered = _RenderedTable(
+        table, {key: _render_toml_value(value) for key, value in changes.items()}
+    )
+    try:
+        after_bytes = _rewrite_settings_table(before_bytes, rendered)
+    except ConfigError as exc:
+        raise ConfigError(f"{path}: {exc}") from exc
+    try:
+        after = _parse_toml_bytes(path, after_bytes)
+    except ConfigError as exc:
+        raise ConfigError(
+            f"Talaria cannot safely rewrite the [{table}] keys in this form: {path}; "
+            "edit the file by hand — no changes were written"
+        ) from exc
+    expected = _expected_after_write(before, table, changes)
+    if after != expected:
+        raise ConfigError(
+            f"refusing to write {path}: the edit changed more than the requested keys"
+        )
+    try:
+        atomic_replace_bytes(path, after_bytes, follow_symlinks=True)
+    except OSError as exc:
+        raise ConfigError(f"{path} could not be written: {exc}") from exc
+    return path
+
+
 def load_config(
     cli_overrides: Mapping[str, Any] | None = None,
     cwd: Path | None = None,
@@ -1135,10 +1760,20 @@ def load_config(
         # automatically upon explicit selection in the UI.
         allowed_cli_overrides = dict(cli_overrides)
         allowed_cli_overrides.pop("theme", None)
-        # Reduced motion is restart-to-apply configuration with no environment
-        # or command-line alias. A caller's unrelated launch overrides must not
-        # create a second, undocumented live-control path.
-        allowed_cli_overrides.pop("ui", None)
+        # Reduced motion stays restart-to-apply with no command-line alias.
+        # D12's other ``[ui]`` keys may be supplied as launch overrides so
+        # validation can run after precedence, the same way file values do.
+        ui_cli = allowed_cli_overrides.get("ui")
+        if isinstance(ui_cli, Mapping):
+            filtered_ui = {
+                key: value for key, value in ui_cli.items() if key != "reduced_motion"
+            }
+            if filtered_ui:
+                allowed_cli_overrides["ui"] = filtered_ui
+            else:
+                allowed_cli_overrides.pop("ui", None)
+        elif "ui" in allowed_cli_overrides:
+            allowed_cli_overrides.pop("ui", None)
         merged = _deep_merge(merged, allowed_cli_overrides)
 
     user_theme_specs, user_theme_notices = load_user_theme_specs(

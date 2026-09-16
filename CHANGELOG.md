@@ -10,6 +10,36 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-09-16
+
+Talaria-owned settings grow to the finite D12 set, writes stay surgical, and
+admin HTTP bodies that carry secrets are redacted by route before they can be
+recorded. See the [v0.6.2 release notes](docs/releases/v0.6.2.md).
+
+### Added
+
+- New Talaria-owned preferences: inspector geometry and open-at-start, diff
+  side-by-side threshold, transcript timestamps, remaining named app bindings,
+  composer attachment cap, and notification transcript-line control. Defaults
+  match today's fixed behavior, so an older file changes nothing.
+- A `[connections.<id>]` inventory (`url`, `auth`, `label`) that is not keyed
+  by profile. `profiles.endpoints` remains a hand-edited compatibility alias.
+  Secret material stays in the 0600 credentials file, never beside the URL.
+- Generalized `save_settings` table writers: comments, CRLF, and dotted keys
+  survive; unsupported inline or interior-comment shapes refuse rather than
+  reformat.
+- Route-aware HTTP redaction for env write/reveal, provider, vault, OAuth, and
+  token/ticket exchanges. Reveal and token responses are not persisted at all.
+
+### Changed
+
+- Key collision and reserved-chord fallback now cover every bindable action,
+  not only the inspector and interrupt chords.
+- Configuration documentation names which Talaria keys apply live and which
+  wait for the next session, and states that host administration is read-only
+  status: no Hermes-update, local-model mutation, or gateway-migration action
+  is offered.
+
 ## [0.6.1] — 2026-09-06
 
 The first published release since v0.5.0. The `0.6.0` line below landed on `main`
@@ -482,7 +512,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.2.md
 [0.6.1]: https://github.com/infiquetra/talaria/releases/tag/v0.6.1
 [0.6.0]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.0.md
 [0.5.0]: https://github.com/infiquetra/talaria/releases/tag/v0.5.0
