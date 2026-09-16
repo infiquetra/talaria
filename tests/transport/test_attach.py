@@ -1460,3 +1460,40 @@ def test_the_recorded_endpoint_header_withholds_a_fragment(tmp_path: Path) -> No
     text = log.read_text(encoding="utf-8")
     assert CANARY not in text
     assert "redacted" in json.loads(text.splitlines()[0])["endpoint"]
+
+
+# ── v0.6.2: gated WS tickets ride the same attach seam ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_ticket_credential_arrives_as_the_ticket_query_parameter(
+    gateway: StubGateway,
+) -> None:
+    """Gated dashboards mint ``?ticket=``; attach already strips that key."""
+    gateway.require_auth = False
+    target = AttachTarget.from_url(gateway.url)
+    outcome = await attach(target, Credential("ticket", CANARY, "file"))
+
+    assert isinstance(outcome, AttachSuccess)
+    await outcome.connection.close()
+    assert gateway.queries[-1] == {"ticket": CANARY}
+    assert CANARY not in outcome.safe_url
+
+
+def test_a_ticket_on_the_endpoint_is_stripped_before_the_dial_url_is_built() -> None:
+    target = AttachTarget.from_url(f"ws://127.0.0.1:8765/api/ws?ticket={CANARY}")
+    dial = target.dial_url(Credential("ticket", "fresh-ticket", "file"))
+    assert dial.count("ticket=") == 1
+    assert CANARY not in dial
+    assert "fresh-ticket" in dial
+
+
+def test_gated_ticket_provider_is_the_per_dial_ticket_source() -> None:
+    import importlib
+
+    try:
+        module = importlib.import_module("talaria.transport.gated_auth")
+    except ImportError as exc:
+        raise AssertionError("unimplemented interface: talaria.transport.gated_auth") from exc
+    provider = getattr(module, "GatedTicketProvider", None)
+    assert provider is not None, "unimplemented interface: GatedTicketProvider"

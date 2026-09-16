@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://infiquetra.github.io/talaria/acceptance/v0.6.2/configuration/ledger.schema.json",
+  "title": "Talaria v0.6.2 configuration functional ledger",
+  "description": "One row per CFG-A1 acceptance ID. passed requires non-empty evidence_refs. No credential or private profile content is permitted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "rows"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "talaria-v0.6.2-configuration-ledger-v1"
+    },
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/row"
+      }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "test_id",
+        "status",
+        "talaria_version",
+        "talaria_commit",
+        "hermes_version",
+        "connection_label",
+        "profile_label",
+        "observed_at",
+        "evidence_refs",
+        "limitation"
+      ],
+      "properties": {
+        "test_id": {
+          "type": "string",
+          "pattern": "^A1-(0?[1-9]|[12][0-9])$"
+        },
+        "status": {
+          "enum": ["passed", "failed", "blocked", "skipped", "not_run"]
+        },
+        "talaria_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "talaria_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "hermes_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "connection_label": {
+          "enum": ["local", "remote", "stub", "installed"]
+        },
+        "profile_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A disposable alias or fixture name. Never a credential or profile document."
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limitation": {
+          "type": "string"
+        }
+      },
+      "if": {
+        "properties": {
+          "status": {
+            "const": "passed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,91 @@
+CFG-T1B Test Author Two — initial expected-failure log
+Date: 2026-09-16
+Worktree: /Users/jefcox/workspace/infiquetra/talaria-cfg-b1-ta2
+Branch: feat/v0.6.2-cfg-b1-ta2
+Baseline: c87c7901e563346913a2764a57f6c4e47bf45f8f
+
+Plans hashed before use (match CFG-PR3):
+  CFG-P1-implementation-plan.md  ce61b768829781dae322f874e1c6e773e44d04364afb58da3b76795ba7194323
+  CFG-P1-test-plan.md            a8c5972c48de87189449a7117a7027fe6b0e65558fe725493cc6e60dae925710
+
+No production code was added. No session settings were changed.
+No credential values, live tokens, or private profile content are in this log.
+Live Hermes flags were unset; fixtures did not read ~/.talaria.
+
+Command (exclusive suite):
+  uv run pytest \
+    tests/transport/test_settings_api.py \
+    tests/transport/test_gated_auth.py \
+    tests/integration/test_hermes_configuration.py \
+    scripts/acceptance/test_v062_configuration.py \
+    tests/transport/test_admin.py \
+    tests/transport/test_connection_set.py \
+    tests/transport/test_attach.py \
+    tests/transport/test_refresh.py \
+    -rs --tb=line
+
+Result: 46 failed, 251 passed, 20 skipped in 40.76s
+Collection succeeded. No syntax errors. No accidental live-network dials.
+
+Frozen unlisted sample (must stay green):
+  uv run pytest tests/transport/test_rpc.py tests/domain/test_models_catalog.py \
+    tests/test_framework_boundaries.py tests/test_config.py -q --tb=line
+  Result: 153 passed
+
+Harness (must stay green):
+  scripts/acceptance/test_v062_configuration.py — 20 passed
+  tests/integration/test_hermes_configuration.py::test_a1_19_multiplexer_preflight_does_not_gate_the_batch — passed
+  tests/integration/test_hermes_configuration.py::test_harness_forbids_host_admin_writes_on_the_live_path — passed
+  tests/transport/test_settings_api.py::test_a1_12_unscoped_put_would_have_written_the_launch_profile — passed
+    (isolated fixture names the launch-profile hazard; no SettingsClient required)
+
+A1-11–20 stub-server / mocked (never skip; fail only for missing production):
+  A1-11  FAIL  unimplemented interface: talaria.transport.settings
+  A1-12  FAIL  unimplemented interface: talaria.transport.settings
+           (fixture-hazard documentation test passed; no I/O issued)
+  A1-13  FAIL  unimplemented interface: talaria.transport.settings
+  A1-14  FAIL  unimplemented interface: talaria.transport.settings
+  A1-15  FAIL  unimplemented interface: talaria.transport.settings
+  A1-16  FAIL  unimplemented interface: talaria.transport.settings
+  A1-17  FAIL  unimplemented interface: talaria.transport.settings
+  A1-18  FAIL  unimplemented interface: talaria.transport.settings
+  A1-19  FAIL  unimplemented interface: talaria.transport.settings / RestartPlan
+           multiplexer preflight is A1-19-only and is not a batch gate
+  A1-20  FAIL  unimplemented interface: talaria.transport.gated_auth
+
+A1-11–20 real-Hermes (CFG-T0 access absent; blocked, not passed):
+  A1-11..A1-20 local  SKIPPED/blocked  authenticated local Hermes access is absent (CFG-T0)
+  (10 parametrized rows; fixture skips before any client I/O)
+
+Replacement-contract failures on existing exclusive transport files
+(all identify absent production behavior):
+  request_admin_json                    FAIL  unimplemented interface
+  409 named conflict                    FAIL  observed http_error (conflict not in vocabulary)
+  AdminFailure timeout+conflict         FAIL  unimplemented interface: reason 'conflict'
+  plan_connections(connections=...)     FAIL  unimplemented interface
+  connection auth mode                  FAIL  unimplemented interface
+  GatedTicketProvider                   FAIL  unimplemented interface: talaria.transport.gated_auth
+  write_connection_tokens               FAIL  unimplemented interface
+
+Existing attach ticket-query / loopback refresh / explicit-profile catalog
+calls remain green (compatibility, not new production).
+
+Remote reuse hooks (not A1-11–20, recorded for the harness):
+  A1-27 (A1-11–19 remote)  SKIPPED/blocked  authenticated remote Hermes access is absent (CFG-T0)
+  A1-28 (12 switch pairs)  SKIPPED/blocked  authenticated local Hermes access is absent (CFG-T0)
+                                           (dual-connection fixture; local gate fires first)
+
+SKIPPED excerpt (sanitized):
+  SKIPPED [10] tests/integration/test_hermes_configuration.py:39:
+    blocked: authenticated local Hermes access is absent (CFG-T0);
+    set V062_CFG_LIVE_HERMES and V062_CFG_CREDENTIALS_PATH only after a
+    safe temporary session exists. Do not export a credential value.
+  SKIPPED [9] tests/integration/test_hermes_configuration.py:54:
+    blocked: authenticated remote Hermes access is absent (CFG-T0); ...
+  SKIPPED [1] tests/integration/test_hermes_configuration.py:65:
+    blocked: authenticated local Hermes access is absent (CFG-T0); ...
+
+Proposed next action: B3/U2 (dev-2-3) implements SettingsClient, ConfigTarget,
+GatedAuthSession, request_admin_json, connection auth inventory, and
+write_connection_tokens against this red suite. Do not treat skipped
+real-Hermes rows as passed.
