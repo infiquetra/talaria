@@ -331,6 +331,18 @@ V064_FORBIDDEN_GATE_IDS = frozenset(
         "v0-6-1-daily-driver",
     }
 )
+V065_ITEM_SCHEMA = "talaria-v0.6.5-receipt-v1"
+V065_MANIFEST_SCHEMA = "talaria-v0.6.5-artifact-manifest-v1"
+V065_GATE_ID = "v0-6-5-configuration-ui-residuals"
+V065_RELEASE = "0.6.5"
+V065_FORBIDDEN_GATE_IDS = frozenset(
+    {
+        "v0-6-4-configuration-ui-residuals",
+        "v0-6-3-configuration-residuals",
+        "v0-6-2-configuration",
+        "v0-6-1-daily-driver",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1480,6 +1492,45 @@ V064_CFG_RECEIPT_SCHEMA = RecordSchema(
         "schema_version": frozenset({V064_ITEM_SCHEMA}),
         "release": frozenset({V064_RELEASE}),
         "checklist_item": V064_CFG_ITEMS,
+        "tester": frozenset(V061_ROLE_LABELS),
+        "verdict": frozenset(VERDICTS),
+    },
+)
+
+V065_CFG_ITEMS = frozenset({"cfg-p4"})
+V065_CFG_RECEIPT_SCHEMA = RecordSchema(
+    name="v065-cfg-receipt",
+    declared_keys={
+        "schema_version": ValueCategory.CLOSED_VOCABULARY,
+        "release": ValueCategory.CLOSED_VOCABULARY,
+        "checklist_item": ValueCategory.CLOSED_VOCABULARY,
+        "tester": ValueCategory.CLOSED_VOCABULARY,
+        "verdict": ValueCategory.CLOSED_VOCABULARY,
+        "candidate_commit_sha": ValueCategory.DIGEST,
+        "applies_to_candidate": ValueCategory.STRING,
+        "evidence": ValueCategory.OBJECT,
+    },
+    nested_schemas={
+        "evidence": {
+            "source": ValueCategory.STRING,
+            "observation": ValueCategory.STRING,
+            "review_artifact_sha256": ValueCategory.DIGEST,
+            "project_check_sha256": ValueCategory.DIGEST,
+            "smoke_receipt_sha256": ValueCategory.DIGEST,
+            "cleanup_receipt_sha256": ValueCategory.DIGEST,
+        },
+    },
+    digest_preimages={
+        "candidate_commit_sha": "git-commit",
+        "evidence.review_artifact_sha256": "artifact",
+        "evidence.project_check_sha256": "artifact",
+        "evidence.smoke_receipt_sha256": "receipt",
+        "evidence.cleanup_receipt_sha256": "receipt",
+    },
+    vocabularies={
+        "schema_version": frozenset({V065_ITEM_SCHEMA}),
+        "release": frozenset({V065_RELEASE}),
+        "checklist_item": V065_CFG_ITEMS,
         "tester": frozenset(V061_ROLE_LABELS),
         "verdict": frozenset(VERDICTS),
     },
@@ -2841,6 +2892,8 @@ class SchemaRegistry:
                 return V062_CFG_RECEIPT_SCHEMA
             if isinstance(doc, dict) and doc.get("schema_version") == V063_ITEM_SCHEMA:
                 return V063_CFG_RECEIPT_SCHEMA
+            if isinstance(doc, dict) and doc.get("schema_version") == V065_ITEM_SCHEMA:
+                return V065_CFG_RECEIPT_SCHEMA
             if isinstance(doc, dict) and doc.get("schema_version") == V064_ITEM_SCHEMA:
                 return V064_CFG_RECEIPT_SCHEMA
             if isinstance(doc, dict) and (
@@ -2869,6 +2922,8 @@ class SchemaRegistry:
                 return V062_CFG_RECEIPT_SCHEMA
             if doc.get("schema_version") == V063_ITEM_SCHEMA:
                 return V063_CFG_RECEIPT_SCHEMA
+            if doc.get("schema_version") == V065_ITEM_SCHEMA:
+                return V065_CFG_RECEIPT_SCHEMA
             if doc.get("schema_version") == V064_ITEM_SCHEMA:
                 return V064_CFG_RECEIPT_SCHEMA
             if "checklist_item" in doc and "verdict" in doc:
@@ -4900,6 +4955,38 @@ def _validate_v064_receipt(receipt: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _is_v065_cfg_manifest(
+    manifest: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
+    return (
+        manifest.get("schema_version") == V065_MANIFEST_SCHEMA
+        or candidate.get("version") == V065_RELEASE
+    )
+
+
+def _validate_v065_receipt(receipt: dict[str, Any]) -> list[str]:
+    """Return defects in a v0.6.5 CFG receipt.
+
+    The named schema is the five-field stub. Closed checklist vocab is
+    ``cfg-p4`` only. Extra keys are ignored.
+    """
+    errors: list[str] = []
+    if receipt.get("schema_version") != V065_ITEM_SCHEMA:
+        errors.append(f"schema_version is not {V065_ITEM_SCHEMA}")
+    if receipt.get("release") != V065_RELEASE:
+        errors.append(f"release is not {V065_RELEASE}")
+    item = receipt.get("checklist_item")
+    if item not in V065_CFG_ITEMS:
+        errors.append(
+            f"checklist_item must be cfg-p4; got {item!r}"
+        )
+    for key in ("tester", "verdict"):
+        value = receipt.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{key} must be a non-empty string")
+    return errors
+
+
 def verify_run(
     manifest_path: Path = _MANIFEST_PATH,
     *,
@@ -4961,6 +5048,20 @@ def verify_run(
                 f"gate_id must be {V064_GATE_ID}; "
                 "must not reuse v0-6-3-configuration-residuals, "
                 "v0-6-2-configuration, or v0-6-1-daily-driver"
+            )
+    v065_cfg = _is_v065_cfg_manifest(manifest, candidate)
+    if v065_cfg and manifest.get("gate_id") != V065_GATE_ID:
+        reused = manifest.get("gate_id")
+        if reused in V065_FORBIDDEN_GATE_IDS:
+            errors.append(
+                f"gate_id must be {V065_GATE_ID}; must not reuse {reused}"
+            )
+        else:
+            errors.append(
+                f"gate_id must be {V065_GATE_ID}; "
+                "must not reuse v0-6-4-configuration-ui-residuals, "
+                "v0-6-3-configuration-residuals, v0-6-2-configuration, "
+                "or v0-6-1-daily-driver"
             )
 
     try:
@@ -5050,6 +5151,8 @@ def verify_run(
             validator = _validate_v062_receipt(receipt)
         elif schema_version == V063_ITEM_SCHEMA:
             validator = _validate_v063_receipt(receipt)
+        elif schema_version == V065_ITEM_SCHEMA:
+            validator = _validate_v065_receipt(receipt)
         elif schema_version == V064_ITEM_SCHEMA:
             validator = _validate_v064_receipt(receipt)
         elif schema_version == V050_ITEM_SCHEMA:
@@ -5069,7 +5172,8 @@ def verify_run(
             errors.append(
                 f"{relative}: unknown receipt schema_version {schema_version!r}; expected one of "
                 f"{V050_ITEM_SCHEMA}, {V060_ITEM_SCHEMA}, {V061_ITEM_SCHEMA}, "
-                f"{V062_ITEM_SCHEMA}, {V063_ITEM_SCHEMA}, or {V064_ITEM_SCHEMA}"
+                f"{V062_ITEM_SCHEMA}, {V063_ITEM_SCHEMA}, {V064_ITEM_SCHEMA}, "
+                f"or {V065_ITEM_SCHEMA}"
             )
             continue
         for error in validator:
