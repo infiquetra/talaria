@@ -310,6 +310,16 @@ V062_ITEM_SCHEMA = "talaria-v0.6.2-receipt-v1"
 V062_MANIFEST_SCHEMA = "talaria-v0.6.2-artifact-manifest-v1"
 V062_GATE_ID = "v0-6-2-configuration"
 V062_RELEASE = "0.6.2"
+V063_ITEM_SCHEMA = "talaria-v0.6.3-receipt-v1"
+V063_MANIFEST_SCHEMA = "talaria-v0.6.3-artifact-manifest-v1"
+V063_GATE_ID = "v0-6-3-configuration-residuals"
+V063_RELEASE = "0.6.3"
+V063_FORBIDDEN_GATE_IDS = frozenset(
+    {
+        "v0-6-2-configuration",
+        "v0-6-1-daily-driver",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -4735,6 +4745,33 @@ def _validate_v062_receipt(receipt: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _is_v063_cfg_manifest(
+    manifest: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
+    return (
+        manifest.get("schema_version") == V063_MANIFEST_SCHEMA
+        or candidate.get("version") == V063_RELEASE
+    )
+
+
+def _validate_v063_receipt(receipt: dict[str, Any]) -> list[str]:
+    """Return defects in a v0.6.3 CFG receipt.
+
+    The named schema is the five-field stub: ``schema_version``, ``release``,
+    ``checklist_item``, ``tester``, ``verdict``. Extra keys are ignored.
+    """
+    errors: list[str] = []
+    if receipt.get("schema_version") != V063_ITEM_SCHEMA:
+        errors.append(f"schema_version is not {V063_ITEM_SCHEMA}")
+    if receipt.get("release") != V063_RELEASE:
+        errors.append(f"release is not {V063_RELEASE}")
+    for key in ("checklist_item", "tester", "verdict"):
+        value = receipt.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{key} must be a non-empty string")
+    return errors
+
+
 def verify_run(
     manifest_path: Path = _MANIFEST_PATH,
     *,
@@ -4772,6 +4809,18 @@ def verify_run(
         errors.append(
             "gate_id must be v0-6-2-configuration; must not reuse v0-6-1-daily-driver"
         )
+    v063_cfg = _is_v063_cfg_manifest(manifest, candidate)
+    if v063_cfg and manifest.get("gate_id") != V063_GATE_ID:
+        reused = manifest.get("gate_id")
+        if reused in V063_FORBIDDEN_GATE_IDS:
+            errors.append(
+                f"gate_id must be {V063_GATE_ID}; must not reuse {reused}"
+            )
+        else:
+            errors.append(
+                f"gate_id must be {V063_GATE_ID}; "
+                "must not reuse v0-6-2-configuration or v0-6-1-daily-driver"
+            )
 
     try:
         expected_commit = _string(candidate.get("commit"), field="manifest.candidate.commit")
@@ -4858,6 +4907,8 @@ def verify_run(
             )
         elif schema_version == V062_ITEM_SCHEMA:
             validator = _validate_v062_receipt(receipt)
+        elif schema_version == V063_ITEM_SCHEMA:
+            validator = _validate_v063_receipt(receipt)
         elif schema_version == V050_ITEM_SCHEMA:
             validator = validate_receipt(
                 receipt,
@@ -4875,7 +4926,7 @@ def verify_run(
             errors.append(
                 f"{relative}: unknown receipt schema_version {schema_version!r}; expected one of "
                 f"{V050_ITEM_SCHEMA}, {V060_ITEM_SCHEMA}, {V061_ITEM_SCHEMA}, "
-                f"or {V062_ITEM_SCHEMA}"
+                f"{V062_ITEM_SCHEMA}, or {V063_ITEM_SCHEMA}"
             )
             continue
         for error in validator:
