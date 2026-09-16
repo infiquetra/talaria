@@ -24,6 +24,7 @@ from talaria.transport.refresh import (
     extract_session_token,
     fetch_dashboard_index,
     refresh_credential,
+    require_fetchable_origin,
     write_profile_token,
     write_token,
 )
@@ -703,4 +704,9 @@ def test_write_connection_tokens_is_the_gated_credential_seam(tmp_path: Path) ->
     text = path.read_text(encoding="utf-8")
     assert f'token = "{SECOND_CANARY}"' in text
     assert "[connections.remote]" in text
+
+
+def test_p2_3_loopback_refresh_still_refuses_literal_rfc1918_http() -> None:
+    with pytest.raises(RefreshError, match="plain HTTP"):
+        require_fetchable_origin("http://10.220.1.139:8765/")
 

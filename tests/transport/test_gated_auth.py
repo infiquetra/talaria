@@ -296,3 +296,13 @@ def test_loopback_token_provider_remains_importable_beside_gated_auth() -> None:
     from talaria.transport.credentials import LoopbackTokenProvider
 
     assert LoopbackTokenProvider is not None
+
+
+def test_p2_3_require_gated_origin_is_not_require_fetchable_origin() -> None:
+    module = load_gated_auth()
+    require = getattr(module, "require_gated_origin", None)
+    assert require is not None, "unimplemented interface: require_gated_origin"
+    from talaria.transport.refresh import require_fetchable_origin
+
+    assert require is not require_fetchable_origin
+    require("http://10.220.1.139:8765/", auth="gated")

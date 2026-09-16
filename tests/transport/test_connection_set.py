@@ -1288,6 +1288,8 @@ def test_a_gated_connection_is_not_planned_as_a_loopback_token_dial() -> None:
     remote = next(member for member in plan if member.name == "remote")
     assert getattr(remote, "auth", None) == "gated"
     assert getattr(remote, "credential_kind", "ticket") in {"ticket", "gated"}
+    provider = credential_provider_factory(None)(remote)
+    assert type(provider).__name__ == "GatedTicketProvider"
 
 
 @pytest.mark.asyncio

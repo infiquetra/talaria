@@ -1529,3 +1529,16 @@ def test_a_recording_launch_tells_the_recorder_the_whole_inventory() -> None:
             "two-gateway run would write an untagged single-connection log"
         )
         assert recorder.multi_connection == (len(connections.profiles) > 1)
+
+
+def test_p2_3_build_live_app_passes_connections_inventory_to_plan() -> None:
+    import ast
+
+    tree = ast.parse(Path(cli_module.__file__).read_text(encoding="utf-8"))
+    planned = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "plan_connections"
+    ]
+    assert planned, "build_live_app must call plan_connections"
+    assert any("connections" in {kw.arg for kw in node.keywords} for node in planned)

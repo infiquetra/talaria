@@ -1247,3 +1247,19 @@ def test_d11_credentialed_connection_url_is_dropped_never_loaded(
         "connections.office" in notice and "credential" in notice.lower()
         for notice in cfg.notices
     )
+
+
+def test_p2_3_gated_literal_rfc1918_connection_is_kept(
+    isolated_global_config_dir: Path, tmp_path: Path
+) -> None:
+    (isolated_global_config_dir / "config.toml").write_text(
+        "[connections.remote]\n"
+        'url = "ws://10.220.1.139:8765/api/ws"\n'
+        'auth = "gated"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+
+    assert cfg.get("connections", "remote", "auth") == "gated"
+    assert cfg.get("connections", "remote", "url") == "ws://10.220.1.139:8765/api/ws"
