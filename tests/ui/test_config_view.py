@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 from textual.app import App, ComposeResult
 from textual.pilot import Pilot
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Static
 
 from talaria.config import setting_scopes
 from talaria.domain.commands import LocalInvocation, resolve_command
@@ -559,6 +559,17 @@ def test_status_write_keys_order_is_the_append_order() -> None:
 #
 # CFG v0.6.2 replacement: /config mounts the settings workspace, fed the
 # process's own state (restart-to-apply still holds for Talaria rows).
+#
+# CFG-T5-T1AR5 (C2 mount): live /config mounts the Hermes groups alongside
+# the Talaria branch, so the branch's lower rows are no longer guaranteed
+# on-screen in a 44-row screenshot. The seam tests prove the mounted groups
+# on screen and read branch rows through the mounted widgets — production
+# must not hide groups to keep a screenshot green.
+
+
+def _branch_static_texts(branch: Any) -> list[str]:
+    """Every Static text the Talaria branch composed, visible or covered."""
+    return [str(line.render()) for line in branch.query(Static)]
 
 
 @pytest.mark.asyncio
@@ -574,14 +585,36 @@ async def test_the_real_app_mounts_the_workspace_with_its_own_state() -> None:
         assert app.perform_local_command(invocation) is True
         await pilot.pause()
         assert isinstance(app.screen, workspace_type)
+        # Hermes groups mount on live /config: their titles and read-only
+        # status rows render on screen beside the Talaria branch.
+        app.screen.query_one("#settings-group-hermes-profile")
+        app.screen.query_one("#settings-group-hermes-host")
+        text = screen_text(app)
+        assert "Hermes profile" in text
+        assert "Profile schema" in text
+        assert "Host" in text
+        assert "Hermes update" in text
+        assert "read-only" in text
         # Replay runs no status script and no files are configured here: the
         # honest branch rows say default-sourced, in the same sentences the
-        # direct-screen tests pin above.
-        text = screen_text(app)
+        # direct-screen tests pin above. The branch head is on screen; its
+        # lower rows are read through the mounted widgets, which hold even
+        # where the mounted groups cover them.
         assert "theme.name" in text
         assert "refined-default" in text
         assert "source: default" in text
-        assert "(no status script)" in text
+        branch_text = " ".join(
+            _branch_static_texts(app.screen.query_one("#settings-talaria-branch"))
+        )
+        assert (
+            "theme.name refined-default · source: default · live" in branch_text
+        )
+        assert (
+            "effective: (no status script) · source: default · mode: restart"
+            in branch_text
+        )
+        assert "effective: 5 · source: default · mode: restart" in branch_text
+        assert "source: default · mode: restart" in branch_text
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, workspace_type)
@@ -615,7 +648,11 @@ async def test_an_apply_through_the_real_app_writes_the_user_file(
     """The whole path: edit a Talaria-branch row in the mounted workspace,
     apply, and the real byte-preserving write lands in the user
     configuration file; the branch's own message surfaces through the app
-    when the workspace closes."""
+    when the workspace closes.
+
+    The apply runs through the mounted button widget rather than screen
+    coordinates, so the mounted Hermes groups covering it cannot turn the
+    write into a click on empty space."""
     workspace_type = _workspace_screen_type()
     app, _ = paused_app([event("gateway.ready", {})])
     user_config = isolated_global_config_dir / "config.toml"
@@ -625,13 +662,18 @@ async def test_an_apply_through_the_real_app_writes_the_user_file(
         assert app.perform_local_command(invocation) is True
         await pilot.pause()
         assert isinstance(app.screen, workspace_type)
+        branch = app.screen.query_one("#settings-talaria-branch")
         app.screen.query_one("#interval", Input).value = "9"
 
-        await pilot.click("#apply-user")
+        app.screen.query_one("#apply-user", Button).press()
         await pilot.pause()
 
         assert user_config.read_bytes() == b"[status]\ninterval_seconds = 9\n"
-        assert "saved to user configuration" in screen_text(app)
+        assert branch.notice_text == "saved to user configuration"
+        branch_text = " ".join(_branch_static_texts(branch))
+        assert (
+            "saved: 9 · effective now: 5 · takes effect on restart" in branch_text
+        )
 
         await pilot.press("escape")
         for _ in range(2):
