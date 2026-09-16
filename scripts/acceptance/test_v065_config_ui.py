@@ -86,6 +86,10 @@ def test_process_isolation_refuses_operator_config_and_worktree_executable(
     assert stdout.strip() == "isolated-ok"
 
 
+@pytest.mark.skipif(
+    not INSTALLED_EXECUTABLE.is_file(),
+    reason="installed Talaria executable is absent",
+)
 def test_installed_identity_uses_clean_pythonpath(tmp_path: Path) -> None:
     record = collect_installed_identity(
         INSTALLED_EXECUTABLE, worktree=REPO_ROOT, scratch=tmp_path
