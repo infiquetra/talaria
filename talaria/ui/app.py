@@ -1330,6 +1330,33 @@ def build_app_bindings(
     ]
 
 
+def _split_config_documents(
+    raw_config: object,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if not isinstance(raw_config, Mapping):
+        return {}, {}, {}
+    if "saved" in raw_config or "effective" in raw_config:
+        saved = dict(raw_config.get("saved") or {})
+        effective = dict(raw_config.get("effective") or saved)
+        defaults = dict(raw_config.get("defaults") or {})
+        return saved, effective, defaults
+    saved = dict(raw_config)
+    return saved, saved, {}
+
+
+def _save_outcome_for(key: str) -> str:
+    from talaria.domain.settings_catalog import TIER1
+
+    for entry in TIER1:
+        if entry.key == key:
+            if entry.effect == "live":
+                return "active"
+            if entry.effect == "gateway-restart":
+                return "awaiting"
+            return "saved"
+    return "saved"
+
+
 def _flatten_patch_keys(tree: Mapping[str, Any], prefix: str = "") -> Iterator[str]:
     if not isinstance(tree, Mapping) or not tree:
         if prefix:
@@ -5892,6 +5919,7 @@ class TalariaApp(App[None]):
         try:
             if isinstance(command, SaveConfig):
                 await client.put_config(command.target, command.patch)
+                await self._reread_after_save(client, command)
             elif isinstance(command, ResetConfig):
                 await surfaces.reset_profile(command.target, command.patch)
             elif isinstance(command, RevealEnv):
@@ -5932,6 +5960,28 @@ class TalariaApp(App[None]):
             else:
                 self._notice(f"settings: {exc}")
             return
+
+    async def _reread_after_save(self, client: Any, command: SaveConfig) -> None:
+        """GET /api/config after PUT and land it on the workspace (R9 / C10)."""
+        workspace = (
+            self.screen if isinstance(self.screen, SettingsWorkspaceScreen) else None
+        )
+        generation = 0
+        if workspace is not None:
+            generation = workspace.begin_settings_reread(command.target)
+        raw_config = await client.get_config(command.target)
+        saved, effective, defaults = _split_config_documents(raw_config)
+        if workspace is not None:
+            workspace.apply_settings_reread(
+                command.target, generation, saved, effective, defaults
+            )
+            results = tuple(
+                FieldSaveResult(key=key, outcome=_save_outcome_for(key))
+                for key in _flatten_patch_keys(command.patch)
+            ) or (FieldSaveResult(key="config", outcome="saved"),)
+            workspace.paint_save_summary(results, notice="saved")
+            return
+        self._notice("settings: saved")
 
     def _config_view_closed(self, result: ConfigViewResult | None) -> None:
         """Surface the view's message, and open the picker when it asked."""
