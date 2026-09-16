@@ -1,7 +1,7 @@
-"""v0.6.3 verify_run contract.
+"""v0.6.4 verify_run contract.
 
 Fixture-only except the committed-record placeholder. Teaching verify_run
-``talaria-v0.6.3-receipt-v1`` and ``v0-6-3-configuration-residuals``
+``talaria-v0.6.4-receipt-v1`` and ``v0-6-4-configuration-ui-residuals``
 flips the schema/gate tests. Do not invent the real record here.
 """
 
@@ -15,18 +15,19 @@ from typing import Any
 from scripts.acceptance.v050_common import active_receipt_paths, sha256_file
 from scripts.acceptance.v050_receipt import verify_run
 
-V063_RECEIPT_SCHEMA = "talaria-v0.6.3-receipt-v1"
-V063_MANIFEST_SCHEMA = "talaria-v0.6.3-artifact-manifest-v1"
+V064_RECEIPT_SCHEMA = "talaria-v0.6.4-receipt-v1"
+V064_MANIFEST_SCHEMA = "talaria-v0.6.4-artifact-manifest-v1"
 _WHEEL = "b" * 64
-_CFG_ITEM = "cfg-p2"
-_GATE_ID = "v0-6-3-configuration-residuals"
+_CFG_ITEM = "cfg-p3"
+_GATE_ID = "v0-6-4-configuration-ui-residuals"
 _FORBIDDEN_GATE_IDS = frozenset(
     {
+        "v0-6-3-configuration-residuals",
         "v0-6-2-configuration",
         "v0-6-1-daily-driver",
     }
 )
-_PRODUCT_SHA = "a11d4261ffb15b8ac7b596c7170ea9faea152f28"
+_PRODUCT_SHA = "7b73f8864941b65ab47a685f859f32992986211b"
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -63,26 +64,26 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def _v063_receipt(*, item: str = _CFG_ITEM, verdict: str = "pass") -> dict[str, Any]:
+def _v064_receipt(*, item: str = _CFG_ITEM, verdict: str = "pass") -> dict[str, Any]:
     return {
-        "schema_version": V063_RECEIPT_SCHEMA,
-        "release": "0.6.3",
+        "schema_version": V064_RECEIPT_SCHEMA,
+        "release": "0.6.4",
         "checklist_item": item,
         "tester": "dedicated-tester",
         "verdict": verdict,
     }
 
 
-def _write_v063_run(
+def _write_v064_run(
     repo: Path,
     *,
     candidate_commit: str,
     gate_id: str = _GATE_ID,
     receipts: list[tuple[str, dict[str, Any]]] | None = None,
 ) -> tuple[Path, Path]:
-    evidence_root = repo / "docs" / "acceptance" / "v0.6.3" / "evidence"
+    evidence_root = repo / "docs" / "acceptance" / "v0.6.4" / "evidence"
     named: list[dict[str, Any]] = []
-    for relative, receipt in receipts or [("cfg-p2/receipts/receipt.json", _v063_receipt())]:
+    for relative, receipt in receipts or [("cfg-p3/receipts/receipt.json", _v064_receipt())]:
         path = evidence_root / relative
         _write_json(path, receipt)
         named.append(
@@ -95,12 +96,12 @@ def _write_v063_run(
             }
         )
     manifest = {
-        "schema_version": V063_MANIFEST_SCHEMA,
+        "schema_version": V064_MANIFEST_SCHEMA,
         "gate_id": gate_id,
         "candidate": {
             "commit": candidate_commit,
-            "version": "0.6.3",
-            "wheel_filename": "talaria-0.6.3-py3-none-any.whl",
+            "version": "0.6.4",
+            "wheel_filename": "talaria-0.6.4-py3-none-any.whl",
             "wheel_sha256": _WHEEL,
         },
         "counts": {
@@ -111,22 +112,22 @@ def _write_v063_run(
         "receipts": named,
         "install_receipts": [],
     }
-    manifest_path = repo / "docs" / "acceptance" / "v0.6.3" / "artifact-manifest.json"
+    manifest_path = repo / "docs" / "acceptance" / "v0.6.4" / "artifact-manifest.json"
     _write_json(manifest_path, manifest)
     return manifest_path, evidence_root
 
 
-def test_verify_run_accepts_named_v063_receipt_schema(tmp_path: Path) -> None:
-    """Teaching verify_run ``talaria-v0.6.3-receipt-v1`` flips this test.
+def test_verify_run_accepts_named_v064_receipt_schema(tmp_path: Path) -> None:
+    """Teaching verify_run ``talaria-v0.6.4-receipt-v1`` flips this test.
 
     Today the same fixture is rejected as an unknown schema. The assertion
     names that gap; do not weaken it to expect the unknown-schema string.
     """
     product = _init_repo(tmp_path)
-    manifest_path, evidence_root = _write_v063_run(tmp_path, candidate_commit=product)
+    manifest_path, evidence_root = _write_v064_run(tmp_path, candidate_commit=product)
     found = active_receipt_paths(evidence_root)
     assert found, (
-        "fixture bug: the v0.6.3 receipt was not enumerated by active_receipt_paths"
+        "fixture bug: the v0.6.4 receipt was not enumerated by active_receipt_paths"
     )
 
     errors = verify_run(
@@ -136,15 +137,15 @@ def test_verify_run_accepts_named_v063_receipt_schema(tmp_path: Path) -> None:
     )
 
     assert not any(
-        "unknown receipt schema_version" in error and V063_RECEIPT_SCHEMA in error
+        "unknown receipt schema_version" in error and V064_RECEIPT_SCHEMA in error
         for error in errors
     ), errors
 
 
 def test_verify_run_accepts_docs_only_descendant_of_product_sha(tmp_path: Path) -> None:
-    """Tag SHA may be a docs-only descendant of product SHA a11d426."""
+    """Tag SHA may be a docs-only descendant of product SHA 7b73f88."""
     product = _init_repo(tmp_path)
-    manifest_path, evidence_root = _write_v063_run(tmp_path, candidate_commit=product)
+    manifest_path, evidence_root = _write_v064_run(tmp_path, candidate_commit=product)
     (tmp_path / "docs-note.txt").write_text("record only\n", encoding="utf-8")
     _git(tmp_path, "add", ".")
     _git(tmp_path, "commit", "-qm", "documentation only")
@@ -161,14 +162,14 @@ def test_verify_run_accepts_docs_only_descendant_of_product_sha(tmp_path: Path) 
         "does not describe the released commit" in error for error in errors
     ), errors
     assert not any(
-        "unknown receipt schema_version" in error and V063_RECEIPT_SCHEMA in error
+        "unknown receipt schema_version" in error and V064_RECEIPT_SCHEMA in error
         for error in errors
     ), errors
 
 
 def test_verify_run_rejects_talaria_drift_from_product_sha(tmp_path: Path) -> None:
     product = _init_repo(tmp_path)
-    manifest_path, evidence_root = _write_v063_run(tmp_path, candidate_commit=product)
+    manifest_path, evidence_root = _write_v064_run(tmp_path, candidate_commit=product)
     (tmp_path / "talaria" / "module.py").write_text("value = 2\n", encoding="utf-8")
     _git(tmp_path, "add", ".")
     _git(tmp_path, "commit", "-qm", "product change")
@@ -184,10 +185,10 @@ def test_verify_run_rejects_talaria_drift_from_product_sha(tmp_path: Path) -> No
     assert any("release-relevant files differ" in error for error in errors), errors
 
 
-def test_verify_run_rejects_prior_gate_id_on_a_v063_manifest(tmp_path: Path) -> None:
+def test_verify_run_rejects_prior_gate_id_on_a_v064_manifest(tmp_path: Path) -> None:
     product = _init_repo(tmp_path)
     for prior in sorted(_FORBIDDEN_GATE_IDS):
-        manifest_path, evidence_root = _write_v063_run(
+        manifest_path, evidence_root = _write_v064_run(
             tmp_path,
             candidate_commit=product,
             gate_id=prior,
@@ -198,7 +199,7 @@ def test_verify_run_rejects_prior_gate_id_on_a_v063_manifest(tmp_path: Path) -> 
             repo_root=tmp_path,
         )
         assert not any(
-            "unknown receipt schema_version" in error and V063_RECEIPT_SCHEMA in error
+            "unknown receipt schema_version" in error and V064_RECEIPT_SCHEMA in error
             for error in errors
         ), errors
         assert any(
@@ -207,19 +208,34 @@ def test_verify_run_rejects_prior_gate_id_on_a_v063_manifest(tmp_path: Path) -> 
         ), errors
 
 
-def test_verify_run_is_clean_for_committed_v063_record() -> None:
-    """Publication gate: the committed v0.6.3 record binds to published a63db5e.
+def test_verify_run_is_clean_for_committed_v064_record() -> None:
+    """Publication gate once a later owner writes the v0.6.4 record.
 
-    Do not bind this check to HEAD. A later product SHA is a different
-    release; the published v0.6.3 record stays valid against a63db5e (or
-    a docs-only descendant of product SHA a11d426).
+    Encode the missing files. Do not invent the record.
     """
     repo_root = Path(__file__).resolve().parents[2]
+    version_dir = repo_root / "docs" / "acceptance" / "v0.6.4"
+    required = (
+        version_dir / "artifact-manifest.json",
+        version_dir / "artifact-manifest.schema.json",
+        version_dir / "evidence",
+    )
+    missing = [
+        path.relative_to(repo_root).as_posix()
+        for path in required
+        if not path.exists()
+    ]
+    assert not missing, (
+        "v0.6.4 release record is missing: "
+        + ", ".join(missing)
+        + "; later owner writes the record for verify-run --expect-candidate HEAD"
+    )
+
     errors = verify_run(
-        repo_root / "docs" / "acceptance" / "v0.6.3" / "artifact-manifest.json",
-        evidence_root=repo_root / "docs" / "acceptance" / "v0.6.3" / "evidence",
+        version_dir / "artifact-manifest.json",
+        evidence_root=version_dir / "evidence",
         repo_root=repo_root,
-        expected_candidate_commit="a63db5ed6500ddcd128a543e0ea0acbb75273fa2",
+        expected_candidate_commit=_head(repo_root),
     )
     assert errors == [], errors
-    assert _PRODUCT_SHA == "a11d4261ffb15b8ac7b596c7170ea9faea152f28"
+    assert _PRODUCT_SHA == "7b73f8864941b65ab47a685f859f32992986211b"
