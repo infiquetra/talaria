@@ -1,0 +1,8 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`OpenTUI split-footer: finished blocks go to scrollback, the footer holds the live region 1`] = `
+"⏺ terminal: ls -la 0.8s
+⏺ partial answer
+● minimax-m3.1-flash · streaming · 0.9s
+› ▌"
+`;

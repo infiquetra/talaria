@@ -1,0 +1,26 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`snapshot: tool cell, diff and assistant block (60 cols) 1`] = `
+"
+› fix the bug
+⏺ terminal: ls -la ✓ 1.2s
+⏺ patch: calc.py ✓ 0.1s
+  --- a/calc.py
+  +++ b/calc.py
+  @@ -1,2 +1,2 @@
+  -    return a - b
+  +    return a + b
+⏺ Fixed the sign in add()."
+`;
+
+exports[`snapshot: live region while waiting for approval (60 cols) 1`] = `
+"┌ approval required · recursive delete
+│ rm -rf .pytest_cache
+│ ▸ 1. once
+│   2. deny
+│   3. session
+│   4. always
+└ 1-4 or ↑/↓ + Enter · Ctrl+C interrupts
+● minimax-m3.1-flash · waiting for approval · 2.4s
+› (answer the approval above)"
+`;
