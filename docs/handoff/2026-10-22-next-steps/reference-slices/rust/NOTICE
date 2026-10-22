@@ -1,0 +1,7 @@
+slice (Rust Hermes client slice)
+
+The history-insertion technique in src/tui.rs (a scroll region that starts at the top of the
+screen, newline-driven scrolling inside it, and reverse-index to slide the live viewport down when
+there is room below it) follows the approach of OpenAI Codex's codex-rs/tui/src/insert_history.rs,
+Copyright OpenAI, licensed under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+The code in this repository was written independently; no Codex source file is copied.

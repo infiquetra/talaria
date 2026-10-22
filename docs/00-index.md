@@ -7,6 +7,10 @@ Authority: `reference`
 
 Architecture decisions are canon. Analysis is evidence for them, not a substitute.
 
+- [Next steps handoff, 2026-10-22](handoff/2026-10-22-next-steps/README.md) — `proposed`: rewrite
+  Talaria as a fast, inline client of the current Hermes gateway; draft ADRs 0007 to 0012 await the
+  operator's decision
+
 - [ADR-0001 — Talaria is a standalone client](../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)
 - [ADR-0002 — The domain core is framework-independent](../platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)
 - [ADR-0003 — Talaria re-encodes the Hermes terminal UI's behavior](../platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)

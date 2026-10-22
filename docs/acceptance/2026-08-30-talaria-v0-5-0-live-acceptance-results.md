@@ -15,7 +15,7 @@ Regenerate it with `uv run python -m scripts.acceptance.v050_records refresh --c
 ```gate
 id: talaria-v0-5-0-live-acceptance
 verdict: BLOCKED
-review-by: 2026-09-30
+review-by: 2026-11-20
 blocks-on: row-24 blocked
 ```
 
@@ -127,3 +127,20 @@ file-hash and candidate validation. A preceding T1 sweep is explicitly retained 
 - `/opt/homebrew/bin/uv run pytest`: passed, 2,444 tests passed and 7 skipped in 601.89 seconds.
 - `uv run bandit -r talaria -q`: passed; Bandit emitted only its existing comment-token warnings.
 - `git diff --check`: passed after the evidence update.
+
+## Re-read on 2026-10-22
+
+This gate was re-read against the evidence available on 2026-10-22. Nothing cleared row 24: no
+later receipt exists for the agent and queue non-color states on the v0.5.0 candidate, so the
+verdict stays **BLOCKED**.
+
+What moved is the ground under it. Releases through v0.6.5 have superseded the v0.5.0 candidate.
+Hermes has moved to v0.22, where one gateway owns every session and approval prompts arrive keyed by
+session, prompt and execution generation
+([the 2026-10-22 handoff, Hermes today](../handoff/2026-10-22-next-steps/03-hermes-today.md)). That
+handoff proposes replacing this Python client, and its repository reset (work unit P0-02) removes
+`docs/acceptance/`. Until then this record describes the v0.5.0 candidate only and says nothing
+about current builds.
+
+`review-by` moves from 2026-09-30 to 2026-11-20: long enough for the operator to decide on the
+handoff, and not shared with any other gate's date.

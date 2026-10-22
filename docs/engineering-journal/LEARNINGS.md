@@ -2,6 +2,52 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-22 — The Hermes gateway contract misled every bake-off builder in the same places
+
+**Evidence.** [`docs/handoff/2026-10-22-next-steps/research/u16-stack-bakeoff.md`](../handoff/2026-10-22-next-steps/research/u16-stack-bakeoff.md)
+§3 and §5: four agents (Sonnet 5.5 high and Haiku 5.5 xhigh, in Rust and in TypeScript) each built a
+working gateway client against Hermes `22063fc09`; their clients are kept in
+[`reference-slices/`](../handoff/2026-10-22-next-steps/reference-slices/README.md). Hermes source:
+`gateway/session_controls.py` (submission keys), `gateway/session_finite.py` and `tools/approval.py`
+(`_yolo_active`).
+
+**Mechanism.** The generated contract is accurate about shapes but not about behaviour.
+`prompt.submit` is refused unless it carries `submission_id` or `input_id`, which the schema marks
+optional. Approval choices arrive in the order `once, deny, session, always`. `inline_diff` arrives
+pre-coloured with ANSI escapes. `session.interrupt` leaves a pending approval open until its timeout.
+And `unattended: true` on `prompt.submit` does not mean "no viewer": it auto-approves every dangerous
+command in the turn. Separately, the Rust builders' extra fixes all sat in the inline terminal layer:
+ratatui's inline viewport queries the cursor position, which crossterm cannot answer while its key
+reader runs, and `insert_before` scrolls with a sequence that may not reach native scrollback.
+
+**Generalizable rule.** A generated contract tells you what a message looks like, not what the
+server requires or does with it; record live frames before trusting a schema's "optional", and read
+the server's handler for any flag whose name sounds harmless.
+
+## 2026-10-22 — Hermes changed shape under Talaria, and Talaria's approvals stopped working
+
+**Evidence.** The 2026-10-22 next-steps research in
+[`docs/handoff/2026-10-22-next-steps/research/`](../handoff/2026-10-22-next-steps/research/): u04
+(client surfaces), u05 (release delta), u13 (hands-on drive against a live backend), and a live attach
+probe recorded in `docs/handoff/2026-10-22-next-steps/03-hermes-today.md` §2. Hermes revision
+`22063fc09`; Talaria `cafc640`.
+
+**Mechanism.** Three Hermes changes landed after Talaria's design settled. (1) On 2026-09-14 Hermes
+began declaring every gateway method and event as a typed model and generating an OpenRPC contract
+from it. (2) On 2026-09-14 approvals, clarifications, sudo and secret prompts became server-to-client
+JSON-RPC requests on the legacy socket, and from 2026-09-16 Hermes withdraws them from any client that
+never sent `client.capabilities {server_requests: true}` — Talaria never sends it, so a live drive saw
+a destructive command blocked with "the attached client cannot answer approval requests". (3) v0.22.0
+(2026-10-13) made one supervised gateway per machine serve every profile, and v0.22.3 (2026-10-21) is
+the first stable release in which that gateway owns every session and first-party clients attach to
+it as viewers over the ticketed `hermes-gateway-v1` WebSocket. Talaria still dials a standalone
+dashboard's legacy socket. Talaria's compatibility probe could not notice any of this,
+because it was built on the premise that the gateway publishes no capabilities.
+
+**Generalizable rule.** When the backend publishes a machine-readable contract, generate from it and
+test against the running backend; a hand-pinned baseline of a fast-moving protocol fails silently at
+exactly the paths a configuration-focused acceptance run does not exercise.
+
 ## 2026-09-11 — Turn completion status must drive session state and aggregation honesty
 
 **Evidence.** `talaria/domain/state.py`, `tests/domain/test_moa.py`,

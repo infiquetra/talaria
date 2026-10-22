@@ -4,6 +4,21 @@
 
 ## P0
 
+### Decide on the 2026-10-22 next-steps handoff (rewrite against the Hermes gateway)
+
+**Priority.** P0 — every other entry in this file assumes the Python client continues.
+
+**Evidence.** [`docs/handoff/2026-10-22-next-steps/`](../handoff/2026-10-22-next-steps/README.md):
+sixteen research reports, a live attach probe, a stack bake-off and two working reference clients.
+The recommendation is a Rust rewrite (draft ADR 0010). Talaria 0.6.5 cannot answer
+approval prompts against current Hermes, is slow to launch and while streaming, and attaches through a
+legacy path; Hermes now offers one gateway per machine, a generated contract, and durable sessions.
+
+**Worth it when.** Now. The operator decides on the draft ADRs in
+`docs/handoff/2026-10-22-next-steps/adr-drafts/`; if accepted, the entries below that concern the
+Python client move to `ARCHIVE.md` as superseded, and work starts at phase 0 of
+`07-roadmap-and-work-units.md`.
+
 ### Eleven public exports have no production caller — v0.4 accumulated review
 
 **Priority.** P3 — none can hurt anyone; all of them read as live to a future maintainer, which is the

@@ -605,7 +605,7 @@ def _status_block(manifest: dict[str, Any]) -> str:
         "```gate",
         "id: talaria-v0-5-0-live-acceptance",
         f"verdict: {status}",
-        "review-by: 2026-09-30",
+        "review-by: 2026-11-20",
     ]
     lines.extend(f"blocks-on: row-{number} {grade}" for number, grade in blocked)
     lines.extend(["```", "", "## Evidence table", "", "| Item | Condition | Status |"])

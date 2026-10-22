@@ -4,6 +4,7 @@ Talaria is a public, experimental Hermes-native terminal UI. Read [AGENTS.md](AG
 
 ## Navigation
 
+- **Next steps (2026-10-22, proposed):** [docs/handoff/2026-10-22-next-steps/README.md](docs/handoff/2026-10-22-next-steps/README.md) — a recommended rewrite against the current Hermes gateway, with draft ADRs awaiting the operator's decision. Read it before starting new work; do not implement it until the drafts are accepted
 - Architecture decisions: [platform-specs/04-architecture/adrs/](platform-specs/04-architecture/adrs/) — read these first; ADR-0001 through ADR-0006 are accepted
 - User documentation: [themes](docs/themes.md), [configuration](docs/configuration.md), and the [terminal UI](docs/terminal-ui.md)
 - Project direction: [docs/analysis/2026-08-01-hermes-tui-project-direction.md](docs/analysis/2026-08-01-hermes-tui-project-direction.md)

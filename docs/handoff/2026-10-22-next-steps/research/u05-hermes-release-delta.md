@@ -1,0 +1,352 @@
+# u05-hermes-release-delta
+
+_Converted from the unit's structured output; the unit was not allowed to write a Markdown report._
+
+## Summary
+
+No report .md file was written: this subagent's instructions forbid it, so the full report is in this output. Scope: all ten Hermes releases published on or after 2026-09-14 (tags v2026.9.14 through v0.22.4), read in full or by section, plus 57 upstream main commits after v0.22.4. No gateway was run, so every Talaria-impact finding comes from source reading and is labeled as such.
+
+Main finding: the gateway protocol changed on 2026-09-14 (PR #110521, commit 9f7f2f28c0), and that change is already inside Talaria's cited pin, 3236f4405. The gateway no longer emits the events approval.request, clarify.request, secret.request, sudo.request and terminal.read.request, and no longer accepts secret.respond, sudo.respond or terminal.read.respond. It now sends these prompts as JSON-RPC requests (a JSON-based remote call format) that the client must answer. Talaria still uses the old names and ignores incoming requests. Source reading says secret, sudo and terminal-read prompts would fail in Talaria, and approvals and clarifications may stall. That is a hypothesis until a live test runs.
+
+Second breaking change: one gateway per machine (v0.22.0, PR #112854). Talaria opens one connection per profile, so it conflicts with this. Sessions were auto-pruned by default in v0.22.0 to v0.22.2, and v0.22.3 reversed that. Sessions made under v0.22.1 cannot be deleted in v0.22.2.
+
+The installed Hermes (22063fc09) is a canary 1,338 commits behind v0.22.4. All 257 gateway methods have identical signatures in both, so upgrading does not change them. v0.23.0 is announced but not released.
+
+Capabilities to adopt: the generated gateway contract (OpenRPC, a JSON format describing these methods), live subagent listing and steering, steerable and editable prompt queues, plan usage in the model picker, native scrollback mode, background long commands, device-code MCP login, and per-child model and provider settings.
+
+## Key findings
+
+- **Ten releases fall inside the window (published on or after 2026-09-14): tags v2026.9.14, v2026.9.21, v2026.9.24, v0.21.6, v0.21.7, v0.22.0, v0.22.1, v0.22.2, v0.22.3 and v0.22.4. The tag v2026.9.11 (published 2026-09-11) is outside it. Relevance labels used below: HIGH = Talaria must change how it talks to Hermes, or the feature is one a terminal client should expose; MEDIUM = behavior a client may need to handle or display; LOW = no effect on a terminal client.**
+  - Evidence: jq over releases.json: tag, published_at (UTC): v2026.9.14 2026-09-14T16:04:14Z; v2026.9.21 2026-09-21T18:10:55Z; v2026.9.24 2026-09-24T10:09:38Z; v0.21.6 2026-10-08T11:51:57Z; v0.21.7 2026-10-12T05:53:41Z; v0.22.0 2026-10-14T03:21:46Z; v0.22.1 2026-10-14T23:59:24Z; v0.22.2 2026-10-15T08:21:32Z; v0.22.3 2026-10-21T12:21:11Z; v0.22.4 2026-10-21T18:49:24Z. Body titles: v2026.9.14 is titled 'Hermes Agent v0.21.3', v2026.9.21 'v0.21.4', v2026.9.24 'v0.21.5'.
+  - Verified: True
+- **The newest upstream release is v0.22.4. No v0.23.0 release exists yet, although the v0.22.2 and v0.22.3 notes say full curated notes ship with v0.23.0.**
+  - Evidence: gh api repos/NousResearch/hermes-agent/releases/latest returned v0.22.4 published 2026-10-21T18:49:24Z. v0.22.3 body: 'Full curated release notes for this window ship with v0.23.0'.
+  - Verified: True
+- **The installed Hermes is revision 22063fc09, a canary build 60 commits after tag v0.22.2+canary.20261018T065527Z. It is 1,338 commits behind v0.22.4 and is an ancestor of it.**
+  - Evidence: git -C <hermes> describe --tags: v0.22.2+canary.20261018T065527Z-60-g22063fc099. gh api compare 22063fc09...v0.22.4: ahead_by 1338, behind_by 0. Author date 2026-10-17T12:49:01Z; committer date 2026-10-18T15:02:52Z.
+  - Verified: True
+- **Talaria's pinned Hermes revision is ambiguous. The unit text says 3236f4405. Acceptance evidence cites 3236f4405 as 'Hermes pin cited by tests ... no Hermes change'. The checked-in compatibility baseline is read at 7f4d15515 (commit dated 2026-08-01), with one entry read at 7095e23eb (2026-08-16).**
+  - Evidence: docs/acceptance/v0.6.5/configuration-ui-residuals/evidence/active/test-author-1-final.txt:9; talaria/domain/compat.py:52 (BASELINE_PIN = '7f4d15515') and :61 (RUNNING_PIN = '7095e23eb').
+  - Verified: True
+- **Talaria HEAD is cafc640 (a merge of PR #187). Git reports its committer date as 2026-09-25, not the 2026-09-16 in the unit text.**
+  - Evidence: git -C <talaria> log -1 --format='%H%n%cI%n%s': cafc640fc24f0af34e6741de4d21e4c3dd65845c, 2026-09-25T17:08:47-04:00.
+  - Verified: True
+- **The dashboard REST routes that Talaria's settings catalog uses still exist, at both the pin and the installed build: GET and PUT /api/config, and GET and POST /api/providers/custom-endpoints.**
+  - Evidence: git grep: hermes_cli/web_routers/config_env.py lines 77, 113 and 529 at 3236f4405; lines 80, 117 and 728 at HEAD. talaria/domain/settings_catalog.py:446-468 maps config.reset, config.export and config.import to PUT and GET /api/config.
+  - Verified: True
+- **Every configuration key checked from Talaria's catalog still appears in the installed Python sources, including sessions.auto_archive and sessions.auto_archive_days. No checked key was renamed. This is a presence check only, not a behavior check.**
+  - Evidence: git grep -l over HEAD *.py for: auto_archive, auto_archive_days, show_reasoning, persistent_shell, use_real_profile, memory_char_limit, user_profile_enabled, max_turns, api_max_retries, tool_use_enforcement, image_input_mode, voice_chat_mode, max_recording_seconds, echo_transcripts, max_snapshots. No key was reported absent. auto_archive matched 31 files and auto_prune 30 at HEAD.
+  - Verified: True
+- **BREAKING (verified in source): the gateway stopped emitting the request events approval.request, clarify.request, secret.request, sudo.request and terminal.read.request, and stopped accepting secret.respond, sudo.respond and terminal.read.respond. The change is commit 9f7f2f28c0 (PR #110521, committed 2026-09-14T13:02:05Z), which is inside the 3236f4405 pin. Approval and clarify answers still exist as approval.respond and clarify.respond.**
+  - Evidence: git grep at 7f4d15515 finds approval.request emitted at tui_gateway/server.py:1674 and the three respond methods registered at tui_gateway/methods_prompt.py:867, 876 and 881. At 3236f4405 and HEAD, git grep finds none of the five event names or three respond names. git merge-base --is-ancestor 9f7f2f28c0 3236f4405 succeeds. approval.respond at methods_prompt.py:1246 (HEAD); clarify.respond at tui_gateway/contracts/canonical.py:342 (HEAD).
+  - Verified: True
+- **BREAKING: Talaria still depends on the old names. Its prompt bridge calls secret.respond, sudo.respond and terminal.read.respond. Its decoder keys prompts on approval.request, clarify.request, secret.request, sudo.request, terminal.read.request and the matching expire events.**
+  - Evidence: talaria/ui/prompts.py:117-121 (_BRIDGES table); talaria/domain/decode.py:40, 44, 64-65, 75-76, 96; talaria/domain/state.py:115-118 maps approval.request to 'approval', and so on.
+  - Verified: True
+- **BREAKING: the gateway now asks the client by sending JSON-RPC requests (methods approval, clarify, secret, sudo, terminal.read, and others) that expect a reply carrying the same id. Talaria classifies any frame with a method as a non-event request, its reducer returns state unchanged for it, and a search of talaria/ found no code that replies to inbound requests.**
+  - Evidence: tui_gateway/server_requests.py module docstring and send()/send_async() (HEAD, lines 191 and 230); server.py:864 send_async('approval'); server.py:1119 send('clarify'). talaria/domain/decode.py:280 returns NonEventFrame(kind='request'). talaria/domain/state.py:1722-1723 and 3646-3649 return state unchanged for NonEventFrame. Contract x-server-requests names: approval, clarify, secret, sudo, terminal.read, setup_beat, theme.pick, and others.
+  - Verified: True
+- **HYPOTHESIS, not tested: secret, sudo and terminal-read prompts never appear in Talaria, and approvals and clarifications may stall until the gateway's timeout. A live test against a v0.22.x gateway in a throwaway profile would confirm or refute this.**
+  - Evidence: Inferred from the two findings above. No gateway was run, because this unit is read-only.
+  - Verified: False
+- **Talaria's startup compatibility check would not detect the break. It probes only read-only and presence-only methods. approval.pending is presence-only and still exists. The three removed respond methods are evidence-only and are never probed.**
+  - Evidence: talaria/domain/compat.py:14 ('evidence-only ... Never probed'), :17 (presence-only), :241 (approval.pending, presence-only), :409, :417 and :425 (evidence-only respond entries).
+  - Verified: True
+- **Of Talaria's 21 hand-recorded baseline methods, 18 are declared in the v0.22.4 generated contract. Exactly three are not: secret.respond, sudo.respond and terminal.read.respond. The installed contract also lacks those three.**
+  - Evidence: talaria-baseline-methods.txt (21 method= entries from compat.py) compared with contract-names-v0.22.4.json and contract-names-22063fc09.json (methods, notifications, server requests and canonical methods) in the research folder.
+  - Verified: True
+- **BREAKING (design): one gateway per machine is now the default. Talaria opens one live connection per configured profile, on the premise that a gateway process knows only its own sessions. Whether one connection now reaches every profile is unverified.**
+  - Evidence: v0.22.0 upgrade note: 'One gateway per machine is the default. hermes update folds per-profile gateways into the multiplexed default when nothing conflicts.' PR #112854 (merged 2026-09-16; title: 'gateway.multiplex_profiles defaults to on'). talaria/transport/connection_set.py:1-21 (design rationale). hermes_cli/config.py:960 lists multiplex_profiles.
+  - Verified: True
+- **BREAKING for session lists (v0.22.0 to v0.22.2): ended sessions inactive for 90 days were deleted at startup by default. v0.22.3 made auto-prune opt-in again.**
+  - Evidence: v0.22.0 upgrade note: 'Old sessions are pruned automatically. sessions.auto_prune now defaults to on: ended sessions inactive for 90 days are deleted at startup. Pinned and open sessions are never touched'. v0.22.3 undocumented list: 'session auto-prune back to opt-in with a one-time prompt when disk runs low'.
+  - Verified: True
+- **BREAKING for session deletion: sessions created under the v0.22.1 gateway cannot be deleted in v0.22.2 (a known issue). v0.22.1 was built from the wrong commit, so do not target it.**
+  - Evidence: v0.22.2 body: 'v0.22.1 was built from the wrong commit. It shipped unreleased gateway work'; '> Known issue: Sessions that ran under the 0.22.1 gateway can't be deleted in 0.22.2.'
+  - Verified: True
+- **Approval behavior changed: v0.22.0 reverted prompts that wait until answered. approvals.timeout still applies, so an approval can time out. A client must not assume an approval waits forever.**
+  - Evidence: v0.22.0 section 'Reverted in this window (not shipping)': '**Approval and clarify prompts that wait until answered** were reverted; `approvals.timeout` still applies. ([#130167])'. PR #130167 merged 2026-10-01.
+  - Verified: True
+- **Tool renames in v0.22.0 (todo to todo_list, cronjob to cronjob_manage, process to process_manage). Old names still work. Talaria has no literal references to the old names.**
+  - Evidence: v0.22.0 upgrade note (PR #97979). grep for quoted todo, cronjob and process literals in talaria/*.py returned no matches.
+  - Verified: True
+- **Idle and daily session resets were retired in v0.22.0. Only /new and /reset start fresh chats. Talaria has no timer-reset code.**
+  - Evidence: v0.22.0 upgrade note '**Chats no longer reset on an idle/daily timer.**'. grep for session_reset, idle_reset and daily_reset in talaria/ returned no matches.
+  - Verified: True
+- **NOT breaking at the signature level: the installed build and v0.22.4 have identical parameter and result schemas for all 257 gateway methods. v0.22.4 adds one notification (tool.progress) and one canonical method (session.export). Server-request names are identical.**
+  - Evidence: jq comparison of apps/shared/src/gateway-contract.openrpc.json at 22063fc09 (git show) and at v0.22.4 (gh api raw fetch), saved under research/untrusted/. Methods added or removed: none. x-server-requests md5 identical. x-notifications 79 vs 80; x-canonical-methods 47 vs 48.
+  - Verified: True
+- **Update behavior changed (v0.21.7 and v0.22.0): source installs follow tagged releases, not every commit on main, so the revision a user runs will move in steps. 'hermes update --set-channel main' restores following commits.**
+  - Evidence: v0.21.7 body: '**Updates now follow tagged releases.** A source install of the official repository updates to the latest published vX.Y.Z release instead of every commit on main.' v0.22.0 Highlights: 'Stable release channels'.
+  - Verified: True
+- **The password-manager login feature asks for a password through a masked prompt, so it uses the changed secret path described above.**
+  - Evidence: v0.22.0 Highlights: 'If nothing is saved, you get a masked prompt in the CLI, TUI or Desktop to save it.' Consequence follows from the secret.request removal (see the protocol findings).
+  - Verified: True
+- **[v2026.9.14, published 2026-09-14] The gateway can ask the client questions with JSON-RPC requests, and the gateway contract is generated (typed TypeScript and OpenRPC). Area: gateway, JSON-RPC. Relevance: HIGH (breaking and new). Link: issues #110521 and #110522 (implementing commits 9f7f2f28c0 and 0250c8bcae). Both numbers are GitHub issues, not pull requests.**
+  - Evidence: Release note: 'Also in the window, undocumented here on purpose: server→client JSON-RPC requests and a Pydantic wire-contract registry with generated TS/OpenRPC for the TUI/Desktop gateway (#110521, #110522)'. gh api pulls endpoint returned 404; issues endpoint returned both as closed issues created 2026-09-14.
+  - Verified: True
+- **[v2026.9.14] Remote dashboard sessions no longer expire on refresh bursts. Area: dashboard auth. Relevance: LOW. Link: https://github.com/NousResearch/hermes-agent/pull/110061**
+  - Evidence: Release note: 'Remote dashboard sessions no longer expire on refresh bursts (#110061, fixes #55712...)'.
+  - Verified: True
+- **[v2026.9.14] Multiplexed-profile isolation and gateway-liveness fixes. Area: profiles, gateway. Relevance: MEDIUM. Link: none in note.**
+  - Evidence: Release note 'undocumented' list: 'multiplexed-profile isolation and gateway-liveness fixes'.
+  - Verified: True
+- **[v2026.9.14] Reasoning-effort selection on every model picker (undocumented). Area: models. Relevance: MEDIUM. Link: none in note.**
+  - Evidence: Release note 'undocumented' list: 'reasoning-effort selection on every model picker, a composer pill and per-auxiliary control in Desktop'.
+  - Verified: True
+- **[v2026.9.21, published 2026-09-21] A host-wide gateway singleton lock; Desktop attaches to the running backend instead of starting a second one. Area: gateway lifecycle. Relevance: HIGH (a client should attach, not spawn). Link: none in note.**
+  - Evidence: Release note 'undocumented' list: 'a host-wide gateway singleton lock with a rendezvous record, and Desktop attaching to the running host backend instead of spawning a second one'.
+  - Verified: True
+- **[v2026.9.21] The CLI gains --format stream-json (structured JSON Lines output). Area: CLI scripting. Relevance: HIGH (new capability). Link: none in note; v0.22.1 commit 08b6ebd0 adds 'stream-json always closes with a result'.**
+  - Evidence: Release note 'undocumented' list: '`--format stream-json` structured JSONL output for the CLI'.
+  - Verified: True
+- **[v2026.9.21] One backend-owned connector operation with a setup card on Desktop, TUI and CLI. Area: connectors. Relevance: MEDIUM. Link: none in note; v0.22.0 cites PR #111008 (merged 2026-09-21).**
+  - Evidence: Release note 'undocumented' list: 'one backend-owned connector operation with a setup card on Desktop, TUI and CLI'.
+  - Verified: True
+- **[v2026.9.21] skills.auto_load pins skills into each new session's prompt; mcp.discovery_concurrency caps MCP connection attempts at boot; session_search gets after/before bounds. Area: skills, MCP, sessions. Relevance: LOW.**
+  - Evidence: Release note 'undocumented' list: '`skills.auto_load` pinning skills into every new session's prompt', 'a configurable MCP discovery connect cap (`mcp.discovery_concurrency`)', 'session_search after/before bounds'.
+  - Verified: True
+- **[v2026.9.24, published 2026-09-24] Per-profile stop, start and restart under the host multiplexer; gateway.standalone opts one profile out. Area: gateway, profiles. Relevance: HIGH (lifecycle control per profile). Link: none in note.**
+  - Evidence: Release note 'undocumented' list: 'per-profile stop/start/restart under the host multiplexer and `gateway.standalone` to opt a profile out'. The key gateway.standalone was not located as a literal in hermes_cli/config.py (unverified).
+  - Verified: True
+- **[v2026.9.24] The live dock shows the standing /goal and queued prompts in the CLI and TUI. Area: TUI, CLI. Relevance: HIGH (queue visibility). Link: none in note; v0.22.0 cites PR #125803.**
+  - Evidence: Release note 'undocumented' list: 'the live dock showing the standing `/goal` and queued prompts in the CLI and TUI'.
+  - Verified: True
+- **[v2026.9.24] The Connectors page replaces the MCP tab. New plugin MCP servers offer 'Connect now'; plugin tools and skills go live in open chats. Area: connectors, MCP, plugins. Relevance: MEDIUM.**
+  - Evidence: Release note 'undocumented' list: 'the Connectors page replacing the MCP tab, with Connect now for a freshly installed plugin's MCP servers and installed plugins' tools and skills going live in every open chat'.
+  - Verified: True
+- **[v2026.9.24] Custom model entry from the composer and Settings pickers. Area: models. Relevance: MEDIUM.**
+  - Evidence: Release note 'undocumented' list: 'custom model entry from the composer and Settings pickers'.
+  - Verified: True
+- **[v2026.9.24] Hot-path performance work across config loading, the tool registry, gateway message handling and the model picker. This is a release claim only; it was not measured here. Area: performance. Relevance: MEDIUM.**
+  - Evidence: Release note 'undocumented' list: 'a long run of hot-path performance work across config loading, the tool registry, gateway message handling and the model picker'.
+  - Verified: True
+- **[v0.21.6, published 2026-10-08] Model picker: favorites at the top; a usage chip before a subscription hits its limit; rate-limited providers say why and until when. Area: models, plan usage. Relevance: HIGH. Link: none in v0.21.6; v0.22.0 cites PR #126535 (merged 2026-09-30) and PR #133392 (merged 2026-10-05).**
+  - Evidence: Release note: 'favorite and pinned models at the top of the Desktop picker, a usage chip before a subscription hits its wall, and rate-limited providers that say why and until when'.
+  - Verified: True
+- **[v0.21.6] Live speech-to-text while speaking (stt.streaming) in CLI, TUI and Desktop. Area: voice. Relevance: MEDIUM. Link: none in v0.21.6; v0.22.0 cites PR #133853 (merged 2026-10-06).**
+  - Evidence: Release note 'undocumented' list: 'live transcription while you speak on CLI, TUI and Desktop (`stt.streaming`)'.
+  - Verified: True
+- **[v0.21.6] Approval flags for credential uploads and for invisible Unicode in terminal commands. Area: approvals. Relevance: MEDIUM. Link: none.**
+  - Evidence: Release note 'undocumented' list: 'approval flags for credential uploads and invisible Unicode in terminal commands'.
+  - Verified: True
+- **[v0.21.6] Third-party plugins run in a per-profile plugin host (plugins.isolation: host). Area: plugins, profiles. Relevance: MEDIUM. Link: none in v0.21.6; v0.22.0 cites PR #126911.**
+  - Evidence: Release note 'undocumented' list: 'third-party plugins running in a per-profile plugin host (`plugins.isolation: host`)'.
+  - Verified: True
+- **[v0.21.6] Summary-first hermes status (--short, --full). Area: CLI. Relevance: MEDIUM. Link: none.**
+  - Evidence: Release note 'undocumented' list: 'a summary-first `hermes status` (`--short`, `--full`)'.
+  - Verified: True
+- **[v0.21.6] Review-pane diff scope selector (Uncommitted, Branch, Last turn). Area: Desktop review. Relevance: LOW (design reference).**
+  - Evidence: Release note 'undocumented' list: 'a review-pane diff scope selector (Uncommitted / Branch / Last turn)'.
+  - Verified: True
+- **[v0.21.6] Security fixes: dashboard sign-in hardening (login codes could go to a non-loopback redirect and allow session takeover, PR #130685), automatic git filter hardening (PR #130661), and email sender spoofing (PR #125212). Area: security. Relevance: MEDIUM (matters if a client uses the dashboard or remote sign-in).**
+  - Evidence: Release note: 'Native sign-in could send login codes to a non-loopback redirect, which allowed session takeover (#130685)'.
+  - Verified: True
+- **[v0.21.7, published 2026-10-12 UTC; body dated October 11] Source installs follow tagged releases; 'hermes update --set-channel main' keeps following commits. Area: release, update. Relevance: HIGH (changes which revision a user runs). Link: none in v0.21.7; v0.22.0 cites PRs #135949 and #136313.**
+  - Evidence: Release note: '**Updates now follow tagged releases.** A source install of the official repository updates to the latest published vX.Y.Z release instead of every commit on main.'
+  - Verified: True
+- **[v0.21.7] Signed thinking replays after 'hermes chat --resume' and on the next gateway turn. Area: sessions, models. Relevance: MEDIUM.**
+  - Evidence: Release note: 'Reasoning survives resume. Signed thinking replays after `hermes chat --resume` and on the next gateway turn'.
+  - Verified: True
+- **[v0.22.0, published 2026-10-14 UTC; body dated October 13] Stable SemVer (semantic version) releases; source installs move release to release by default. Area: release, update. Relevance: HIGH (same effect as the v0.21.7 item). Links: PRs #102765, #135847, #135949, #136313, #137780.**
+  - Evidence: Release note: 'source installs now move from release to release by default instead of tracking every commit on `main`. Prefer the bleeding edge? `hermes update --set-channel main`'.
+  - Verified: True
+- **[v0.22.0] Connectors: hosted apps (for example Linear and Notion) through the Nous tool gateway; one setup card in the TUI and CLI; several named accounts; /connectors and 'hermes connectors'. Area: connectors. Relevance: HIGH (a TUI setup flow to mirror). Links: PRs #106842, #111008 (merged 2026-09-21), #119074, #135143, #135072, #135097, #135151, #135173, #137426.**
+  - Evidence: Release note: 'the same setup card appears in the TUI and CLI, and you can connect several named accounts of one app (a `work` and a `home` account) and manage them with `/connectors` or `hermes connectors`'.
+  - Verified: True
+- **[v0.22.0] Local models in one click: llama.cpp runtime, started from 'hermes model' then Local models. Area: models. Relevance: MEDIUM. Links: PRs #100667, #101823, #128768, #111423, #133111, #134116.**
+  - Evidence: Release note: 'Hermes can now run open models entirely on your machine with nothing leaving it: no account, no API key.'
+  - Verified: True
+- **[v0.22.0] Claude 5.5 and GPT-6 catalog entries; prior reasoning replayed by default; visible, bounded waits for transient provider errors (503, 529, timeouts). Area: models, providers. Relevance: MEDIUM (a client should show the waiting state). Links: PRs #100577, #119304, #126842, #134759, #128248, #137955, #136358, #116353.**
+  - Evidence: Release note: 'when a provider has a bad hour, Hermes waits out transient 503/529/timeouts in visible, bounded cycles instead of ending your turn'.
+  - Verified: True
+- **[v0.22.0] Password-manager sign-in for the browser; masked prompt in CLI, TUI or Desktop to save a login. Area: browser, secrets. Relevance: MEDIUM (this prompt uses the changed secret path). Links: PRs #106480, #107585, #137084.**
+  - Evidence: Release note: 'If nothing is saved, you get a masked prompt in the CLI, TUI or Desktop to save it, one-time codes are filled without entering the conversation'.
+  - Verified: True
+- **[v0.22.0] One backend and one gateway for every profile per machine; 'gateway.multiplex_profiles' defaults on. Area: gateway, profiles. Relevance: HIGH (breaking; see the one-gateway finding). Links: PRs #112854 (merged 2026-09-16), #108928, #118273, #117983, #118246, #118027.**
+  - Evidence: Release note: 'Hermes now runs a single messaging gateway and a single desktop backend per machine that serve all of your profiles, instead of one process per profile.' Also: 'gateway.standalone: true is a temporary opt-out.' PR #112854 title verified via gh api.
+  - Verified: True
+- **[v0.22.0] Subagents visible and steerable live: CLI F6 and TUI Ctrl+T monitors, Desktop; Steer and Stop buttons; /stop reaches background children and returns partial work. Area: subagents. Relevance: HIGH. Links: PRs #105593 (merged 2026-09-08), #115616 (merged 2026-09-19), #97689 (merged 2026-09-14).**
+  - Evidence: Release note: 'Running subagents now stay visible above the composer in the CLI (F6), TUI (Ctrl+T) and Desktop with each child's task, elapsed time and live transcript, plus Steer and Stop buttons.'
+  - Verified: True
+- **[v0.22.0] The model picker knows plans: favorites, a warning when a subscription runs low, rate-limit lift times, and reasoning effort set with '/model X --reasoning high'. Area: models, plan usage. Relevance: HIGH. Links: PRs #126535 (merged 2026-09-30), #133392 (merged 2026-10-05), #133408, #110346, #113117.**
+  - Evidence: Release note: 'see a subscription running low ('17% left · resets 3:00 PM') and when a rate limit lifts right in the picker'. Also: '/model X --reasoning high works too'.
+  - Verified: True
+- **[v0.22.0] Editable /queue (list, edit, move, remove prompts); /s as an alias for /steer; hermes --native; Ctrl+C clears the draft; bell and desktop notification when Hermes waits. Area: TUI, CLI. Relevance: HIGH. Links: PRs #95999 (merged 2026-09-14), #125803 (merged 2026-09-28), #121035 (merged 2026-09-25), #106412, #106434, #101284, #101320, #137065, #118587, #111601.**
+  - Evidence: Release note: 'an editable `/queue`, and `hermes --native` to let your own terminal handle TUI scrollback and search'. Slash section: 'Editable `/queue` — list, edit, move or remove prompts; `/s` = `/steer`.'
+  - Verified: True
+- **[v0.22.0] Running-turn control: double-Esc interrupts; push-to-talk cuts speech; the live dock shows /goal and queued prompts. Area: TUI. Relevance: HIGH. Link: PR #125803 (merged 2026-09-28).**
+  - Evidence: Release note: 'Running-turn control — double-Esc interrupts, push-to-talk cuts speech, the live dock (CLI too) shows `/goal` and queued prompts.'
+  - Verified: True
+- **[v0.22.0] Native terminal mode: --native or display.tui_native (opt-in) lets the terminal own scrollback. Area: TUI. Relevance: HIGH (a design option). Link: PR #121035 (merged 2026-09-25).**
+  - Evidence: Release note: 'Native terminal mode — `--native` or `display.tui_native` (opt-in).'
+  - Verified: True
+- **[v0.22.0] Attached TUIs rejoin their session after reconnect; attachments.storage: workspace stages files a sandboxed agent can read. Area: TUI, sessions. Relevance: HIGH. Links: PRs #112227, #125816.**
+  - Evidence: Release note: 'attached TUIs rejoin their session; `attachments.storage: workspace` stages files a sandboxed agent can read'.
+  - Verified: True
+- **[v0.22.0] Foreground commands over 600 s become background jobs; heartbeat=N sends progress; the live-work dock lists them. Area: background work. Relevance: HIGH. Link: PR #103529 (merged 2026-09-06).**
+  - Evidence: Release note: 'foreground timeouts over 600 s become background jobs, `heartbeat=N` sends progress, and the live-work dock lists them'.
+  - Verified: True
+- **[v0.22.0] MCP device-code login for headless terminals: hermes mcp login <server> --flow device. Area: MCP, auth. Relevance: HIGH (for a terminal client). Link: PR #104891 (merged 2026-09-07).**
+  - Evidence: Release note: '`hermes mcp login <server> --flow device` for headless terminals.'
+  - Verified: True
+- **[v0.22.0] Per-child model and provider chains: delegation.fallback_providers gives children their own chain; child_timeout_seconds measures inactivity. Per-child credential overrides come from the delegation config block. Area: subagents, models. Relevance: HIGH (per-agent model choice). Links: PRs #105347, #117606.**
+  - Evidence: Release note: '`delegation.fallback_providers` gives children their own chain; `child_timeout_seconds` measures inactivity.' Source: tools/delegate_tool.py:208-225 at HEAD ('Credential overrides from delegation config'). Exact user-facing key names not enumerated.
+  - Verified: True
+- **[v0.22.0] /goal behaves the same on CLI, Desktop and messaging; the judge waits on subagents. Area: goal mode, background work. Relevance: MEDIUM. Links: PRs #104833, #132251, #125453.**
+  - Evidence: Release note: '/goal — Consistent on CLI, Desktop and messaging; the judge waits on subagents'.
+  - Verified: True
+- **[v0.22.0] Fan-outs lose less: failed children surface at once; an owner crash keeps finished work; children can hand processes to the parent. Area: subagents, workflows. Relevance: MEDIUM. Links: PRs #103549, #116707, #105125.**
+  - Evidence: Release note: 'Fan-outs lose less — Failed children surface at once, an owner crash keeps finished work, children can hand processes to the parent'.
+  - Verified: True
+- **[v0.22.0] Scriptable commands: hermes usage --json (quota, no session), hermes worktree --json, kanban edit flags, -t to pick MCP servers to start. Area: CLI. Relevance: MEDIUM. Links: PR #115899 (its title says it prints Codex quota windows), #95257, #117632, #101634.**
+  - Evidence: Release note: '`hermes usage --json` (quota, no session)'. PR #115899 title: '`hermes usage --json` prints Codex quota windows without a session'.
+  - Verified: True
+- **[v0.22.0] hermes -z exits non-zero on failure; -m custom:<name>:<model> reaches that provider. Area: CLI. Relevance: MEDIUM. Links: PRs #113234, #115293.**
+  - Evidence: Release note: '`hermes -z` exits non-zero on failure; `-m custom:<name>:<model>` reaches that provider'.
+  - Verified: True
+- **[v0.22.0] Rare tools load on demand behind tool_search; the desktop tool schema shrinks from 13,367 to 6,883 tokens. Area: tools. Relevance: MEDIUM (the tool list a client shows changes). Link: PR #97979.**
+  - Evidence: Release note: 'Rare tools load on demand — computer_use, session_search, image_generate, cron and Desktop GUI tools sit behind `tool_search` by default (desktop schemas 13,367→6,883 tokens; `defer: []` opts out)'.
+  - Verified: True
+- **[v0.22.0] Old sessions are auto-pruned after 90 days by default (sessions.auto_prune). Reversed in v0.22.3. Area: sessions. Relevance: HIGH (data removal at startup). Link: none in note.**
+  - Evidence: Release note: '**Old sessions are pruned automatically.** `sessions.auto_prune` now defaults to on: ended sessions inactive for 90 days are deleted at startup.'
+  - Verified: True
+- **[v0.22.0] Idle and daily session resets retired; only /new and /reset start fresh chats. Area: sessions. Relevance: MEDIUM (Talaria has no timer code). Links: PRs #105021 (merged 2026-09-07), #126244.**
+  - Evidence: Release note: '**Chats no longer reset on an idle/daily timer.** `session_reset` idle/daily modes are retired ... `/new` or `/reset` starts fresh.'
+  - Verified: True
+- **[v0.22.0] Safer hermes config: get masks secrets (--raw opts out); set refuses typo paths; env-style names go to .env. Area: config. Relevance: MEDIUM (Talaria does not call this command). Links: PRs #111341, #112250.**
+  - Evidence: Release note: '**Safer `hermes config`** — `get` masks secrets (`--raw` opts out); `set` refuses typo paths and stores env-style names in `.env`.'
+  - Verified: True
+- **[v0.22.0] REST routes act on the profile they name. Area: config, profiles. Relevance: MEDIUM. Link: PR #118275.**
+  - Evidence: Release note: 'REST routes act on the profile they name, exports skip `.ssh`/`.aws`/`.gnupg`'.
+  - Verified: True
+- **[v0.22.0] A stalled-turn watchdog interrupts a turn with no progress after agent.turn_liveness.timeout_s (default 600 s). Area: turns. Relevance: MEDIUM (a client must show the interrupted state). Links: PRs #99758, #99687.**
+  - Evidence: Release note: '**Stalled turns recover** — a watchdog (`agent.turn_liveness.timeout_s`, default 600 s) interrupts a no-progress turn and frees its session'.
+  - Verified: True
+- **[v0.22.0] Safer rewinds: regenerate or edit asks before archiving more than one later turn; Stop keeps the partial reply. Area: sessions, rewind. Relevance: MEDIUM. Links: PRs #133748 (merged 2026-10-11), #121597.**
+  - Evidence: Release note: 'Regenerate or edit asks before archiving more than one later turn; Stop shows the partial reply the session saves.'
+  - Verified: True
+- **[v0.22.0] Cron jobs follow the main model unless pinned; hermes cron resnap was removed. Area: cron. Relevance: MEDIUM. Link: PR #113679.**
+  - Evidence: Release note: 'Unpinned jobs use the model configured at fire time; `pinned` locks one.' Reverted list: '`hermes cron resnap` ... were replaced'.
+  - Verified: True
+- **[v0.22.0] Session lists: sessions.show_subagents lists titled subagent chats; one-shot runs stay out of pickers. Area: sessions. Relevance: MEDIUM. Links: PRs #113826, #122304, #126687.**
+  - Evidence: Release note: 'Cleaner session lists — one-shot runs stay out of pickers, `sessions.show_subagents` lists titled subagent chats'.
+  - Verified: True
+- **[v0.22.0] Approval and clarify prompts that wait until answered were reverted; approvals.timeout still applies. Area: approvals. Relevance: HIGH (see the approval finding). Link: PR #130167 (merged 2026-10-01; reverted per the note).**
+  - Evidence: Release note: '**Approval and clarify prompts that wait until answered** were reverted; `approvals.timeout` still applies. ([#130167])'.
+  - Verified: True
+- **[v0.22.0] Tool renames: todo to todo_list, cronjob to cronjob_manage, process to process_manage; old names still work. Area: tools. Relevance: LOW for Talaria (no literal references). Link: PR #97979.**
+  - Evidence: Release note: 'Several tools were renamed (`todo` → `todo_list`, `cronjob` → `cronjob_manage`, `process` → `process_manage`); the old names still work.'
+  - Verified: True
+- **[v0.22.0] Big sessions confirm a cache-breaking /model switch; opt-in cache_ttl: auto. Area: models, caching. Relevance: MEDIUM (a client may need to answer a confirmation). Links: PRs #118337, #95267, #104455.**
+  - Evidence: Release note: 'big sessions confirm a cache-breaking `/model`; compaction keeps the prefix'.
+  - Verified: True
+- **[v0.22.0] Performance and size claims: source from about 1.06M to 698K lines; gateway/run.py from 34,847 to 5,512 lines; about 2.1k fewer prompt tokens per request. Release claims only, not measured here. Area: performance. Relevance: MEDIUM. Links: PRs #102117, #97979, #106676, #137084.**
+  - Evidence: Release note: 'source went from about 1.06M to 698K lines (−34%) and `gateway/run.py` shrank from 34,847 lines to 5,512'.
+  - Verified: True
+- **[v0.22.0] Many items are Desktop-only: first-run setup chat, Simple mode, Bot Screen, Bot Mode rooms, a 600-entry plugin catalog, language packs. Area: Desktop, plugins, i18n. Relevance: LOW for a terminal client (Simple mode is a design precedent for trimming a UI).**
+  - Evidence: Release note: 'On Desktop, a new **Simple** mode turns the app into a plain chat window'. 'The Plugin Catalog: 600 reviewed plugins'.
+  - Verified: True
+- **[v0.22.1, published 2026-10-14; this line was superseded by v0.22.2] One session authority in the gateway owns sessions, queues and approvals. Attached viewers share approvals and queued-prompt changes. Area: gateway, sessions, approvals. Relevance: HIGH (architecture; shipped again in v0.22.2). Link: commit subjects only.**
+  - Evidence: Commit subjects in v0.22.1 Features: 'Share generation-fenced approvals across gateway viewers' (5e2afdae); 'Publish shared queue changes to attached viewers' (fb02973f); 'Stream canonical gateway execution events to shared observers' (40d9b4c7); 'Replay authority events from atomic subscription watermarks' (d24dc3fa).
+  - Verified: True
+- **[v0.22.1] The gateway resolves --resume <title> and -c <title> [--create-if-missing]; bare -c stays refused. Area: CLI, sessions. Relevance: MEDIUM. Links: commits 11a83ad4 and c6c4161c.**
+  - Evidence: Commit subject: 'Gateway): resolve --resume <title> and -c <title> [--create-if-missing] in the authority'. Docs section: 'Cli): classic chat resolves --resume <title> and -c <title> --create-if-missing at the gateway; bare -c stays refused'.
+  - Verified: True
+- **[v0.22.1] The API refuses /v1/runs on a session owned natively, with a bounded 409 response. Area: API. Relevance: MEDIUM (for API clients). Link: commit 809fec15.**
+  - Evidence: Commit subject: 'Refuse /v1/runs on a natively owned session with a bounded 409'.
+  - Verified: True
+- **[v0.22.1] Local slash commands dispatch through gateway handlers; slash-command discovery is shared with legacy catalogs. Area: slash commands. Relevance: MEDIUM. Links: commits b0377e92, fcf50e03.**
+  - Evidence: Commit subjects: 'Dispatch bound local slash commands through gateway handlers'; 'Share authenticated canonical slash discovery with legacy catalogs'.
+  - Verified: True
+- **[v0.22.2, published 2026-10-15] The gateway starts after a reboot again. Area: gateway lifecycle. Relevance: MEDIUM. Link: PR #138594 (merged 2026-10-14).**
+  - Evidence: Release note: '**The gateway starts after a reboot again.** After a restart, Linux can hand an early PID to an unrelated process ...'
+  - Verified: True
+- **[v0.22.2] Local model turns stream prompt-reading progress into the status line; stall timers skip laptop sleep. Area: local models. Relevance: MEDIUM. Link: PR #138560 (merged 2026-10-14).**
+  - Evidence: Release note: 'Local requests always stream with prompt-reading progress (shown in the status line), stall timers skip time the machine was asleep'.
+  - Verified: True
+- **[v0.22.2] KNOWN ISSUE: sessions that ran under the 0.22.1 gateway cannot be deleted in v0.22.2. Area: sessions. Relevance: HIGH for a client with a delete action.**
+  - Evidence: Release note: '> **Known issue:** Sessions that ran under the 0.22.1 gateway can't be deleted in 0.22.2.'
+  - Verified: True
+- **[v0.22.3, published 2026-10-21] MCP progress notifications stream as live tool progress. Area: MCP, tools. Relevance: MEDIUM. Link: none in note; the tool.progress notification is declared in the contract from v0.22.4.**
+  - Evidence: Release note 'undocumented' list: 'MCP progress notifications streamed as live tool progress'.
+  - Verified: True
+- **[v0.22.3] Steering and editing a queued prompt from Desktop (commit 98efa9dfad, 2026-10-17). Contract methods prompt.steer_queued and prompt.replace_queued. Area: queue, steering. Relevance: HIGH. Link: commit 98efa9dfad; the note gives no PR number.**
+  - Evidence: Release note 'undocumented' list: 'steering and editing a queued prompt from Desktop'. git log -G shows prompt.steer_queued first appears in 98efa9dfad. gh api compare 98efa9dfad...v0.22.3: status ahead, behind_by 0 (contained in v0.22.3).
+  - Verified: True
+- **[v0.22.3] A guided subagent model and provider picker in Desktop. Area: subagents, models. Relevance: HIGH (shows that per-child model choice is user-facing). Link: none in note.**
+  - Evidence: Release note 'undocumented' list: 'a guided subagent model and provider picker in Desktop'.
+  - Verified: True
+- **[v0.22.3] Session auto-prune goes back to opt-in, with a one-time prompt when disk runs low. Reverses the v0.22.0 default. Area: sessions. Relevance: HIGH. Link: none in note.**
+  - Evidence: Release note 'undocumented' list: 'session auto-prune back to opt-in with a one-time prompt when disk runs low'.
+  - Verified: True
+- **[v0.22.3] Refreshed classic CLI layout (glyph transcript, status line under the composer, two-line header); live /loop countdown row in the CLI and TUI. Area: CLI, TUI. Relevance: MEDIUM. Link: none.**
+  - Evidence: Release note 'undocumented' list: 'a refreshed classic CLI layout (glyph transcript, status line under the composer, two-line header)' and 'a live `/loop` countdown row in the CLI and TUI'.
+  - Verified: True
+- **[v0.22.3] Plugin hook post_compaction; a capabilities catalog; plugins can declare OAuth clients that Hermes signs in and refreshes. Area: plugins, MCP. Relevance: LOW to MEDIUM (catalog contents not inspected). Link: none.**
+  - Evidence: Release note 'undocumented' list: 'a `post_compaction` plugin hook, a capabilities catalog, OAuth clients that plugins declare and Hermes signs in and refreshes'.
+  - Verified: True
+- **[v0.22.4, published 2026-10-21] Desktop approval-mode chip follows the active profile's mode. Area: approvals, profiles. Relevance: MEDIUM. Link: PR #142565.**
+  - Evidence: Release note: '**Desktop: the approval-mode chip follows the active profile's mode.**'
+  - Verified: True
+- **[v0.22.4] Minor fixes: Desktop suggestion pills removed; plugin consent step skipped for plugins that install nothing; WhatsApp re-pair; release build check. Area: Desktop, plugins. Relevance: LOW. Links: PRs #142559, #142569, #142439, #142586, #142623.**
+  - Evidence: Release note: '**Desktop no longer shows suggestion pills above the composer.**' and the other fix bullets.
+  - Verified: True
+- **[v0.22.4] The mcp-serve plugin (Hermes as an MCP server) joins the plugin catalog; upstream main later moves it out of core. Area: MCP. Relevance: MEDIUM. Link: none in note.**
+  - Evidence: Release note: 'mcp-serve (Hermes as an MCP server)'. Upstream commit subject: 'refactor(mcp): Hermes as an MCP server leaves core for the mcp-serve plugin'.
+  - Verified: True
+- **[v0.22.4, not in the release note] The generated gateway contract gains session.export (a canonical method) and tool.progress (a notification). Area: gateway, JSON-RPC. Relevance: HIGH (a new method to use). Link: none; visible in the contract file.**
+  - Evidence: jq diff of apps/shared/src/gateway-contract.openrpc.json between 22063fc09 and v0.22.4: x-canonical-methods gains session.export; x-notifications gains tool.progress; no method signatures changed.
+  - Verified: True
+- **Upstream main after v0.22.4: 57 commit subjects since 2026-10-21T18:49:24Z. Notable: background-launch fixes (workdir honored; failed sandbox launch reported as an error); MCP-serve moved out of core; a damaged .git no longer strands paused gateways; sidebar pin/unpin for sessions (PR #142672, merged 2026-10-22); security dependency bumps (certifi, tinypool and simple-git marked critical). Relevance: LOW to MEDIUM.**
+  - Evidence: gh api 'repos/NousResearch/hermes-agent/commits?sha=main&since=2026-10-21T18:49:24Z&per_page=100' returned 57 subjects (under the 100-per-page limit, so no second page needed). Saved to research/upstream-main-after-v0.22.4.txt.
+  - Verified: True
+
+## Recommendations
+
+- Use the generated gateway contract as the source of method names: apps/shared/src/gateway-contract.openrpc.json (OpenRPC, a JSON format that describes JSON-RPC methods; 257 methods, 79 notifications at the installed build and 80 at v0.22.4, 16 server requests, 47 to 48 canonical methods). It is generated by scripts/gen_gateway_contracts.py and was first committed 2026-09-14 (commit 0250c8bcae). It replaces Talaria's hand-recorded baseline, which predates it (compat.py:52).
+- Answer server requests (approval, clarify, secret, sudo, terminal.read, setup_beat, theme.pick, and others) with a reply carrying the same id. Unanswered requests come back as open_requests from session.resume, session.activate and session.events.since, so a reconnecting client can show them again (tui_gateway/server_requests.py docstring). A timed-out request emits one request.cancel notification.
+- Use live subagent control: subagent.list, subagent.tail, subagent.steer, subagent.interrupt, spawn_tree.list/load/save, delegation.status and delegation.pause. subagent.steer, subagent.tail and subagent.list were absent at Talaria's baseline and present at the 3236f4405 pin (grep count 0 vs 2 files).
+- Use queue control: prompt.steer_queued (first appears 2026-10-17 in commit 98efa9dfad, shipped in v0.22.3), prompt.replace_queued, prompt.background and session.steer (session.steer present at the pin).
+- Use plan usage in the model picker: usage.bars, session.usage and model.options (all present at the pin). The release notes describe the picker chip. The content of usage.bars was not inspected.
+- Use session.export for session export (new in v0.22.4, per the contract diff).
+- Use connectors: connectors.catalog, connectors.list, connectors.connect, connectors.operation.status, connectors.accounts.* and connectors.policy.* (connectors.list absent at baseline, present at the pin).
+- Use background processes: process.list, process.kill and process.stop (present at baseline). Foreground commands over 600 s become background jobs (v0.22.0, PR #103529).
+- Use rollback and rewind: rollback.list, rollback.restore, rollback.diff and rollback.session_diff (present at the pin). No checkpoint-specific release note exists in the window; the keyword 'checkpoint' appears in none of the in-scope bodies.
+- Use per-child model and provider overrides: the delegation config block (tools/delegate_tool.py:208-225 at HEAD), delegation.fallback_providers, child_timeout_seconds and the Desktop subagent picker. Confirm exact key names before depending on them.
+- Use hermes --format stream-json (v2026.9.21) for structured one-shot output, and expect a closing result line (v0.22.1 commit 08b6ebd0).
+- Use hermes --native (v0.22.0, PR #121035) if the client wants the terminal to own scrollback.
+- Use --resume <title> and -c <title> --create-if-missing (v0.22.1 commit 11a83ad4) for resume by title.
+- Use device-code MCP login: hermes mcp login <server> --flow device (v0.22.0, PR #104891). The gateway also exposes mcp.servers.oauth.start, poll, cancel and callback (oauth.start absent at baseline, present at the pin).
+- Attach to the running host backend rather than starting a second gateway (v2026.9.21 undocumented list). Follow the one-gateway-per-machine model (v0.22.0).
+- Show turn liveness: agent.turn_liveness.timeout_s (default 600 s) and the visible, bounded retry waits for provider errors (v0.22.0).
+- Use live speech-to-text through stt.streaming (v0.21.6; PR #133853).
+- Use hermes usage --json for quota from the command line (v0.22.0, PR #115899). Its PR title says it prints Codex quota windows, so check the output before relying on it for other providers.
+- Before any Talaria release that targets v0.22.x, add a live test (in a throwaway profile) that exercises approval, clarify, secret, sudo and terminal-read prompts, and add the three removed respond methods to the startup check's knowledge.
+- Record one pinned Hermes revision in Talaria. The code says 7f4d15515 and 7095e23eb; the acceptance evidence says 3236f4405.
+- Target v0.22.2 or later, never v0.22.1. v0.22.4 has the same 257 method signatures as the installed canary, plus tool.progress and session.export, so it is the natural first target.
+
+## Surprises
+
+- The protocol break is inside Talaria's own cited pin. Commit 9f7f2f28c0 (2026-09-14T13:02:05Z) is an ancestor of 3236f4405 (2026-09-14T17:27:26Z), while Talaria's acceptance note says 'no Hermes change' for that pin.
+- Talaria's checked-in baseline (7f4d15515, 2026-08-01) predates the break, so Talaria's own compatibility data describes the old protocol.
+- PR numbers #110521 and #110522, cited in the v2026.9.14 release note as if they were pull requests, are GitHub issues. The implementing commits are 9f7f2f28c0 and 0250c8bcae.
+- Session auto-prune was on by default in v0.22.0 and was reversed in v0.22.3, so the default changed twice within two weeks.
+- The release tags v2026.9.14, v2026.9.21 and v2026.9.24 carry bodies titled v0.21.3, v0.21.4 and v0.21.5.
+- Three release notes (v2026.9.14, v2026.9.21 and v2026.9.24) say most features are 'undocumented here on purpose'. The protocol changes sit in those lists, so a notes-only review would miss them.
+- v0.22.1 was built from the wrong commit; its body is a commit list, and v0.22.2 is the intended release.
+- Talaria's startup check would report approval.pending as present even though the prompt paths are broken, so the check gives a false sense of compatibility.
+- v0.23.0 is announced in three notes but has not been published.
+- The installed canary and v0.22.4 have identical signatures for all 257 gateway methods, so upgrading from the canary is compatible at the signature level. This is a static comparison; no live call was made.
+
+## Open questions
+
+- Do approval, clarify, secret, sudo and terminal-read prompts fail today when Talaria runs against v0.22.4? This needs a live test in a throwaway profile. This unit was read-only, so no test was run.
+- Does approval.pending plus approval.respond still settle an approval that Talaria never answered as a server request? Unverified.
+- Can one Talaria connection reach every profile on a multiplexed gateway, or does per-profile dialing still apply? The release notes do not say how a client should address profiles on the wire.
+- Which revision is Talaria's actual pin? The unit text says 3236f4405; compat.py says 7f4d15515 (baseline) and 7095e23eb (running); the acceptance evidence says 3236f4405.
+- What does usage.bars return, and is it usable for a plan-usage display? Its content was not inspected.
+- Are the release-note performance claims true (about 2.1k fewer prompt tokens, the desktop tool schema halved, faster search)? They were not measured here.
+- Does the gateway.standalone key exist in the installed config? It was not found as a literal in hermes_cli/config.py; only gateway multiplex_profiles appears there (line 960).
+- What is the installed build's default for sessions.auto_prune? Not checked. The v0.22.3 reversal may or may not be in the canary.
+- How was Talaria's 'last commit 2026-09-16' derived? Git reports 2026-09-25 for HEAD cafc640.
