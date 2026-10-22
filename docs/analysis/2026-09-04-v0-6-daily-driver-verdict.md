@@ -12,7 +12,7 @@ section below names both and shows why the result transfers.
 ```gate
 id: v0-6-daily-driver
 verdict: READY
-review-by: 2026-09-30
+review-by: 2026-11-23
 ```
 
 ## Evidence table
@@ -59,3 +59,23 @@ honest-unavailable leg stays the 4018). Marketplace fetch was not re-attempted
 (prior evidence: search live, downloads refuse safely with 404). Corrupt-file
 reload and sub-dialog races are unit-covered only. None of these blocks the
 verdict above; each is recorded so a reader does not mistake coverage for it.
+
+## Re-read on 2026-10-22
+
+This gate was re-read against the evidence available on 2026-10-22. It decided whether to ship
+v0.6.0, and v0.6.0 shipped. Its twelve rows describe candidate `e967c20` against the Hermes of early
+September, and no later evidence contradicts any of them as a record of that candidate, so the
+verdict stays **READY**, scoped to that candidate. What moved:
+
+- Later releases, v0.6.1 to v0.6.5, are gated by their own documents.
+- Hermes moved to v0.22. A hands-on drive of v0.6.5 on 2026-10-22 found that it cannot answer
+  Hermes's approval or question prompts, because current Hermes sends them only to clients that
+  declare `client.capabilities {server_requests: true}`
+  ([the 2026-10-22 handoff, current state](../handoff/2026-10-22-next-steps/02-current-state.md)).
+  None of the twelve rows here covers approvals, so no row reopens, but READY must not be read as
+  "a daily driver on today's Hermes". The same finding bears on `v0-6-1-daily-driver`, whose re-read
+  is due by 2026-10-31.
+- The handoff proposes replacing the Python client; its repository reset (work unit P0-02) retires
+  these gates.
+
+`review-by` moves from 2026-09-30 to 2026-11-23, a date no other gate uses.
