@@ -50,6 +50,8 @@ Talaria tried to be.
 10. [research/](research/) — the sixteen evidence reports, with the corrections between them.
 11. [reference-slices/](reference-slices/) — two working minimal clients from the stack bake-off, in
     Rust and in TypeScript, to read before building.
+12. [units/](units/README.md) — the reference specification behind each GitHub issue in the Talaria
+    v0.7.0 issue set, indexed by phase.
 
 ## For a coding agent starting work
 
@@ -59,6 +61,10 @@ Talaria tried to be.
 - After acceptance, start at phase 0 in [07-roadmap-and-work-units.md](07-roadmap-and-work-units.md).
   Every unit names what to read first, which files it owns, the interfaces it must provide, and the
   tests that prove it done.
+- Each unit is also a GitHub issue under the Objective `Talaria v0.7.0` on the Operations board, as a
+  sub-issue of its phase's capability issue. The issue is the contract; its specification in
+  [units/](units/README.md) holds the evidence and detail. If the two disagree, the issue wins and
+  the disagreement is reported on the issue.
 - Verify Hermes facts against the Hermes you are building against, not against this document. Every
   Hermes claim here was read at revision `22063fc09` (2026-10-17) or checked against v0.22.4
   (2026-10-21); Hermes merges thousands of changes per release.

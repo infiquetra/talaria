@@ -2,6 +2,45 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-22
+
+### The v0.7.0 work is issued as GitHub issues with committed unit specifications
+
+**Decision.** The 2026-10-22 handoff's roadmap becomes a set of GitHub issues under the Objective
+`Talaria v0.7.0` on the Operations board: one capability issue per phase slice, with the building,
+acceptance, decision and exploration units as its sub-issues. Each building and acceptance issue is
+the contract, kept under 40,000 characters: requirements restated inline, the tests to write before
+any code, user acceptance scenarios in a fixed `UAT-n` shape (persona, covers, runner, given, when,
+then, evidence), acceptance criteria that each name a runnable check, and stop conditions. The depth
+lives in a unit specification under `docs/handoff/2026-10-22-next-steps/units/`, linked as the
+issue's first reference: each Hermes fact with its file and line at v0.22.4, request and result
+shapes, edge cases and test notes. When an issue and its specification disagree, the issue wins and
+the disagreement is reported on the issue. Each capability issue makes its planner re-check the
+Hermes facts before any child starts, and the first issue (P0-01) records the operator's decisions
+on the draft ADRs; every later unit depends on it through the dependency chain.
+
+**Rationale.** The issues are meant to be built test-first by models below the drafting tier. The
+specifications run from about 16,000 to 128,000 characters, past GitHub's 65,536-character body
+limit, and a body that long stops working as a checklist. Committed beside the code, the evidence
+is versioned with what it describes. Every draft went through two review rounds: a fact-check
+against the Hermes source and a simulated builder (a smaller model asked what it would have to ask
+before building), each followed by a repair. Over the 42 units measured in both rounds when this
+entry was written, the simulated builder's contradictions fell from 453 to 323 and its blocking
+questions from 332 to 280, and no unit was judged buildable without questions in either round, so
+planners should expect to settle edge cases at planning time.
+
+**Rejected alternatives.** (a) The whole specification in the issue body: over GitHub's limit for
+most units, and it buries the contract. (b) Specifications outside the repository, such as a gist or
+a wiki: they drift from the code they describe. (c) One issue per phase with no sub-issues: too
+coarse to give one unit to one builder, and the board could not show progress inside a phase.
+(d) One drafting pass with no review: the first simulated-builder round found every unit
+unbuildable without questions.
+
+**Revisit when.** Phase 1 finishes: count the questions builders actually raised against the issue
+and its specification, and keep or drop the review rounds on that evidence. Or Hermes moves far
+enough past v0.22.4 that the planning-stage re-check rewrites most cited facts, which would turn the
+committed specifications from a help into upkeep.
+
 ## 2026-09-06
 
 ### Talaria adopts the launch directory as the session's working directory at creation (Live 13 option (c), #157)
