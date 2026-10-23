@@ -2,6 +2,46 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-23 — Patterns guide trial with a fresh Haiku-tier agent
+
+**Evidence.** Issue #197 (`P0-04`), the guide `docs/agents/patterns.md` at commit `1e64b8c`. A new
+Claude Code session in a disposable worktree of that commit received the fixed prompt of the unit
+specification ([units/P0-04.md](../handoff/2026-10-22-next-steps/units/P0-04.md), section 8) and
+nothing else. The trial's code was not kept.
+
+**Trial 1.**
+
+Result: PASS
+
+- Model and effort: Haiku 5.5 (`claude-haiku-5-5`) at effort `xhigh`, run non-interactively.
+- Instruction files loaded by the tool itself: the repository's `AGENTS.md` and `CLAUDE.md`, the
+  operator's global Claude Code instructions, and the instructions of the configured tool servers
+  (the agent also called the Serena server's built-in instructions tool, which reads no repository
+  file).
+- Files opened by its own tool calls: `docs/agents/patterns.md`, `crates/talaria-tui/Cargo.toml`,
+  `crates/talaria-tui/src/lib.rs` and `crates/talaria-tui/src/view.rs`; it created
+  `crates/talaria-tui/src/keys.rs` and `crates/talaria-tui/src/view.rs`.
+- Minutes: 3 (22 turns).
+- Compile errors and fixes: one, `unresolved import talaria_core::Effect`: the guide says the real
+  `Effect` lives in `talaria-core`, which has no such type yet; it defined an empty local `Effect`
+  enum instead. Its two tests failed first by design, then passed; `cargo fmt` fixed two layout
+  differences.
+- Questions written: none (`TRIAL-QUESTIONS.txt` absent).
+- Checks run by the lead afterwards: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo test -p talaria-tui` (2 passed) and `cargo test -p patterns-check` all exited 0;
+  `git status --porcelain` listed only `crates/talaria-tui/src/lib.rs`, `keys.rs` and `view.rs`.
+  The snapshot test compares literal rows at 40 columns, with the version row built by `format!`
+  from `env!("CARGO_PKG_VERSION")`.
+- Guide changes made in response: none.
+
+**Mechanism.** The overlay pattern gave a complete, compiled shape (enum variant, `open` method,
+key handling that swallows keys, a render function into an area and a buffer, a literal-row
+snapshot), so the agent copied structure instead of exploring. Its only error came from a name the
+guide attributes to a crate that later units will fill.
+
+**Generalizable rule.** A guide that names a real type its readers cannot yet import should say so
+next to the name; a compiled stand-in example is what lets a small model finish without questions.
+
 ## 2026-10-22 — The Hermes gateway contract misled every bake-off builder in the same places
 
 **Evidence.** [`docs/handoff/2026-10-22-next-steps/research/u16-stack-bakeoff.md`](../handoff/2026-10-22-next-steps/research/u16-stack-bakeoff.md)

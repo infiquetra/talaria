@@ -35,6 +35,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Clippy ban canary
+        run: cargo test -p patterns-check --test boundaries -- --ignored clippy_catches_each_banned_interface
       - name: Whitespace
         run: git diff --check origin/main...HEAD
       - name: Conflict markers
