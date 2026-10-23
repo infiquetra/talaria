@@ -10,8 +10,7 @@ disagreement is reported on the issue.
 
 The plan behind the set is the [roadmap](../07-roadmap-and-work-units.md). Capability issues (one
 per phase slice) hold the run contract for their children and have no specification of their own;
-neither do P4-00 (exploration), P5-00 (exploration), P6-08 (exploration). Rows marked "to come" are
-building or acceptance units whose specification lands in a later change.
+neither do P6-08 (exploration).
 
 ## PH0: Talaria v0.7.0 phase 0: decide the direction and reset the repository for the Rust rewrite
 
@@ -50,102 +49,102 @@ building or acceptance units whose specification lands in a later change.
 
 | Unit | Kind | Specification | Issue |
 |---|---|---|---|
-| P2-01: Tool-call cells and rendered diffs (unit P2-01) | building | to come |  |
-| P2-02: Transcript pager with search over the whole session (unit P2-02) | building | to come |  |
-| P2-03: Slash-command palette from the backend catalogue (unit P2-03) | building | to come |  |
-| P2-04: @ file mentions, attachments, image paste and large-paste collapse (unit P2-04) | building | to come |  |
-| P2-05: ! shell commands and /btw side questions (unit P2-05) | building | to come |  |
-| P2-11: Show the agent's task checklist (unit P2-11) | building | to come |  |
-| P2-12: Apply Hermes skins with light, dark and reduced-motion handling (unit P2-12) | building | to come |  |
-| P2-13: Comforts: external editor, history search, suspend, notifications and Herdr pane state (unit P2-13) | building | to come |  |
-| PH2A-ACC: Phase 2a acceptance: extend the smoke suite to every phase 2a feature and run it on the candidate | acceptance | to come |  |
+| P2-01: Tool-call cells and rendered diffs (unit P2-01) | building | [P2-01.md](P2-01.md) |  |
+| P2-02: Transcript pager with search over the whole session (unit P2-02) | building | [P2-02.md](P2-02.md) |  |
+| P2-03: Slash-command palette from the backend catalogue (unit P2-03) | building | [P2-03.md](P2-03.md) |  |
+| P2-04: @ file mentions, attachments, image paste and large-paste collapse (unit P2-04) | building | [P2-04.md](P2-04.md) |  |
+| P2-05: ! shell commands and /btw side questions (unit P2-05) | building | [P2-05.md](P2-05.md) |  |
+| P2-11: Show the agent's task checklist (unit P2-11) | building | [P2-11.md](P2-11.md) |  |
+| P2-12: Apply Hermes skins with light, dark and reduced-motion handling (unit P2-12) | building | [P2-12.md](P2-12.md) |  |
+| P2-13: Comforts: external editor, history search, suspend, notifications and Herdr pane state (unit P2-13) | building | [P2-13.md](P2-13.md) |  |
+| PH2A-ACC: Phase 2a acceptance: extend the smoke suite to every phase 2a feature and run it on the candidate | acceptance | [PH2A-ACC.md](PH2A-ACC.md) |  |
 
 ## PH2B: Talaria v0.7.0 phase 2b: control sessions, models, queues and modes
 
 | Unit | Kind | Specification | Issue |
 |---|---|---|---|
-| P2-06: Model, provider and effort picker that changes this session by default (unit P2-06) | building | to come |  |
-| P2-07: Session picker across profiles with rename, branch and export (unit P2-07) | building | to come |  |
-| P2-08: Queue and steer: see, edit, reorder and send queued prompts (unit P2-08) | building | to come |  |
-| P2-09: Rewind: checkpoints, diffs and restoring the conversation (unit P2-09) | building | to come |  |
-| P2-10: Context breakdown, compaction and usage (unit P2-10) | building | to come |  |
-| P2-14: Headless mode: talaria -p with text or JSON output and exit codes (unit P2-14) | building | to come |  |
-| P2-15: Clean display for Hermes's own /plan, /goal, /loop, /yolo and /fast (unit P2-15) | building | to come |  |
-| P2-16: Permission mode in the status line and /cd for the session's folder (unit P2-16) | building | to come |  |
-| PH2-ACC: Phase 2 acceptance: the smoke suite on the candidate, then a switch week from Claude Code to Talaria | acceptance | to come |  |
+| P2-06: Model, provider and effort picker that changes this session by default (unit P2-06) | building | [P2-06.md](P2-06.md) |  |
+| P2-07: Session picker across profiles with rename, branch and export (unit P2-07) | building | [P2-07.md](P2-07.md) |  |
+| P2-08: Queue and steer: see, edit, reorder and send queued prompts (unit P2-08) | building | [P2-08.md](P2-08.md) |  |
+| P2-09: Rewind: checkpoints, diffs and restoring the conversation (unit P2-09) | building | [P2-09.md](P2-09.md) |  |
+| P2-10: Context breakdown, compaction and usage (unit P2-10) | building | [P2-10.md](P2-10.md) |  |
+| P2-14: Headless mode: talaria -p with text or JSON output and exit codes (unit P2-14) | building | [P2-14.md](P2-14.md) |  |
+| P2-15: Clean display for Hermes's own /plan, /goal, /loop, /yolo and /fast (unit P2-15) | building | [P2-15.md](P2-15.md) |  |
+| P2-16: Permission mode in the status line and /cd for the session's folder (unit P2-16) | building | [P2-16.md](P2-16.md) |  |
+| PH2-ACC: Phase 2 acceptance: the smoke suite on the candidate, then a switch week from Claude Code to Talaria | acceptance | [PH2-ACC.md](PH2-ACC.md) |  |
 
 ## PH3: Talaria v0.7.0 phase 3: a fleet of agents working in the background
 
 | Unit | Kind | Specification | Issue |
 |---|---|---|---|
-| P3-01: Fleet registry: every session across served profiles and one needs-you queue (unit P3-01) | building | to come |  |
-| P3-02: Fleet view: peek, reply, stop and open any session (unit P3-02) | building | to come |  |
-| P3-03: Background launch, including a new session in a fresh git worktree (unit P3-03) | building | to come |  |
-| P3-04: Subagent tree with tail, steer and stop (unit P3-04) | building | to come |  |
-| P3-05: Background processes and /bg results (unit P3-05) | building | to come |  |
-| P3-06: Attention: bell, desktop notification and counters for needs-you, done and failed (unit P3-06) | building | to come |  |
-| P3-07: Review a session's worktree: stage, commit, push and open a draft pull request (unit P3-07) | building | to come |  |
-| P3-08: talaria attach, and open a session in a new multiplexer pane (unit P3-08) | building | to come |  |
-| P3-09: Resident agents: always-available named agents pinned in the fleet view (unit P3-09, only if the operator adopts it) | building | to come |  |
-| PH3-ACC: Phase 3 acceptance: three agents on three providers while the operator codes in a fourth | acceptance | to come |  |
+| P3-01: Fleet registry: every session across served profiles and one needs-you queue (unit P3-01) | building | [P3-01.md](P3-01.md) |  |
+| P3-02: Fleet view: peek, reply, stop and open any session (unit P3-02) | building | [P3-02.md](P3-02.md) |  |
+| P3-03: Background launch, including a new session in a fresh git worktree (unit P3-03) | building | [P3-03.md](P3-03.md) |  |
+| P3-04: Subagent tree with tail, steer and stop (unit P3-04) | building | [P3-04.md](P3-04.md) |  |
+| P3-05: Background processes and /bg results (unit P3-05) | building | [P3-05.md](P3-05.md) |  |
+| P3-06: Attention: bell, desktop notification and counters for needs-you, done and failed (unit P3-06) | building | [P3-06.md](P3-06.md) |  |
+| P3-07: Review a session's worktree: stage, commit, push and open a draft pull request (unit P3-07) | building | [P3-07.md](P3-07.md) |  |
+| P3-08: talaria attach, and open a session in a new multiplexer pane (unit P3-08) | building | [P3-08.md](P3-08.md) |  |
+| P3-09: Resident agents: always-available named agents pinned in the fleet view (unit P3-09, only if the operator adopts it) | building | [P3-09.md](P3-09.md) |  |
+| PH3-ACC: Phase 3 acceptance: three agents on three providers while the operator codes in a fourth | acceptance | [PH3-ACC.md](PH3-ACC.md) |  |
 
 ## PH4A: Talaria v0.7.0 phase 4a: settings, providers, model roles, profiles and a doctor
 
 | Unit | Kind | Specification | Issue |
 |---|---|---|---|
-| P4-00: Find out which configuration calls work on the gateway socket and which need the dashboard API (unit P4-00) | exploration | none |  |
-| P4-01: Schema-driven settings: forms, validation and a diff before apply (unit P4-01) | building | to come |  |
-| P4-02: Providers, keys and sign-in (unit P4-02) | building | to come |  |
-| P4-03: Model roles: main, auxiliary, Mixture of Agents, fallbacks and delegation (unit P4-03) | building | to come |  |
-| P4-06: Profiles, including why a profile is not served (unit P4-06) | building | to come |  |
-| P4-10: Doctor: gateway health and versions, each problem with a fix (unit P4-10) | building | to come |  |
-| PH4A-ACC: Phase 4a acceptance: extend the smoke suite to settings, providers, model roles, profiles and the doctor, and run it | acceptance | to come |  |
+| P4-00: Find out which configuration calls work on the gateway socket and which need the dashboard API (unit P4-00) | exploration | [P4-00.md](P4-00.md) |  |
+| P4-01: Schema-driven settings: forms, validation and a diff before apply (unit P4-01) | building | [P4-01.md](P4-01.md) |  |
+| P4-02: Providers, keys and sign-in (unit P4-02) | building | [P4-02.md](P4-02.md) |  |
+| P4-03: Model roles: main, auxiliary, Mixture of Agents, fallbacks and delegation (unit P4-03) | building | [P4-03.md](P4-03.md) |  |
+| P4-06: Profiles, including why a profile is not served (unit P4-06) | building | [P4-06.md](P4-06.md) |  |
+| P4-10: Doctor: gateway health and versions, each problem with a fix (unit P4-10) | building | [P4-10.md](P4-10.md) |  |
+| PH4A-ACC: Phase 4a acceptance: extend the smoke suite to settings, providers, model roles, profiles and the doctor, and run it | acceptance | [PH4A-ACC.md](PH4A-ACC.md) |  |
 
 ## PH4B: Talaria v0.7.0 phase 4b: MCP servers, skills, plugins, memory, cron, connectors and /configure
 
 | Unit | Kind | Specification | Issue |
 |---|---|---|---|
-| P4-04: MCP servers: catalogue, add, test, enable and sign in (unit P4-04) | building | to come |  |
-| P4-05: Skills, toolsets and plugins: browse, enable and install (unit P4-05) | building | to come |  |
-| P4-07: Memory provider settings, reset and curator (unit P4-07) | building | to come |  |
-| P4-08: Cron jobs: list, add, pause, resume, trigger and history (unit P4-08) | building | to come |  |
-| P4-11: Connectors and messaging platforms (unit P4-11) | building | to come |  |
-| P4-09: Conversational configuration with /configure (unit P4-09) | building | to come |  |
-| PH4-ACC: Phase 4 acceptance: configure a provider, an MCP server, a profile's model and a cron job without a YAML file | acceptance | to come |  |
+| P4-04: MCP servers: catalogue, add, test, enable and sign in (unit P4-04) | building | [P4-04.md](P4-04.md) |  |
+| P4-05: Skills, toolsets and plugins: browse, enable and install (unit P4-05) | building | [P4-05.md](P4-05.md) |  |
+| P4-07: Memory provider settings, reset and curator (unit P4-07) | building | [P4-07.md](P4-07.md) |  |
+| P4-08: Cron jobs: list, add, pause, resume, trigger and history (unit P4-08) | building | [P4-08.md](P4-08.md) |  |
+| P4-11: Connectors and messaging platforms (unit P4-11) | building | [P4-11.md](P4-11.md) |  |
+| P4-09: Conversational configuration with /configure (unit P4-09) | building | [P4-09.md](P4-09.md) |  |
+| PH4-ACC: Phase 4 acceptance: configure a provider, an MCP server, a profile's model and a cron job without a YAML file | acceptance | [PH4-ACC.md](PH4-ACC.md) |  |
 
 ## PH5: Talaria v0.7.0 phase 5: workflows that fan work out across every configured model
 
 | Unit | Kind | Specification | Issue |
 |---|---|---|---|
-| P5-00: Measure the gateway with ten or more concurrent sessions before workflows depend on it (unit P5-00) | exploration | none |  |
-| P5-01: Workflow script engine in embedded QuickJS (unit P5-01) | building | to come |  |
-| P5-02: Workflow journal and resume that never re-runs a finished agent (unit P5-02) | building | to come |  |
-| P5-03: Hermes binding for agent(): hidden sessions, explicit model and schema-checked results (unit P5-03) | building | to come |  |
-| P5-04: Staffing table, roster and per-provider scheduling within budgets (unit P5-04) | building | to come |  |
-| P5-05: Workflow progress view (unit P5-05) | building | to come |  |
-| P5-06: Workflow runner lifecycle: run, detach, resume, list and stop (unit P5-06) | building | to come |  |
-| P5-07: Worktree isolation for workflow agents (unit P5-07) | building | to come |  |
-| P5-08: Built-in workflows: review-branch, research, fix-failing-tests and ultracode (unit P5-08) | building | to come |  |
-| P5-09: Ultracode mode and the talaria-workflows Hermes skill (unit P5-09) | building | to come |  |
-| PH5-ACC: Phase 5 acceptance: a three-provider review workflow survives a kill and resumes without re-running finished agents | acceptance | to come |  |
+| P5-00: Measure the gateway with ten or more concurrent sessions before workflows depend on it (unit P5-00) | exploration | [P5-00.md](P5-00.md) |  |
+| P5-01: Workflow script engine in embedded QuickJS (unit P5-01) | building | [P5-01.md](P5-01.md) |  |
+| P5-02: Workflow journal and resume that never re-runs a finished agent (unit P5-02) | building | [P5-02.md](P5-02.md) |  |
+| P5-03: Hermes binding for agent(): hidden sessions, explicit model and schema-checked results (unit P5-03) | building | [P5-03.md](P5-03.md) |  |
+| P5-04: Staffing table, roster and per-provider scheduling within budgets (unit P5-04) | building | [P5-04.md](P5-04.md) |  |
+| P5-05: Workflow progress view (unit P5-05) | building | [P5-05.md](P5-05.md) |  |
+| P5-06: Workflow runner lifecycle: run, detach, resume, list and stop (unit P5-06) | building | [P5-06.md](P5-06.md) |  |
+| P5-07: Worktree isolation for workflow agents (unit P5-07) | building | [P5-07.md](P5-07.md) |  |
+| P5-08: Built-in workflows: review-branch, research, fix-failing-tests and ultracode (unit P5-08) | building | [P5-08.md](P5-08.md) |  |
+| P5-09: Ultracode mode and the talaria-workflows Hermes skill (unit P5-09) | building | [P5-09.md](P5-09.md) |  |
+| PH5-ACC: Phase 5 acceptance: a three-provider review workflow survives a kill and resumes without re-running finished agents | acceptance | [PH5-ACC.md](PH5-ACC.md) |  |
 
 ## PH6: Talaria v0.7.0 phase 6: later work, in the order the operator chooses
 
 | Unit | Kind | Specification | Issue |
 |---|---|---|---|
-| P6-01: Remote gateways: native-app sign-in with a one-time proof key, behind a tunnel (unit P6-01) | building | to come |  |
-| P6-02: Agent Client Protocol adapter so non-Hermes agents appear in the fleet view (unit P6-02) | building | to come |  |
-| P6-03: Kanban view and compiling a workflow to kanban (unit P6-03) | building | to come |  |
-| P6-04: Vim editing mode in the composer (unit P6-04) | building | to come |  |
-| P6-05: Streaming JSON input and output for scripts (unit P6-05) | building | to come |  |
-| P6-06: Voice input and output (unit P6-06) | building | to come |  |
-| P6-07: Packaging: GitHub release binaries per platform and a Homebrew tap (unit P6-07) | building | to come |  |
+| P6-01: Remote gateways: native-app sign-in with a one-time proof key, behind a tunnel (unit P6-01) | building | [P6-01.md](P6-01.md) |  |
+| P6-02: Agent Client Protocol adapter so non-Hermes agents appear in the fleet view (unit P6-02) | building | [P6-02.md](P6-02.md) |  |
+| P6-03: Kanban view and compiling a workflow to kanban (unit P6-03) | building | [P6-03.md](P6-03.md) |  |
+| P6-04: Vim editing mode in the composer (unit P6-04) | building | [P6-04.md](P6-04.md) |  |
+| P6-05: Streaming JSON input and output for scripts (unit P6-05) | building | [P6-05.md](P6-05.md) |  |
+| P6-06: Voice input and output (unit P6-06) | building | [P6-06.md](P6-06.md) |  |
+| P6-07: Packaging: GitHub release binaries per platform and a Homebrew tap (unit P6-07) | building | [P6-07.md](P6-07.md) |  |
 | P6-08: Propose the upstream Hermes contributions the client needs (unit P6-08) | exploration | none |  |
 
 ## REL: Talaria v0.7.0 release: integrated regression, documentation, migration notes and tag
 
 | Unit | Kind | Specification | Issue |
 |---|---|---|---|
-| REL-01: Release candidate: integrated regression, replay suites and performance budgets on one commit (unit REL-01) | building | to come |  |
-| REL-02: User documentation: guide, keybinding and configuration reference, and migration from 0.6.5 (unit REL-02) | building | to come |  |
-| REL-03: Version, changelog, tag and release notes for v0.7.0 (unit REL-03) | building | to come |  |
+| REL-01: Release candidate: integrated regression, replay suites and performance budgets on one commit (unit REL-01) | building | [REL-01.md](REL-01.md) |  |
+| REL-02: User documentation: guide, keybinding and configuration reference, and migration from 0.6.5 (unit REL-02) | building | [REL-02.md](REL-02.md) |  |
+| REL-03: Version, changelog, tag and release notes for v0.7.0 (unit REL-03) | building | [REL-03.md](REL-03.md) |  |
