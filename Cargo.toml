@@ -8,6 +8,7 @@ members = [
     "crates/talaria-tui",
     "crates/talaria-workflow",
     "crates/talaria-cli",
+    "tools/patterns-check",
 ]
 # Reference slices remain standalone packages when Cargo runs inside the handoff.
 exclude = ["docs"]
