@@ -1,0 +1,11 @@
+[package]
+name = "talaria-cli"
+version = "0.7.0-dev"
+edition = "2024"
+
+[[bin]]
+name = "talaria"
+path = "src/main.rs"
+
+[dev-dependencies]
+serde_json.workspace = true

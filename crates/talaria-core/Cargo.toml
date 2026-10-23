@@ -1,0 +1,7 @@
+[package]
+name = "talaria-core"
+version = "0.7.0-dev"
+edition = "2024"
+
+[dev-dependencies]
+serde_json.workspace = true
