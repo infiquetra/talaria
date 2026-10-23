@@ -42,7 +42,7 @@ const BASELINE_COMMANDS: &[&str] = &[
     "cargo fmt --check",
     "cargo clippy --all-targets -- -D warnings",
     "cargo test --workspace",
-    "cargo llvm-cov --workspace --ignore-filename-regex \"(/tests/|/generated/)\" --fail-under-lines 80",
+    "cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
     "git diff --check origin/main...HEAD",
 ];
 

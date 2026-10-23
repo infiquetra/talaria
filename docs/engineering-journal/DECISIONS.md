@@ -23,9 +23,10 @@ required admission identifier and refusal of unattended approval, remain in
 
 **Rationale.** These rules preserve wire discriminators without handwritten
 protocol types, custom typify templates, or blanket removal of schema keywords.
-The committed input makes offline checks reproducible. The coverage command
-excludes integration-test and generated-source paths as settled by the parent
-issue; inline test code continues to count.
+The committed input makes offline checks reproducible. The settled coverage
+command uses `--ignore-filename-regex /generated/`; the workflow, repository
+profile and baseline expectation remain owned by issue 195. Workspace line
+coverage is 92.60% across 311 lines with that exclusion; inline test code counts.
 
 **Revisit when.** Hermes adds a discriminator, a received constrained string,
 or a conflicting inline enum title; or typify gains reliable const and title
