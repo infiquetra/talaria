@@ -1522,12 +1522,12 @@ mod ticket {
                             expired: false,
                         },
                         ControlReply::Issue {
-                            profile_id: canonical.clone(),
+                            profile_id: fixture,
                             instance_id: INSTANCE_ID.to_string(),
                             expired: false,
                         },
                         ControlReply::Issue {
-                            profile_id: fixture,
+                            profile_id: canonical.clone(),
                             instance_id: INSTANCE_ID.to_string(),
                             expired: false,
                         },
@@ -1609,6 +1609,7 @@ mod ticket {
         .await
         .expect("host ticket");
         let requests = mock.requests();
+        assert_eq!(requests.len(), 5, "identify and four ticket requests");
         assert_ticket_line(
             &requests[1],
             &fixture,
@@ -1620,10 +1621,17 @@ mod ticket {
             &requests[2],
             &fixture,
             INSTANCE_ID,
+            "interactive",
+            "profile",
+        );
+        assert_ticket_line(
+            &requests[3],
+            &fixture,
+            INSTANCE_ID,
             "native-http",
             "profile",
         );
-        assert_ticket_line(&requests[3], &canonical, INSTANCE_ID, "interactive", "host");
+        assert_ticket_line(&requests[4], &canonical, INSTANCE_ID, "interactive", "host");
         let host = Scope::host(Purpose::Interactive).expect("host again");
         let seen = mock.connections();
         let err = mint_ticket(home.path(), &endpoint, &profile, Purpose::NativeHttp, host)
@@ -2668,6 +2676,7 @@ mod handshake {
             WsStep::Take,
             WsStep::Send(frame_capabilities()),
             WsStep::Take,
+            WsStep::Wait(Duration::from_secs(2)),
         ];
         let (_mock, mut connection) = opened(
             &home,
