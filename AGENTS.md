@@ -28,6 +28,7 @@ Read the architecture decision records before writing code. Their recorded statu
 2. Read the unit's inputs. Verify Hermes facts at the revision pinned in
    `crates/hermes-contract/PINNED`, created by P0-03
    ([roadmap](docs/handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p0-03--vendor-and-generate-the-hermes-contract)).
+   After the issue and before writing code, read the patterns guide, `docs/agents/patterns.md`.
 3. Touch only owned files; explain any necessary minimal exception in the PR.
 4. Tests first when named by the unit; record their failing and passing runs.
 5. Pass the project check and the unit's acceptance commands.

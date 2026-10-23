@@ -1,1 +1,1 @@
-//! Checks the Talaria patterns guide and boundary rules.
+#![doc = include_str!("../../../docs/agents/patterns.md")]

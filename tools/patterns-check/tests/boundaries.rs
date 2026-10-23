@@ -7,35 +7,119 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Relative paths allowed to contain terminal-only tokens.
-/// Empty in the red run, so the allow-list test fails on this constant.
-pub const TERMINAL_MODULE: &[&str] = &[];
+/// Relative paths allowed to contain terminal-only tokens. Widening it needs a stated reason.
+pub const TERMINAL_MODULE: &[&str] = &["crates/talaria-tui/src/terminal.rs"];
 
-/// Red-run stub. Reports nothing, so planted terminal, viewport and lint-table
-/// violations fail the boundary tests.
-///
-/// The replacement walks `root` and returns `path:line: token` using `/`.
-/// (a) In `crates/**/*.rs`, these tokens are allowed only on a [`TERMINAL_MODULE`]
-/// path: `execute!`, `queue!`, `enable_raw_mode`, `disable_raw_mode`,
-/// `EnterAlternateScreen`, `LeaveAlternateScreen`, `EventStream`,
-/// `clippy::disallowed_methods`, `clippy::disallowed_types`.
-/// (b) In `crates/**/*.rs`, nowhere: `Viewport::Inline`, `insert_before`, `Rc<RefCell`.
-/// (c) In the root `Cargo.toml` and `crates/**/Cargo.toml`, nowhere:
-/// `disallowed_methods`, `disallowed-methods`, `disallowed_types`, `disallowed-types`.
+/// Allowed only on a [`TERMINAL_MODULE`] path, in `crates/**/*.rs`. The lint names match
+/// whatever surrounds them: `allow`, `expect`, a list of lints or an inner attribute.
+const TERMINAL_ONLY: &[&str] = &[
+    "execute!",
+    "queue!",
+    "enable_raw_mode",
+    "disable_raw_mode",
+    "EnterAlternateScreen",
+    "LeaveAlternateScreen",
+    "EventStream",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+];
+
+/// Allowed nowhere in `crates/**/*.rs`.
+const NEVER: &[&str] = &["Viewport::Inline", "insert_before", "Rc<RefCell"];
+
+/// Allowed in no `Cargo.toml` (root or under `crates/`): a lint table would switch a ban off.
+const LINT_TABLE: &[&str] = &[
+    "disallowed_methods",
+    "disallowed-methods",
+    "disallowed_types",
+    "disallowed-types",
+];
+
+const UNATTENDED: &str = "\"unattended\"";
+
+/// Walks `root` and returns `path:line: token` with `/` separators, relative to `root`.
+/// (a) [`TERMINAL_ONLY`] tokens outside [`TERMINAL_MODULE`], (b) [`NEVER`] tokens, both in
+/// `crates/**/*.rs`; (c) [`LINT_TABLE`] tokens in the root `Cargo.toml` and
+/// `crates/**/Cargo.toml`. Text scanning is a heuristic: a token in a comment counts too.
 fn boundary_violations(root: &Path) -> Vec<String> {
-    let _ = root;
-    Vec::new()
+    let mut found = Vec::new();
+    for relative in files_under(root, "crates") {
+        if relative.ends_with(".rs") {
+            let terminal_module = TERMINAL_MODULE.contains(&relative.as_str());
+            let mut tokens: Vec<&str> = NEVER.to_vec();
+            if !terminal_module {
+                tokens.extend_from_slice(TERMINAL_ONLY);
+            }
+            found.extend(token_hits(root, &relative, &tokens));
+        } else if relative.ends_with("/Cargo.toml") {
+            found.extend(token_hits(root, &relative, LINT_TABLE));
+        }
+    }
+    if root.join("Cargo.toml").is_file() {
+        found.extend(token_hits(root, "Cargo.toml", LINT_TABLE));
+    }
+    found
 }
 
-/// Red-run stub. Reports nothing, so a planted quoted key fails the unattended test.
-///
-/// The replacement reports `"unattended"`, quotes included, in `crates/**/*.rs`.
-/// A file is exempt when a path component is `tests`, or when `src` is immediately
-/// followed by `generated`. Issue #197 REQ-16(d) exempts generated schema bindings.
-/// That exemption is settled contradiction 2: both `tests/` and `src/generated/` are exempt.
+/// Reports `"unattended"`, quotes included, in `crates/**/*.rs`. A file is exempt when a
+/// path component is `tests`, or when `src` is immediately followed by `generated`:
+/// generated schema bindings only describe the wire field.
 fn unattended_violations(root: &Path) -> Vec<String> {
-    let _ = root;
-    Vec::new()
+    files_under(root, "crates")
+        .into_iter()
+        .filter(|relative| relative.ends_with(".rs") && !unattended_exempt(relative))
+        .flat_map(|relative| token_hits(root, &relative, &[UNATTENDED]))
+        .collect()
+}
+
+fn unattended_exempt(relative: &str) -> bool {
+    let parts: Vec<&str> = relative.split('/').collect();
+    parts.contains(&"tests")
+        || parts
+            .windows(2)
+            .any(|pair| pair[0] == "src" && pair[1] == "generated")
+}
+
+/// Every file under `root/top`, as `/`-separated paths relative to `root`, sorted.
+/// A missing `top` folder yields nothing.
+fn files_under(root: &Path, top: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.join(top)];
+    while let Some(folder) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|error| panic!("could not read a folder entry ({error})"))
+                .path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if let Ok(relative) = path.strip_prefix(root) {
+                let parts: Vec<String> = relative
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                files.push(parts.join("/"));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn token_hits(root: &Path, relative: &str, tokens: &[&str]) -> Vec<String> {
+    let text = std::fs::read_to_string(root.join(relative))
+        .unwrap_or_else(|error| panic!("could not read {relative} ({error})"));
+    let mut hits = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        for token in tokens {
+            if line.contains(token) {
+                hits.push(format!("{relative}:{}: {token}", index + 1));
+            }
+        }
+    }
+    hits
 }
 
 const BANNED_PATHS: &[&str] = &[
