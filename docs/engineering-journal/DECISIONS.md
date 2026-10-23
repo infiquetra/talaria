@@ -3172,3 +3172,30 @@ remain evidence-bound until that run produces receipts.
 **Revisit when.** A new visual surface needs data the process does not hold, a setting genuinely
 needs live external reload, or a writable diff action is separately approved. None is implied by
 this release.
+
+## 2026-10-23 — The Rust workspace has an 80% line-coverage floor
+
+**Decision.** Measure hand-written source across the workspace with
+`cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80`.
+The floor is 80% of lines, with no branch-coverage requirement. Generated protocol
+source under `src/generated/` is excluded before the contract generator arrives.
+The same command lives in continuous integration and the repository profile.
+
+Inline `#[cfg(test)]` code counts. A compiler probe on Rust 1.98.1 rejects
+`#[coverage(off)]` with error E0658 (experimental feature), so stable Rust cannot
+exclude those inline modules with that attribute. Whether integration-test files
+under `tests/` count must be read from the first successful coverage summary.
+Local measurement was blocked: `failed to find llvm-tools-preview, please install
+llvm-tools-preview, or set LLVM_COV and LLVM_PROFDATA environment variables`.
+The build host has Homebrew Rust 1.98.1 without rustup; the continuous-integration
+coverage job installs the pinned toolchain and components and is the measurement authority.
+
+**Rationale.** A line floor guards new hand-written behaviour without letting generated
+types dominate the result. The initial libraries contain only crate documentation,
+so the placeholder command line provides the initial executable source.
+
+**Revisit when.** The operator changes the proposed floor or coverage-check requirement,
+or stable Rust supports a deliberate change to what test code counts. Only P0-03
+may change the generated-source exclusion command, together with its profile entry
+and matching repository test
+([roadmap](../handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p0-03--vendor-and-generate-the-hermes-contract)).
