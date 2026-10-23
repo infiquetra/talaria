@@ -4,6 +4,39 @@
 
 ## 2026-10-23
 
+### The patterns guide is compiled, its bans are mechanical, and the viewport is fixed
+
+**Decision.** The patterns guide, `docs/agents/patterns.md`, is the conventions document every Rust
+unit reads after its issue. Three conventions come with it. (1) The guide is compiled: the
+`tools/patterns-check` crate includes it as crate documentation, so `cargo test --workspace` runs
+each of its six examples as a doctest, and structural tests fix its headings, fence tags, rules
+table, pinned versions and line limit (399). (2) Interfaces the bake-off proved harmful are banned
+mechanically: `clippy.toml` bans ten ratatui methods and `ratatui::DefaultTerminal`, a canary test
+in the `rust-check` job proves each ban resolves, and text scans in
+`tools/patterns-check/tests/boundaries.rs` cover what clippy cannot ban (`Viewport::Inline`,
+terminal-mode calls outside `crates/talaria-tui/src/terminal.rs`, switched-off lints and the quoted
+`"unattended"` key). (3) Nothing uses `Viewport::Inline`; the terminal module moves a fixed
+viewport itself, which is stricter than ADR-0010's ban on inline-viewport resizing after start-up.
+
+**Rationale.** In the stack bake-off
+([u16, section 3](../handoff/2026-10-22-next-steps/research/u16-stack-bakeoff.md#3-fixes-grouped-by-cause)),
+6 of the Rust Sonnet builder's 11 fixes were terminal-library or language fixes, and four came from
+interfaces this guide now bans. A guide whose examples are not compiled rots silently, and every
+later unit copies it. Clippy only warns about a misspelled `clippy.toml` path, and `-D warnings`
+does not make that fatal, so the ban list needs its own exact-list test and a canary. The inline
+viewport queries the cursor on every resize, which races the key reader.
+
+**Rejected alternatives.** (a) Prose-only conventions in `AGENTS.md`: unchecked, and too long for
+that file. (b) Examples tagged `no_run` or `ignore`: they compile nothing that matters. (c) Banning
+`Viewport::Inline` through clippy: enum variants cannot be listed in `clippy.toml`. (d) A second
+dependency-edge checker: the layering tests in `crates/talaria-core/tests/layering.rs` already own
+that. (e) A snapshot crate for render tests: literal row lists keep the expected screen readable in
+the test source.
+
+**Revisit when.** A ratatui upgrade moves a banned path (the canary fails on "does not refer to a
+reachable"), the terminal module needs a second file on the allow-list, or the guide cannot hold a
+new convention under 400 lines.
+
 ### Talaria is rewritten in Rust against the Hermes gateway (ADRs 0007 to 0012 accepted)
 
 **Decision.** The operator accepted the six draft ADRs of the 2026-10-22 handoff as drafted, with
