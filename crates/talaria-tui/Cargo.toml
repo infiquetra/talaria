@@ -1,0 +1,17 @@
+[package]
+name = "talaria-tui"
+description = "Terminal rendering, input and overlays projected from domain state."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+talaria-core.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+
+[lints]
+workspace = true

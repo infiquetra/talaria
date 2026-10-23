@@ -1,0 +1,18 @@
+[package]
+name = "talaria-core"
+description = "Domain state and pure reducers without input, output or terminal libraries."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+hermes-contract.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

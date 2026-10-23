@@ -1,3 +1,0 @@
-# preserve repository comment
-[status]
-interval_seconds = 11

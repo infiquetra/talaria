@@ -1,0 +1,1 @@
+Small recorded frame fixtures will live here. P1-04 owns this folder; see the [roadmap](../../docs/handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p1-04--recorder-and-replay-source). Recorded frame logs must be redacted before committing; whole corpora never enter version control.

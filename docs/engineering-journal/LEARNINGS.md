@@ -3714,3 +3714,20 @@ symbol its plan introduces missing from the default branch — not by observing 
 open. Absence of an artifact about the work is not absence of the work. Where a project keeps a ledger
 of what shipped, read the ledger *before* dispatching, not while writing it up: a register that records
 outcomes is only a control if it is consulted at the moment a decision is made.
+
+## 2026-10-23 — Keep reference Cargo packages outside the workspace
+
+The Rust reset keeps the handoff's executable reference slices as historical inputs.
+The root workspace uses `exclude = ["docs"]` so Cargo invoked in a reference slice
+resolves that package independently instead of rejecting an undeclared workspace member.
+The acceptance check is `cargo metadata --no-deps --format-version 1` from the
+handoff's Rust reference slice.
+
+**Rule.** Exclude retained standalone reference packages from the product workspace;
+verify Cargo from inside the reference package as well as at the repository root.
+
+The reset also ends the Python/TypeScript recorder equivalence check because both
+implementations leave together. P1-04's Rust recorder and raw-byte redaction tests
+replace that guarantee, using the deny-set preserved at
+`python-final:talaria/recorder/redact.py`
+([roadmap](../handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p1-04--recorder-and-replay-source)).

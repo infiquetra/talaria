@@ -1,87 +1,72 @@
 # AGENTS.md
 
-## Repository purpose
+Talaria is a public Rust terminal client for the Hermes gateway. The workspace currently
+contains placeholders; it owns terminal presentation, transport adapters and client state.
 
-Talaria is an experimental, public terminal UI for Hermes Agent. It owns the client-side terminal experience, transport abstractions, and UI-specific state. It does not own Hermes core, provider implementations, or private Infiquetra operational policy.
+## Architecture decision records
 
-Talaria is a standalone client that connects to a Hermes gateway it did not launch; it is not built to be loaded by `hermes --tui`. Focused improvements may still be proposed upstream where they fit, but upstreamability does not constrain the architecture, and divergence is accepted. See [ADR-0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md).
+Read the architecture decision records before writing code. Their recorded statuses are:
 
-## Read the ADRs before writing code
+| Record | Status |
+| --- | --- |
+| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md) | `superseded in part by ADR-0007: the transport half is replaced; the decision that Talaria is a standalone client stands` |
+| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md) | `accepted` |
+| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md) | `superseded in part by ADR-0008: the protocol half is replaced; the decision to re-encode Hermes terminal behaviour stands` |
+| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md) | `superseded by ADR-0010` |
+| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) | `superseded by ADR-0010` |
+| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) | `superseded by ADR-0009` |
+| [0007](platform-specs/04-architecture/adrs/0007-attach-to-the-hermes-session-authority.md) | `accepted` |
+| [0008](platform-specs/04-architecture/adrs/0008-protocol-types-are-generated-from-the-hermes-contract.md) | `accepted` |
+| [0009](platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md) | `accepted` |
+| [0010](platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md) | `accepted` |
+| [0011](platform-specs/04-architecture/adrs/0011-workflows-run-in-a-detachable-runner.md) | `accepted` |
+| [0012](platform-specs/04-architecture/adrs/0012-verification-is-proportionate.md) | `accepted` |
 
-Twelve decisions are recorded and are not open for re-litigation in an implementation change; the status in each row below says which older ones are superseded:
+## Rules for every unit
 
-| ADR                                                                                                       | What it settles                                                                                                    |
-| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)                        | Talaria owns its own process lifetime and dials a gateway it did not launch (superseded in part by ADR-0007)       |
-| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)              | The domain core never imports the terminal framework; the UI is a projection of domain state                       |
-| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)                | Hermes's terminal UI is documentation of behavior, not a source tree to translate (superseded in part by ADR-0008) |
-| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)                            | Talaria is written in Python; the terminal framework is decided by a validation gate (superseded by ADR-0010)      |
-| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)                | Textual 8.2.8 is the accepted presentation layer (superseded by ADR-0010)                                          |
-| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md)         | Block rendering is bounded by work and rendered height (superseded by ADR-0009)                                    |
-| [0007](platform-specs/04-architecture/adrs/0007-attach-to-the-hermes-session-authority.md)                | Talaria attaches to the Hermes session authority as a viewer                                                       |
-| [0008](platform-specs/04-architecture/adrs/0008-protocol-types-are-generated-from-the-hermes-contract.md) | Protocol types are generated from the contract Hermes publishes                                                    |
-| [0009](platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md)            | Finished output lives in the terminal's native scrollback                                                          |
-| [0010](platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md)                                      | The rewrite is Rust, with ratatui, crossterm and tokio                                                             |
-| [0011](platform-specs/04-architecture/adrs/0011-workflows-run-in-a-detachable-runner.md)                  | Workflows run in a detachable headless runner                                                                      |
-| [0012](platform-specs/04-architecture/adrs/0012-verification-is-proportionate.md)                         | Verification is proportionate                                                                                      |
+1. One unit, one branch, one PR. Use conventional commits. No attribution lines anywhere.
+2. Read the unit's inputs. Verify Hermes facts at the revision pinned in
+   `crates/hermes-contract/PINNED`, created by P0-03
+   ([roadmap](docs/handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p0-03--vendor-and-generate-the-hermes-contract)).
+3. Touch only owned files; explain any necessary minimal exception in the PR.
+4. Tests first when named by the unit; record their failing and passing runs.
+5. Pass the project check and the unit's acceptance commands.
+6. No unsafe code or `Rc<RefCell<…>>` webs. Own state and pass messages through channels.
+   Every source of change sends a message into one application event channel.
+   Domain crates never import terminal libraries.
+7. Record non-obvious learnings with evidence and a one-line rule in
+   [LEARNINGS.md](docs/engineering-journal/LEARNINGS.md). No planning codes in source comments.
+8. Use the unit's suggested model tier or the nearest provider equivalent; state it in the PR.
+   After a failed review, retry one tier higher; at the top tier, a second failure goes to the operator.
 
-**The transition is done, and `src/` is what survived it.** The Ink prototype, the command-line entry point, the recording command and the transport shim were removed on 2026-08-07. The three remaining TypeScript files are the reference recorder and its redaction rules, kept because `tests/recorder/test_equivalence.py` runs the real thing in a subprocess and asserts the Python recorder matches it across the credential redaction boundary. Do not add behavior to them. Do not port them file by file. Do not delete them without first saying what replaces that guarantee.
+The [roadmap rules](docs/handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#rules-for-every-unit)
+define the tier ladder. Every phase ends with an operator check before the next phase starts.
 
-## Source of truth
+## Checks
 
-- Repository purpose and commands: [README.md](README.md)
-- Project analysis: [docs/analysis/](docs/analysis/)
-- Local durable knowledge: [docs/engineering-journal/](docs/engineering-journal/)
-- Public Hermes integration reference: [Hermes Agent](https://github.com/NousResearch/hermes-agent)
-- Organization-level standards: [infiquetra-context-library](https://github.com/infiquetra/infiquetra-context-library)
-- SDLC process: [infiquetra-sdlc](https://github.com/infiquetra/infiquetra-sdlc)
-
-## Commands
-
-The active implementation is Python (ADR-0004). The project check is:
-
-```bash
-uv sync --all-groups
-uv run ruff check .
-uv run mypy
-uv run pytest
-uv run bandit -r talaria -q
-git diff --check
-! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
-```
-
-A change touching `src/` runs the Node check as well:
+Use rustup; [rust-toolchain.toml](rust-toolchain.toml) pins the compiler and components.
 
 ```bash
-npm install
-npm run check
-git diff --check
-! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --workspace
 ```
 
-The equivalence assertion between the two recorders runs from the Python suite, not this one. The
-continuous-integration leg that sets `TALARIA_REQUIRE_TS_BRIDGE=1` makes a missing Node toolchain a
-failure rather than a skip, because the harness once skipped invisibly inside a green run.
+Line coverage must reach 80% across the workspace. Generated source under
+`/generated/` is excluded; inline test code counts.
 
-## Working rules
+```bash
+cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
+```
 
-- Keep changes scoped and prefer small, composable interfaces.
-- **The domain core does not import the terminal framework.** Transport, protocol parsing, normalized events, domain state, commands, clocks, and record/replay are plain Python. The UI consumes view models and may request commands; it never holds protocol or session state. This is enforced by a check, not by intention — if you add a domain module, the check covers it. See [ADR-0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md).
-- **Re-encode Hermes's terminal UI behavior; do not translate its code.** Take the protocol contract, the reconciliation rules, and the hard-won terminal knowledge. Leave the component structure, the state shape, and the framework workarounds. Record a keep/change/drop verdict for the features of any surface before implementing it. See [ADR-0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md).
-- **Cite Hermes source by revision, and read the Hermes that is running.** Where a local checkout and an installed copy both exist, read the installed one — resolve it with `python3 -c "import hermes_cli, os; print(os.path.dirname(hermes_cli.__file__))"` and record the revision (`git -C <dir> rev-parse --short=9 HEAD`) alongside any `file:line` you commit. A stale checkout never fails loudly: it answers every question fluently, because it is the same project, only older. Every citation in this repository was once wrong this way.
-- Do not import Hermes implementation modules when an API, gateway, or typed adapter boundary is sufficient.
-- Do not assume optional Hermes features exist. The Hermes API server publishes `GET /v1/capabilities`; the terminal gateway publishes nothing equivalent, so gateway capabilities must be inferred by probing each seam at startup and naming what is absent.
-- Preserve graceful fallback behavior when a richer capability is unavailable.
-- Update tests for behavior changes.
-- Update `docs/engineering-journal/` when work creates a durable learning, decision, deferred item, shipped/rejected item, superseded entry, narrative, or audit.
-- Do not commit secrets, local environment files, private operational details, or copied private policy text.
-- Keep public documentation safe for readers outside Infiquetra.
-- Use conventional commits and pull requests for non-trivial changes.
-- **No attribution lines anywhere** — not in commit messages, pull request bodies, code comments, or generated documentation. No generated-with notices, no co-authored-by trailer naming a tool, no machine-added sign-off. This is stated here rather than left to each contributor's own configuration because agents that do not read that configuration still read this file, and one such agent put an attribution trailer on `main`.
+## Boundaries and public safety
 
-## Architectural guardrails
-
-1. Core run/session behavior should prefer a stable Hermes API contract.
-2. Hermes-specific control-plane behavior may use the TUI gateway through an explicit adapter.
-3. Kanban UI operations must be deterministic and typed; do not rely on a model deciding to call a board tool as the UI's data API.
-4. A feature that requires a new gateway or core contract must be capability-gated and must degrade visibly when the contract is absent.
+- Dependency boundaries are enforced by
+  [layering tests](crates/talaria-core/tests/layering.rs), including normal and build edges
+  transitively with every feature enabled. Later units may add forbidden edges, never remove them.
+- Only the terminal module of `talaria-tui` writes escape sequences.
+- Keep domain state out of presentation and input/output out of the pure domain core.
+- Re-encode Hermes terminal behaviour rather than translating its component structure.
+- Keep this public repository free of secrets and private operational context.
+- Follow [public organization standards](https://github.com/infiquetra/infiquetra-context-library).
+- No attribution lines in commits, PRs, code comments or generated documentation.

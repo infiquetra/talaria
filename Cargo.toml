@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/hermes-contract",
+    "crates/hermes-client",
+    "crates/talaria-core",
+    "crates/talaria-app",
+    "crates/talaria-tui",
+    "crates/talaria-workflow",
+    "crates/talaria-cli",
+]
+# Reference slices remain standalone packages when Cargo runs inside the handoff.
+exclude = ["docs"]
+
+[workspace.package]
+version = "0.7.0-dev"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT"
+repository = "https://github.com/infiquetra/talaria"
+publish = false
+
+[workspace.dependencies]
+ratatui = { version = "=0.30.2", features = ["scrolling-regions"] }
+crossterm = { version = "=0.29.0", features = ["event-stream"] }
+tokio = { version = "=1.54.1", features = ["full"] }
+tokio-tungstenite = "=0.26.2"
+futures-util = "=0.3.34"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+hermes-contract = { path = "crates/hermes-contract" }
+hermes-client = { path = "crates/hermes-client" }
+talaria-core = { path = "crates/talaria-core" }
+talaria-app = { path = "crates/talaria-app" }
+talaria-tui = { path = "crates/talaria-tui" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

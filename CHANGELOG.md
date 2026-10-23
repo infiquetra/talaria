@@ -10,12 +10,17 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+### Removed
+
+- Removed the Python client, its tests and process records from `main`. The last Python
+  commit is tagged `python-final`; the Rust workspace starts here.
+
 ## [0.6.5] — 2026-09-16
 
 Typed schema and env load outcomes, plus `summarize_schema_shape` for
 metadata-only diagnosis. The live T3R probe found no-failure-class;
 the accepted remount was not rewritten. See the
-[v0.6.5 release notes](docs/releases/v0.6.5.md).
+[v0.6.5 release notes](https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.5.md).
 
 ### Added
 
@@ -29,7 +34,7 @@ the accepted remount was not rewritten. See the
 
 Selected `/config` target loads remount that profile's schema and
 Environment rows, so Stay / Discard / Save and one-shot Reveal are
-reachable after a switch. See the [v0.6.4 release notes](docs/releases/v0.6.4.md).
+reachable after a switch. See the [v0.6.4 release notes](https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.4.md).
 
 ### Fixed
 
@@ -45,7 +50,7 @@ reachable after a switch. See the [v0.6.4 release notes](docs/releases/v0.6.4.md
 
 Residual configuration after v0.6.2: live target switching, one-shot reveal,
 gated remote composition, and product Start/Stop. See the
-[v0.6.3 release notes](docs/releases/v0.6.3.md).
+[v0.6.3 release notes](https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.3.md).
 
 ### Added
 
@@ -69,7 +74,7 @@ gated remote composition, and product Start/Stop. See the
 
 Talaria-owned settings grow to the finite D12 set, writes stay surgical, and
 admin HTTP bodies that carry secrets are redacted by route before they can be
-recorded. See the [v0.6.2 release notes](docs/releases/v0.6.2.md).
+recorded. See the [v0.6.2 release notes](https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.2.md).
 
 ### Added
 
@@ -99,7 +104,7 @@ recorded. See the [v0.6.2 release notes](docs/releases/v0.6.2.md).
 
 The first published release since v0.5.0. The `0.6.0` line below landed on `main`
 but was never tagged or published, so upgrading from v0.5.0 delivers both at once.
-See the [v0.6.1 release notes](docs/releases/v0.6.1.md) for the limits and the
+See the [v0.6.1 release notes](https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.1.md) for the limits and the
 upgrade reasons, and read the `0.6.0` section below alongside them.
 
 ### Added
@@ -133,7 +138,7 @@ upgrade reasons, and read the `0.6.0` section below alongside them.
 
 Talaria v0.6.0 is a configurable daily-driver follow-up to v0.5.0, answering ten
 manual-test findings against the v0.5 implementation. See the
-[v0.6.0 release notes](docs/releases/v0.6.0.md) for the limits, the upgrade
+[v0.6.0 release notes](https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.0.md) for the limits, the upgrade
 reasons, and the findings-to-evidence map.
 
 ### Added
@@ -163,7 +168,7 @@ reasons, and the findings-to-evidence map.
 
 Talaria v0.5.0 makes the terminal interface themeable and adds persistent bottom-of-screen
 context, an inspector, and a bounded read-only view of session-reported changes. The
-[v0.5.0 acceptance run](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md) was
+[v0.5.0 acceptance run](https://github.com/infiquetra/talaria/blob/python-final/docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md) was
 executed on 2026-08-31. **BLOCKED**: 43 of 43 expected checklist/tester slots are covered. The
 evidence set separately contains 44 current receipts (42 item and 2 install). The one-receipt overlap
 is checklist item 1 for talaria-t2, which has both an item receipt and an install receipt. Item
@@ -221,7 +226,7 @@ unreachable because the gateway always assigns a request identifier.
 
 ### Known limitations
 
-- The [v0.5.0 acceptance verdict](docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
+- The [v0.5.0 acceptance verdict](https://github.com/infiquetra/talaria/blob/python-final/docs/acceptance/2026-08-30-talaria-v0-5-0-live-acceptance-results.md)
   is **BLOCKED** on item 24 alone. The gateway always assigns a request identifier, so the keyless
   approval state required by that item is terminally unreachable without simulation.
 - The `growing-one-column-table` steady-state p99 `TranscriptPane.apply` latency exceeds its 50 ms
@@ -245,9 +250,9 @@ a closing review-and-QA pass over the whole release, and the acceptance
 record. The deepest unit — the needs-you queue — took twelve adversarial
 review rounds plus a bounded confirmation, and its hardest finding
 corrected the project's own review rules. The unit-by-unit record is in
-[the fleet-turn plan](docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md);
+[the fleet-turn plan](https://github.com/infiquetra/talaria/blob/python-final/docs/plans/2026-08-16-talaria-v0-4-fleet-turn-plan.md);
 the live-acceptance record is in
-[the acceptance results](docs/plans/2026-08-19-v0-4-live-acceptance-results.md).
+[the acceptance results](https://github.com/infiquetra/talaria/blob/python-final/docs/plans/2026-08-19-v0-4-live-acceptance-results.md).
 
 ### Added
 
@@ -352,7 +357,7 @@ comparable interface already has — history on `Up`, and a slash-command
 palette. Nine units; two shipped clean, three needed one repair round, and
 four needed a further round after an independent check found the first
 report had claimed more than the work delivered. The session-by-session
-record is in [the decision register](docs/plans/2026-08-11-v0-3-decision-log.md).
+record is in [the decision register](https://github.com/infiquetra/talaria/blob/python-final/docs/plans/2026-08-11-v0-3-decision-log.md).
 
 ### Added
 
@@ -418,7 +423,7 @@ record is in [the decision register](docs/plans/2026-08-11-v0-3-decision-log.md)
 ### Fixed
 
 - **`F4`'s published description was missing its destructive half, and this
-  corrects it forward.** Both [the v0.2.0 release notes](docs/releases/v0.2.0.md)
+  corrects it forward.** Both [the v0.2.0 release notes](https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.2.0.md)
   and the v0.2.0 entry below say `F4` "sweeps the answerable set" and stop
   there. What `F4` is actually bound to is `interrupt` — it **cancels the
   in-flight turn**, and only _then_, and only when the gateway confirms the
@@ -493,7 +498,7 @@ The first release. Talaria dials a Hermes gateway it did not launch, runs a
 session in a terminal interface, and can record and replay everything it saw.
 
 **Read the limits before relying on it.** They are listed in the [release
-notes](docs/releases/v0.1.0.md) and set out row by row in
+notes](https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.1.0.md) and set out row by row in
 [the v0.1 daily-driver verdict](docs/analysis/2026-08-02-v0-1-daily-driver-verdict.md).
 The short version: nobody has driven the interface on Linux, and no run on
 either platform has used a real terminal emulator rather than a bare
@@ -568,12 +573,12 @@ content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
 [Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.5...HEAD
-[0.6.5]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.5.md
-[0.6.4]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.4.md
-[0.6.3]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.3.md
-[0.6.2]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.2.md
+[0.6.5]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.5.md
+[0.6.4]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.4.md
+[0.6.3]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.3.md
+[0.6.2]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.2.md
 [0.6.1]: https://github.com/infiquetra/talaria/releases/tag/v0.6.1
-[0.6.0]: https://github.com/infiquetra/talaria/blob/main/docs/releases/v0.6.0.md
+[0.6.0]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.0.md
 [0.5.0]: https://github.com/infiquetra/talaria/releases/tag/v0.5.0
 [0.4.0]: https://github.com/infiquetra/talaria/releases/tag/v0.4.0
 [0.3.0]: https://github.com/infiquetra/talaria/releases/tag/v0.3.0

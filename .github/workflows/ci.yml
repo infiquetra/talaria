@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Job names are load-bearing: the required status checks on main name them exactly.
+  # The matrix holds only `os`. Adding a matrix key would change the reported names and
+  # silently detach branch protection from them.
+  rust-check:
+    name: rust-check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # Full history, so the whitespace check can compare this change with origin/main.
+          fetch-depth: 0
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Whitespace
+        run: git diff --check origin/main...HEAD
+      - name: Conflict markers
+        run: |
+          ! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
+
+  rust-coverage:
+    name: rust-coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-llvm-cov
+      - name: Measure line coverage (floor 80%)
+        run: cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
+      # The report is its own step so it still runs when the floor fails; in one step the
+      # shell would stop at the failing floor and never write lcov.info.
+      - name: Write the LCOV report
+        if: always()
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lcov
+          path: lcov.info
+          if-no-files-found: error

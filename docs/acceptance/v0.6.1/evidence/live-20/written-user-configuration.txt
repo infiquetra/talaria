@@ -1,9 +1,0 @@
-# retained comment
-[status]
-interval_seconds = 7
-segments = [
-  "version",
-]
-command = "python3 status_probe.py"
-[theme]
-name = "dark-green-terminal"

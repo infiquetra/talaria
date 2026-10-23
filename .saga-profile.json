@@ -1,0 +1,44 @@
+{
+  "schema": "repository_profile.v1",
+  "repo": "infiquetra/talaria",
+  "visibility": "public",
+  "languages": ["rust"],
+  "concurrency_allocation": 10,
+  "nonproduction_destination": "none",
+  "main_consumed_directly": false,
+  "functional_test_environment": {
+    "kind": "local",
+    "test_command": "cargo test --workspace",
+    "scope": "private"
+  },
+  "mechanical_tool_baseline": [
+    "cargo fmt --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test --workspace",
+    "cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
+    "git diff --check origin/main...HEAD"
+  ],
+  "preflight_checks": [
+    "the plan cleared /doc-review with nothing above P3 open",
+    "the work branch exists and is not the default branch"
+  ],
+  "qa": {
+    "schema": "qa_profile.v1",
+    "ceiling": {
+      "max_duration_seconds": 600,
+      "max_direct_cost": 0
+    },
+    "strategies": {
+      "cli-smoke": {
+        "required": true,
+        "file_patterns": ["crates/talaria-cli/**"],
+        "commands": [
+          {
+            "name": "talaria-version",
+            "command": "cargo run --quiet --package talaria-cli -- --version"
+          }
+        ]
+      }
+    }
+  }
+}

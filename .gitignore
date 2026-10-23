@@ -42,3 +42,6 @@ tests/**/corpora/
 
 # Machine-local Qwen CLI preferences, written when an external agent runs here.
 .qwen/
+
+/target
+/lcov.info
