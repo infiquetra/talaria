@@ -2,7 +2,7 @@
 
 Status: `proposed`
 
-This document holds the depth of the phase 3 capability issue `{{PH3}}`: the ledger's proofs, the comment formats its Verification reads, the meaning of each dependency gate, and the details of planning steps, rulings and authority that the issue only points to. The issue body wins on anything stated in both; if the two disagree, stop and report on `{{PH3}}`. It is committed to `docs/handoff/2026-10-22-next-steps/units/PH3.md` with the ten child specifications (planning step 0).
+This document holds the depth of the phase 3 capability issue [`PH3`](https://github.com/infiquetra/talaria/issues/215): the ledger's proofs, the comment formats its Verification reads, the meaning of each dependency gate, and the details of planning steps, rulings and authority that the issue only points to. The issue body wins on anything stated in both; if the two disagree, stop and report on [`PH3`](https://github.com/infiquetra/talaria/issues/215). It is committed to `docs/handoff/2026-10-22-next-steps/units/PH3.md` with the ten child specifications (planning step 0).
 
 ## 1. Requirement ownership ledger with proofs
 
@@ -72,15 +72,15 @@ Proof is the owner's test numbers and scenarios (U3 means the owner's UAT-3). Th
 | L-58 | `gh` gets an allow-listed environment; recordings public-safe | P3-07 | 25, 50 |
 | L-59 | Pane command quoted; this binary; only the pane's shell | P3-08 | 27, 31, 35 |
 
-**Rows added by D-8.** When Ruling D-8 gives a "Not delivered" gap an owner child, the planner adds a row to the issue's ledger and to this table, numbered from L-60 upward in the issue's three-column form (`| L-60 | <requirement> | <owner key> |`), adds the owner's tests and scenario to that child's body, and, when the gap needs a live check, a row to `{{PH3-ACC}}`'s specification section 4 by its section 8.1 item 4 before the freeze. AC-10 then prints the new row count (59 plus the added rows) and checks the new rows like the others. An accepted gap gets a `docs/engineering-journal/QUEUED.md` entry in the closeout pull request and no ledger row.
+**Rows added by D-8.** When Ruling D-8 gives a "Not delivered" gap an owner child, the planner adds a row to the issue's ledger and to this table, numbered from L-60 upward in the issue's three-column form (`| L-60 | <requirement> | <owner key> |`), adds the owner's tests and scenario to that child's body, and, when the gap needs a live check, a row to [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248)'s specification section 4 by its section 8.1 item 4 before the freeze. AC-10 then prints the new row count (59 plus the added rows) and checks the new rows like the others. An accepted gap gets a `docs/engineering-journal/QUEUED.md` entry in the closeout pull request and no ledger row.
 
 ## 2. Comment formats and who posts them
 
-Verification reads only comments on `{{PH3}}` whose author is an OWNER or MEMBER of `infiquetra/talaria` (GitHub's `author_association`). Every comment below must therefore come from such an account.
+Verification reads only comments on [`PH3`](https://github.com/infiquetra/talaria/issues/215) whose author is an OWNER or MEMBER of `infiquetra/talaria` (GitHub's `author_association`). Every comment below must therefore come from such an account.
 
 | First line | Posted by | When |
 |---|---|---|
-| `Base: <40 hex>` | lead | after `{{PH2-ACC}}`'s operator check |
+| `Base: <40 hex>` | lead | after [`PH2-ACC`](https://github.com/infiquetra/talaria/issues/238)'s operator check |
 | `Decision 8: reading (a)` or `Decision 8: reading (b)` | planner | step 2 |
 | `Settled C-<n>: <decision>`; C-3 as `Settled C-3: limit <n> lines; <decision>` | planner | step 7, before the first child pull request |
 | `Revised C-<n>: <decision>`; C-3 as `Revised C-3: limit <n> lines; <decision>` | planner | later; the latest wins |
@@ -98,20 +98,20 @@ The lead and planner post with the account the operator names in the Per-run inp
 | content | branch, write its tests against stubs, build what does not call the other's names | call the other's names or merge |
 | merge | build in full | merge |
 
-A `-.-` line is coordination only: the pair read each other's settled text (C-4: `{{P3-06}}` and `{{P3-07}}`), and neither waits.
+A `-.-` line is coordination only: the pair read each other's settled text (C-4: [`P3-06`](https://github.com/infiquetra/talaria/issues/244) and [`P3-07`](https://github.com/infiquetra/talaria/issues/245)), and neither waits.
 
-At step 7 the lead records each edge of the issue's graph on the child it gates, in two ways. First, a line in the child's Dependencies section, `- Gate (phase 3 plan): <start|content|merge> after {{ID}}` (for `{{P3-07}}`: `- Gate (phase 3 plan): start after {{P3-03}}; merge after {{P3-02}}`). Second, for start and merge gates, a GitHub "blocked by" issue dependency to the gating issue, written by Mission Control and read back. Under reading (b) `{{P3-09}}` is also a start gate of `{{PH3-ACC}}`; under reading (a) it is no gate.
+At step 7 the lead records each edge of the issue's graph on the child it gates, in two ways. First, a line in the child's Dependencies section, `- Gate (phase 3 plan): <start|content|merge> after {{ID}}` (for [`P3-07`](https://github.com/infiquetra/talaria/issues/245): `- Gate (phase 3 plan): start after P3-03 (#241); merge after P3-02 (#240)`). Second, for start and merge gates, a GitHub "blocked by" issue dependency to the gating issue, written by Mission Control and read back. Under reading (b) [`P3-09`](https://github.com/infiquetra/talaria/issues/247) is also a start gate of [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248); under reading (a) it is no gate.
 
 ## 4. Staffing
 
 The Developer row's simultaneous cap is the operator's number. Three are suggested: one each for lanes A, B with C, and D. The cap counts developers working at once anywhere in the slice. Pull requests that touch the shared files (`app.rs`, `keys.rs`, the mock gateway, `fleet_view/state.rs`) merge one at a time; the later one rebases and keeps both sides.
 
-Custody of shared code: on a conflict the later pull request keeps both sides. `fleet/` is {{P3-01}}'s ({{P3-09}} adds pins); `fleet_view/` {{P3-02}}'s (others add variants and arms only); `worktree/` {{P3-03}}'s; `status/segments.rs` takes {{P3-06}}'s and {{P3-07}}'s segments (C-4).
+Custody of shared code: on a conflict the later pull request keeps both sides. `fleet/` is [`P3-01`](https://github.com/infiquetra/talaria/issues/239)'s ([`P3-09`](https://github.com/infiquetra/talaria/issues/247) adds pins); `fleet_view/` [`P3-02`](https://github.com/infiquetra/talaria/issues/240)'s (others add variants and arms only); `worktree/` [`P3-03`](https://github.com/infiquetra/talaria/issues/241)'s; `status/segments.rs` takes [`P3-06`](https://github.com/infiquetra/talaria/issues/244)'s and [`P3-07`](https://github.com/infiquetra/talaria/issues/245)'s segments (C-4).
 
 ## 5. Planning step details
 
-- Step 2: `{{P0-01}}` records decisions 5 and 8 as ticked checkboxes in its body ("Decision 8: accept the recommendation (reading (a) ...)" or "choose the alternative (reading (b) ...)"), confirmed by its `decisions recorded` comment. The planner copies the reading into the `Decision 8:` comment; Verification's `D8` is that letter.
-- Step 8: `{{P1-01}}`'s attach example prints a line `gateway code_version=<v> code_sha=<12 characters>` (its REQ-18 and UAT). From the repository root:
+- Step 2: [`P0-01`](https://github.com/infiquetra/talaria/issues/194) records decisions 5 and 8 as ticked checkboxes in its body ("Decision 8: accept the recommendation (reading (a) ...)" or "choose the alternative (reading (b) ...)"), confirmed by its `decisions recorded` comment. The planner copies the reading into the `Decision 8:` comment; Verification's `D8` is that letter.
+- Step 8: [`P1-01`](https://github.com/infiquetra/talaria/issues/198)'s attach example prints a line `gateway code_version=<v> code_sha=<12 characters>` (its REQ-18 and UAT). From the repository root:
 
 ```bash
 OUT=$(cargo run -q -p hermes-client --example attach -- --no-ensure --profile fixture); echo "exit=$?"
@@ -130,20 +130,20 @@ Each child body states its own commit scope, branch and checks; these are the sh
 - `Red run` section of the pull request body: the command, then each test with the reason it failed; expected passes (test-first rule 1) are listed under their own line.
 - `Criteria` section: each `AC-<n>`, its check command and its output, run on the pull request head.
 - `bench`: a green run of `bench.yml` on the head. Agents start it only after `Ruling bench: granted`; otherwise the operator starts it, and the pull request waits in `Code review`.
-- Scenario evidence: `UAT-<n>: PASS` with the text of `herdr pane read`, in the forms of `{{P1-13}}`'s Herdr facts H1 to H14, redacted.
+- Scenario evidence: `UAT-<n>: PASS` with the text of `herdr pane read`, in the forms of [`P1-13`](https://github.com/infiquetra/talaria/issues/210)'s Herdr facts H1 to H14, redacted.
 
 ## 7. Rulings
 
 | Ruling | Deadline (AC-11 checks it) | What it answers |
 |---|---|---|
-| D-1 | before `{{P3-01}}` merges | its question 1, the fleet link as an exception to draft ADR 0007; question 2 (2 s hot, 4 s cold polls, 30 s backstop) keeps the draft unless answered; question 3 is an upstream ask (a "session started waiting" signal, `omit_messages` on attach) |
-| D-2 | before `{{P3-02}}` merges | its question 1, the peek link and its ignore rule (`{{P3-03}}` decision 7 and `{{P3-09}}` decision 6 depend on it); questions 2 (close or end sessions) and 3 (a default key) keep the draft |
-| D-3 | before `{{P3-03}}` merges | its questions 1 to 4: tree paths, linked folders, Hermes's sweep, a failed fetch, `launch_abandoned` |
-| D-4 | before `{{P3-05}}` merges | the `/background` alias and the double press for `x` |
-| D-5 | before `{{P3-07}}` merges | the throwaway GitHub repository and `gh` account (its test 41, UAT-3); filter drivers keep the draft |
-| D-6 | before `{{P3-09}}` merges, reading (b) only | its questions 1 and 2 |
-| D-7 | before `{{PH3-ACC}}`'s freeze (AC-11 can only check that it precedes the `p3-acc-record` pull request; the reviewer checks it precedes the AUTO-1 evidence) | `{{PH3-ACC}}` specification section 10.2: Q1 the fleet days' numbers; Q2 the three providers with a cheap model each; Q4 the XF-9 limits and the 1200 s deadline; Q7 the second Ollama Cloud model; Q8 the record shape; and the rows dropped by its section 8.1 item 4 |
-| D-8 | before the first child pull request (step 7) | each of the three gaps: R6's cost, "steered" and "closed"; Herdr pane state for background requests (`{{P3-06}}` question 2); alerts for `{{P3-05}}`'s signals |
+| D-1 | before [`P3-01`](https://github.com/infiquetra/talaria/issues/239) merges | its question 1, the fleet link as an exception to draft ADR 0007; question 2 (2 s hot, 4 s cold polls, 30 s backstop) keeps the draft unless answered; question 3 is an upstream ask (a "session started waiting" signal, `omit_messages` on attach) |
+| D-2 | before [`P3-02`](https://github.com/infiquetra/talaria/issues/240) merges | its question 1, the peek link and its ignore rule ([`P3-03`](https://github.com/infiquetra/talaria/issues/241) decision 7 and [`P3-09`](https://github.com/infiquetra/talaria/issues/247) decision 6 depend on it); questions 2 (close or end sessions) and 3 (a default key) keep the draft |
+| D-3 | before [`P3-03`](https://github.com/infiquetra/talaria/issues/241) merges | its questions 1 to 4: tree paths, linked folders, Hermes's sweep, a failed fetch, `launch_abandoned` |
+| D-4 | before [`P3-05`](https://github.com/infiquetra/talaria/issues/243) merges | the `/background` alias and the double press for `x` |
+| D-5 | before [`P3-07`](https://github.com/infiquetra/talaria/issues/245) merges | the throwaway GitHub repository and `gh` account (its test 41, UAT-3); filter drivers keep the draft |
+| D-6 | before [`P3-09`](https://github.com/infiquetra/talaria/issues/247) merges, reading (b) only | its questions 1 and 2 |
+| D-7 | before [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248)'s freeze (AC-11 can only check that it precedes the `p3-acc-record` pull request; the reviewer checks it precedes the AUTO-1 evidence) | [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248) specification section 10.2: Q1 the fleet days' numbers; Q2 the three providers with a cheap model each; Q4 the XF-9 limits and the 1200 s deadline; Q7 the second Ollama Cloud model; Q8 the record shape; and the rows dropped by its section 8.1 item 4 |
+| D-8 | before the first child pull request (step 7) | each of the three gaps: R6's cost, "steered" and "closed"; Herdr pane state for background requests ([`P3-06`](https://github.com/infiquetra/talaria/issues/244) question 2); alerts for [`P3-05`](https://github.com/infiquetra/talaria/issues/243)'s signals |
 
 Line formats AC-11 matches: `Ruling D-7: Q1 <answer>; Q2 <answer>; Q4 <answer>; Q7 <answer>; Q8 <answer>; dropped rows <none or ids>` and `Ruling D-8: cost, steered, closed: <accepted or owner key>; pane state: <...>; process alerts: <...>`. A ruling that only confirms defaults still says so per item.
 
@@ -151,14 +151,14 @@ Line formats AC-11 matches: `Ruling D-7: Q1 <answer>; Q2 <answer>; Q4 <answer>; 
 
 - Notes branches: exactly `p3-01-fleet-registry`, `p3-02-fleet-view`, `p3-03-background-launch`, `p3-04-subagents`, `p3-05-background-work`, `p3-06-attention`, `p3-07-review`, `p3-08-attach-anywhere`, `p3-09-resident-agents`, `p3-acc-smoke`, `p3-acc-record`, `p3-acc-candidate`, and the settlement branches below. Other branches exist only in temporary repositories.
 - Settlement: the step 7 specification edits go in one pull request, branch `p3-plan-settle`, merged before the first child pull request. A later `Revised C-<n>` goes in its own pull request, branch `p3-plan-revise-c<n>`, merged before any child pull request whose text it changes merges.
-- GitHub outside `infiquetra/talaria`: the operator pushes and opens the pull requests of `{{P3-07}}` test 41, UAT-3 and OP-4 in the throwaway repository with their own `gh`; agents push only to temporary repositories whose `origin` is a local bare repository.
-- Decision 5 yes: the operator comments `Ruling decision 5: P6-01 joins phase 3`. That ruling authorises the lead to add `{{P6-01}}` as an eleventh child and edit the issue (membership, graph, ledger, the scenario ledger) and `{{PH3-ACC}}` before any child starts. Verification then uses `N=11`: AC-1 prints 11; AC-2 prints `completed=11` or `completed=10 not_planned=1`.
+- GitHub outside `infiquetra/talaria`: the operator pushes and opens the pull requests of [`P3-07`](https://github.com/infiquetra/talaria/issues/245) test 41, UAT-3 and OP-4 in the throwaway repository with their own `gh`; agents push only to temporary repositories whose `origin` is a local bare repository.
+- Decision 5 yes: the operator comments `Ruling decision 5: P6-01 joins phase 3`. That ruling authorises the lead to add [`P6-01`](https://github.com/infiquetra/talaria/issues/274) as an eleventh child and edit the issue (membership, graph, ledger, the scenario ledger) and [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248) before any child starts. Verification then uses `N=11`: AC-1 prints 11; AC-2 prints `completed=11` or `completed=10 not_planned=1`.
 
 ## 9. The record (AC-6)
 
 - Shape B: the merged `p3-acc-record` pull request is required; its body and comments together are the record.
 - Shape A: the `P=` and `REC=` lines are not run; the shape A line replaces them, and the record is `phase-3.md` followed by `phase-3-evidence.md`.
-- Rows: `| <id> | <persona> | <result> | <evidence> | <commit> |`, ids and personas as in `{{PH3-ACC}}` specification section 4.
+- Rows: `| <id> | <persona> | <result> | <evidence> | <commit> |`, ids and personas as in [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248) specification section 4.
 - Evidence: one heading line `## <id>`, the id exactly as in its row (`## P3-01 UAT-1`); the first `Candidate: <7 or more hex>` line after it, before the next `## `, ties it to the candidate.
 
 ## 10. The configuration document (C-3, AC-9)
@@ -173,10 +173,10 @@ Checked by commands: the L-n lines (AC-10), the `- Journal:` lines (AC-12), the 
 
 The issue's Stop conditions summarise these; the planner settles each at step 7 and the settled text wins over the proposal.
 
-- C-1, {{P3-03}}'s gate on {{P3-02}}: {{P3-03}} makes {{P3-02}} a start gate; {{P3-02}}'s Dependencies and spec 18 say {{P3-03}} may start after {{P3-01}} and merges after {{P3-02}}. Proposal: the start gate ({{P3-03}} tests 38, 50 drive {{P3-02}}'s overlay). Edit {{P3-02}}'s Dependencies and spec 18, or {{P3-03}}'s.
-- C-2, live-region placement: {{P3-04}} spec 7.1 leaves the order "to be confirmed"; {{P3-05}} spec 13.1 cites {{P3-04}}'s REQ-31 for it (it is REQ-29). Proposal: decision 9. Edit {{P3-04}} spec 7.1 and {{P3-05}} spec 13.1.
-- C-3, configuration length: only {{P3-06}} (AC-9, stop condition 4) keeps `docs/configuration.md` under 200 lines; six others add keys (about 20 from {{P3-07}}, 15 from {{P3-02}}). Decide the limit or a compact form; put it in every key-adding child's criteria.
-- C-4, status-line ladder: {{P3-06}} renumbers `Segment` to ten levels (test 18 asserts exact lines); {{P3-07}} adds `PullRequest` above `External`. Proposal: {{P3-06}} merges first, or its test 18 asserts relative order.
-- C-5, {{P3-09}} in the gate: it says decision 8 "yes" (elsewhere: reading (b)); {{PH3-ACC}} reruns every row, but its UAT-7 runs once. Proposal: under reading (b) its UAT-1 to UAT-6 become rows (83) by {{PH3-ACC}} spec 8.1 item 4, UAT-7 cited as evidence; this body counts both ways. Edit {{P3-09}}'s Dependencies and {{PH3-ACC}}'s REQ-11, counts and checker.
-- C-6, R6's verbs: R6 wants sessions "steered" and "closed" from the fleet view, with cost; {{P3-02}} queues replies and leaves close to its question 2; {{P3-01}} reports no cost (decision 6). Settled by D-8 only.
-- C-7, {{P3-08}} UAT-2: its preconditions have the tester launch and rename a `default` session, which Authority boundaries forbid. Proposal: the operator creates `attach-dup-<tag>` on `default` (tag from the tester) and later removes it; the tester does the `fixture` half and the read-only checks; unprepared: BLOCKED (no access). Edit {{P3-08}} UAT-2 and {{PH3-ACC}} REQ-11 (a fifth allowed change).
+- C-1, [`P3-03`](https://github.com/infiquetra/talaria/issues/241)'s gate on [`P3-02`](https://github.com/infiquetra/talaria/issues/240): [`P3-03`](https://github.com/infiquetra/talaria/issues/241) makes [`P3-02`](https://github.com/infiquetra/talaria/issues/240) a start gate; [`P3-02`](https://github.com/infiquetra/talaria/issues/240)'s Dependencies and spec 18 say [`P3-03`](https://github.com/infiquetra/talaria/issues/241) may start after [`P3-01`](https://github.com/infiquetra/talaria/issues/239) and merges after [`P3-02`](https://github.com/infiquetra/talaria/issues/240). Proposal: the start gate ([`P3-03`](https://github.com/infiquetra/talaria/issues/241) tests 38, 50 drive [`P3-02`](https://github.com/infiquetra/talaria/issues/240)'s overlay). Edit [`P3-02`](https://github.com/infiquetra/talaria/issues/240)'s Dependencies and spec 18, or [`P3-03`](https://github.com/infiquetra/talaria/issues/241)'s.
+- C-2, live-region placement: [`P3-04`](https://github.com/infiquetra/talaria/issues/242) spec 7.1 leaves the order "to be confirmed"; [`P3-05`](https://github.com/infiquetra/talaria/issues/243) spec 13.1 cites [`P3-04`](https://github.com/infiquetra/talaria/issues/242)'s REQ-31 for it (it is REQ-29). Proposal: decision 9. Edit [`P3-04`](https://github.com/infiquetra/talaria/issues/242) spec 7.1 and [`P3-05`](https://github.com/infiquetra/talaria/issues/243) spec 13.1.
+- C-3, configuration length: only [`P3-06`](https://github.com/infiquetra/talaria/issues/244) (AC-9, stop condition 4) keeps `docs/configuration.md` under 200 lines; six others add keys (about 20 from [`P3-07`](https://github.com/infiquetra/talaria/issues/245), 15 from [`P3-02`](https://github.com/infiquetra/talaria/issues/240)). Decide the limit or a compact form; put it in every key-adding child's criteria.
+- C-4, status-line ladder: [`P3-06`](https://github.com/infiquetra/talaria/issues/244) renumbers `Segment` to ten levels (test 18 asserts exact lines); [`P3-07`](https://github.com/infiquetra/talaria/issues/245) adds `PullRequest` above `External`. Proposal: [`P3-06`](https://github.com/infiquetra/talaria/issues/244) merges first, or its test 18 asserts relative order.
+- C-5, [`P3-09`](https://github.com/infiquetra/talaria/issues/247) in the gate: it says decision 8 "yes" (elsewhere: reading (b)); [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248) reruns every row, but its UAT-7 runs once. Proposal: under reading (b) its UAT-1 to UAT-6 become rows (83) by [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248) spec 8.1 item 4, UAT-7 cited as evidence; this body counts both ways. Edit [`P3-09`](https://github.com/infiquetra/talaria/issues/247)'s Dependencies and [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248)'s REQ-11, counts and checker.
+- C-6, R6's verbs: R6 wants sessions "steered" and "closed" from the fleet view, with cost; [`P3-02`](https://github.com/infiquetra/talaria/issues/240) queues replies and leaves close to its question 2; [`P3-01`](https://github.com/infiquetra/talaria/issues/239) reports no cost (decision 6). Settled by D-8 only.
+- C-7, [`P3-08`](https://github.com/infiquetra/talaria/issues/246) UAT-2: its preconditions have the tester launch and rename a `default` session, which Authority boundaries forbid. Proposal: the operator creates `attach-dup-<tag>` on `default` (tag from the tester) and later removes it; the tester does the `fixture` half and the read-only checks; unprepared: BLOCKED (no access). Edit [`P3-08`](https://github.com/infiquetra/talaria/issues/246) UAT-2 and [`PH3-ACC`](https://github.com/infiquetra/talaria/issues/248) REQ-11 (a fifth allowed change).
