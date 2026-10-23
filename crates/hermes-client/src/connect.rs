@@ -327,6 +327,13 @@ impl std::fmt::Debug for Connection {
 }
 
 impl Connection {
+    /// Record every handshake frame this connection reads or writes, tagged with
+    /// `generation` (P1-04). `GatewayDial::on_connect` calls this per connection.
+    pub fn set_recorder(&mut self, recorder: crate::record::Recorder, generation: u64) {
+        let _ = (recorder, generation);
+        todo!("P1-04")
+    }
+
     pub fn into_parts(self) -> ConnectionParts {
         ConnectionParts {
             sink: self.sink,

@@ -9,6 +9,7 @@ members = [
     "crates/talaria-workflow",
     "crates/talaria-cli",
     "tools/patterns-check",
+    "tools/record-fixture",
 ]
 # Reference slices remain standalone packages when Cargo runs inside the handoff.
 exclude = ["docs"]
@@ -38,6 +39,12 @@ static_assertions = "=1.1.0"
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
 http = "=1.5.0"
+url = "=2.5.8"
+regex = "=1.13.1"
+gethostname = "=1.1.0"
+time = { version = "=0.3.55", features = ["formatting"] }
+clap = { version = "=4.6.7", features = ["derive"] }
+rand = "=0.10.3"
 hermes-contract = { path = "crates/hermes-contract" }
 hermes-client = { path = "crates/hermes-client" }
 talaria-core = { path = "crates/talaria-core" }

@@ -10,6 +10,10 @@ publish.workspace = true
 
 [dependencies]
 fastrand.workspace = true
+gethostname.workspace = true
+regex.workspace = true
+time.workspace = true
+url.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 hermes-contract.workspace = true
 rustix.workspace = true
@@ -24,6 +28,7 @@ tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
 workspace = true
 
 [dev-dependencies]
+rand.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 http.workspace = true
 proptest.workspace = true
