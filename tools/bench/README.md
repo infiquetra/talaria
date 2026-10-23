@@ -1,0 +1,1 @@
+Performance harnesses and budget measurements will live here. P1-11 owns this folder; see the [roadmap](../../docs/handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p1-11--performance-harness-and-budgets).

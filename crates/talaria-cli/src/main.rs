@@ -6,11 +6,54 @@ struct Response {
     code: u8,
 }
 
-fn respond(_args: &[String]) -> Response {
+fn respond(args: &[String]) -> Response {
+    let version = env!("CARGO_PKG_VERSION");
+    let (stdout, stderr, code) = match args.first().map(String::as_str) {
+        Some("--version" | "-V") => (format!("talaria {version}\n"), String::new(), 0),
+        Some("--help" | "-h") => (
+            format!(
+                "talaria {version}\n\
+                 This build is a placeholder while Talaria is rewritten in Rust; it does not connect to Hermes yet.\n\
+                 Options: --version, --help\n"
+            ),
+            String::new(),
+            0,
+        ),
+        None => (
+            String::new(),
+            "talaria: this build is a placeholder and does nothing yet. Run talaria --help.\n"
+                .to_string(),
+            2,
+        ),
+        Some(argument) => {
+            let shown: String = argument
+                .chars()
+                .take(64)
+                .map(|character| {
+                    if character.is_control()
+                        || matches!(
+                            character,
+                            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}'
+                                | '\u{2066}'..='\u{2069}'
+                        )
+                    {
+                        '?'
+                    } else {
+                        character
+                    }
+                })
+                .collect();
+            (
+                String::new(),
+                format!("talaria: unknown argument `{shown}`. Run talaria --help.\n"),
+                2,
+            )
+        }
+    };
     Response {
-        stdout: String::new(),
-        stderr: String::new(),
-        code: 0,
+        stdout,
+        stderr,
+        code,
     }
 }
 

@@ -1,0 +1,1 @@
+Contract preprocessing and generation tools will live here. P0-03 owns this folder; see the [roadmap](../../docs/handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p0-03--vendor-and-generate-the-hermes-contract).
