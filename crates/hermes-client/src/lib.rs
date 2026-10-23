@@ -13,6 +13,8 @@
 pub mod channel;
 pub mod connect;
 pub mod discovery;
+pub mod liveness;
+pub mod replay;
 pub mod rpc;
 pub mod ticket;
 
