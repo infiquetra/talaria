@@ -2,6 +2,41 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-23 — Typify needs explicit discriminator enums and distinct inline enum titles
+
+**Evidence.** At Hermes v0.22.4, commit `4d04303818b61bf3aa09278af48356315515965b`,
+cargo-typify 0.8.0 generated a plain string for a discriminator `const`. A decoded
+`connectors.policy.get` allow policy selected `Effective::Unrestricted` and lost
+its `connectors` and `tools`. Repeated inline enum titles also collapsed distinct
+`Status`, `Scope`, and `Kind` value sets. The amended union tests exercise these
+through the public method-result and event entry points.
+
+**Mechanism.** Removing closed-object markers permits extra fields, exposing the
+first-match behaviour of untagged unions. A shared enum title can additionally
+reuse a type with the wrong values. The architecture review approved section 4.1
+with amendments: convert only the 13 discriminator string constants to singleton
+enums and drop their titles; retain the existing WaitBarrierTarget enum and all
+15 unrelated constants. Six specifically listed inline string enum titles across
+Status, Scope, and Kind are removed, including CanonicalPendingPrompt.kind so
+the new Kind enum in Hermes v0.22.5 does not collapse with the pending-prompt kind.
+Validation rejects ambiguous discriminator definitions and any remaining title
+shared by different inline string-enum value sets.
+
+The ProviderUsageWindow bisect accepts the schema alone but fails in the full
+lifted document. Removing only `scope.default` clears it; removing only
+`resets_at.default` does not. This remains a named default exception alongside
+DisplayLease.viewer_id and MessageCompletePayload.text.
+
+The recording also exposed a scalar-union bug: MessageCompletePayload.text is
+`anyOf` a string and an empty schema. Typify emitted flattened fields and rejected
+the recorded string as "expected struct Text". At that site only, preprocessing
+removes the tautological union, preserving its meaning of any JSON value. The
+unchanged recording example then decodes both completed messages successfully.
+
+**Rule.** Verify discriminator selection and every inline enum value through
+the consumer's real decode entry point; compilation alone cannot detect a lost
+union variant or an enum title collapse.
+
 ## 2026-10-23 — Patterns guide trial with a fresh Haiku-tier agent
 
 **Evidence.** Issue #197 (`P0-04`), the guide `docs/agents/patterns.md` at commit `1e64b8c`. A new

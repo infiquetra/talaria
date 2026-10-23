@@ -29,6 +29,8 @@ tokio-tungstenite = "=0.26.2"
 futures-util = "=0.3.34"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
+regress = "=0.10.3"
+proptest = "=1.11.0"
 hermes-contract = { path = "crates/hermes-contract" }
 hermes-client = { path = "crates/hermes-client" }
 talaria-core = { path = "crates/talaria-core" }
