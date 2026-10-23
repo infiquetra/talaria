@@ -5,7 +5,18 @@
 use std::time::Duration;
 
 use futures_util::stream::{SplitSink, SplitStream};
-use tokio_tungstenite::tungstenite::Message;
+use futures_util::{SinkExt, StreamExt};
+use hermes_contract::{
+    methods::{canonical::runtime_describe, legacy::client_capabilities},
+    native::NativeMethod,
+};
+use serde_json::Value;
+use tokio_tungstenite::tungstenite::{
+    Error as WsError, Message,
+    client::IntoClientRequest,
+    error::ProtocolError,
+    protocol::{WebSocketConfig, frame::coding::CloseCode},
+};
 
 use crate::discovery::{Endpoint, ProfileId};
 use crate::ticket::Ticket;
@@ -19,8 +30,7 @@ pub type WsStream = SplitStream<WsStreamInner>;
 
 /// `http` becomes `ws` and gains `/api/ws`. `https` becomes `wss`.
 pub fn ws_url(api_origin: &str) -> String {
-    let _ = api_origin;
-    todo!("P1-01")
+    format!("{}/api/ws", api_origin.replacen("http", "ws", 1))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +46,7 @@ impl Default for ConnectOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConnectError {
     UpgradeRejected { status: Option<u16> },
     SubprotocolMismatch,
@@ -72,8 +82,6 @@ impl std::fmt::Display for ConnectError {
     }
 }
 
-impl std::error::Error for ConnectError {}
-
 impl ConnectError {
     pub fn next_step(&self) -> &'static str {
         match self {
@@ -101,14 +109,85 @@ pub async fn connect_with(
     ticket: Ticket,
     options: &ConnectOptions,
 ) -> Result<Connection, ConnectError> {
-    let _ = (endpoint, ticket, options);
-    todo!("P1-01")
+    if ticket.purpose() != crate::ticket::Purpose::Interactive {
+        return Err(ConnectError::WrongPurpose);
+    }
+    if endpoint.api_origin().starts_with("https://") {
+        return Err(ConnectError::TlsNotSupported);
+    }
+    tokio::time::timeout(options.timeout, async {
+        let authority = endpoint
+            .api_origin()
+            .strip_prefix("http://")
+            .ok_or(ConnectError::Io(std::io::ErrorKind::InvalidInput))?;
+        let address: std::net::SocketAddr = authority
+            .parse()
+            .map_err(|_| ConnectError::Io(std::io::ErrorKind::InvalidInput))?;
+        let socket = tokio::net::TcpStream::connect(address)
+            .await
+            .map_err(|err| ConnectError::Io(err.kind()))?;
+        let mut request = ws_url(endpoint.api_origin())
+            .into_client_request()
+            .map_err(map_upgrade_error)?;
+        let protocols = format!(
+            "hermes-gateway-v1, hermes-gateway-ticket.{}",
+            ticket.expose()
+        );
+        request.headers_mut().insert(
+            "Sec-WebSocket-Protocol",
+            protocols
+                .parse()
+                .map_err(|_| ConnectError::Io(std::io::ErrorKind::InvalidInput))?,
+        );
+        let config = WebSocketConfig::default()
+            .max_message_size(Some(8 * 1024 * 1024))
+            .max_frame_size(Some(8 * 1024 * 1024));
+        let (socket, response) =
+            tokio_tungstenite::client_async_with_config(request, socket, Some(config))
+                .await
+                .map_err(map_upgrade_error)?;
+        if response
+            .headers()
+            .get("Sec-WebSocket-Protocol")
+            .and_then(|h| h.to_str().ok())
+            != Some("hermes-gateway-v1")
+        {
+            return Err(ConnectError::SubprotocolMismatch);
+        }
+        let (sink, stream) = socket.split();
+        let (instance_id, profile_id) = match ticket.identity() {
+            Some((instance, profile)) => (instance.to_owned(), Some(profile.clone())),
+            None => (endpoint.instance_id().to_owned(), None),
+        };
+        Ok(Connection {
+            sink,
+            stream,
+            instance_id,
+            profile_id,
+            next_request_id: 1,
+            buffered: Vec::new(),
+        })
+    })
+    .await
+    .map_err(|_| ConnectError::Timeout)?
+}
+
+fn map_upgrade_error(error: WsError) -> ConnectError {
+    match error {
+        WsError::Http(response) => ConnectError::UpgradeRejected {
+            status: Some(response.status().as_u16()),
+        },
+        WsError::Protocol(ProtocolError::SecWebSocketSubProtocolError(_)) => {
+            ConnectError::SubprotocolMismatch
+        }
+        WsError::Io(err) => ConnectError::Io(err.kind()),
+        _ => ConnectError::Io(std::io::ErrorKind::InvalidData),
+    }
 }
 
 /// The two failure lines the example prints.
 pub fn format_failure(step: &str, message: &str, next_step: &str) -> String {
-    let _ = (step, message, next_step);
-    todo!("P1-01")
+    format!("ATTACH FAILED at {step}: {message}\nNext step: {next_step}")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,7 +220,7 @@ pub struct HandshakeTimings {
     pub describe: Duration,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Closed {
     Overloaded,
     Dropped,
@@ -167,7 +246,7 @@ impl Closed {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HandshakeError {
     ReadyTimeout,
     CallTimeout { method: &'static str },
@@ -207,8 +286,6 @@ impl std::fmt::Display for HandshakeError {
         }
     }
 }
-
-impl std::error::Error for HandshakeError {}
 
 impl HandshakeError {
     pub fn next_step(&self) -> &'static str {
@@ -251,17 +328,41 @@ impl std::fmt::Debug for Connection {
 
 impl Connection {
     pub fn into_parts(self) -> ConnectionParts {
-        let _ = self;
-        todo!("P1-01")
+        ConnectionParts {
+            sink: self.sink,
+            stream: self.stream,
+            instance_id: self.instance_id,
+            profile_id: self.profile_id,
+            next_request_id: self.next_request_id,
+            buffered: self.buffered,
+        }
     }
 
     async fn send_text(&mut self, text: String) -> Result<(), FrameError> {
-        let _ = text;
-        todo!("P1-01")
+        self.sink
+            .send(Message::Text(text.into()))
+            .await
+            .map_err(frame_error)
     }
 
     async fn next_text(&mut self) -> Result<Option<String>, FrameError> {
-        todo!("P1-01")
+        loop {
+            match self.stream.next().await {
+                Some(Ok(Message::Text(text))) => return Ok(Some(text.to_string())),
+                Some(Ok(Message::Close(frame))) => {
+                    return Err(FrameError::Closed(
+                        if frame.is_some_and(|frame| frame.code == CloseCode::Error) {
+                            Closed::Overloaded
+                        } else {
+                            Closed::Dropped
+                        },
+                    ));
+                }
+                Some(Ok(_)) => {}
+                Some(Err(err)) => return Err(frame_error(err)),
+                None => return Ok(None),
+            }
+        }
     }
 }
 
@@ -303,6 +404,168 @@ pub async fn handshake_with(
     conn: &mut Connection,
     options: &HandshakeOptions,
 ) -> Result<Handshake, HandshakeError> {
-    let _ = (conn, options);
-    todo!("P1-01")
+    let started = tokio::time::Instant::now();
+    let ready = tokio::time::timeout(options.ready_timeout, async {
+        loop {
+            let (raw, value) = read_frame(conn).await?;
+            if value["method"] == "event" && value["params"]["type"] == "gateway.ready" {
+                let ready: GatewayReadyPayload =
+                    serde_json::from_value(value["params"]["payload"].clone())
+                        .map_err(|_| HandshakeError::BadReady)?;
+                if ready.session_authority != Some(true) {
+                    return Err(HandshakeError::NotSessionAuthority);
+                }
+                return Ok(ready);
+            }
+            if value.get("method").is_some() {
+                conn.buffered.push(raw);
+            } else if !is_reply(&value) {
+                return Err(HandshakeError::BadFrame);
+            }
+        }
+    })
+    .await
+    .map_err(|_| HandshakeError::ReadyTimeout)??;
+    let ready_time = started.elapsed();
+    let started = tokio::time::Instant::now();
+    let caps = call::<client_capabilities::Marker>(
+        conn,
+        1,
+        client_capabilities::Params {
+            server_requests: true,
+        },
+        options.call_timeout,
+    )
+    .await;
+    let server_requests = match caps {
+        Ok(value) if value.get("error").is_none() => {
+            serde_json::from_value(value["result"].clone()).ok()
+        }
+        Ok(_) => None,
+        Err(HandshakeError::CallTimeout { .. }) => None,
+        Err(err) => return Err(err),
+    };
+    let capabilities_time = started.elapsed();
+    let started = tokio::time::Instant::now();
+    let value = call::<runtime_describe::Marker>(
+        conn,
+        2,
+        hermes_contract::schemas::RuntimeDescribeParams(serde_json::Map::new()),
+        options.call_timeout,
+    )
+    .await?;
+    if let Some(error) = value.get("error") {
+        let code = error["code"].as_i64().ok_or(HandshakeError::BadDescribe)?;
+        let reason = error["data"]["reason"]
+            .as_str()
+            .filter(|s| {
+                !s.is_empty()
+                    && s.len() <= 80
+                    && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            })
+            .map(str::to_owned);
+        return Err(HandshakeError::DescribeFailed { code, reason });
+    }
+    // Keep a required JSON value distinct from a missing field, which serde's
+    // generic JSON value decoder otherwise accepts as null.
+    if value["result"].get("session_create").is_none() {
+        return Err(HandshakeError::BadDescribe);
+    }
+    let describe: RuntimeDescribeResult =
+        serde_json::from_value(value["result"].clone()).map_err(|_| HandshakeError::BadDescribe)?;
+    if describe.instance_id != conn.instance_id
+        || conn
+            .profile_id
+            .as_ref()
+            .is_some_and(|profile| profile.as_ref() != describe.profile_id)
+    {
+        return Err(HandshakeError::IdentityChanged);
+    }
+    if conn.profile_id.is_none() {
+        conn.profile_id = Some(ProfileId::from(describe.profile_id.clone()));
+    }
+    Ok(Handshake {
+        ready,
+        describe,
+        server_requests,
+        timings: HandshakeTimings {
+            ready: ready_time,
+            capabilities: capabilities_time,
+            describe: started.elapsed(),
+        },
+    })
+}
+
+fn frame_error(error: WsError) -> FrameError {
+    match error {
+        WsError::Io(err) => FrameError::Io(err.kind()),
+        _ => FrameError::Closed(Closed::Dropped),
+    }
+}
+
+impl From<FrameError> for HandshakeError {
+    fn from(error: FrameError) -> Self {
+        match error {
+            FrameError::Closed(closed) => Self::Closed(closed),
+            FrameError::Io(kind) => Self::Io(kind),
+        }
+    }
+}
+
+async fn read_frame(conn: &mut Connection) -> Result<(String, Value), HandshakeError> {
+    let raw = conn
+        .next_text()
+        .await?
+        .ok_or(HandshakeError::Closed(Closed::Dropped))?;
+    let value: Value = serde_json::from_str(&raw).map_err(|_| HandshakeError::BadFrame)?;
+    if !value.is_object() {
+        return Err(HandshakeError::BadFrame);
+    }
+    Ok((raw, value))
+}
+
+fn is_reply(value: &Value) -> bool {
+    value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some())
+}
+
+async fn call<M: NativeMethod>(
+    conn: &mut Connection,
+    id: u64,
+    params: M::Params,
+    timeout: Duration,
+) -> Result<Value, HandshakeError> {
+    #[derive(serde::Serialize)]
+    struct Request<P> {
+        jsonrpc: &'static str,
+        id: u64,
+        method: &'static str,
+        params: P,
+    }
+    tokio::time::timeout(timeout, async {
+        let request = Request {
+            jsonrpc: "2.0",
+            id,
+            method: M::NAME,
+            params,
+        };
+        conn.next_request_id = id + 1;
+        let text = serde_json::to_string(&request).map_err(|_| HandshakeError::BadFrame)?;
+        conn.send_text(text).await?;
+        loop {
+            let (raw, value) = read_frame(conn).await?;
+            if value.get("method").is_some() {
+                conn.buffered.push(raw);
+                continue;
+            }
+            if value["id"].as_u64() == Some(id) {
+                // The method decides whether a matched but malformed reply is usable.
+                return Ok(value);
+            }
+            if !is_reply(&value) {
+                return Err(HandshakeError::BadFrame);
+            }
+        }
+    })
+    .await
+    .map_err(|_| HandshakeError::CallTimeout { method: M::NAME })?
 }

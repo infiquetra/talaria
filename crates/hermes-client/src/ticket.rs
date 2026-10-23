@@ -7,7 +7,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::discovery::{
-    Endpoint, NodeKind, NodeProblem, ProfileId, unsafe_node_message, unsafe_node_step,
+    DiscoveryError, Endpoint, NodeKind, NodeProblem, ProfileId, control_request, scrub_peer_text,
+    unsafe_node_message, unsafe_node_step,
 };
 
 /// What the ticket is allowed to open.
@@ -67,7 +68,7 @@ impl Scope {
 }
 
 /// `Scope::host` was asked for a purpose that cannot carry a host scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub struct ScopeError;
 
 impl std::fmt::Display for ScopeError {
@@ -75,8 +76,6 @@ impl std::fmt::Display for ScopeError {
         f.write_str("a host ticket needs the interactive purpose")
     }
 }
-
-impl std::error::Error for ScopeError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TicketOptions {
@@ -108,14 +107,24 @@ impl std::fmt::Debug for Ticket {
 impl Ticket {
     /// Accept 1 to 256 letters, digits, `-`, and `_`. Identity is unknown.
     pub fn parse(value: String) -> Result<Self, TicketError> {
-        let _ = value;
-        todo!("P1-01")
+        if value.is_empty()
+            || value.len() > 256
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(TicketError::Malformed);
+        }
+        Ok(Self {
+            value,
+            purpose: Purpose::Interactive,
+            identity: None,
+        })
     }
 
     /// The secret, for the WebSocket subprotocol only.
     pub(crate) fn expose(&self) -> &str {
-        let _ = self;
-        todo!("P1-01")
+        &self.value
     }
 
     pub(crate) fn purpose(&self) -> Purpose {
@@ -129,7 +138,7 @@ impl Ticket {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TicketError {
     StaleInstance,
     BindingRejected,
@@ -199,8 +208,6 @@ impl std::fmt::Display for TicketError {
     }
 }
 
-impl std::error::Error for TicketError {}
-
 impl TicketError {
     pub fn next_step(&self) -> &'static str {
         match self {
@@ -246,6 +253,62 @@ pub async fn mint_ticket_with(
     scope: Scope,
     options: &TicketOptions,
 ) -> Result<Ticket, TicketError> {
-    let _ = (home, endpoint, profile_id, purpose, scope, options);
-    todo!("P1-01")
+    if scope.is_host() && purpose != Purpose::Interactive {
+        return Err(TicketError::ScopeMismatch);
+    }
+    let supplied_home = home;
+    let home = home.canonicalize().map_err(|e| TicketError::Io(e.kind()))?;
+    let reply = control_request(&home, serde_json::json!({"protocol":1,"id":2,"verb":"session-ticket","params": {
+        "profile_id":profile_id.as_ref(),"instance_id":endpoint.instance_id(),"purpose":purpose.as_wire(),"scope":scope.as_wire()
+    }}), options.control_timeout).await.map_err(|err| match err {
+        DiscoveryError::UnsafeNode { node, problem } => TicketError::UnsafeNode { node, problem },
+        DiscoveryError::ControlTimeout => TicketError::Timeout,
+        DiscoveryError::ReplyTooLarge => TicketError::ReplyTooLarge,
+        DiscoveryError::Io(kind) => TicketError::Io(kind),
+        DiscoveryError::NoGateway | DiscoveryError::NamedProfileHome => TicketError::Io(std::io::ErrorKind::NotFound),
+        _ => TicketError::InvalidReply,
+    })?;
+    if reply["ok"] == false {
+        let error = reply["error"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or(TicketError::InvalidReply)?;
+        let text = error
+            .split_once(": ")
+            .map_or(error, |(_, text)| text)
+            .trim();
+        return Err(match text {
+            "stale runtime instance" => TicketError::StaleInstance,
+            "bootstrap binding rejected" => TicketError::BindingRejected,
+            "authenticated runtime bootstrap unavailable" => TicketError::NotAuthenticated,
+            "bootstrap capacity exhausted" => TicketError::CapacityExhausted,
+            "invalid bootstrap envelope"
+            | "invalid bootstrap parameters"
+            | "invalid bootstrap subject" => TicketError::InvalidRequest,
+            _ => TicketError::Refused(scrub_peer_text(text, supplied_home, 200)),
+        });
+    }
+    let result = reply["result"]
+        .as_object()
+        .ok_or(TicketError::InvalidReply)?;
+    if result
+        .get("runtime_protocol")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+        || result
+            .get("instance_id")
+            .and_then(serde_json::Value::as_str)
+            != Some(endpoint.instance_id())
+        || result.get("profile_id").and_then(serde_json::Value::as_str) != Some(profile_id.as_ref())
+    {
+        return Err(TicketError::IdentityChanged);
+    }
+    let value = result
+        .get("ticket")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(TicketError::Malformed)?;
+    let mut ticket = Ticket::parse(value.to_owned())?;
+    ticket.purpose = purpose;
+    ticket.identity = Some((endpoint.instance_id().to_owned(), profile_id.clone()));
+    Ok(ticket)
 }

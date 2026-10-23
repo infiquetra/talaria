@@ -3806,3 +3806,24 @@ implementations leave together. P1-04's Rust recorder and raw-byte redaction tes
 replace that guarantee, using the deny-set preserved at
 `python-final:talaria/recorder/redact.py`
 ([roadmap](../handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p1-04--recorder-and-replay-source)).
+
+## 2026-10-23 — Gateway mocks must preserve envelopes and ticket identity
+
+**Evidence.** Issue #198's pre-build started from the independent red-test commit
+`4ff5a7d`. Its direct endpoint-parser fixture was also sent as an unwrapped control reply,
+although Hermes v0.22.4 (`4d04303818b6`, `gateway/control_socket.py:306-347`) wraps successful
+results with `ok`, `protocol`, and the echoed request identifier. Several handshake success
+fixtures also described a different temporary home from the one used to mint their ticket.
+The implementation correctly rejected both shapes; the independent test author repaired the
+fixture construction while preserving the tests and their negative assertions.
+
+**Mechanism.** Compile-only stubs cannot expose a fixture that violates the protocol at a
+later boundary. A pure parser's input is the inner result; a transport mock must provide the
+whole reply. Likewise, a successful describe reply must use the exact profile identity that
+the ticket binds, even when both identities are disposable temporary directories.
+
+**Generalizable rule.** Build success fixtures from the same identity and envelope as the
+request path. When a strict implementation rejects a fixture, compare both with the pinned
+server before changing either. An annotated Git tag's object identifier is also distinct from
+its peeled commit: Hermes v0.22.4's tag object begins `64dbae64747a`, while its code revision
+begins `4d04303818b6`; a live-code comparison must use the latter.

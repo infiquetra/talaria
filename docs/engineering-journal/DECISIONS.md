@@ -3262,3 +3262,44 @@ or stable Rust supports a deliberate change to what test code counts. Only P0-03
 may change the generated-source exclusion command, together with its profile entry
 and matching repository test
 ([roadmap](../handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p0-03--vendor-and-generate-the-hermes-contract)).
+
+## 2026-10-23 — Keep gateway attachment narrow and preserve the authenticated socket
+
+**Decision.** The Rust gateway client keeps discovery, ticket minting, socket upgrade and
+the opening exchange in separate modules. It uses the existing pinned tokio-tungstenite
+0.26.2 dependency over a directly opened loopback TCP socket, without name resolution,
+proxy configuration, or an Origin header. Tickets are consumed by connection, excluded
+from Display and serialization, and redacted by Debug. Library errors retain typed causes
+or status codes rather than response bodies or library error text.
+
+The client checks node types, ownership, permissions and the control peer's user identifier
+before sending bytes. Group-write on a home is accepted because the peer authenticates the
+listener; ticket refusal then explains Hermes' stricter home policy. Ensure is bounded,
+opt-in for automated callers, and forbidden for incompatible gateways and named-profile
+homes. The opening exchange retains raw method frames in arrival order and hands the same
+socket to the next unit with request identifier 3.
+
+**Rationale.** These boundaries implement issue #198 without taking responsibility for
+gateway lifetime, session creation, reconnecting, or request dispatch. Keep Hermes behavior
+at the transport boundary; change its presentation to typed, redacted errors; drop implicit
+gateway replacement and launcher policy. The unknown-profile next step omits the spec's
+parentheses so its final character is a full stop, as requirement 17 and the frozen test
+require. Its meaning is unchanged.
+
+**Evidence boundary.** The local pre-build was rebased onto the merged generated contract
+from issue #196 (`ace72b5`). Temporary contract definitions were removed. The opening exchange
+constructs the generated empty-map `RuntimeDescribeParams` newtype. Live fixture acceptance
+is deferred until the Phase 0 to Phase 1a gate; a skipped live check is not live acceptance.
+The branch remains local pending the authorized publication gate.
+
+**Pre-build verification.** Formatting and Clippy with warnings denied passed, and the
+client suite passed all 30 non-live tests. An independent isolated run confirmed that count.
+The three original ignored live tests each printed `LIVE_ATTACH_RESULT: SKIPPED` without
+requiring a live fixture. All 33 original test declarations remain; no new ignores were
+added. For the old gateway's duplicate derived profile names, the test helper verifies a
+revision mismatch through a separate private, same-user socket probe before allowing the
+skip. This does not relax production discovery or turn unsafe nodes into skips.
+
+**Revisit when.** The generated contract changes an imported type or method marker, or
+Hermes publishes a different native attachment contract. Re-run the complete client checks
+and required live fixture acceptance after integration.

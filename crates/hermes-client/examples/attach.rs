@@ -86,7 +86,7 @@ async fn main() {
 
     let done = match handshake(&mut connection).await {
         Ok(done) => done,
-        Err(err) => fail_handshake(err),
+        Err(err) => fail_handshake(err, connection.into_parts().next_request_id),
     };
     println!(
         "step gateway.ready ok {} ms",
@@ -174,14 +174,18 @@ fn fail_discovery(err: DiscoveryError) -> ! {
     fail(step, &err.to_string(), err.next_step())
 }
 
-fn fail_handshake(err: HandshakeError) -> ! {
+fn fail_handshake(err: HandshakeError, next_request_id: u64) -> ! {
     let step = match &err {
         HandshakeError::ReadyTimeout
         | HandshakeError::BadReady
-        | HandshakeError::NotSessionAuthority
-        | HandshakeError::BadFrame
-        | HandshakeError::Closed(_)
-        | HandshakeError::Io(_) => "gateway.ready",
+        | HandshakeError::NotSessionAuthority => "gateway.ready",
+        HandshakeError::BadFrame | HandshakeError::Closed(_) | HandshakeError::Io(_) => {
+            match next_request_id {
+                1 => "gateway.ready",
+                2 => "client.capabilities",
+                _ => "runtime.describe",
+            }
+        }
         HandshakeError::CallTimeout { method } if *method == "client.capabilities" => {
             "client.capabilities"
         }

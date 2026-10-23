@@ -2,9 +2,11 @@
 //!
 //! This crate finds the gateway, mints one ticket, opens the session socket,
 //! and finishes the opening exchange. It does not create a session.
+//!
+//! Consumers continue on the same socket with [`Connection::into_parts`].
+//! Automated callers select [`EnsurePolicy::Never`] when discovering a gateway.
 
 #![forbid(unsafe_code)]
-#![allow(dead_code)]
 
 pub mod connect;
 pub mod discovery;
