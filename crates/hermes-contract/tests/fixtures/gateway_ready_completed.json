@@ -1,0 +1,10 @@
+{
+  "type": "gateway.ready",
+  "payload": {
+    "change_events": true,
+    "heartbeat": true,
+    "session_authority": true,
+    "skin": {},
+    "replay_epoch": "replay-epoch-placeholder"
+  }
+}
