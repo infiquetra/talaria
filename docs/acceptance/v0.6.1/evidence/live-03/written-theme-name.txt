@@ -1,3 +1,0 @@
-# Sanitized extract of the bytes written by this run.
-[theme]
-name = "neutral-dark"
