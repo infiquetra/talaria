@@ -658,10 +658,8 @@ mod control_socket {
         let mock = serve(
             &socket,
             move |origin| {
-                vec![ControlReply::Line(text(&identify_reply(
-                    &canonical_for_reply,
-                    origin,
-                )))]
+                let reply = text(&identify_reply(&canonical_for_reply, origin));
+                vec![ControlReply::Line(reply.clone()), ControlReply::Line(reply)]
             },
             WsPlan::Idle,
         )
@@ -1517,6 +1515,7 @@ mod ticket {
                 move |origin| {
                     vec![
                         ControlReply::Line(text(&identify_reply(&canonical, origin))),
+                        ControlReply::Silence,
                         ControlReply::Issue {
                             profile_id: fixture.clone(),
                             instance_id: INSTANCE_ID.to_string(),
@@ -1532,7 +1531,6 @@ mod ticket {
                             instance_id: INSTANCE_ID.to_string(),
                             expired: false,
                         },
-                        ControlReply::Silence,
                     ]
                 }
             },
@@ -2589,7 +2587,15 @@ mod handshake {
             "call default"
         );
 
-        let (_mock, mut connection) = opened(&Home::new(), WsPlan::Silence).await;
+        let (_mock, mut connection) = opened(
+            &Home::new(),
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps: vec![WsStep::Wait(Duration::from_secs(2))],
+                guard: false,
+            },
+        )
+        .await;
         let err = handshake_with(
             &mut connection,
             &HandshakeOptions {

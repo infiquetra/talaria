@@ -302,15 +302,19 @@ fn spawn_control(
 
 async fn run_control(listener: UnixListener, mut replies: Vec<ControlReply>, shared: Arc<Shared>) {
     replies.reverse();
+    // Each control request owns its connection; a silent peer must not block
+    // the next request. Dropping this set also cancels silent connections.
+    let mut connections = tokio::task::JoinSet::new();
     loop {
         let Ok((mut stream, _)) = listener.accept().await else {
             break;
         };
         shared.connections.fetch_add(1, Ordering::SeqCst);
         let reply = replies.pop().unwrap_or(ControlReply::Close);
-        if handle_control(&mut stream, reply, &shared).await.is_err() {
-            break;
-        }
+        let shared = Arc::clone(&shared);
+        connections.spawn(async move {
+            let _ = handle_control(&mut stream, reply, &shared).await;
+        });
     }
 }
 
