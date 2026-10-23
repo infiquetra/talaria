@@ -1,4 +1,4 @@
-//! The hand-written method trait every generated marker implements.
+//! A method's wire name and generated request and response types.
 
 pub trait Method {
     const NAME: &'static str;

@@ -58,7 +58,7 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: Measure line coverage (floor 80%)
-        run: cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
+        run: cargo llvm-cov --workspace --ignore-filename-regex "(/tests/|/generated/)" --fail-under-lines 80
       # The report is its own step so it still runs when the floor fails; in one step the
       # shell would stop at the failing floor and never write lcov.info.
       - name: Write the LCOV report

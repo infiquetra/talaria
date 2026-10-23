@@ -2,6 +2,35 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-23 — Generate Hermes protocol bindings offline with narrow schema corrections
+
+**Decision.** Use a Python 3.9 standard-library generator with cargo-typify 0.8.0
+in its default builder mode. Vendor the pinned Hermes contract and license
+byte-for-byte. Commit the sorted owner-method list extracted from the pinned
+Hermes handler functions so normal regeneration requires no source checkout or
+network. Drift refreshes that list when supplied a matching checkout, and reports
+binding failures separately from historical recording outcomes.
+
+The architecture review's approved-with-amendments ruling for issue 196,
+specification section 4.1, permits discriminator-only const-to-enum conversion
+with local title removal and six named inline string enum title removals across
+Status, Scope, and Kind. These include CanonicalPendingPrompt.kind, keeping
+the v0.22.5 drift check free of its new Kind title collision.
+The generator retains unrelated constants and defaults, and validates remaining
+enum titles before writing output. Protocol corrections, including prompt.submit's
+required admission identifier and refusal of unattended approval, remain in
+`overrides.rs`.
+
+**Rationale.** These rules preserve wire discriminators without handwritten
+protocol types, custom typify templates, or blanket removal of schema keywords.
+The committed input makes offline checks reproducible. The coverage command
+excludes integration-test and generated-source paths as settled by the parent
+issue; inline test code continues to count.
+
+**Revisit when.** Hermes adds a discriminator, a received constrained string,
+or a conflicting inline enum title; or typify gains reliable const and title
+handling. Such changes require a named rule and independent regression evidence.
+
 ## 2026-10-23
 
 ### The patterns guide is compiled, its bans are mechanical, and the viewport is fixed

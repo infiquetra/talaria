@@ -1,0 +1,66 @@
+name: Hermes contract
+
+on:
+  push:
+    branches: [main]
+    paths: &contract-paths
+      - 'tools/contract-gen/**'
+      - 'crates/hermes-contract/**'
+      - '.github/workflows/contract.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.gitattributes'
+  pull_request:
+    paths: *contract-paths
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-gen-check:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      CONTRACT_GEN_REQUIRE_TYPIFY: '1'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Install cargo-typify
+        run: cargo install cargo-typify --version 0.8.0 --locked
+      - name: Generator tests
+        run: python3 -I -m unittest discover -s tools/contract-gen/tests -t tools/contract-gen
+      - name: Check generated bindings
+        run: python3 -I tools/contract-gen/contract_gen.py check --require-typify
+      - name: Test bindings
+        run: cargo test -p hermes-contract
+
+  contract-drift:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Install cargo-typify
+        run: cargo install cargo-typify --version 0.8.0 --locked
+      - name: Clone newest stable Hermes release
+        shell: bash
+        run: |
+          tag="$(python3 - <<'PY'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location('contract_gen', 'tools/contract-gen/contract_gen.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          print(module.resolve_tag('latest')[0])
+          PY
+          )"
+          git clone --depth 1 --branch "$tag" https://github.com/NousResearch/hermes-agent "$RUNNER_TEMP/hermes-contract-source"
+      - name: Report drift
+        run: python3 -I tools/contract-gen/contract_gen.py drift --tag latest --summary "$GITHUB_STEP_SUMMARY" --hermes-checkout "$RUNNER_TEMP/hermes-contract-source"
