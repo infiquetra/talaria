@@ -1,6 +1,6 @@
 # ADR-0006: Block rendering is bounded by work and height
 
-Status: `accepted`
+Status: `superseded by ADR-0009`
 Date: 2026-08-09
 Deciders: operator
 Affected components: `talaria/ui/transcript.py`, `talaria/ui/blocks.py` (new), `talaria/ui/markdown.py`,

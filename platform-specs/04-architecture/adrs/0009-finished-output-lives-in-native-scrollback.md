@@ -1,8 +1,10 @@
-# ADR-0009 (draft): Finished output lives in the terminal's native scrollback
+# ADR-0009: Finished output lives in the terminal's native scrollback
 
-Status: `proposed`
+Status: `accepted`
 Date: 2026-10-22
+Accepted: 2026-10-23
 Deciders: operator
+Supersedes: ADR-0006
 Affected components: rendering, the transcript, overlays, performance budgets
 
 ## Context

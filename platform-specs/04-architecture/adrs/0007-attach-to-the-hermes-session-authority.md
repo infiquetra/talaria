@@ -1,8 +1,10 @@
-# ADR-0007 (draft): Talaria attaches to the Hermes session authority as a viewer
+# ADR-0007: Talaria attaches to the Hermes session authority as a viewer
 
-Status: `proposed`
+Status: `accepted`
 Date: 2026-10-22
+Accepted: 2026-10-23
 Deciders: operator
+Supersedes: the transport half of ADR-0001 (the per-profile gateway fleet and dashboard token scraping)
 Affected components: transport, connection management, credentials, the fleet view
 Evidence revision: Hermes Agent `22063fc09` (2026-10-17); live probe 2026-10-22
 

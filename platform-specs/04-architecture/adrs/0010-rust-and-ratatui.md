@@ -1,8 +1,10 @@
-# ADR-0010 (draft): The rewrite is Rust, with ratatui, crossterm and tokio
+# ADR-0010: The rewrite is Rust, with ratatui, crossterm and tokio
 
-Status: `proposed`
+Status: `accepted`
 Date: 2026-10-22
+Accepted: 2026-10-23
 Deciders: operator
+Supersedes: ADR-0004 and ADR-0005
 Affected components: every crate of the rewrite, continuous integration, distribution, the staffing
 of terminal work
 
@@ -13,12 +15,12 @@ measured. Keystroke latency while a reply streamed was 107 ms at the 95th percen
 28% of a core on average, and 48% of streaming time went to Textual's whole-screen layout pass.
 Textual's own vendor has wound down.
 
-A stack evaluation ([u11](../research/u11-language-framework.md)) compared five stacks. Rust with
+A stack evaluation ([u11](../../../docs/handoff/2026-10-22-next-steps/research/u11-language-framework.md)) compared five stacks. Rust with
 ratatui scored 81 out of 100, TypeScript with OpenTUI on Bun 78, Go with Bubble Tea 73, TypeScript
 with Ink 69, and Python with Textual 56. The evaluation called the top two "within noise", and named
 a head-to-head agent build as the evidence that would settle them.
 
-That build ran on 2026-10-22 ([u16](../research/u16-stack-bakeoff.md)). Four agents built the same
+That build ran on 2026-10-22 ([u16](../../../docs/handoff/2026-10-22-next-steps/research/u16-stack-bakeoff.md)). Four agents built the same
 client against the live gateway: Sonnet 5.5 high and Haiku 5.5 xhigh, each in Rust and in
 TypeScript. All four passed every acceptance item without help.
 

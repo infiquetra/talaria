@@ -2,6 +2,63 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-23
+
+### Talaria is rewritten in Rust against the Hermes gateway (ADRs 0007 to 0012 accepted)
+
+**Decision.** The operator accepted the six draft ADRs of the 2026-10-22 handoff as drafted, with
+no amendments, and answered the eight open questions in issue #194 (`P0-01`) as follows:
+- Decision 1: rewrite Talaria in Rust with ratatui, crossterm and tokio, accepting
+  [ADR-0007](../../platform-specs/04-architecture/adrs/0007-attach-to-the-hermes-session-authority.md),
+  [ADR-0008](../../platform-specs/04-architecture/adrs/0008-protocol-types-are-generated-from-the-hermes-contract.md),
+  [ADR-0009](../../platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md),
+  [ADR-0010](../../platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md),
+  [ADR-0011](../../platform-specs/04-architecture/adrs/0011-workflows-run-in-a-detachable-runner.md)
+  and [ADR-0012](../../platform-specs/04-architecture/adrs/0012-verification-is-proportionate.md).
+- Decision 2: the rewrite stays in this repository; `main` is tagged `python-final` and reset there.
+- Decision 3: the command stays `talaria`, shipped through GitHub releases and a Homebrew tap, with
+  no package registry publishing.
+- Decision 4: no non-Hermes agents in the fleet view for now; internal events use the Agent Client
+  Protocol's vocabulary so the adapter stays cheap to add later.
+- Decision 5: no; the local gateway is the daily path and remote gateways stay in phase 6.
+- Decision 6: no upstream contributions to Hermes; #281 (`P6-08`) closes and the client-side
+  workarounds (hand-typed canonical events and overrides) stay.
+- Decision 7: the interim daily driver is `hermes --tui --native`, with no further changes to the
+  Python client.
+- Decision 8: "an always-running agent" means reading (a), the backend keeps agents alive with no
+  client attached; #247 (`P3-09`) is not built.
+
+The record is the operator's
+[`decisions recorded` comment](https://github.com/infiquetra/talaria/issues/194#issuecomment-6374197257).
+
+**Rationale.** The Python client takes 1.2 s from launch to a usable composer against a live backend
+and shows keystrokes 107 ms late at the 95th percentile while a reply streams
+([02-current-state.md](../handoff/2026-10-22-next-steps/02-current-state.md#what-was-measured), the
+handoff's 2026-10-22 measurements, not re-measured here). Its approval path cannot answer prompts on
+current Hermes ([handoff README](../handoff/2026-10-22-next-steps/README.md)). Hermes now publishes a
+generated contract, so protocol types can be generated from it instead of transcribed by hand
+([ADR-0008](../../platform-specs/04-architecture/adrs/0008-protocol-types-are-generated-from-the-hermes-contract.md)).
+
+**Rejected alternatives.** (a) TypeScript with OpenTUI on Bun: easier for moderate agents to build,
+but far heavier at runtime and slower to attach; it stays the named fallback in ADR-0010.
+(b) Keeping and patching the Python client: its approval path is broken against current Hermes.
+(c) A new repository for the rewrite (decision 2). (d) Renaming the product before the rewrite
+(decision 3). (e) Building the Agent Client Protocol adapter in the first fleet release (decision 4).
+(f) A remote Hermes gateway as a daily path, moving remote sign-in into phase 3 (decision 5).
+(g) Proposing upstream contributions to Hermes and keeping #281 (`P6-08`) (decision 6). (h) Keeping
+and patching the Python client as the daily driver (decision 7). (i) Reading (b), a named resident
+agent that is always available to message (decision 8).
+
+**Revisit when.** From
+[ADR-0010](../../platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md#revisit-when):
+- Either switching condition of ADR-0010 decision 4 occurs: the inline renderer (#203 (`P1-06`))
+  fails its acceptance twice at the top building tier (Opus 5.5 high), or more than two other
+  phase 1 units need a terminal library workaround.
+- Hermes publishes its TypeScript client as a supported, versioned package and OpenTUI reaches 1.0;
+  reconsider at the start of phase 2.
+- A real terminal benchmark shows that the start-up and memory differences cannot be perceived in
+  daily use ([stack bake-off](../handoff/2026-10-22-next-steps/research/u16-stack-bakeoff.md)).
+
 ## 2026-10-22
 
 ### The v0.7.0 work is issued as GitHub issues with committed unit specifications

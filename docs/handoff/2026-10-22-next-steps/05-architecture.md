@@ -195,7 +195,7 @@ enforced in continuous integration on recorded fixtures.
 **Rust, with ratatui 0.30, crossterm 0.29 and tokio.** TypeScript on Bun with OpenTUI is the named
 fallback. The call is close: the TypeScript builds needed fewer fixes, and the Rust builds are far
 faster and lighter at runtime. The reasons, the costs and the conditions for switching are below.
-[Draft ADR 0010](adr-drafts/0010-rust-and-ratatui.md) records the decision.
+[ADR 0010](../../../platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md) records the decision.
 
 ### The bake-off
 
@@ -285,6 +285,8 @@ Start from [reference-slices/typescript/](reference-slices/typescript/) if any o
 - In phase 1, more than two units other than P1-06 need a workaround for the terminal library.
 - Hermes publishes its TypeScript client as a supported, versioned package, and OpenTUI reaches 1.0.
   Reconsider at the start of phase 2, because reuse would then outweigh the runtime cost.
+
+ADR 0010 decides which of these apply. Its switching conditions are the first two. The third is a reason to reconsider at the start of phase 2, not a reason to switch.
 
 ### What the bake-off did not measure
 
