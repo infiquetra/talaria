@@ -8,16 +8,22 @@ Talaria is a standalone client that connects to a Hermes gateway it did not laun
 
 ## Read the ADRs before writing code
 
-Six decisions are settled and are not open for re-litigation in an implementation change:
+Twelve decisions are recorded and are not open for re-litigation in an implementation change; the status in each row below says which older ones are superseded:
 
-| ADR                                                                                               | What it settles                                                                              |
-| ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)                | Talaria owns its own process lifetime and dials a gateway it did not launch                  |
-| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)      | The domain core never imports the terminal framework; the UI is a projection of domain state |
-| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)        | Hermes's terminal UI is documentation of behavior, not a source tree to translate            |
-| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)                    | Talaria is written in Python; the terminal framework is decided by a validation gate         |
-| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)        | Textual 8.2.8 is the accepted presentation layer                                             |
-| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) | Block rendering is bounded by work and rendered height                                       |
+| ADR                                                                                                       | What it settles                                                                                                    |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)                        | Talaria owns its own process lifetime and dials a gateway it did not launch (superseded in part by ADR-0007)       |
+| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)              | The domain core never imports the terminal framework; the UI is a projection of domain state                       |
+| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)                | Hermes's terminal UI is documentation of behavior, not a source tree to translate (superseded in part by ADR-0008) |
+| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)                            | Talaria is written in Python; the terminal framework is decided by a validation gate (superseded by ADR-0010)      |
+| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)                | Textual 8.2.8 is the accepted presentation layer (superseded by ADR-0010)                                          |
+| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md)         | Block rendering is bounded by work and rendered height (superseded by ADR-0009)                                    |
+| [0007](platform-specs/04-architecture/adrs/0007-attach-to-the-hermes-session-authority.md)                | Talaria attaches to the Hermes session authority as a viewer                                                       |
+| [0008](platform-specs/04-architecture/adrs/0008-protocol-types-are-generated-from-the-hermes-contract.md) | Protocol types are generated from the contract Hermes publishes                                                    |
+| [0009](platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md)            | Finished output lives in the terminal's native scrollback                                                          |
+| [0010](platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md)                                      | The rewrite is Rust, with ratatui, crossterm and tokio                                                             |
+| [0011](platform-specs/04-architecture/adrs/0011-workflows-run-in-a-detachable-runner.md)                  | Workflows run in a detachable headless runner                                                                      |
+| [0012](platform-specs/04-architecture/adrs/0012-verification-is-proportionate.md)                         | Verification is proportionate                                                                                      |
 
 **The transition is done, and `src/` is what survived it.** The Ink prototype, the command-line entry point, the recording command and the transport shim were removed on 2026-08-07. The three remaining TypeScript files are the reference recorder and its redaction rules, kept because `tests/recorder/test_equivalence.py` runs the real thing in a subprocess and asserts the Python recorder matches it across the credential redaction boundary. Do not add behavior to them. Do not port them file by file. Do not delete them without first saying what replaces that guarantee.
 

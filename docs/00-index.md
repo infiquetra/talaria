@@ -8,15 +8,20 @@ Authority: `reference`
 Architecture decisions are canon. Analysis is evidence for them, not a substitute.
 
 - [Next steps handoff, 2026-10-22](handoff/2026-10-22-next-steps/README.md) — `proposed`: rewrite
-  Talaria as a fast, inline client of the current Hermes gateway; draft ADRs 0007 to 0012 await the
-  operator's decision
+  Talaria as a fast, inline client of the current Hermes gateway; ADRs 0007 to 0012 were accepted on `2026-10-23`
 
-- [ADR-0001 — Talaria is a standalone client](../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)
+- [ADR-0001 — Talaria is a standalone client](../platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md) — `superseded in part by ADR-0007`
 - [ADR-0002 — The domain core is framework-independent](../platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)
-- [ADR-0003 — Talaria re-encodes the Hermes terminal UI's behavior](../platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)
-- [ADR-0004 — Talaria is a Python client](../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)
-- [ADR-0005 — Textual is Talaria's presentation layer](../platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) — `accepted`
-- [ADR-0006 — Block rendering is bounded by work and height](../platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) — `accepted`
+- [ADR-0003 — Talaria re-encodes the Hermes terminal UI's behavior](../platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md) — `superseded in part by ADR-0008`
+- [ADR-0004 — Talaria is a Python client](../platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md) — `superseded by ADR-0010`
+- [ADR-0005 — Textual is Talaria's presentation layer](../platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md) — `superseded by ADR-0010`
+- [ADR-0006 — Block rendering is bounded by work and height](../platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) — `superseded by ADR-0009`
+- [ADR-0007 — Talaria attaches to the Hermes session authority as a viewer](../platform-specs/04-architecture/adrs/0007-attach-to-the-hermes-session-authority.md) — `accepted`
+- [ADR-0008 — Protocol types are generated from the contract Hermes publishes](../platform-specs/04-architecture/adrs/0008-protocol-types-are-generated-from-the-hermes-contract.md) — `accepted`
+- [ADR-0009 — Finished output lives in the terminal's native scrollback](../platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md) — `accepted`
+- [ADR-0010 — The rewrite is Rust, with ratatui, crossterm and tokio](../platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md) — `accepted`
+- [ADR-0011 — Workflows run in a detachable headless runner](../platform-specs/04-architecture/adrs/0011-workflows-run-in-a-detachable-runner.md) — `accepted`
+- [ADR-0012 — Verification is proportionate](../platform-specs/04-architecture/adrs/0012-verification-is-proportionate.md) — `accepted`
 
 ## User guides
 

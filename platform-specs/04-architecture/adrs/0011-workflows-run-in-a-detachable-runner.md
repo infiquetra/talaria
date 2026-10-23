@@ -1,8 +1,10 @@
-# ADR-0011 (draft): Workflows run in a detachable headless runner
+# ADR-0011: Workflows run in a detachable headless runner
 
-Status: `proposed`
+Status: `accepted`
 Date: 2026-10-22
+Accepted: 2026-10-23
 Deciders: operator
+Supersedes: none
 Affected components: the workflow runner, the fleet view, the CLI
 
 ## Context

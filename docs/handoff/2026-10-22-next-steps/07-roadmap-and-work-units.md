@@ -9,7 +9,7 @@ are specified to the level of goal, Hermes calls and acceptance; **re-plan each 
 start** with a planning agent, using the code that exists by then.
 
 This plan assumes the Rust stack chosen in [05-architecture.md](05-architecture.md) §Stack and in
-architecture decision record (ADR) draft 0010 ([adr-drafts/0010-rust-and-ratatui.md](adr-drafts/0010-rust-and-ratatui.md)).
+architecture decision record (ADR) 0010 ([ADR-0010](../../../platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md)).
 If a switching condition there fires, phases 0 and 1 are re-planned: the unit boundaries, interfaces
 and tests carry over, but the file paths and commands do not.
 
@@ -330,7 +330,7 @@ the end of the phase.
 - **Tier:** Opus 5.5 high. This is the hardest building unit in the plan. The bake-off put six of the
   Rust builder's eleven fixes here, so it is not handed to a moderate tier.
 - **Depends on:** P0-04, P1-05.
-- **Read first:** [adr-drafts/0009-finished-output-lives-in-native-scrollback.md](adr-drafts/0009-finished-output-lives-in-native-scrollback.md);
+- **Read first:** [ADR-0009](../../../platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md);
   [reference-slices/rust/src/tui.rs](reference-slices/rust/src/tui.rs), which worked in the bake-off;
   [research/u16-stack-bakeoff.md](research/u16-stack-bakeoff.md) §3; OpenAI Codex
   `codex-rs/tui/src/insert_history.rs` and `custom_terminal.rs` (Apache-2.0; if you copy code, keep

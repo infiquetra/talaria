@@ -1,6 +1,6 @@
 # ADR-0004: Talaria is a Python client
 
-Status: `accepted`
+Status: `superseded by ADR-0010`
 Date: 2026-08-02
 Deciders: operator
 Affected components: language, toolchain, packaging and installation, continuous integration, every source file

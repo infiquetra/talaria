@@ -1,8 +1,10 @@
-# ADR-0008 (draft): Protocol types are generated from the contract Hermes publishes
+# ADR-0008: Protocol types are generated from the contract Hermes publishes
 
-Status: `proposed`
+Status: `accepted`
 Date: 2026-10-22
+Accepted: 2026-10-23
 Deciders: operator
+Supersedes: the protocol half of ADR-0003 (hand-transcribed method shapes); the behaviour half stays
 Affected components: the contract crate (or package), the client, continuous integration
 Evidence revision: Hermes Agent `22063fc09`
 

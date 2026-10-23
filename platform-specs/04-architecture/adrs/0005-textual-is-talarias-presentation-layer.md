@@ -1,6 +1,6 @@
 # ADR-0005: Textual is Talaria's presentation layer
 
-Status: `accepted`
+Status: `superseded by ADR-0010`
 Date: 2026-08-03
 Deciders: operator
 Affected components: `talaria/ui/`, the composer, the transcript pane, the status region, the test

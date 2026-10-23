@@ -1,6 +1,6 @@
 # ADR-0001: Talaria is a standalone client, not a TUI bundle Hermes launches
 
-Status: `accepted`
+Status: `superseded in part by ADR-0007: the transport half is replaced; the decision that Talaria is a standalone client stands`
 Date: 2026-08-02
 Deciders: operator
 Affected components: transports, core lifetime, packaging, language choice

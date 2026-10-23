@@ -288,14 +288,20 @@ parity proof had stopped running.
 
 ### Settled decisions
 
-| ADR                                                                                               | Decision                                                                    |
-| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)                | Talaria is a standalone process, not a TUI bundle Hermes launches           |
-| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)      | The domain core is framework-independent; the terminal UI is a projection   |
-| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)        | Talaria re-encodes the Hermes terminal UI's behavior rather than porting it |
-| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)                    | Talaria is a Python client; the terminal framework is decided by a gate     |
-| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)        | Textual is the accepted presentation layer                                  |
-| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) | Block rendering is bounded by work and rendered height                      |
+| ADR                                                                                                       | Decision                                                                                                     |
+| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [0001](platform-specs/04-architecture/adrs/0001-talaria-is-a-standalone-client.md)                        | Talaria is a standalone process, not a TUI bundle Hermes launches (superseded in part by ADR-0007)           |
+| [0002](platform-specs/04-architecture/adrs/0002-the-domain-core-is-framework-independent.md)              | The domain core is framework-independent; the terminal UI is a projection                                    |
+| [0003](platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md)                | Talaria re-encodes the Hermes terminal UI's behavior rather than porting it (superseded in part by ADR-0008) |
+| [0004](platform-specs/04-architecture/adrs/0004-talaria-is-a-python-client.md)                            | Talaria is a Python client; the terminal framework is decided by a gate (superseded by ADR-0010)             |
+| [0005](platform-specs/04-architecture/adrs/0005-textual-is-talarias-presentation-layer.md)                | Textual is the accepted presentation layer (superseded by ADR-0010)                                          |
+| [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md)         | Block rendering is bounded by work and rendered height (superseded by ADR-0009)                              |
+| [0007](platform-specs/04-architecture/adrs/0007-attach-to-the-hermes-session-authority.md)                | Talaria attaches to the Hermes session authority as a viewer                                                 |
+| [0008](platform-specs/04-architecture/adrs/0008-protocol-types-are-generated-from-the-hermes-contract.md) | Protocol types are generated from the contract Hermes publishes                                              |
+| [0009](platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md)            | Finished output lives in the terminal's native scrollback                                                    |
+| [0010](platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md)                                      | The rewrite is Rust, with ratatui, crossterm and tokio                                                       |
+| [0011](platform-specs/04-architecture/adrs/0011-workflows-run-in-a-detachable-runner.md)                  | Workflows run in a detachable headless runner                                                                |
+| [0012](platform-specs/04-architecture/adrs/0012-verification-is-proportionate.md)                         | Verification is proportionate                                                                                |
 
 ## Contributing
 

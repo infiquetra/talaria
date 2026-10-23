@@ -1,6 +1,6 @@
 # ADR-0003: Talaria re-encodes the Hermes terminal UI's behavior rather than porting its code
 
-Status: `accepted`
+Status: `superseded in part by ADR-0008: the protocol half is replaced; the decision to re-encode Hermes terminal behaviour stands`
 Date: 2026-08-02
 Deciders: operator
 Affected components: protocol normalization, domain state, terminal UI, feature scope, tests

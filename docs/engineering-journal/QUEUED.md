@@ -14,10 +14,9 @@ The recommendation is a Rust rewrite (draft ADR 0010). Talaria 0.6.5 cannot answ
 approval prompts against current Hermes, is slow to launch and while streaming, and attaches through a
 legacy path; Hermes now offers one gateway per machine, a generated contract, and durable sessions.
 
-**Worth it when.** Now. The operator decides on the draft ADRs in
-`docs/handoff/2026-10-22-next-steps/adr-drafts/`; if accepted, the entries below that concern the
-Python client move to `ARCHIVE.md` as superseded, and work starts at phase 0 of
-`07-roadmap-and-work-units.md`.
+**Worth it when.** Now. The operator decided on 2026-10-23; the ADRs are in
+platform-specs/04-architecture/adrs/, and the entries below that concern the Python client are still
+to move to ARCHIVE.md as superseded.
 
 ### Eleven public exports have no production caller — v0.4 accumulated review
 

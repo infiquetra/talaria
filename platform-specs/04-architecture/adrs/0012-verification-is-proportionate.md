@@ -1,8 +1,10 @@
-# ADR-0012 (draft): Verification is proportionate
+# ADR-0012: Verification is proportionate
 
-Status: `proposed`
+Status: `accepted`
 Date: 2026-10-22
+Accepted: 2026-10-23
 Deciders: operator
+Supersedes: none (it replaces the per-release acceptance-receipt practice, which no ADR recorded)
 Affected components: tests, continuous integration, release process, documentation
 
 ## Context

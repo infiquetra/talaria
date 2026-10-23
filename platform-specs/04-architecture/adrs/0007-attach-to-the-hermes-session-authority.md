@@ -1,8 +1,10 @@
-# ADR-0007 (draft): Talaria attaches to the Hermes session authority as a viewer
+# ADR-0007: Talaria attaches to the Hermes session authority as a viewer
 
-Status: `proposed`
+Status: `accepted`
 Date: 2026-10-22
+Accepted: 2026-10-23
 Deciders: operator
+Supersedes: the transport half of ADR-0001 (the per-profile gateway fleet and dashboard token scraping)
 Affected components: transport, connection management, credentials, the fleet view
 Evidence revision: Hermes Agent `22063fc09` (2026-10-17); live probe 2026-10-22
 
@@ -29,7 +31,7 @@ warm attach of about 30 ms.
 ## Decision
 
 1. Talaria finds the gateway with the control socket's `identify` verb (or `hermes gateway ensure
-   --json`), mints a ticket with `session-ticket` (purpose `interactive`, scope `host` when the fleet
+--json`), mints a ticket with `session-ticket` (purpose `interactive`, scope `host` when the fleet
    view needs every profile), and dials `<api_origin>/api/ws` with the subprotocols
    `hermes-gateway-v1` and `hermes-gateway-ticket.<ticket>`.
 2. One connection per Talaria process. A second connection is an exception path (for example a remote
