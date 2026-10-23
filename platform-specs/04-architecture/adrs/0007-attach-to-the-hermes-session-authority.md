@@ -31,7 +31,7 @@ warm attach of about 30 ms.
 ## Decision
 
 1. Talaria finds the gateway with the control socket's `identify` verb (or `hermes gateway ensure
-   --json`), mints a ticket with `session-ticket` (purpose `interactive`, scope `host` when the fleet
+--json`), mints a ticket with `session-ticket` (purpose `interactive`, scope `host` when the fleet
    view needs every profile), and dials `<api_origin>/api/ws` with the subprotocols
    `hermes-gateway-v1` and `hermes-gateway-ticket.<ticket>`.
 2. One connection per Talaria process. A second connection is an exception path (for example a remote
