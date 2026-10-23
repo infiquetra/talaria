@@ -5,6 +5,8 @@
 
 #![allow(dead_code)]
 
+pub mod peer;
+
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
