@@ -24,6 +24,14 @@ fn text(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| panic!("json"))
 }
 
+fn identify_reply(home: &str, origin: &str) -> Value {
+    control_reply(ready_identify(home, origin))
+}
+
+fn control_reply(result: Value) -> Value {
+    json!({"ok": true, "protocol": 1, "id": 1, "result": result})
+}
+
 fn never() -> DiscoverOptions {
     DiscoverOptions {
         control_timeout: Duration::from_secs(5),
@@ -250,7 +258,8 @@ mod identify_parsing {
     async fn from_identify_rejects_bad_replies() {
         let home = Home::new();
         let canonical = home.canonical();
-        let rows: Vec<(&str, fn(&mut Value, &str), Expect)> = vec![
+        type IdentityRow = (&'static str, fn(&mut Value, &str), Expect);
+        let rows: Vec<IdentityRow> = vec![
             (
                 "protocol 2",
                 |value, _| value["runtime_protocol"] = json!(2),
@@ -601,7 +610,7 @@ mod control_socket {
             {
                 let canonical = canonical.clone();
                 move |origin| {
-                    let line = text(&ready_identify(&canonical, origin));
+                    let line = text(&identify_reply(&canonical, origin));
                     vec![ControlReply::Line(line.clone()), ControlReply::Line(line)]
                 }
             },
@@ -649,7 +658,7 @@ mod control_socket {
         let mock = serve(
             &socket,
             move |origin| {
-                vec![ControlReply::Line(text(&ready_identify(
+                vec![ControlReply::Line(text(&identify_reply(
                     &canonical_for_reply,
                     origin,
                 )))]
@@ -921,7 +930,7 @@ mod control_socket {
         let mock = serve(
             &socket,
             move |origin| {
-                vec![ControlReply::Line(text(&ready_identify(
+                vec![ControlReply::Line(text(&identify_reply(
                     &canonical, origin,
                 )))]
             },
@@ -980,7 +989,7 @@ mod control_socket {
             move |origin| {
                 let mut value = ready_identify(&canonical, origin);
                 value["served_profiles"] = json!([{"profile_id": canonical, "home": canonical}]);
-                vec![ControlReply::Line(text(&value))]
+                vec![ControlReply::Line(text(&control_reply(value)))]
             },
             WsPlan::Idle,
         )
@@ -1015,7 +1024,7 @@ mod control_socket {
         ensure_fixture(home.path());
         let canonical = home.canonical();
         let socket = home.path().join("gateway.sock");
-        let padded = pad_json(ready_identify(&canonical, "http://127.0.0.1:9"), 524_288);
+        let padded = pad_json(identify_reply(&canonical, "http://127.0.0.1:9"), 524_288);
         let mock = serve(
             &socket,
             move |_| vec![ControlReply::Line(padded.clone())],
@@ -1038,7 +1047,7 @@ mod control_socket {
             (
                 "two lines",
                 ControlReply::Lines(
-                    text(&ready_identify(&canonical, "http://127.0.0.1:9")),
+                    text(&identify_reply(&canonical, "http://127.0.0.1:9")),
                     "nope".to_string(),
                 ),
             ),
@@ -1141,7 +1150,7 @@ mod ensure {
                     let socket = home.path().join("gateway.sock");
                     let canonical = canonical.clone();
                     mock = Some(serve(&socket, move |origin| {
-                        vec![ControlReply::Line(text(&ready_identify(&canonical, origin)))]
+                        vec![ControlReply::Line(text(&identify_reply(&canonical, origin)))]
                     }, WsPlan::Idle).await);
                 }
             }
@@ -1295,7 +1304,7 @@ mod ensure {
                     let socket = home.path().join("gateway.sock");
                     let canonical = canonical.clone();
                     let _mock = serve(&socket, move |origin| {
-                        vec![ControlReply::Line(text(&ready_identify(&canonical, origin)))]
+                        vec![ControlReply::Line(text(&identify_reply(&canonical, origin)))]
                     }, WsPlan::Idle).await;
                     // The listener has to outlive the retry. Leak it on purpose for this row.
                     std::mem::forget(_mock);
@@ -1425,7 +1434,7 @@ mod ensure {
             {
                 let canonical = canonical.clone();
                 move |origin| {
-                    vec![ControlReply::Line(text(&ready_identify(
+                    vec![ControlReply::Line(text(&identify_reply(
                         &canonical, origin,
                     )))]
                 }
@@ -1507,7 +1516,7 @@ mod ticket {
                 let fixture = fixture.clone();
                 move |origin| {
                     vec![
-                        ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                        ControlReply::Line(text(&identify_reply(&canonical, origin))),
                         ControlReply::Issue {
                             profile_id: fixture.clone(),
                             instance_id: INSTANCE_ID.to_string(),
@@ -1667,7 +1676,7 @@ mod ticket {
                     let canonical = canonical.clone();
                     move |origin| {
                         vec![
-                            ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                            ControlReply::Line(text(&identify_reply(&canonical, origin))),
                             ControlReply::Line(text(&body)),
                         ]
                     }
@@ -1703,7 +1712,7 @@ mod ticket {
                     assert!(matches!(err, TicketError::InvalidRequest), "{name}")
                 }
                 "split" => match err {
-                    TicketError::Refused(text) => assert_eq!(text, "B: C", "split"),
+                    TicketError::Refused(text) => assert_eq!(text, "A: B: C", "split"),
                     _ => panic!("split"),
                 },
                 _ => panic!("row"),
@@ -1733,7 +1742,7 @@ mod ticket {
                     let canonical = canonical.clone();
                     move |origin| {
                         vec![
-                            ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                            ControlReply::Line(text(&identify_reply(&canonical, origin))),
                             ControlReply::Line(text(&body)),
                         ]
                     }
@@ -1804,7 +1813,7 @@ mod ticket {
                     let canonical = canonical.clone();
                     move |origin| {
                         vec![
-                            ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                            ControlReply::Line(text(&identify_reply(&canonical, origin))),
                             ControlReply::Line(text(&body)),
                         ]
                     }
@@ -1875,7 +1884,7 @@ mod websocket {
                 let canonical = canonical.clone();
                 move |origin| {
                     vec![
-                        ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                        ControlReply::Line(text(&identify_reply(&canonical, origin))),
                         ControlReply::Issue {
                             profile_id: fixture.clone(),
                             instance_id: INSTANCE_ID.into(),
@@ -1994,7 +2003,7 @@ mod websocket {
                     let fixture = fixture.clone();
                     move |origin| {
                         vec![
-                            ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                            ControlReply::Line(text(&identify_reply(&canonical, origin))),
                             ControlReply::Issue {
                                 profile_id: fixture,
                                 instance_id: INSTANCE_ID.into(),
@@ -2051,7 +2060,7 @@ mod websocket {
                     let fixture = fixture.clone();
                     move |origin| {
                         vec![
-                            ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                            ControlReply::Line(text(&identify_reply(&canonical, origin))),
                             ControlReply::Issue {
                                 profile_id: fixture,
                                 instance_id: INSTANCE_ID.into(),
@@ -2121,7 +2130,7 @@ mod websocket {
                 let fixture = fixture.clone();
                 move |origin| {
                     vec![
-                        ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                        ControlReply::Line(text(&identify_reply(&canonical, origin))),
                         ControlReply::Issue {
                             profile_id: fixture.clone(),
                             instance_id: INSTANCE_ID.into(),
@@ -2204,8 +2213,7 @@ mod handshake {
         format!(r#"{{"jsonrpc":"2.0","id":2,"method":"{name}","params":{{}}}}"#)
     }
 
-    async fn opened(plan: WsPlan) -> (Home, AttachMock, hermes_client::Connection) {
-        let home = Home::new();
+    async fn opened(home: &Home, plan: WsPlan) -> (AttachMock, hermes_client::Connection) {
         ensure_fixture(home.path());
         let canonical = home.canonical();
         let fixture = format!("{canonical}/profiles/fixture");
@@ -2217,7 +2225,7 @@ mod handshake {
                 let fixture = fixture.clone();
                 move |origin| {
                     vec![
-                        ControlReply::Line(text(&ready_identify(&canonical, origin))),
+                        ControlReply::Line(text(&identify_reply(&canonical, origin))),
                         ControlReply::Issue {
                             profile_id: fixture,
                             instance_id: INSTANCE_ID.into(),
@@ -2243,15 +2251,14 @@ mod handshake {
         .await
         .expect("ticket");
         let connection = connect(&endpoint, ticket).await.expect("connect");
-        (home, mock, connection)
+        (mock, connection)
     }
 
     #[tokio::test]
     async fn handshake_sends_capabilities_then_describe_in_order() {
-        let canonical_holder = Home::new();
-        let canonical = canonical_holder.canonical();
+        let home = Home::new();
+        let canonical = home.canonical();
         let fixture = format!("{canonical}/profiles/fixture");
-        drop(canonical_holder);
         let steps = vec![
             WsStep::Wait(Duration::from_millis(100)),
             WsStep::Send(frame_ready()),
@@ -2260,11 +2267,14 @@ mod handshake {
             WsStep::Take,
             WsStep::Send(frame_describe(&fixture)),
         ];
-        let (_home, mock, mut connection) = opened(WsPlan::Talk {
-            echo: Echo::Version1,
-            steps,
-            guard: false,
-        })
+        let (mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps,
+                guard: false,
+            },
+        )
         .await;
         let done = handshake(&mut connection).await.expect("handshake");
         same(&done.ready.replay_epoch, "0123abcd", "epoch");
@@ -2318,11 +2328,14 @@ mod handshake {
             WsStep::Send(late.to_string()),
             WsStep::Send(frame_describe(&fixture)),
         ];
-        let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-            echo: Echo::Version1,
-            steps,
-            guard: false,
-        })
+        let (_mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps,
+                guard: false,
+            },
+        )
         .await;
         let _ = handshake(&mut connection).await.expect("handshake");
         let parts = connection.into_parts();
@@ -2338,7 +2351,6 @@ mod handshake {
     async fn handshake_validates_ready_and_describe() {
         let home = Home::new();
         let fixture = format!("{}/profiles/fixture", home.canonical());
-        drop(home);
         let base_ready = serde_json::from_str::<Value>(&frame_ready()).expect("ready json");
         let mut extra = base_ready.clone();
         extra["params"]["payload"]["extra"] = json!(true);
@@ -2350,11 +2362,14 @@ mod handshake {
             WsStep::Take,
             WsStep::Send(describe.clone()),
         ];
-        let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-            echo: Echo::Version1,
-            steps: ok_steps,
-            guard: false,
-        })
+        let (_mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps: ok_steps,
+                guard: false,
+            },
+        )
         .await;
         handshake(&mut connection).await.expect("extra field");
 
@@ -2417,11 +2432,14 @@ mod handshake {
                 WsStep::Take,
                 WsStep::Send(describe_frame.to_string()),
             ];
-            let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-                echo: Echo::Version1,
-                steps,
-                guard: false,
-            })
+            let (_mock, mut connection) = opened(
+                &home,
+                WsPlan::Talk {
+                    echo: Echo::Version1,
+                    steps,
+                    guard: false,
+                },
+            )
             .await;
             let err = handshake(&mut connection).await.expect_err(name);
             match name {
@@ -2508,11 +2526,14 @@ mod handshake {
             ),
         ] {
             let steps = vec![step];
-            let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-                echo: Echo::Version1,
-                steps,
-                guard: false,
-            })
+            let (_mock, mut connection) = opened(
+                &Home::new(),
+                WsPlan::Talk {
+                    echo: Echo::Version1,
+                    steps,
+                    guard: false,
+                },
+            )
             .await;
             let err = handshake(&mut connection).await.expect_err(name);
             match name {
@@ -2530,7 +2551,6 @@ mod handshake {
 
         let home = Home::new();
         let fixture = format!("{}/profiles/fixture", home.canonical());
-        drop(home);
         let steps = vec![
             WsStep::Send(frame_ready()),
             WsStep::Binary,
@@ -2541,11 +2561,14 @@ mod handshake {
             WsStep::Take,
             WsStep::Send(frame_describe(&fixture)),
         ];
-        let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-            echo: Echo::Version1,
-            steps,
-            guard: false,
-        })
+        let (_mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps,
+                guard: false,
+            },
+        )
         .await;
         handshake(&mut connection).await.expect("ignored frames");
         let parts = connection.into_parts();
@@ -2566,7 +2589,7 @@ mod handshake {
             "call default"
         );
 
-        let (_home, _mock, mut connection) = opened(WsPlan::Silence).await;
+        let (_mock, mut connection) = opened(&Home::new(), WsPlan::Silence).await;
         let err = handshake_with(
             &mut connection,
             &HandshakeOptions {
@@ -2580,7 +2603,6 @@ mod handshake {
 
         let home = Home::new();
         let fixture = format!("{}/profiles/fixture", home.canonical());
-        drop(home);
         let error_reply = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"missing"}}"#;
         let steps = vec![
             WsStep::Send(frame_ready()),
@@ -2589,11 +2611,14 @@ mod handshake {
             WsStep::Take,
             WsStep::Send(frame_describe(&fixture)),
         ];
-        let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-            echo: Echo::Version1,
-            steps,
-            guard: false,
-        })
+        let (_mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps,
+                guard: false,
+            },
+        )
         .await;
         let done = handshake(&mut connection)
             .await
@@ -2609,11 +2634,14 @@ mod handshake {
             WsStep::Take,
             WsStep::Send(frame_describe(&fixture)),
         ];
-        let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-            echo: Echo::Version1,
-            steps,
-            guard: false,
-        })
+        let (_mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps,
+                guard: false,
+            },
+        )
         .await;
         let done = handshake_with(
             &mut connection,
@@ -2635,11 +2663,14 @@ mod handshake {
             WsStep::Send(frame_capabilities()),
             WsStep::Take,
         ];
-        let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-            echo: Echo::Version1,
-            steps,
-            guard: false,
-        })
+        let (_mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps,
+                guard: false,
+            },
+        )
         .await;
         let err = handshake_with(
             &mut connection,
@@ -2669,11 +2700,14 @@ mod handshake {
                     reason: String::new(),
                 },
             ];
-            let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-                echo: Echo::Version1,
-                steps,
-                guard: false,
-            })
+            let (_mock, mut connection) = opened(
+                &home,
+                WsPlan::Talk {
+                    echo: Echo::Version1,
+                    steps,
+                    guard: false,
+                },
+            )
             .await;
             let err = handshake(&mut connection).await.expect_err(name);
             if code == 1011 {
@@ -2702,11 +2736,14 @@ mod handshake {
                 WsStep::Take,
                 WsStep::Send(reply),
             ];
-            let (_home, _mock, mut connection) = opened(WsPlan::Talk {
-                echo: Echo::Version1,
-                steps,
-                guard: false,
-            })
+            let (_mock, mut connection) = opened(
+                &home,
+                WsPlan::Talk {
+                    echo: Echo::Version1,
+                    steps,
+                    guard: false,
+                },
+            )
             .await;
             let err = handshake(&mut connection).await.expect_err(name);
             assert!(matches!(err, HandshakeError::BadDescribe), "{name}");
@@ -2720,13 +2757,15 @@ mod handshake {
         assert_native::<hermes_contract::methods::canonical::runtime_describe::Marker>();
         let home = Home::new();
         let fixture = format!("{}/profiles/fixture", home.canonical());
-        drop(home);
         let steps = success_steps(&fixture);
-        let (_home, mock, mut connection) = opened(WsPlan::Talk {
-            echo: Echo::Version1,
-            steps,
-            guard: false,
-        })
+        let (mock, mut connection) = opened(
+            &home,
+            WsPlan::Talk {
+                echo: Echo::Version1,
+                steps,
+                guard: false,
+            },
+        )
         .await;
         let _ = handshake(&mut connection).await.expect("handshake");
         let frames = mock.frames();
@@ -2773,7 +2812,7 @@ mod properties {
         let mock = serve(
             &socket,
             move |origin| {
-                vec![ControlReply::Line(text(&ready_identify(
+                vec![ControlReply::Line(text(&identify_reply(
                     &canonical, origin,
                 )))]
             },

@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,8 +18,10 @@ use hermes_client::{
     DiscoverOptions, DiscoveryError, Endpoint, EnsurePolicy, ProfileId, ProfileLookupError,
     default_home, discover_with,
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
-use tokio::net::{TcpListener, TcpStream, UnixListener};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf,
+};
+use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
@@ -280,10 +282,10 @@ fn spawn_control(
     replies: Vec<ControlReply>,
     shared: Arc<Shared>,
 ) -> tokio::task::JoinHandle<()> {
-    if let Some(parent) = socket.parent() {
-        if !parent.is_dir() {
-            panic!("control directory missing");
-        }
+    if let Some(parent) = socket.parent()
+        && !parent.is_dir()
+    {
+        panic!("control directory missing");
     }
     if std::fs::remove_file(socket).is_err() && socket.exists() {
         panic!("socket reset failed");
@@ -451,12 +453,13 @@ async fn serve_ws(mut stream: TcpStream, plan: WsPlan, shared: &Shared) -> std::
         inner: stream,
     };
     let callback_echo = echo.clone();
-    let socket = tokio_tungstenite::accept_hdr_async(
-        replay,
-        move |request: &Request, response: Response| set_echo(request, response, &callback_echo),
-    )
-    .await
-    .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "upgrade"))?;
+    // Tungstenite fixes this callback's error type to an unboxed HTTP response.
+    #[allow(clippy::result_large_err)]
+    let callback =
+        move |request: &Request, response: Response| set_echo(request, response, &callback_echo);
+    let socket = tokio_tungstenite::accept_hdr_async(replay, callback)
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "upgrade"))?;
     run_steps(socket, steps, &shared.frames).await;
     Ok(())
 }
@@ -559,6 +562,8 @@ fn ticket_from_header(value: &str) -> String {
         .to_string()
 }
 
+// Tungstenite requires this unboxed error response in its upgrade callback.
+#[allow(clippy::result_large_err)]
 fn set_echo(
     request: &Request,
     mut response: Response,
@@ -640,11 +645,13 @@ where
                 let _ = socket.send(Message::Close(Some(frame))).await;
                 break;
             }
-            WsStep::Take => match tokio::time::timeout(Duration::from_secs(2), socket.next()).await
-            {
-                Ok(Some(Ok(Message::Text(text)))) => lock(frames).push(text.to_string()),
-                _ => {}
-            },
+            WsStep::Take => {
+                if let Ok(Some(Ok(Message::Text(text)))) =
+                    tokio::time::timeout(Duration::from_secs(2), socket.next()).await
+                {
+                    lock(frames).push(text.to_string());
+                }
+            }
             WsStep::Drop => break,
         }
     }
@@ -838,6 +845,56 @@ pub struct LiveEnv {
     pub fixture: ProfileId,
 }
 
+// The pre-build gateway may predate the pinned identity contract. Only an
+// authenticated, well-formed reply proving a different revision may skip it.
+// This probe never relaxes discovery, starts a gateway, or accepts an endpoint.
+// Pointer-based homes retain the original discovery failure.
+async fn incompatible_live_revision(home: &Path) -> Option<String> {
+    let home = home.canonicalize().ok()?;
+    let uid = rustix::process::getuid().as_raw();
+    let metadata = std::fs::symlink_metadata(&home).ok()?;
+    if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o002 != 0 {
+        return None;
+    }
+    let socket = home.join("gateway.sock");
+    let metadata = std::fs::symlink_metadata(&socket).ok()?;
+    if !metadata.file_type().is_socket() || metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
+        return None;
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut stream = UnixStream::connect(socket).await.ok()?;
+        if stream.peer_cred().ok()?.uid() != uid {
+            return None;
+        }
+        stream
+            .write_all(b"{\"protocol\":1,\"verb\":\"identify\",\"id\":1}\n")
+            .await
+            .ok()?;
+        let mut line = Vec::new();
+        BufReader::new(stream.take(524_290))
+            .read_until(b'\n', &mut line)
+            .await
+            .ok()?;
+        if line.last() != Some(&b'\n') || line.len() > 524_289 {
+            return None;
+        }
+        let reply: serde_json::Value = serde_json::from_slice(&line).ok()?;
+        if reply["ok"] != true || reply["protocol"] != 1 || reply["id"] != 1 {
+            return None;
+        }
+        let result = reply.get("result")?.as_object()?;
+        let sha = result.get("code_sha")?.as_str()?;
+        // Restrict the only peer text included in a skip reason to a revision.
+        if !(7..=40).contains(&sha.len()) || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        hermes_contract::pinned::live_skip_reason(Some(sha))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 pub async fn live_preconditions() -> Result<LiveEnv, String> {
     let home = default_home();
     let options = DiscoverOptions {
@@ -848,6 +905,13 @@ pub async fn live_preconditions() -> Result<LiveEnv, String> {
         Ok(endpoint) => endpoint,
         Err(DiscoveryError::NoGateway) => {
             return Err("no Hermes gateway is running for this home".to_string());
+        }
+        Err(DiscoveryError::InvalidIdentity) => {
+            if let Some(reason) = incompatible_live_revision(&home).await {
+                return Err(reason);
+            }
+            let err = DiscoveryError::InvalidIdentity;
+            panic!("discovery failed: {err} | {}", err.next_step());
         }
         Err(err) => panic!("discovery failed: {err} | {}", err.next_step()),
     };
