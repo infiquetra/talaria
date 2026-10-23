@@ -110,6 +110,7 @@ async fn main() {
         }
     }
 
+    client.close().await;
     println!("CALL_EXAMPLE_RESULT: PASSED");
 }
 

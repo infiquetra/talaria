@@ -1,10 +1,12 @@
-//! Attach to the local Hermes gateway.
+//! Attach to the local Hermes gateway and exchange typed messages.
 //!
 //! This crate finds the gateway, mints one ticket, opens the session socket,
 //! and finishes the opening exchange. It does not create a session.
 //!
 //! Consumers continue on the same socket with [`Connection::into_parts`].
 //! Automated callers select [`EnsurePolicy::Never`] when discovering a gateway.
+//! [`Client::start`] consumes the connection parts once. Calls and the unbounded
+//! inbound stream then share one actor; reconnect through [`Client::replace_connection`].
 
 #![forbid(unsafe_code)]
 

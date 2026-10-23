@@ -3873,3 +3873,28 @@ request path. When a strict implementation rejects a fixture, compare both with 
 server before changing either. An annotated Git tag's object identifier is also distinct from
 its peeled commit: Hermes v0.22.4's tag object begins `64dbae64747a`, while its code revision
 begins `4d04303818b6`; a live-code comparison must use the latter.
+
+## 2026-10-23 — A responder's successful write must survive task replacement
+
+**Evidence.** Issue #199's channel uses separate reader, writer, and state-owner tasks.
+A response can finish writing before the state owner reads its completion message. Closing
+or replacing the writer during that interval must preserve the successful outcome. The writer
+records successful transmission before announcing completion, and replacement aborts and joins
+the old tasks before resolving outstanding answers. Cancellation still suppresses queued writes;
+subsequent attempts after cancellation return `Cancelled`. Focused tests cover those races and
+the rule that a failed write remains answerable.
+
+**Generalizable rule.** Distinguish physical completion from receipt of its acknowledgement.
+Do not erase terminal evidence while retiring a task. Likewise, count WebSocket control frames
+as connection activity even though they do not pass through the JSON message decoder.
+
+**Test-harness lesson.** Dropping `Pin<&mut Future>` does not drop its underlying future.
+Cancellation tests must own the pinned future, and paused-clock tests must establish call
+registration before advancing time. Property-test peers must drain requests from cancelled
+calls before assigning the next reply. The independent test repairs retain all original test
+functions and live-test ignores. Validation now uses the merged generated contract from
+issue #196, with no temporary definitions or compatibility overlays.
+
+A peer dropping its socket does not prove the client has observed the disconnect. Wait for
+the inbound `Closed` notification before requiring a later call to return `NotConnected`;
+a call accepted before that observation can correctly end with an unknown outcome.

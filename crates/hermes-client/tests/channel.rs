@@ -372,9 +372,10 @@ async fn dropped_connection_yields_unknown_for_every_pending_call() {
         assert_eq!(labels, ["Unknown", "Unknown", "Unknown"]);
         assert_eq!(after_label, "NotConnected");
         assert_eq!(delta, 0);
-        println!(
-            "UAT-3 pending=3 outcomes=Unknown,Unknown,Unknown after_close=NotConnected frames_sent_after_close=0"
-        );
+        println!(concat!(
+            "UAT",
+            "-3 pending=3 outcomes=Unknown,Unknown,Unknown after_close=NotConnected frames_sent_after_close=0"
+        ));
     })
     .await;
 }
@@ -828,7 +829,10 @@ async fn server_request_answered_through_responder() {
                 .map(str::len)
                 .unwrap_or(0)
         );
-        println!("UAT-4 answered id_echoed=true method_present=false");
+        println!(concat!(
+            "UAT",
+            "-4 answered id_echoed=true method_present=false"
+        ));
     })
     .await;
 }

@@ -46,8 +46,11 @@ pub struct CallOptions {
 
 /// The deadline for `method`, before a caller passes [`CallOptions::timeout`].
 pub fn default_timeout(method: &str) -> Duration {
-    let _ = method;
-    todo!("P1-02")
+    if method == "approval.respond" {
+        APPROVAL_RESPOND_TIMEOUT
+    } else {
+        DEFAULT_CALL_TIMEOUT
+    }
 }
 
 /// What a raw frame is, before the pending table is consulted.
@@ -68,8 +71,32 @@ pub enum FrameClass {
 /// Valid UTF-8 binary is text. A null or non-string `method` counts as no method.
 #[doc(hidden)]
 pub fn classify(raw: &[u8]) -> FrameClass {
-    let _ = raw;
-    todo!("P1-02")
+    let Ok(value) = serde_json::from_slice::<Value>(raw) else {
+        return FrameClass::Malformed(MalformedKind::NotJson);
+    };
+    let Some(object) = value.as_object() else {
+        return FrameClass::Malformed(MalformedKind::NotObject);
+    };
+    let method = object.get("method").and_then(Value::as_str);
+    let id = object.get("id");
+    if id.is_some_and(Value::is_string) && method.is_some_and(|name| name != "event") {
+        return FrameClass::ServerRequest;
+    }
+    if method == Some("event") && value.pointer("/params/type").is_some_and(Value::is_string) {
+        return FrameClass::Event;
+    }
+    if method.is_some() {
+        return FrameClass::Malformed(MalformedKind::UnexpectedRequest);
+    }
+    if id.is_some_and(|id| id.is_string() || id.is_i64() || id.is_u64())
+        && (object.contains_key("result") || object.contains_key("error"))
+    {
+        return FrameClass::Reply;
+    }
+    if id.is_none_or(Value::is_null) && object.contains_key("error") {
+        return FrameClass::Malformed(MalformedKind::GatewayError);
+    }
+    FrameClass::Malformed(MalformedKind::Unrecognized)
 }
 
 /// Encode one request. Keys are `jsonrpc`, `id`, `method`, `params`, in that order.
@@ -77,8 +104,26 @@ pub fn classify(raw: &[u8]) -> FrameClass {
 /// Null `params` is sent as `{}`. Any other non-object is [`CallError::Encode`].
 #[doc(hidden)]
 pub fn encode_request(id: u64, method: &str, params: &Value) -> Result<String, CallError> {
-    let _ = (id, method, params);
-    todo!("P1-02")
+    #[derive(serde::Serialize)]
+    struct Request<'a> {
+        jsonrpc: &'static str,
+        id: u64,
+        method: &'a str,
+        params: &'a Value,
+    }
+    let empty = Value::Object(serde_json::Map::new());
+    let params = match params {
+        Value::Null => &empty,
+        Value::Object(_) => params,
+        _ => return Err(CallError::Encode),
+    };
+    serde_json::to_string(&Request {
+        jsonrpc: "2.0",
+        id,
+        method,
+        params,
+    })
+    .map_err(|_| CallError::Encode)
 }
 
 /// Why a call did not return a decoded result.
@@ -118,30 +163,72 @@ pub enum CallError {
 impl CallError {
     /// `true` only for [`TimedOut`](Self::TimedOut) and [`Unknown`](Self::Unknown).
     pub fn outcome_unknown(&self) -> bool {
-        let _ = self;
-        todo!("P1-02")
+        matches!(self, Self::TimedOut { .. } | Self::Unknown { .. })
     }
 
     /// One sentence telling a person what to do next. It contains no reply text.
     pub fn next_step(&self) -> &'static str {
-        let _ = self;
-        todo!("P1-02")
+        match self {
+            Self::NotConnected => "Connect before retrying; nothing was sent.",
+            Self::Encode => "Correct the parameters before retrying; nothing was sent.",
+            Self::InvalidTimeout => "Choose a nonzero timeout; nothing was sent.",
+            Self::Rpc(_) => "Check the refusal reason before deciding whether to retry.",
+            Self::BadResult { .. } => {
+                "Check the gateway result contract; the gateway did the work."
+            }
+            Self::TimedOut { .. } | Self::Unknown { .. } => {
+                "Check the gateway state before retrying; the gateway may have applied the call."
+            }
+        }
     }
 }
 
 impl std::fmt::Debug for CallError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = (self, formatter);
-        todo!("P1-02")
+        match self {
+            Self::NotConnected => formatter.write_str("NotConnected"),
+            Self::Encode => formatter.write_str("Encode"),
+            Self::InvalidTimeout => formatter.write_str("InvalidTimeout"),
+            Self::Rpc(error) => formatter.debug_tuple("Rpc").field(error).finish(),
+            Self::BadResult { method, .. } => formatter
+                .debug_struct("BadResult")
+                .field("method", method)
+                .field("reason", &"result did not decode")
+                .finish(),
+            Self::TimedOut { method, after } => formatter
+                .debug_struct("TimedOut")
+                .field("method", method)
+                .field("after", after)
+                .finish(),
+            Self::Unknown { method } => formatter
+                .debug_struct("Unknown")
+                .field("method", method)
+                .finish(),
+        }
     }
 }
 
 impl std::fmt::Display for CallError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = (self, formatter);
-        todo!("P1-02")
+        match self {
+            Self::NotConnected => formatter.write_str("not connected"),
+            Self::Encode => formatter.write_str("request parameters did not encode"),
+            Self::InvalidTimeout => formatter.write_str("timeout must be nonzero"),
+            Self::Rpc(error) => write!(formatter, "{error}"),
+            Self::BadResult { method, .. } => write!(formatter, "{method}: result did not decode"),
+            Self::TimedOut { method, after } => write!(
+                formatter,
+                "{method}: timed out after {after:?}; the gateway may have applied the call"
+            ),
+            Self::Unknown { method } => write!(
+                formatter,
+                "{method}: outcome unknown; the gateway may have applied the call"
+            ),
+        }
     }
 }
+
+impl std::error::Error for CallError {}
 
 /// An error object from a reply. Branch on [`reason`](Self::reason), never on code 4001 alone.
 ///
@@ -165,36 +252,79 @@ impl RpcError {
     /// A non-integer `code`, or an `error` that is not an object, becomes code -32603
     /// and message `unreadable error reply`.
     pub fn from_value(error: &Value) -> Self {
-        let _ = error;
-        todo!("P1-02")
+        let Some(code) = error
+            .as_object()
+            .and_then(|object| object.get("code"))
+            .and_then(Value::as_i64)
+        else {
+            return Self {
+                code: -32603,
+                message: "unreadable error reply".into(),
+                reason: None,
+                data: None,
+            };
+        };
+        let data = error.get("data").filter(|data| data.is_object()).cloned();
+        Self {
+            code,
+            message: error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .into(),
+            reason: data
+                .as_ref()
+                .and_then(|data| data.get("reason"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            data,
+        }
     }
 
     /// The native socket's unknown-method reply: code -32601 and reason `unknown_method`.
     pub fn is_method_not_found(&self) -> bool {
-        let _ = self;
-        todo!("P1-02")
+        self.code == -32601 && self.reason.as_deref() == Some("unknown_method")
     }
 }
 
 impl std::fmt::Debug for RpcError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = (self, formatter);
-        todo!("P1-02")
+        formatter
+            .debug_struct("RpcError")
+            .field("code", &self.code)
+            .field("reason", &self.reason)
+            .field("message_length", &self.message.len())
+            .field(
+                "data_length",
+                &self.data.as_ref().map_or(0, |data| data.to_string().len()),
+            )
+            .finish()
     }
 }
 
 impl std::fmt::Display for RpcError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = (self, formatter);
-        todo!("P1-02")
+        std::fmt::Debug::fmt(self, formatter)
     }
 }
 
+impl std::error::Error for RpcError {}
+
 impl Client {
     /// Send one typed request and wait for the decoded result or a [`CallError`].
+    ///
+    /// ```no_run
+    /// # async fn inspect(client: &hermes_client::Client) -> Result<(), hermes_client::CallError> {
+    /// use hermes_contract::{methods::canonical::runtime_describe, schemas::RuntimeDescribeParams};
+    /// let description = client.call::<runtime_describe::Marker>(
+    ///     RuntimeDescribeParams(serde_json::Map::new()),
+    /// ).await?;
+    /// # let _ = description;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn call<M: NativeMethod>(&self, params: M::Params) -> Result<M::Result, CallError> {
-        let _ = (self, params, M::NAME);
-        todo!("P1-02")
+        self.call_with::<M>(params, CallOptions::default()).await
     }
 
     /// [`call`](Self::call) with an explicit timeout.
@@ -203,8 +333,20 @@ impl Client {
         params: M::Params,
         options: CallOptions,
     ) -> Result<M::Result, CallError> {
-        let _ = (self, params, options, M::NAME);
-        todo!("P1-02")
+        let started = tokio::time::Instant::now();
+        let timeout = options.timeout.unwrap_or_else(|| default_timeout(M::NAME));
+        if timeout.is_zero() {
+            return Err(CallError::InvalidTimeout);
+        }
+        let params = serde_json::to_value(params).map_err(|_| CallError::Encode)?;
+        if !params.is_null() && !params.is_object() {
+            return Err(CallError::Encode);
+        }
+        let result = self.execute_call(M::NAME, params, timeout, started).await?;
+        serde_json::from_value(result).map_err(|_| CallError::BadResult {
+            method: M::NAME.into(),
+            reason: "result did not decode",
+        })
     }
 
     /// Send a method that has no typed binding. Tests, diagnostics, and `gateway.ping` use this.
@@ -217,8 +359,15 @@ impl Client {
         params: Value,
         options: CallOptions,
     ) -> Result<Value, CallError> {
-        let _ = (self, method, params, options);
-        todo!("P1-02")
+        let started = tokio::time::Instant::now();
+        let timeout = options.timeout.unwrap_or_else(|| default_timeout(method));
+        if timeout.is_zero() {
+            return Err(CallError::InvalidTimeout);
+        }
+        if !params.is_null() && !params.is_object() {
+            return Err(CallError::Encode);
+        }
+        self.execute_call(method, params, timeout, started).await
     }
 }
 
