@@ -118,6 +118,37 @@ timeouts can make such a test deterministic.
 
 **Generalizable rule:** pause tokio time only where nothing waits on real I/O, or advance it by hand
 with `tokio::time::advance` after the I/O you need has completed.
+## 2026-10-23 — A scalar `message.complete` text decodes
+
+**Evidence.** `tools/contract-gen/contract_gen.py` `preprocess_schemas` drops the `anyOf` on
+`MessageCompletePayload.text` when that union contains an empty schema. The generated field is
+`Option<serde_json::Value>` at `crates/hermes-contract/src/generated/schemas.rs` line 10103.
+`crates/talaria-core/tests/session_rules.rs` `unknown_status_string_ends_failed_with_one_notice`
+asserts that `EventFrame::from_params` accepts `payload.text` set to the JSON string `"Hello"`.
+
+**Mechanism.** Typify 0.8.0 turned the original string-or-anything union into flattened fields and
+rejected a scalar string. P0-03 (issue 196), merged as `ace72b5`, normalizes that one site to an
+unrestricted JSON value. `EventFrame::from_params` then decodes a string `message.complete.text`.
+The reducer still reads payload fields from the raw params object. The generated frame does not
+carry `is_error`, `context`, or a missing-versus-zero usage counter.
+
+**Generalizable rule.** Decode success does not make the generated payload the source of every wire
+field. Read the envelope from the frame and the payload from the raw params.
+
+## 2026-10-23 — A snapshot's `pending` list is not its open prompts
+
+**Evidence.** `CanonicalSnapshot` in `crates/hermes-contract/src/generated/schemas.rs` (the
+`pending` field at line 2691 and the `prompts` field at line 2694). P1-05 section 11 and parent
+issue 192. The check is `snapshot_open_prompts_come_from_prompts_not_pending` in
+`crates/talaria-core/tests/session_snapshot.rs`, using
+`tests/data/snapshot_pending_vs_prompts.jsonl`.
+
+**Mechanism.** On Hermes v0.22.4, `pending` is the queued and started admissions. `prompts` is the
+open approval and clarification questions. Restoring a card from `pending` would show a queued
+sentence as a question. The reducer counts `pending` for the line `queued admissions ignored` and
+builds prompt cells only from `prompts`.
+
+**Generalizable rule.** Open questions come from `prompts`. `pending` is a count, not a transcript.
 
 ## 2026-10-23 — Typify needs explicit discriminator enums and distinct inline enum titles
 

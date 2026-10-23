@@ -2,6 +2,22 @@
 
 > Future work with priority, rough effort, and worth-it-when triggers.
 
+## 2026-10-23
+
+### Record a `session.resume` fixture after the tool-diff turn
+
+**Priority.** P1. P1-05 test 10 compares a resume snapshot with the tool-diff recording. The
+recording does not exist yet, and P1-04's seven scenarios include no `session.resume`.
+
+**Evidence.** Parent issue 192, contradiction C-4. P1-05 section 11.
+`crates/talaria-core/tests/data/resume_snapshot.jsonl` is a contract-built stand-in (see
+`DECISIONS.md`, 2026-10-23). `fixtures/frames/` currently holds only `README.md`. Issue 201 is open.
+
+**Worth it when.** Issue 201 records `fixtures/frames/tool-diff.jsonl`. Add an eighth scenario:
+`session.resume` with `display_projection: true` after that turn. Test 10 then uses the recording.
+Keep the hand-built file for the other snapshot tests until those expectations move onto the
+recording too.
+
 ## P0
 
 ### Decide on the 2026-10-22 next-steps handoff (rewrite against the Hermes gateway)

@@ -1,0 +1,9 @@
+cell 1 user "Count from 1 to 30, one number per line."
+cell 2 assistant "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30"
+cell 3 reasoning "The user wants me to count from 1 to 30, one number per line. Simple. But I have a tool for arithmetic... counting isn't really arithmetic computation. Just output the numbers.\n\nLet me just output them."
+cell 4 user "Reply with the single word: second."
+cell 5 assistant "second"
+turn: Finished(Completed)
+final_prefix: 5 of 5
+prompts: none
+unknown_event_types: none

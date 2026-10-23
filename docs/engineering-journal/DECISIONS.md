@@ -67,6 +67,53 @@ chain (it cannot be redacted after the fact, so it waits for a later decision).
 
 **Revisit when** a reducer test needs the answer of a server request other than `approval`, or
 phase 3 records several gateways into one file.
+## 2026-10-23
+
+### The session reducer takes the raw event params with the decoded frame
+
+**Decision.** `Event::Session` is `{ session_id, frame, raw }`. `frame` is the decoded
+`EventFrame`. `raw` is the whole `params` object. The reducer reads the envelope (`seq`,
+`replay_epoch`, `execution_generation`, `authority_epoch`, `admission_id`) from `frame`, and every
+payload field from `raw["payload"]`. Effects are values returned by `update`. The reducer does not
+call the transport.
+
+**Rationale.** Parent issue 192, contradiction C-2, and P1-05 section 5.1. The architecture sketch
+`Event::Session(SessionId, Notification)` drops `seq`, the replay epoch, and fields the generated
+contract leaves out (`is_error`, `context`, and usage counters that must stay absent rather than
+zero). A pure function that returns effects can be compared with recorded outbound frames.
+
+**Rejected alternatives.** (a) The sketch's `(SessionId, Notification)` shape. (b) Calling the
+gateway from `update`. (c) Merging usage from the generated struct, whose counters default to zero
+and cannot tell a missing field from a zero reading.
+
+**Revisit when.** The contract declares `seq`, the replay epoch, and the payload fields this unit
+reads from raw JSON, or more than one session is driven at once (P3-01).
+
+### The resume snapshot in the P1-05 tests is built from the contract, not from a recording
+
+**Decision.** `crates/talaria-core/tests/data/resume_snapshot.jsonl` is a version 3 frame log whose
+`session.resume` result is a `CanonicalSnapshot` filled by hand. The rows are the wire example in
+P1-05 section 4: the user text "What files are in this directory? Answer in one sentence.", a tool
+row `terminal` / `call-2` / `ls -la`, and the assistant sentence from that example. `last_sequence`
+is 8 and `replay_epoch` is `id-0002`, both placeholders. `display_messages` repeats those rows. One
+approval prompt is present so the file meets the section 12.1 content check. It is not a recording
+of `tool-diff.jsonl`, because that file is not in `fixtures/frames/` (issue 201 is open). The seven
+golden files under `tests/golden/` are the same kind of stand-in: the `describe` shape from section
+12.3, written for the roles issue 201 will record. Replay tests name a missing role and stop before
+they compare a golden.
+
+**Rationale.** Parent issue 192, contradiction C-4. P1-04 records seven scenarios and no
+`session.resume`. This unit does not write under `fixtures/frames/` and does not edit
+`tools/record-fixture/`.
+
+**Rejected alternatives.** (a) Inventing a `tool-diff.jsonl` recording in `fixtures/frames/`.
+(b) Skipping the resume test until issue 201 merges. (c) Generating the goldens by running the
+reducer.
+
+**Revisit when.** Issue 201 lands `fixtures/frames/tool-diff.jsonl`. Rebuild `resume_snapshot.jsonl`
+from that fixture's submit text, streamed segments, tool id, last `seq`, and epoch. Rewrite each
+golden from its recording. If a recorded `session.resume` with `display_messages` is added, test 10
+uses that recording and this hand-built file stays for the other snapshot tests.
 
 ## 2026-10-23 — Generate Hermes protocol bindings offline with narrow schema corrections
 

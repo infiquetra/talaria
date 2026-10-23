@@ -1,0 +1,6 @@
+cell 1 user "Count from 1 to 500, one number per line, and do not stop early."
+cell 2 notice[interrupted] "Interrupted"
+turn: Finished(Interrupted)
+final_prefix: 2 of 2
+prompts: none
+unknown_event_types: none
