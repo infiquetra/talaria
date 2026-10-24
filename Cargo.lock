@@ -2335,6 +2335,7 @@ version = "0.7.0-dev"
 dependencies = [
  "crossterm",
  "futures-util",
+ "getrandom 0.3.4",
  "hermes-client",
  "hermes-contract",
  "proptest",
@@ -2342,6 +2343,7 @@ dependencies = [
  "talaria-core",
  "talaria-tui",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite",
  "toml",
@@ -2366,13 +2368,19 @@ dependencies = [
 name = "talaria-cli"
 version = "0.7.0-dev"
 dependencies = [
+ "clap",
+ "crossterm",
  "hermes-client",
+ "hermes-contract",
+ "portable-pty",
  "ratatui",
  "serde_json",
  "talaria-app",
  "talaria-core",
  "talaria-tui",
+ "tempfile",
  "tokio",
+ "vt100",
 ]
 
 [[package]]

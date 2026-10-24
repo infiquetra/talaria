@@ -381,9 +381,6 @@ struct State {
     written: Vec<Written>,
     next_srq: u64,
     next_seq: u64,
-    /// The replay epoch of the last replayed event that carried one; events the mock makes up
-    /// afterwards use it, so they belong to the same stream.
-    replay_epoch: Option<String>,
     envelope_generation: i64,
     respond_script: VecDeque<Reply>,
     respond_default: Reply,
@@ -469,7 +466,6 @@ impl MockGateway {
                 written: Vec::new(),
                 next_srq: 1,
                 next_seq: 1,
-                replay_epoch: None,
                 envelope_generation: 1,
                 respond_script: VecDeque::new(),
                 respond_default: Reply::Resolved,
@@ -675,10 +671,7 @@ impl MockGateway {
                 state.session_id.clone(),
                 seq,
                 state.envelope_generation,
-                state
-                    .replay_epoch
-                    .clone()
-                    .unwrap_or_else(|| "id-0002".to_owned()),
+                "id-0002",
             )
         };
         let generation = payload
@@ -707,9 +700,6 @@ impl MockGateway {
             if s.next_seq <= seq {
                 s.next_seq = seq + 1;
             }
-        }
-        if let Some(epoch) = params["replay_epoch"].as_str() {
-            lock(&self.shared).replay_epoch = Some(epoch.to_owned());
         }
         let event_type = params["type"].as_str().map(str::to_owned);
         let text = json!({"jsonrpc": "2.0", "method": "event", "params": params});
@@ -1188,10 +1178,6 @@ fn event_text(state: &mut State, type_name: &str, payload: Value) -> String {
         .get("execution_generation")
         .and_then(Value::as_i64)
         .unwrap_or(state.envelope_generation);
-    let epoch = state
-        .replay_epoch
-        .clone()
-        .unwrap_or_else(|| "id-0002".to_owned());
     json!({
         "jsonrpc": "2.0",
         "method": "event",
@@ -1199,7 +1185,7 @@ fn event_text(state: &mut State, type_name: &str, payload: Value) -> String {
             "type": type_name,
             "session_id": state.session_id,
             "seq": seq,
-            "replay_epoch": epoch,
+            "replay_epoch": "id-0002",
             "authority_epoch": 1,
             "execution_generation": generation,
             "admission_id": "adm-1",
@@ -1339,5 +1325,70 @@ pub fn session_event(event: &InboundEvent) -> Event {
         session_id: SessionId::new(event.raw["session_id"].as_str().unwrap_or_default()),
         frame: event.frame.clone(),
         raw: event.raw.clone(),
+    }
+}
+
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::JoinHandle;
+
+pub struct MockServer {
+    path: PathBuf,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+    log: Arc<Mutex<Vec<u8>>>,
+}
+
+impl MockServer {
+    pub fn start(home: &Path) -> std::io::Result<Self> {
+        let path = home.join("gateway.sock");
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path)?;
+        listener.set_nonblocking(true)?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let stop_flag = Arc::clone(&stop);
+        let log_flag = Arc::clone(&log);
+        let thread = std::thread::spawn(move || {
+            while !stop_flag.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buf = Vec::new();
+                        let _ = stream.read_to_end(&mut buf);
+                        if let Ok(mut guard) = log_flag.lock() {
+                            guard.extend(buf);
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Ok(Self {
+            path,
+            stop,
+            thread: Some(thread),
+            log,
+        })
+    }
+
+    pub fn received(&self) -> Vec<u8> {
+        self.log
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for MockServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        let _ = std::fs::remove_file(&self.path);
     }
 }
