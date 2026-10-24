@@ -2,6 +2,27 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-23 — Shift+Enter reaches the composer only with the Kitty keyboard protocol, and fast typing without bracketed paste is indistinguishable from a paste
+
+**Evidence.** crossterm 0.29.0 `src/event/sys/unix/parse.rs`: a legacy carriage return is Enter
+whatever was held, and only the protocol's `CSI 13 ; 2 u` becomes Enter with Shift; byte 0x0A
+arrives as Ctrl+J. `crates/talaria-tui/src/composer/paste_burst.rs`; the tests
+`composer_paste.rs` and `composer_pty.rs`.
+
+**Mechanism.** Shift+Enter is a hypothesis per terminal until the operator's terminal matrix
+settles it: a terminal without the protocol sends a plain Enter, which submits. Ctrl+J and
+Alt+Enter (`ESC` then `CR`) arrive as distinct keys everywhere, so they are defaults, and the empty
+composer's placeholder names Alt+Enter when the start-up probe found no protocol. Without
+bracketed paste, a paste is plain characters a few milliseconds apart. The burst detector starts at
+the third character within 8 ms of the one before, so a pasted first line of two characters or
+fewer submits at its line break (`hi`, a break, `there` sends `hi`). Bracketed paste is the main
+path and has no such limit. A paste delivered before the program has switched raw mode on is
+echoed by the terminal and then read by the start-up probe, so a test must wait for the first
+frame before it writes.
+
+**Generalizable rule:** a key the terminal cannot encode needs a second default that every
+terminal can send, and a timing heuristic needs its known false case written down.
+
 ## 2026-10-23 — A document test must assert the file before it calls a stub
 
 **Evidence.** `crates/talaria-app/tests/config_doc.rs` `doc_default_shape_loads_cleanly` and

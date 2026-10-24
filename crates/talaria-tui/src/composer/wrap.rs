@@ -15,9 +15,72 @@ pub struct Row {
 }
 
 /// Wrap `text` to `width` display cells. A width below 1 is treated as 1.
+///
+/// Each logical line is filled greedily. When the next cluster does not fit, the row breaks
+/// after its last space if it holds one, else before that cluster. A cluster wider than the
+/// width gets a row of its own.
 #[must_use]
-pub fn wrap(_text: &str, _width: usize) -> Vec<Row> {
-    todo!()
+pub fn wrap(text: &str, width: usize) -> Vec<Row> {
+    let width = width.max(1);
+    let mut rows = Vec::new();
+    let mut line_start = 0;
+    loop {
+        let line_end = text[line_start..]
+            .find('\n')
+            .map_or(text.len(), |at| line_start + at);
+        wrap_line(text, line_start, line_end, width, &mut rows);
+        if line_end == text.len() {
+            break;
+        }
+        if let Some(last) = rows.last_mut() {
+            last.hard_break_after = true;
+        }
+        line_start = line_end + 1;
+    }
+    rows
+}
+
+fn wrap_line(text: &str, start: usize, end: usize, width: usize, rows: &mut Vec<Row>) {
+    let mut row_start = start;
+    let mut used = 0;
+    // Byte offset just after the last space in the current row, if any.
+    let mut after_space: Option<usize> = None;
+    for (offset, cluster) in text[start..end].grapheme_indices(true) {
+        let at = start + offset;
+        let cells = cluster_width(cluster);
+        if used > 0 && used + cells > width {
+            let break_at = match after_space {
+                Some(split) if split > row_start => split,
+                _ => at,
+            };
+            rows.push(Row {
+                start: row_start,
+                end: break_at,
+                hard_break_after: false,
+            });
+            used = display_width(&text[break_at..at]);
+            row_start = break_at;
+            after_space = None;
+            if used > 0 && used + cells > width {
+                rows.push(Row {
+                    start: row_start,
+                    end: at,
+                    hard_break_after: false,
+                });
+                row_start = at;
+                used = 0;
+            }
+        }
+        used += cells;
+        if cluster == " " {
+            after_space = Some(at + cluster.len());
+        }
+    }
+    rows.push(Row {
+        start: row_start,
+        end,
+        hard_break_after: false,
+    });
 }
 
 /// Display columns of a cluster. A tab is four cells.
