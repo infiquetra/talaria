@@ -7,12 +7,18 @@
 //! Automated callers select [`EnsurePolicy::Never`] when discovering a gateway.
 //! [`Client::start`] consumes the connection parts once. Calls and the unbounded
 //! inbound stream then share one actor; reconnect through [`Client::replace_connection`].
+//! [`liveness::Link`] manages heartbeat, reconnect, and replay on that same client.
+//! On a [`liveness::LinkEvent::Gap`], rebuild the session from a fresh snapshot
+//! and install its cursor with [`liveness::Link::resync`]. Replayed inbound events
+//! retain the original parameter object in [`InboundEvent::raw`].
 
 #![forbid(unsafe_code)]
 
 pub mod channel;
 pub mod connect;
 pub mod discovery;
+pub mod liveness;
+pub mod replay;
 pub mod rpc;
 pub mod ticket;
 

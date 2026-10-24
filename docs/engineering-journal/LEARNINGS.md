@@ -2,6 +2,76 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-24 — A live count is provider chunks, and the replay ring holds 512 events
+
+**Evidence.** Against Hermes v0.22.4, a solo run of
+`dropped_link_mid_turn_replays_exactly_once` finished the count-to-300 turn
+after 10 `message.delta` frames (8.77s) and then completed. Ten fill turns
+raised the session sequence by 180, short of the 600 rise the long-outage test
+asks for. That gateway keeps a per-session replay ring of 512 events. The live
+test therefore drops after 4 deltas (`DROP_AFTER_DELTAS` at
+`crates/hermes-client/tests/live_reconnect.rs:43`) and stops the fill at 40
+turns (`FILL_TURN_CAP` at `crates/hermes-client/tests/live_reconnect.rs:46`).
+The serial run then replayed 4 events with `duplicates=0 missing=0`, and the
+long outage printed one `GAP reason=snapshot_required` and `RESYNCED at seq 608`.
+The issue text still says drop after 40 deltas and at most 10 fill turns. Those
+two numbers are not reachable on this model.
+
+**Mechanism.** The gateway publishes one `message.delta` per provider chunk,
+not per token, so a 300-number answer is about ten frames. The ring evicts by
+count. Ten turns cannot cross 512 frames when a turn stamps about 18 events.
+Forty turns can. The exactly-once, single-gap, and resync assertions are unchanged.
+
+**Generalizable rule.** Size a live drop and a live eviction against measured
+frames per turn and the gateway ring. Do not treat a token count as a frame count.
+
+## 2026-10-23 — A new socket gets no live events until session.resume
+
+**Evidence.** At Hermes v0.22.4 a session subscription lives on the connection that
+created it. `session.events.since` reads the ring and does not subscribe. Issue 200's
+link calls `session.resume` from `begin_replay` in `crates/hermes-client/src/liveness.rs`
+before `session.events.since`. The same live runs showed a second wire mismatch:
+`CanonicalCreateParams.max_turns` has no skip-if-empty rule, and its generated default
+`MaxTurns::Null` is sent as JSON null. Hermes rejects that with `invalid_params` and
+detail `unreadable cap: None`. Hermes accepts the integer variant.
+`MaxTurns::from(30)` is `MaxTurns::Integer(30)`. The live reconnect test and the
+reconnect watch send that integer instead of `MaxTurns::Null`.
+
+**Mechanism.** A subscription belongs to its connection, so a new socket stays outside
+the session fan-out until `session.resume` attaches it. The null cap is a separate
+mistake: a schema default that serializes is still on the wire, and Hermes reads
+`max_turns` only as an integer.
+
+**Generalizable rule.** A replay buffer is not a subscription; call `session.resume`
+before replaying. Do not send JSON null where the gateway requires an integer.
+
+## 2026-10-23 — Reconnect recovery needs original parameters and incident boundaries
+
+Replay events must keep their original JSON parameter objects alongside the generated
+result decoder. Serializing a generated replay event back into JSON loses unknown envelope
+fields and can change optional nulls. The client validates the typed result and decodes each
+original event through the same event decoder as live traffic before delivering any window.
+
+A replay gap ends an incident only when the consumer installs a fresh snapshot cursor.
+Two incidents can have the same delivered-event offset when no events arrive between
+resyncs. The property oracle therefore records deliveries, gaps, and resyncs in chronological
+order; it still checks exactly-once delivery, contiguous runs, and one gap per incident.
+The test setup also uses a contiguous post-snapshot cursor and the existing active replay
+token rather than accidentally starting that replay twice.
+
+The channel records closure time independently of consuming its inbound queue. A full
+link event buffer can delay that consumption; measuring stability at consumption would
+reset backoff for a socket that actually closed before the five-second stable interval.
+Gateway re-attachment uses the canonical typed methods and omits generated optional
+defaults so resume sends only its session id and replay sends exactly its three cursor keys.
+
+Closing a channel can resolve an in-flight replay as `Unknown` before the link consumes
+its queued closure. Before applying a replay reply, the link checks the channel's generation
+and recorded closure. A lost replay keeps its cursor for the next connection rather than
+creating a snapshot incident. Hold-overflow evidence also survives repeated snapshots whose
+cursors are still too old; it clears when a snapshot covers the lost prefix.
+
+
 ## 2026-10-23 — Typify needs explicit discriminator enums and distinct inline enum titles
 
 **Evidence.** At Hermes v0.22.4, commit `4d04303818b61bf3aa09278af48356315515965b`,

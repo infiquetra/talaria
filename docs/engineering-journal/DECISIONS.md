@@ -2,6 +2,50 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-23 — Half-jitter backoff, 1 to 30 s
+
+**Decision.** Reconnect delays use half-jitter. Attempt 1 waits the 1 s floor. Later
+attempts draw inside the upper half of a ceiling that doubles until 30 s
+(`Backoff::delay` in `crates/hermes-client/src/liveness.rs`).
+
+**Rationale.** Hermes draws full jitter that can be zero and then hot-loops a dead
+gateway. Rejected alternative: Hermes's full jitter from 0.
+
+**Revisit when.** A floor of 1 s proves too slow on a local gateway.
+
+## 2026-10-23 — Grace tick after a late heartbeat tick
+
+**Decision.** A heartbeat tick more than two intervals late only sends a ping. It does
+not declare the link dead (`HeartbeatClock::on_tick`).
+
+**Rationale.** Hermes treats that late tick, with a ping still outstanding, as death.
+Machine sleep would then look like a dropped socket. Rejected alternative: immediate
+death on a late tick.
+
+**Revisit when.** Sleep detection becomes available from the platform.
+
+## 2026-10-23 — Replay failure becomes a gap
+
+**Decision.** A failed, timed-out, or mismatched `session.resume` or
+`session.events.since` becomes one gap. `ReplayTracker::on_replay_failed` records that
+replay failure. A not-found reply forgets the session instead.
+
+**Rationale.** Hermes swallows replay errors, so the client can look attached while the
+transcript has a hole. Rejected alternative: swallowing those errors.
+
+**Revisit when.** Talaria gains a history backstop that can fill a failed window without
+a snapshot.
+
+## 2026-10-23 — No retry of the first connection
+
+**Decision.** `Link::start` dials once. A failed first connection is returned to the
+caller and is not retried.
+
+**Rationale.** Someone starting Talaria with no gateway should see the reason and the
+next step at once, not a reconnect loop. Rejected alternative: retrying from start-up.
+
+**Revisit when.** Talaria gains a background mode that should wait for a gateway.
+
 ## 2026-10-23 — Generate Hermes protocol bindings offline with narrow schema corrections
 
 **Decision.** Use a Python 3.9 standard-library generator with cargo-typify 0.8.0
@@ -3304,3 +3348,26 @@ skip. This does not relax production discovery or turn unsafe nodes into skips.
 **Revisit when.** The generated contract changes an imported type or method marker, or
 Hermes publishes a different native attachment contract. Re-run the complete client checks
 and required live fixture acceptance after integration.
+
+## 2026-10-24 — Keep replay request shaping local and closure time in the channel
+
+**Decision.** The liveness module sends `session.resume` and `session.events.since`
+through the existing raw-call interface with explicit parameter objects, then decodes
+the replies into generated contract types. It retains the original replay result for
+event extension fields and nulls. Neither the general RPC implementation nor connection
+setup needs a replay-specific modification; both are restored to the main branch.
+
+**Narrow channel exception.** Keep `ChannelStats.closed_at`, its reset at generation
+start, its assignment on the first recognized closure, and its focused lifecycle test.
+The timestamp records when the channel actor recognizes closure, rather than when the
+liveness task eventually consumes its notification. Pending calls can wake before that
+notification is consumed, so replay completion consults the same channel-owned closure
+state before interpreting a failed call. Backoff uses the recorded time to avoid counting
+time spent behind queued events or a blocked consumer as a stable connection.
+
+**Rejected alternative.** Recording the time in liveness, or checking its inbound queue
+before replay completion, cannot recover the original closure time. A closure may be
+behind ordinary inbound items, and draining them would require buffering or reordering.
+The channel-owned timestamp preserves those boundaries with one optional field. Duplicate
+and stale closures leave it unchanged; a new generation clears it. The replay guard is a
+check of observed channel state, not an atomic exclusion of every later socket failure.
