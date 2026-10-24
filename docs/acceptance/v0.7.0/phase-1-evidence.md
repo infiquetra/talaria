@@ -5648,3 +5648,190 @@ Resume this session with:
 0d1a078 --profile fixture
 $
 ```
+
+
+## P1-06 UAT-4
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Command: cargo run --release --example inline_demo -- --lines 300 --interval-ms 20
+UAT-4 (Herdr): PASS
+  - Shrank pane by 12 rows and restored before line 0300.
+  - Pressed o: OVERLAY - press Esc appeared.
+  - Pressed Esc: live rows returned.
+  - Pressed q, selected line 0150 with native selection, copied and pasted: line 0150.
+  - Native search counts: line 0150 = 1, line 0007 = 1, LIVE# = 0.
+UAT-4 (tmux 3.7c, 100x40 -> 100x30 -> 100x40): PASS
+  - Pressed o -> OVERLAY - press Esc; Esc restored live rows.
+  - copy-mode selected and pasted line 0150; search counts: line 0150 = 1, line 0007 = 1, LIVE# = 0, OVERLAY = 0.
+UAT-4 (Ghostty / Terminal.app): PASS
+  - Resized window by 10 rows and back during stream; o / Esc overlay round-trip; selection/copy/paste of line 0150 exact; search counts: line 0150 = 1, line 0007 = 1, LIVE# = 0.
+Verdict: PASS
+```
+
+## P1-07 UAT-6
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Commands:
+  1. cargo run --release --example markdown_demo -- crates/talaria-tui/examples/sample.md
+  2. cargo run --release --example markdown_demo -- --generate mixed-64k --stream --delta-bytes 64 --delay-ms 5
+  3. NO_COLOR=1 cargo run --release --example markdown_demo -- crates/talaria-tui/examples/sample.md
+UAT-6 (Herdr): PASS — headings bold, links blue/underlined, syntax-highlighted python/rust blocks, aligned tables; mixed-64k streamed cleanly with 0 leftover tail lines; NO_COLOR=1 emitted 0 SGR color escapes (\x1b[38 count = 0) while preserving bold and underline.
+UAT-6 (tmux 3.7c, 100x40): PASS — verified across all 3 invocations (MD_DONE, 0 color escapes under NO_COLOR=1).
+UAT-6 (Ghostty): PASS — verified across all 3 invocations; 0 leftover tail lines or flicker.
+Verdict: PASS
+```
+
+## P1-08 UAT-5
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Command: cargo run --release --example composer_demo
+UAT-5 (Herdr): PASS
+  SUBMITTED lines=4 chars=7 text="a\nb\nc\nd"
+  SUBMITTED lines=1 chars=8 text="one Xtwo"
+UAT-5 (tmux 3.7c): PASS (Shift+Enter unsupported in default tmux key table as allowed by UAT-5; Alt+Enter, Ctrl+J, and Option+Left passed)
+  SUBMITTED lines=1 chars=1 text="a"
+  SUBMITTED lines=3 chars=5 text="b\nc\nd"
+  SUBMITTED lines=1 chars=8 text="one Xtwo"
+UAT-5 (Ghostty): PASS
+  SUBMITTED lines=4 chars=7 text="a\nb\nc\nd"
+  SUBMITTED lines=1 chars=8 text="one Xtwo"
+Verdict: PASS
+```
+
+## P1-13 UAT-5
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Precondition: temporarily set approvals.mode: off in fixture profile config.yaml.
+Run 1 (cargo run -q -p smoke -- run --talaria target/release/talaria):
+  SKIP approval (no approval card appeared and the command ran; the profile fixture must set approvals.mode: manual (the default is smart, in which Hermes may approve by itself; a hosted-room policy can also override the mode))
+  SMOKE_RESULT: PASSED WITH SKIPS (approval)
+  exit=3
+Run 2 (TALARIA_LIVE_REQUIRE=1 cargo run -q -p smoke -- run --talaria target/release/talaria):
+  PASS startup 4.7 s
+  PASS plain-answer 6.8 s
+  FAIL approval (skipped: no approval card appeared and the command ran; the profile fixture must set approvals.mode: manual (the default is smart, in which Hermes may approve by itself; a hosted-room policy can also override the mode); TALARIA_LIVE_REQUIRE=1)
+  SMOKE_RESULT: FAILED (approval)
+  exit=1
+Postcondition: restored approvals.mode: manual in fixture config.yaml and verified read-back (approvals.mode: manual).
+Verdict: PASS
+```
+
+## OP-1
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Scenario: Approvals and clarifications (OP-1)
+Counts:
+  - Approval cards seen: 5 (3 answered once, 1 answered session, 1 answered deny)
+  - Clarifying questions answered: 2 (red / blue)
+  - Leftover cards on screen after answering: 0
+  - Misrouted keys: 0
+Every agent reply reflected the exact choice selected.
+Verdict: PASS
+```
+
+## OP-2
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Scenario: Typing while long replies stream (OP-2)
+Counts:
+  - Streaming episodes tested: 6 (>= 30 reply lines each, >= 24 characters typed per episode during active streaming)
+  - Episodes with all typed characters preserved in order: 6 of 6
+  - Dropped or reordered keys: 0
+  - Perceptible input lag: none (consistent with AUTO-3 p99 <= 5 ms budget)
+Verdict: PASS
+```
+
+## OP-3
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Scenario: Native terminal search, copy, and scrollback (OP-3)
+Terminals checked: Herdr 0.9.4, tmux 3.7c, Ghostty (after > 350 lines of scrollback)
+  - Native search for first reply marker: found once in each terminal
+  - Copied 8-line shell script from fenced code block: 0 box-drawing (U+2500..U+257F) or gutter characters; bash -n exit=0
+  - Scrollback to top of session: first prompt present once
+Verdict: PASS
+```
+
+## OP-4
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Scenario: Quit and resume across --resume <id>, -c, and --resume list, including open approval card (OP-4)
+Counts:
+  - Total quit-and-resume cycles: 4
+    1. --resume <id> after completed turn
+    2. -c with an approval card open for rm -rf .pytest_cache, resumed within 45 s (pending card restored and accepted 1. once)
+    3. --resume list picker on a working turn
+    4. Resume after background turn completion while detached
+  - Cycles with prior prompts/replies shown once and status line showing minimax-m3.1-flash: 4 of 4
+Verdict: PASS
+```
+
+## OP-5
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+Scenario: Visual and state hygiene across resizes, pickers, cards, and Ctrl+C (OP-5)
+Activity counts: 4 terminal resizes, 3 list pickers, 5 approval cards, 3 Ctrl+C interrupts
+Defect counts:
+  - Repeated lines: 0
+  - Status lines stuck on working > 5 s after turn end: 0
+  - Wrong model names: 0
+  - Raw escape sequences (^[ or [2J): 0
+  - Leftover cards after answer or cancel: 0
+  - Broken borders: 0
+Verdict: PASS
+```
+
+## OP-6
+
+Candidate: f87640cb557702ed139877778c993bf93a3e9b86. Runner: operator. Run 1 of 1. Date: 2026-10-24.
+
+Operator comment: https://github.com/infiquetra/talaria/issues/211#issuecomment-6390869813
+
+```text
+PHASE 1 OPERATOR CHECK: PASSED (candidate f87640c)
+Candidate commit: f87640cb557702ed139877778c993bf93a3e9b86 (f87640c)
+Release binary sha256 (target/release/talaria): 82e2dde9974fe1aa98d94f6e4475349da8b17610dc3f6bca247fa0fc9567ef62
+Hermes release: v0.22.4 (4d043030c574)
+Herdr version: herdr 0.9.4
+Terminals & multiplexers: Herdr 0.9.4, tmux 3.7c, Ghostty, Terminal.app
+Session window: 2026-10-24 08:00 EDT - 15:10 EDT (7.1 hours across Candidates 1-4, > 1.0 hour on Candidate 4 f87640c)
+Profile & model: fixture (minimax-m3.1-flash on ollama-cloud)
+Defects remediated before Candidate 4: #303 (1700075), #304 (34ce306), #305 (f87640c) — 0 open defects remaining.
+Verdict: PASS
+```
