@@ -13,16 +13,24 @@ name = "talaria"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
+crossterm.workspace = true
 hermes-client.workspace = true
-talaria-core.workspace = true
-talaria-app.workspace = true
-talaria-tui.workspace = true
 ratatui.workspace = true
 serde_json.workspace = true
+talaria-app.workspace = true
+talaria-core.workspace = true
+talaria-tui.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+futures-util = { workspace = true, features = ["sink"] }
+hermes-contract.workspace = true
+portable-pty.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
+vt100.workspace = true
 
 [lints]
 workspace = true

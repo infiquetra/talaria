@@ -1,0 +1,29 @@
+{
+  "session_id": "local-session-1",
+  "stored_session_id": "stored-1",
+  "messages": [
+    {"role": "user", "text": "Count from 1 to 400."},
+    {"role": "assistant", "text": "1"}
+  ],
+  "display_messages": [
+    {"role": "user", "text": "Count from 1 to 400."},
+    {"role": "assistant", "text": "1"}
+  ],
+  "message_count": 2,
+  "running": true,
+  "authority_epoch": 1,
+  "replay_epoch": "epoch-1",
+  "last_sequence": 6,
+  "subscription_id": "sub-1",
+  "revision": 1,
+  "execution_generation": 2,
+  "pending": [],
+  "prompts": [],
+  "info": {
+    "desktop_protocol": "1",
+    "cwd": "/work/proj",
+    "profile_id": "fixture",
+    "model": "minimax-m3.1-flash",
+    "provider": "ollama-cloud"
+  }
+}

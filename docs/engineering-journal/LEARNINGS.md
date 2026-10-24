@@ -2,6 +2,48 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-23
+
+### One task per prompt lets held prompts overtake each other
+
+**Evidence.** `Executor::new` in `crates/talaria-app/src/app.rs`; `prompts_held_until_ready_in_order_with_cap` in `crates/talaria-app/tests/session_flow.rs` saw prompt 3 reach the mock before prompt 1.
+
+**Mechanism.** A call's frame is written when its future is first polled, not when it is built. Spawning one task per `prompt.submit` lets the scheduler poll them in any order, so ten held prompts released together reached the gateway shuffled. All prompts now go through one worker that sends them one at a time in submission order; Hermes queues a prompt sent to a busy session, so waiting for each receipt costs only the round trip.
+
+**Generalizable rule.** When order on the wire matters, put the calls through one queue; spawning them separately keeps only the order of creation, not of sending.
+
+### A killed git can still hold its output pipe open
+
+**Evidence.** `find_git_toplevel` in `crates/talaria-app/src/connection.rs`; its test's sleeping stand-in is a shell script that runs `sleep 30`.
+
+**Mechanism.** Killing the timed-out `git` process kills the shell, not the `sleep` it started, and that grandchild keeps the write end of standard output open. Reading the pipe after the kill would block until the grandchild exits, 30 seconds instead of 5. The lookup therefore reads standard output only after a normal exit and returns `None` straight after a kill.
+
+**Generalizable rule.** After killing a child on a timeout, do not read its pipes; only a child that exited by itself has finished writing.
+
+### The application loop reaches the terminal only through a trait
+
+**Evidence.** `Screen`, `ComposerDeadline` and `StatusHost` in `crates/talaria-app/src/app.rs`; `TuiScreen` in `crates/talaria-cli/src/run.rs`; `domain_crates_never_reach_a_terminal_library` in `crates/talaria-core/tests/layering.rs`.
+
+**Mechanism.** `talaria-app` may not depend on `talaria-tui`, which brings ratatui and crossterm. The composer, the key map, the prompt cards and the status command therefore live behind a trait the binary implements. The loop hands the screen a borrowed view and gets back plain actions (submit, interrupt, quit, an answer). One consequence is that `talaria-app` cannot build the key map, so key-map notices are produced by the binary and passed into the loop.
+
+**Generalizable rule.** When a layering rule keeps a crate away from the UI library, the loop owns the state and the UI is a port that turns raw input into intents.
+
+### A detach that names an end reason stops background work
+
+**Evidence.** The detach parameter builder and `crates/talaria-app/tests/wire_params.rs` (`resume_detach_submit_params_exact_keys`).
+
+**Mechanism.** The gateway treats `end_reason` on detach as an instruction to interrupt the session's background work and close its row. The detach body therefore carries the session id and the subscription id only. The key is absent, not null.
+
+**Generalizable rule.** When a field's presence changes a lifecycle, build the object by the keys it must have and test that set, rather than serialising a generated struct that fills the field in.
+
+### Continue must not take the newest session of any folder
+
+**Evidence.** `belongs` and `workspace_key` in `crates/talaria-app/src/launch.rs`, and the continue tests in `crates/talaria-app/tests/session_flow.rs`.
+
+**Mechanism.** The gateway's own lookup falls back to the newest session of any folder, and a session's folder is fixed when it is created. Following that fallback would open another project's session. Continue fails closed when the folder is missing or lies outside this workspace.
+
+**Generalizable rule.** A "most recent in this place" lookup must not widen to every place when the local lookup misses.
+
 ## 2026-10-23 — Shift+Enter reaches the composer only with the Kitty keyboard protocol, and fast typing without bracketed paste is indistinguishable from a paste
 
 **Evidence.** crossterm 0.29.0 `src/event/sys/unix/parse.rs`: a legacy carriage return is Enter
@@ -4252,3 +4294,36 @@ events. The stamps now come from the first event that carries a `session_id`.
 take the identity fields from an event that has them and check that every spliced event
 ends up in the same session; synthetic fixtures that start with a session event hide
 this.
+
+## 2026-10-24 — One frame per message lets a fast stream starve the keyboard
+
+**Evidence.** `crates/talaria-app/src/app.rs`, the `run` loop. In two of ten live smoke runs
+against `minimax-m3.1-flash`, Esc sent while about 200 counting lines were on screen did not
+stop a "count from 1 to 2000" turn: the count reached 2000 with no interrupted notice.
+
+**Mechanism.** The loop applied one message per wake-up and drew the screen after each, and
+drawing re-renders the open assistant cell. When the model streams faster than a frame is
+drawn, deltas pile up in the channel, the screen falls further behind the gateway, and a key
+waits its turn behind them; by the time Esc was handled the turn could already be finished
+on the Hermes side. The loop now takes every waiting key first, then up to 64 more ready
+messages, and draws once for the batch.
+
+**Generalizable rule.** In a terminal loop fed by a network stream, never pay one frame per
+message: drain what is ready, keep input ahead of output, and draw once per batch.
+
+## 2026-10-24 — A live preview must cost what it shows, not what it holds
+
+**Evidence.** `crates/talaria-cli/src/run.rs`, `TuiScreen::draw` and `preview_text`. With the
+debug build, the live smoke test's interrupt step failed: the screen showed about 200 numbers of
+a 2000-number count while Hermes had already finished the turn, so Esc had nothing to stop. The
+release build passed five runs in a row.
+
+**Mechanism.** The live tail rendered the whole open cell as Markdown on every frame and then
+showed only its bottom rows, so a frame's cost grew with the reply's length. Batching messages
+per frame cut the number of frames but not the cost of each. The preview now renders the last
+lines only (twice the viewport, at least 80), cut at a blank line when there is one; a code
+fence or a table row keeps the cell whole, because their rows depend on lines above the cut.
+A test compares the bottom rows of the cut and the whole rendering.
+
+**Generalizable rule.** Bound a per-frame computation by what the frame displays; when the
+input grows with the session, a debug build is where the quadratic cost shows first.

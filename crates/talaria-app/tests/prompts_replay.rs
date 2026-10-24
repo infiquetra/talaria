@@ -57,6 +57,9 @@ async fn replay_to_prompt(
     let request_type = match fixture {
         Fixture::Approval => "approval.request",
         Fixture::Clarification => "clarify.request",
+        Fixture::PlainAnswer | Fixture::Interrupted => {
+            panic!("this fixture holds no prompt")
+        }
     };
     let through_request = fixture_events(fixture)
         .iter()
