@@ -1,0 +1,860 @@
+//! Plain key values, chord text, and the composer key map.
+
+use std::collections::BTreeMap;
+
+use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
+
+/// Where an action is looked up. Later screens add their own variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyContext {
+    /// The draft box at the bottom of the screen.
+    Composer,
+}
+
+/// One composer command a key chord can run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Action {
+    Submit,
+    Newline,
+    Interrupt,
+    Cancel,
+    MoveLeft,
+    MoveRight,
+    MoveUp,
+    MoveDown,
+    LineStart,
+    LineEnd,
+    BufferStart,
+    BufferEnd,
+    WordLeft,
+    WordRight,
+    DeleteBackward,
+    DeleteForward,
+    DeleteWordBackward,
+    KillToLineEnd,
+    KillToLineStart,
+    Yank,
+}
+
+impl Action {
+    /// Every action, in the order used for conflicts and notices.
+    pub const ALL: [Self; 20] = [
+        Self::Submit,
+        Self::Newline,
+        Self::Interrupt,
+        Self::Cancel,
+        Self::MoveLeft,
+        Self::MoveRight,
+        Self::MoveUp,
+        Self::MoveDown,
+        Self::LineStart,
+        Self::LineEnd,
+        Self::BufferStart,
+        Self::BufferEnd,
+        Self::WordLeft,
+        Self::WordRight,
+        Self::DeleteBackward,
+        Self::DeleteForward,
+        Self::DeleteWordBackward,
+        Self::KillToLineEnd,
+        Self::KillToLineStart,
+        Self::Yank,
+    ];
+
+    /// Name used in the keys table of the configuration file.
+    #[must_use]
+    pub const fn config_name(self) -> &'static str {
+        match self {
+            Self::Submit => "submit",
+            Self::Newline => "newline",
+            Self::Interrupt => "interrupt",
+            Self::Cancel => "cancel",
+            Self::MoveLeft => "move_left",
+            Self::MoveRight => "move_right",
+            Self::MoveUp => "move_up",
+            Self::MoveDown => "move_down",
+            Self::LineStart => "line_start",
+            Self::LineEnd => "line_end",
+            Self::BufferStart => "buffer_start",
+            Self::BufferEnd => "buffer_end",
+            Self::WordLeft => "word_left",
+            Self::WordRight => "word_right",
+            Self::DeleteBackward => "delete_backward",
+            Self::DeleteForward => "delete_forward",
+            Self::DeleteWordBackward => "delete_word_backward",
+            Self::KillToLineEnd => "kill_to_line_end",
+            Self::KillToLineStart => "kill_to_line_start",
+            Self::Yank => "yank",
+        }
+    }
+
+    /// The action named in the configuration file, if the name is known.
+    #[must_use]
+    pub fn from_config_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|action| action.config_name() == name)
+    }
+
+    /// The screen this action belongs to.
+    #[must_use]
+    pub const fn context(self) -> KeyContext {
+        KeyContext::Composer
+    }
+
+    /// Position in [`Self::ALL`].
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The built-in chords, in display order.
+    const fn default_chords(self) -> &'static [&'static str] {
+        match self {
+            Self::Submit => &["enter"],
+            Self::Newline => &["shift+enter", "alt+enter", "ctrl+j"],
+            Self::Interrupt => &["esc"],
+            Self::Cancel => &["ctrl+c"],
+            Self::MoveLeft => &["left"],
+            Self::MoveRight => &["right"],
+            Self::MoveUp => &["up"],
+            Self::MoveDown => &["down"],
+            Self::LineStart => &["home", "ctrl+a"],
+            Self::LineEnd => &["end", "ctrl+e"],
+            Self::BufferStart => &["ctrl+home"],
+            Self::BufferEnd => &["ctrl+end"],
+            Self::WordLeft => &["alt+left", "ctrl+left", "alt+b"],
+            Self::WordRight => &["alt+right", "ctrl+right", "alt+f"],
+            Self::DeleteBackward => &["backspace", "ctrl+h"],
+            Self::DeleteForward => &["delete"],
+            Self::DeleteWordBackward => &["ctrl+w", "alt+backspace"],
+            Self::KillToLineEnd => &["ctrl+k"],
+            Self::KillToLineStart => &["ctrl+u"],
+            Self::Yank => &["ctrl+y"],
+        }
+    }
+}
+
+/// A key after it has been turned into Talaria's own value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Key {
+    /// The key that was pressed.
+    pub code: KeyCode,
+    /// Which modifier keys were held.
+    pub mods: Mods,
+    /// Press, repeat, or release.
+    pub kind: KeyKind,
+}
+
+impl From<KeyEvent> for Key {
+    fn from(event: KeyEvent) -> Self {
+        use crossterm::event::KeyCode as Term;
+        let code = match event.code {
+            Term::Char(c) => KeyCode::Char(c),
+            Term::Enter => KeyCode::Enter,
+            Term::Esc => KeyCode::Esc,
+            Term::Tab => KeyCode::Tab,
+            Term::Backspace => KeyCode::Backspace,
+            Term::Delete => KeyCode::Delete,
+            Term::Insert => KeyCode::Insert,
+            Term::Up => KeyCode::Up,
+            Term::Down => KeyCode::Down,
+            Term::Left => KeyCode::Left,
+            Term::Right => KeyCode::Right,
+            Term::Home => KeyCode::Home,
+            Term::End => KeyCode::End,
+            Term::PageUp => KeyCode::PageUp,
+            Term::PageDown => KeyCode::PageDown,
+            Term::F(n) => KeyCode::F(n),
+            _ => KeyCode::Other,
+        };
+        let held = event.modifiers;
+        let mods = Mods {
+            ctrl: held.contains(KeyModifiers::CONTROL),
+            alt: held.contains(KeyModifiers::ALT),
+            shift: held.contains(KeyModifiers::SHIFT),
+            super_key: held.contains(KeyModifiers::SUPER),
+            other: held.intersects(KeyModifiers::HYPER | KeyModifiers::META),
+        };
+        let kind = match event.kind {
+            KeyEventKind::Press => KeyKind::Press,
+            KeyEventKind::Repeat => KeyKind::Repeat,
+            KeyEventKind::Release => KeyKind::Release,
+        };
+        Self { code, mods, kind }
+    }
+}
+
+/// The key identity, without modifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyCode {
+    /// A typed character.
+    Char(char),
+    /// Enter or return.
+    Enter,
+    /// Escape.
+    Esc,
+    /// Tab.
+    Tab,
+    /// Backspace.
+    Backspace,
+    /// Forward delete.
+    Delete,
+    /// Insert.
+    Insert,
+    /// Up arrow.
+    Up,
+    /// Down arrow.
+    Down,
+    /// Left arrow.
+    Left,
+    /// Right arrow.
+    Right,
+    /// Home.
+    Home,
+    /// End.
+    End,
+    /// Page up.
+    PageUp,
+    /// Page down.
+    PageDown,
+    /// A function key. `F(1)` is F1.
+    F(u8),
+    /// A key this list does not name. Shift+Tab arrives here.
+    Other,
+}
+
+/// Modifier keys. `other` is set for hyper or meta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Mods {
+    /// Control.
+    pub ctrl: bool,
+    /// Alt or option.
+    pub alt: bool,
+    /// Shift.
+    pub shift: bool,
+    /// Super or command.
+    pub super_key: bool,
+    /// Hyper or meta, which match no chord.
+    pub other: bool,
+}
+
+/// Whether the key went down, repeated, or came up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyKind {
+    /// The key was pressed.
+    Press,
+    /// The key is repeating.
+    Repeat,
+    /// The key was released. Releases never match a chord.
+    Release,
+}
+
+/// One binding: modifiers plus a single key. A character is stored lower-cased; an uppercase
+/// letter in the text sets `shift`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyChord {
+    code: KeyCode,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    super_key: bool,
+}
+
+/// The key names a chord may use, besides a single character and `f1` to `f24`.
+const NAMED_KEYS: [(&str, KeyCode); 16] = [
+    ("enter", KeyCode::Enter),
+    ("esc", KeyCode::Esc),
+    ("escape", KeyCode::Esc),
+    ("tab", KeyCode::Tab),
+    ("backspace", KeyCode::Backspace),
+    ("delete", KeyCode::Delete),
+    ("insert", KeyCode::Insert),
+    ("up", KeyCode::Up),
+    ("down", KeyCode::Down),
+    ("left", KeyCode::Left),
+    ("right", KeyCode::Right),
+    ("home", KeyCode::Home),
+    ("end", KeyCode::End),
+    ("pageup", KeyCode::PageUp),
+    ("pagedown", KeyCode::PageDown),
+    ("space", KeyCode::Char(' ')),
+];
+
+impl KeyChord {
+    /// Parse chord text such as `ctrl+j` or `shift+enter`. The error is the reason.
+    pub fn parse(text: &str, context: KeyContext) -> Result<Self, String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("empty".to_string());
+        }
+        let parts: Vec<&str> = text.split('+').map(str::trim).collect();
+        if parts.iter().any(|part| part.is_empty()) {
+            return Err("missing key".to_string());
+        }
+        let (key, modifiers) = parts
+            .split_last()
+            .ok_or_else(|| "missing key".to_string())?;
+        let mut chord = Self {
+            code: KeyCode::Other,
+            ctrl: false,
+            alt: false,
+            shift: false,
+            super_key: false,
+        };
+        for modifier in modifiers {
+            let slot = match modifier.to_lowercase().as_str() {
+                "ctrl" | "control" => &mut chord.ctrl,
+                "alt" | "option" => &mut chord.alt,
+                "shift" => &mut chord.shift,
+                "super" => &mut chord.super_key,
+                _ => return Err(format!("unknown modifier \"{modifier}\"")),
+            };
+            if *slot {
+                return Err(format!("repeated modifier \"{modifier}\""));
+            }
+            *slot = true;
+        }
+        chord.code = parse_key(key, &mut chord.shift)?;
+        let printable = matches!(chord.code, KeyCode::Char(_));
+        if context == KeyContext::Composer
+            && printable
+            && !(chord.ctrl || chord.alt || chord.super_key)
+        {
+            return Err("a plain letter would stop that key from typing".to_string());
+        }
+        Ok(chord)
+    }
+
+    /// Whether this chord matches a key. Releases and hyper or meta never match.
+    #[must_use]
+    pub fn matches(&self, key: &Key) -> bool {
+        if key.kind == KeyKind::Release || key.mods.other {
+            return false;
+        }
+        let mods = key.mods;
+        if self.ctrl != mods.ctrl || self.alt != mods.alt || self.super_key != mods.super_key {
+            return false;
+        }
+        match (self.code, key.code) {
+            (KeyCode::Char(want), KeyCode::Char(got)) => {
+                let shifted = mods.shift || got.is_uppercase();
+                lower(got) == want && self.shift == shifted
+            }
+            (want, got) => want == got && self.shift == mods.shift,
+        }
+    }
+
+    /// Display text such as `Shift+Enter` or `Ctrl+C`.
+    #[must_use]
+    pub fn label(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for (held, name) in [
+            (self.ctrl, "Ctrl"),
+            (self.alt, "Alt"),
+            (self.shift, "Shift"),
+            (self.super_key, "Super"),
+        ] {
+            if held {
+                parts.push(name.to_string());
+            }
+        }
+        parts.push(key_label(self.code));
+        parts.join("+")
+    }
+
+    /// True when a terminal can send this chord only with keyboard enhancement.
+    #[must_use]
+    pub fn needs_enhancement(&self) -> bool {
+        self.super_key || (self.code == KeyCode::Enter && (self.shift || self.ctrl))
+    }
+
+    /// F1, F2, Ctrl+B or Ctrl+S, which some layer may take before Talaria sees it.
+    fn is_risky(&self) -> bool {
+        let bare = !(self.alt || self.shift || self.super_key);
+        match self.code {
+            KeyCode::F(1 | 2) => bare && !self.ctrl,
+            KeyCode::Char('b' | 's') => bare && self.ctrl,
+            _ => false,
+        }
+    }
+}
+
+fn lower(c: char) -> char {
+    let mut lowered = c.to_lowercase();
+    match (lowered.next(), lowered.next()) {
+        (Some(single), None) => single,
+        _ => c,
+    }
+}
+
+/// The key part of a chord. An uppercase letter sets `shift`.
+fn parse_key(key: &str, shift: &mut bool) -> Result<KeyCode, String> {
+    let name = key.to_lowercase();
+    if let Some((_, code)) = NAMED_KEYS.iter().find(|(known, _)| *known == name) {
+        return Ok(*code);
+    }
+    if name == "plus" {
+        return Ok(KeyCode::Char('+'));
+    }
+    if let Some(number) = name.strip_prefix('f').and_then(|n| n.parse::<u8>().ok())
+        && (1..=24).contains(&number)
+        && name.len() > 1
+        && !name[1..].starts_with('0')
+    {
+        return Ok(KeyCode::F(number));
+    }
+    let mut chars = key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => {
+            if c.is_uppercase() {
+                *shift = true;
+            }
+            Ok(KeyCode::Char(lower(c)))
+        }
+        _ => Err(format!("unknown key \"{key}\"")),
+    }
+}
+
+fn key_label(code: KeyCode) -> String {
+    match code {
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char('+') => "Plus".to_string(),
+        KeyCode::Char(c) => c.to_uppercase().collect(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::Insert => "Insert".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PageUp".to_string(),
+        KeyCode::PageDown => "PageDown".to_string(),
+        KeyCode::F(n) => format!("F{n}"),
+        KeyCode::Other => "Other".to_string(),
+    }
+}
+
+/// The literal file name every notice uses, never the real path.
+const FILE: &str = "~/.talaria/config.toml";
+
+/// The chords bound to each composer action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyMap {
+    /// Indexed by position in [`Action::ALL`].
+    chords: Vec<Vec<KeyChord>>,
+}
+
+impl KeyMap {
+    /// The built-in bindings.
+    #[must_use]
+    pub fn defaults() -> Self {
+        let chords = Action::ALL
+            .iter()
+            .map(|action| default_chords(*action))
+            .collect();
+        Self { chords }
+    }
+
+    /// Apply the keys table from configuration on top of the defaults. Returns the map and
+    /// one plain notice per problem: first those about each entry, in key-name order, then
+    /// the conflicts, in action order of the action that lost.
+    #[must_use]
+    pub fn from_entries(entries: &BTreeMap<String, Vec<String>>) -> (Self, Vec<String>) {
+        let mut map = Self::defaults();
+        let mut explicit = [false; Action::ALL.len()];
+        let mut notices = Vec::new();
+
+        for (name, texts) in entries {
+            let Some(action) = Action::from_config_name(name) else {
+                let known: Vec<&str> = Action::ALL.iter().map(|a| a.config_name()).collect();
+                notices.push(format!(
+                    "Ignoring [keys] {name} in {FILE}: it is not a known action. Known actions: \
+                     {}.",
+                    known.join(", ")
+                ));
+                continue;
+            };
+            let mut parsed: Vec<KeyChord> = Vec::new();
+            for text in texts {
+                match KeyChord::parse(text, action.context()) {
+                    Ok(chord) => {
+                        if chord.is_risky() {
+                            notices.push(format!(
+                                "[keys] {name} in {FILE}: {} may not reach Talaria in some \
+                                 terminals (the system, Herdr or terminal flow control can take \
+                                 it); the binding is kept.",
+                                chord.label()
+                            ));
+                        }
+                        if !parsed.contains(&chord) {
+                            parsed.push(chord);
+                        }
+                    }
+                    Err(reason) => notices.push(format!(
+                        "[keys] {name} in {FILE}: \"{text}\" is not a key Talaria understands \
+                         ({reason}); ignoring it."
+                    )),
+                }
+            }
+            if !texts.is_empty() && parsed.is_empty() {
+                notices.push(format!(
+                    "[keys] {name} in {FILE} has no usable key; using the default ({}).",
+                    map.labels(action).join(", ")
+                ));
+                continue;
+            }
+            map.chords[action.index()] = parsed;
+            explicit[action.index()] = true;
+        }
+
+        notices.extend(map.resolve_conflicts(&explicit));
+        (map, notices)
+    }
+
+    /// Give each chord held by more than one action of a context to one winner.
+    fn resolve_conflicts(&mut self, explicit: &[bool; Action::ALL.len()]) -> Vec<String> {
+        // (loser index, notice), sorted by loser at the end.
+        let mut lost: Vec<(usize, String)> = Vec::new();
+        for holder in Action::ALL {
+            let mut position = 0;
+            while position < self.chords[holder.index()].len() {
+                let chord = self.chords[holder.index()][position].clone();
+                let holders: Vec<Action> = Action::ALL
+                    .into_iter()
+                    .filter(|other| {
+                        other.context() == holder.context()
+                            && self.chords[other.index()].contains(&chord)
+                    })
+                    .collect();
+                position += 1;
+                if holders.len() < 2 {
+                    continue;
+                }
+                let Some(winner) = holders
+                    .iter()
+                    .copied()
+                    .find(|action| explicit[action.index()])
+                    .or_else(|| holders.first().copied())
+                else {
+                    continue;
+                };
+                for loser in holders.into_iter().filter(|action| *action != winner) {
+                    let chords = &mut self.chords[loser.index()];
+                    chords.retain(|held| *held != chord);
+                    let (loser_name, winner_name, label) =
+                        (loser.config_name(), winner.config_name(), chord.label());
+                    if explicit[loser.index()] {
+                        lost.push((
+                            loser.index(),
+                            format!(
+                                "[keys] {loser_name} in {FILE}: {label} is already bound to \
+                                 {winner_name}; keeping it on {winner_name} only."
+                            ),
+                        ));
+                    } else if chords.is_empty() {
+                        lost.push((
+                            loser.index(),
+                            format!(
+                                "[keys] {loser_name} in {FILE} lost its default key {label} \
+                                 because {winner_name} now uses it; {loser_name} has no key \
+                                 until you bind one."
+                            ),
+                        ));
+                    }
+                    if loser == holder {
+                        position -= 1;
+                    }
+                }
+            }
+        }
+        lost.sort_by_key(|(index, _)| *index);
+        lost.into_iter().map(|(_, notice)| notice).collect()
+    }
+
+    /// The action bound to this key, if any.
+    #[must_use]
+    pub fn resolve(&self, key: &Key) -> Option<Action> {
+        Action::ALL
+            .into_iter()
+            .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
+    }
+
+    /// Chords bound to one action, in binding order.
+    #[must_use]
+    pub fn chords(&self, action: Action) -> &[KeyChord] {
+        &self.chords[action.index()]
+    }
+
+    /// Label of the first chord bound to an action.
+    #[must_use]
+    pub fn label(&self, action: Action) -> Option<String> {
+        self.chords(action).first().map(KeyChord::label)
+    }
+
+    fn labels(&self, action: Action) -> Vec<String> {
+        self.chords(action).iter().map(KeyChord::label).collect()
+    }
+}
+
+/// The built-in chords of one action. Every default text parses; the defaults test checks it.
+fn default_chords(action: Action) -> Vec<KeyChord> {
+    action
+        .default_chords()
+        .iter()
+        .filter_map(|text| KeyChord::parse(text, action.context()).ok())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    use super::{Action, Key, KeyChord, KeyContext, KeyMap};
+
+    fn parse(text: &str) -> Result<KeyChord, String> {
+        KeyChord::parse(text, KeyContext::Composer)
+    }
+
+    fn labels(map: &KeyMap, action: Action) -> Vec<String> {
+        map.chords(action).iter().map(KeyChord::label).collect()
+    }
+
+    fn entries(pairs: &[(&str, &[&str])]) -> BTreeMap<String, Vec<String>> {
+        pairs
+            .iter()
+            .map(|(name, chords)| {
+                (
+                    (*name).to_string(),
+                    chords.iter().map(|chord| (*chord).to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn chord_parse_accepts_and_refuses() {
+        let ctrl_j = parse("ctrl+j").expect("ctrl+j");
+        assert_eq!(ctrl_j.label(), "Ctrl+J");
+        assert!(!ctrl_j.needs_enhancement());
+        let shift_enter = parse("Shift+Enter").expect("Shift+Enter");
+        assert_eq!(shift_enter.label(), "Shift+Enter");
+        assert!(shift_enter.needs_enhancement());
+        let f24 = parse("f24").expect("f24");
+        assert_eq!(f24.label(), "F24");
+        assert!(!f24.needs_enhancement());
+
+        assert_eq!(parse("control+j").unwrap().label(), "Ctrl+J");
+        assert_eq!(parse("option+enter").unwrap().label(), "Alt+Enter");
+        assert_eq!(parse("escape").unwrap().label(), "Esc");
+
+        let refused = [
+            ("", "empty"),
+            (" ", "empty"),
+            ("   ", "empty"),
+            ("+", "missing key"),
+            ("ctrl+", "missing key"),
+            ("ctrl++", "missing key"),
+            ("hyper+a", "unknown modifier \"hyper\""),
+            ("banana", "unknown key \"banana\""),
+            ("a", "a plain letter would stop that key from typing"),
+            ("A", "a plain letter would stop that key from typing"),
+            ("shift+a", "a plain letter would stop that key from typing"),
+            ("shift+x", "a plain letter would stop that key from typing"),
+            ("f25", "unknown key \"f25\""),
+            ("ctrl+ctrl+a", "repeated modifier \"ctrl\""),
+        ];
+        for (text, reason) in refused {
+            assert_eq!(parse(text).unwrap_err(), reason, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn chord_matches_crossterm_events() {
+        let shift_enter = parse("shift+enter").unwrap();
+        let plain_enter = parse("enter").unwrap();
+        let shifted = Key::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert!(shift_enter.matches(&shifted));
+        assert!(!plain_enter.matches(&shifted));
+
+        let map = KeyMap::defaults();
+        let backspace = Key::from(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        let ctrl_h = Key::from(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        assert_eq!(map.resolve(&backspace), Some(Action::DeleteBackward));
+        assert_eq!(map.resolve(&ctrl_h), Some(Action::DeleteBackward));
+
+        let hyper = Key::from(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::HYPER));
+        assert_eq!(map.resolve(&hyper), None);
+        assert!(!shift_enter.matches(&hyper));
+
+        let back_tab = Key::from(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(map.resolve(&back_tab), None);
+
+        let release = Key::from(KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        assert_eq!(map.resolve(&release), None);
+        assert!(!plain_enter.matches(&release));
+
+        let repeat = Key::from(KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ));
+        assert_eq!(map.resolve(&repeat), Some(Action::Submit));
+        assert!(plain_enter.matches(&repeat));
+    }
+
+    #[test]
+    fn defaults_are_safe_and_unambiguous() {
+        assert_eq!(Action::ALL.len(), 20);
+        for action in Action::ALL {
+            assert_eq!(action.context(), KeyContext::Composer);
+            let name = action.config_name();
+            assert_eq!(Action::from_config_name(name), Some(action));
+        }
+        assert_eq!(Action::from_config_name("not_an_action"), None);
+
+        let map = KeyMap::defaults();
+        let expected = [
+            (Action::Submit, vec!["Enter"]),
+            (Action::Newline, vec!["Shift+Enter", "Alt+Enter", "Ctrl+J"]),
+            (Action::Interrupt, vec!["Esc"]),
+            (Action::Cancel, vec!["Ctrl+C"]),
+            (Action::MoveLeft, vec!["Left"]),
+            (Action::MoveRight, vec!["Right"]),
+            (Action::MoveUp, vec!["Up"]),
+            (Action::MoveDown, vec!["Down"]),
+            (Action::LineStart, vec!["Home", "Ctrl+A"]),
+            (Action::LineEnd, vec!["End", "Ctrl+E"]),
+            (Action::BufferStart, vec!["Ctrl+Home"]),
+            (Action::BufferEnd, vec!["Ctrl+End"]),
+            (Action::WordLeft, vec!["Alt+Left", "Ctrl+Left", "Alt+B"]),
+            (Action::WordRight, vec!["Alt+Right", "Ctrl+Right", "Alt+F"]),
+            (Action::DeleteBackward, vec!["Backspace", "Ctrl+H"]),
+            (Action::DeleteForward, vec!["Delete"]),
+            (Action::DeleteWordBackward, vec!["Ctrl+W", "Alt+Backspace"]),
+            (Action::KillToLineEnd, vec!["Ctrl+K"]),
+            (Action::KillToLineStart, vec!["Ctrl+U"]),
+            (Action::Yank, vec!["Ctrl+Y"]),
+        ];
+        for (action, want) in expected {
+            assert_eq!(labels(&map, action), want, "{}", action.config_name());
+        }
+
+        let risky = ["F1", "F2", "Ctrl+B", "Ctrl+S"];
+        let mut seen: Vec<(KeyChord, Action)> = Vec::new();
+        for action in Action::ALL {
+            for chord in map.chords(action) {
+                let label = chord.label();
+                assert!(
+                    !risky.contains(&label.as_str()),
+                    "{label} is bound to {}",
+                    action.config_name()
+                );
+                if let Some((_, other)) = seen.iter().find(|(held, _)| held == chord) {
+                    panic!(
+                        "{} shares {label} with {}",
+                        action.config_name(),
+                        other.config_name()
+                    );
+                }
+                seen.push((chord.clone(), action));
+            }
+        }
+
+        for (code, mods) in [
+            (KeyCode::F(1), KeyModifiers::NONE),
+            (KeyCode::F(2), KeyModifiers::NONE),
+            (KeyCode::Char('b'), KeyModifiers::CONTROL),
+            (KeyCode::Char('s'), KeyModifiers::CONTROL),
+        ] {
+            let key = Key::from(KeyEvent::new(code, mods));
+            assert_eq!(map.resolve(&key), None);
+        }
+    }
+
+    #[test]
+    fn from_entries_reports_each_problem_once() {
+        let (map, notices) = KeyMap::from_entries(&entries(&[
+            ("bogus", &["x"]),
+            ("delete_forward", &["ctrl+s"]),
+            ("line_start", &["hyper+a"]),
+            ("move_left", &["banana", "left"]),
+            ("submit", &["alt+enter"]),
+            ("word_left", &["ctrl+o"]),
+            ("word_right", &["ctrl+o"]),
+            ("yank", &[]),
+        ]));
+        let known = Action::ALL
+            .iter()
+            .map(|action| action.config_name())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let expected = [
+            format!(
+                "Ignoring [keys] bogus in ~/.talaria/config.toml: it is not a known action. \
+                 Known actions: {known}."
+            ),
+            "[keys] delete_forward in ~/.talaria/config.toml: Ctrl+S may not reach Talaria in \
+             some terminals (the system, Herdr or terminal flow control can take it); the \
+             binding is kept."
+                .to_string(),
+            "[keys] line_start in ~/.talaria/config.toml: \"hyper+a\" is not a key Talaria \
+             understands (unknown modifier \"hyper\"); ignoring it."
+                .to_string(),
+            "[keys] line_start in ~/.talaria/config.toml has no usable key; using the default \
+             (Home, Ctrl+A)."
+                .to_string(),
+            "[keys] move_left in ~/.talaria/config.toml: \"banana\" is not a key Talaria \
+             understands (unknown key \"banana\"); ignoring it."
+                .to_string(),
+            "[keys] word_right in ~/.talaria/config.toml: Ctrl+O is already bound to word_left; \
+             keeping it on word_left only."
+                .to_string(),
+        ];
+        assert_eq!(notices, expected);
+        assert_eq!(labels(&map, Action::Submit), vec!["Alt+Enter".to_string()]);
+        assert_eq!(
+            labels(&map, Action::Newline),
+            vec!["Shift+Enter".to_string(), "Ctrl+J".to_string()]
+        );
+        assert_eq!(labels(&map, Action::Yank), Vec::<String>::new());
+        assert_eq!(labels(&map, Action::WordRight), Vec::<String>::new());
+        assert_eq!(labels(&map, Action::MoveLeft), vec!["Left".to_string()]);
+        assert_eq!(
+            labels(&map, Action::DeleteForward),
+            vec!["Ctrl+S".to_string()]
+        );
+        assert_eq!(
+            labels(&map, Action::LineStart),
+            vec!["Home".to_string(), "Ctrl+A".to_string()]
+        );
+        assert!(
+            notices
+                .iter()
+                .all(|notice| !notice.to_lowercase().contains("ctrl+j")),
+            "{notices:?}"
+        );
+
+        let (map, notices) = KeyMap::from_entries(&entries(&[("submit", &["esc"])]));
+        assert_eq!(
+            notices,
+            vec![
+                "[keys] interrupt in ~/.talaria/config.toml lost its default key Esc because \
+                 submit now uses it; interrupt has no key until you bind one."
+                    .to_string()
+            ]
+        );
+        assert_eq!(labels(&map, Action::Submit), vec!["Esc".to_string()]);
+        assert_eq!(labels(&map, Action::Interrupt), Vec::<String>::new());
+    }
+}

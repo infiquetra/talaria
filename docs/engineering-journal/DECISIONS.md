@@ -2,6 +2,99 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-23
+
+### One Esc interrupts a running turn and keeps the draft
+
+**Decision.** The composer's `interrupt` action (Esc by default) returns `Interrupt` on the first
+press while a turn runs and leaves the draft untouched; with no turn it only clears a visible exit
+hint. Ctrl+C clears a draft first, then interrupts, then asks for a second press within 2 seconds
+before it exits.
+
+**Rationale.** A single press is faster, and keeping the draft makes an accidental interrupt
+cheap to recover from. Hermes's own terminal interface needs two presses within 500 ms and only on
+an empty draft; Talaria deliberately differs. Ctrl+C asks before exiting because people press it by
+habit.
+
+**Rejected alternatives.** Hermes's double Esc. Exiting on the first Ctrl+C of an idle, empty
+composer.
+
+**Revisit when.** The operator overturns the single Esc, or accidental interrupts show up in use.
+
+### The status settings live in a table named `[status]`
+
+**Decision.** The loader reads `[status]` (`command`, `interval_seconds`) and `[environment]`
+(`allowlist`), the names of the frozen status-line contract in `docs/formats/status-line.md`,
+not the roadmap's `[status_line]`. The command stays one raw string; splitting and running it
+belong to the status line. That contract also names a repository config file and an interval
+environment override, which this loader does not read; those lines become wrong at merge and the
+phase decides how they are corrected.
+
+**Rationale.** The frozen document is the contract the status line builds against; the roadmap
+wording cites it.
+
+**Rejected alternatives.** `[status_line]`, which would break the frozen contract.
+
+**Revisit when.** The operator rules on the table name, or the status-line contract is revised.
+
+### No default key on F1, F2, Ctrl+B or Ctrl+S
+
+**Decision.** None of the twenty composer defaults uses F1, F2, Ctrl+B or Ctrl+S. A file may still
+bind them; the key map keeps the binding and adds a notice that the key may not reach Talaria.
+Newline has three defaults (Shift+Enter, Alt+Enter, Ctrl+J), and Backspace also answers to Ctrl+H.
+
+**Rationale.** macOS takes F1 and F2, Herdr takes Ctrl+B when nested, and Ctrl+S is the old flow
+control stop key that a layer between the terminal and Talaria may still take. Ctrl+J and
+Alt+Enter work without the Kitty keyboard protocol; some terminals send Backspace as Ctrl+H. A
+carried 0.6 file binds `interrupt` to Ctrl+S, and refusing it would discard a stated choice.
+
+**Rejected alternatives.** Refusing the four keys in the file. Keeping them silently.
+
+**Revisit when.** The terminal matrix shows one of the four reaching Talaria everywhere, or a
+default proves unreachable in a terminal in daily use.
+
+### The configuration document tests fail on the fence count while the loader is a stub
+
+**Decision.** `config_doc` and `keymap_doc` count fenced toml blocks in `docs/configuration.md`
+before they call `parse` or `KeyMap::from_entries`. This commit leaves that document as it is.
+
+**Rationale.** The document on this branch has two toml fences. The count runs first, so the red
+failure names the document. The loader in this commit is a stub, and a panic there would hide the
+stale document.
+
+**Rejected alternatives.** Calling the loader first. Editing the document in the same commit as the
+red tests.
+
+**Revisit when.** The document has one toml block and both tests pass.
+
+### talaria-tui depends on talaria-app only for tests and the example
+
+**Decision.** `talaria-tui` lists `talaria-app` as a development dependency. `talaria-app` does not
+depend on `talaria-tui`. The example and the keymap document test call the application loader.
+
+**Rationale.** Key names stay strings in the application crate. A development edge is ignored by
+the layering test, so the shipped graph still has no path from the application crate to the
+terminal crate, and no cycle.
+
+**Rejected alternatives.** A second toml reader in the terminal crate. A normal dependency from
+`talaria-tui` to `talaria-app`. A dependency from `talaria-app` to `talaria-tui`.
+
+**Revisit when.** The layering test starts counting development edges, or a later unit's binary is
+the only caller of the loader.
+
+### Property tests stay on the workspace proptest pin
+
+**Decision.** The property tests use the workspace pin `proptest = "=1.11.0"`. The unit text names
+1.12.0. This commit does not change the pin.
+
+**Rationale.** The workspace already pins 1.11.0, and the tests use that release's configuration
+field `failure_persistence: None`.
+
+**Rejected alternatives.** Bumping the workspace pin in this commit. Adding a direct 1.12.0
+requirement next to the workspace pin.
+
+**Revisit when.** The workspace moves to proptest 1.12.0 or newer for another reason.
+
 ## 2026-10-23 — Scrollback is asserted with `alacritty_terminal`, resize follows a stated model with cursor-relative moves, and there is no hardware caret
 
 **Decision.** The inline renderer's scrollback tests feed the bytes to `alacritty_terminal`
