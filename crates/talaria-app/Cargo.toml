@@ -13,9 +13,19 @@ talaria-core.workspace = true
 hermes-client.workspace = true
 hermes-contract.workspace = true
 toml.workspace = true
+zeroize.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
+crossterm.workspace = true
+futures-util = { workspace = true, features = ["sink"] }
+proptest.workspace = true
+serde_json.workspace = true
+talaria-tui.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
+vt100.workspace = true
 
 [lints]
 workspace = true

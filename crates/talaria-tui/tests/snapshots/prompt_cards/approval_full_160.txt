@@ -1,0 +1,9 @@
+Approval needed
+$ rm -rf .pytest_cache
+Recursively removes the pytest cache directory and everything below it; this cannot be undone.
+Hermes denies this after 300 s without an answer.
+› 1. once
+  2. session
+  3. always
+  4. deny
+1-4 choose · Enter confirm · Esc deny · Tab note · Ctrl+C deny and stop

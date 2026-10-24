@@ -1,0 +1,4 @@
+One-time code
+6 digit code from your authenticator
+value:
+Enter send · Esc decline · Ctrl+C decline and stop
