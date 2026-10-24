@@ -20,6 +20,8 @@ url.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "time"] }
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
+pulldown-cmark.workspace = true
+syntect.workspace = true
 
 [dev-dependencies]
 alacritty_terminal.workspace = true
@@ -34,6 +36,10 @@ vt100.workspace = true
 vte.workspace = true
 portable-pty.workspace = true
 talaria-app.workspace = true
+
+[[bench]]
+name = "markdown_stream"
+harness = false
 
 [lints]
 workspace = true

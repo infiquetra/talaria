@@ -4186,3 +4186,17 @@ assistant cell's text already begins with the payload's trimmed text.
 
 **Generalizable rule.** An event's name is not proof of its content; before rendering a
 summary event, check it against what the stream has already delivered in the same turn.
+
+
+## 2026-10-23 — Complete source lines establish Markdown commit boundaries
+
+**Evidence.** With pulldown-cmark 0.13.4, `Hello\n***` temporarily contains a
+paragraph and a rule, but appending `bold***\n` makes one paragraph. The Markdown
+stream therefore scans only newline-terminated source when deciding what to commit,
+while rendering the entire pending source as its replaceable tail. A complete closing
+fence can commit its own top-level code block; a nested fence cannot commit its container.
+The stream tests check partial lines, nested fences, split carriage-return/newline
+pairs, and equality with whole-document rendering across character-sized deltas.
+
+**Rule.** Use complete source lines as evidence for irreversible Markdown output.
+Keep separators with the following block so finishing a message adds no trailing blank.

@@ -3562,3 +3562,25 @@ behind ordinary inbound items, and draining them would require buffering or reor
 The channel-owned timestamp preserves those boundaries with one optional field. Duplicate
 and stale closures leave it unchanged; a new generation clears it. The replay guard is a
 check of observed channel state, not an atomic exclusion of every later socket failure.
+
+
+## 2026-10-23 — Markdown returns styled lines and prepares highlighting separately
+
+**Decision.** Keep the Markdown engine independent of terminal output. It returns owned
+ratatui lines and sanitizes incoming text before parsing. Keep Markdown constructs,
+change their presentation to terminal-width blocks, and discard server-rendered terminal
+text. The pinned Hermes v0.22.4 contract (`4d04303818b6`) permits both text and rendered
+fields on message deltas; only caller-provided text enters this engine.
+
+Syntax grammars load on an explicitly requested background thread. Readiness is published
+after warming Rust, Python and shell. Until then code stays plain. Cache complete code
+lines and parser state; render an incomplete line from cloned state. Colours map to named
+terminal colours rather than a detected palette. The history adapter renders assistant
+and reasoning cells as Markdown, with a dim base for reasoning, and delegates other cells
+to the existing plain renderer. The live adapter clips already-wrapped tail lines.
+
+**Rationale.** Committed blocks cannot be redrawn. Complete-line commit boundaries and
+one separator at the start of each later block preserve streaming equivalence. Keeping
+loading outside rendering avoids a first-frame stall and leaves startup policy with the
+caller. Width changes affect only pending output. The two adapters retain ownership of
+session state in the domain core and terminal output in the terminal module.
