@@ -32,6 +32,8 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 vt100.workspace = true
 vte.workspace = true
+portable-pty.workspace = true
+talaria-app.workspace = true
 
 [lints]
 workspace = true

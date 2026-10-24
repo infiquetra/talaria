@@ -2,6 +2,19 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-23 — A document test must assert the file before it calls a stub
+
+**Evidence.** `crates/talaria-app/tests/config_doc.rs` `doc_default_shape_loads_cleanly` and
+`crates/talaria-tui/tests/keymap_doc.rs` `doc_keys_equal_defaults` count fenced toml blocks in
+`docs/configuration.md` before calling the loader. The file on this branch has two such blocks.
+
+**Mechanism.** The loader is a stub in the red commit. Calling it first makes the failure the
+stub, and a later parser can go green while the document still carries the old tables. The count
+runs first, so the red failure is the document.
+
+**Generalizable rule:** when a red test is meant to fail because existing data is wrong, assert
+that data before calling any unimplemented function.
+
 ## 2026-10-23 — A status line is fed by declared fields, not by reported ones
 
 **Evidence.** The status line reads the session's model, effort, working folder and branch from

@@ -2,6 +2,50 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-23
+
+### The configuration document tests fail on the fence count while the loader is a stub
+
+**Decision.** `config_doc` and `keymap_doc` count fenced toml blocks in `docs/configuration.md`
+before they call `parse` or `KeyMap::from_entries`. This commit leaves that document as it is.
+
+**Rationale.** The document on this branch has two toml fences. The count runs first, so the red
+failure names the document. The loader in this commit is a stub, and a panic there would hide the
+stale document.
+
+**Rejected alternatives.** Calling the loader first. Editing the document in the same commit as the
+red tests.
+
+**Revisit when.** The document has one toml block and both tests pass.
+
+### talaria-tui depends on talaria-app only for tests and the example
+
+**Decision.** `talaria-tui` lists `talaria-app` as a development dependency. `talaria-app` does not
+depend on `talaria-tui`. The example and the keymap document test call the application loader.
+
+**Rationale.** Key names stay strings in the application crate. A development edge is ignored by
+the layering test, so the shipped graph still has no path from the application crate to the
+terminal crate, and no cycle.
+
+**Rejected alternatives.** A second toml reader in the terminal crate. A normal dependency from
+`talaria-tui` to `talaria-app`. A dependency from `talaria-app` to `talaria-tui`.
+
+**Revisit when.** The layering test starts counting development edges, or a later unit's binary is
+the only caller of the loader.
+
+### Property tests stay on the workspace proptest pin
+
+**Decision.** The property tests use the workspace pin `proptest = "=1.11.0"`. The unit text names
+1.12.0. This commit does not change the pin.
+
+**Rationale.** The workspace already pins 1.11.0, and the tests use that release's configuration
+field `failure_persistence: None`.
+
+**Rejected alternatives.** Bumping the workspace pin in this commit. Adding a direct 1.12.0
+requirement next to the workspace pin.
+
+**Revisit when.** The workspace moves to proptest 1.12.0 or newer for another reason.
+
 ## 2026-10-23 — Scrollback is asserted with `alacritty_terminal`, resize follows a stated model with cursor-relative moves, and there is no hardware caret
 
 **Decision.** The inline renderer's scrollback tests feed the bytes to `alacritty_terminal`
