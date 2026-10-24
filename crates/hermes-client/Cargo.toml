@@ -1,6 +1,6 @@
 [package]
 name = "hermes-client"
-description = "Find the local Hermes gateway, mint a ticket, and finish the opening handshake."
+description = "Hermes gateway discovery, transport and request correlation."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -24,7 +24,7 @@ workspace = true
 
 [dev-dependencies]
 futures-util = { workspace = true, features = ["sink"] }
-http = "=1.5.0"
+http.workspace = true
 proptest.workspace = true
 rustix.workspace = true
 serde.workspace = true

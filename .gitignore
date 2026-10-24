@@ -33,9 +33,6 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# Cargo build output for the attach workspace.
-/target/
-
 # Recorded frame-log corpora (R29): real sessions may carry content the
 # redaction deny-set missed, so they never enter version control. Committed
 # test fixtures are small synthetic frames checked in individually, not

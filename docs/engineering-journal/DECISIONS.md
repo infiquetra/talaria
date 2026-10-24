@@ -3288,15 +3288,16 @@ require. Its meaning is unchanged.
 
 **Evidence boundary.** The local pre-build was rebased onto the merged generated contract
 from issue #196 (`ace72b5`). Temporary contract definitions were removed. The opening exchange
-constructs the generated empty-map `RuntimeDescribeParams` newtype. Live fixture acceptance
-is deferred until the Phase 0 to Phase 1a gate; a skipped live check is not live acceptance.
-The branch remains local pending the authorized publication gate.
+constructs the generated empty-map `RuntimeDescribeParams` newtype. Live acceptance passed
+on the candidate commit against Hermes v0.22.4 (code revision `4d04303818b6`, matching
+`crates/hermes-contract/PINNED`): the three ignored live tests each printed
+`LIVE_ATTACH_RESULT: PASSED` under `TALARIA_LIVE_REQUIRE=1`, recorded in pull request #290.
 
 **Pre-build verification.** Formatting and Clippy with warnings denied passed, and the
 client suite passed all 30 non-live tests. An independent isolated run confirmed that count.
-The three original ignored live tests each printed `LIVE_ATTACH_RESULT: SKIPPED` without
-requiring a live fixture. All 33 original test declarations remain; no new ignores were
-added. For the old gateway's duplicate derived profile names, the test helper verifies a
+Before the operator's fixture profile was served, the live tests skipped; with it served they
+passed (above), and a skip was never counted as acceptance. All 33 original test declarations
+remain; no new ignores were added. For the old gateway's duplicate derived profile names, the test helper verifies a
 revision mismatch through a separate private, same-user socket probe before allowing the
 skip. This does not relax production discovery or turn unsafe nodes into skips.
 

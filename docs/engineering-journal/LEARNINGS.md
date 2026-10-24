@@ -3807,6 +3807,52 @@ replace that guarantee, using the deny-set preserved at
 `python-final:talaria/recorder/redact.py`
 ([roadmap](../handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p1-04--recorder-and-replay-source)).
 
+## 2026-10-23 — A scrubbed recording is not a protocol sample
+
+**Evidence.** The prototype recording `reference-slices/rust/tests/fixtures/live_two_turns.jsonl`
+was scrubbed: its `gateway.ready` lacks `skin` and `replay_epoch`, and its `runtime.describe`
+lacks `skin` (`docs/handoff/2026-10-22-next-steps/units/P1-01.md`, section 2, item 7). The
+handshake test `handshake_validates_ready_and_describe` (`crates/hermes-client/tests/connect.rs:2357`)
+removes each field in turn ("no epoch", "no skin") and checks the outcome, and the live attach
+against Hermes v0.22.4 (`4d04303818b6`) printed `LIVE_ATTACH_RESULT: PASSED` with the real frames.
+
+**Mechanism.** Scrubbing removes fields to protect what a session held, so the recording no
+longer shows which fields a real gateway always sends. A mock copied from it, or a decoder
+loosened until it accepts it, agrees with the recording and disagrees with the gateway.
+
+**Generalizable rule.** Build mocks from the pinned contract and the pinned server's source,
+never from a redacted recording; treat a recording as evidence of order and timing only.
+
+## 2026-10-23 — Every failed upgrade, including an unknown ticket, is HTTP 403
+
+**Evidence.** `live_attach_unknown_ticket_is_refused_at_upgrade`
+(`crates/hermes-client/tests/live_attach.rs:152`) sends a made-up ticket and accepts only
+`ConnectError::UpgradeRejected { status: Some(403) }`; it passed live on Hermes v0.22.4
+(`4d04303818b6`), settling the status the unit specification left to confirm.
+
+**Mechanism.** The gateway refuses before it accepts the upgrade. A wrong peer, bad
+subprotocols or an unknown profile closes with 4403, and an unknown, used or expired ticket
+falls through to the dashboard route; the client sees HTTP 403 for all of them. The status
+therefore cannot tell an expired ticket from a wrong profile or a restarting gateway, so the
+error names the step that failed, not a cause.
+
+**Generalizable rule.** When a server answers several refusals with one status, map the status
+to "refused at this step" and keep any guessed cause out of the message.
+
+## 2026-10-23 — Check the gateway's state before its served profiles
+
+**Evidence.** `Endpoint::from_identify` in `crates/hermes-client/src/discovery.rs` returns
+`NotReady` for `starting`, `draining` and `conflict` (lines 101-125) before it reads
+`served_profiles` (line 164); the identify parsing tests in `crates/hermes-client/tests/connect.rs`
+cover the `state starting` reply (line 308).
+
+**Mechanism.** A starting Hermes gateway answers `identify` with empty `capabilities` and
+`served_profiles`. Hermes checks the served profiles first, so a client that copied it would
+report "this profile is not served" to someone who only has to wait a moment.
+
+**Generalizable rule.** Validate the readiness of a reply before the data that readiness
+gates; an empty list from a server that is not ready yet is not an answer.
+
 ## 2026-10-23 — Gateway mocks must preserve envelopes and ticket identity
 
 **Evidence.** Issue #198's pre-build started from the independent red-test commit
