@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 
 use hermes_client::{Client, InboundStream};
 use mock_gateway::{
-    Fixture, MockGateway, SESSION_ID, fixture_outbound_params, next_event, session_event,
+    Fixture, MockGateway, SESSION_ID, fixture_events, fixture_outbound_params, next_event,
+    session_event,
 };
 use serde_json::Value;
 use talaria_app::prompts::PromptService;
@@ -47,15 +48,27 @@ fn submission_ids() -> Box<dyn FnMut() -> String + Send> {
 }
 
 /// The mock, a client attached to it, and the session state after the recorded turn reached its
-/// prompt: the turn start and the request for the approval or the question.
+/// prompt: every recorded event up to and including the request for the approval or the question.
 async fn replay_to_prompt(
     fixture: Fixture,
 ) -> (MockGateway, Client, InboundStream, SessionState, PromptKey) {
     let (mock, client, mut inbound) = MockGateway::start().await;
     mock.set_auto_settle(true);
-    assert_eq!(mock.replay_fixture(fixture, 2).await, 2);
+    let request_type = match fixture {
+        Fixture::Approval => "approval.request",
+        Fixture::Clarification => "clarify.request",
+    };
+    let through_request = fixture_events(fixture)
+        .iter()
+        .position(|frame| frame["params"]["type"] == request_type)
+        .map(|index| index + 1)
+        .unwrap_or_else(|| panic!("the recorded log has no request for the prompt"));
+    assert_eq!(
+        mock.replay_fixture(fixture, through_request).await,
+        through_request
+    );
     let mut state = SessionState::empty(SessionId::new(SESSION_ID));
-    for _ in 0..2 {
+    for _ in 0..through_request {
         let event = next_event(&mut inbound).await;
         let _ = update(&mut state, session_event(&event));
     }
@@ -148,8 +161,11 @@ async fn approval_fixture_sends_recorded_respond() {
         "a resolved answer gives no notice"
     );
 
-    let recorded = fixture_outbound_params(Fixture::Approval, "approval.respond")
+    // The mock stamps its own session id on the events it replays, so the call must equal the
+    // recorded one with that id in place of the recorded one.
+    let mut recorded = fixture_outbound_params(Fixture::Approval, "approval.respond")
         .unwrap_or_else(|| panic!("the recorded log has no approval.respond"));
+    recorded["session_id"] = Value::String(SESSION_ID.to_owned());
     let sent = mock.wait_for_request("approval.respond", 0).await;
     assert_eq!(
         sent.params, recorded,
@@ -217,9 +233,13 @@ async fn clarification_fixture_sends_clarify_respond() {
     let sent = mock.wait_for_request("clarify.respond", 0).await;
     assert_eq!(mock.requests("clarify.respond").len(), 1);
     assert_eq!(sorted_keys(&sent.params), sorted_keys(&recorded));
-    for name in ["session_id", "execution_generation", "prompt_id"] {
+    for name in ["execution_generation", "prompt_id"] {
         assert_eq!(sent.params[name], recorded[name], "{name} should match");
     }
+    assert_eq!(
+        sent.params["session_id"],
+        Value::String(SESSION_ID.to_owned())
+    );
     assert_eq!(
         sent.params["answer"],
         Value::String(TYPED_ANSWER.to_owned())

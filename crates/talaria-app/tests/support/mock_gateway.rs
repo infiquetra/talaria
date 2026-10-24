@@ -381,6 +381,9 @@ struct State {
     written: Vec<Written>,
     next_srq: u64,
     next_seq: u64,
+    /// The replay epoch of the last replayed event that carried one; events the mock makes up
+    /// afterwards use it, so they belong to the same stream.
+    replay_epoch: Option<String>,
     envelope_generation: i64,
     respond_script: VecDeque<Reply>,
     respond_default: Reply,
@@ -466,6 +469,7 @@ impl MockGateway {
                 written: Vec::new(),
                 next_srq: 1,
                 next_seq: 1,
+                replay_epoch: None,
                 envelope_generation: 1,
                 respond_script: VecDeque::new(),
                 respond_default: Reply::Resolved,
@@ -671,7 +675,10 @@ impl MockGateway {
                 state.session_id.clone(),
                 seq,
                 state.envelope_generation,
-                "id-0002",
+                state
+                    .replay_epoch
+                    .clone()
+                    .unwrap_or_else(|| "id-0002".to_owned()),
             )
         };
         let generation = payload
@@ -700,6 +707,9 @@ impl MockGateway {
             if s.next_seq <= seq {
                 s.next_seq = seq + 1;
             }
+        }
+        if let Some(epoch) = params["replay_epoch"].as_str() {
+            lock(&self.shared).replay_epoch = Some(epoch.to_owned());
         }
         let event_type = params["type"].as_str().map(str::to_owned);
         let text = json!({"jsonrpc": "2.0", "method": "event", "params": params});
@@ -1178,6 +1188,10 @@ fn event_text(state: &mut State, type_name: &str, payload: Value) -> String {
         .get("execution_generation")
         .and_then(Value::as_i64)
         .unwrap_or(state.envelope_generation);
+    let epoch = state
+        .replay_epoch
+        .clone()
+        .unwrap_or_else(|| "id-0002".to_owned());
     json!({
         "jsonrpc": "2.0",
         "method": "event",
@@ -1185,7 +1199,7 @@ fn event_text(state: &mut State, type_name: &str, payload: Value) -> String {
             "type": type_name,
             "session_id": state.session_id,
             "seq": seq,
-            "replay_epoch": "id-0002",
+            "replay_epoch": epoch,
             "authority_epoch": 1,
             "execution_generation": generation,
             "admission_id": "adm-1",
