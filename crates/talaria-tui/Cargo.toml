@@ -12,7 +12,7 @@ publish.workspace = true
 talaria-core.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
-rustix.workspace = true
+rustix = { workspace = true, features = ["event"] }
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 

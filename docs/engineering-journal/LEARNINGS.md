@@ -2,6 +2,41 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-23 — Inline scrollback: `vt100` hides lost rows, and tmux tells the program about a resize late
+
+**Evidence.** `crates/talaria-tui/src/terminal.rs` (`insert_rows`, `resize`); the scrollback tests
+in `crates/talaria-tui/tests/scrollback.rs`; `tests/tmux_scrollback.rs` run against tmux 3.7c.
+
+**Mechanism.** `vt100` 0.16.2 sends a scrolled-off row to its scrollback only when no scroll
+region is set, and history is written by scrolling inside the region over the rows above the
+viewport. So a `vt100` scrollback test passes while lines are lost. The tests assert scrollback
+with `alacritty_terminal` 0.26.0, which keeps history whenever the scrolled region starts at the
+top line. Reverse index scrolls a region down only when the cursor sits on the region's top
+line: a slide whose region starts one row below the viewport only moves the cursor up. That
+slide does nothing, and a repaint after each commit hides it. A one-row region is invalid in
+both emulators, so the live region is capped at the row count minus two.
+
+The start-up probe reads replies straight from the descriptor until the device-attributes
+reply arrives or 200 ms pass, then drains input until it has been quiet for 50 ms. A reply
+later than that (a slow link) still reaches the key reader as keystrokes.
+
+The resize model, no cursor query, is exact in `alacritty_terminal` and in tmux when the program
+hears of each resize before it writes again. tmux resizes the pane's grid at once but sets the
+pty size and sends the window-change signal later. At most one notice goes out per 250 ms, so a
+second resize 150 ms after the first is reported about 250 ms after it (measured: commits every
+20 ms kept the old geometry for nine commits). Every absolute row the renderer writes in that
+window lands on the wrong row: the scroll region over the history, the cursor moves of a commit
+and the live-region diff. With commits every 20 ms through two resizes, lines land inside older
+history and a live-row diff overwrites a history row. Without the resizes the same run is exact.
+Known limits that remain: with less scrollback than a grow assumes, stale live rows stay above
+the viewport; a shrink below the live region pushes live rows into scrollback before Talaria
+hears of it; a width change can reflow long committed rows; quick resizes can reach Talaria as
+one event.
+
+**Generalizable rule.** A test of scrollback must use an emulator that keeps history under a
+scroll region, and a renderer that addresses rows absolutely must assume the terminal's geometry
+can change before the program is told.
+
 ## 2026-10-24 — A live count is provider chunks, and the replay ring holds 512 events
 
 **Evidence.** Against Hermes v0.22.4, a solo run of
