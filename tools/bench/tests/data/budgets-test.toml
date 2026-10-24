@@ -1,0 +1,50 @@
+# Loose limits for tests against the fake client. Same keys as the shipped file.
+
+[terminal]
+cols = 160
+rows = 48
+
+[launch]
+median_ms = 1500
+runs = 3
+warmups = 1
+
+[keystroke]
+p95_ms = 100
+max_ms = 150
+keys = 10
+visible_within_ms = 1000
+interval_ms = 100
+start_ms = 500
+interval_ms_fast = 40
+start_ms_fast = 50
+
+[cpu]
+mean_pct = 50
+peak_pct = 50
+sample_ms = 100
+window_samples = 10
+
+[worst_frame]
+max_ms = 40
+
+[idle]
+seconds = 2
+settle_seconds = 2
+frames = 0
+
+[memory]
+unit = "MB"
+start_max = 100
+long_session_max = 100
+
+[live_gateway]
+composer_ms = 200
+
+[unit_choice]
+bytes_median = 4096
+late_over_early = 3.0
+
+[scenario]
+turn_seconds = 6
+long_session_turns = 100

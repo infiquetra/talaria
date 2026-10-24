@@ -1,1 +1,6 @@
-Performance harnesses and budget measurements will live here. P1-11 owns this folder; see the [roadmap](../../docs/handoff/2026-10-22-next-steps/07-roadmap-and-work-units.md#p1-11--performance-harness-and-budgets).
+# Performance harness
+
+Starts the real `talaria` binary in a pseudo-terminal, replays a recorded reply into it,
+types while the reply streams, and compares the measurements with `budgets.toml`.
+
+Run it with `target/release/talaria-bench run --binary target/release/talaria`.

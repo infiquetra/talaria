@@ -13,6 +13,8 @@ name = "talaria"
 path = "src/main.rs"
 
 [dependencies]
+hermes-client.workspace = true
+talaria-core.workspace = true
 talaria-app.workspace = true
 talaria-tui.workspace = true
 

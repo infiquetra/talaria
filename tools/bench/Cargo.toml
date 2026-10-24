@@ -1,0 +1,37 @@
+[package]
+name = "talaria-bench"
+description = "Performance harness and budgets for the Talaria binary."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "talaria_bench"
+path = "src/lib.rs"
+
+[[bin]]
+name = "talaria-bench"
+path = "src/main.rs"
+
+[[bin]]
+name = "fake-tui"
+path = "src/bin/fake_tui.rs"
+
+[dependencies]
+portable-pty = "=0.9.0"
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+toml = "=1.1.8"
+vt100.workspace = true
+
+[dev-dependencies]
+hermes-client.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
