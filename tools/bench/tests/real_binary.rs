@@ -27,7 +27,7 @@ const COLS: u16 = 160;
 const PROBE: &str = "^kbdprobe-0123456789-abcdefghijklmnopqrs";
 
 /// The recorded reply in the plain-answer recording, as it reads on screen.
-const PLAIN_ANSWER_REPLY: &str = "The directory contains a git repository and a tests directory.";
+const PLAIN_ANSWER_REPLY: &str = "pong";
 
 const MISSING_FIXTURE: &str = "no-such-fixture.jsonl";
 
