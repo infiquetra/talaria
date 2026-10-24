@@ -4344,3 +4344,20 @@ rejects a line that chains anything else with `&&`, `|` or a further `;`.
 **Generalizable rule.** When a live check matches text a model produced, accept the variations
 the prompt itself invites and reject everything else explicitly; an exact match turns a
 harmless rewording into a false failure.
+
+## 2026-10-24 — A resumed session's header can repeat the history it introduces
+
+**Evidence.** `tools/smoke/src/steps.rs`, the resume step, and `screen::without_resume_header`.
+A live smoke run failed with "token counts after resume: A 3 (first pane 2)". The session
+list showed that run's session titled with token A itself (`tundra-4838`); other smoke
+sessions were titled the same way, while most read like "Join cedar and 4417".
+
+**Mechanism.** Hermes names a session with a model call over its first prompt, and Talaria
+opens a resumed session with `── Resumed: <title> ──`. When the model's title is the
+answer to the first prompt, the header holds one more copy of token A than the first
+pane ever showed, so a whole-text count reads it as history printed twice. The resume
+step now counts tokens with the header line removed.
+
+**Generalizable rule.** When a check counts how often text appears in a screen, exclude
+the lines the program writes about the content (headers, titles, notices); generated
+metadata can quote the content it describes.

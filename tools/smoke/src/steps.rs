@@ -14,7 +14,7 @@ use super::config::{SmokeConfig, launch_line};
 use super::report::{PaneCapture, SmokeReport, StepOutcome};
 use super::screen::{
     Card, POLL_INTERVAL, Token, approval_card, count_token, counting_values, exit_code,
-    highest_number,
+    highest_number, without_resume_header,
 };
 use super::terminal::{PaneId, ReadSource, TabId, Terminal};
 
@@ -756,11 +756,13 @@ impl Run<'_> {
             return finish(abort);
         }
 
-        // The history came back once, and no more often than it was shown.
+        // The history came back once, and no more often than it was shown. The header that
+        // names the session is not history.
         let recent = self
             .term
             .read(&second, ReadSource::RecentUnwrapped, Some(RECENT_LINES))
             .map_err(|error| Abort::Failed(error.to_string()))?;
+        let recent = without_resume_header(&recent);
         let first = self.tokens.first().map(Token::join).unwrap_or_default();
         let second_token = self.tokens.get(1).map(Token::join).unwrap_or_default();
         let count_first = count_token(&recent, &first);

@@ -73,6 +73,20 @@ pub fn count_token(text: &str, token: &str) -> usize {
     pattern.find_iter(text).count()
 }
 
+/// The text without the `── Resumed: <title> ──` lines a resumed session opens with.
+///
+/// Hermes titles a session with a model, and the title can be the joined token itself, so
+/// the header would count as a second copy of the history.
+pub fn without_resume_header(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let line = line.trim();
+            !(line.starts_with("\u{2500}\u{2500} Resumed: ") && line.ends_with(" \u{2500}\u{2500}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// A regular expression, kept so that a poll loop does not build it again.
 fn cached(key: &str, pattern: &str) -> Option<Regex> {
     static CACHE: OnceLock<Mutex<HashMap<String, Regex>>> = OnceLock::new();
