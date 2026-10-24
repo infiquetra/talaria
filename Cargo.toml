@@ -39,6 +39,7 @@ unicode-width = "=0.2.2"
 vt100 = "=0.16.2"
 alacritty_terminal = "=0.26.0"
 vte = { version = "=0.15.0", features = ["ansi"] }
+shlex = "=2.0.1"
 sha2 = "=0.11.0"
 static_assertions = "=1.1.0"
 tempfile = "=3.27.0"
