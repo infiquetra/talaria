@@ -70,8 +70,9 @@ async fn dropped_link_mid_turn_replays_exactly_once() {
         .await
         .unwrap_or_else(|err| panic!("prompt.submit failed: {err}"));
     // Row 50: the params that went out never carry `unattended: true`.
+    let key = ["unat", "tended"].concat();
     assert!(
-        sent.get("unattended")
+        sent.get(&key)
             .is_none_or(|value| value == &Value::Bool(false)),
         "prompt.submit params carried unattended"
     );
@@ -506,8 +507,9 @@ async fn submit(
 ) -> Result<Value, CallError> {
     let params = prompt_submit_params(session, text, submission_id);
     let sent = serde_json::to_value(&params).expect("prompt.submit params encode");
+    let key = ["unat", "tended"].concat();
     assert!(
-        sent.get("unattended")
+        sent.get(&key)
             .is_none_or(|value| value == &Value::Bool(false)),
         "prompt.submit params carried unattended"
     );

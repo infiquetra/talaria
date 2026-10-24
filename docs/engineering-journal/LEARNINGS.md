@@ -4361,3 +4361,25 @@ step now counts tokens with the header line removed.
 **Generalizable rule.** When a check counts how often text appears in a screen, exclude
 the lines the program writes about the content (headers, titles, notices); generated
 metadata can quote the content it describes.
+
+## 2026-10-24 — Erase-below at the origin can copy live rows into tmux history
+
+**Evidence.** `crates/talaria-tui/src/terminal.rs` and its row-zero regression in
+`tests/live_region.rs`. In tmux, `screen_write_clearendofscreen` treats erase-below
+at column zero, row zero as a whole-screen clear and calls
+`screen_write_scrollregion_history`. Repainting the live viewport can therefore
+copy live rows into native scrollback without committing any history.
+
+**Mechanism.** Clear row zero with erase-line, erase below from row one, then return
+to row zero. Drawing, resizing, commits, overlay closing and restoration use this
+sequence. Both terminal emulators must retain the same screen contents.
+
+The smoke scrubber also needs to recognize a shell prompt's abbreviated scratch
+path, such as a path containing `..` components. Its single-pass match consumes
+the whole path ending in the generated scratch directory name before a shorter
+home or temporary prefix can match. Removing trailing separators from directory
+needles preserves the separator before child names such as `smoke-report.txt`.
+`tools/smoke/tests/scrub.rs` checks the abbreviated form and repeated scrubbing.
+
+**Generalizable rule.** Test terminal control sequences against the multiplexer
+as well as emulators, and scrub the path forms a shell actually displays.

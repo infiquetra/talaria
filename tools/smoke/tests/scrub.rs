@@ -32,6 +32,61 @@ fn real_text_of(path: &Path) -> String {
     text_of(&path.canonicalize().expect("the path exists"))
 }
 
+#[test]
+fn prompt_shortened_scratch_paths_are_scrubbed_in_one_pass() {
+    let plant = Plant::new();
+    let name = plant.scratch.file_name().unwrap().to_str().unwrap();
+    let shortened = ["private", "var", "..", "bucket", "..", "T", name].join("/");
+    let scratch = text_of(&plant.scratch);
+    let home = text_of(plant.home.path());
+    let scrubber = Scrubber::new(&home, &plant.login, &plant.scratch, None, plant.tmp.path());
+    let once = scrubber.scrub(&format!(
+        "prompt {shortened} % {shortened}/child {scratch}/file {home}/documents"
+    ));
+    assert_eq!(
+        once,
+        "prompt <scratch> % <scratch>/child <scratch>/file <home>/documents"
+    );
+    assert_eq!(scrubber.scrub(&once), once);
+}
+
+#[test]
+fn longer_exact_paths_below_scratch_keep_their_placeholder() {
+    let plant = Plant::new();
+    let home = text_of(plant.home.path());
+    let scratch = text_of(&plant.scratch);
+    let hermes = format!("{scratch}/.hermes");
+    let scrubber = Scrubber::new(
+        &home,
+        &plant.login,
+        &plant.scratch,
+        Some(&hermes),
+        plant.tmp.path(),
+    );
+    assert_eq!(
+        scrubber.scrub(&format!("{hermes}/config {scratch}/file {home}/documents")),
+        "<hermes-home>/config <scratch>/file <home>/documents"
+    );
+}
+
+#[test]
+fn trailing_path_separators_are_preserved_after_placeholders() {
+    let plant = Plant::new();
+    let tmp = format!("{}/", text_of(plant.tmp.path()));
+    let scratch = format!("{}/", text_of(&plant.scratch));
+    let scrubber = Scrubber::new(
+        &text_of(plant.home.path()),
+        &plant.login,
+        Path::new(&scratch),
+        None,
+        Path::new(&tmp),
+    );
+    assert_eq!(
+        scrubber.scrub(&format!("{tmp}report.txt {scratch}file.txt")),
+        "<tmp>/report.txt <scratch>/file.txt"
+    );
+}
+
 /// Four unrelated directories and a generated login name, so no needle holds another.
 struct Plant {
     tmp: TempDir,
