@@ -16,13 +16,15 @@ impl MarkdownTailSection {
 }
 
 impl LiveSection for MarkdownTailSection {
-    fn height(&self, width: u16) -> u16 {
-        let _ = (self.tail.len(), width);
-        todo!()
+    fn height(&self, _width: u16) -> u16 {
+        u16::try_from(self.tail.len()).unwrap_or(u16::MAX)
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let _ = (self.tail.len(), area, buf.area());
-        todo!()
+        let take = usize::from(area.height);
+        let skip = self.tail.len().saturating_sub(take);
+        for (index, line) in self.tail.iter().skip(skip).take(take).enumerate() {
+            buf.set_line(area.x, area.y + index as u16, line, area.width);
+        }
     }
 }

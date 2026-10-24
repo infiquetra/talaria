@@ -147,7 +147,8 @@ fn push_styled(out: &mut Vec<u8>, line: &Line<'_>) {
 }
 
 fn push_sgr(out: &mut Vec<u8>, style: Style) {
-    let mut params: Vec<u16> = Vec::new();
+    // Each span owns its full style; previous modifiers must not leak into it.
+    let mut params: Vec<u16> = vec![0];
     if has(style, Modifier::BOLD) {
         params.push(1);
     }

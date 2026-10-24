@@ -28,6 +28,7 @@ fn main() {
     }
     if let Err(message) = wait_ready() {
         eprintln!("{message}");
+        std::process::exit(1);
     }
     println!(
         "scenario bytes deltas committed_lines p50_ms p95_ms p99_ms max_ms median_ms maxima status"
