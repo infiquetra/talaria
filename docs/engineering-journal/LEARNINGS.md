@@ -70,7 +70,54 @@ its queued closure. Before applying a replay reply, the link checks the channel'
 and recorded closure. A lost replay keeps its cursor for the next connection rather than
 creating a snapshot incident. Hold-overflow evidence also survives repeated snapshots whose
 cursors are still too old; it clears when a snapshot covers the lost prefix.
+## 2026-10-23 — The gateway ends the parent turn before a delegated child completes
 
+**Evidence.** Recording the `subagent-batch` fixture against Hermes v0.22.4 failed all three attempts
+with "no subagent.start and subagent.complete". A debug listing of the event types showed
+`subagent.start` arriving, then the parent's `message.complete`, and no `subagent.complete`. The
+gateway log showed `delegate_task` finishing in 0.04 s and the child sessions running for several
+seconds after the parent turn had ended. `tools/record-fixture/src/lib.rs` (`drive`) now keeps
+listening for up to 60 s after the last turn when the scenario is `subagent-batch`.
+
+**Mechanism.** Delegation is asynchronous: the tool call returns as soon as the children are
+spawned, so the turn's own completion does not bound the children's lifecycle events.
+
+**Generalizable rule:** a recorder that ends an attempt at the turn's completion must wait for the
+events that only a background child can emit, or the fixture holds a start with no end.
+
+## 2026-10-23 — A start-anchored key-name pattern let prefixed provider keys through
+
+**Evidence.** The Python recorder's key-name net (`talaria/recorder/redact.py` at the tag
+`python-final`) anchored its API-key pattern at the start of the name, so `openai_api_key`,
+`OPENAI_API_KEY`, `anthropicApiKey`, `provider_api_key` and `X-Api-Key` all passed it. The Rust net
+in `crates/hermes-client/src/redact.rs` (`is_suspicious_key`) adds an optional `(.*[-_])?` prefix
+on the camel-normalized name and matches the squashed name as a suffix; `redaction_names.rs`
+`prefixed_api_keys_and_ticket_withheld` holds the cases.
+
+**Mechanism.** Provider credentials are almost always named `<provider>_api_key`, and a squashed
+spelling (`openaiapikey`) has no separator left for a prefix group to stop at. A pattern written
+for `api_key` alone therefore misses the names that matter most, and a scan built on the same net
+inherits the miss.
+
+**Generalizable rule:** a credential name pattern matches a suffix, never only a whole name or a
+prefix, and is tested on squashed and camel spellings.
+
+## 2026-10-23 — Paused tokio time races real socket round trips
+
+**Evidence.** `tools/record-fixture/tests/scenarios.rs` `attempt_timeout_fails_attempt` calls
+`tokio::time::pause()` and then drives a real `Client` over a loopback mock gateway. It failed 14
+times in 30 runs of the suite, either before `session.create` returned or before the cleanup's
+`session.detach` was read by the mock. tokio 1.54.1 `src/runtime/time/mod.rs:263-275`: when time is
+paused and a timer is pending, every park polls I/O once with a zero timeout and then advances the
+clock to the next timer unless the driver was unparked from outside.
+
+**Mechanism.** A task woken by I/O during that park does not count as an unpark, so the clock jumps
+to the earliest deadline (the attempt timeout, or a call's own 120 s timeout) while a reply is
+still in flight. Every call in the P1-02 client owns a timer, so no implementation that keeps call
+timeouts can make such a test deterministic.
+
+**Generalizable rule:** pause tokio time only where nothing waits on real I/O, or advance it by hand
+with `tokio::time::advance` after the I/O you need has completed.
 
 ## 2026-10-23 — Typify needs explicit discriminator enums and distinct inline enum titles
 

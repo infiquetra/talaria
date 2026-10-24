@@ -18,7 +18,10 @@ pub mod channel;
 pub mod connect;
 pub mod discovery;
 pub mod liveness;
+pub mod record;
+pub mod redact;
 pub mod replay;
+pub mod replay_source;
 pub mod rpc;
 pub mod ticket;
 
@@ -36,6 +39,16 @@ pub use discovery::{
     DiscoverOptions, DiscoveryError, Endpoint, EnsureError, EnsurePolicy, ExitKind, GatewayState,
     NodeKind, NodeProblem, PointerProblem, ProfileId, ProfileLookupError, ReportedState,
     ServedProfile, default_home, discover, discover_with, home_hash,
+};
+pub use record::{
+    FRAME_LOG_VERSION, GatewayIdentity, RecordError, RecordSummary, Recorder, RecorderOptions,
+};
+pub use redact::{
+    REDACTED, Redacted, Redaction, Redactor, ScanHit, is_suspicious_key, local_forbidden_literals,
+    redact_url, scan_for_secrets, scan_literals,
+};
+pub use replay_source::{
+    FrameLogHeader, ReplayError, ReplayFrame, ReplayItem, ReplaySource, Speed,
 };
 pub use rpc::{
     APPROVAL_RESPOND_TIMEOUT, CallError, CallOptions, DEFAULT_CALL_TIMEOUT, FrameClass, RpcError,

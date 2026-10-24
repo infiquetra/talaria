@@ -38,6 +38,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::connect::{ConnectionParts, WsSink};
+use crate::record::Recorder;
 use hermes_contract::events::EventFrame;
 use hermes_contract::events::ServerRequest as ContractServerRequest;
 
@@ -1096,7 +1097,11 @@ impl Transport {
         parts: ConnectionParts,
         generation: Generation,
         events: mpsc::UnboundedSender<SocketEvent>,
+        recorder: Option<Recorder>,
     ) -> (Self, Vec<String>) {
+        // Frames in `buffered` were recorded by the connection before hand-over; only frames
+        // that cross the socket from here on are recorded below.
+        let read_recorder = recorder.clone();
         let ConnectionParts {
             mut sink,
             mut stream,
@@ -1108,7 +1113,8 @@ impl Transport {
         let reader_task = tokio::spawn(async move {
             let reason = loop {
                 match stream.next().await {
-                    Some(Ok(Message::Text(text))) => { if read_events.send(SocketEvent::Frame(generation, text.as_bytes().to_vec())).is_err() { return; } },
+                    Some(Ok(Message::Text(text))) => { if let Some(recorder) = &read_recorder { recorder.record_inbound(generation.0, &text); }
+                        if read_events.send(SocketEvent::Frame(generation, text.as_bytes().to_vec())).is_err() { return; } },
                     Some(Ok(Message::Binary(bytes))) => { if read_events.send(SocketEvent::Frame(generation, bytes.to_vec())).is_err() { return; } },
                     Some(Ok(Message::Close(frame))) => { let reason = match frame {
                         Some(frame) if u16::from(frame.code) == 1011 => CloseReason::Overloaded,
@@ -1140,6 +1146,9 @@ impl Transport {
                         ));
                     }
                     continue;
+                }
+                if let Some(recorder) = &recorder {
+                    recorder.record_outbound(generation.0, &text);
                 }
                 let result = write_frame(&mut sink, generation, &text).await;
                 drop(text);
@@ -1197,6 +1206,7 @@ struct Actor {
     backlog: usize,
     generation: Arc<AtomicU64>,
     commands: mpsc::WeakUnboundedSender<Command>,
+    recorder: Option<Recorder>,
 }
 
 impl Actor {
@@ -1220,6 +1230,7 @@ impl Actor {
             backlog: 0,
             generation,
             commands: sender,
+            recorder: None,
         };
         actor.install(parts, &events).await;
         loop {
@@ -1235,14 +1246,19 @@ impl Actor {
 
     async fn install(
         &mut self,
-        parts: ConnectionParts,
+        mut parts: ConnectionParts,
         events: &mpsc::UnboundedSender<SocketEvent>,
     ) {
+        // The client keeps its recorder across a replaced connection.
+        if let Some(recorder) = parts.recorder.take() {
+            self.recorder = Some(recorder);
+        }
         let generation = Generation(self.generation.load(Ordering::SeqCst));
         let effects = self.state.begin_generation(generation);
         self.effects(effects);
         self.disconnect_writer().await;
-        let (transport, buffered) = Transport::start(parts, generation, events.clone());
+        let (transport, buffered) =
+            Transport::start(parts, generation, events.clone(), self.recorder.clone());
         self.transport = Some(transport);
         for text in buffered {
             self.frame(generation, text.as_bytes());
@@ -1605,6 +1621,7 @@ mod tests {
             backlog: 0,
             generation: Arc::new(AtomicU64::new(1)),
             commands: sender.downgrade(),
+            recorder: None,
         };
         (actor, id, receiver)
     }
