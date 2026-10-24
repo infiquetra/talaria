@@ -18,7 +18,9 @@ pub struct SplitCounts {
 
 #[derive(Debug, Default)]
 pub struct FrameSplitter {
-    _open: bool,
+    open: Option<(Instant, usize)>,
+    tail: Vec<u8>,
+    counts: SplitCounts,
 }
 
 impl FrameSplitter {
@@ -27,11 +29,56 @@ impl FrameSplitter {
     }
 
     pub fn push(&mut self, chunk: &[u8], at: Instant) -> Vec<Frame> {
-        let _ = (chunk, at);
-        todo!("bench")
+        const OPEN: &[u8] = b"\x1b[?2026h";
+        const CLOSE: &[u8] = b"\x1b[?2026l";
+        let mut frames = Vec::new();
+        for &byte in chunk {
+            self.tail.push(byte);
+            while !OPEN.starts_with(&self.tail) && !CLOSE.starts_with(&self.tail) {
+                self.tail.remove(0);
+                self.add_bytes(1);
+                if self.tail.is_empty() {
+                    break;
+                }
+            }
+            if self.tail == OPEN {
+                if self.open.is_some() {
+                    self.counts.nested_markers += 1;
+                    self.add_bytes(OPEN.len());
+                } else {
+                    self.open = Some((at, OPEN.len()));
+                }
+                self.tail.clear();
+            } else if self.tail == CLOSE {
+                if let Some((start, bytes)) = self.open.take() {
+                    frames.push(Frame {
+                        bytes: bytes + CLOSE.len(),
+                        start,
+                        end: at,
+                    });
+                } else {
+                    self.counts.bytes_outside_frames += CLOSE.len() as u64;
+                }
+                self.tail.clear();
+            }
+        }
+        frames
     }
 
     pub fn counts(&self) -> SplitCounts {
-        todo!("bench")
+        let mut counts = self.counts;
+        counts.unterminated_frames = u64::from(self.open.is_some());
+        if self.open.is_none() {
+            counts.bytes_outside_frames += self.tail.len() as u64;
+        }
+        counts
+    }
+
+    fn add_bytes(&mut self, n: usize) {
+        if let Some((_, bytes)) = &mut self.open {
+            *bytes += n;
+        } else {
+            self.counts.bytes_outside_frames += n as u64;
+        }
     }
 }

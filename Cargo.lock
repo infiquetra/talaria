@@ -2379,10 +2379,12 @@ name = "talaria-cli"
 version = "0.7.0-dev"
 dependencies = [
  "hermes-client",
+ "ratatui",
  "serde_json",
  "talaria-app",
  "talaria-core",
  "talaria-tui",
+ "tokio",
 ]
 
 [[package]]

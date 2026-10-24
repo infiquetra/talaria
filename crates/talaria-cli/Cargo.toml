@@ -17,6 +17,9 @@ hermes-client.workspace = true
 talaria-core.workspace = true
 talaria-app.workspace = true
 talaria-tui.workspace = true
+ratatui.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -1,6 +1,8 @@
 //! Performance harness for the Talaria binary: budgets, a pseudo-terminal runner,
 //! query responder, frame splitter, replay generator, sampler and report.
 
+#![forbid(unsafe_code)]
+
 pub mod budgets;
 pub mod error;
 pub mod frames;

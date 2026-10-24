@@ -155,6 +155,21 @@ mistake: a schema default that serializes is still on the wire, and Hermes reads
 
 **Generalizable rule.** A replay buffer is not a subscription; call `session.resume`
 before replaying. Do not send JSON null where the gateway requires an integer.
+## 2026-10-23 — Performance windows use arrival clocks, including queued output
+
+A child can finish its report while output already received by the pseudo-terminal
+reader is still waiting for the measurement thread. Closing a window when the report
+is noticed loses those final frames. Frame-byte and frame-count windows therefore
+use reader arrival timestamps and drain queued chunks through the cutoff. Key latency
+uses the same timestamps, while write lag is reported separately.
+
+CPU mean uses total process CPU time over the elapsed measurement interval; averaging
+percentages is wrong when process sampling takes uneven time. Missing process samples
+are measurement failures, never zero CPU or memory. The version query is also a child:
+it needs the same kill-and-wait guard, a deadline, and bounded captured output.
+
+Rule: use arrival timestamps for output windows and fail explicitly when a required
+measurement is unavailable.
 
 ## 2026-10-23 — Reconnect recovery needs original parameters and incident boundaries
 
