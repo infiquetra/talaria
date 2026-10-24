@@ -760,14 +760,16 @@ impl<W: io::Write> InlineTerminal<W> {
         }
 
         let below = self.rows - (self.top + self.height);
+        let wrapped = self.wrapped_extra(cols);
         if rows < self.rows {
-            let pushed = (self.rows - rows).saturating_sub(below);
+            let height_pushed = (self.rows - rows).saturating_sub(below);
+            let pushed = height_pushed.saturating_add(wrapped);
             if let Some(scrolled) = &mut self.scrolled {
-                *scrolled = scrolled.saturating_add(u32::from(pushed));
+                *scrolled = scrolled.saturating_add(u32::from(height_pushed));
             }
             self.spilled = self.spilled.saturating_add(pushed.saturating_sub(self.top));
             self.top -= self.top.min(pushed);
-            self.cursor -= self.cursor.min(pushed);
+            self.cursor -= self.cursor.min(height_pushed);
         } else {
             let grown = rows - self.rows;
             let pulled = match &mut self.scrolled {
@@ -996,6 +998,26 @@ impl<W: io::Write> InlineTerminal<W> {
     fn jump(&mut self, batch: &mut Batch, column: u16, row: u16) {
         batch.move_to(column, row);
         self.cursor = row;
+    }
+
+    /// Extra rows the last drawn live frame wraps into when the screen narrows to `cols`.
+    fn wrapped_extra(&self, cols: u16) -> u16 {
+        if cols == 0 || cols >= self.cols || self.overlay.is_some() {
+            return 0;
+        }
+        let area = self.previous.area;
+        let height = area.height.min(self.height);
+        let mut extra: u16 = 0;
+        for y in 0..height {
+            let last = (0..area.width)
+                .rev()
+                .find(|&x| self.previous[(x, y)] != ratatui::buffer::Cell::EMPTY)
+                .map_or(0, |x| x + 1);
+            if last > cols {
+                extra = extra.saturating_add((last - 1) / cols);
+            }
+        }
+        extra
     }
 
     // tmux saves the visible screen to history when erase-below starts at the origin.

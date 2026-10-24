@@ -509,6 +509,59 @@ fn shrink_and_larger_grow_from_fresh_screen_clears_old_live_tail() {
 }
 
 #[test]
+fn narrowing_live_rows_tracks_wraps_separately_from_history() {
+    // Alacritty and tmux pull history back differently after width reflow. Check the writer's
+    // geometry here rather than treating the emulator as an oracle for tmux regrowth.
+    for (cols, overlay, expected_top) in [
+        (80, false, 7),
+        (100, false, 10),
+        (120, false, 10),
+        (80, true, 10),
+    ] {
+        let sink = ByteSink::default();
+        let mut term = InlineTerminal::new(
+            sink.clone(),
+            (100, 30),
+            10,
+            probe(false, false, Some((0, 1))),
+            RestoreLink::detached(),
+        )
+        .expect("new terminal");
+        term.commit_lines(tagged(15)).expect("commit history");
+        let mut live = live_view_sections(6);
+        for n in 1..=3 {
+            let prefix = format!("LIVE# border {n} ");
+            live.push(PlainTextSection::new(&format!(
+                "{prefix}{}",
+                "x".repeat(100 - prefix.len())
+            )));
+        }
+        live.push(PlainTextSection::new("status"));
+        term.draw_live(&view_of(&live)).expect("draw wide rows");
+        assert_eq!(term.viewport(), Rect::new(0, 16, 100, 10));
+        if overlay {
+            term.open_overlay().expect("open overlay");
+        }
+        sink.take();
+        term.resize(cols, 20).expect("shrink");
+        assert_eq!(term.viewport(), Rect::new(0, expected_top, cols, 10));
+        if !overlay {
+            let written = String::from_utf8(sink.take()).expect("ASCII cursor moves");
+            assert!(written.contains(&format!("\x1b[{};1H", expected_top + 1)));
+            let mut vt = vt100::Parser::new(20, cols, 0);
+            vt.process(written.as_bytes());
+            assert_eq!(vt.screen().cursor_position(), (expected_top + 9, 0));
+        }
+        term.resize(100, 40).expect("grow");
+        assert_eq!(
+            term.viewport().y,
+            expected_top + 6,
+            "only the six rows pushed by the height change are pulled back"
+        );
+    }
+}
+
+#[test]
 fn resize_neither_duplicates_nor_loses_lines() {
     let mut rig = Rig::anchored(Alac::with_shell_history(COLS, ROWS));
     let live = live_view_sections(2);

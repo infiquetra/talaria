@@ -4390,3 +4390,20 @@ preserving the existing behavior when startup history is unknown.
 
 **Generalizable rule.** Test terminal control sequences against the multiplexer
 as well as emulators, and scrub the path forms a shell actually displays.
+
+## 2026-10-24 — Narrowing a live region adds rows before the resize handler runs
+
+**Evidence.** A simultaneous width and height shrink in tmux reflows full-width
+composer borders before the application handles the resize. An emulator check
+at 100 columns and 30 rows with three wide live rows reproduced a clear starting
+three rows too low after shrinking to 80 columns and 20 rows. Alacritty's history
+pullback on regrowth differs from tmux; the regression in
+`crates/talaria-tui/tests/scrollback.rs` therefore checks writer geometry directly.
+
+**Mechanism.** Count the extra wrapped rows in the cached frame when moving the
+viewport top, while cursor and history accounting still follow the height
+change. Keep only the last six rendered streaming-tail rows so the live region
+has room for width reflow in the smaller pane.
+
+**Generalizable rule.** Leave resize headroom in live output and account for
+physical reflow before clearing its old position.
