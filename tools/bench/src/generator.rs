@@ -35,7 +35,10 @@ pub fn generate(fixtures: &Path, out: &Path, budgets: &Budgets) -> Result<(), Be
             let record: Value = serde_json::from_str(line).map_err(|_| missing(kinds[0]))?;
             let params = &record["frame"]["params"];
             if record["dir"] == "in" && record["frame"]["method"] == "event" {
-                if stamps.is_null() {
+                // A live recording opens with gateway events that name no session, so the
+                // stamps come from the first event that does; otherwise each template keeps
+                // its own recording's session and the reducer drops the other one's events.
+                if stamps.is_null() && params.get("session_id").is_some() {
                     stamps = params.clone();
                 }
                 if let Some(kind) = params["type"].as_str()

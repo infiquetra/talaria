@@ -4236,3 +4236,19 @@ generates later settlement events.
 workspace dependency from test-only to normal use so concurrent denials can finish
 within a bounded wait before an interrupt. It adds no dependency version and imports
 no terminal library into the application crate.
+## 2026-10-24 — A live recording opens with events that name no session
+
+**Evidence.** `tools/bench/src/generator.rs`, `generate`. With the live-recorded
+`plain-answer` and `tool-diff` templates, the generated long session held 1,000 cells
+instead of 2,000: no tool cell survived replay.
+
+**Mechanism.** The generator copied `session_id`, `replay_epoch` and the other identity
+fields from the first event it saw. In a live recording that is `gateway.ready`, which
+names no session, so nothing was copied: message events kept the `plain-answer` session
+and tool events kept the `tool-diff` one, and the reducer dropped the second session's
+events. The stamps now come from the first event that carries a `session_id`.
+
+**Generalizable rule.** When splicing frames from several recordings into one stream,
+take the identity fields from an event that has them and check that every spliced event
+ends up in the same session; synthetic fixtures that start with a session event hide
+this.
