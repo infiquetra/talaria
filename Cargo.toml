@@ -11,6 +11,7 @@ members = [
     "tools/bench",
     "tools/patterns-check",
     "tools/record-fixture",
+    "tools/smoke",
 ]
 # Reference slices remain standalone packages when Cargo runs inside the handoff.
 exclude = ["docs"]
@@ -31,6 +32,7 @@ tokio-tungstenite = "=0.26.2"
 futures-util = "=0.3.34"
 fastrand = "=2.5.0"
 serde = { version = "=1.0.229", features = ["derive"] }
+signal-hook = "=0.4.5"
 serde_json = "=1.0.154"
 regress = "=0.10.3"
 proptest = "=1.11.0"

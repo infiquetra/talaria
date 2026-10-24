@@ -1,0 +1,10 @@
+PLACEHOLDER: this is the approval card layout planned by the card unit, not a capture of a real
+run. Replace it with a scrubbed capture of the first live run, then re-run the whole offline suite.
+
+Approval needed
+$ rm -rf .pytest_cache
+Recursive delete of a folder in the working directory.
+› 1. once
+  2. session
+  3. always
+  4. deny

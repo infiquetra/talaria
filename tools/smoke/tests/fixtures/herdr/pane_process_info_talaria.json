@@ -1,0 +1,1 @@
+{"id":"cli:pane:process_info","result":{"process_info":{"foreground_process_group_id":4343,"foreground_processes":[{"argv":["<talaria>","--profile","fixture"],"argv0":"<talaria>","cmdline":"<talaria> --profile fixture","cwd":"<scratch>","name":"talaria","pid":4343}],"pane_id":"w1:p1G","shell_pid":4242},"type":"pane_process_info"}}
