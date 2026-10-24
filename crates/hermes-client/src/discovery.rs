@@ -248,6 +248,18 @@ impl Endpoint {
             ..self.clone()
         }
     }
+
+    /// Copy this endpoint with a validated loopback relay origin, keeping its identity.
+    #[doc(hidden)]
+    pub fn with_api_origin(&self, origin: &str) -> Result<Endpoint, DiscoveryError> {
+        if !valid_api_origin(origin) {
+            return Err(DiscoveryError::InvalidApiOrigin);
+        }
+        Ok(Self {
+            api_origin: origin.to_owned(),
+            ..self.clone()
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

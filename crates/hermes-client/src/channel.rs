@@ -62,6 +62,8 @@ pub struct ChannelStats {
     pub frames_received: u64,
     /// When the current generation last received a frame. `None` when a generation begins.
     pub last_frame_at: Option<Instant>,
+    /// When this generation ended, independent of when its inbound closure is consumed.
+    pub closed_at: Option<Instant>,
     /// Frames whose generation was not current. A total for the life of the client.
     pub stale_generation_frames: u64,
     /// Replies that matched no waiting integer id. A total for the life of the client.
@@ -635,6 +637,7 @@ impl ChannelState {
         self.stats.generation = generation;
         self.stats.frames_received = 0;
         self.stats.last_frame_at = None;
+        self.stats.closed_at = None;
         self.connected = true;
         self.generation_closed = false;
         self.unknown_methods.clear();
@@ -766,6 +769,7 @@ impl ChannelState {
         }
         self.connected = false;
         self.generation_closed = true;
+        self.stats.closed_at = Some(Instant::now());
         let mut effects: Vec<_> = self
             .calls
             .drain()
@@ -1562,6 +1566,23 @@ fn request_kind(value: &Value) -> &str {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn closure_time_is_recorded_once_and_cleared_for_the_next_generation() {
+        let mut state = ChannelState::new(1);
+        let _ = state.begin_generation(Generation(1));
+        assert!(state.stats(0).closed_at.is_none());
+        let _ = state.on_closed(Generation(1), CloseReason::RemoteClosed { code: None });
+        let closed_at = state.stats(0).closed_at.expect("closure time");
+        let _ = state.on_closed(
+            Generation(1),
+            CloseReason::Error(std::io::ErrorKind::BrokenPipe),
+        );
+        let _ = state.on_closed(Generation(0), CloseReason::RemoteClosed { code: None });
+        assert_eq!(state.stats(0).closed_at, Some(closed_at));
+        let _ = state.begin_generation(Generation(2));
+        assert!(state.stats(0).closed_at.is_none());
+    }
 
     fn pending_answer() -> (Actor, String, oneshot::Receiver<Result<(), RespondError>>) {
         let mut state = ChannelState::new(3);

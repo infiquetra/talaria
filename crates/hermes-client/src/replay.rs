@@ -2,7 +2,7 @@
 //!
 //! This module has no clocks and no sockets. The link drives it.
 
-use std::marker::PhantomData;
+use std::collections::{BTreeMap, VecDeque};
 
 /// The last `(replay_epoch, seq)` the consumer has accepted for one session.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,7 +120,106 @@ pub struct ReplayToken(pub u64);
 /// Per-session cursor, hold, and passed-through memory.
 pub struct ReplayTracker<T> {
     hold_limit: usize,
-    _item: PhantomData<fn() -> T>,
+    sessions: BTreeMap<String, Session<T>>,
+    passed: VecDeque<(String, Cursor)>,
+    process_epoch: Option<String>,
+    next_token: u64,
+    duplicates: u64,
+}
+
+enum State {
+    Tracking,
+    Replaying(ReplayToken),
+    AwaitingSnapshot(ReplayGap),
+}
+
+struct Held<T> {
+    seq: u64,
+    epoch: String,
+    item: T,
+    replayed: bool,
+}
+
+struct Session<T> {
+    cursor: Cursor,
+    state: State,
+    hold: VecDeque<Held<T>>,
+    dropped: bool,
+}
+
+impl<T> Session<T> {
+    fn gap(
+        &mut self,
+        id: &str,
+        reason: GapReason,
+        seq: Option<u64>,
+        epoch: Option<&str>,
+    ) -> Out<T> {
+        let gap = ReplayGap {
+            session_id: id.to_owned(),
+            reason,
+            latest_seq: seq,
+            replay_epoch: epoch.map(str::to_owned),
+        };
+        self.state = State::AwaitingSnapshot(gap.clone());
+        Out::Gap(gap)
+    }
+
+    fn hold(&mut self, frame: Held<T>, limit: usize) -> bool {
+        self.hold.push_back(frame);
+        if self.hold.len() > limit {
+            self.hold.pop_front();
+            self.dropped = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn gate(
+        &mut self,
+        id: &str,
+        frame: Held<T>,
+        duplicates: &mut u64,
+        limit: usize,
+    ) -> Vec<Out<T>> {
+        let reason = if frame.epoch != self.cursor.replay_epoch {
+            Some(GapReason::EpochChanged)
+        } else if frame.seq <= self.cursor.last_sequence {
+            *duplicates = duplicates.saturating_add(1);
+            return Vec::new();
+        } else if self.cursor.last_sequence.checked_add(1) != Some(frame.seq) {
+            Some(GapReason::SeqJump)
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            let out = self.gap(id, reason, Some(frame.seq), Some(&frame.epoch));
+            self.hold.push_front(frame);
+            if self.hold.len() > limit {
+                self.hold.pop_front();
+                self.dropped = true;
+            }
+            vec![out]
+        } else {
+            self.cursor.last_sequence = frame.seq;
+            vec![Out::Deliver {
+                item: frame.item,
+                replayed: frame.replayed,
+            }]
+        }
+    }
+
+    fn flush(&mut self, id: &str, duplicates: &mut u64, limit: usize) -> Vec<Out<T>> {
+        let mut out = Vec::new();
+        while let Some(frame) = self.hold.pop_front() {
+            out.extend(self.gate(id, frame, duplicates, limit));
+            if matches!(self.state, State::AwaitingSnapshot(_)) {
+                break;
+            }
+        }
+        out
+    }
 }
 
 impl<T> ReplayTracker<T> {
@@ -128,28 +227,108 @@ impl<T> ReplayTracker<T> {
     pub fn new(hold_limit: usize) -> Self {
         Self {
             hold_limit,
-            _item: PhantomData,
+            sessions: BTreeMap::new(),
+            passed: VecDeque::new(),
+            process_epoch: None,
+            next_token: 0,
+            duplicates: 0,
         }
     }
 
     /// Start tracking `session_id` at `cursor`.
     ///
     /// A higher passed-through sequence of the same epoch replaces `cursor`.
-    pub fn track(&mut self, session_id: &str, cursor: Cursor) {
-        let _ = (self.hold_limit, session_id, cursor);
-        todo!("P1-03")
+    pub fn track(&mut self, session_id: &str, mut cursor: Cursor) {
+        if let Some(index) = self.passed.iter().position(|(id, _)| id == session_id)
+            && let Some((_, remembered)) = self.passed.remove(index)
+            && remembered.replay_epoch == cursor.replay_epoch
+            && remembered.last_sequence > cursor.last_sequence
+        {
+            cursor = remembered;
+        }
+        self.sessions.insert(
+            session_id.to_owned(),
+            Session {
+                cursor,
+                state: State::Tracking,
+                hold: VecDeque::new(),
+                dropped: false,
+            },
+        );
     }
 
     /// Forget `session_id`. Sends nothing.
     pub fn untrack(&mut self, session_id: &str) {
-        let _ = (self, session_id);
-        todo!("P1-03")
+        self.sessions.remove(session_id);
     }
 
     /// Apply one live frame.
     pub fn on_live(&mut self, stamp: Stamp<'_>, item: T) -> Vec<Out<T>> {
-        let _ = (self, stamp, item);
-        todo!("P1-03")
+        let Some(id) = stamp.session_id else {
+            return vec![Out::Deliver {
+                item,
+                replayed: false,
+            }];
+        };
+        if let Some(session) = self.sessions.get_mut(id) {
+            if stamp.server_gap {
+                return if matches!(session.state, State::AwaitingSnapshot(_)) {
+                    Vec::new()
+                } else {
+                    vec![session.gap(id, GapReason::ServerOverflow, stamp.seq, stamp.replay_epoch)]
+                };
+            }
+            let (Some(seq), Some(epoch)) = (stamp.seq, stamp.replay_epoch) else {
+                return vec![Out::Deliver {
+                    item,
+                    replayed: false,
+                }];
+            };
+            let frame = Held {
+                seq,
+                epoch: epoch.to_owned(),
+                item,
+                replayed: false,
+            };
+            if matches!(session.state, State::Tracking) {
+                return session.gate(id, frame, &mut self.duplicates, self.hold_limit);
+            }
+            let overflow = session.hold(frame, self.hold_limit);
+            if overflow && matches!(session.state, State::Replaying(_)) {
+                let gap = session.gap(id, GapReason::HoldOverflow, Some(seq), Some(epoch));
+                session.dropped = true;
+                return vec![gap];
+            }
+            return Vec::new();
+        }
+        if let (Some(seq), Some(epoch)) = (stamp.seq, stamp.replay_epoch) {
+            if let Some(index) = self.passed.iter().position(|(name, _)| name == id) {
+                // A session's entry retains its original insertion order for FIFO eviction.
+                if let Some((_, cursor)) = self.passed.get_mut(index)
+                    && (cursor.replay_epoch != epoch || seq > cursor.last_sequence)
+                {
+                    *cursor = Cursor {
+                        replay_epoch: epoch.to_owned(),
+                        last_sequence: seq,
+                    };
+                }
+            } else {
+                self.passed.push_back((
+                    id.to_owned(),
+                    Cursor {
+                        replay_epoch: epoch.to_owned(),
+                        last_sequence: seq,
+                    },
+                ));
+                if self.passed.len() > 1_024 {
+                    self.passed.pop_front();
+                }
+            }
+        }
+        vec![Out::Deliver {
+            item,
+            replayed: false,
+        }]
     }
 
     /// Record the process epoch. The first call records only.
@@ -157,20 +336,49 @@ impl<T> ReplayTracker<T> {
     /// A later epoch gaps every Tracking session with `BackendRestarted` and
     /// re-raises the existing gap of every AwaitingSnapshot session.
     pub fn on_new_connection(&mut self, process_epoch: &str) -> Vec<Out<T>> {
-        let _ = (self, process_epoch);
-        todo!("P1-03")
+        let Some(previous) = self.process_epoch.replace(process_epoch.to_owned()) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (id, session) in &mut self.sessions {
+            match &session.state {
+                State::AwaitingSnapshot(gap) => out.push(Out::Gap(gap.clone())),
+                State::Tracking if previous != process_epoch => {
+                    out.push(session.gap(id, GapReason::BackendRestarted, None, None));
+                }
+                _ => {}
+            }
+        }
+        out
     }
 
     /// Gap every Tracking session with `ReplayUnsupported`.
     pub fn on_replay_unsupported(&mut self) -> Vec<Out<T>> {
-        let _ = self;
-        todo!("P1-03")
+        self.sessions
+            .iter_mut()
+            .filter_map(|(id, session)| {
+                matches!(session.state, State::Tracking)
+                    .then(|| session.gap(id, GapReason::ReplayUnsupported, None, None))
+            })
+            .collect()
     }
 
     /// Tracking sessions to re-attach, and move them to Replaying.
     pub fn begin_replay(&mut self) -> Vec<(String, Cursor, ReplayToken)> {
-        let _ = self;
-        todo!("P1-03")
+        let mut plan = Vec::new();
+        for (id, session) in &mut self.sessions {
+            if matches!(session.state, State::Tracking) {
+                // Even one replay per nanosecond cannot exhaust this in 584 years.
+                self.next_token = self
+                    .next_token
+                    .checked_add(1)
+                    .expect("replay token space exhausted");
+                let token = ReplayToken(self.next_token);
+                session.state = State::Replaying(token);
+                plan.push((id.clone(), session.cursor.clone(), token));
+            }
+        }
+        plan
     }
 
     /// Apply a resume snapshot's epoch. A mismatch is one `EpochChanged` gap.
@@ -180,8 +388,22 @@ impl<T> ReplayTracker<T> {
         token: ReplayToken,
         snapshot_epoch: &str,
     ) -> Vec<Out<T>> {
-        let _ = (self, session_id, token, snapshot_epoch);
-        todo!("P1-03")
+        if !self.token_is_current(session_id, token) {
+            return Vec::new();
+        }
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return Vec::new();
+        };
+        if snapshot_epoch != session.cursor.replay_epoch {
+            vec![session.gap(
+                session_id,
+                GapReason::EpochChanged,
+                None,
+                Some(snapshot_epoch),
+            )]
+        } else {
+            Vec::new()
+        }
     }
 
     /// Apply a replay window, then flush the hold through the same gate.
@@ -191,8 +413,46 @@ impl<T> ReplayTracker<T> {
         token: ReplayToken,
         window: ReplayWindow<T>,
     ) -> Vec<Out<T>> {
-        let _ = (self, session_id, token, window);
-        todo!("P1-03")
+        if !self.token_is_current(session_id, token) {
+            return Vec::new();
+        }
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return Vec::new();
+        };
+        let events = match window {
+            ReplayWindow::SnapshotRequired { latest_seq } => {
+                return vec![session.gap(
+                    session_id,
+                    GapReason::SnapshotRequired,
+                    Some(latest_seq),
+                    None,
+                )];
+            }
+            ReplayWindow::Events(events) => events,
+        };
+        session.state = State::Tracking;
+        let held = std::mem::take(&mut session.hold);
+        let mut out = Vec::new();
+        for (seq, epoch, item) in events {
+            let frame = Held {
+                seq,
+                epoch,
+                item,
+                replayed: true,
+            };
+            if matches!(session.state, State::AwaitingSnapshot(_)) {
+                session.hold(frame, self.hold_limit);
+            } else {
+                out.extend(session.gate(session_id, frame, &mut self.duplicates, self.hold_limit));
+            }
+        }
+        for frame in held {
+            session.hold(frame, self.hold_limit);
+        }
+        if matches!(session.state, State::Tracking) {
+            out.extend(session.flush(session_id, &mut self.duplicates, self.hold_limit));
+        }
+        out
     }
 
     /// `NotFound` forgets the session. `Other` is one `ReplayFailed` gap.
@@ -202,26 +462,99 @@ impl<T> ReplayTracker<T> {
         token: ReplayToken,
         failure: ReplayFailure,
     ) -> Vec<Out<T>> {
-        let _ = (self, session_id, token, failure);
-        todo!("P1-03")
+        if !self.token_is_current(session_id, token) {
+            return Vec::new();
+        }
+        match failure {
+            ReplayFailure::NotFound => {
+                self.sessions.remove(session_id);
+                vec![Out::Gone(session_id.to_owned())]
+            }
+            ReplayFailure::Other => self
+                .sessions
+                .get_mut(session_id)
+                .map(|session| vec![session.gap(session_id, GapReason::ReplayFailed, None, None)])
+                .unwrap_or_default(),
+        }
     }
 
     /// A dropped socket. Replaying sessions return to Tracking with an empty hold.
     pub fn on_connection_lost(&mut self) {
-        let _ = self;
-        todo!("P1-03")
+        for session in self.sessions.values_mut() {
+            if matches!(session.state, State::Replaying(_)) {
+                session.state = State::Tracking;
+                session.hold.clear();
+                session.dropped = false;
+            }
+        }
     }
 
     /// Install `cursor` and flush held frames of that epoch above it.
     pub fn resync(&mut self, session_id: &str, cursor: Cursor) -> Vec<Out<T>> {
-        let _ = (self, session_id, cursor);
-        todo!("P1-03")
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            self.track(session_id, cursor);
+            return Vec::new();
+        };
+        session.cursor = cursor;
+        session.state = State::Tracking;
+        session.hold.retain(|frame| {
+            frame.epoch == session.cursor.replay_epoch && frame.seq > session.cursor.last_sequence
+        });
+        let dropped = std::mem::take(&mut session.dropped);
+        if let Some(first) = session.hold.front()
+            && session.cursor.last_sequence.checked_add(1) != Some(first.seq)
+        {
+            let seq = first.seq;
+            let epoch = first.epoch.clone();
+            let reason = if dropped {
+                GapReason::HoldOverflow
+            } else {
+                GapReason::SeqJump
+            };
+            session.dropped = dropped;
+            return vec![session.gap(session_id, reason, Some(seq), Some(&epoch))];
+        }
+        session.flush(session_id, &mut self.duplicates, self.hold_limit)
+    }
+
+    /// Total duplicates discarded by the cursor gate.
+    pub fn duplicates_dropped(&self) -> u64 {
+        self.duplicates
+    }
+
+    /// Whether a reply still belongs to the session's active replay.
+    pub fn token_is_current(&self, session_id: &str, token: ReplayToken) -> bool {
+        self.sessions.get(session_id).is_some_and(
+            |session| matches!(session.state, State::Replaying(current) if current == token),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_low_resync_keeps_the_hold_overflow_reason() {
+        let mut tracker = ReplayTracker::new(2);
+        tracker.track("s", cursor("e", 0));
+        let _ = tracker.on_live(server_gap("s", Some("e")), 0);
+        for seq in 5..=7 {
+            assert!(
+                tracker
+                    .on_live(live(Some("s"), Some(seq), Some("e")), seq)
+                    .is_empty()
+            );
+        }
+        for _ in 0..2 {
+            let out = tracker.resync("s", cursor("e", 3));
+            assert!(delivered(&out).is_empty());
+            assert_eq!(gaps(&out)[0].reason, GapReason::HoldOverflow);
+        }
+        let out = tracker.resync("s", cursor("e", 5));
+        assert_eq!(delivered(&out), vec![(6, false), (7, false)]);
+        assert!(gaps(&out).is_empty());
+    }
 
     fn cursor(epoch: &str, seq: u64) -> Cursor {
         Cursor {

@@ -5,17 +5,28 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 
-use crate::channel::{Client, Inbound};
+use crate::channel::{Client, CloseReason, Generation, Inbound, InboundEvent, InboundStream};
 use crate::connect::{ConnectError, Connection, ConnectionParts, HandshakeError};
 use crate::discovery::{DiscoveryError, ProfileLookupError};
-use crate::replay::{Cursor, GapReason, ReplayGap};
+use crate::replay::{
+    Cursor, GapReason, Out, ReplayFailure, ReplayGap, ReplayToken, ReplayTracker, ReplayWindow,
+    Stamp,
+};
 use crate::ticket::TicketError;
+use crate::{CallError, CallOptions};
+use hermes_contract::events::{EventFrame, Notification};
+use hermes_contract::methods::canonical::{session_events_since, session_resume};
+use hermes_contract::schemas::{
+    CanonicalEventsParams, CanonicalEventsResult, CanonicalResumeParams, CanonicalSnapshot,
+};
 
 /// Half-jitter ladder. `floor` is the shortest delay and `cap` is the longest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,16 +40,26 @@ pub struct Backoff {
 impl Backoff {
     /// `min(cap, floor × 2^(attempt - 1))`. `attempt` starts at 1.
     pub fn ceiling(&self, attempt: u32) -> Duration {
-        let _ = (self, attempt);
-        todo!("P1-03")
+        self.floor
+            .saturating_mul(
+                1u32.checked_shl(attempt.saturating_sub(1))
+                    .unwrap_or(u32::MAX),
+            )
+            .min(self.cap)
     }
 
     /// Uniform point in `[max(floor, ceiling / 2), ceiling]` selected by `draw`.
     ///
     /// `draw` is in `[0, 1]`. `0` is the bottom of the band and `1` is the ceiling.
     pub fn delay(&self, attempt: u32, draw: f64) -> Duration {
-        let _ = (self, attempt, draw);
-        todo!("P1-03")
+        let ceiling = self.ceiling(attempt);
+        let bottom = self.floor.max(ceiling / 2).min(ceiling);
+        let draw = if draw.is_finite() {
+            draw.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        bottom + (ceiling - bottom).mul_f64(draw)
     }
 }
 
@@ -65,6 +86,9 @@ pub struct HeartbeatClock {
     interval: Duration,
     deadline: Duration,
     connected_at: Instant,
+    last_frame: Instant,
+    last_tick: Instant,
+    last_ping: Option<Instant>,
 }
 
 impl HeartbeatClock {
@@ -74,19 +98,30 @@ impl HeartbeatClock {
             interval,
             deadline,
             connected_at,
+            last_frame: connected_at,
+            last_tick: connected_at,
+            last_ping: None,
         }
     }
 
     /// Remember the latest sign of life. An older instant is ignored.
     pub fn on_inbound(&mut self, at: Instant) {
-        let _ = (self, at);
-        todo!("P1-03")
+        self.last_frame = self.last_frame.max(at);
     }
 
     /// Decide this tick. A tick later than two intervals only sends a ping.
     pub fn on_tick(&mut self, now: Instant) -> Tick {
-        let _ = (self.interval, self.deadline, self.connected_at, now);
-        todo!("P1-03")
+        let late = now.saturating_duration_since(self.last_tick) > self.interval.saturating_mul(2);
+        self.last_tick = now;
+        if !late
+            && self.last_ping.is_some_and(|ping| ping > self.last_frame)
+            && now.saturating_duration_since(self.last_frame.max(self.connected_at))
+                >= self.deadline
+        {
+            return Tick::Dead;
+        }
+        self.last_ping = Some(now);
+        Tick::SendPing
     }
 }
 
@@ -205,36 +240,73 @@ impl std::fmt::Debug for DialFailure {
 
 impl From<DiscoveryError> for DialFailure {
     fn from(error: DiscoveryError) -> Self {
-        let _ = error;
-        todo!("P1-03")
+        let fatal = matches!(
+            error,
+            DiscoveryError::HomeNotServed
+                | DiscoveryError::NamedProfileHome
+                | DiscoveryError::Incompatible
+                | DiscoveryError::InvalidState
+                | DiscoveryError::InvalidApiOrigin
+                | DiscoveryError::InvalidSupervisor
+                | DiscoveryError::InvalidIdentity
+                | DiscoveryError::BadPointer(_)
+                | DiscoveryError::UnsafeNode { .. }
+        );
+        failure(fatal, error.to_string(), error.next_step().to_owned())
     }
 }
 
 impl From<ProfileLookupError> for DialFailure {
     fn from(error: ProfileLookupError) -> Self {
-        let _ = error;
-        todo!("P1-03")
+        let (ProfileLookupError::Parked { name, .. }
+        | ProfileLookupError::NeverDiscovered { name }) = &error;
+        let mut reason = error.to_string();
+        let mut next_step = error.next_step().to_owned();
+        if !matches!(name.as_str(), "default" | "fixture") && !name.is_empty() {
+            reason = reason.replace(name, "<profile>");
+            next_step = next_step.replace(name, "<profile>");
+        }
+        failure(true, reason, next_step)
     }
 }
 
 impl From<TicketError> for DialFailure {
     fn from(error: TicketError) -> Self {
-        let _ = error;
-        todo!("P1-03")
+        let fatal = matches!(
+            error,
+            TicketError::InvalidRequest
+                | TicketError::ScopeMismatch
+                | TicketError::Malformed
+                | TicketError::NotAuthenticated
+                | TicketError::BindingRejected
+                | TicketError::UnsafeNode { .. }
+        );
+        failure(fatal, error.to_string(), error.next_step().to_owned())
     }
 }
 
 impl From<ConnectError> for DialFailure {
     fn from(error: ConnectError) -> Self {
-        let _ = error;
-        todo!("P1-03")
+        let fatal = matches!(
+            error,
+            ConnectError::SubprotocolMismatch
+                | ConnectError::TlsNotSupported
+                | ConnectError::WrongPurpose
+        );
+        failure(fatal, error.to_string(), error.next_step().to_owned())
     }
 }
 
 impl From<HandshakeError> for DialFailure {
     fn from(error: HandshakeError) -> Self {
-        let _ = error;
-        todo!("P1-03")
+        let fatal = matches!(
+            error,
+            HandshakeError::NotSessionAuthority
+                | HandshakeError::BadReady
+                | HandshakeError::BadDescribe
+                | HandshakeError::BadFrame
+        );
+        failure(fatal, error.to_string(), error.next_step().to_owned())
     }
 }
 
@@ -261,9 +333,12 @@ pub struct Dialed {
 pub struct GatewayDial {
     home: PathBuf,
     profile: String,
-    hook: Option<Arc<dyn Fn(&mut Connection, u64) + Send + Sync>>,
+    hook: Option<ConnectHook>,
     origin: Option<String>,
 }
+
+/// Runs on each newly opened connection before its handshake.
+pub type ConnectHook = Arc<dyn Fn(&mut Connection, u64) + Send + Sync>;
 
 impl GatewayDial {
     /// Dial `profile` in `home` through the gateway's own API origin.
@@ -277,7 +352,7 @@ impl GatewayDial {
     }
 
     /// Run `hook` on the open socket, with its generation, before the handshake.
-    pub fn on_connect(mut self, hook: Arc<dyn Fn(&mut Connection, u64) + Send + Sync>) -> Self {
+    pub fn on_connect(mut self, hook: ConnectHook) -> Self {
         self.hook = Some(hook);
         self
     }
@@ -298,12 +373,39 @@ impl std::fmt::Debug for GatewayDial {
 }
 
 impl Dial for GatewayDial {
-    fn dial(
-        &mut self,
-        generation: u64,
-    ) -> impl Future<Output = Result<Dialed, DialFailure>> + Send {
-        let _ = (self.home.as_os_str(), &self.profile, generation);
-        async { todo!("P1-03") }
+    async fn dial(&mut self, generation: u64) -> Result<Dialed, DialFailure> {
+        let endpoint = crate::discover_with(
+            &self.home,
+            &crate::DiscoverOptions {
+                ensure: crate::EnsurePolicy::Never,
+                ..crate::DiscoverOptions::default()
+            },
+        )
+        .await?;
+        let endpoint = match self.origin.as_deref() {
+            Some(origin) => endpoint.with_api_origin(origin)?,
+            None => endpoint,
+        };
+        let profile = endpoint.resolve_profile(&self.profile)?;
+        let ticket = crate::mint_ticket(
+            &self.home,
+            &endpoint,
+            &profile,
+            crate::Purpose::Interactive,
+            crate::Scope::profile(),
+        )
+        .await?;
+        let mut connection = crate::connect(&endpoint, ticket).await?;
+        if let Some(hook) = &self.hook {
+            hook(&mut connection, generation);
+        }
+        let handshake = crate::handshake(&mut connection).await?;
+        Ok(Dialed {
+            parts: connection.into_parts(),
+            process_epoch: handshake.ready.replay_epoch,
+            heartbeat: handshake.ready.heartbeat == Some(true),
+            capabilities: handshake.describe.capabilities,
+        })
     }
 }
 
@@ -312,7 +414,7 @@ impl Dial for GatewayDial {
 pub enum LinkState {
     /// A handshake finished. The first generation is 1.
     Connected {
-        /// P1-02 generation of the open socket.
+        /// Channel generation of the open socket.
         generation: u64,
     },
     /// Waiting to dial again.
@@ -336,12 +438,13 @@ pub enum LinkState {
 }
 
 /// One item on the link's event channel.
+#[allow(clippy::large_enum_variant)]
 pub enum LinkEvent {
     /// The link changed state.
     State(LinkState),
     /// One inbound item. `replayed` is true for events taken from a replay window.
     Inbound {
-        /// P1-02 item, including its generation and raw params.
+        /// Channel item, including its generation and raw params.
         item: Inbound,
         /// True when a replay window produced this item.
         replayed: bool,
@@ -377,13 +480,15 @@ pub struct LinkStats {
 
 /// Handle to the link task. Dropping it does not close the link.
 pub struct Link {
-    _private: (),
+    client: Client,
+    commands: mpsc::UnboundedSender<LinkCommand>,
+    stop: watch::Sender<bool>,
+    stats: Arc<Mutex<LinkStats>>,
 }
 
 impl std::fmt::Debug for Link {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = (self, formatter);
-        todo!("P1-03")
+        formatter.write_str("Link { .. }")
     }
 }
 
@@ -392,48 +497,558 @@ impl Link {
     ///
     /// A failed first dial is returned. It is not retried.
     pub async fn start(
-        dial: impl Dial,
+        mut dial: impl Dial,
         cfg: LinkConfig,
     ) -> Result<(Self, mpsc::Receiver<LinkEvent>), DialFailure> {
-        let _ = (dial, cfg);
-        todo!("P1-03")
+        let first = tokio::time::timeout(cfg.dial_timeout, dial.dial(1))
+            .await
+            .unwrap_or_else(|_| Err(dial_timeout()))?;
+        let (client, inbound) = Client::start(first.parts);
+        let (commands, receiver) = mpsc::unbounded_channel();
+        let (events, rx) = mpsc::channel(cfg.event_buffer.max(1));
+        let (stop, cancel) = watch::channel(false);
+        let stats = Arc::new(Mutex::new(LinkStats::default()));
+        let now = Instant::now();
+        let mut tracker = ReplayTracker::new(cfg.hold_limit);
+        tracker.on_new_connection(&first.process_epoch);
+        let mut ticks = tokio::time::interval_at(now + cfg.ping_interval, cfg.ping_interval);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let task = LinkTask {
+            client: client.clone(),
+            inbound,
+            commands: receiver,
+            events,
+            cancel,
+            _keep_stop: stop.clone(),
+            stats: stats.clone(),
+            tracker,
+            cfg,
+            generation: Generation(1),
+            connected: true,
+            connected_at: now,
+            heartbeat: first.heartbeat,
+            clock: HeartbeatClock::new(Duration::ZERO, Duration::ZERO, now),
+            ticks,
+            attempt: 0,
+            retry_at: None,
+            replay: JoinSet::new(),
+        };
+        tokio::spawn(task.run(dial));
+        Ok((
+            Self {
+                client,
+                commands,
+                stop,
+                stats,
+            },
+            rx,
+        ))
     }
 
     /// The one client. Clones stay valid across reconnects.
     pub fn client(&self) -> Client {
-        let _ = self;
-        todo!("P1-03")
+        self.client.clone()
     }
 
     /// Track `session_id` at `cursor`. Returns before the task applies it.
     pub fn track(&self, session_id: &str, cursor: Cursor) {
-        let _ = (self, session_id, cursor);
-        todo!("P1-03")
+        let _ = self
+            .commands
+            .send(LinkCommand::Track(session_id.to_owned(), cursor));
     }
 
     /// Stop tracking `session_id`. Sends nothing to the gateway.
     pub fn untrack(&self, session_id: &str) {
-        let _ = (self, session_id);
-        todo!("P1-03")
+        let _ = self
+            .commands
+            .send(LinkCommand::Untrack(session_id.to_owned()));
     }
 
     /// Install `cursor` after the consumer has rebuilt the session.
     pub fn resync(&self, session_id: &str, cursor: Cursor) {
-        let _ = (self, session_id, cursor);
-        todo!("P1-03")
+        let _ = self
+            .commands
+            .send(LinkCommand::Resync(session_id.to_owned(), cursor));
     }
 
     /// A snapshot of the counters.
     pub fn stats(&self) -> LinkStats {
-        let _ = self;
-        todo!("P1-03")
+        self.stats.lock().expect("link stats poisoned").clone()
     }
 
     /// Stop the link. Emits `State(Closed)` and then ends.
     pub async fn close(self) {
-        let _ = self._private;
-        todo!("P1-03")
+        let _ = self.stop.send(true);
+        self.client.close().await;
     }
+}
+
+fn failure(fatal: bool, reason: String, next_step: String) -> DialFailure {
+    if fatal {
+        DialFailure::GiveUp { reason, next_step }
+    } else {
+        DialFailure::Retry { reason, next_step }
+    }
+}
+
+fn dial_timeout() -> DialFailure {
+    failure(
+        false,
+        "dial timed out".into(),
+        "Check the gateway with `hermes gateway status`.".into(),
+    )
+}
+
+enum LinkCommand {
+    Track(String, Cursor),
+    Untrack(String),
+    Resync(String, Cursor),
+}
+
+enum ReplayReply {
+    PingDone,
+    Attached {
+        id: String,
+        cursor: Cursor,
+        token: ReplayToken,
+        result: Result<Box<CanonicalSnapshot>, CallError>,
+    },
+    Window {
+        id: String,
+        token: ReplayToken,
+        result: Result<(CanonicalEventsResult, serde_json::Value), CallError>,
+    },
+}
+
+struct LinkTask {
+    client: Client,
+    inbound: InboundStream,
+    commands: mpsc::UnboundedReceiver<LinkCommand>,
+    events: mpsc::Sender<LinkEvent>,
+    cancel: watch::Receiver<bool>,
+    // Dropping the public handle deliberately leaves the link running.
+    _keep_stop: watch::Sender<bool>,
+    stats: Arc<Mutex<LinkStats>>,
+    tracker: ReplayTracker<Inbound>,
+    cfg: LinkConfig,
+    generation: Generation,
+    connected: bool,
+    connected_at: Instant,
+    heartbeat: bool,
+    clock: HeartbeatClock,
+    ticks: tokio::time::Interval,
+    attempt: u32,
+    retry_at: Option<Instant>,
+    replay: JoinSet<ReplayReply>,
+}
+
+impl LinkTask {
+    async fn emit(&mut self, event: LinkEvent) {
+        if *self.cancel.borrow() {
+            return;
+        }
+        tokio::select! {
+            biased;
+            _ = self.cancel.changed() => {},
+            _ = self.events.send(event) => {},
+        }
+    }
+
+    async fn outputs(&mut self, outputs: Vec<Out<Inbound>>) {
+        self.stats
+            .lock()
+            .expect("link stats poisoned")
+            .duplicates_dropped = self.tracker.duplicates_dropped();
+        for output in outputs {
+            let event = match output {
+                Out::Deliver { item, replayed } => {
+                    if replayed {
+                        self.stats
+                            .lock()
+                            .expect("link stats poisoned")
+                            .replayed_events += 1;
+                    }
+                    LinkEvent::Inbound { item, replayed }
+                }
+                Out::Gap(gap) => {
+                    *self
+                        .stats
+                        .lock()
+                        .expect("link stats poisoned")
+                        .gaps
+                        .entry(gap.reason)
+                        .or_default() += 1;
+                    LinkEvent::Gap(gap)
+                }
+                Out::Gone(session_id) => LinkEvent::SessionGone { session_id },
+            };
+            self.emit(event).await;
+            if *self.cancel.borrow() {
+                break;
+            }
+        }
+    }
+
+    fn restart_clock(&mut self) {
+        self.connected_at = Instant::now();
+        self.clock = HeartbeatClock::new(
+            self.cfg.ping_interval,
+            self.cfg.ping_deadline,
+            self.connected_at,
+        );
+        self.ticks
+            .reset_at(self.connected_at + self.cfg.ping_interval);
+    }
+
+    async fn retry(&mut self, reason: String) {
+        self.attempt = self.attempt.saturating_add(1);
+        let draw = match self.cfg.jitter {
+            Jitter::Random => fastrand::f64(),
+            Jitter::Fixed(draw) => draw,
+        };
+        let delay = self.cfg.backoff.delay(self.attempt, draw);
+        self.emit(LinkEvent::State(LinkState::Reconnecting {
+            attempt: self.attempt,
+            retry_in: delay,
+            reason,
+        }))
+        .await;
+        self.retry_at = Some(Instant::now() + delay);
+    }
+
+    async fn lost(&mut self, reason: &str) {
+        let stats = self.client.stats().await;
+        let ended_at = if stats.generation == self.generation {
+            stats
+                .closed_at
+                .map(Instant::from_std)
+                .unwrap_or_else(Instant::now)
+        } else {
+            Instant::now()
+        };
+        if ended_at.saturating_duration_since(self.connected_at) >= self.cfg.stable_open {
+            self.attempt = 0;
+        }
+        self.connected = false;
+        self.replay.abort_all();
+        self.tracker.on_connection_lost();
+        self.retry(reason.to_owned()).await;
+    }
+
+    fn begin_replay(&mut self) {
+        for (id, cursor, token) in self.tracker.begin_replay() {
+            let client = self.client.clone();
+            let timeout = self.cfg.replay_timeout;
+            self.replay.spawn(async move {
+                let params = CanonicalResumeParams {
+                    session_id: id.clone(),
+                    ..Default::default()
+                };
+                let result = client
+                    .call_with::<session_resume::Marker>(
+                        params,
+                        CallOptions {
+                            timeout: Some(timeout),
+                        },
+                    )
+                    .await
+                    .map(Box::new);
+                ReplayReply::Attached {
+                    id,
+                    cursor,
+                    token,
+                    result,
+                }
+            });
+        }
+    }
+
+    async fn replay_reply(&mut self, reply: ReplayReply) {
+        if !matches!(reply, ReplayReply::PingDone) {
+            // The channel can fail a pending call before the link consumes Closed.
+            // Such an Unknown belongs to a lost replay, not a snapshot incident.
+            let stats = self.client.stats().await;
+            if !self.connected || stats.generation != self.generation || stats.closed_at.is_some() {
+                return;
+            }
+        }
+        match reply {
+            ReplayReply::PingDone => {}
+            ReplayReply::Attached {
+                id,
+                cursor,
+                token,
+                result,
+            } => {
+                if !self.tracker.token_is_current(&id, token) {
+                    return;
+                }
+                match result {
+                    Ok(snapshot) if snapshot.session_id == id => {
+                        let outs = self
+                            .tracker
+                            .on_reattached(&id, token, &snapshot.replay_epoch);
+                        self.outputs(outs).await;
+                        if !self.tracker.token_is_current(&id, token) {
+                            return;
+                        }
+                        self.emit(LinkEvent::Reattached {
+                            session_id: id.clone(),
+                            subscription_id: snapshot.subscription_id,
+                        })
+                        .await;
+                        let Ok(last_sequence) = cursor.last_sequence.try_into() else {
+                            let outs =
+                                self.tracker
+                                    .on_replay_failed(&id, token, ReplayFailure::Other);
+                            self.outputs(outs).await;
+                            return;
+                        };
+                        let client = self.client.clone();
+                        let timeout = self.cfg.replay_timeout;
+                        self.replay.spawn(async move {
+                            let params = CanonicalEventsParams {
+                                session_id: id.clone(),
+                                last_sequence,
+                                replay_epoch: Some(cursor.replay_epoch),
+                                last_seen: 0,
+                                profile: None,
+                            };
+                            let result = client
+                                .call_with_raw::<session_events_since::Marker>(
+                                    params,
+                                    CallOptions {
+                                        timeout: Some(timeout),
+                                    },
+                                )
+                                .await;
+                            ReplayReply::Window { id, token, result }
+                        });
+                    }
+                    result => {
+                        let why = replay_failure(result.err().as_ref());
+                        let outs = self.tracker.on_replay_failed(&id, token, why);
+                        self.outputs(outs).await;
+                    }
+                }
+            }
+            ReplayReply::Window { id, token, result } => {
+                if !self.tracker.token_is_current(&id, token) {
+                    return;
+                }
+                let window = result
+                    .map_err(|err| replay_failure(Some(&err)))
+                    .and_then(|(result, raw)| decode_window(result, raw, self.generation, &id));
+                let outs = match window {
+                    Ok(window) => self.tracker.on_replay_window(&id, token, window),
+                    Err(why) => self.tracker.on_replay_failed(&id, token, why),
+                };
+                self.outputs(outs).await;
+            }
+        }
+    }
+
+    async fn run<D: Dial>(mut self, dial: D) {
+        type DialFuture<D> = Pin<Box<dyn Future<Output = (D, Result<Dialed, DialFailure>)> + Send>>;
+        let mut dial = Some(dial);
+        let mut dialing: Option<DialFuture<D>> = None;
+        let mut commands_open = true;
+        self.restart_clock();
+        self.emit(LinkEvent::State(LinkState::Connected { generation: 1 }))
+            .await;
+        while !*self.cancel.borrow() && !self.events.is_closed() {
+            tokio::select! {
+                _ = self.cancel.changed() => break,
+                _ = self.events.closed() => break,
+                command = self.commands.recv(), if commands_open => match command {
+                    Some(LinkCommand::Track(id, cursor)) => self.tracker.track(&id, cursor),
+                    Some(LinkCommand::Untrack(id)) => self.tracker.untrack(&id),
+                    Some(LinkCommand::Resync(id, cursor)) => {
+                        let outs = self.tracker.resync(&id, cursor);
+                        self.outputs(outs).await;
+                    }
+                    None => commands_open = false,
+                },
+                item = self.inbound.next() => match item {
+                    Some(Inbound::Closed(closed)) => {
+                        if self.connected && closed.generation == self.generation {
+                            let reason = match closed.reason {
+                                CloseReason::RemoteClosed { .. } => Some("socket closed"),
+                                CloseReason::Error(_) => Some("read failed"),
+                                CloseReason::Overloaded => Some("gateway closed a slow reader"),
+                                CloseReason::Replaced | CloseReason::ClientClosed => None,
+                            };
+                            if let Some(reason) = reason { self.lost(reason).await; }
+                        }
+                    }
+                    Some(item) if self.connected => {
+                        let generation = match &item {
+                            Inbound::Event(event) => event.generation,
+                            Inbound::ServerRequest(request) => request.generation,
+                            Inbound::Malformed(frame) => frame.generation,
+                            Inbound::Closed(_) => unreachable!("closed handled above"),
+                        };
+                        if generation != self.generation { continue; }
+                        let stamp = match &item {
+                            Inbound::Event(event) => Stamp {
+                                session_id: event.frame.session_id.as_deref(), seq: event.frame.seq,
+                                replay_epoch: event.frame.replay_epoch.as_deref(),
+                                server_gap: matches!(event.frame.notification, Notification::SessionReplayGap(_)),
+                            },
+                            _ => Stamp { session_id: None, seq: None, replay_epoch: None, server_gap: false },
+                        };
+                        // The stamp borrows the event; own the small metadata before moving it.
+                        let id = stamp.session_id.map(str::to_owned);
+                        let epoch = stamp.replay_epoch.map(str::to_owned);
+                        let stamp = Stamp { session_id: id.as_deref(), replay_epoch: epoch.as_deref(), ..stamp };
+                        let gap_hint = match &item {
+                            Inbound::Event(event) if stamp.server_gap => Some((
+                                event.raw["payload"]["latest_seq"].as_u64(),
+                                event.raw["payload"]["replay_epoch"].as_str().map(str::to_owned),
+                            )),
+                            _ => None,
+                        };
+                        let mut outs = self.tracker.on_live(stamp, item);
+                        if let Some((seq, epoch)) = gap_hint {
+                            for out in &mut outs {
+                                if let Out::Gap(gap) = out {
+                                    gap.latest_seq = seq;
+                                    gap.replay_epoch = epoch.clone();
+                                }
+                            }
+                        }
+                        self.outputs(outs).await;
+                    }
+                    Some(_) => {},
+                    None => break,
+                },
+                _ = self.ticks.tick(), if self.connected && self.heartbeat => {
+                    let stats = self.client.stats().await;
+                    if stats.generation == self.generation && let Some(at) = stats.last_frame_at {
+                        self.clock.on_inbound(Instant::from_std(at));
+                    }
+                    match self.clock.on_tick(Instant::now()) {
+                        Tick::Dead => self.lost("heartbeat timeout").await,
+                        Tick::SendPing => {
+                            let client = self.client.clone();
+                            let timeout = self.cfg.ping_interval;
+                            // Abort heartbeat calls along with this connection's replay work.
+                            self.replay.spawn(async move {
+                                let _ = client.call_raw("gateway.ping", serde_json::json!({}), CallOptions { timeout: Some(timeout) }).await;
+                                ReplayReply::PingDone
+                            });
+                        }
+                    }
+                },
+                _ = async { tokio::time::sleep_until(self.retry_at.expect("retry scheduled")).await }, if self.retry_at.is_some() => {
+                    self.retry_at = None;
+                    let mut next = dial.take().expect("one dial at a time");
+                    let generation = self.generation.0 + 1;
+                    let timeout = self.cfg.dial_timeout;
+                    dialing = Some(Box::pin(async move {
+                        let result = tokio::time::timeout(timeout, next.dial(generation)).await.unwrap_or_else(|_| Err(dial_timeout()));
+                        (next, result)
+                    }));
+                },
+                (next, result) = async { dialing.as_mut().expect("dialing").await }, if dialing.is_some() => {
+                    dialing = None;
+                    dial = Some(next);
+                    match result {
+                        Ok(open) => {
+                            let Ok(generation) = self.client.replace_connection(open.parts).await else { break; };
+                            self.generation = generation;
+                            self.connected = true;
+                            self.heartbeat = open.heartbeat;
+                            self.restart_clock();
+                            self.stats.lock().expect("link stats poisoned").reconnects += 1;
+                            self.emit(LinkEvent::State(LinkState::Connected { generation: generation.0 })).await;
+                            let outs = self.tracker.on_new_connection(&open.process_epoch);
+                            let restarted = outs.iter().any(|out| matches!(out, Out::Gap(gap) if gap.reason == GapReason::BackendRestarted));
+                            self.outputs(outs).await;
+                            if !restarted {
+                                if open.capabilities.iter().any(|cap| cap == "event-replay-v1") { self.begin_replay(); }
+                                else {
+                                    let outs = self.tracker.on_replay_unsupported();
+                                    self.outputs(outs).await;
+                                }
+                            }
+                        }
+                        Err(DialFailure::Retry { reason, .. }) => self.retry(reason).await,
+                        Err(DialFailure::GiveUp { reason, next_step }) => {
+                            self.client.close().await;
+                            self.emit(LinkEvent::State(LinkState::Failed { reason, next_step })).await;
+                            if !*self.cancel.borrow() {
+                                tokio::select! {
+                                    _ = self.cancel.changed() => {},
+                                    _ = self.events.closed() => {},
+                                }
+                            }
+                            break;
+                        },
+                    }
+                },
+                Some(reply) = self.replay.join_next(), if !self.replay.is_empty() => {
+                    if let Ok(reply) = reply { self.replay_reply(reply).await; }
+                },
+            }
+        }
+        // Dropping the dial future and JoinSet cancels work, including a hung upgrade.
+        drop(dialing);
+        self.replay.abort_all();
+        self.client.close().await;
+        let _ = self.events.send(LinkEvent::State(LinkState::Closed)).await;
+    }
+}
+
+fn replay_failure(error: Option<&CallError>) -> ReplayFailure {
+    if matches!(error, Some(CallError::Rpc(error)) if error.reason.as_deref() == Some("not_found"))
+    {
+        ReplayFailure::NotFound
+    } else {
+        ReplayFailure::Other
+    }
+}
+
+fn decode_window(
+    result: CanonicalEventsResult,
+    raw: serde_json::Value,
+    generation: Generation,
+    session_id: &str,
+) -> Result<ReplayWindow<Inbound>, ReplayFailure> {
+    if result.snapshot_required || result.truncated {
+        return Ok(ReplayWindow::SnapshotRequired {
+            latest_seq: result
+                .latest_seq
+                .try_into()
+                .map_err(|_| ReplayFailure::Other)?,
+        });
+    }
+    let raw_events = raw
+        .get("events")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(ReplayFailure::Other)?;
+    let events = raw_events
+        .iter()
+        .cloned()
+        .map(|raw| {
+            let frame = EventFrame::from_params(&raw).map_err(|_| ReplayFailure::Other)?;
+            if frame.session_id.as_deref() != Some(session_id) {
+                return Err(ReplayFailure::Other);
+            }
+            let seq = frame.seq.ok_or(ReplayFailure::Other)?;
+            let epoch = frame.replay_epoch.clone().ok_or(ReplayFailure::Other)?;
+            Ok((
+                seq,
+                epoch,
+                Inbound::Event(InboundEvent {
+                    generation,
+                    frame,
+                    raw,
+                }),
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ReplayWindow::Events(events))
 }
 
 #[cfg(test)]
@@ -446,6 +1061,50 @@ mod tests {
     use super::*;
     use crate::connect::Closed;
     use crate::discovery::{EnsureError, NodeKind, NodeProblem, PointerProblem, ReportedState};
+
+    #[test]
+    fn replay_raw_preserves_extension_fields_and_nulls() {
+        let event = serde_json::json!({
+            "type": "message.delta", "session_id": "s", "seq": 5,
+            "replay_epoch": "e", "payload": {"text": "hello", "future_payload": 7},
+            "future_envelope": {"value": null}, "admission_id": null,
+        });
+        let raw = serde_json::json!({
+            "events": [event.clone()], "latest_seq": 5, "last_sequence": 5,
+            "epoch": "e", "replay_epoch": "e", "truncated": false,
+            "snapshot_required": false, "count": 1,
+        });
+        let typed = serde_json::from_value(raw.clone()).expect("canonical replay result");
+        let ReplayWindow::Events(mut events) =
+            decode_window(typed, raw, Generation(3), "s").unwrap()
+        else {
+            panic!("expected events");
+        };
+        let (_, _, Inbound::Event(inbound)) = events.pop().expect("one event") else {
+            panic!("expected inbound event");
+        };
+        assert_eq!(inbound.generation, Generation(3));
+        assert_eq!(inbound.raw, event);
+    }
+
+    #[test]
+    fn replay_decode_rejects_entire_window_on_invalid_or_foreign_event() {
+        for bad in [
+            serde_json::json!({"type": "message.delta", "session_id": "s", "seq": 6, "replay_epoch": "e", "payload": {}}),
+            serde_json::json!({"type": "message.delta", "session_id": "other", "seq": 6, "replay_epoch": "e", "payload": {"text": "wrong session"}}),
+        ] {
+            let raw = serde_json::json!({
+                "events": [{"type": "message.delta", "session_id": "s", "seq": 5, "replay_epoch": "e", "payload": {"text": "ok"}}, bad],
+                "latest_seq": 6, "last_sequence": 6, "epoch": "e", "replay_epoch": "e",
+                "truncated": false, "snapshot_required": false, "count": 2,
+            });
+            let typed = serde_json::from_value(raw.clone()).expect("canonical replay envelope");
+            assert!(matches!(
+                decode_window(typed, raw, Generation(1), "s"),
+                Err(ReplayFailure::Other)
+            ));
+        }
+    }
 
     fn production() -> Backoff {
         Backoff {

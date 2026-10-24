@@ -27,6 +27,7 @@ crossterm = { version = "=0.29.0", features = ["event-stream"] }
 tokio = { version = "=1.54.1", features = ["full"] }
 tokio-tungstenite = "=0.26.2"
 futures-util = "=0.3.34"
+fastrand = "=2.5.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 regress = "=0.10.3"

@@ -77,6 +77,8 @@ async fn main() {
                 cwd: Some(scratch.path().to_string_lossy().into_owned()),
                 model: args.model.clone(),
                 provider: args.provider.clone(),
+                // Hermes v0.22.4 rejects the generated null default as an unreadable cap.
+                max_turns: hermes_contract::schemas::MaxTurns::from(30),
                 ..CanonicalCreateParams::default()
             };
             client.call::<session_create::Marker>(params).await
@@ -91,8 +93,8 @@ async fn main() {
     link.track(&watch.session, cursor_of(&snapshot));
 
     if let Some(prompt) = &args.prompt {
-        let params =
-            prompt_submit_params(watch.session.clone(), prompt.clone(), "reconnect-watch-1");
+        let submission_id = format!("reconnect-watch-{:016x}", fastrand::u64(..));
+        let params = prompt_submit_params(watch.session.clone(), prompt.clone(), submission_id);
         if let Err(err) = client.call::<prompt_submit::Marker>(params).await {
             watch.line(&format!("SUBMIT FAILED reason={err}"));
         }

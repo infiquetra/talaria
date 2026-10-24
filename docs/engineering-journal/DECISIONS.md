@@ -2,6 +2,50 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-23 — Half-jitter backoff, 1 to 30 s
+
+**Decision.** Reconnect delays use half-jitter. Attempt 1 waits the 1 s floor. Later
+attempts draw inside the upper half of a ceiling that doubles until 30 s
+(`Backoff::delay` in `crates/hermes-client/src/liveness.rs`).
+
+**Rationale.** Hermes draws full jitter that can be zero and then hot-loops a dead
+gateway. Rejected alternative: Hermes's full jitter from 0.
+
+**Revisit when.** A floor of 1 s proves too slow on a local gateway.
+
+## 2026-10-23 — Grace tick after a late heartbeat tick
+
+**Decision.** A heartbeat tick more than two intervals late only sends a ping. It does
+not declare the link dead (`HeartbeatClock::on_tick`).
+
+**Rationale.** Hermes treats that late tick, with a ping still outstanding, as death.
+Machine sleep would then look like a dropped socket. Rejected alternative: immediate
+death on a late tick.
+
+**Revisit when.** Sleep detection becomes available from the platform.
+
+## 2026-10-23 — Replay failure becomes a gap
+
+**Decision.** A failed, timed-out, or mismatched `session.resume` or
+`session.events.since` becomes one gap. `ReplayTracker::on_replay_failed` records that
+replay failure. A not-found reply forgets the session instead.
+
+**Rationale.** Hermes swallows replay errors, so the client can look attached while the
+transcript has a hole. Rejected alternative: swallowing those errors.
+
+**Revisit when.** Talaria gains a history backstop that can fill a failed window without
+a snapshot.
+
+## 2026-10-23 — No retry of the first connection
+
+**Decision.** `Link::start` dials once. A failed first connection is returned to the
+caller and is not retried.
+
+**Rationale.** Someone starting Talaria with no gateway should see the reason and the
+next step at once, not a reconnect loop. Rejected alternative: retrying from start-up.
+
+**Revisit when.** Talaria gains a background mode that should wait for a gateway.
+
 ## 2026-10-23 — Generate Hermes protocol bindings offline with narrow schema corrections
 
 **Decision.** Use a Python 3.9 standard-library generator with cargo-typify 0.8.0
