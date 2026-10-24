@@ -49,6 +49,8 @@ const LIVE_HEIGHT: u16 = 4;
 const COMPOSER_ROWS: u16 = 10;
 /// A long open cell is drawn from at least this many of its last lines.
 const PREVIEW_MIN_LINES: usize = 80;
+/// At most this many tail rows are shown in the live region while a turn streams.
+const MAX_TAIL_ROWS: usize = 6;
 /// Shown under the composer until the session is open.
 const CONNECTING: &str = "Connecting to Hermes\u{2026}";
 
@@ -329,7 +331,7 @@ impl Screen for TuiScreen {
         self.inputs = status_inputs(view, self.inputs.home_dir.clone());
         self.sync_prompts(view, now);
         let width = self.terminal.viewport().width;
-        let tail: Vec<Line<'static>> = view
+        let mut tail: Vec<Line<'static>> = view
             .state
             .map(|state| {
                 let limit = usize::from(self.terminal.viewport().height)
@@ -345,6 +347,9 @@ impl Screen for TuiScreen {
                     .collect()
             })
             .unwrap_or_default();
+        if tail.len() > MAX_TAIL_ROWS {
+            tail.drain(..tail.len() - MAX_TAIL_ROWS);
+        }
         let tail = MarkdownTailSection::new(tail);
         let connecting = PlainTextSection::new(CONNECTING);
         let status = StatusSection::new(&self.inputs, self.external.segment(), &self.palette);
