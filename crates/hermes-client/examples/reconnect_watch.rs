@@ -382,7 +382,7 @@ fn parse_args() -> Args {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: reconnect_watch [--home DIR] [--profile NAME] [--model M] [--provider P] \
+        "usage: reconnect_watch [--home DIR] [--profile <name>] [--model M] [--provider P] \
          [--prompt TEXT] [--resume SESSION]"
     );
     exit(2);

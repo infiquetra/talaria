@@ -377,7 +377,14 @@ fn restore_sequence(state: &RestoreState) -> Vec<u8> {
     bytes.extend_from_slice(RESET_REGION);
     if state.placed {
         push_move(&mut bytes, 0, state.top);
+        if state.top == 0 {
+            bytes.extend_from_slice(CLEAR_LINE);
+            push_move(&mut bytes, 0, 1);
+        }
         bytes.extend_from_slice(CLEAR_BELOW);
+        if state.top == 0 {
+            push_move(&mut bytes, 0, 0);
+        }
     }
     bytes.extend_from_slice(PASTE_OFF);
     if state.flags_pushed {
@@ -686,8 +693,7 @@ impl<W: io::Write> InlineTerminal<W> {
             self.clear = true;
         }
         if self.clear {
-            self.go(&mut batch, 0, self.top);
-            batch.put(CLEAR_BELOW);
+            self.clear_from_top_relative(&mut batch);
         }
         let blank = Buffer::empty(area);
         let previous = std::mem::replace(&mut self.previous, blank);
@@ -776,8 +782,7 @@ impl<W: io::Write> InlineTerminal<W> {
         // The new size is known now: address the top absolutely, so the cursor row is exact again.
         let mut batch = self.begin();
         self.sync_on(&mut batch);
-        self.jump(&mut batch, 0, self.top);
-        batch.put(CLEAR_BELOW);
+        self.clear_from_top_absolute(&mut batch);
         self.park(&mut batch);
         self.sync_off(&mut batch);
         self.clear = false;
@@ -862,8 +867,7 @@ impl<W: io::Write> InlineTerminal<W> {
         batch.put(ALTERNATE_OFF);
         batch.mark(Mark::OverlayOff);
         if self.placed {
-            self.jump(&mut batch, 0, self.top);
-            batch.put(CLEAR_BELOW);
+            self.clear_from_top_absolute(&mut batch);
             self.write_queue(&mut batch)?;
         } else if self.rows >= 3 {
             self.place_at_bottom(&mut batch);
@@ -968,6 +972,35 @@ impl<W: io::Write> InlineTerminal<W> {
     fn jump(&mut self, batch: &mut Batch, column: u16, row: u16) {
         batch.move_to(column, row);
         self.cursor = row;
+    }
+
+    // tmux saves the visible screen to history when erase-below starts at the origin.
+    fn clear_from_top_relative(&mut self, batch: &mut Batch) {
+        self.go(batch, 0, self.top);
+        if self.top == 0 {
+            batch.put(CLEAR_LINE);
+            if self.rows > 1 {
+                self.go(batch, 0, 1);
+                batch.put(CLEAR_BELOW);
+                self.go(batch, 0, 0);
+            }
+        } else {
+            batch.put(CLEAR_BELOW);
+        }
+    }
+
+    fn clear_from_top_absolute(&mut self, batch: &mut Batch) {
+        self.jump(batch, 0, self.top);
+        if self.top == 0 {
+            batch.put(CLEAR_LINE);
+            if self.rows > 1 {
+                self.jump(batch, 0, 1);
+                batch.put(CLEAR_BELOW);
+                self.jump(batch, 0, 0);
+            }
+        } else {
+            batch.put(CLEAR_BELOW);
+        }
     }
 
     /// A newline at column 0; at the last row it scrolls the screen.
@@ -1082,8 +1115,7 @@ impl<W: io::Write> InlineTerminal<W> {
             return Ok(());
         }
         let count = u16::try_from(rows.len()).unwrap_or(u16::MAX);
-        self.go(batch, 0, self.top);
-        batch.put(CLEAR_BELOW);
+        self.clear_from_top_relative(batch);
         for (index, row) in rows.iter().enumerate() {
             if index > 0 {
                 self.newline(batch);

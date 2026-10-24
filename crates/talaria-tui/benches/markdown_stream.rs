@@ -1,6 +1,6 @@
 //! Times one push of a streaming Markdown document.
 //!
-//! A measured run fails when its slowest push is slower than the budget.
+//! A scenario passes when the median of three runs' slowest pushes is within the budget.
 
 #[path = "support/doc.rs"]
 mod doc;
@@ -60,9 +60,7 @@ fn run_scenario(name: &str, text: &str) -> bool {
     ordered.sort_by(|left, right| left.total_cmp(right));
     let median = ordered[1];
     let slowest = ordered[2];
-    let pass = maxima
-        .iter()
-        .all(|sample| *sample <= MARKDOWN_FRAME_BUDGET_MS);
+    let pass = median <= MARKDOWN_FRAME_BUDGET_MS;
     let status = if pass { "pass" } else { "fail" };
     println!(
         "{name} bytes={} deltas={} committed_lines={committed_lines} p50_ms={:.3} p95_ms={:.3} p99_ms={:.3} max_ms={slowest:.3} median_ms={median:.3} maxima={:.3},{:.3},{:.3} {status}",

@@ -26,7 +26,7 @@ async fn main() {
             "--hermes" => program = PathBuf::from(require(&mut args, "--hermes")),
             "--help" => {
                 println!(
-                    "usage: attach [--home DIR] [--profile NAME] [--no-ensure] [--hermes PROGRAM]"
+                    "usage: attach [--home DIR] [--profile <name>] [--no-ensure] [--hermes PROGRAM]"
                 );
                 return;
             }

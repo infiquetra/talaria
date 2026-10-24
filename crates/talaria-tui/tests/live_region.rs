@@ -8,7 +8,7 @@ mod support;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use support::{ByteSink, Vt, live_view_sections, probe, tagged};
+use support::{Alac, ByteSink, Vt, live_view_sections, probe, tagged};
 use talaria_tui::live::{FrameStats, LiveSection, LiveView, PlainTextSection};
 use talaria_tui::terminal::{InlineTerminal, RestoreLink};
 
@@ -20,6 +20,107 @@ const SYNC_OPEN: &[u8] = b"\x1b[?2026h";
 
 /// Closes a synchronized update.
 const SYNC_CLOSE: &[u8] = b"\x1b[?2026l";
+
+#[test]
+fn clearing_a_viewport_at_row_zero_never_erases_the_display_from_home() {
+    for operation in ["draw", "resize", "commit", "close overlay", "restore"] {
+        let sink = ByteSink::default();
+        let mut term = InlineTerminal::new(
+            sink.clone(),
+            (COLS, ROWS),
+            2,
+            probe(false, false, Some((0, 0))),
+            RestoreLink::detached(),
+        )
+        .expect("new terminal at row zero");
+        let mut vt = vt100::Parser::new(ROWS, COLS, 0);
+        let mut alac = Alac::new(COLS, ROWS);
+        let setup = sink.take();
+        vt.process(&setup);
+        alac.feed(&setup);
+        let sections = texts(&["LIVE# one", "LIVE# two"]);
+        if operation != "draw" {
+            term.draw_live(&view_of(&sections)).expect("initial frame");
+            let bytes = sink.take();
+            vt.process(&bytes);
+            alac.feed(&bytes);
+        }
+        assert_eq!(term.viewport().y, 0);
+
+        let rows = if operation == "resize" { 3 } else { ROWS };
+        match operation {
+            "draw" => {
+                term.draw_live(&view_of(&sections)).expect("draw");
+            }
+            "resize" => {
+                vt.screen_mut().set_size(rows, COLS);
+                alac.resize(COLS, rows);
+                term.resize(COLS, rows).expect("shrink to three rows");
+                assert_eq!(term.viewport().y, 0);
+            }
+            "commit" => term.commit_lines(tagged(1)).expect("commit at row zero"),
+            "close overlay" => {
+                term.open_overlay().expect("open overlay");
+                let bytes = sink.take();
+                vt.process(&bytes);
+                alac.feed(&bytes);
+                term.close_overlay().expect("close overlay");
+            }
+            "restore" => term.restore().expect("restore"),
+            _ => unreachable!(),
+        }
+        let bytes = sink.take();
+        let mut cleared_first_row = false;
+        let mut erased_from_second_row = false;
+        for (at, byte) in bytes.iter().enumerate() {
+            let (row, _) = vt.screen().cursor_position();
+            if bytes[at..].starts_with(b"\x1b[K") && row == 0 {
+                cleared_first_row = true;
+            }
+            if bytes[at..].starts_with(b"\x1b[J") {
+                assert!(row > 0, "{operation} erased the display from row zero");
+                erased_from_second_row |= row == 1;
+            }
+            vt.process(std::slice::from_ref(byte));
+        }
+        assert!(cleared_first_row, "{operation} did not clear the first row");
+        assert!(
+            erased_from_second_row,
+            "{operation} did not erase from row one"
+        );
+        alac.feed(&bytes);
+        let screen: Vec<String> = vt
+            .screen()
+            .rows(0, COLS)
+            .map(|line| line.trim_end().to_owned())
+            .collect();
+        assert_eq!(alac.screen(), screen, "{operation} emulator disagreement");
+        let mut expected = vec![String::new(); usize::from(rows)];
+        match operation {
+            "draw" => {
+                expected[0] = "LIVE# one".into();
+                expected[1] = "LIVE# two".into();
+            }
+            "commit" => {
+                expected[0] = "line 0001".into();
+                expected[1] = "LIVE# one".into();
+                expected[2] = "LIVE# two".into();
+            }
+            _ => {}
+        }
+        assert_eq!(screen, expected, "{operation} changed the screen contents");
+        let expected_cursor_row = match operation {
+            "resize" | "restore" => 0,
+            "commit" => 2,
+            _ => 1,
+        };
+        assert_eq!(
+            vt.screen().cursor_position(),
+            (expected_cursor_row, 0),
+            "{operation} left the cursor on the wrong row"
+        );
+    }
+}
 
 /// A terminal under test, the sink it writes into and the bytes its set-up wrote.
 struct Rig {

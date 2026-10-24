@@ -14,6 +14,7 @@ const ABSOLUTE_PATH: &str = r"/[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-/]*";
 pub struct Scrubber {
     pattern: Option<Regex>,
     needles: Vec<(String, String)>,
+    scratch_suffix: Option<String>,
 }
 
 impl Scrubber {
@@ -33,13 +34,13 @@ impl Scrubber {
             }
             needles.push((value.to_owned(), placeholder.to_owned()));
         };
-        add(&scratch.to_string_lossy(), "<scratch>");
+        add(trim_separator(&scratch.to_string_lossy()), "<scratch>");
         if let Ok(real) = scratch.canonicalize() {
-            add(&real.to_string_lossy(), "<scratch>");
+            add(trim_separator(&real.to_string_lossy()), "<scratch>");
         }
-        add(&tmp.to_string_lossy(), "<tmp>");
+        add(trim_separator(&tmp.to_string_lossy()), "<tmp>");
         if let Ok(real) = tmp.canonicalize() {
-            add(&real.to_string_lossy(), "<tmp>");
+            add(trim_separator(&real.to_string_lossy()), "<tmp>");
         }
         add(home, "<home>");
         add(login, "<user>");
@@ -48,16 +49,37 @@ impl Scrubber {
         }
         // The longest needle wins, so a path inside a longer path is replaced as one.
         needles.sort_by_key(|needle| std::cmp::Reverse(needle.0.len()));
-        let pattern = if needles.is_empty() {
+        let scratch_suffix = scratch
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| keeps(name))
+            .map(|name| format!("/{name}"));
+        // Exact child paths keep their more specific placeholders; shortened scratch paths
+        // must still match before a home or temporary prefix can consume them.
+        let scratch_child = scratch_suffix.as_ref().map(|suffix| format!("{suffix}/"));
+        let (children, other): (Vec<_>, Vec<_>) = needles.iter().partition(|(needle, _)| {
+            scratch_child
+                .as_deref()
+                .is_some_and(|child| needle.contains(child))
+        });
+        let mut alternatives: Vec<_> = children
+            .iter()
+            .map(|(needle, _)| regex::escape(needle))
+            .collect();
+        if let Some(suffix) = &scratch_suffix {
+            alternatives.push(format!(r"[A-Za-z0-9_.\-/]+{}", regex::escape(suffix)));
+        }
+        alternatives.extend(other.iter().map(|(needle, _)| regex::escape(needle)));
+        let pattern = if alternatives.is_empty() {
             None
         } else {
-            let alternatives: Vec<String> = needles
-                .iter()
-                .map(|(needle, _)| regex::escape(needle))
-                .collect();
             Regex::new(&alternatives.join("|")).ok()
         };
-        Self { pattern, needles }
+        Self {
+            pattern,
+            needles,
+            scratch_suffix,
+        }
     }
 
     /// Replaces every needle in one pass; the output is never read again.
@@ -69,11 +91,18 @@ impl Scrubber {
         let mut last = 0;
         for found in pattern.captures_iter(text) {
             let whole = found.get(0).expect("the whole match");
-            let Some((_, placeholder)) = self
+            let placeholder = self
                 .needles
                 .iter()
                 .find(|(needle, _)| needle == whole.as_str())
-            else {
+                .map(|(_, placeholder)| placeholder.as_str())
+                .or_else(|| {
+                    self.scratch_suffix
+                        .as_deref()
+                        .is_some_and(|suffix| whole.as_str().ends_with(suffix))
+                        .then_some("<scratch>")
+                });
+            let Some(placeholder) = placeholder else {
                 continue;
             };
             out.push_str(&text[last..whole.start()]);
@@ -82,6 +111,14 @@ impl Scrubber {
         }
         out.push_str(&text[last..]);
         out
+    }
+}
+
+fn trim_separator(value: &str) -> &str {
+    if value.len() > 1 {
+        value.trim_end_matches('/')
+    } else {
+        value
     }
 }
 
