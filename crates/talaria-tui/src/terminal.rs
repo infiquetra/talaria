@@ -542,6 +542,10 @@ pub struct InlineTerminal<W: io::Write> {
     cursor: u16,
     /// The live region's height: the last drawn one, or the one asked for at start.
     height: u16,
+    /// Rows known to be in history, or unknown when startup may have inherited history.
+    scrolled: Option<u32>,
+    /// Live rows pushed above row zero by a shrink, awaiting recovery on a grow.
+    spilled: u16,
     /// False while the screen is too small to hold a viewport.
     placed: bool,
     /// The last live frame drawn.
@@ -581,6 +585,11 @@ impl<W: io::Write> InlineTerminal<W> {
                 .cursor
                 .map_or(0, |(_, row)| row.min(rows.saturating_sub(1))),
             height: live_height.max(1),
+            scrolled: match probe.cursor {
+                Some((_, row)) if row < rows.saturating_sub(1) => Some(0),
+                _ => None,
+            },
+            spilled: 0,
             placed: false,
             previous: Buffer::empty(Rect::new(0, 0, cols, 0)),
             repaint: true,
@@ -753,11 +762,26 @@ impl<W: io::Write> InlineTerminal<W> {
         let below = self.rows - (self.top + self.height);
         if rows < self.rows {
             let pushed = (self.rows - rows).saturating_sub(below);
+            if let Some(scrolled) = &mut self.scrolled {
+                *scrolled = scrolled.saturating_add(u32::from(pushed));
+            }
+            self.spilled = self.spilled.saturating_add(pushed.saturating_sub(self.top));
             self.top -= self.top.min(pushed);
             self.cursor -= self.cursor.min(pushed);
         } else {
-            self.top += rows - self.rows;
-            self.cursor += rows - self.rows;
+            let grown = rows - self.rows;
+            let pulled = match &mut self.scrolled {
+                Some(scrolled) => {
+                    let pulled = grown.min(u16::try_from(*scrolled).unwrap_or(u16::MAX));
+                    *scrolled -= u32::from(pulled);
+                    pulled
+                }
+                None => grown,
+            };
+            let recovered = self.spilled.min(pulled);
+            self.spilled -= recovered;
+            self.top += pulled - recovered;
+            self.cursor += pulled;
         }
         self.cursor = self.cursor.min(rows.saturating_sub(1));
         self.cols = cols;
@@ -1006,6 +1030,12 @@ impl<W: io::Write> InlineTerminal<W> {
     /// A newline at column 0; at the last row it scrolls the screen.
     fn newline(&mut self, batch: &mut Batch) {
         batch.put(b"\r\n");
+        if self.rows > 0
+            && self.cursor >= self.rows - 1
+            && let Some(scrolled) = &mut self.scrolled
+        {
+            *scrolled = scrolled.saturating_add(1);
+        }
         self.cursor = (self.cursor + 1).min(self.rows.saturating_sub(1));
     }
 
@@ -1076,8 +1106,12 @@ impl<W: io::Write> InlineTerminal<W> {
     /// the last row. Content above moves into scrollback; nothing is erased.
     fn make_room(&mut self, batch: &mut Batch) {
         if self.top + self.height > self.rows {
+            let room = self.top + self.height - self.rows;
+            if let Some(scrolled) = &mut self.scrolled {
+                *scrolled = scrolled.saturating_add(u32::from(room));
+            }
             self.go(batch, 0, self.rows - 1);
-            for _ in 0..(self.top + self.height - self.rows) {
+            for _ in 0..room {
                 batch.put(b"\n");
             }
             self.top = self.rows - self.height;
@@ -1087,6 +1121,9 @@ impl<W: io::Write> InlineTerminal<W> {
     /// Place the viewport at the bottom of a screen that has just become big enough.
     fn place_at_bottom(&mut self, batch: &mut Batch) {
         self.height = self.height.clamp(1, max_live_height(self.rows));
+        if let Some(scrolled) = &mut self.scrolled {
+            *scrolled = scrolled.saturating_add(u32::from(self.height));
+        }
         self.jump(batch, 0, self.rows - 1);
         for _ in 0..self.height {
             batch.put(b"\n");
@@ -1115,6 +1152,7 @@ impl<W: io::Write> InlineTerminal<W> {
             return Ok(());
         }
         let count = u16::try_from(rows.len()).unwrap_or(u16::MAX);
+        self.spilled = 0;
         self.clear_from_top_relative(batch);
         for (index, row) in rows.iter().enumerate() {
             if index > 0 {

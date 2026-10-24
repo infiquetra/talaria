@@ -18,6 +18,7 @@ const REMOVED_PATHS: &[&str] = &[
     "uv.lock",
     ".python-version",
     "docs/acceptance/",
+    ":(exclude)docs/acceptance/v0.7.0/",
     "docs/plans/",
     "docs/reviews/",
     "docs/code-reviews/",

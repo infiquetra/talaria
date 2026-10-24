@@ -4381,5 +4381,12 @@ home or temporary prefix can match. Removing trailing separators from directory
 needles preserves the separator before child names such as `smoke-report.txt`.
 `tools/smoke/tests/scrub.rs` checks the abbreviated form and repeated scrubbing.
 
+Growing a fresh screen after a shrink can pull back only the rows actually
+scrolled into history. A 30-to-20-to-40-row resize with nine history rows must
+pull nine rows, not twenty; otherwise clearing starts below the old live tail.
+`tests/scrollback.rs` reproduces this with fifteen committed lines and thirteen
+live rows. Track known history and live rows spilled above row zero, while
+preserving the existing behavior when startup history is unknown.
+
 **Generalizable rule.** Test terminal control sequences against the multiplexer
 as well as emulators, and scrub the path forms a shell actually displays.
