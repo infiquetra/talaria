@@ -219,13 +219,20 @@ async fn run_command_shared(
         .kill_on_drop(true)
         .process_group(0);
 
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            return result_of(Failure::NotFound);
-        }
-        Err(error) => {
-            return result_of(Failure::SpawnFailed(error.to_string()));
+    let mut attempts = 0u8;
+    let mut child = loop {
+        match command.spawn() {
+            Ok(child) => break child,
+            Err(error) if error.raw_os_error() == Some(26) && attempts < 10 => {
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return result_of(Failure::NotFound);
+            }
+            Err(error) => {
+                return result_of(Failure::SpawnFailed(error.to_string()));
+            }
         }
     };
 
