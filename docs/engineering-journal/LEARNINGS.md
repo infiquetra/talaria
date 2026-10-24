@@ -4327,3 +4327,20 @@ A test compares the bottom rows of the cut and the whole rendering.
 
 **Generalizable rule.** Bound a per-frame computation by what the frame displays; when the
 input grows with the session, a debug build is where the quadratic cost shows first.
+
+## 2026-10-24 — A model asked for an exit code rewrites the command it shows
+
+**Evidence.** `tools/smoke/src/screen.rs`, `is_command_line`. The live smoke run's approval
+prompt asks the agent to run `rm -rf .pytest_cache` and report its exit code. On the
+`minimax-m3.1-flash` route the approval card showed `rm -rf .pytest_cache; echo "EXIT_CODE=$?"`
+or `rm -rf .pytest_cache; echo $?` on five of six runs, so an exact match on the command never
+found the card's command line.
+
+**Mechanism.** Asking for the exit code invites the model to print it in the same shell call, so
+the command Hermes asks to approve is the requested command plus an `echo` of `$?`. The check now
+accepts the exact command or the command followed by `; echo` of `$?` or `EXIT_CODE`, and still
+rejects a line that chains anything else with `&&`, `|` or a further `;`.
+
+**Generalizable rule.** When a live check matches text a model produced, accept the variations
+the prompt itself invites and reject everything else explicitly; an exact match turns a
+harmless rewording into a false failure.

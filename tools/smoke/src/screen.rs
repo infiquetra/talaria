@@ -238,11 +238,22 @@ fn normalised_lines(visible: &str) -> Vec<String> {
 }
 
 /// A line that holds the command, with or without the dollar sign of the card.
+///
+/// Asked for the exit code, a model may append `; echo $?` or
+/// `; echo "EXIT_CODE=$?"`; that suffix is accepted, any other chained command is not.
 fn is_command_line(line: &str, command: &str) -> bool {
-    if line == command {
+    let rest = line.strip_prefix("$ ").unwrap_or(line);
+    if rest == command {
         return true;
     }
-    line.strip_prefix("$ ").is_some_and(|rest| rest == command)
+    rest.strip_prefix(command)
+        .and_then(|suffix| suffix.strip_prefix("; echo "))
+        .is_some_and(|echoed| {
+            !echoed.contains("&&")
+                && !echoed.contains('|')
+                && !echoed.contains(';')
+                && (echoed.contains("$?") || echoed.contains("EXIT_CODE"))
+        })
 }
 
 /// The number of a numbered choice line, when it holds the given word.
