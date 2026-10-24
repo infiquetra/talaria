@@ -3,7 +3,7 @@
 A paragraph with **bold**, *emphasis*, `keep    spaces` and a [docs](https://example.org/x).
 
 Soft break here
-continues on the next line.  
+continues on the next line.\
 Hard break ends the previous line.
 
 ## Two
