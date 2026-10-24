@@ -479,6 +479,36 @@ fn assert_history_exact(rig: &Rig, tags: usize, size: (u16, u16)) {
 }
 
 #[test]
+fn shrink_and_larger_grow_from_fresh_screen_clears_old_live_tail() {
+    let mut rig = Rig::new(
+        Alac::with_shell_rows(100, 30, (0, 1)),
+        (100, 30),
+        13,
+        probe(false, false, Some((0, 1))),
+    );
+    rig.commit_lines(tagged(15));
+    assert_eq!(rig.term.viewport().y, 16);
+    let live = live_view_sections(13);
+    rig.draw(&live);
+
+    for (cols, rows) in [(80, 20), (100, 40)] {
+        rig.resize(cols, rows);
+        rig.draw(&live);
+        let viewport = rig.term.viewport();
+        let screen = rig.alac.screen();
+        assert_live_only_in_viewport(&screen, viewport);
+        assert_tags_once_in_order(&rig.alac.history_and_screen(), 15);
+        for row in 0..viewport.height {
+            assert_eq!(
+                screen[usize::from(viewport.y + row)],
+                format!("LIVE# {}", row + 1)
+            );
+        }
+    }
+    assert_eq!(rig.term.viewport().y, 16);
+}
+
+#[test]
 fn resize_neither_duplicates_nor_loses_lines() {
     let mut rig = Rig::anchored(Alac::with_shell_history(COLS, ROWS));
     let live = live_view_sections(2);
