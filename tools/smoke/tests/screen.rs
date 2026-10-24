@@ -286,6 +286,42 @@ fn card_for_a_longer_command_is_refused() {
 }
 
 #[test]
+fn card_accepts_an_exit_code_echo_suffix() {
+    // A model asked for the exit code may append an echo of that code, and nothing else.
+    for command_line in [
+        r#"rm -rf .pytest_cache; echo "EXIT_CODE=$?"#,
+        r#"$ rm -rf .pytest_cache; echo "EXIT_CODE=$?"#,
+        "rm -rf .pytest_cache; echo EXIT_CODE=$?",
+        "$ rm -rf .pytest_cache; echo EXIT_CODE=$?",
+        "rm -rf .pytest_cache; echo $?",
+        "$ rm -rf .pytest_cache; echo $?",
+    ] {
+        assert_eq!(
+            card(&[command_line, "› 1. once", "  2. deny"]),
+            shown(Some('1'), true),
+            "command line: {command_line}"
+        );
+    }
+}
+
+#[test]
+fn card_rejects_a_command_chained_after_the_exit_code_echo() {
+    for command_line in [
+        "rm -rf .pytest_cache; echo $?; whoami",
+        "$ rm -rf .pytest_cache; echo $?; whoami",
+        r#"rm -rf .pytest_cache; echo "EXIT_CODE=$?"; whoami"#,
+        r#"$ rm -rf .pytest_cache; echo EXIT_CODE=$? && whoami"#,
+        "rm -rf .pytest_cache; echo $? | whoami",
+    ] {
+        assert_eq!(
+            card(&[command_line, "› 1. once", "  2. deny"]),
+            Card::OtherCommand,
+            "command line: {command_line}"
+        );
+    }
+}
+
+#[test]
 fn card_found_in_box_drawn_rows() {
     assert_eq!(
         card(&[
