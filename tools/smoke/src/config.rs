@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Everything the run needs, resolved by the preflight.
 pub struct SmokeConfig {
     /// Absolute path of the binary under test.
     pub talaria: PathBuf,
@@ -21,6 +22,11 @@ pub struct SmokeConfig {
 
 /// `'<path>' args...; echo SMOKE_EXIT:$?`
 pub fn launch_line(talaria: &Path, args: &[&str]) -> String {
-    let _ = (talaria, args);
-    todo!("smoke")
+    let mut line = format!("'{}'", talaria.display());
+    for argument in args {
+        line.push(' ');
+        line.push_str(argument);
+    }
+    line.push_str("; echo SMOKE_EXIT:$?");
+    line
 }
