@@ -1,5 +1,7 @@
 use std::process::ExitCode;
 
+mod bench_replay;
+
 struct Response {
     stdout: String,
     stderr: String,
@@ -62,6 +64,14 @@ fn main() -> ExitCode {
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
+    match bench_replay::parse_args(&args) {
+        Ok(Some(parsed)) => return bench_replay::run(parsed),
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("talaria: {error}");
+            return ExitCode::from(2);
+        }
+    }
     let response = respond(&args);
     print!("{}", response.stdout);
     eprint!("{}", response.stderr);

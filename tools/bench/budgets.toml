@@ -1,0 +1,52 @@
+# Every number the harness enforces. The first block is the architecture's budget
+# table; the unit_choice block is this harness's reading of "proportional to changed
+# cells, never growing with transcript length". Memory is in megabytes of 1,000,000 bytes.
+
+[terminal]
+cols = 160
+rows = 48
+
+[launch]
+median_ms = 100
+runs = 15
+warmups = 1
+
+[keystroke]
+p95_ms = 16
+max_ms = 33
+keys = 40
+visible_within_ms = 1000
+interval_ms = 150
+start_ms = 3000
+interval_ms_fast = 100
+start_ms_fast = 500
+
+[cpu]
+mean_pct = 5
+peak_pct = 15
+sample_ms = 100
+window_samples = 10
+
+[worst_frame]
+max_ms = 50
+
+[idle]
+seconds = 30
+settle_seconds = 2
+frames = 0
+
+[memory]
+unit = "MB"
+start_max = 40
+long_session_max = 100
+
+[live_gateway]
+composer_ms = 200
+
+[unit_choice]
+bytes_median = 2048
+late_over_early = 1.5
+
+[scenario]
+turn_seconds = 30
+long_session_turns = 1000

@@ -8,6 +8,7 @@ members = [
     "crates/talaria-tui",
     "crates/talaria-workflow",
     "crates/talaria-cli",
+    "tools/bench",
     "tools/patterns-check",
     "tools/record-fixture",
 ]

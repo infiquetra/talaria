@@ -155,6 +155,21 @@ mistake: a schema default that serializes is still on the wire, and Hermes reads
 
 **Generalizable rule.** A replay buffer is not a subscription; call `session.resume`
 before replaying. Do not send JSON null where the gateway requires an integer.
+## 2026-10-23 — Performance windows use arrival clocks, including queued output
+
+A child can finish its report while output already received by the pseudo-terminal
+reader is still waiting for the measurement thread. Closing a window when the report
+is noticed loses those final frames. Frame-byte and frame-count windows therefore
+use reader arrival timestamps and drain queued chunks through the cutoff. Key latency
+uses the same timestamps, while write lag is reported separately.
+
+CPU mean uses total process CPU time over the elapsed measurement interval; averaging
+percentages is wrong when process sampling takes uneven time. Missing process samples
+are measurement failures, never zero CPU or memory. The version query is also a child:
+it needs the same kill-and-wait guard, a deadline, and bounded captured output.
+
+Rule: use arrival timestamps for output windows and fail explicitly when a required
+measurement is unavailable.
 
 ## 2026-10-23 — Reconnect recovery needs original parameters and incident boundaries
 
@@ -4221,3 +4236,19 @@ generates later settlement events.
 workspace dependency from test-only to normal use so concurrent denials can finish
 within a bounded wait before an interrupt. It adds no dependency version and imports
 no terminal library into the application crate.
+## 2026-10-24 — A live recording opens with events that name no session
+
+**Evidence.** `tools/bench/src/generator.rs`, `generate`. With the live-recorded
+`plain-answer` and `tool-diff` templates, the generated long session held 1,000 cells
+instead of 2,000: no tool cell survived replay.
+
+**Mechanism.** The generator copied `session_id`, `replay_epoch` and the other identity
+fields from the first event it saw. In a live recording that is `gateway.ready`, which
+names no session, so nothing was copied: message events kept the `plain-answer` session
+and tool events kept the `tool-diff` one, and the reducer dropped the second session's
+events. The stamps now come from the first event that carries a `session_id`.
+
+**Generalizable rule.** When splicing frames from several recordings into one stream,
+take the identity fields from an event that has them and check that every spliced event
+ends up in the same session; synthetic fixtures that start with a session event hide
+this.

@@ -2350,12 +2350,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "talaria-bench"
+version = "0.7.0-dev"
+dependencies = [
+ "hermes-client",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "vt100",
+]
+
+[[package]]
 name = "talaria-cli"
 version = "0.7.0-dev"
 dependencies = [
+ "hermes-client",
+ "ratatui",
  "serde_json",
  "talaria-app",
+ "talaria-core",
  "talaria-tui",
+ "tokio",
 ]
 
 [[package]]
