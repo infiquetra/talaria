@@ -4,6 +4,36 @@
 
 ## 2026-10-23
 
+### Prompt-card calls run in spawned tasks behind one async lock
+
+**Decision.** The prompt service of `crates/talaria-app/src/prompts.rs` sits behind a `tokio::sync::Mutex`. Every call to it (a server request, an answer, the deny before an interrupt, a connection change) runs in a spawned task that sends its notices and events back to the loop as a message. Session calls (`prompt.submit`, `session.interrupt`, recovery) run the same way through `SessionService::execute` and `recover`.
+
+**Rationale.** The service's methods take `&mut self` across network awaits, and the loop must never wait on the network, so the keys stay live during an approval answer.
+
+**Rejected alternatives.** Awaiting the service inside the loop (freezes typing for up to 300 seconds during an approval answer); one task per service with its own queue (more code for the same ordering).
+
+**Revisit when** a refused server request must be answered within 100 ms while an approval answer is in flight: today it waits for the lock.
+
+### A gateway that lacks a creation option fails the launch with exit 1
+
+**Decision.** `OptionNotOffered`, `CwdNotOffered` and `NoSessionSource` are `UsageError` values, but they turn into exit code 1, not 2.
+
+**Rationale.** They describe the gateway, not the command line: the same command works against a gateway that offers the option. Exit 2 stays for what the person typed.
+
+**Revisit when** the operator wants every `UsageError` to share one exit code.
+
+### Continue is folder-strict
+
+**Decision.** Continue is folder-strict: it resumes the latest session whose workspace is this folder (the git top level when the folder is in a repository, otherwise the folder itself). It does not fall back to a session from another folder. A session whose folder cannot be read is refused. Naming a session by id still opens it, and shows a notice when it belongs elsewhere.
+
+**Rationale.** The gateway's lookup is wider than the promise "the most recent session of this folder". A fallback would edit the wrong project because the session's folder does not change.
+
+**Rejected alternatives.** Match the gateway's wider lookup (opens the wrong project); try a terminal breadcrumb first (the promise is the folder, not the terminal).
+
+**Revisit when** a person can pass an explicit folder, or sessions can move between folders.
+
+## 2026-10-23
+
 ### One Esc interrupts a running turn and keeps the draft
 
 **Decision.** The composer's `interrupt` action (Esc by default) returns `Interrupt` on the first

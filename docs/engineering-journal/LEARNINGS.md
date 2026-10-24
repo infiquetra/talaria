@@ -2,6 +2,48 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-23
+
+### One task per prompt lets held prompts overtake each other
+
+**Evidence.** `Executor::new` in `crates/talaria-app/src/app.rs`; `prompts_held_until_ready_in_order_with_cap` in `crates/talaria-app/tests/session_flow.rs` saw prompt 3 reach the mock before prompt 1.
+
+**Mechanism.** A call's frame is written when its future is first polled, not when it is built. Spawning one task per `prompt.submit` lets the scheduler poll them in any order, so ten held prompts released together reached the gateway shuffled. All prompts now go through one worker that sends them one at a time in submission order; Hermes queues a prompt sent to a busy session, so waiting for each receipt costs only the round trip.
+
+**Generalizable rule.** When order on the wire matters, put the calls through one queue; spawning them separately keeps only the order of creation, not of sending.
+
+### A killed git can still hold its output pipe open
+
+**Evidence.** `find_git_toplevel` in `crates/talaria-app/src/connection.rs`; its test's sleeping stand-in is a shell script that runs `sleep 30`.
+
+**Mechanism.** Killing the timed-out `git` process kills the shell, not the `sleep` it started, and that grandchild keeps the write end of standard output open. Reading the pipe after the kill would block until the grandchild exits, 30 seconds instead of 5. The lookup therefore reads standard output only after a normal exit and returns `None` straight after a kill.
+
+**Generalizable rule.** After killing a child on a timeout, do not read its pipes; only a child that exited by itself has finished writing.
+
+### The application loop reaches the terminal only through a trait
+
+**Evidence.** `Screen`, `ComposerDeadline` and `StatusHost` in `crates/talaria-app/src/app.rs`; `TuiScreen` in `crates/talaria-cli/src/run.rs`; `domain_crates_never_reach_a_terminal_library` in `crates/talaria-core/tests/layering.rs`.
+
+**Mechanism.** `talaria-app` may not depend on `talaria-tui`, which brings ratatui and crossterm. The composer, the key map, the prompt cards and the status command therefore live behind a trait the binary implements. The loop hands the screen a borrowed view and gets back plain actions (submit, interrupt, quit, an answer). One consequence is that `talaria-app` cannot build the key map, so key-map notices are produced by the binary and passed into the loop.
+
+**Generalizable rule.** When a layering rule keeps a crate away from the UI library, the loop owns the state and the UI is a port that turns raw input into intents.
+
+### A detach that names an end reason stops background work
+
+**Evidence.** The detach parameter builder and `crates/talaria-app/tests/wire_params.rs` (`resume_detach_submit_params_exact_keys`).
+
+**Mechanism.** The gateway treats `end_reason` on detach as an instruction to interrupt the session's background work and close its row. The detach body therefore carries the session id and the subscription id only. The key is absent, not null.
+
+**Generalizable rule.** When a field's presence changes a lifecycle, build the object by the keys it must have and test that set, rather than serialising a generated struct that fills the field in.
+
+### Continue must not take the newest session of any folder
+
+**Evidence.** `belongs` and `workspace_key` in `crates/talaria-app/src/launch.rs`, and the continue tests in `crates/talaria-app/tests/session_flow.rs`.
+
+**Mechanism.** The gateway's own lookup falls back to the newest session of any folder, and a session's folder is fixed when it is created. Following that fallback would open another project's session. Continue fails closed when the folder is missing or lies outside this workspace.
+
+**Generalizable rule.** A "most recent in this place" lookup must not widen to every place when the local lookup misses.
+
 ## 2026-10-23 — Shift+Enter reaches the composer only with the Kitty keyboard protocol, and fast typing without bracketed paste is indistinguishable from a paste
 
 **Evidence.** crossterm 0.29.0 `src/event/sys/unix/parse.rs`: a legacy carriage return is Enter

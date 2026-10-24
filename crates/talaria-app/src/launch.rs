@@ -60,16 +60,11 @@ pub enum UsageError {
     NoSessionSource,
 }
 
-#[must_use]
-pub fn new_request_id() -> String {
-    let _ = getrandom::fill;
-    todo!("binary")
-}
-
-#[must_use]
-pub fn new_launch_id() -> String {
-    let _ = getrandom::fill;
-    todo!("binary")
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Belongs {
+    Yes,
+    No,
+    Unknown,
 }
 
 /// The `--effort` values, in the order the refusal lists them.
@@ -80,50 +75,145 @@ pub const EFFORT_LEVELS: [&str; 8] = [
 /// The session source Talaria creates and continues.
 pub const SESSION_SOURCE: &str = "tui";
 
+fn random_hex<const N: usize>() -> String {
+    let mut bytes = [0u8; N];
+    // Without system randomness there is no safe id to send, so the launch cannot go on.
+    getrandom::fill(&mut bytes).expect("system randomness is available");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// 32 lower-case hex characters, made once per launch for `session.create`.
+#[must_use]
+pub fn new_request_id() -> String {
+    random_hex::<16>()
+}
+
+/// 16 lower-case hex characters, the launch's part of every `submission_id`.
+#[must_use]
+pub fn new_launch_id() -> String {
+    random_hex::<8>()
+}
+
 /// The new-session options the person gave, in the order `--help` lists them.
 #[must_use]
 pub fn new_session_options(launch: &Launch) -> Vec<&'static str> {
-    let _ = launch;
-    todo!("binary")
+    let mut given = Vec::new();
+    if launch.model.is_some() {
+        given.push("--model");
+    }
+    if launch.provider.is_some() {
+        given.push("--provider");
+    }
+    if launch.effort.is_some() {
+        given.push("--effort");
+    }
+    given
 }
 
+/// Decide the session request. The descriptor gates only option keys: `source` and `request_id`
+/// are not checked, as in Hermes's own client. For continue, the workspace is the launch folder;
+/// the caller replaces it with [`workspace_key`] once git has answered.
 pub fn plan(
     launch: &Launch,
     request_id: String,
     describe: &RuntimeDescribeResult,
 ) -> Result<SessionRequest, UsageError> {
-    let _ = (launch, request_id, describe);
-    todo!("binary")
+    let given = new_session_options(launch);
+    if launch.mode != StartMode::New && !given.is_empty() {
+        return Err(UsageError::NewSessionOptionsWithResume { given });
+    }
+    match &launch.mode {
+        StartMode::Continue => {
+            return Ok(SessionRequest::Latest {
+                workspace: launch.folder.clone(),
+            });
+        }
+        StartMode::Resume(Some(id)) => {
+            return Ok(SessionRequest::ById {
+                session_id: id.trim().to_string(),
+            });
+        }
+        StartMode::Resume(None) => return Ok(SessionRequest::Pick),
+        StartMode::New => {}
+    }
+    let descriptor = &describe.session_create;
+    if !descriptor
+        .sources
+        .iter()
+        .any(|source| source == SESSION_SOURCE)
+    {
+        return Err(UsageError::NoSessionSource);
+    }
+    let offered = |key: &str| descriptor.parameters.iter().any(|name| name == key);
+    if !offered("cwd") {
+        return Err(UsageError::CwdNotOffered);
+    }
+    let reasoning = launch.effort.as_deref().map(parse_effort).transpose()?;
+    for (given, key, option) in [
+        (launch.model.is_some(), "model", "--model"),
+        (launch.provider.is_some(), "provider", "--provider"),
+        (reasoning.is_some(), "reasoning", "--effort"),
+    ] {
+        if given && !offered(key) {
+            return Err(UsageError::OptionNotOffered(option));
+        }
+    }
+    Ok(SessionRequest::New(NewSession {
+        request_id,
+        source: SESSION_SOURCE.to_string(),
+        cwd: launch.folder.clone(),
+        model: launch.model.clone(),
+        provider: launch.provider.clone(),
+        reasoning,
+    }))
 }
 
+/// One of the eight lower-case levels, exactly as typed.
 pub fn parse_effort(value: &str) -> Result<String, UsageError> {
-    let _ = value;
-    todo!("binary")
+    if EFFORT_LEVELS.contains(&value) {
+        Ok(value.to_string())
+    } else {
+        Err(UsageError::UnknownEffort(value.to_string()))
+    }
 }
 
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The git top level when there is one, else the folder, canonical when it exists.
 #[must_use]
 pub fn workspace_key(folder: &Path, git_toplevel: Option<&Path>) -> PathBuf {
-    let _ = (folder, git_toplevel);
-    todo!("binary")
+    canonical(git_toplevel.unwrap_or(folder))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Belongs {
-    Yes,
-    No,
-    Unknown,
-}
-
+/// Whether a session's folder is the workspace or inside it, by whole path components.
 #[must_use]
 pub fn belongs(session_cwd: Option<&str>, workspace: &Path) -> Belongs {
-    let _ = (session_cwd, workspace);
-    todo!("binary")
+    let Some(cwd) = session_cwd.filter(|cwd| !cwd.is_empty()) else {
+        return Belongs::Unknown;
+    };
+    if canonical(Path::new(cwd)).starts_with(canonical(workspace)) {
+        Belongs::Yes
+    } else {
+        Belongs::No
+    }
 }
 
+/// The lines printed after a quit. Profile `default` needs no flag. Escape sequences, control
+/// characters and bidirectional marks are removed from both values.
 #[must_use]
 pub fn exit_hint(session_id: &str, profile: &str) -> String {
-    let _ = (session_id, profile);
-    todo!("binary")
+    // Printed after the terminal is restored, so nothing from the gateway may carry an escape
+    // sequence or a control character into it.
+    let session_id = plain(session_id);
+    let profile = plain(profile);
+    let flag = if profile == "default" {
+        String::new()
+    } else {
+        format!(" --profile {profile}")
+    };
+    format!("Resume this session with:\n  talaria --resume {session_id}{flag}\n")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,22 +234,113 @@ pub enum Choice {
     OutOfRange(usize),
 }
 
+/// Merge the two list scopes: one row per session, the live row winning, newest first.
 #[must_use]
 pub fn merge_rows(live: Vec<ListRow>, stored: Vec<ListRow>) -> Vec<ListRow> {
-    let _ = (live, stored);
-    todo!("binary")
+    let mut rows: Vec<ListRow> = Vec::new();
+    for row in live.into_iter().chain(stored) {
+        if !rows.iter().any(|kept| kept.session_id == row.session_id) {
+            rows.push(row);
+        }
+    }
+    rows.sort_by(|a, b| match (a.started_at, b.started_at) {
+        (Some(a), Some(b)) => b.total_cmp(&a),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    rows.truncate(LIST_ROWS);
+    rows
 }
 
+/// Text from the gateway with escape sequences and control characters removed.
+pub(crate) fn plain(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        let bidi = matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+        if !ch.is_control() && !bidi {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn age(started_at: Option<f64>, now: f64) -> String {
+    let Some(started) = started_at else {
+        return "-".to_string();
+    };
+    let seconds = now - started;
+    if !seconds.is_finite() || seconds < 60.0 {
+        return "just now".to_string();
+    }
+    // Whole units only; the float is a count of seconds well inside u64.
+    let whole = |unit: f64| (seconds / unit).floor() as u64;
+    if seconds < 3_600.0 {
+        format!("{}m ago", whole(60.0))
+    } else if seconds < 86_400.0 {
+        format!("{}h ago", whole(3_600.0))
+    } else {
+        format!("{}d ago", whole(86_400.0))
+    }
+}
+
+/// One numbered line per row: title, age, model, message count, `working`, id.
 #[must_use]
 pub fn format_rows(rows: &[ListRow], now: f64) -> String {
-    let _ = (rows, now);
-    todo!("binary")
+    let mut out = String::new();
+    for (index, row) in rows.iter().enumerate() {
+        let title = row
+            .title
+            .as_deref()
+            .map(plain)
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| "(untitled)".to_string());
+        let model = row
+            .model
+            .as_deref()
+            .map(plain)
+            .filter(|model| !model.trim().is_empty())
+            .unwrap_or_else(|| "-".to_string());
+        let working = if row.running { "  working" } else { "" };
+        out.push_str(&format!(
+            "{:>3}  {title}  {}  {model}  {} messages{working}  {}\n",
+            index + 1,
+            age(row.started_at, now),
+            row.message_count,
+            plain(&row.session_id),
+        ));
+    }
+    out
 }
 
+/// A row number, an id, or an empty line to cancel.
 #[must_use]
 pub fn parse_choice(line: &str, rows: usize) -> Choice {
-    let _ = (line, rows);
-    todo!("binary")
+    let line = line.trim();
+    if line.is_empty() {
+        return Choice::Cancel;
+    }
+    if line.chars().all(|ch| ch.is_ascii_digit()) {
+        let number = line.parse::<usize>().unwrap_or(usize::MAX);
+        return if (1..=rows).contains(&number) {
+            Choice::Row(number)
+        } else {
+            Choice::OutOfRange(number)
+        };
+    }
+    Choice::Id(line.to_string())
 }
 
 #[cfg(test)]

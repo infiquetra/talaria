@@ -14,7 +14,7 @@ fn main() -> ExitCode {
             Ok(Some(parsed)) => return bench_replay::run(parsed),
             Ok(None) => {}
             Err(error) => {
-                eprintln!("talaria: {error:?}");
+                eprintln!("talaria: {error}");
                 return ExitCode::from(2);
             }
         }

@@ -22,195 +22,363 @@ impl LaunchFailure {
     }
 }
 
+/// Exit code of a start-up or runtime failure.
+const FAILED: u8 = 1;
+/// Exit code of a usage error or a missing terminal.
+const USAGE: u8 = 2;
+
+fn failure(what: impl Into<String>, next_step: impl Into<String>, exit_code: u8) -> LaunchFailure {
+    LaunchFailure {
+        what: sentence(&scrub(&what.into())),
+        next_step: sentence(&scrub(&next_step.into())),
+        exit_code,
+    }
+}
+
+/// End with a full stop unless the text already ends a sentence.
+fn sentence(text: &str) -> String {
+    let text = text.trim();
+    if text.ends_with(['.', '!', '?']) {
+        text.to_string()
+    } else {
+        format!("{text}.")
+    }
+}
+
+/// One line of plain text: control characters and bidirectional marks become `?`, and a word
+/// that looks like a path (a `/` between letters, or `~/`) is replaced, so no home folder or
+/// file name reaches standard error through an error's own text.
+fn scrub(text: &str) -> String {
+    let words: Vec<String> = text
+        .split(' ')
+        .map(|word| {
+            let pathlike = word.contains("~/")
+                || word.char_indices().any(|(index, ch)| {
+                    ch == '/' && word[index + 1..].starts_with(char::is_alphabetic)
+                });
+            if pathlike && !word.contains("127.0.0.1") {
+                "a local path".to_string()
+            } else {
+                word.chars()
+                    .map(|ch| {
+                        let bidi = matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+                        if ch.is_control() || bidi { '?' } else { ch }
+                    })
+                    .collect()
+            }
+        })
+        .collect();
+    words.join(" ")
+}
+
+/// A value the person typed, made safe to echo: plain and at most 64 characters.
+fn echoed(value: &str) -> String {
+    scrub(value).chars().take(64).collect()
+}
+
+fn options_text(given: &[&str]) -> String {
+    match given {
+        [] => "these options".to_string(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 impl From<UsageError> for LaunchFailure {
     fn from(value: UsageError) -> Self {
-        let _ = value;
-        todo!("binary")
+        match value {
+            UsageError::NewSessionOptionsWithResume { given } => failure(
+                format!(
+                    "{} only apply to a new session; a resumed session keeps the model it was \
+                     created with.",
+                    options_text(&given)
+                ),
+                "Remove those options, or start a new session with talaria.",
+                USAGE,
+            ),
+            UsageError::UnknownEffort(value) => failure(
+                format!(
+                    "--effort must be one of {} (got {}).",
+                    crate::launch::EFFORT_LEVELS.join(", "),
+                    echoed(&value)
+                ),
+                "Pick one of those values.",
+                USAGE,
+            ),
+            UsageError::OptionNotOffered(option) => option_not_offered(option),
+            UsageError::CwdNotOffered => cwd_not_offered(),
+            UsageError::NoSessionSource => no_session_source(),
+        }
     }
 }
 
 impl From<DiscoveryError> for LaunchFailure {
     fn from(value: DiscoveryError) -> Self {
-        let _ = value;
-        todo!("binary")
+        failure(value.to_string(), value.next_step(), FAILED)
     }
 }
 
 impl From<EnsureError> for LaunchFailure {
     fn from(value: EnsureError) -> Self {
-        let _ = value;
-        todo!("binary")
+        failure(value.to_string(), value.next_step(), FAILED)
     }
 }
 
 impl From<ProfileLookupError> for LaunchFailure {
     fn from(value: ProfileLookupError) -> Self {
-        let _ = value;
-        todo!("binary")
+        failure(value.to_string(), value.next_step(), FAILED)
     }
 }
 
 impl From<TicketError> for LaunchFailure {
     fn from(value: TicketError) -> Self {
-        let _ = value;
-        todo!("binary")
+        failure(value.to_string(), value.next_step(), FAILED)
     }
 }
 
 impl From<ConnectError> for LaunchFailure {
     fn from(value: ConnectError) -> Self {
-        let _ = value;
-        todo!("binary")
+        failure(value.to_string(), value.next_step(), FAILED)
     }
 }
 
 impl From<HandshakeError> for LaunchFailure {
     fn from(value: HandshakeError) -> Self {
-        let _ = value;
-        todo!("binary")
+        failure(value.to_string(), value.next_step(), FAILED)
     }
 }
 
 impl From<Closed> for LaunchFailure {
     fn from(value: Closed) -> Self {
-        let _ = value;
-        todo!("binary")
+        failure(value.to_string(), value.next_step(), FAILED)
     }
 }
 
 impl From<CallError> for LaunchFailure {
     fn from(value: CallError) -> Self {
-        let _ = value;
-        todo!("binary")
+        match &value {
+            CallError::Rpc(error) => refusal(error.reason.as_deref().unwrap_or("refused")),
+            _ => failure(value.to_string(), value.next_step(), FAILED),
+        }
     }
 }
 
 impl From<DialFailure> for LaunchFailure {
     fn from(value: DialFailure) -> Self {
-        let _ = value;
-        todo!("binary")
+        failure(value.reason(), value.next_step(), FAILED)
+    }
+}
+
+/// A launch call that got no usable answer: not connected, timed out, or undecodable.
+#[must_use]
+pub fn link_failure(what: &str) -> LaunchFailure {
+    failure(
+        what,
+        "Check the gateway with hermes gateway status, then run the command again.",
+        FAILED,
+    )
+}
+
+/// The failure for a refused launch call, by its `data.reason`.
+#[must_use]
+pub fn refusal(reason: &str) -> LaunchFailure {
+    match reason {
+        "permission_denied" => permission_denied(),
+        "profile_mismatch" => profile_mismatch(),
+        "runtime_draining" => runtime_draining(),
+        other => other_refusal(other),
     }
 }
 
 #[must_use]
 pub fn no_terminal() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "a terminal is required on standard input and standard output.",
+        "Run it in a terminal pane. Scripted use (talaria -p) arrives in a later release.",
+        USAGE,
+    )
 }
 
 #[must_use]
 pub fn nothing_to_continue() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "no earlier session found for this folder.",
+        "Start a new one with talaria, or choose one with talaria --resume.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn resume_not_found(session_id: &str, profile: &str) -> LaunchFailure {
-    let _ = (session_id, profile);
-    todo!("binary")
+    failure(
+        format!(
+            "no session with the id {} in the profile {}.",
+            echoed(session_id),
+            echoed(profile)
+        ),
+        "Session ids belong to one profile. Check --profile, or list sessions with talaria --resume.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn permission_denied() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "Hermes refused to open that session (it belongs to another user or profile).",
+        "Check --profile and the id.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn profile_mismatch() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "that session belongs to a different profile.",
+        "Pass the profile it was created with using --profile.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn runtime_draining() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "Hermes is restarting and cannot open sessions right now.",
+        "Wait a few seconds and run the command again.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn option_not_offered(option: &str) -> LaunchFailure {
-    let _ = option;
-    todo!("binary")
+    failure(
+        format!(
+            "this Hermes gateway does not accept {} when creating a session.",
+            echoed(option)
+        ),
+        "Drop the option, or update Hermes to a release that supports it.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn cwd_not_offered() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "this Hermes gateway cannot keep the working folder of a new session.",
+        "Update Hermes to a release that supports it.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn no_session_source() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "this Hermes gateway does not offer the session source Talaria needs (tui).",
+        "Update Hermes to a release that offers it.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn folder_unknown() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "the most recent session cannot be checked against this folder.",
+        "Choose a session with talaria --resume, or start a new one with talaria.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn create_lost_twice() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "the connection dropped while the session was being created; Hermes may have created \
+         an empty session.",
+        "Run the command again.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn folder_unreadable() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "the current folder cannot be read.",
+        "Run talaria from a folder that exists and that you can open.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn record_unwritable() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "cannot write the recording file.",
+        "Check the path and the folder's permissions.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn record_exists() -> LaunchFailure {
-    todo!("binary")
+    failure(
+        "the recording file already exists.",
+        "Choose a new path for --record.",
+        FAILED,
+    )
 }
 
 #[must_use]
 pub fn other_refusal(reason: &str) -> LaunchFailure {
-    let _ = reason;
-    todo!("binary")
+    failure(
+        format!("Hermes refused the request ({}).", reason_text(reason)),
+        "Run the command again; if it keeps failing, report the reason.",
+        FAILED,
+    )
 }
 
-#[must_use]
-pub fn voice_stop_notice() -> String {
-    todo!("binary")
-}
-
-#[must_use]
-pub fn interrupt_refused_notice(reason: &str) -> String {
-    let _ = reason;
-    todo!("binary")
-}
-
-#[must_use]
-pub fn link_failure(what: &str) -> LaunchFailure {
-    let _ = what;
-    todo!("binary")
-}
-
-#[must_use]
-pub fn refusal(reason: &str) -> LaunchFailure {
-    let _ = reason;
-    todo!("binary")
-}
-
-/// A refusal reason as it may be shown: the reason when it is a plain `[a-z_]` word.
+/// A `data.reason` is `[a-z_]{1,80}`; anything else is shown as `unknown`.
 #[must_use]
 pub fn reason_text(reason: &str) -> &str {
-    let _ = reason;
-    todo!("binary")
+    let valid = !reason.is_empty()
+        && reason.len() <= 80
+        && reason
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_');
+    if valid { reason } else { "unknown" }
 }
 
 /// `prompt.submit` was refused with an RPC error.
 #[must_use]
 pub fn prompt_refused_notice(reason: &str) -> String {
-    let _ = reason;
-    todo!("binary")
+    let reason = reason_text(reason);
+    if reason == "permission_denied" {
+        format!(
+            "Hermes refused the prompt ({reason}). The connection is not attached to this \
+             session; it will reconnect."
+        )
+    } else {
+        format!("Hermes refused the prompt ({reason}).")
+    }
 }
 
 /// The connection dropped while a prompt was being sent.
 #[must_use]
 pub fn prompt_unknown_notice() -> String {
-    todo!("binary")
+    "The connection dropped while this prompt was being sent. It is shown above if Hermes \
+     received it; send it again if it is not."
+        .to_string()
+}
+
+#[must_use]
+pub fn voice_stop_notice() -> String {
+    "Hermes took that text as the stop phrase of a voice chat on this session, so it was not \
+     sent as a prompt."
+        .to_string()
+}
+
+#[must_use]
+pub fn interrupt_refused_notice(reason: &str) -> String {
+    format!(
+        "Hermes did not stop the turn ({}). If it is still running, press Esc again.",
+        reason_text(reason)
+    )
 }
 
 #[cfg(test)]

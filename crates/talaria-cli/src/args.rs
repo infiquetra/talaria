@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{ColorChoice, CommandFactory, Parser};
 
-use talaria_app::launch::{Launch, UsageError};
+use talaria_app::launch::{Launch, StartMode, UsageError, new_session_options, parse_effort};
 
 fn required_text(value: &str) -> Result<String, String> {
     if value.trim().is_empty() {
@@ -60,9 +60,39 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// The launch this command line asks for. New-session options with `-c` or `--resume` and
+    /// an unknown `--effort` are refused here. The folder is the current one, made canonical
+    /// when it can be; the binary refuses one that cannot be read.
     pub fn into_launch(self) -> Result<Launch, UsageError> {
-        let _ = self;
-        todo!("binary")
+        let mode = if self.continue_session {
+            StartMode::Continue
+        } else if let Some(resume) = self.resume {
+            StartMode::Resume(resume.map(|id| id.trim().to_string()))
+        } else {
+            StartMode::New
+        };
+        let folder = std::env::current_dir()
+            .map(|folder| folder.canonicalize().unwrap_or(folder))
+            .unwrap_or_default();
+        let launch = Launch {
+            mode,
+            model: self.model,
+            provider: self.provider,
+            effort: self.effort,
+            profile: self.profile.trim().to_string(),
+            folder,
+            record: self.record,
+            bench_replay: self.bench_replay.map(PathBuf::from),
+            no_ensure: self.no_ensure,
+        };
+        let given = new_session_options(&launch);
+        if launch.mode != StartMode::New && !given.is_empty() {
+            return Err(UsageError::NewSessionOptionsWithResume { given });
+        }
+        if let Some(effort) = &launch.effort {
+            parse_effort(effort)?;
+        }
+        Ok(launch)
     }
 }
 
