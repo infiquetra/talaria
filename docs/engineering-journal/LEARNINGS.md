@@ -4187,7 +4187,6 @@ assistant cell's text already begins with the payload's trimmed text.
 **Generalizable rule.** An event's name is not proof of its content; before rendering a
 summary event, check it against what the stream has already delivered in the same turn.
 
-
 ## 2026-10-23 — Complete source lines establish Markdown commit boundaries
 
 **Evidence.** With pulldown-cmark 0.13.4, `Hello\n***` temporarily contains a
@@ -4200,3 +4199,25 @@ pairs, and equality with whole-document rendering across character-sized deltas.
 
 **Rule.** Use complete source lines as evidence for irreversible Markdown output.
 Keep separators with the following block so finishing a message adds no trailing blank.
+
+## 2026-10-23 — Keep masked input owned until its response is written
+
+**Evidence.** Prompt cards hold masked input in a dedicated wrapper around
+`Zeroizing<String>`, preallocated to 65,536 bytes for at most 16,384 Unicode
+characters. The wrapper has no formatting, cloning or serialization implementation.
+Its intent reports only a character count when formatted and moves the buffer directly
+to the response service. The service borrows that buffer while writing the response;
+the value never becomes a reducer event. Zeroize 1.9.1 clears the entire string capacity
+on drop, including bytes removed while editing. The secrecy tests exercise both typed
+and pasted input across the screen, recorder, notices and response boundary.
+
+**Rule.** Separate the value's lifetime from the card's visible metadata. Preserve a
+single zeroing allocation until transmission or withdrawal, then drop it. A successful
+socket write confirms transmission, while a peer-side assertion still needs a read
+barrier. Replayed envelopes must also advance the mock's sequence counter before it
+generates later settlement events.
+
+**Dependency boundary.** The prompt service promotes the existing pinned Tokio
+workspace dependency from test-only to normal use so concurrent denials can finish
+within a bounded wait before an interrupt. It adds no dependency version and imports
+no terminal library into the application crate.

@@ -6,13 +6,24 @@ use zeroize::Zeroizing;
 pub struct MaskedValue(Zeroizing<String>);
 
 impl MaskedValue {
+    pub(super) fn new() -> Self {
+        Self(Zeroizing::new(String::with_capacity(65_536)))
+    }
+
+    pub(super) fn push(&mut self, ch: char) {
+        self.0.push(ch);
+    }
+
+    pub(super) fn pop(&mut self) {
+        self.0.pop();
+    }
+
     pub fn len_chars(&self) -> usize {
-        let _ = &self.0;
-        todo!("prompts")
+        self.0.chars().count()
     }
 
     pub fn into_inner(self) -> Zeroizing<String> {
-        todo!("prompts")
+        self.0
     }
 }
 

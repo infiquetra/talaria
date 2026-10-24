@@ -34,8 +34,21 @@ pub enum PromptIntent {
 
 impl fmt::Debug for PromptIntent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = f;
-        todo!("prompts")
+        match self {
+            Self::Approve { choice, note, .. } => f
+                .debug_struct("Approve")
+                .field("choice_chars", &choice.chars().count())
+                .field("note_chars", &note.as_ref().map(|s| s.chars().count()))
+                .finish(),
+            Self::Clarify { answer, .. } => f
+                .debug_struct("Clarify")
+                .field("answer_chars", &answer.chars().count())
+                .finish(),
+            Self::Masked { value, .. } => f
+                .debug_struct("Masked")
+                .field("value_chars", &value.len_chars())
+                .finish(),
+        }
     }
 }
 
