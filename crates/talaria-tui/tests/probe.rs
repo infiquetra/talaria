@@ -218,8 +218,11 @@ fn read_probe_reply_stops_at_marker_or_deadline() {
     // was no marker, so the answer is the defaults, and the drain has taken the late reply.
     let (read_end, write_end) = pipe().expect("pipe");
     write_all(&write_end, CURSOR_BOTTOM_LEFT);
+    let started = Instant::now();
     let late = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(220));
+        while started.elapsed() < Duration::from_millis(220) {
+            thread::sleep(Duration::from_millis(2));
+        }
         write_all(&write_end, KEYBOARD_SUPPORTED);
         // Hand the write end back so the pipe stays open while the test looks at it.
         write_end
