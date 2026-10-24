@@ -19,6 +19,7 @@ shlex.workspace = true
 url.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "time"] }
 unicode-segmentation.workspace = true
+zeroize.workspace = true
 unicode-width.workspace = true
 pulldown-cmark.workspace = true
 syntect.workspace = true

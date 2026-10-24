@@ -1,0 +1,5 @@
+Approval needed
+$ echo ␛[2J‹U+202E› done
+› 1. once
+  2. deny
+1-2 choose · Enter confirm · Esc deny · Tab note · Ctrl+C deny and stop

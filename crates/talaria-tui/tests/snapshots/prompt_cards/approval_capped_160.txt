@@ -1,0 +1,17 @@
+Approval needed · session f00dfeed
+$ echo step-01
+  echo step-02
+  echo step-03
+  echo step-04
+  echo step-05
+  echo step-06
+  echo step-07
+  echo step-08
+  echo step-09
+  echo step-10
+… 2 more lines
+This approval carries a proposed edit.
+Hermes denies this after 45 s without an answer.
+› 1. once
+  2. deny
+1-2 choose · Enter confirm · Esc deny · Tab note · Ctrl+C deny and stop

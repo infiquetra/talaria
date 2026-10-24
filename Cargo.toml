@@ -34,6 +34,7 @@ serde_json = "=1.0.154"
 regress = "=0.10.3"
 proptest = "=1.11.0"
 pulldown-cmark = { version = "=0.13.4", default-features = false }
+zeroize = "=1.9.1"
 rustix = { version = "=1.1.5", features = ["fs", "process"] }
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"

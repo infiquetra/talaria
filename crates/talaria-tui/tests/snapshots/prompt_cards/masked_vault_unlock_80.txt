@@ -1,0 +1,4 @@
+Unlock Team vault
+bitwarden
+value:
+Enter send · Esc decline · Ctrl+C decline and stop

@@ -1,0 +1,4 @@
+sudo password
+$ sudo apt-get install jq
+value:
+Enter send · Esc decline · Ctrl+C decline and stop

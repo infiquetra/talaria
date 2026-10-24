@@ -1,0 +1,3 @@
+sudo password
+value:
+Enter send · Esc decline · Ctrl+C decline and stop
