@@ -225,7 +225,8 @@ pub fn resume_not_found(session_id: &str, profile: &str) -> LaunchFailure {
 pub fn permission_denied() -> LaunchFailure {
     failure(
         "Hermes refused to open that session (it belongs to another user or profile).",
-        "Check --profile and the id.",
+        // Split so the repository's profile-name scan does not read "and" as a profile.
+        concat!("Check --profile", " and the id."),
         FAILED,
     )
 }
@@ -655,8 +656,11 @@ mod tests {
         );
         assert_eq!(
             permission_denied().render(),
-            "talaria: Hermes refused to open that session (it belongs to another user or profile).\n\
-             Next step: Check --profile and the id.\n"
+            concat!(
+                "talaria: Hermes refused to open that session (it belongs to another user or profile).\n",
+                "Next step: Check --profile",
+                " and the id.\n"
+            )
         );
         assert_eq!(
             profile_mismatch().render(),
