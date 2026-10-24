@@ -13,16 +13,23 @@ talaria-core.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 rustix = { workspace = true, features = ["event"] }
+serde.workspace = true
+serde_json.workspace = true
+shlex.workspace = true
+url.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "time"] }
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]
 alacritty_terminal.workspace = true
+hermes-client.workspace = true
 hermes-contract.workspace = true
 proptest.workspace = true
 rustix = { workspace = true, features = ["event", "pipe"] }
 serde_json.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 vt100.workspace = true
 vte.workspace = true
 

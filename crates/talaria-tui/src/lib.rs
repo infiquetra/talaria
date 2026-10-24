@@ -2,4 +2,5 @@
 
 pub mod history;
 pub mod live;
+pub mod status;
 pub mod terminal;
