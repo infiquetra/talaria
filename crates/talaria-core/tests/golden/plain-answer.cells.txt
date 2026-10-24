@@ -1,0 +1,6 @@
+cell 1 user "Reply with exactly the single word: pong. Do not use any tools."
+cell 2 assistant "pong"
+turn: Finished(Completed)
+final_prefix: 2 of 2
+prompts: none
+unknown_event_types: none

@@ -2043,6 +2043,7 @@ name = "talaria-core"
 version = "0.7.0-dev"
 dependencies = [
  "hermes-contract",
+ "proptest",
  "serde_json",
 ]
 

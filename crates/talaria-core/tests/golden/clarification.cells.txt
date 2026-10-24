@@ -1,0 +1,9 @@
+cell 1 user "Before anything else, use the clarify tool to ask me which colour I prefer, with the choices red and blue. Then tell me the colour I chose."
+cell 2 assistant "I'll ask you now."
+cell 3 tool[ok] clarify context="Which colour do you prefer?" id=call_function_q8rhzzxsnj84_1
+cell 4 prompt[clarify Settled(Answered("[redacted]"))] question="Which colour do you prefer?"
+cell 5 assistant "You chose blue."
+turn: Finished(Completed)
+final_prefix: 5 of 5
+prompts: none
+unknown_event_types: none

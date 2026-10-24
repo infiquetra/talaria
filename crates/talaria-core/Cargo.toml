@@ -10,8 +10,10 @@ publish.workspace = true
 
 [dependencies]
 hermes-contract.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 serde_json.workspace = true
 
 [lints]
