@@ -727,6 +727,10 @@ impl MockGateway {
                 s.next_seq = seq + 1;
             }
         }
+        // Events the mock makes up afterwards belong to the stream just replayed.
+        if let Some(epoch) = params["replay_epoch"].as_str() {
+            lock(&self.shared).sess.replay_epoch = epoch.to_owned();
+        }
         let event_type = params["type"].as_str().map(str::to_owned);
         let text = json!({"jsonrpc": "2.0", "method": "event", "params": params});
         self.write(
@@ -1555,7 +1559,23 @@ fn recorded_result(log: &str, method: &str) -> Value {
 /// The `session.create` result of the recorded plain-answer log: session `local-session-1`,
 /// stored id `stored-1`, `execution_generation` 1, folder `/work/proj`.
 pub fn recorded_create_snapshot() -> Value {
-    recorded_result(PLAIN_ANSWER_LOG, "session.create")
+    let mut snapshot = recorded_result(PLAIN_ANSWER_LOG, "session.create");
+    // A live recording carries the ids, epoch and folder of the machine it was made on; the
+    // mock serves the fixed ones the tests name.
+    snapshot["session_id"] = json!("local-session-1");
+    snapshot["stored_session_id"] = json!("stored-1");
+    snapshot["subscription_id"] = json!("sub-1");
+    snapshot["replay_epoch"] = json!("id-0002");
+    snapshot["authority_epoch"] = json!(1);
+    snapshot["revision"] = json!(1);
+    snapshot["execution_generation"] = json!(1);
+    snapshot["info"]["cwd"] = json!("/work/proj");
+    // The recorder withholds some `info` objects as the text `[redacted]`, which is not the
+    // shape the contract gives them; the mock leaves those keys out.
+    if let Some(info) = snapshot["info"].as_object_mut() {
+        info.retain(|_, value| value != "[redacted]");
+    }
+    snapshot
 }
 
 /// The `session.resume` result of talaria-core's paired resume snapshot, as recorded: three

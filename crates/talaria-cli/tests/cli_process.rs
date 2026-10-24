@@ -282,10 +282,7 @@ fn quit_restores_terminal_and_prints_resume_hint() {
         .unwrap_or_else(|| panic!("no prompt was sent:\n{}", terminal.screen_text()));
     assert_eq!(submit.params["text"], "What files are in this directory?");
     assert!(
-        terminal.wait_for_text(
-            "The directory contains a git repository and a tests directory.",
-            Duration::from_secs(5)
-        ),
+        terminal.wait_for_text("pong", Duration::from_secs(5)),
         "the answer never reached the screen:\n{}",
         terminal.screen_text()
     );
