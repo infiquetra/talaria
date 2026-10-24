@@ -6,7 +6,7 @@ use super::{PromptKey, SessionId};
 
 /// One reducer input.
 ///
-/// `Event::Session.raw` is the whole `params` object (parent #192 C-2). Envelope fields come from
+/// `Event::Session.raw` is the whole `params` object. Envelope fields come from
 /// `frame`. Every payload field comes from `raw["payload"]`.
 ///
 /// The decoded frame stays by value. Boxing it would change this stub's public shape.

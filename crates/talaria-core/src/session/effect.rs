@@ -6,7 +6,7 @@ use super::{AnswerRefusal, PromptKey, SessionId};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     /// `prompt.submit` with exactly `session_id`, `text` and `submission_id`.
-    /// `unattended` is never set true (parent #192 C-7).
+    /// `unattended` is never set true.
     SendPrompt {
         /// Target session.
         session_id: SessionId,

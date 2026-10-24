@@ -21,6 +21,20 @@ pub enum Cell {
     Prompt(PromptCell),
 }
 
+impl Cell {
+    /// Whether this cell is final and ready to be committed to scrollback once every earlier cell is also final.
+    #[must_use]
+    pub fn is_final(&self) -> bool {
+        match self {
+            Self::User(_) | Self::Notice(_) => true,
+            Self::Assistant(cell) => cell.sealed,
+            Self::Reasoning(cell) => cell.sealed,
+            Self::Tool(cell) => cell.status != ToolStatus::Running,
+            Self::Prompt(cell) => cell.sealed,
+        }
+    }
+}
+
 /// A user cell is final as soon as it exists.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserCell {

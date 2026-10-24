@@ -3,27 +3,48 @@
 
 /// Drop leading `\r` and `\n` only. Spaces and tabs stay, so a chunk of spaces opens a cell.
 pub fn trim_leading_breaks(chunk: &str) -> &str {
-    let _ = chunk;
-    todo!("P1-05")
+    chunk.trim_start_matches(['\r', '\n'])
 }
 
 /// Remove CSI sequences (`ESC [` … final byte) and any other `ESC` plus the following byte.
 /// The caller treats a blank remainder as absent.
 pub fn strip_terminal_escapes(text: &str) -> String {
-    let _ = text;
-    todo!("P1-05")
+    let mut out = String::new();
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+        } else if chars.next() == Some('[') {
+            for next in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&next) {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Delete every Unicode whitespace character. Used to compare a final reply with what was shown.
 pub fn remove_whitespace(text: &str) -> String {
-    let _ = text;
-    todo!("P1-05")
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
 /// The tail of `original` after `kept` non-whitespace characters, with leading whitespace removed.
 pub fn text_after_non_whitespace(original: &str, kept: usize) -> String {
-    let _ = (original, kept);
-    todo!("P1-05")
+    if kept == 0 {
+        return original.trim_start().to_owned();
+    }
+    let mut count = 0;
+    for (index, ch) in original.char_indices() {
+        if !ch.is_whitespace() {
+            count += 1;
+            if count == kept {
+                return original[index + ch.len_utf8()..].trim_start().to_owned();
+            }
+        }
+    }
+    String::new()
 }
 
 #[cfg(test)]

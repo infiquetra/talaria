@@ -1,6 +1,6 @@
 //! Pure session reducer. One [`SessionState`] turns Hermes events into cells and effects.
 //!
-//! Payload fields are read from the raw `params` object on [`Event::Session`] (parent #192 C-2).
+//! Payload fields are read from the raw `params` object on [`Event::Session`].
 //! The function [`update`] does no input or output and reads no clock.
 
 pub mod cell;

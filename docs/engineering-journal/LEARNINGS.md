@@ -4046,3 +4046,32 @@ issue #196, with no temporary definitions or compatibility overlays.
 A peer dropping its socket does not prove the client has observed the disconnect. Wait for
 the inbound `Closed` notification before requiring a later call to return `NotConnected`;
 a call accepted before that observation can correctly end with an unknown outcome.
+
+## 2026-10-23 — Prompt identity follows the pinned string shape
+
+**Evidence.** At Hermes v0.22.4, commit
+`4d04303818b61bf3aa09278af48356315515965b`, `CanonicalPendingPrompt.prompt_id`
+and the canonical approval/clarification events use strings. The issue's request
+for an integer prompt id is a wording mismatch: `execution_generation` is the
+integer. The reducer's `PromptKey` retains the pinned string id and generation.
+
+**Rule.** Validate each part of a correlation key against the pinned wire type;
+do not coerce prompt ids into numbers.
+
+
+## 2026-10-24 — Hermes echoes the answer as `reasoning.available` at the end of a turn
+
+**Evidence.** `crates/talaria-core/src/session/reducer.rs`, the `reasoning.delta` /
+`reasoning.available` arm. On sessions with `source = "tui"`, Hermes v0.22.4
+`agent/turn_response_intake.py:_relay_thinking` passes `reasoning.available` to the
+structured progress callback with the first 500 characters of the assistant message's
+content once the turn ends.
+
+**Mechanism.** The event name says reasoning, but the payload is a copy of the answer
+the client has already streamed. Treating it as reasoning sealed the open assistant
+cell and added a reasoning cell holding a repeat of the answer. The reducer now ignores
+`reasoning.available` when the turn already streamed reasoning, or when the open
+assistant cell's text already begins with the payload's trimmed text.
+
+**Generalizable rule.** An event's name is not proof of its content; before rendering a
+summary event, check it against what the stream has already delivered in the same turn.
