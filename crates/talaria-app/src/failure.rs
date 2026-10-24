@@ -181,6 +181,38 @@ pub fn interrupt_refused_notice(reason: &str) -> String {
     todo!("binary")
 }
 
+#[must_use]
+pub fn link_failure(what: &str) -> LaunchFailure {
+    let _ = what;
+    todo!("binary")
+}
+
+#[must_use]
+pub fn refusal(reason: &str) -> LaunchFailure {
+    let _ = reason;
+    todo!("binary")
+}
+
+/// A refusal reason as it may be shown: the reason when it is a plain `[a-z_]` word.
+#[must_use]
+pub fn reason_text(reason: &str) -> &str {
+    let _ = reason;
+    todo!("binary")
+}
+
+/// `prompt.submit` was refused with an RPC error.
+#[must_use]
+pub fn prompt_refused_notice(reason: &str) -> String {
+    let _ = reason;
+    todo!("binary")
+}
+
+/// The connection dropped while a prompt was being sent.
+#[must_use]
+pub fn prompt_unknown_notice() -> String {
+    todo!("binary")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

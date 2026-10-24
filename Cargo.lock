@@ -2370,6 +2370,7 @@ version = "0.7.0-dev"
 dependencies = [
  "clap",
  "crossterm",
+ "futures-util",
  "hermes-client",
  "hermes-contract",
  "portable-pty",
@@ -2380,6 +2381,7 @@ dependencies = [
  "talaria-tui",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "vt100",
 ]
 

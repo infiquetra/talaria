@@ -72,6 +72,21 @@ pub fn new_launch_id() -> String {
     todo!("binary")
 }
 
+/// The `--effort` values, in the order the refusal lists them.
+pub const EFFORT_LEVELS: [&str; 8] = [
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
+
+/// The session source Talaria creates and continues.
+pub const SESSION_SOURCE: &str = "tui";
+
+/// The new-session options the person gave, in the order `--help` lists them.
+#[must_use]
+pub fn new_session_options(launch: &Launch) -> Vec<&'static str> {
+    let _ = launch;
+    todo!("binary")
+}
+
 pub fn plan(
     launch: &Launch,
     request_id: String,
