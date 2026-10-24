@@ -813,7 +813,7 @@ async fn reconnect_uses_fresh_ticket_and_reattaches_before_replay() {
             let first_replayed = tail.iter().position(|l| {
                 matches!(&l.rec, Rec::Event(ev) if ev.replayed && ev.session.as_deref() == Some(watched.id.as_str()))
             });
-            // Replayed events are items of the current connection (REQ-18 step 6).
+            // Replayed events are items of the current connection.
             if let Some(Rec::Event(ev)) = first_replayed.map(|at| &tail[at].rec) {
                 assert_eq!(ev.generation, generation, "replayed event generation");
             }
@@ -1419,7 +1419,7 @@ async fn reply_traffic_counts_as_life() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn no_heartbeat_when_not_advertised() {
     let _serial = serial().await;
-    // Missing and false both mean "no heartbeat" (REQ-1).
+    // Missing and false both mean "no heartbeat".
     for advertised in [None, Some(false)] {
         let gw = MockGateway::start().await;
         gw.set_heartbeat(advertised);

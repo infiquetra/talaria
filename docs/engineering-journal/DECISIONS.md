@@ -3348,3 +3348,26 @@ skip. This does not relax production discovery or turn unsafe nodes into skips.
 **Revisit when.** The generated contract changes an imported type or method marker, or
 Hermes publishes a different native attachment contract. Re-run the complete client checks
 and required live fixture acceptance after integration.
+
+## 2026-10-24 — Keep replay request shaping local and closure time in the channel
+
+**Decision.** The liveness module sends `session.resume` and `session.events.since`
+through the existing raw-call interface with explicit parameter objects, then decodes
+the replies into generated contract types. It retains the original replay result for
+event extension fields and nulls. Neither the general RPC implementation nor connection
+setup needs a replay-specific modification; both are restored to the main branch.
+
+**Narrow channel exception.** Keep `ChannelStats.closed_at`, its reset at generation
+start, its assignment on the first recognized closure, and its focused lifecycle test.
+The timestamp records when the channel actor recognizes closure, rather than when the
+liveness task eventually consumes its notification. Pending calls can wake before that
+notification is consumed, so replay completion consults the same channel-owned closure
+state before interpreting a failed call. Backoff uses the recorded time to avoid counting
+time spent behind queued events or a blocked consumer as a stable connection.
+
+**Rejected alternative.** Recording the time in liveness, or checking its inbound queue
+before replay completion, cannot recover the original closure time. A closure may be
+behind ordinary inbound items, and draining them would require buffering or reordering.
+The channel-owned timestamp preserves those boundaries with one optional field. Duplicate
+and stale closures leave it unchanged; a new generation clears it. The replay guard is a
+check of observed channel state, not an atomic exclusion of every later socket failure.

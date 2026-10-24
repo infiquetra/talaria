@@ -333,50 +333,20 @@ impl Client {
         params: M::Params,
         options: CallOptions,
     ) -> Result<M::Result, CallError> {
-        let result = self.call_value::<M>(params, options).await?;
-        decode_result::<M>(result)
-    }
-
-    /// The same typed call path, retaining the original result for replay's raw params.
-    pub(crate) async fn call_with_raw<M: NativeMethod>(
-        &self,
-        params: M::Params,
-        options: CallOptions,
-    ) -> Result<(M::Result, Value), CallError> {
-        let raw = self.call_value::<M>(params, options).await?;
-        Ok((decode_result::<M>(raw.clone())?, raw))
-    }
-
-    async fn call_value<M: NativeMethod>(
-        &self,
-        params: M::Params,
-        options: CallOptions,
-    ) -> Result<Value, CallError> {
         let started = tokio::time::Instant::now();
         let timeout = options.timeout.unwrap_or_else(|| default_timeout(M::NAME));
         if timeout.is_zero() {
             return Err(CallError::InvalidTimeout);
         }
-        let mut params = serde_json::to_value(params).map_err(|_| CallError::Encode)?;
-        // The generated schemas serialize optional defaults. Omit these defaults
-        // on the canonical resume/replay path so replay uses only its three keys.
-        if let Some(object) = params.as_object_mut() {
-            if M::NAME == "session.resume" {
-                for key in ["defer_history", "display_projection", "omit_messages"] {
-                    if object.get(key) == Some(&Value::Bool(false)) {
-                        object.remove(key);
-                    }
-                }
-            } else if M::NAME == "session.events.since"
-                && object.get("last_seen") == Some(&Value::from(0))
-            {
-                object.remove("last_seen");
-            }
-        }
+        let params = serde_json::to_value(params).map_err(|_| CallError::Encode)?;
         if !params.is_null() && !params.is_object() {
             return Err(CallError::Encode);
         }
-        self.execute_call(M::NAME, params, timeout, started).await
+        let result = self.execute_call(M::NAME, params, timeout, started).await?;
+        serde_json::from_value(result).map_err(|_| CallError::BadResult {
+            method: M::NAME.into(),
+            reason: "result did not decode",
+        })
     }
 
     /// Send a method that has no typed binding. Tests, diagnostics, and `gateway.ping` use this.
@@ -399,13 +369,6 @@ impl Client {
         }
         self.execute_call(method, params, timeout, started).await
     }
-}
-
-fn decode_result<M: NativeMethod>(result: Value) -> Result<M::Result, CallError> {
-    serde_json::from_value(result).map_err(|_| CallError::BadResult {
-        method: M::NAME.into(),
-        reason: "result did not decode",
-    })
 }
 
 #[cfg(test)]

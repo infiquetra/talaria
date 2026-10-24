@@ -23,10 +23,7 @@ use crate::replay::{
 use crate::ticket::TicketError;
 use crate::{CallError, CallOptions};
 use hermes_contract::events::{EventFrame, Notification};
-use hermes_contract::methods::canonical::{session_events_since, session_resume};
-use hermes_contract::schemas::{
-    CanonicalEventsParams, CanonicalEventsResult, CanonicalResumeParams, CanonicalSnapshot,
-};
+use hermes_contract::schemas::{CanonicalEventsResult, CanonicalSnapshot};
 
 /// Half-jitter ladder. `floor` is the shortest delay and `cap` is the longest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -740,19 +737,7 @@ impl LinkTask {
             let client = self.client.clone();
             let timeout = self.cfg.replay_timeout;
             self.replay.spawn(async move {
-                let params = CanonicalResumeParams {
-                    session_id: id.clone(),
-                    ..Default::default()
-                };
-                let result = client
-                    .call_with::<session_resume::Marker>(
-                        params,
-                        CallOptions {
-                            timeout: Some(timeout),
-                        },
-                    )
-                    .await
-                    .map(Box::new);
+                let result = resume_session(&client, &id, timeout).await.map(Box::new);
                 ReplayReply::Attached {
                     id,
                     cursor,
@@ -807,21 +792,14 @@ impl LinkTask {
                         let client = self.client.clone();
                         let timeout = self.cfg.replay_timeout;
                         self.replay.spawn(async move {
-                            let params = CanonicalEventsParams {
-                                session_id: id.clone(),
+                            let result = replay_events(
+                                &client,
+                                &id,
                                 last_sequence,
-                                replay_epoch: Some(cursor.replay_epoch),
-                                last_seen: 0,
-                                profile: None,
-                            };
-                            let result = client
-                                .call_with_raw::<session_events_since::Marker>(
-                                    params,
-                                    CallOptions {
-                                        timeout: Some(timeout),
-                                    },
-                                )
-                                .await;
+                                &cursor.replay_epoch,
+                                timeout,
+                            )
+                            .await;
                             ReplayReply::Window { id, token, result }
                         });
                     }
@@ -998,6 +976,53 @@ impl LinkTask {
         self.client.close().await;
         let _ = self.events.send(LinkEvent::State(LinkState::Closed)).await;
     }
+}
+
+async fn resume_session(
+    client: &Client,
+    id: &str,
+    timeout: Duration,
+) -> Result<CanonicalSnapshot, CallError> {
+    let raw = client
+        .call_raw(
+            "session.resume",
+            serde_json::json!({"session_id": id}),
+            CallOptions {
+                timeout: Some(timeout),
+            },
+        )
+        .await?;
+    serde_json::from_value(raw).map_err(|_| CallError::BadResult {
+        method: "session.resume".into(),
+        reason: "result did not decode",
+    })
+}
+
+async fn replay_events(
+    client: &Client,
+    id: &str,
+    last_sequence: i64,
+    replay_epoch: &str,
+    timeout: Duration,
+) -> Result<(CanonicalEventsResult, serde_json::Value), CallError> {
+    let raw = client
+        .call_raw(
+            "session.events.since",
+            serde_json::json!({
+                "session_id": id,
+                "last_sequence": last_sequence,
+                "replay_epoch": replay_epoch,
+            }),
+            CallOptions {
+                timeout: Some(timeout),
+            },
+        )
+        .await?;
+    let result = serde_json::from_value(raw.clone()).map_err(|_| CallError::BadResult {
+        method: "session.events.since".into(),
+        reason: "result did not decode",
+    })?;
+    Ok((result, raw))
 }
 
 fn replay_failure(error: Option<&CallError>) -> ReplayFailure {

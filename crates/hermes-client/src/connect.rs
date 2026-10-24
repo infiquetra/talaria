@@ -109,27 +109,24 @@ pub async fn connect_with(
     ticket: Ticket,
     options: &ConnectOptions,
 ) -> Result<Connection, ConnectError> {
-    let origin = endpoint.api_origin();
     if ticket.purpose() != crate::ticket::Purpose::Interactive {
         return Err(ConnectError::WrongPurpose);
     }
-    if origin.starts_with("https://") {
+    if endpoint.api_origin().starts_with("https://") {
         return Err(ConnectError::TlsNotSupported);
     }
     tokio::time::timeout(options.timeout, async {
-        let authority = origin
+        let authority = endpoint
+            .api_origin()
             .strip_prefix("http://")
             .ok_or(ConnectError::Io(std::io::ErrorKind::InvalidInput))?;
         let address: std::net::SocketAddr = authority
             .parse()
             .map_err(|_| ConnectError::Io(std::io::ErrorKind::InvalidInput))?;
-        if !address.ip().is_loopback() {
-            return Err(ConnectError::Io(std::io::ErrorKind::InvalidInput));
-        }
         let socket = tokio::net::TcpStream::connect(address)
             .await
             .map_err(|err| ConnectError::Io(err.kind()))?;
-        let mut request = ws_url(origin)
+        let mut request = ws_url(endpoint.api_origin())
             .into_client_request()
             .map_err(map_upgrade_error)?;
         let protocols = format!(
