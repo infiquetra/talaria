@@ -2,6 +2,35 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-23 — Scrollback is asserted with `alacritty_terminal`, resize follows a stated model with cursor-relative moves, and there is no hardware caret
+
+**Decision.** The inline renderer's scrollback tests feed the bytes to `alacritty_terminal`
+0.26.0 (with `vte` 0.15.0), and `vt100` 0.16.2 serves only screen snapshots. A resize does not
+query the terminal; Talaria applies `alacritty_terminal`'s resize model: a shrink drops rows below
+the cursor first, then pushes rows from the top into scrollback, and a grow pulls rows back from
+scrollback. The cursor stays hidden and parked on column 0 of the viewport's last row after
+every operation, and moves after start-up are written relative to the parked cursor rather than
+with absolute row numbers or a top-anchored scroll region (except at start-up, after a resize
+notification, and on overlay close, which re-anchor absolutely). A commit moves relative to the
+viewport top, clears below with `ESC [ J`, writes committed lines with `CRLF` so the screen
+scrolls naturally into native scrollback, and repaints the live region from the last frame.
+The composer draws its caret as a styled cell.
+
+**Rationale.** `vt100` records no scrollback while a scroll region is set, which makes the most
+important assertion vacuous. A cursor query after start-up races the key reader for the reply.
+Because `tmux` 3.7c resizes the pane grid immediately but rate-limits `SIGWINCH` delivery to at
+most one signal per 250 ms, absolute row coordinates (`DECSTBM` scroll regions and absolute
+`CSI row;col H` moves) written during that 250 ms window land on stale row indices and corrupt
+history; relative moves stay anchored to the content line `tmux` keeps the cursor on.
+
+**Rejected alternatives.** `vt100` for every test; a cursor query on each resize, as OpenAI
+Codex does; `DECSTBM` scroll regions with absolute row coordinates during streaming commits
+(fails `tmux_scrollback` whenever commits arrive within 250 ms of a resize); showing the hardware
+cursor for input method editors (it moves the cursor the model depends on).
+
+**Revisit when** a terminal in the manual matrix breaks the model, or when input method editor
+support needs a visible caret.
+
 ## 2026-10-23 — Half-jitter backoff, 1 to 30 s
 
 **Decision.** Reconnect delays use half-jitter. Attempt 1 waits the 1 s floor. Later
