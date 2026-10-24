@@ -1980,7 +1980,7 @@ elapsed_ms=88
 marker=-
 rows=1
 truncated=false
-row[0]=_=/opt/homebrew/opt/coreutils/libexec/gnubin/env HOME=<home> LANG=en_US.UTF-8 PATH=<home>/.opencode/bin:<home>/.local/bin:<home>/.local/bin:<home>/.antigravity/antigravity/bin:<home>/.local/bin:<home>/.opencode/bin:<home>/.local/bin:<home>/.local/bin:/Applications/SnowSQL.app/Contents/MacOS:<home>/.jenv/shims:<home>/.jenv/bin:/opt/homebrew/opt/coreutils/libexec/gnubin:<home>/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:<scratch> PWD=<scratch> SHELL=/opt/homebrew/bin/bash SHLVL=1 TALARIA_GATEWAY_URL=ws://gateway.invalid:9/ws TALARIA_PROFILE=fixture TERM=xterm-256color TMPDIR=<tmp>/ 
+row[0]=_=/opt/homebrew/opt/coreutils/libexec/gnubin/env HOME=<home> LANG=en_US.UTF-8 PATH=<home>/.opencode/bin:<home>/.local/bin:<home>/.local/bin:<home>/.antigravity/antigravity/bin:<home>/.local/bin:<home>/.opencode/bin:<home>/.local/bin:<home>/.local/bin:/Applications/SnowSQL.app/Contents/MacOS:<home>/.jenv/shims:<home>/.jenv/bin:/opt/homebrew/opt/coreutils/libexec/gnubin:<home>/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:<scratch> PWD=<scratch> SHELL=/opt/homebrew/bin/bash SHLVL=1 TALARIA_GATEWAY_URL=ws://gateway.invalid:9/ws TALARIA_PROFILE=fixture TERM=xterm-256color TMPDIR=<tmp>/
 grep -c canary: 0
 exit=0
 Result: PASS
