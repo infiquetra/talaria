@@ -16,6 +16,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
+/// The start of the binary's start-up query: the cursor position request.
+const QUERY_MARK: &[u8] = b"\x1b[6n";
+
 fn search_path(prefix: Option<&Path>) -> String {
     match prefix {
         Some(dir) => format!("{}:/usr/bin:/bin", dir.display()),
@@ -111,6 +114,9 @@ pub struct Launch {
     rows: u16,
     cols: u16,
     script: Option<String>,
+    hermes_home: Option<PathBuf>,
+    cwd: Option<PathBuf>,
+    answer_queries: bool,
 }
 
 impl Launch {
@@ -122,6 +128,9 @@ impl Launch {
             rows: 30,
             cols: 100,
             script: None,
+            hermes_home: None,
+            cwd: None,
+            answer_queries: false,
         }
     }
 
@@ -139,6 +148,27 @@ impl Launch {
     pub fn size(mut self, rows: u16, cols: u16) -> Self {
         self.rows = rows;
         self.cols = cols;
+        self
+    }
+
+    /// Use this Hermes home (a running gateway's) instead of the given folder. `HOME` stays the
+    /// given folder, so no user configuration file is read.
+    pub fn hermes_home(mut self, dir: &Path) -> Self {
+        self.hermes_home = Some(dir.to_path_buf());
+        self
+    }
+
+    /// Answer the binary's start-up terminal queries as a real terminal does (cursor position,
+    /// synchronized output supported, no keyboard enhancement, device attributes), so the
+    /// binary does not wait out its reply deadline.
+    pub fn answer_queries(mut self) -> Self {
+        self.answer_queries = true;
+        self
+    }
+
+    /// Start in this folder instead of the given one.
+    pub fn cwd(mut self, dir: &Path) -> Self {
+        self.cwd = Some(dir.to_path_buf());
         self
     }
 
@@ -173,11 +203,14 @@ impl Launch {
                 command
             }
         };
-        command.cwd(&self.home);
+        command.cwd(self.cwd.as_ref().unwrap_or(&self.home));
         command.env_clear();
         command.env("PATH", search_path(self.path_prefix.as_deref()));
         command.env("HOME", &self.home);
-        command.env("HERMES_HOME", &self.home);
+        command.env(
+            "HERMES_HOME",
+            self.hermes_home.as_ref().unwrap_or(&self.home),
+        );
         command.env("TMPDIR", &self.home);
         if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
             command.env("LLVM_PROFILE_FILE", profile);
@@ -185,7 +218,7 @@ impl Launch {
         let spawned = Instant::now();
         let child = pair.slave.spawn_command(command).expect("spawn in pty");
         let mut reader = pair.master.try_clone_reader().expect("reader");
-        let writer = pair.master.take_writer().expect("writer");
+        let writer = Arc::new(Mutex::new(pair.master.take_writer().expect("writer")));
         let parser = Arc::new(Mutex::new(vt100::Parser::new(self.rows, self.cols, 200)));
         let raw = Arc::new(Mutex::new(Vec::new()));
         let first_screen = Arc::new(Mutex::new(None));
@@ -193,7 +226,10 @@ impl Launch {
             let parser = Arc::clone(&parser);
             let raw = Arc::clone(&raw);
             let first_screen = Arc::clone(&first_screen);
+            let writer = Arc::clone(&writer);
+            let answer_queries = self.answer_queries;
             std::thread::spawn(move || {
+                let mut answered = false;
                 let mut chunk = [0u8; 4096];
                 loop {
                     let count = match reader.read(&mut chunk) {
@@ -204,6 +240,21 @@ impl Launch {
                     lock(&raw).extend_from_slice(&chunk[..count]);
                     let mut parser = lock(&parser);
                     parser.process(&chunk[..count]);
+                    if answer_queries && !answered {
+                        let seen = lock(&raw);
+                        if seen
+                            .windows(QUERY_MARK.len())
+                            .any(|window| window == QUERY_MARK)
+                        {
+                            answered = true;
+                            let (row, column) = parser.screen().cursor_position();
+                            let reply =
+                                format!("\x1b[{};{}R\x1b[?2026;2$y\x1b[?62;c", row + 1, column + 1);
+                            let mut out = lock(&writer);
+                            let _ = out.write_all(reply.as_bytes());
+                            let _ = out.flush();
+                        }
+                    }
                     let mut first = lock(&first_screen);
                     if first.is_none() && !parser.screen().contents().trim().is_empty() {
                         *first = Some(read_at);
@@ -230,7 +281,7 @@ pub struct Terminal {
     child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
     _slave: Box<dyn SlavePty + Send>,
-    writer: Box<dyn Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     parser: Arc<Mutex<vt100::Parser>>,
     raw: Arc<Mutex<Vec<u8>>>,
     first_screen: Arc<Mutex<Option<Instant>>>,
@@ -309,8 +360,9 @@ impl Terminal {
 
     /// Write keys to the terminal, as typed.
     pub fn type_keys(&mut self, keys: &str) {
-        let _ = self.writer.write_all(keys.as_bytes());
-        let _ = self.writer.flush();
+        let mut out = lock(&self.writer);
+        let _ = out.write_all(keys.as_bytes());
+        let _ = out.flush();
     }
 
     /// Wait for the child to exit; kill it if the limit passes first.
