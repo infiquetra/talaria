@@ -2,6 +2,32 @@
 
 > Future work with priority, rough effort, and worth-it-when triggers.
 
+## 2026-10-24
+
+### Include the status section in `--bench-replay` (`#193` C-2)
+
+**Priority.** P2.
+
+**Evidence.** Parent issue 193 (`Settled C-2`), `crates/talaria-cli/src/bench_replay.rs`, and issue 208 (`REQ-14`). In Phase 1, `--bench-replay` deliberately omits the status line (`no status line`) so the replay harness measures markdown streaming and composer rendering deterministically without an external status subprocess.
+
+**Worth it when.** Phase 2 (`#213` / `#214`) or a later performance pass wants `--bench-replay` to measure status-segment formatting cost alongside the markdown tail and composer.
+
+### Implement `/clear` in the slash-command palette (`#193` C-7)
+
+**Priority.** P1 (scheduled in Phase 2 issue 223).
+
+**Evidence.** Parent issue 193 (`Settled C-7`) and issue 209 (`REQ-15`). Phase 1 restricts slash commands to `/quit` only (`the_only_slash_command_is_quit`); `/clear` (detach from the current session and call `session.create` in the same folder) is moved to issue 223.
+
+**Worth it when.** Issue 223 builds the Phase 2 slash-command palette and session-reset flow.
+
+### Reconcile frozen `docs/formats/status-line.md` with Rust configuration paths (`#193` C-8)
+
+**Priority.** P2.
+
+**Evidence.** Parent issue 193 (`Settled C-8`), `docs/formats/status-line.md`, and `docs/configuration.md`. The frozen v1 status-line contract still mentions legacy Python configuration paths (`talaria/config.py`, repository config file, and `TALARIA_STATUS_INTERVAL_SECONDS`) that the Rust client intentionally replaces with `~/.talaria/config.toml` (`[status]`).
+
+**Worth it when.** The operator unfreezes `docs/formats/status-line.md` for a contract revision.
+
 ## 2026-10-23
 
 ### Record a `session.resume` fixture after the tool-diff turn
