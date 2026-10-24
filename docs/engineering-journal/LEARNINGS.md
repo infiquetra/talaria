@@ -2,6 +2,48 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-23 — A status line is fed by declared fields, not by reported ones
+
+**Evidence.** The status line reads the session's model, effort, working folder and branch from
+the `info` object of the gateway's settings snapshot. At the pinned Hermes revision (v0.22.4,
+commit `4d04303818b6`) the usage view declares `cost_usd` and `cost_status`, but no live path in
+`tui_gateway/`, `gateway/` or `agent/context_breakdown.py` sets either one, and Hermes's own
+terminal bar draws no cost. The `session.info` notification is a separate hazard: it can be a
+partial payload that holds only the stored session id, the pending flag, the authority epoch and
+the running flag, and no notification ever carries the branch — only the `session.info` method
+result does.
+
+**Mechanism.** A field that a schema declares is not a field the client will ever see. The cost
+segment of the status line therefore stays hidden until a value arrives, and a caller that
+replaces its settings wholesale on a `session.info` notification loses the model, the effort and
+the branch whenever the payload is partial. A missing figure and a reported zero are different
+facts, and the row must not invent one from the other.
+
+**Generalizable rule.** Treat a declared wire field as absent until a live producer sets it, and
+merge session settings field by field instead of replacing them; a segment that has no figure
+stays hidden rather than showing zero.
+
+## 2026-10-23 — A child process group is only as safe as its cleanup traps
+
+**Evidence.** The Python status runner leaked a helper on every tick until four traps were added,
+and the Rust runner needed the same four. The group kill must not depend on the leader still
+being alive: a command such as `worker & echo ok` reaps its leader at once and the worker keeps
+the output pipes open, so the run waits out its whole timeout unless the group is killed when the
+leader exits. The child's process id has to be recorded before the first `await`, or a shutdown
+that lands while the child is still starting leaves it running. The output caps have to be applied
+while reading, because reading to the end first turns one flooding command into resident memory.
+And the recorded process id must be cleared when the run ends, or a shutdown hours later signals
+a process group id the kernel has handed to something else. The process group is killed on every
+path — success, failure, timeout, cancellation — and `ESRCH` and `EPERM` are both ignored.
+
+**Mechanism.** A process group outlives the leader that named it, so the lifetime of the group and
+the lifetime of the leader are different things. Cleanup that hangs off the leader's exit status
+misses the helpers; cleanup that hangs off a stored id outlives the run it belonged to.
+
+**Generalizable rule.** Record a child before it can outlive the call that started it, kill the
+whole group on every exit path, clear the record when the run ends, and never treat an ignored
+signal as a failure.
+
 ## 2026-10-23 — Inline scrollback: `vt100` hides lost rows, and tmux tells the program about a resize late
 
 **Evidence.** `crates/talaria-tui/src/terminal.rs` (`insert_rows`, `resize`); the scrollback tests
