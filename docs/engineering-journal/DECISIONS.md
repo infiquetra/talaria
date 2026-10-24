@@ -45,6 +45,28 @@ caller and is not retried.
 next step at once, not a reconnect loop. Rejected alternative: retrying from start-up.
 
 **Revisit when.** Talaria gains a background mode that should wait for a gateway.
+## 2026-10-23 — The frame log moves to version 3 and answers to server requests are withheld by default
+
+**Decision.** The recorder writes frame log version 3 (`docs/formats/frame-log.md`): a header with
+`endpoint` and `subprotocols`, and records with a monotonic `tMs` and a connection `generation`
+instead of a wall-clock `at` and a `profile`. `ReplaySource` reads version 3 only. Redaction runs
+on a writer thread behind a bounded queue before anything is written. The answer to every server
+request is withheld whole except an `approval` answer, which keeps only `choice` and `all`.
+
+**Rationale.** The Rust client has one connection per process with a generation counter, so the
+version 2 multi-profile shape describes nothing it does. A bounded queue keeps recording off the
+path that serves the screen and states what it dropped, where an unbounded queue grows without
+limit on a stalled disk and a blocking one stalls the session. Withholding by default means a
+server request added by a later Hermes cannot leak its answer; a deny-list would have to be right
+about all sixteen requests of v0.22.4, four of which return screen or page content.
+
+**Rejected alternatives.** Keep reading versions 1 and 2 (their corpora were recorded against an
+older protocol and nothing needs them); a list of answers to withhold (fails open on a new
+request); redacting on the caller's thread (simpler, but the cost lands on the hot path); a hash
+chain (it cannot be redacted after the fact, so it waits for a later decision).
+
+**Revisit when** a reducer test needs the answer of a server request other than `approval`, or
+phase 3 records several gateways into one file.
 
 ## 2026-10-23 — Generate Hermes protocol bindings offline with narrow schema corrections
 

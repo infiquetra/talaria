@@ -1,4 +1,4 @@
-//! Test row 9 of P1-04: `ReplaySource` reads a version 3 frame log and feeds the inbound frames
+//! Test row 9: `ReplaySource` reads a version 3 frame log and feeds the inbound frames
 //! back through the real decode function with no socket.
 //!
 //! Every file here is written by hand from the format in `docs/formats/frame-log.md`, so these

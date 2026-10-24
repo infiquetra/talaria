@@ -2,231 +2,198 @@
 
 Status: `active`
 Authority: `contract`
-Version: 2 (a single-connection recording is still version 1 — see "Connections")
+Version: 3
 
-A frame log is the recording Talaria makes of its conversation with a Hermes gateway. It is written
-by `talaria record` and is the corpus that replay, renderer comparison, and protocol-drift detection
-all read.
+A frame log is the recording Talaria makes of its conversation with a Hermes gateway: every
+JSON-RPC frame (one WebSocket text message) in both directions, with secrets withheld before
+anything is written. The fixtures under `fixtures/frames/`, the session reducer's tests, the screen
+snapshots and the performance harness all read it.
 
-This file is the contract. The format is specified here rather than being implied by whatever a
-serializer emits, so a corpus recorded by today's TypeScript Talaria stays readable by a Talaria
-written in another language later. That property is the reason the recorder was built first.
+This file is the contract. The writer is `crates/hermes-client/src/record.rs`, the reader is
+`crates/hermes-client/src/replay_source.rs`, and the redaction rules are in
+`crates/hermes-client/src/redact.rs`. A change to any of them changes this file in the same pull
+request.
 
 ## Shape
 
-One JSON object per line, UTF-8, newline-delimited (JSON Lines). Appended, never rewritten.
+JSON Lines: UTF-8, one JSON object per line, every line ending in a newline, appended and never
+rewritten. The first line is the header; every later line is a record.
 
-The first line is a header. Every subsequent line is a frame.
+Readers ignore fields they do not know and skip records whose `kind` they do not know. A reader
+stops with a clear error on a header whose `version` is not 3.
 
 ### Header
 
 ```json
 {
   "kind": "header",
-  "version": 1,
-  "startedAt": "2026-08-02T12:21:35.016Z",
-  "endpoint": "ws://127.0.0.1:8799/api/ws?token=%5Bredacted%5D"
+  "version": 3,
+  "startedAt": "2026-10-23T09:14:02.331Z",
+  "endpoint": "ws://<gateway>/api/ws",
+  "subprotocols": ["hermes-gateway-v1"],
+  "gateway": { "codeVersion": "0.22.4", "codeSha": "<sha>" },
+  "scenario": "approval",
+  "expectedStatuses": ["complete"]
 }
 ```
 
-| field         | meaning                                                                    |
-| ------------- | -------------------------------------------------------------------------- |
-| `version`     | Format version. Bumped when a reader must notice a change.                 |
-| `startedAt`   | When recording began, ISO-8601.                                            |
-| `endpoint`    | The gateway dialled, with every credential-bearing component withheld — see below. |
-| `connections` | Version 2 only. Every connection this recording covers — see "Connections". |
+| Field | Meaning |
+|---|---|
+| `kind` | Always `header`. |
+| `version` | Always 3 for this layout. |
+| `startedAt` | When recording began, ISO 8601 in UTC with milliseconds. Written once; records carry `tMs`, not a clock time. |
+| `endpoint` | The WebSocket URL dialled, cleaned by the URL rule below. An endpoint that is not an absolute URL is written as the marker `[redacted]` alone; the header has no `redactions` list. |
+| `subprotocols` | The subprotocols offered, with every entry starting `hermes-gateway-ticket.` removed. Never holds a ticket. |
+| `gateway` | Optional. `codeVersion` and `codeSha` as the gateway's `identify` reported them (public build identifiers). |
+| `scenario` | Optional. The fixture scenario this file records. |
+| `expectedStatuses` | Optional. The `message.complete` status each turn is expected to end with, in order. |
 
-**What `endpoint` promises.** A URL can carry a credential in three places, and all three are
-withheld: a credential-shaped query parameter (`?token=`, `?ticket=`, `?internal=`, plus the
-key-name net), the userinfo ahead of the host (`user:pass@`), and the fragment. The fragment is
-taken whole and unread — it has no key/value structure to filter, so `#token=v` and `#v` are
-equally ordinary and there is nothing to match a name against. Scheme, host, port and path
-survive; the path is the one component that is **not** covered, and `talaria/recorder/redact.py`
-says why under "Known and deliberately not covered".
+A file with only a header is a valid recording of a session in which nothing crossed the socket.
 
-Fragment withholding arrived on 2026-08-05. A recording made before then may carry one verbatim.
-
-A log with only a header is a valid, complete recording of a session in which nothing arrived. That
-is deliberately distinguishable from a missing file.
-
-### Frame
+### Records
 
 ```json
-{
-  "kind": "frame",
-  "seq": 3,
-  "at": "2026-08-02T12:21:35.066Z",
-  "dir": "in",
-  "frame": { "jsonrpc": "2.0", "method": "event", "params": {} }
-}
+{"kind":"frame","seq":3,"tMs":152,"generation":1,"dir":"in","frame":{"jsonrpc":"2.0","method":"event","params":{}}}
+{"kind":"dropped","seq":4,"tMs":160,"count":12}
 ```
 
-| field        | meaning                                                      |
-| ------------ | ------------------------------------------------------------ |
-| `seq`        | Position in this file, starting at 1, monotonic and gapless. |
-| `at`         | When the frame was _observed_, not when it was sent.         |
-| `dir`        | `in` from the gateway, `out` from Talaria.                   |
-| `frame`      | The decoded JSON-RPC frame, after redaction.                 |
-| `redactions` | Present only when something was withheld.                    |
-| `parseError` | Present only when the payload was not valid JSON.            |
-| `profile`    | Version 2 only. Which connection the frame crossed — see below. |
+| Field | Meaning |
+|---|---|
+| `kind` | `frame`, `dropped`, or a kind a reader does not know (skipped). |
+| `seq` | Position among the records after the header, from 1, gapless. A `dropped` record takes a number. |
+| `tMs` | Milliseconds since the recorder was created, from a monotonic clock. Never decreases. Replay paces by it. |
+| `generation` | The connection generation the frame crossed; the first connection is 1. The recorder copies it from the caller. |
+| `dir` | `in` from the gateway, `out` from Talaria. |
+| `frame` | The frame after redaction and substitution, or `null` when the text was not valid JSON. |
+| `redactions` | Present only when something was withheld: a list of `{path, reason}`. |
+| `parseError` | Present only when `frame` is `null`: the parser's position and expectation. The text itself is withheld. |
+| `count` | On `dropped` records only: how many frames were not written because the recorder's queue was full. |
 
-## Connections
+The recorder never blocks the session. Frames wait in a bounded queue (4,096 by default; the queue
+counts frames, not bytes); when it is full a frame is dropped and counted, and a `dropped` record is
+written before the next frame that is written, or when recording ends. A recording states what it
+lost.
 
-Talaria can hold several gateway connections at once, one per configured profile. They record into
-**one** file, in native arrival order, so replay reproduces the interleaving with no cross-log merge
-rule to get wrong. The connection count — and nothing else — decides which of the two shapes a
-recording has.
+**Paths.** A redaction `path` is a dotted path from the frame root: object keys joined by `.`,
+array indices as plain numbers (`params.attachments.0.path`). A `.` inside a key is written `\.` and
+a `\` inside a key is written `\\`, so the key `a.b` under `params` is `params.a\.b`.
 
-**One connection: version 1.** No `profile` key on any frame, no `connections` list in the header.
-This is what `talaria record`, `talaria --record`, and every single-gateway run write, and it is
-byte-identical to what v0.1–v0.3 wrote. Recordings made by those versions are single-connection
-recordings by definition, and every reader that could read them can still read a new one.
+**The marker.** A value `"[redacted]"` is not data. Never treat it as real text, and never assume a
+frame with `redactions` is complete. Inside a URL the marker is percent-encoded, `%5Bredacted%5D`.
 
-**Two or more: version 2.** Every frame carries a `profile` naming the connection it crossed, and
-the header carries a `connections` list:
+### Reasons
 
-```json
-{
-  "kind": "header",
-  "version": 2,
-  "startedAt": "2026-08-17T09:14:02.331Z",
-  "endpoint": "ws://127.0.0.1:9119/api/ws",
-  "connections": [
-    { "profile": "work", "endpoint": "ws://127.0.0.1:9119/api/ws" },
-    { "profile": "lab", "endpoint": "ws://127.0.0.1:9120/api/ws" }
-  ]
-}
-```
-
-A version-2 header is a **superset** of a version-1 one: `endpoint` is still present and names the
-run's first connection, so no field changes meaning by disappearing. Each `connections` entry's
-`endpoint` is withheld on exactly the same terms as the top-level one.
-
-**Why the version bumps.** This format's rule is that the version bumps when a reader must notice a
-change, and a multi-connection log is that case rather than a merely additive one. Session ids are
-unique *within a gateway process*, not across gateways: a version-1-only reader that skipped the
-unknown `profile` key would merge equal ids from two different gateways into one session that never
-existed, and would do it silently. The bump makes such a reader stop instead of misread.
-
-**Profiles are the observer's identity, not the gateway's.** No gateway listing carries a profile
-field — verified on the wire, 2026-08-17. `profile` is the name of the connection Talaria observed
-the frame on, taken from the operator's own `[profiles.endpoints]` configuration. When two
-configured profile names resolve to one gateway with one credential they are one connection, and
-frames carry the first-configured name.
-
-**Readers ignore what they do not know.** Both this document and the reader
-(`talaria/recorder/reader.py`) treat unknown record fields as tolerated: each record's known fields
-are selected and extras are neither rejected nor required. That tolerance is what lets a field be
-added without a bump when — unlike `profile` — nothing changes meaning for a reader that skips it.
+| Reason | Meaning |
+|---|---|
+| `deny-set:<method>` | A method rule withheld this key (below). Inbound `answers` of a `clarify` request use `deny-set:clarify`. |
+| `suspicious-key` | The key name is credential shaped. |
+| `free-text` | `system_prompt`, `credential_hint` or `launch_request`: free text a profile's author wrote. |
+| `url-credential` | A URL carried a credential in its userinfo, a credential-named query value or its fragment. |
+| `ticket` | The string contained `hermes-gateway-ticket.`. |
+| `server-response:<method>` | The answer to a server request of that method. |
+| `server-response:unknown` | An answer whose request this recorder never saw. |
 
 ## Redaction
 
-**Credentials never reach the file.** The Hermes gateway carries them in plaintext on ordinary
-client-to-server frames. Hermes calls these its four "blocking bridges", verified against
-`tui_gateway/methods_prompt.py` at Hermes `7f4d15515`:
+Redaction happens before anything is written; nothing is redacted at read time, because by then
+the secret would already be on disk. The rules, in the order they apply to an object key:
 
-| method                  | plaintext field   |
-| ----------------------- | ----------------- |
-| `sudo.respond`          | `params.password` |
-| `secret.respond`        | `params.value`    |
-| `terminal.read.respond` | `params.text`     |
-| `clarify.respond`       | `params.answer`   |
+1. **Method deny-set.** An object whose `method` is listed withholds the listed keys at any depth
+   below its `params`, wherever the object sits (a frame, a batch element, a server request, an
+   `open_requests` entry). A listed method inside another listed method adds its rule; the outer
+   rule still applies. An inner `method` that is not listed clears nothing. The list:
+   `clarify.respond` and `clarify.lock` (`answer`); `clarify` (`answers`); `sudo.respond`
+   (`password`); `secret.respond` (`value`); `terminal.read.respond` (`text`); `model.save_key`
+   (`api_key`); `mcp.servers.set_api_key` (`value`); `mcp.servers.oauth.callback` (`code`,
+   `state`); `connection.respond` (`env`); `config.set` (`value`); `vault.add` (`secret`);
+   `vault.unlock` (`password`); `mcp.servers.add` (`config`); `plugins.manage` (`values`);
+   `diagnostics.share_nous` (`extra_files`); `session.create` (`api_key`, `client_env`);
+   `session.resume` (`api_key`); `file.attach` (`path`, `data_url`, `name`); `image.attach`
+   (`path`); `image.attach_bytes` (`content_base64`, `data`, `filename`, `ext`); `image.detach`
+   (`path`); `pdf.attach` (`content_base64`, `data`, `filename`, `path`); `prompt.submit` and
+   `prompt.replace_queued` (`path`); `request.answer` (`result`, kept as an `approval` answer only
+   when the request it answers was an approval). The prompt text is kept: a user who records a
+   real session records what they typed.
+2. **Free text.** `system_prompt`, `credential_hint` and `launch_request` are withheld by name at
+   any depth.
+3. **Key-name net.** A key is credential shaped when one of these case-insensitive patterns matches
+   its camel-normalized form (an `_` inserted at each lower-case-or-digit to upper-case boundary,
+   then lower-cased) or its squashed form (lower-cased, non-alphanumerics removed; there the
+   optional prefix group is dropped, so the patterns match as suffixes):
+   `^(.*[-_])?pass(word|phrase)$`, `secret` anywhere, `^(.*[-_])?credentials?$`,
+   `^(.*[-_])?authorization$`, `^(.*[-_])?(api|private|public|access|secret|signing)[-_]?keys?$`,
+   `^(.*[-_])?token$` (singular only, so `max_tokens` is kept) and `^(.*[-_])?ticket$`. The value
+   becomes the marker whatever its type.
 
-Every frame passes a redaction boundary before it is written. See `src/record/redact.ts`.
+Every string value then passes two more rules:
 
-**Pin the Hermes revision whenever you re-derive this list.** It was first written against a
-checkout six weeks behind the running Hermes, in which these methods lived in a different file, and
-that reading missed `clarify.respond` entirely.
+4. **Ticket.** A string that contains `hermes-gateway-ticket.` is withheld whole.
+5. **URLs, by position.** A string that contains `://` and parses as an absolute URL with a host is
+   cleaned by editing the original text, never by re-serializing it: any non-empty userinfo
+   becomes `%5Bredacted%5D`; a query value whose percent-decoded, lower-cased key is `token`,
+   `ticket`, `internal` or credential shaped becomes `%5Bredacted%5D`; a non-empty fragment becomes
+   `#%5Bredacted%5D`. A URL with none of these is left byte for byte.
 
-**The recorder now writes both directions, and this format now holds secrets.** It was receive-only
-until the live transport landed, at which point the caveat this paragraph used to carry — "the
-direction that actually carries credentials is not yet recorded at all" — stopped being true. Every
-outbound frame is written through the same boundary before it is sent, including all four fields
-above, so redaction is no longer proven only by unit test: `tests/transport/test_bridges.py`
-answers each bridge over a real socket with a distinctive value and then searches the raw bytes of
-the file the recorder wrote.
+**Answers to server requests.** Hermes asks the client questions (`sudo`, `secret`, `clarify`,
+`approval` and others) as JSON-RPC requests. The recorder remembers the method of each request it
+sees, from inbound request frames and from `open_requests` entries of an inbound result, and
+forgets it when the answer is written or a `request.cancel` event names it (at most 1,024 are
+held; the oldest is forgotten first). An outbound answer keeps only `choice` and `all` of an
+`approval` result; every other answer's `result` is withheld whole, so a server request added by a
+later Hermes cannot leak an answer. An `error` answer is kept.
 
-**Consequence for anyone handling a recording.** A frame log captured from a live session is now a
-file that a credential was deliberately kept out of, rather than a file no credential could reach.
-The difference matters when the deny-set goes stale: the key-name net behind it (`redact.py`) is
-what covers a bridge Hermes adds after this list was written, and it does not cover a field named
-something innocuous. `params.answer` is the standing example — a clarify answer is free text, the
-name looks harmless, and "paste the token here" is an ordinary thing for an agent to ask.
+**Substitutions.** After redaction the recorder replaces caller-supplied needles (longest first) in
+every string value, every object key and the header endpoint. The fixture script uses it to write
+`<profile>`, `<home>`, `<tmp>`, `<gateway>` and `<user>` in place of machine-specific text. A
+needle under four characters is refused.
 
-Withholding is recorded rather than silent, so a reader sees a marked hole instead of clean-looking
-data:
+**Limits.** The claim "no secret reaches the file" is bounded by these rules:
 
-```json
-{
-  "kind": "frame",
-  "seq": 3,
-  "dir": "in",
-  "frame": {
-    "method": "sudo.respond",
-    "params": { "request_id": "r-1", "password": "[redacted]" }
-  },
-  "redactions": [
-    { "path": "params.password", "reason": "deny-set:sudo.respond" }
-  ]
-}
-```
-
-`reason` is `deny-set:<method>` for an explicit rule, or `suspicious-key` for the key-name net that
-catches credentials on methods the deny-set has never heard of.
-
-**Consequence for readers:** a value of `"[redacted]"` is not data. Never treat it as a real string,
-and never assume a frame with a `redactions` array is complete.
+- The path component of a URL is not covered: a bearer capability carried in a path (a browser
+  debugging socket URL is the known example) is recorded as is.
+- Free-form object parameters that no rule names are open positions: a secret written there under
+  an innocent key is recorded. The unit specification lists them, and a test fails when Hermes
+  adds a new one.
+- Free text a user or model writes is not redacted; the secret scan is the backstop for the
+  committed fixtures.
+- Dashboard HTTP exchanges are not recorded. The first unit that adds an HTTP client adds
+  route-aware rules here.
 
 ## Unparseable payloads
 
-A payload that is not valid JSON is recorded with `frame: null` and a `parseError`. The payload
-itself is withheld — it could not be walked by the redaction boundary, so it cannot be shown to be
-safe.
-
-```json
-{
-  "kind": "frame",
-  "seq": 7,
-  "dir": "in",
-  "frame": null,
-  "parseError": "Expected property name or '}' in JSON at position 2"
-}
-```
-
-These are worth reading: an unparseable frame is exactly the protocol drift the corpus exists to
-catch.
+Text that is not valid JSON is recorded with `frame: null` and a `parseError` holding the parser's
+position and expectation. The text itself is withheld: it could not be walked by the rules, so it
+cannot be shown to be safe. These records are worth reading: an unparseable frame is protocol
+drift. Replay skips them.
 
 ## Guarantees and non-guarantees
 
-**Guaranteed.** Append-only. `seq` gapless within a file. Ordinary traffic round-trips to an equal
-JSON *value* — the same keys with the same values, parsed. Every withheld value marked.
+**Guaranteed.** Append-only. `seq` gapless. `tMs` never decreases. A frame with no secret position
+round-trips to an equal JSON value (not equal bytes: key order and whitespace are not kept). Every
+withheld value is marked and listed.
 
-*Amended 2026-08-02.* This guarantee previously read "ordinary traffic byte-identical to what
-arrived." That was never true of this format's own reference implementation: the recorder parses
-each frame and re-serializes it (`src/record/recorder.ts:95-124`), so key order and whitespace have
-never been preserved. The guarantee is corrected to describe what v1 has always actually done.
-**No version bump**, because no reader ever received byte-identical output and none can have
-depended on it. Consumers that need to compare two logs compare parsed values, which is the relation
-the Talaria recorder's equivalence harness implements.
+**Not guaranteed.** No hash chain: records are not tamper-evident. A chain cannot be redacted after
+the fact without destroying the tamper-evidence that was its point, which is why redaction must be
+right at the first write; adding one is a later decision. A recording cut short leaves a last line
+with no newline; a reader ignores it and reports the file as truncated.
 
-**Not guaranteed.** No hash chain yet — the records are not tamper-evident, and nothing detects an
-edited or truncated file. Adding one is a later decision, and it is the reason redaction had to be
-correct from the first write: a chain cannot be redacted after the fact without destroying the
-tamper-evidence that was the point of chaining it.
+## Earlier versions
 
-Timestamps are observation times from the recording host's clock, so they are not a reliable
-ordering across two logs recorded on different machines.
+Version 1 (single connection) and version 2 (several profiles in one file) were written by the
+Python and TypeScript clients. They used `at` (a wall-clock time per frame) where version 3 uses
+`tMs`, and version 2 tagged each frame with a `profile` naming the observing connection where
+version 3 uses `generation`; version 2's header carried a `connections` list where version 3 has
+`endpoint` and `subprotocols`. Those corpora were recorded against an older protocol, and the
+version 3 reader does not read them. Recording several gateways into one file is left to a later
+phase.
 
-## Reading one
+## Reading a recording
 
 ```bash
-# every event type seen, by frequency
-jq -r 'select(.kind=="frame") | .frame.params.type // empty' log.jsonl | sort | uniq -c | sort -rn
-
+# event types by frequency
+jq -r 'select(.kind=="frame" and .dir=="in") | .frame.params.type // empty' fixtures/frames/approval.jsonl | sort | uniq -c | sort -rn
 # everything that was withheld
-jq -c 'select(.redactions) | {seq, redactions}' log.jsonl
-
-# protocol drift
-jq -c 'select(.parseError) | {seq, parseError}' log.jsonl
+jq -c 'select(.redactions) | {seq, redactions}' fixtures/frames/clarification.jsonl
+# turn outcomes
+jq -r 'select(.frame.params.type=="message.complete") | .frame.params.payload.status' fixtures/frames/*.jsonl
 ```

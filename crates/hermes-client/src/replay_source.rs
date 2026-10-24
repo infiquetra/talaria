@@ -1,9 +1,12 @@
 //! Read a version 3 frame log and feed its inbound frames back with no socket.
 //!
-//! Red-run stubs for P1-04: every body is `todo!("P1-04")`.
+//! `run` sends text, not decoded values: the consumer decodes each item with
+//! [`crate::decode_frame`], the same function the live socket reader uses.
 
 use std::path::Path;
+use std::time::Duration;
 
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::record::GatewayIdentity;
@@ -19,8 +22,23 @@ pub enum Speed {
 impl Speed {
     /// `instant`, `recorded`, or a positive number.
     pub fn parse(text: &str) -> Result<Speed, ReplayError> {
-        let _ = text;
-        todo!("P1-04")
+        match text {
+            "instant" => Ok(Speed::Instant),
+            "recorded" => Ok(Speed::Recorded),
+            other => {
+                let factor: f64 = other.parse().map_err(|_| ReplayError::BadSpeed)?;
+                Speed::Factor(factor).checked()
+            }
+        }
+    }
+
+    fn checked(self) -> Result<Speed, ReplayError> {
+        match self {
+            Speed::Factor(factor) if !(factor.is_finite() && factor > 0.0) => {
+                Err(ReplayError::BadSpeed)
+            }
+            speed => Ok(speed),
+        }
     }
 }
 
@@ -70,46 +88,178 @@ pub struct ReplayItem {
 
 #[derive(Debug)]
 pub struct ReplaySource {
-    _private: (),
+    header: FrameLogHeader,
+    inbound: Vec<ReplayFrame>,
+    outbound: Vec<ReplayFrame>,
+    truncated: bool,
 }
 
 impl ReplaySource {
+    /// Read and check the whole file. The error never names the path.
     pub fn open(path: &Path) -> Result<ReplaySource, ReplayError> {
-        let _ = path;
-        todo!("P1-04")
+        let bytes =
+            std::fs::read(path).map_err(|error| ReplayError::Io(format!("{:?}", error.kind())))?;
+        let text = String::from_utf8(bytes).map_err(|_| ReplayError::Io("InvalidData".into()))?;
+        let mut lines: Vec<&str> = text.split('\n').collect();
+        let mut truncated = false;
+        if text.ends_with('\n') {
+            lines.pop();
+        } else if lines.len() > 1 {
+            // A recording cut short: its last line has no newline and is ignored.
+            lines.pop();
+            truncated = true;
+        }
+        let Some((first, records)) = lines.split_first() else {
+            return Err(ReplayError::NotAHeader);
+        };
+        let header = parse_header(first)?;
+        let mut source = ReplaySource {
+            header,
+            inbound: Vec::new(),
+            outbound: Vec::new(),
+            truncated,
+        };
+        let mut expected_seq = 1_u64;
+        for (index, line) in records.iter().enumerate() {
+            let number = index + 2;
+            let corrupt = ReplayError::Corrupt { line: number };
+            let record: Value = serde_json::from_str(line).map_err(|_| corrupt.clone())?;
+            let kind = record
+                .get("kind")
+                .and_then(Value::as_str)
+                .ok_or(corrupt.clone())?;
+            let seq = record.get("seq").and_then(Value::as_u64);
+            match kind {
+                "frame" | "dropped" if seq.is_none() => return Err(corrupt),
+                _ => {}
+            }
+            if let Some(seq) = seq {
+                if seq != expected_seq {
+                    return Err(ReplayError::SeqGap { at: expected_seq });
+                }
+                expected_seq += 1;
+            }
+            if kind != "frame" {
+                continue;
+            }
+            let field = |name: &str| record.get(name).and_then(Value::as_u64);
+            let (Some(seq), Some(t_ms), Some(generation)) =
+                (seq, field("tMs"), field("generation"))
+            else {
+                return Err(corrupt);
+            };
+            let frame = record.get("frame").ok_or(corrupt.clone())?;
+            let target = match record.get("dir").and_then(Value::as_str) {
+                Some("in") => &mut source.inbound,
+                Some("out") => &mut source.outbound,
+                _ => return Err(corrupt),
+            };
+            // Text that was not JSON was recorded with a null frame; there is nothing to replay.
+            if frame.is_null() {
+                continue;
+            }
+            target.push(ReplayFrame {
+                seq,
+                t_ms,
+                generation,
+                frame: frame.clone(),
+            });
+        }
+        Ok(source)
     }
 
     pub fn header(&self) -> &FrameLogHeader {
-        todo!("P1-04")
+        &self.header
     }
 
+    /// The inbound frames in `seq` order, without null frames.
     pub fn inbound(&self) -> impl Iterator<Item = &ReplayFrame> {
-        let none: Option<&ReplayFrame> = None;
-        if true {
-            todo!("P1-04")
-        }
-        none.into_iter()
+        self.inbound.iter()
     }
 
+    /// The outbound frames in `seq` order, without null frames.
     pub fn outbound(&self) -> impl Iterator<Item = &ReplayFrame> {
-        let none: Option<&ReplayFrame> = None;
-        if true {
-            todo!("P1-04")
-        }
-        none.into_iter()
+        self.outbound.iter()
     }
 
     /// True when the last line had no newline and was ignored.
     pub fn truncated(&self) -> bool {
-        todo!("P1-04")
+        self.truncated
     }
 
+    /// Send each inbound frame into `sink`, paced by `speed` on `tokio::time`. Returns how many
+    /// were sent; a closed sink ends the run early without an error.
     pub async fn run(
         &self,
         speed: Speed,
         sink: mpsc::Sender<ReplayItem>,
     ) -> Result<usize, ReplayError> {
-        let _ = (speed, sink);
-        todo!("P1-04")
+        let speed = speed.checked()?;
+        let started = tokio::time::Instant::now();
+        let mut sent = 0;
+        for frame in &self.inbound {
+            let due = match speed {
+                Speed::Instant => None,
+                Speed::Recorded => Some(Duration::from_millis(frame.t_ms)),
+                Speed::Factor(factor) => Some(Duration::from_micros(
+                    (frame.t_ms as f64 * 1_000.0 / factor).round() as u64,
+                )),
+            };
+            if let Some(due) = due {
+                tokio::time::sleep_until(started + due).await;
+            }
+            let item = ReplayItem {
+                generation: frame.generation,
+                text: frame.frame.to_string(),
+            };
+            if sink.send(item).await.is_err() {
+                break;
+            }
+            sent += 1;
+        }
+        Ok(sent)
     }
+}
+
+fn parse_header(line: &str) -> Result<FrameLogHeader, ReplayError> {
+    let value: Value = serde_json::from_str(line).map_err(|_| ReplayError::NotAHeader)?;
+    if value.get("kind").and_then(Value::as_str) != Some("header") {
+        return Err(ReplayError::NotAHeader);
+    }
+    let version = value
+        .get("version")
+        .and_then(Value::as_u64)
+        .ok_or(ReplayError::NotAHeader)?;
+    if version != 3 {
+        return Err(ReplayError::UnsupportedVersion { found: version });
+    }
+    let text = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_owned);
+    let strings = |name: &str| -> Vec<String> {
+        value
+            .get(name)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let gateway = value.get("gateway").and_then(|gateway| {
+        Some(GatewayIdentity {
+            code_version: gateway.get("codeVersion")?.as_str()?.to_owned(),
+            code_sha: gateway.get("codeSha")?.as_str()?.to_owned(),
+        })
+    });
+    Ok(FrameLogHeader {
+        version,
+        started_at: text("startedAt").unwrap_or_default(),
+        endpoint: text("endpoint").unwrap_or_default(),
+        subprotocols: strings("subprotocols"),
+        gateway,
+        scenario: text("scenario"),
+        expected_statuses: strings("expectedStatuses"),
+    })
 }

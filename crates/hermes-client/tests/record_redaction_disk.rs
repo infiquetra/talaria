@@ -1,4 +1,4 @@
-//! No secret reaches the disk (P1-04, test row 8).
+//! No secret reaches the disk (test row 8).
 //!
 //! Every test here records through a real `Recorder::create` to a temporary file and then looks at
 //! the raw bytes of that file with a plain substring search. A test that only called the pure
@@ -223,7 +223,7 @@ fn sudo_exchange_answer_never_reaches_disk() {
     assert_eq!(last["frame"]["result"], REDACTED);
     assert!(has_reason(last, "result", "server-response:unknown"));
 
-    // UAT-4 reads these with --nocapture. The assertions above ran first, so nothing printed here
+    // The verification check reads these with --nocapture. The assertions above ran first, so nothing printed here
     // can hold a sentinel.
     let text = String::from_utf8_lossy(&bytes);
     for line in text.lines() {

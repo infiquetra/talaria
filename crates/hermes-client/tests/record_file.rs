@@ -1,4 +1,4 @@
-//! Frame log file format, queueing, and failure behaviour of the recorder (P1-04, test row 6).
+//! Frame log file format, queueing, and failure behaviour of the recorder (test row 6).
 //!
 //! Spec sections 3 and 5. Nothing here asserts a wall-clock time. The gated writers below wait on
 //! channels, so the tests decide the order of events, not a timer.

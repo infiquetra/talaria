@@ -1,4 +1,4 @@
-//! The secret scan (P1-04, spec 7, REQ-20).
+//! The secret scan (spec 7, REQ-20).
 //!
 //! Every sample is built at run time from pieces, so this source file holds no string that
 //! looks like a real credential and neither GitHub's push protection nor the project's own

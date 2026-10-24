@@ -1,4 +1,4 @@
-//! Test row 13 of P1-04: the seven live-recorded fixtures under `fixtures/frames/` exist, replay
+//! Test row 13: the seven live-recorded fixtures under `fixtures/frames/` exist, replay
 //! in order through the shared decode function, and carry the evidence each scenario promises
 //! (spec section 8.4).
 //!

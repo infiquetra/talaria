@@ -1,4 +1,4 @@
-//! Test row 14 of P1-04: the committed fixtures hold no secret-shaped string, no home directory,
+//! Test row 14: the committed fixtures hold no secret-shaped string, no home directory,
 //! login name or host name, and no foreign profile name (spec section 7).
 //!
 //! A failure prints the file name, the line number and the rule id. It never prints the matched

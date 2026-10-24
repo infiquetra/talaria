@@ -1,13 +1,12 @@
-//! Where the recorder plugs into a connection (P1-04, test row 7).
+//! Where the recorder plugs into a connection (test row 7).
 //!
-//! The hook is `Connection::set_recorder(recorder, generation)` (settled in #192 C-3), called per
+//! The hook is `Connection::set_recorder(recorder, generation)`, called per
 //! connection before the handshake. These tests run the handshake against the in-process mock
 //! gateway of `tests/support/mod.rs`.
 //!
-//! `handshake_frames_recorded_once_with_generation_1` hands the connection over to the P1-02
+//! `handshake_frames_recorded_once_with_generation_1` hands the connection over to the channel
 //! `Client`, because the property it proves (a frame is not recorded twice across the hand-over)
-//! cannot be seen without it. Until P1-02 is implemented that test stops at `todo!("P1-02")`
-//! after it has passed the `P1-04` stubs.
+//! cannot be seen without it.
 
 mod support;
 
@@ -222,7 +221,7 @@ async fn handshake_frames_recorded_once_with_generation_1() {
         "the early event waits in the buffer"
     );
 
-    // The P1-02 client delivers the buffered frame first, then reads from the socket.
+    // The channel client delivers the buffered frame first, then reads from the socket.
     let (client, mut inbound) = Client::start(parts);
     let mut seen_early = false;
     let mut seen_late = false;

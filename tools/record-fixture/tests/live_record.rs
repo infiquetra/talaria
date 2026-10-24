@@ -5,7 +5,7 @@
 //! It prints exactly one line, `LIVE_RECORD_RESULT: PASSED` or
 //! `LIVE_RECORD_RESULT: SKIPPED (<reason>)`, and fails on a skip when `TALARIA_LIVE_REQUIRE=1`.
 //! Discovery never starts a gateway (`EnsurePolicy::Never`). The other six scenarios are checked
-//! live only by UAT-1.
+//! live only during live verification.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

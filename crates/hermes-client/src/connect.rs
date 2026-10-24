@@ -19,6 +19,7 @@ use tokio_tungstenite::tungstenite::{
 };
 
 use crate::discovery::{Endpoint, ProfileId};
+use crate::record::Recorder;
 use crate::ticket::Ticket;
 use hermes_contract::schemas::{
     ClientCapabilitiesResult, GatewayReadyPayload, RuntimeDescribeResult,
@@ -166,6 +167,7 @@ pub async fn connect_with(
             profile_id,
             next_request_id: 1,
             buffered: Vec::new(),
+            recorder: None,
         })
     })
     .await
@@ -318,6 +320,7 @@ pub struct Connection {
     profile_id: Option<ProfileId>,
     next_request_id: u64,
     buffered: Vec<String>,
+    recorder: Option<(Recorder, u64)>,
 }
 
 impl std::fmt::Debug for Connection {
@@ -328,10 +331,9 @@ impl std::fmt::Debug for Connection {
 
 impl Connection {
     /// Record every handshake frame this connection reads or writes, tagged with
-    /// `generation` (P1-04). `GatewayDial::on_connect` calls this per connection.
-    pub fn set_recorder(&mut self, recorder: crate::record::Recorder, generation: u64) {
-        let _ = (recorder, generation);
-        todo!("P1-04")
+    /// `generation`. `GatewayDial::on_connect` calls this per connection.
+    pub fn set_recorder(&mut self, recorder: Recorder, generation: u64) {
+        self.recorder = Some((recorder, generation));
     }
 
     pub fn into_parts(self) -> ConnectionParts {
@@ -342,10 +344,14 @@ impl Connection {
             profile_id: self.profile_id,
             next_request_id: self.next_request_id,
             buffered: self.buffered,
+            recorder: self.recorder.map(|(recorder, _)| recorder),
         }
     }
 
     async fn send_text(&mut self, text: String) -> Result<(), FrameError> {
+        if let Some((recorder, generation)) = &self.recorder {
+            recorder.record_outbound(*generation, &text);
+        }
         self.sink
             .send(Message::Text(text.into()))
             .await
@@ -355,7 +361,12 @@ impl Connection {
     async fn next_text(&mut self) -> Result<Option<String>, FrameError> {
         loop {
             match self.stream.next().await {
-                Some(Ok(Message::Text(text))) => return Ok(Some(text.to_string())),
+                Some(Ok(Message::Text(text))) => {
+                    if let Some((recorder, generation)) = &self.recorder {
+                        recorder.record_inbound(*generation, &text);
+                    }
+                    return Ok(Some(text.to_string()));
+                }
                 Some(Ok(Message::Close(frame))) => {
                     return Err(FrameError::Closed(
                         if frame.is_some_and(|frame| frame.code == CloseCode::Error) {
@@ -381,6 +392,8 @@ pub struct ConnectionParts {
     pub profile_id: Option<ProfileId>,
     pub next_request_id: u64,
     pub buffered: Vec<String>,
+    /// The connection's recorder, passed on so the channel records after hand-over.
+    pub recorder: Option<Recorder>,
 }
 
 impl ConnectionParts {
@@ -399,6 +412,7 @@ impl ConnectionParts {
             profile_id: None,
             next_request_id,
             buffered,
+            recorder: None,
         }
     }
 }

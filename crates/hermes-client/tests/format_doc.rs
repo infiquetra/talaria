@@ -1,4 +1,4 @@
-//! Test row 12 of P1-04: `docs/formats/frame-log.md` is the contract for the frame log, and it
+//! Test row 12: `docs/formats/frame-log.md` is the contract for the frame log, and it
 //! must describe version 3, every field the recorder writes, every redaction reason and the
 //! limits of the redaction.
 
