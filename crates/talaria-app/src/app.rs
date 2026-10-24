@@ -46,6 +46,9 @@ pub const DENY_WAIT: Duration = Duration::from_secs(2);
 pub const TITLE_CHARS: usize = 60;
 /// Unsent prompts printed after a quit are cut to this many characters.
 const HELD_PRINT_CHARS: usize = 80;
+/// At most this many ready messages are applied after the one that woke the loop, before
+/// the screen is drawn.
+const MESSAGE_BATCH: usize = 64;
 
 pub const SESSION_GONE_NOTICE: &str = "This session no longer exists on the gateway.";
 pub const STILL_WORKING: &str = "The agent is still working on it in the background.";
@@ -1436,6 +1439,7 @@ pub async fn run<S: Screen>(
         let now = Instant::now();
         let deadline = earliest(screen.next_tick(), screen.next_wake(now));
         let mut redraw = false;
+        let mut woke_on_message = false;
         tokio::select! {
             input = inputs.recv() => {
                 let Some(input) = input else { break Ending::InputClosed };
@@ -1446,6 +1450,7 @@ pub async fn run<S: Screen>(
             }
             Some(message) = messages.recv() => {
                 redraw |= apply(&mut state, message, screen, &executor);
+                woke_on_message = true;
             }
             joined = async { pending.as_mut().expect("guarded by the branch condition").await },
                 if pending.is_some() => {
@@ -1476,6 +1481,27 @@ pub async fn run<S: Screen>(
             Some(()) = async { match hangup.as_mut() { Some(stream) => stream.recv().await, None => std::future::pending().await } } => {
                 break Ending::Signal(129);
             }
+        }
+        // A fast stream queues deltas faster than a frame is drawn. Keys that are already
+        // waiting go first, so Esc is never held behind the stream, and ready messages are
+        // applied together and drawn once instead of one frame each.
+        let mut drained = 0;
+        loop {
+            while !state.quitting {
+                let Ok(input) = inputs.try_recv() else { break };
+                let actions = screen.input(input, &state.view(), Instant::now());
+                for action in actions {
+                    redraw |= apply(&mut state, AppMessage::User(action), screen, &executor);
+                }
+            }
+            if !woke_on_message || state.quitting || drained == MESSAGE_BATCH {
+                break;
+            }
+            let Ok(message) = messages.try_recv() else {
+                break;
+            };
+            redraw |= apply(&mut state, message, screen, &executor);
+            drained += 1;
         }
         if state.quitting {
             break Ending::Quit;

@@ -4294,3 +4294,19 @@ events. The stamps now come from the first event that carries a `session_id`.
 take the identity fields from an event that has them and check that every spliced event
 ends up in the same session; synthetic fixtures that start with a session event hide
 this.
+
+## 2026-10-24 — One frame per message lets a fast stream starve the keyboard
+
+**Evidence.** `crates/talaria-app/src/app.rs`, the `run` loop. In two of ten live smoke runs
+against `minimax-m3.1-flash`, Esc sent while about 200 counting lines were on screen did not
+stop a "count from 1 to 2000" turn: the count reached 2000 with no interrupted notice.
+
+**Mechanism.** The loop applied one message per wake-up and drew the screen after each, and
+drawing re-renders the open assistant cell. When the model streams faster than a frame is
+drawn, deltas pile up in the channel, the screen falls further behind the gateway, and a key
+waits its turn behind them; by the time Esc was handled the turn could already be finished
+on the Hermes side. The loop now takes every waiting key first, then up to 64 more ready
+messages, and draws once for the batch.
+
+**Generalizable rule.** In a terminal loop fed by a network stream, never pay one frame per
+message: drain what is ready, keep input ahead of output, and draw once per batch.
