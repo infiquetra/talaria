@@ -31,5 +31,6 @@ serde.workspace = true
 serde_json.workspace = true
 static_assertions.workspace = true
 tempfile.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
+trybuild = "=1.0.121"
