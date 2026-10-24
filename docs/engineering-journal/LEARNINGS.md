@@ -2,6 +2,28 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-24
+
+### An empty acceptance record is a filled record with no results, not a skeleton
+
+**Evidence.** `docs/acceptance/v0.7.0/phase-1.md` and `docs/acceptance/v0.7.0/check-record.sh`
+(`docs/handoff/2026-10-22-next-steps/units/PH1-ACC.md`, sections 4 and 6.1); the red run of the
+committed record ends `ACCEPTANCE_RESULT: FAILED (70 problems, 0 of 70 rows PASS)`.
+
+**Mechanism.** The checker refuses a header line that still holds a `<...>` placeholder, so a
+skeleton with empty headers can never be checked: the red-phase record already carries the real
+candidate, the pinned release, the platform and the date, and only the result column is empty.
+That record is committed before the checker exists, because the stub cannot produce one problem
+per row; it prints a single `FAILED (stub)`. The red run of the record is therefore taken from
+the committed files with the finished checker, not from the commit that introduced them. The
+`awk` row shape follows the same counting: splitting `| a | b | c | d | e |` on `|` gives seven
+fields, because the leading and trailing pipes make two empty ones, and five cells are counted
+that way.
+
+**Generalizable rule.** A red-phase artefact that the checker will reject for placeholders must
+already carry its real metadata; leave only the results empty, and take the red run from the
+committed files once the checker exists.
+
 ## 2026-10-23
 
 ### One task per prompt lets held prompts overtake each other
