@@ -19,7 +19,9 @@ use talaria_app::connection::OpenConnection;
 use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
-use talaria_core::session::{Cell, PromptCell, TurnState as SessionTurn};
+use talaria_core::session::{
+    AssistantCell, Cell, PromptCell, ReasoningCell, TurnState as SessionTurn,
+};
 use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome};
 use talaria_tui::history::CellLines;
 use talaria_tui::keys::{Key, KeyMap};
@@ -45,6 +47,8 @@ const PROBE_DEADLINE: Duration = Duration::from_millis(200);
 const LIVE_HEIGHT: u16 = 4;
 /// The composer's tallest box, in rows.
 const COMPOSER_ROWS: u16 = 10;
+/// A long open cell is drawn from at least this many of its last lines.
+const PREVIEW_MIN_LINES: usize = 80;
 /// Shown under the composer until the session is open.
 const CONNECTING: &str = "Connecting to Hermes\u{2026}";
 
@@ -92,6 +96,53 @@ fn masked_views(masked: &[MaskedRequestInfo]) -> Vec<MaskedView> {
                 .collect(),
         })
         .collect()
+}
+
+/// The last lines of a long open assistant or reasoning cell, for the live tail only.
+///
+/// The tail section shows the bottom rows alone, so rendering the whole text on every frame
+/// only makes a fast stream fall behind. The cut starts at a blank line when the kept lines
+/// hold one, and is skipped when the text holds a code fence or the kept lines a table row,
+/// whose rows depend on lines above the cut. Committed cells are always rendered whole.
+fn preview(cell: &Cell, limit: usize) -> Option<Cell> {
+    let text = match cell {
+        Cell::Assistant(inner) => &inner.text,
+        Cell::Reasoning(inner) => &inner.text,
+        _ => return None,
+    };
+    let tail = preview_text(text, limit)?;
+    Some(match cell {
+        Cell::Assistant(inner) => Cell::Assistant(AssistantCell {
+            text: tail,
+            ..inner.clone()
+        }),
+        Cell::Reasoning(inner) => Cell::Reasoning(ReasoningCell {
+            text: tail,
+            ..inner.clone()
+        }),
+        _ => return None,
+    })
+}
+
+/// The text `preview` draws: the last `limit` lines, from a blank line when they hold one.
+fn preview_text(text: &str, limit: usize) -> Option<String> {
+    if text.contains("```") || text.contains("~~~") {
+        return None;
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    if lines.len() <= limit {
+        return None;
+    }
+    let mut kept = &lines[lines.len() - limit..];
+    if let Some(blank) = kept.iter().position(|line| line.trim().is_empty())
+        && kept[blank + 1..].iter().any(|line| !line.trim().is_empty())
+    {
+        kept = &kept[blank + 1..];
+    }
+    if kept.iter().any(|line| line.trim_start().starts_with('|')) {
+        return None;
+    }
+    Some(kept.join("\n"))
 }
 
 fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
@@ -281,10 +332,16 @@ impl Screen for TuiScreen {
         let tail: Vec<Line<'static>> = view
             .state
             .map(|state| {
+                let limit = usize::from(self.terminal.viewport().height)
+                    .saturating_mul(2)
+                    .max(PREVIEW_MIN_LINES);
                 state
                     .live_tail()
                     .iter()
-                    .flat_map(|cell| self.cells.lines(cell, width))
+                    .flat_map(|cell| match preview(cell, limit) {
+                        Some(trimmed) => self.cells.lines(&trimmed, width),
+                        None => self.cells.lines(cell, width),
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -508,4 +565,41 @@ fn session(
     drop(screen);
     drop(guard);
     Ok(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preview_text;
+    use talaria_tui::markdown::{MarkdownOptions, render_markdown};
+
+    /// The bottom `rows` rows of a rendering, as plain text.
+    fn bottom(text: &str, rows: usize) -> Vec<String> {
+        let lines = render_markdown(text, &MarkdownOptions::default());
+        let skip = lines.len().saturating_sub(rows);
+        lines.iter().skip(skip).map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn preview_keeps_the_bottom_rows_of_a_long_answer() {
+        let count: String = (1..=2000).map(|n| format!("{n}\n")).collect();
+        let lists: String = (1..=300)
+            .map(|n| format!("- item {n} with a little more text\n"))
+            .collect();
+        let mixed = format!("{lists}\nA closing paragraph.\n\n{count}");
+        for text in [count.as_str(), lists.as_str(), mixed.as_str()] {
+            let limit = 96;
+            let trimmed = preview_text(text, limit).expect("a long text is cut");
+            assert!(trimmed.lines().count() <= limit);
+            assert_eq!(bottom(&trimmed, 48), bottom(text, 48));
+        }
+    }
+
+    #[test]
+    fn preview_leaves_short_fenced_and_table_text_whole() {
+        assert_eq!(preview_text("one\ntwo\n", 80), None);
+        let fenced = format!("```\n{}```\n", "x\n".repeat(200));
+        assert_eq!(preview_text(&fenced, 80), None);
+        let table = format!("| a | b |\n|---|---|\n{}", "| 1 | 2 |\n".repeat(200));
+        assert_eq!(preview_text(&table, 80), None);
+    }
 }

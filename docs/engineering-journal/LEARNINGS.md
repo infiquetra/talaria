@@ -4310,3 +4310,20 @@ messages, and draws once for the batch.
 
 **Generalizable rule.** In a terminal loop fed by a network stream, never pay one frame per
 message: drain what is ready, keep input ahead of output, and draw once per batch.
+
+## 2026-10-24 — A live preview must cost what it shows, not what it holds
+
+**Evidence.** `crates/talaria-cli/src/run.rs`, `TuiScreen::draw` and `preview_text`. With the
+debug build, the live smoke test's interrupt step failed: the screen showed about 200 numbers of
+a 2000-number count while Hermes had already finished the turn, so Esc had nothing to stop. The
+release build passed five runs in a row.
+
+**Mechanism.** The live tail rendered the whole open cell as Markdown on every frame and then
+showed only its bottom rows, so a frame's cost grew with the reply's length. Batching messages
+per frame cut the number of frames but not the cost of each. The preview now renders the last
+lines only (twice the viewport, at least 80), cut at a blank line when there is one; a code
+fence or a table row keeps the cell whole, because their rows depend on lines above the cut.
+A test compares the bottom rows of the cut and the whole rendering.
+
+**Generalizable rule.** Bound a per-frame computation by what the frame displays; when the
+input grows with the session, a debug build is where the quadratic cost shows first.
