@@ -34,6 +34,11 @@ serde_json = "=1.0.154"
 regress = "=0.10.3"
 proptest = "=1.11.0"
 rustix = { version = "=1.1.5", features = ["fs", "process"] }
+unicode-segmentation = "=1.13.3"
+unicode-width = "=0.2.2"
+vt100 = "=0.16.2"
+alacritty_terminal = "=0.26.0"
+vte = { version = "=0.15.0", features = ["ansi"] }
 sha2 = "=0.11.0"
 static_assertions = "=1.1.0"
 tempfile = "=3.27.0"

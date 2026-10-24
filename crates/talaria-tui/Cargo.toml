@@ -12,6 +12,19 @@ publish.workspace = true
 talaria-core.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
+rustix.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+alacritty_terminal.workspace = true
+hermes-contract.workspace = true
+proptest.workspace = true
+rustix = { workspace = true, features = ["event", "pipe"] }
+serde_json.workspace = true
+tempfile.workspace = true
+vt100.workspace = true
+vte.workspace = true
 
 [lints]
 workspace = true
