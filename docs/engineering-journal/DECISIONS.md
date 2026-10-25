@@ -3614,3 +3614,29 @@ one separator at the start of each later block preserve streaming equivalence. K
 loading outside rendering avoids a first-frame stall and leaves startup policy with the
 caller. Width changes affect only pending output. The two adapters retain ownership of
 session state in the domain core and terminal output in the terminal module.
+
+## 2026-10-24 — Splice archived_truncated into the generated transcript row
+
+**Decision.** Hermes marks the first transcript row with `archived_truncated: true` when its byte
+budget left older archived history out (`gateway/session_local_recovery.py:313-314` at the pinned
+commit), but the published contract does not declare the field. `contract_gen.py` now adds it to
+the typify output for `TranscriptMessage` and its builder through `postprocess_schemas_rs`, and the
+field decodes through `overrides::deserialize_archived_truncated`: a boolean is kept, and any other
+value reads as absent rather than failing the row. `overrides.rs` also carries a standalone
+`TranscriptMessageOverride` for callers that decode only the extra fields. This extends the
+2026-10-23 generator decision, which kept protocol corrections in `overrides.rs`; a field the
+schema omits cannot be added there without a parallel type, so the generator places it and
+`overrides.rs` owns how it decodes.
+
+**Guards.** The splice needs exactly one match at each of its six sites. A changed typify shape
+stops generation instead of emitting partial code, and a contract that starts declaring the field
+stops generation with an instruction to remove the splice. Output with no `TranscriptMessage` at
+all, such as the offline test fakes, passes through unchanged.
+
+**Rejected alternatives.** Editing the vendored contract would break its byte-for-byte match with
+Hermes. A wrapper type with `#[serde(flatten)]` around the generated row would change every
+`Vec<TranscriptMessage>` in the generated replies. A custom typify template was rejected by the
+2026-10-23 decision.
+
+**Revisit when.** Hermes declares `archived_truncated` in its published contract; delete the splice
+and the custom deserializer, then regenerate.

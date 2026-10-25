@@ -69,3 +69,35 @@ pub fn check_prompt_submit(params: &Params) -> Result<(), OverrideError> {
     }
     Ok(())
 }
+
+/// Transcript row fields that Hermes sends but leaves out of its published schema.
+/// Hermes `gateway/session_local_recovery.py:313-314` at commit
+/// `4d04303818b61bf3aa09278af48356315515965b` sets `archived_truncated: true` on
+/// the first row when the byte budget left older archived history out.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct TranscriptMessageOverride {
+    #[serde(
+        default,
+        deserialize_with = "deserialize_archived_truncated",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub archived_truncated: Option<bool>,
+}
+
+/// Keep a boolean `archived_truncated` and read any other value as absent, so an
+/// unexpected shape never fails the whole transcript row.
+pub fn deserialize_archived_truncated<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <Option<serde_json::Value> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Bool(flag)) => Some(flag),
+        _ => None,
+    })
+}
+
+/// Whether Hermes left earlier archived history out before this row.
+pub fn transcript_archived_truncated(message: &crate::schemas::TranscriptMessage) -> Option<bool> {
+    message.archived_truncated
+}

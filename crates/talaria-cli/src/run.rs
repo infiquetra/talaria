@@ -50,7 +50,7 @@ const COMPOSER_ROWS: u16 = 10;
 /// A long open cell is drawn from at least this many of its last lines.
 const PREVIEW_MIN_LINES: usize = 80;
 /// At most this many tail rows are shown in the live region while a turn streams.
-const MAX_TAIL_ROWS: usize = 6;
+const MAX_TAIL_ROWS: usize = 15;
 /// Shown under the composer until the session is open.
 const CONNECTING: &str = "Connecting to Hermes\u{2026}";
 

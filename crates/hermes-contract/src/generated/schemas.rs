@@ -19875,6 +19875,12 @@ impl TourStep {
 #[doc = "One transcript row as the gateway PROJECTS it for renderers (``session_history._project_history``):\n``text``, display-only ``timestamp`` / ``display_kind`` / ``display_metadata``, the durable ``row_id``\nrewind targets, and for tool rows raw ``content``, ``tool_call_id``, ``name``, ``context`` and ``args``.\nAssistant detail sidecars (``reasoning``, …) ride as extra keys."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct TranscriptMessage {
+    #[serde(
+        default,
+        deserialize_with = "crate::overrides::deserialize_archived_truncated",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub archived_truncated: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub args: ::std::option::Option<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -97445,6 +97451,8 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct TranscriptMessage {
+        archived_truncated:
+            ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         args: ::std::result::Result<
             ::std::option::Option<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
             ::std::string::String,
@@ -97492,6 +97500,7 @@ pub mod builder {
     impl ::std::default::Default for TranscriptMessage {
         fn default() -> Self {
             Self {
+                archived_truncated: Ok(Default::default()),
                 args: Ok(Default::default()),
                 content: Ok(Default::default()),
                 context: Ok(Default::default()),
@@ -97509,6 +97518,16 @@ pub mod builder {
         }
     }
     impl TranscriptMessage {
+        pub fn archived_truncated<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.archived_truncated = value.try_into().map_err(|e| {
+                format!("error converting supplied value for archived_truncated: {e}")
+            });
+            self
+        }
         pub fn args<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<
@@ -97650,6 +97669,7 @@ pub mod builder {
             value: TranscriptMessage,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                archived_truncated: value.archived_truncated?,
                 args: value.args?,
                 content: value.content?,
                 context: value.context?,
@@ -97669,6 +97689,7 @@ pub mod builder {
     impl ::std::convert::From<super::TranscriptMessage> for TranscriptMessage {
         fn from(value: super::TranscriptMessage) -> Self {
             Self {
+                archived_truncated: Ok(value.archived_truncated),
                 args: Ok(value.args),
                 content: Ok(value.content),
                 context: Ok(value.context),
