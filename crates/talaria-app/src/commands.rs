@@ -15,8 +15,8 @@ use hermes_contract::methods::legacy::{
 use serde_json::Value;
 use talaria_core::commands::{
     CommandCatalog, CommandOutcome, CommandsEffect, CommandsInput, CommandsState, ErrorView,
-    LocalCommandTable, PaletteContext, PaletteEffect, PaletteInput, PaletteState, SlashLine,
-    describe_error, interpret_result, palette_update, parse_slash_line, state_update,
+    LocalAction, LocalCommandTable, PaletteContext, PaletteEffect, PaletteInput, PaletteState,
+    SlashLine, describe_error, interpret_result, palette_update, parse_slash_line, state_update,
 };
 use talaria_core::session::{Event, NoticeKind};
 use tokio::sync::mpsc;
@@ -25,6 +25,16 @@ use tokio::task::JoinHandle;
 use crate::app::UserAction;
 use crate::launch::new_launch_id;
 use crate::sessions::{submission_id, submit_params};
+
+/// Route a local command through the same application action as its key binding.
+#[must_use]
+pub fn local_action(action: LocalAction) -> Option<UserAction> {
+    match action {
+        LocalAction::Quit => Some(UserAction::Quit),
+        LocalAction::Tasks => Some(UserAction::ToggleTasks),
+        _ => None,
+    }
+}
 
 /// `commands.catalog` gives up after this long.
 pub const CATALOG_TIMEOUT: Duration = Duration::from_secs(15);

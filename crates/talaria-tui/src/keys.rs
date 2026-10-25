@@ -426,7 +426,7 @@ impl Action {
             Self::PagerPrevMatch => &["shift+n"],
             Self::PagerDetails => &["t"],
             Self::PagerClose => &["q"],
-            Self::ToggleTasks => &[],
+            Self::ToggleTasks => &["ctrl+t"],
         }
     }
 }

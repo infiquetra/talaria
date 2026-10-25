@@ -15,8 +15,8 @@ use hermes_client::{
     mint_ticket, scan_for_secrets, scan_literals, ws_url,
 };
 use record_fixture::{
-    AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, Preflight, PreflightInput, SCENARIOS,
-    Scenario, ScratchDir, build_substitutions, check_evidence, never_ensure, preflight,
+    AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, NO_TODO_TOOL, Preflight, PreflightInput,
+    SCENARIOS, Scenario, ScratchDir, build_substitutions, check_evidence, never_ensure, preflight,
     run_scenario,
 };
 
@@ -232,10 +232,17 @@ async fn record(settings: &RecordSettings) -> Outcome {
             }
         }
         if !recorded {
-            eprintln!(
-                "{}: not recorded in {} attempts; last failure: {last}",
-                scenario.name, settings.attempts
-            );
+            if scenario.name == "todo-checklist" && last == NO_TODO_TOOL {
+                eprintln!(
+                    "{}: the model did not use the todo tool in {} attempts",
+                    scenario.name, settings.attempts
+                );
+            } else {
+                eprintln!(
+                    "{}: not recorded in {} attempts; last failure: {last}",
+                    scenario.name, settings.attempts
+                );
+            }
             outcome = Outcome::Failure;
         }
     }

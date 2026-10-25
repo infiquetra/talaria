@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 /// The scenarios of the fixture set, in the order the script records them.
 /// `slash-palette` is recognized here; its frames come from the slash command steps, not from
 /// a model prompt.
-pub const SCENARIOS: [&str; 11] = [
+pub const SCENARIOS: [&str; 12] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -30,6 +30,7 @@ pub const SCENARIOS: [&str; 11] = [
     "rewind-and-rollback",
     "context-compaction",
     "attachments-mention-image",
+    "todo-checklist",
 ];
 
 /// The shell command the approval scenario asks for. `manual` mode raises an approval for it.
@@ -45,6 +46,12 @@ const REWIND_AND_ROLLBACK: &str = "rewind-and-rollback";
 
 /// The file tools whose calls show that a turn of [`REWIND_AND_ROLLBACK`] edited `notes.txt`.
 const FILE_EDIT_TOOLS: [&str; 2] = ["write_file", "patch"];
+/// The todo tool ran, but the gateway published no snapshot of the plan.
+const NO_TODO_SNAPSHOT: &str =
+    "todo.updated was not published for this session (local viewer turn?)";
+
+/// The model never called the todo tool.
+pub const NO_TODO_TOOL: &str = "the model did not use the todo tool";
 
 /// How long each cleanup call may take.
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -135,6 +142,12 @@ impl Scenario {
                 ],
             ),
             "attachments-mention-image" => (&[], &["complete"]),
+            "todo-checklist" => (
+                &[
+                    "Use your todo_list tool to write a plan with exactly three items: create a.txt, run sleep 30, create b.txt. Before each step mark it in_progress with the todo_list tool, and after it mark it completed. Do the steps in this folder. Then reply with the single word: done.",
+                ],
+                &["complete"],
+            ),
             _ => return None,
         };
         Some(Scenario {
@@ -495,6 +508,11 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
                 return Err("no session.resume".to_owned());
             }
         }
+        "todo-checklist" => {
+            if !has("todo.updated") {
+                return Err(NO_TODO_SNAPSHOT.to_owned());
+            }
+        }
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -557,6 +575,10 @@ struct Session {
     revision: i64,
     /// The compaction of the context scenario has run.
     compacted: bool,
+    /// A todo snapshot arrived.
+    todo_updated_seen: bool,
+    /// A call of the todo tool finished.
+    todo_tool_seen: bool,
 }
 
 /// How long the driver keeps listening after the last turn ends for a delegated child that
@@ -909,6 +931,13 @@ async fn drive(
     }
     if scenario.name == "approval" && !session.approval_seen && session.delete_ran {
         return AttemptResult::PreconditionAbsent(NO_APPROVAL_CARD.to_owned());
+    }
+    if scenario.name == "todo-checklist" && !session.todo_updated_seen {
+        return AttemptResult::Failed(if session.todo_tool_seen {
+            NO_TODO_SNAPSHOT.to_owned()
+        } else {
+            NO_TODO_TOOL.to_owned()
+        });
     }
     if session.statuses != scenario.expected_statuses {
         return AttemptResult::Failed(format!(
@@ -1322,7 +1351,13 @@ async fn on_event(
             {
                 session.delete_ran = true;
             }
+            if payload["name"].as_str() == Some("todo_list")
+                || payload["tool_name"].as_str() == Some("todo_list")
+            {
+                session.todo_tool_seen = true;
+            }
         }
+        "todo.updated" => session.todo_updated_seen = true,
         "approval.request" => {
             session.approval_seen = true;
             let prompt = (
