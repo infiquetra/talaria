@@ -4,6 +4,22 @@
 
 ## 2026-10-25
 
+### A closed test listener keeps accepting while another thread spawns a process
+
+**Evidence.** `crates/hermes-client/tests/support/mod.rs` (`bind_stale`) binds a socket and drops the listener at once. In the phase 2b acceptance run (#238) both `cargo test --workspace` runs failed `crates/hermes-client/tests/connect.rs` at a stale-socket assertion (line 825, then line 973, one each), while 18 runs of that file alone passed. A standalone probe on the same Mac (Rust 1.98.1, `std::process::Command` running `/usr/bin/true` from 8 threads) connected to a just-dropped listener 5,551 and 5,394 times in 20,000 tries, and 0 times with no spawning thread. With the wait loop now in `bind_stale` it connected 0 times in 40,000.
+
+**Mechanism.** A child process starts with a copy of the parent's descriptors and closes the close-on-exec ones only when it executes its program. Until then the listening socket has a second holder, so it keeps accepting after the test drops its own copy. Discovery's connect then succeeds, the read fails, and the error is not "no gateway".
+
+**Generalizable rule.** A socket a test closed is stale only once a connect is refused; wait for the refusal before asserting that nothing listens.
+
+### A live test working in the temporary root captures every later temporary folder's checkpoints
+
+**Evidence.** Hermes v0.22.4 `tools/checkpoint_manager.py` lines 1388 to 1412 (`get_working_dir_for_path`). `crates/talaria-cli/tests/live_automation.rs` and `live_pager.rs` used `std::env::temp_dir()` itself as the session folder. On 2026-10-25 the `fixture` profile's checkpoint store in the live test home held `$TMPDIR` as a registered project (created 10:37 EDT); the acceptance lead attributed a failed `live_rewind` run to it.
+
+**Mechanism.** Before any project-marker walk, Hermes gives a path to the deepest registered checkpoint root that contains it. Once the temporary root is registered, a later test's own folder below it resolves to that root, so its checkpoints and agent-write ledger land on the shared root. Both tests now work in their own `tempfile::tempdir()`, but the registration already in the store stays until it is removed or the tests run under another `TMPDIR`.
+
+**Generalizable rule.** Give every live session a fresh folder of its own, never a shared parent: Hermes treats a folder it has worked in as the owner of everything below it.
+
 ### Duplicate session titles answer -32603
 
 **Evidence.** Hermes v0.22.4 `gateway/session_controls.py` lines 319 to 330, `tui_gateway/ws.py` lines 431 to 441 and `hermes_state_runtime.py` line 23; `crates/talaria-app/src/directory.rs` (`DirectoryService::rename_result`); `crates/talaria-app/tests/mutate_wire.rs` (`taken_title_is_a_gateway_error`). The live check `live_rename_round_trip` in `crates/talaria-cli/tests/live_session_picker.rs` was not run for this change, so the fact rests on the source.

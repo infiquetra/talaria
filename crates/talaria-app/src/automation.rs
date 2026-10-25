@@ -2,7 +2,7 @@
 //!
 //! Behavior contract: issue 236. Only `session.control.read` and `config.get` are called here:
 //! never `session.automation`, whose accepted call turns the gateway's goal judge off for the
-//! session, and never `config.set` or `session.control`.
+//! session, and never the profile configuration or session control verbs.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

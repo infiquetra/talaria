@@ -13,7 +13,7 @@ const ABSOLUTE_PATH: &str = r"/[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-/]*";
 /// A home directory, with or without anything below it.
 const HOME_DIRECTORY: &str = r"/(?:Users|home)/[A-Za-z0-9_.\-]+";
 
-/// A profile named on a launch line: `--profile name`.
+/// A profile named on a launch line: `--profile fixture`.
 const PROFILE_FLAG: &str = r#"--profile[ =]+([^\s"'`,.;:)]+)"#;
 
 /// A profile named in a JSON field: `"profile": "name"`.

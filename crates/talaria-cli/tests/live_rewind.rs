@@ -87,7 +87,7 @@ async fn live_rewind_restore_and_diff() {
     let service = SessionService::with_client("live-rewind", client.clone());
     let opened = service
         .open(SessionRequest::New(NewSession {
-            request_id: "0123456789abcdef0123456789abcdef".to_string(),
+            request_id: format!("live-rewind-{}", now_ms()),
             source: "tui".to_string(),
             cwd: folder.path().to_path_buf(),
             model: Some("minimax-m3.1-flash".to_string()),
