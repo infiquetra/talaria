@@ -1798,7 +1798,7 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
                 "payload",
             ],
         ),
->>        _ => (Vec::new(), Vec::new()),
+        _ => (Vec::new(), Vec::new()),
     }
 }
 

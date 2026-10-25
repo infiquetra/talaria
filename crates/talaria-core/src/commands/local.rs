@@ -12,6 +12,10 @@
 pub enum LocalAction {
     /// Leave Talaria. The Hermes session keeps running.
     Quit,
+    /// Choose the model of the foreground session.
+    Model,
+    /// Choose the reasoning level of the foreground session.
+    Effort,
 }
 
 /// One local command.
@@ -40,14 +44,32 @@ impl LocalCommand {
 }
 
 /// The one table, in the order the palette lists it.
-const BUILTIN: &[LocalCommand] = &[LocalCommand {
-    name: "quit",
-    aliases: &["exit"],
-    summary: "Leave Talaria; the session keeps running in Hermes",
-    args_hint: "",
-    takes_argument: false,
-    action: LocalAction::Quit,
-}];
+const BUILTIN: &[LocalCommand] = &[
+    LocalCommand {
+        name: "quit",
+        aliases: &["exit"],
+        summary: "Leave Talaria; the session keeps running in Hermes",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Quit,
+    },
+    LocalCommand {
+        name: "model",
+        aliases: &[],
+        summary: "Choose the model of this session",
+        args_hint: "[<model> [--provider <id>] [--effort <level>] [--default]]",
+        takes_argument: true,
+        action: LocalAction::Model,
+    },
+    LocalCommand {
+        name: "effort",
+        aliases: &[],
+        summary: "Choose the reasoning level of this session",
+        args_hint: "[<level>|default] [--default]",
+        takes_argument: true,
+        action: LocalAction::Effort,
+    },
+];
 
 /// The ordered local table.
 #[derive(Clone, Debug, PartialEq, Eq)]

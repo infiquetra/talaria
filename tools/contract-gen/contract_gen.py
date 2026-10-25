@@ -245,6 +245,10 @@ def preprocess_schemas(contract):
     text = schemas.get("MessageCompletePayload", {}).get("properties", {}).get("text", {})
     if {} in text.get("anyOf", []):
         del text["anyOf"]
+    # Hermes gateway/session_mutation_model.py:329 and session_mutations.py:316
+    # at the pin return open mutation projections, beyond the declared receipt.
+    if "SessionMutateResult" in schemas:
+        schemas["SessionMutateResult"]["additionalProperties"] = {}
     # Architecture ruling for section 4.1: only discriminator const properties
     # become singleton enums, with local titles removed to avoid type collapse.
     for name, prop in discriminator_properties(contract):
@@ -467,7 +471,21 @@ ARCHIVED_TRUNCATED_EDITS = (
 
 
 def postprocess_schemas_rs(schemas):
-    """Add archived_truncated to TranscriptMessage and its builder; output without the struct is left alone."""
+    """Apply the received transcript field and the catalogue's omission rule."""
+    # model.options omits inactive flags so the profile stale check sends only
+    # explicit_only. Keep this local to its params; other defaults stay put.
+    if "pub struct ModelOptionsParams" in schemas:
+        for field in ("include_unconfigured", "refresh"):
+            pattern = (r'(pub struct ModelOptionsParams\s*\{[^}]*?)#\[serde\(default\)\]'
+                       r'(\s*pub ' + field + r': bool,)')
+            schemas, count = re.subn(
+                pattern,
+                r'\1#[serde(default, skip_serializing_if = "::std::ops::Not::not")]\2',
+                schemas,
+                count=1,
+            )
+            if count != 1:
+                raise ContractError("expected one ModelOptionsParams.{} boolean default; update the override".format(field))
     split = schemas.find("pub mod builder {")
     if "pub struct TranscriptMessage" not in schemas or split < 0:
         return schemas

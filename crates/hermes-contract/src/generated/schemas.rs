@@ -10434,11 +10434,11 @@ impl ModelOptionProvider {
 pub struct ModelOptionsParams {
     #[serde(default)]
     pub explicit_only: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "::std::ops::Not::not")]
     pub include_unconfigured: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub profile: ::std::option::Option<::std::string::String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "::std::ops::Not::not")]
     pub refresh: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub session_id: ::std::option::Option<::std::string::String>,
@@ -16515,6 +16515,8 @@ pub struct SessionMutateResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub revision: ::std::option::Option<i64>,
     pub session_id: ::std::string::String,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
 }
 impl SessionMutateResult {
     pub fn builder() -> builder::SessionMutateResult {
@@ -84744,6 +84746,10 @@ pub mod builder {
         operation: ::std::result::Result<::std::string::String, ::std::string::String>,
         revision: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        extra: ::std::result::Result<
+            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for SessionMutateResult {
         fn default() -> Self {
@@ -84751,6 +84757,7 @@ pub mod builder {
                 operation: Err("no value supplied for operation".to_string()),
                 revision: Ok(Default::default()),
                 session_id: Err("no value supplied for session_id".to_string()),
+                extra: Err("no value supplied for extra".to_string()),
             }
         }
     }
@@ -84785,6 +84792,18 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for session_id: {e}"));
             self
         }
+        pub fn extra<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.extra = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for extra: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<SessionMutateResult> for super::SessionMutateResult {
         type Error = super::error::ConversionError;
@@ -84795,6 +84814,7 @@ pub mod builder {
                 operation: value.operation?,
                 revision: value.revision?,
                 session_id: value.session_id?,
+                extra: value.extra?,
             })
         }
     }
@@ -84804,6 +84824,7 @@ pub mod builder {
                 operation: Ok(value.operation),
                 revision: Ok(value.revision),
                 session_id: Ok(value.session_id),
+                extra: Ok(value.extra),
             }
         }
     }

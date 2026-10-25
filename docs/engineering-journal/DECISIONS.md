@@ -3693,3 +3693,27 @@ viewer's work. Raw completion and pending fields compensate for narrow generated
 projections at the adapter boundary. Issue #230 owns saved-default integration
 in the shared launch and session modules; this implementation leaves those
 modules unchanged.
+
+## 2026-10-24 — New-session model defaults belong to Talaria
+
+**Decision.** Model and effort picks change the attached session. Choosing the
+wider scope saves an explicit Talaria default for that profile in `models.json`;
+it never writes the Hermes profile's model. Model and provider are saved as a pair,
+while effort can change independently. Command-line flags win by field group;
+resume and continue retain their session settings. Unknown top-level saved-file
+keys are dropped on write, and malformed files are never overwritten.
+
+The pure model reducer and shared mutation ledger decide retries, confirmations,
+deferred state and exact notices. Application services perform typed native calls
+and file persistence; the terminal adapter owns only immutable display projections
+and focus. Every asynchronous result returns through the application channel.
+
+**Rejected alternatives.** Global model configuration writes would change other
+clients and lack a native socket API at the pinned revision. A client-side held
+effort would compete with Hermes's ordered drain. Raw mutation calls would conceal
+a generated-contract defect, so the narrow generator projections are corrected
+instead. Filesystem methods on the domain type would violate the pure-core boundary;
+the storage extension trait belongs to the application layer.
+
+**Revisit when.** Hermes gains a supported profile-default socket operation or
+declares these result and optional-parameter serialization rules explicitly.

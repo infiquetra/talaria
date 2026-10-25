@@ -82,8 +82,9 @@ class LiftTests(unittest.TestCase):
         self.assertGreater(before["false"], 0)
         self.assertEqual(after["false"], 0)
         self.assertEqual(before["false"] - after["false"], before["false"])
-        self.assertEqual(after["true"], before["true"])
-        self.assertEqual(after["schema"], before["schema"])
+        self.assertEqual(after["true"], before["true"] - 1)
+        # The mutation receipt projection deliberately preserves undeclared fields.
+        self.assertEqual(after["schema"], before["schema"] + 1)
         # The inline voice.interrupted marker lives outside components.schemas
         # and must still be present on the untouched contract.
         voice = [

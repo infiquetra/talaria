@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use hermes_contract::schemas::RuntimeDescribeResult;
 
+pub use crate::models::apply_saved_default;
+
 pub const RESUME_HISTORY_CELLS: usize = 50;
 pub const MAX_HELD_PROMPTS: usize = 10;
 pub const LIST_ROWS: usize = 20;

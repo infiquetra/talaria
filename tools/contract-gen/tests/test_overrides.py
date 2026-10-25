@@ -78,5 +78,41 @@ class ArchivedTruncatedTests(unittest.TestCase):
         self.assertIn("remove the override", str(caught.exception))
 
 
+class ModelContractTests(unittest.TestCase):
+    def test_mutation_result_keeps_unlisted_receipt_fields(self) -> None:
+        contract = {"components": {"schemas": {
+            "SessionMutateResult": {"type": "object", "properties": {
+                "session_id": {"type": "string"},
+            }},
+            "OtherResult": {"type": "object"},
+        }}}
+        projected = contract_gen.preprocess_schemas(contract)["$defs"]
+        self.assertEqual(projected["SessionMutateResult"]["additionalProperties"], {})
+        self.assertNotIn("additionalProperties", projected["OtherResult"])
+        self.assertNotIn("additionalProperties", contract["components"]["schemas"]["SessionMutateResult"])
+
+    def test_normal_catalogue_omits_refresh_false_only_at_its_site(self) -> None:
+        text = """pub struct ModelOptionsParams {
+    #[serde(default)]
+    pub include_unconfigured: bool,
+    #[serde(default)]
+    pub refresh: bool,
+}
+pub struct OtherParams {
+    #[serde(default)]
+    pub refresh: bool,
+}
+"""
+        result = contract_gen.postprocess_schemas_rs(text)
+        expected = text.replace(
+            "#[serde(default)]", '#[serde(default, skip_serializing_if = "::std::ops::Not::not")]', 2
+        )
+        self.assertEqual(result, expected)
+
+    def test_changed_refresh_shape_requires_a_deliberate_override_update(self) -> None:
+        with self.assertRaises(contract_gen.ContractError):
+            contract_gen.postprocess_schemas_rs("pub struct ModelOptionsParams { pub refresh: Option<bool>, }")
+
+
 if __name__ == "__main__":
     unittest.main()

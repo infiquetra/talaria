@@ -5,7 +5,7 @@
 //! depends on a terminal library. Every gateway call runs in a spawned task and comes back as an
 //! [`AppMessage`]; the loop itself never waits on the network.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::future::Future;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -24,6 +24,11 @@ use talaria_core::commands::{
     PaletteContext, PaletteEffect, PaletteInput, PaletteState, palette_update, parse_slash_line,
     state_update,
 };
+use talaria_core::models::{
+    ConfirmKey, ModelCommandOrEffort, ModelsEffect, ModelsInput, ModelsState, NoticeLevel,
+    PickerKey, PickerView, SavedModels, parse_effort_command, parse_model_command,
+};
+use talaria_core::mutation::Confirmation;
 use talaria_core::session::{
     Cell, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState, SessionId, SessionState,
 };
@@ -80,6 +85,9 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    OpenModels,
+    ModelPicker(PickerKey),
+    ModelConfirm(ConfirmKey),
     /// The composer sent this text.
     Submit(String),
     /// Stop the running turn (Esc, or Ctrl+C on a card or an empty draft).
@@ -93,7 +101,10 @@ pub enum UserAction {
         note: Option<String>,
     },
     /// A clarification card was answered.
-    Clarify { key: PromptKey, answer: String },
+    Clarify {
+        key: PromptKey,
+        answer: String,
+    },
     /// A masked card was answered; an empty value declines it.
     Masked {
         request_id: String,
@@ -132,6 +143,16 @@ impl View<'_> {
 
 /// The terminal side of the loop.
 pub trait Screen: ComposerDeadline + StatusHost {
+    /// Synchronize model overlays and cards without passing terminal state into the app.
+    fn sync_models(
+        &mut self,
+        _picker: Option<PickerView<'_>>,
+        _confirmation: Option<&Confirmation>,
+    ) {
+    }
+    fn model_list_height(&self) -> usize {
+        10
+    }
     /// One raw input: a key, a paste, a resize, or a status command result.
     type Input: Send + 'static;
     /// Route one input and redraw; returns what the person asked for.
@@ -169,6 +190,10 @@ pub struct Ready {
 }
 
 pub struct AppState {
+    pub models: ModelsState,
+    model_service: Option<Arc<crate::models::ModelService>>,
+    model_notice_counter: u64,
+    model_warnings: BTreeSet<String>,
     pub opened: Option<OpenedSession>,
     pub held: VecDeque<String>,
     pub launch_id: String,
@@ -207,10 +232,15 @@ pub struct AppState {
 impl AppState {
     #[must_use]
     pub fn new(launch_id: impl Into<String>) -> Self {
+        let launch_id = launch_id.into();
         Self {
+            models: ModelsState::new(&launch_id, Ok(SavedModels::empty())),
+            model_service: None,
+            model_notice_counter: 0,
+            model_warnings: BTreeSet::new(),
             opened: None,
             held: VecDeque::new(),
-            launch_id: launch_id.into(),
+            launch_id,
             prompt_counter: 0,
             quitting: false,
             committed_cells: 0,
@@ -280,6 +310,7 @@ impl AppState {
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
+    Models(ModelsInput),
     User(UserAction),
     Link(LinkEvent),
     /// The session is open: commit its history, track it, send held prompts.
@@ -314,6 +345,7 @@ pub enum AppMessage {
 
 /// What the executor does after one update. Ranges index the open session's cells.
 pub enum AppEffect {
+    Models(ModelsEffect),
     CommitLines(Vec<String>),
     CommitCells(Range<usize>),
     Redraw,
@@ -370,9 +402,103 @@ fn notice_lines(text: &str) -> AppEffect {
     AppEffect::CommitLines(text.lines().map(|line| format!("\u{b7} {line}")).collect())
 }
 
+fn model_card_blocked(state: &AppState) -> bool {
+    !state.masked.is_empty()
+        || state
+            .opened
+            .as_ref()
+            .is_some_and(|s| s.state.open_prompts().any(|p| p.state == PromptState::Open))
+}
+
+fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
+    state.models.set_list_height(screen.model_list_height());
+    screen.sync_models(
+        state.models.view(),
+        if model_card_blocked(state) {
+            None
+        } else {
+            state.models.confirmation()
+        },
+    );
+}
+
+fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
+    let current = state.opened.as_ref().map(|s| s.session_id.as_str());
+    match &input {
+        ModelsInput::OptionsLoaded { session_id, result }
+            if Some(session_id.as_str()) == current =>
+        {
+            state.model = Some(result.model.clone());
+            if let Some(opened) = &mut state.opened {
+                opened.info.provider = Some(result.provider.clone());
+            }
+        }
+        ModelsInput::EffortRead { session_id, value } if Some(session_id.as_str()) == current => {
+            state.effort = Some(value.clone().unwrap_or_else(|| "medium".into()));
+        }
+        ModelsInput::SessionEvent {
+            session_id,
+            payload,
+            type_name,
+        } if Some(session_id.as_str()) == current
+            && type_name == "session.updated"
+            && payload.get("status").and_then(Value::as_str) == Some("confirmation_required") =>
+        {
+            if let Some(model) = payload.get("committed_model").and_then(Value::as_str) {
+                state.model = Some(model.into());
+            }
+        }
+        ModelsInput::SessionEvent {
+            session_id,
+            payload,
+            type_name,
+        } if Some(session_id.as_str()) == current && type_name == "session.info" => {
+            if let Some(model) = payload.get("model").and_then(Value::as_str) {
+                state.model = Some(model.into());
+            }
+            if let Some(provider) = payload.get("provider").and_then(Value::as_str)
+                && let Some(opened) = &mut state.opened
+            {
+                opened.info.provider = Some(provider.into());
+            }
+            if let Some(effort) = payload
+                .get("reasoning_effort")
+                .or_else(|| payload.get("reasoning"))
+                .and_then(Value::as_str)
+            {
+                state.effort = Some(effort.into());
+            }
+        }
+        ModelsInput::MutationReturned {
+            request,
+            outcome: talaria_core::mutation::MutationOutcome::Committed(receipt),
+        } if Some(request.session_id.as_str()) == current => {
+            if let Some(model) = receipt.get("model").and_then(Value::as_str) {
+                state.model = Some(model.into());
+            }
+            if let Some(effort) = receipt.get("effort").and_then(Value::as_str) {
+                state.effort = Some(effort.into());
+            }
+            if let Some(provider) = receipt.get("provider").and_then(Value::as_str)
+                && let Some(opened) = &mut state.opened
+            {
+                opened.info.provider = Some(provider.into());
+            }
+        }
+        _ => {}
+    }
+    state
+        .models
+        .update(input)
+        .into_iter()
+        .map(AppEffect::Models)
+        .collect()
+}
+
 /// Apply one message. No input or output: the effects say what to do.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let mut effects = match message {
+        AppMessage::Models(input) => models_input(state, input),
         AppMessage::User(action) => user_action(state, action),
         AppMessage::Link(event) => link_event(state, event),
         AppMessage::Opened { opened, notice } => opened_session(state, opened, notice),
@@ -405,6 +531,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
     };
+    if model_card_blocked(state) {
+        effects.extend(models_input(state, ModelsInput::CardOpened));
+    }
     effects.extend(commit_ready(state));
     effects.push(AppEffect::Redraw);
     effects
@@ -447,6 +576,15 @@ fn route(
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
+        UserAction::OpenModels => models_input(
+            state,
+            ModelsInput::OpenPicker {
+                session_id: state.opened.as_ref().map(|s| s.session_id.clone()),
+                profile: state.profile.clone(),
+            },
+        ),
+        UserAction::ModelPicker(key) => models_input(state, ModelsInput::Picker(key)),
+        UserAction::ModelConfirm(key) => models_input(state, ModelsInput::Confirm(key)),
         UserAction::Submit(text) => {
             // The composer has taken the draft.
             let mut effects = if state.draft.is_empty() && !state.palette.open {
@@ -693,6 +831,24 @@ fn run_command(state: &mut AppState, typed: String) -> Vec<AppEffect> {
     }]
 }
 
+/// A local command this client runs itself: the model picker's own commands, which the
+/// local table names and the loop turns into one model input.
+fn local_command(state: &mut AppState, action: LocalAction, argument: &str) -> Vec<AppEffect> {
+    let command = match action {
+        LocalAction::Model => parse_model_command(argument).map(ModelCommandOrEffort::Model),
+        LocalAction::Effort => parse_effort_command(argument).map(ModelCommandOrEffort::Effort),
+        _ => return Vec::new(),
+    };
+    models_input(
+        state,
+        ModelsInput::Command {
+            session_id: state.opened.as_ref().map(|s| s.session_id.clone()),
+            profile: state.profile.clone(),
+            command,
+        },
+    )
+}
+
 fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         return Vec::new();
@@ -702,6 +858,7 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
             state.quitting = true;
             return vec![AppEffect::Quit];
         }
+        Slash::Local(action, argument) => return local_command(state, action, &argument),
         Slash::Notice(notice) => {
             return match state.opened {
                 Some(_) => reduce(
@@ -806,9 +963,31 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     return Vec::new();
                 }
                 let session_id = opened.session_id.clone();
-                let produced =
-                    apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
-                route(state, produced, None)
+                let type_name = inbound
+                    .raw
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let payload = inbound.raw.get("payload").cloned().unwrap_or(Value::Null);
+                if let Some(sequence) = seq {
+                    opened.cursor.last_sequence = opened.cursor.last_sequence.max(sequence);
+                }
+                let produced = if type_name == "session.updated" {
+                    Vec::new()
+                } else {
+                    apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw)
+                };
+                let mut effects = route(state, produced, None);
+                effects.extend(models_input(
+                    state,
+                    ModelsInput::SessionEvent {
+                        session_id,
+                        type_name,
+                        payload,
+                    },
+                ));
+                effects
             }
             Inbound::ServerRequest(request) => vec![AppEffect::ServerRequest(request)],
             Inbound::Malformed(_) | Inbound::Closed(_) => Vec::new(),
@@ -853,7 +1032,29 @@ fn opened_session(
     opened: OpenedSession,
     notice: Option<String>,
 ) -> Vec<AppEffect> {
-    let mut effects = Vec::new();
+    state.model = opened.info.model.clone();
+    state.effort = opened.effort.clone();
+    let mut effects = models_input(
+        state,
+        ModelsInput::ForegroundChanged {
+            session_id: Some(opened.session_id.clone()),
+        },
+    );
+    effects.extend(models_input(
+        state,
+        ModelsInput::SessionOpened {
+            session_id: opened.session_id.clone(),
+            revision: Some(opened.revision),
+            execution_generation: Some(opened.execution_generation),
+        },
+    ));
+    for text in &opened.launch_notices {
+        if !text.starts_with("~/.talaria/models.json could not be read (")
+            || state.model_warnings.insert(text.clone())
+        {
+            effects.push(notice_lines(text));
+        }
+    }
     let title = session_title(
         opened.title.as_deref(),
         state.list_title.as_deref(),
@@ -955,6 +1156,14 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         session_id: fresh.session_id.clone(),
         cursor: fresh.cursor.clone(),
     });
+    effects.extend(models_input(
+        state,
+        ModelsInput::SessionOpened {
+            session_id: fresh.session_id.clone(),
+            revision: Some(fresh.revision),
+            execution_generation: Some(fresh.execution_generation),
+        },
+    ));
     let mut fresh = fresh;
     if fresh.title.is_none() {
         fresh.title = old.title;
@@ -1137,6 +1346,8 @@ pub fn hold_prompt(state: &mut AppState, text: &str) -> Result<(), String> {
 pub enum Slash {
     /// `/quit` or `/exit`: detach and leave.
     Quit,
+    /// A local command this client runs itself, with its action and its argument.
+    Local(LocalAction, String),
     /// A local command refused locally, with the notice to show.
     Notice(String),
     /// A Hermes command, as typed. It goes to `slash.exec`.
@@ -1164,10 +1375,7 @@ pub fn slash_line(text: &str) -> Slash {
         }
         return match command.action {
             LocalAction::Quit => Slash::Quit,
-            _ => Slash::Notice(format!(
-                "/{} is not available in this version of Talaria.",
-                line.name
-            )),
+            _ => Slash::Local(command.action, line.arg),
         };
     }
     Slash::Command(text.to_string())
@@ -1384,7 +1592,11 @@ async fn open_session(
 ) -> Result<(SessionService, OpenedSession, Option<String>), LaunchFailure> {
     let request =
         plan(launch, new_request_id(), &connection.describe).map_err(LaunchFailure::from)?;
-    let service = SessionService::with_client(launch_id, connection.link.client());
+    let service = SessionService::with_client(launch_id, connection.link.client())
+        .with_create_defaults(
+            &connection.profile_name,
+            &connection.describe.session_create.parameters,
+        );
     let git_toplevel = match git {
         Some(handle) => handle.await.ok().flatten(),
         None => None,
@@ -1489,6 +1701,12 @@ struct Executor {
     /// Prompts go through one worker, one call at a time, so they reach the gateway in the
     /// order they were submitted.
     prompts: mpsc::UnboundedSender<(SessionService, Effect)>,
+    model_files: mpsc::UnboundedSender<ModelFileJob>,
+}
+
+enum ModelFileJob {
+    Save(Arc<crate::models::ModelService>, SavedModels),
+    Flush(tokio::sync::oneshot::Sender<bool>),
 }
 
 impl Executor {
@@ -1513,7 +1731,43 @@ impl Executor {
                 }
             }
         });
-        Self { sender, prompts }
+        let (model_files, mut files) = mpsc::unbounded_channel();
+        let results = sender.clone();
+        tokio::spawn(async move {
+            let mut failed = false;
+            while let Some(job) = files.recv().await {
+                match job {
+                    ModelFileJob::Save(service, saved) => {
+                        let inputs = service.execute(ModelsEffect::SaveFile(saved)).await;
+                        failed = inputs
+                            .iter()
+                            .any(|input| matches!(input, ModelsInput::FileFailed { .. }));
+                        for input in inputs {
+                            let _ = results.send(AppMessage::Models(input));
+                        }
+                    }
+                    ModelFileJob::Flush(reply) => {
+                        let _ = reply.send(failed);
+                    }
+                }
+            }
+        });
+        Self {
+            sender,
+            prompts,
+            model_files,
+        }
+    }
+
+    async fn flush_model_files(&self) -> bool {
+        let (reply, waiting) = tokio::sync::oneshot::channel();
+        if self.model_files.send(ModelFileJob::Flush(reply)).is_err() {
+            return true;
+        }
+        !matches!(
+            tokio::time::timeout(QUIT_WAIT, waiting).await,
+            Ok(Ok(false))
+        )
     }
 
     fn send_later(&self, task: impl Future<Output = AppMessage> + Send + 'static) {
@@ -1555,6 +1809,46 @@ fn apply<S: Screen>(
     let mut redraw = false;
     for effect in update(state, message) {
         match effect {
+            AppEffect::Models(effect) => match effect {
+                ModelsEffect::OpenOverlay | ModelsEffect::CloseOverlay => redraw = true,
+                ModelsEffect::Notice { level, text, .. } => {
+                    if text.starts_with("~/.talaria/models.json could not be read (")
+                        && !state.model_warnings.insert(text.clone())
+                    {
+                        continue;
+                    }
+                    state.model_notice_counter = state.model_notice_counter.saturating_add(1);
+                    screen.commit_cells(&[Cell::Notice(talaria_core::session::NoticeCell {
+                        id: talaria_core::session::CellId::new(
+                            u64::MAX - state.model_notice_counter,
+                        ),
+                        kind: match level {
+                            NoticeLevel::Info => talaria_core::session::NoticeKind::Diagnostic,
+                            NoticeLevel::Warning => talaria_core::session::NoticeKind::Warning,
+                            NoticeLevel::Error => talaria_core::session::NoticeKind::Error,
+                        },
+                        text,
+                        detail: None,
+                    })]);
+                }
+                ModelsEffect::SaveFile(saved) => {
+                    if let Some(service) = state.model_service.clone() {
+                        let _ = executor
+                            .model_files
+                            .send(ModelFileJob::Save(service, saved));
+                    }
+                }
+                effect => {
+                    if let Some(service) = state.model_service.clone() {
+                        let sender = executor.sender.clone();
+                        tokio::spawn(async move {
+                            for input in service.execute(effect).await {
+                                let _ = sender.send(AppMessage::Models(input));
+                            }
+                        });
+                    }
+                }
+            },
             AppEffect::CommitLines(lines) => screen.commit_lines(lines),
             AppEffect::CommitCells(range) => {
                 if let Some(opened) = &state.opened {
@@ -1735,6 +2029,15 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     state.command_service = Some(commands);
     state.link = Some(link);
     state.service = Some(service);
+    state.model_service = Some(Arc::new(crate::models::ModelService::new(
+        state
+            .service
+            .as_ref()
+            .and_then(SessionService::client)
+            .expect("an installed connection has a client")
+            .clone(),
+        crate::config::models_path().unwrap_or_default(),
+    )));
     let counter = Arc::clone(&state.counter);
     let launch_id = state.launch_id.clone();
     state.prompts = Some(Arc::new(Mutex::new(PromptService::new(Box::new(
@@ -1771,15 +2074,24 @@ enum Ending {
 /// the caller prints the outcome.
 pub async fn run<S: Screen>(
     launch: Launch,
-    setup: RunSetup,
+    mut setup: RunSetup,
     screen: &mut S,
     mut inputs: mpsc::UnboundedReceiver<S::Input>,
 ) -> Outcome {
     let mut state = AppState::new(setup.launch_id.clone());
+    state.models = ModelsState::new(&setup.launch_id, crate::config::load_models());
+    state
+        .models
+        .set_display_zone(crate::config::model_display_zone());
+    if let Some(warning) = state.models.take_saved_warning() {
+        state.model_warnings.insert(warning.clone());
+        setup.notices.push(warning);
+    }
     state.profile = launch.profile.trim().to_lowercase();
     state.list_title = setup.list_title;
     state.model = launch.model.clone();
     state.effort = launch.effort.clone();
+    sync_models(&mut state, screen);
     screen.draw(&state.view());
     if !setup.notices.is_empty() {
         screen.commit_lines(
@@ -1812,6 +2124,7 @@ pub async fn run<S: Screen>(
         tokio::select! {
             input = inputs.recv() => {
                 let Some(input) = input else { break Ending::InputClosed };
+                sync_models(&mut state, screen);
                 let actions = screen.input(input, &state.view(), Instant::now());
                 for action in actions {
                     redraw |= apply(&mut state, AppMessage::ForegroundKey(action), screen, &executor);
@@ -1858,6 +2171,7 @@ pub async fn run<S: Screen>(
         loop {
             while !state.quitting {
                 let Ok(input) = inputs.try_recv() else { break };
+                sync_models(&mut state, screen);
                 let actions = screen.input(input, &state.view(), Instant::now());
                 for action in actions {
                     redraw |= apply(
@@ -1881,6 +2195,7 @@ pub async fn run<S: Screen>(
             break Ending::Quit;
         }
         if redraw {
+            sync_models(&mut state, screen);
             screen.draw(&state.view());
             screen.on_tick(Instant::now());
         }
@@ -1917,6 +2232,11 @@ pub async fn run<S: Screen>(
             outcome.code = failure.exit_code;
             outcome.stderr.push_str(&failure.render());
         }
+    }
+    if executor.flush_model_files().await {
+        outcome
+            .stderr
+            .push_str("Some model choices could not be saved before exit.\n");
     }
     drive_status(screen, hermes_client::is_suspicious_key).await;
     screen.restore();
