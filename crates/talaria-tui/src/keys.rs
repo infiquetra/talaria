@@ -357,7 +357,8 @@ impl Action {
             | Self::HistorySearch
             | Self::Suspend
             | Self::AttachClipboardImage
-            | Self::ToggleTasks => KeyContext::Composer,
+            | Self::ToggleTasks
+            | Self::ApprovalsToggle => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
             | Self::PagerPageUp
@@ -454,7 +455,7 @@ impl From<KeyEvent> for Key {
             Term::Char(c) => KeyCode::Char(c),
             Term::Enter => KeyCode::Enter,
             Term::Esc => KeyCode::Esc,
-            Term::Tab => KeyCode::Tab,
+            Term::Tab | Term::BackTab => KeyCode::Tab,
             Term::Backspace => KeyCode::Backspace,
             Term::Delete => KeyCode::Delete,
             Term::Insert => KeyCode::Insert,
@@ -473,7 +474,8 @@ impl From<KeyEvent> for Key {
         let mods = Mods {
             ctrl: held.contains(KeyModifiers::CONTROL),
             alt: held.contains(KeyModifiers::ALT),
-            shift: held.contains(KeyModifiers::SHIFT),
+            // crossterm reports Shift+Tab as BackTab, with or without the shift flag.
+            shift: held.contains(KeyModifiers::SHIFT) || event.code == Term::BackTab,
             super_key: held.contains(KeyModifiers::SUPER),
             other: held.intersects(KeyModifiers::HYPER | KeyModifiers::META),
         };
@@ -521,7 +523,7 @@ pub enum KeyCode {
     PageDown,
     /// A function key. `F(1)` is F1.
     F(u8),
-    /// A key this list does not name. Shift+Tab arrives here.
+    /// A key this list does not name.
     Other,
 }
 

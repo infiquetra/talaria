@@ -19,7 +19,7 @@ use std::sync::{
 };
 use talaria_app::app::{
     self, AttachmentView, ComposerDeadline, InputCode, InputKey, LinkView, Outcome, RunSetup,
-    Screen, StatusHost, TranscriptAction, UserAction, View,
+    Screen, StatusHost, ToggleContext, TranscriptAction, UserAction, View,
 };
 use talaria_app::appearance::AppearanceView;
 use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
@@ -37,6 +37,7 @@ use talaria_core::checklist::ChecklistCommit;
 use talaria_core::commands::PaletteInput;
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
+use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
 use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
@@ -68,9 +69,9 @@ use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
 use talaria_tui::side::{SideTasksSection, SideTheme, shell_mode_title};
 use talaria_tui::status::{
-    CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay, SessionRef,
-    StatusCommandService, StatusDocument, StatusInputs, StatusPalette, StatusSection, TurnState,
-    interval_from_config, parse_command,
+    ApprovalsSegment, CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay,
+    SessionRef, StatusCommandService, StatusDocument, StatusInputs, StatusPalette, StatusSection,
+    Tone, TurnState, interval_from_config, parse_command,
 };
 use talaria_tui::terminal::{
     InlineTerminal, InputThread, TerminalError, TerminalGuard, probe_startup, spawn_input,
@@ -581,9 +582,10 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         model: view.model.map(str::to_string),
         reasoning_effort: view.effort.map(str::to_string),
         reasoning_effort_wire: view.effort.map(str::to_string),
-        working_dir: view.info.and_then(|info| info.cwd.clone()),
+        // One folder for the foreground session, kept by the app and moved by `/cd` (#237).
+        working_dir: view.folder.and_then(|folder| folder.cwd.clone()),
         home_dir,
-        branch: view.info.and_then(|info| info.branch.clone()),
+        branch: view.folder.and_then(|folder| folder.branch.clone()),
         needs_you: open,
         working: u32::from(turn != TurnState::Idle),
         session: view.session_id.map(|id| SessionRef {
@@ -593,7 +595,19 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         turn,
         pending_prompts: open,
         context_percent,
+        approvals: view.approvals.as_ref().map(approvals_segment),
         ..StatusInputs::default()
+    }
+}
+
+/// The permissions state's segment in the status line's own types (#237).
+fn approvals_segment(segment: &ApprovalSegmentText) -> ApprovalsSegment {
+    ApprovalsSegment {
+        text: segment.text.clone(),
+        tone: match segment.tone {
+            ApprovalTone::Muted => Tone::Muted,
+            ApprovalTone::Warning => Tone::Warning,
+        },
     }
 }
 
@@ -936,6 +950,19 @@ impl TuiScreen {
                     let mut actions = Vec::new();
                     Self::close_palette(&mut actions);
                     return actions;
+                }
+                // A focused card took the key above. The completion list keeps it; the
+                // composer hands it to the approvals toggle (#237).
+                if key.kind != KeyKind::Release
+                    && self.keymap.resolve(&key, KeyContext::Composer)
+                        == Some(Action::ApprovalsToggle)
+                {
+                    let context = if view.palette.open {
+                        ToggleContext::Completion
+                    } else {
+                        ToggleContext::Composer
+                    };
+                    return vec![UserAction::ApprovalsToggle { context }];
                 }
                 let ctx = ComposerContext {
                     turn_running: view.turn_running(),
@@ -1337,7 +1364,7 @@ impl Screen for TuiScreen {
     fn draw(&mut self, view: &View<'_>) {
         self.apply_transcript(view);
         let now = Instant::now();
-        if let Some(cwd) = view.info.and_then(|info| info.cwd.as_deref()) {
+        if let Some(cwd) = view.folder.and_then(|folder| folder.cwd.as_deref()) {
             self.folder = std::path::PathBuf::from(cwd);
         }
         self.connecting = view.state.is_none() && view.link == LinkView::Connecting;
@@ -1622,6 +1649,13 @@ impl Screen for TuiScreen {
         }
     }
 
+    fn toggle_label(&self) -> Option<String> {
+        self.keymap.label(Action::ApprovalsToggle)
+    }
+
+    fn interrupt_label(&self) -> Option<String> {
+        self.keymap.label(Action::Interrupt)
+    }
     fn startup_appearance(&self) -> Option<(TerminalColors, (Polarity, PolaritySource))> {
         Some((self.look.terminal, self.look.polarity))
     }

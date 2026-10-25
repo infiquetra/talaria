@@ -36,7 +36,10 @@ use talaria_core::models::{
     PickerKey, PickerView, SavedModels, parse_effort_command, parse_model_command,
 };
 use talaria_core::mutation::{Confirmation, MutationLedger, MutationOutcome, MutationRequest};
-use talaria_core::permissions::{ApprovalSegmentText, PermissionsInput};
+use talaria_core::permissions::{
+    ApprovalSegmentText, CallFailure as PermissionsFailure, PermissionsEffect, PermissionsInput,
+    PermissionsState, hermes_command_finished, parse_permissions_command,
+};
 use talaria_core::rewind::{
     CallFailure, DiffCommand, DiffSource, DoubleEsc, Reply, RewindEffect, RewindInput, RewindKey,
     RewindState, RewindView, RollbackCommand, parse_diff as parse_diff_command, parse_rollback,
@@ -49,6 +52,9 @@ use talaria_core::session::{
 use talaria_core::side::{
     NO_SESSION_NOTICE, SHELL_EMPTY_HINT, SIDE_USAGE, Submission, btw_command, carry_over, classify,
     next_tick,
+};
+use talaria_core::workspace::{
+    CdContext, CdEffect, CdInput, CdState, FolderCheck, SessionFolder, parse_cd_command,
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
@@ -78,12 +84,15 @@ use crate::launch::{
     Belongs, Launch, ListRow, MAX_HELD_PROMPTS, RESUME_HISTORY_CELLS, SessionRequest, StartMode,
     belongs, merge_rows, new_request_id, plain, plan, workspace_key,
 };
+use crate::mutation::MutationClient;
+use crate::permissions::PermissionsService;
 use crate::prompts::{MaskedRequestInfo, PromptService, ServerRequestPolicy, policy_for};
 use crate::sessions::{
     DetachOutcome, ExecuteOutcome, OpenError, OpenedSession, SessionInfoSummary, SessionService,
     accept_event, submission_id,
 };
 use crate::side::{self, SideService};
+use crate::workspace::WorkspaceService;
 
 /// How long a quit waits for a create or resume that is still in flight.
 pub const QUIT_WAIT: Duration = Duration::from_secs(5);
@@ -91,6 +100,8 @@ pub const QUIT_WAIT: Duration = Duration::from_secs(5);
 pub const DENY_WAIT: Duration = Duration::from_secs(2);
 /// Titles in the resume separator are cut to this many characters, with no ellipsis.
 pub const TITLE_CHARS: usize = 60;
+/// How notices name the approvals toggle until the screen reports its own binding (#237).
+pub const DEFAULT_TOGGLE_LABEL: &str = "Shift+Tab";
 /// Unsent prompts printed after a quit are cut to this many characters.
 const HELD_PRINT_CHARS: usize = 80;
 /// At most this many ready messages are applied after the one that woke the loop, before
@@ -235,6 +246,8 @@ pub struct View<'a> {
     pub checklist_expanded: bool,
     /// The approvals segment, when the permissions state shows one (#237).
     pub approvals: Option<ApprovalSegmentText>,
+    /// The foreground session's folder and branch, the status line's only copy (#237).
+    pub folder: Option<&'a SessionFolder>,
 }
 
 impl View<'_> {
@@ -334,6 +347,15 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn attachment_rule(&self) -> CollapseRule {
         CollapseRule::HERMES_DEFAULT
     }
+    /// How notices name the approvals toggle key: its first binding, or `None` when the
+    /// person unbound it (#237).
+    fn toggle_label(&self) -> Option<String> {
+        Some(DEFAULT_TOGGLE_LABEL.to_string())
+    }
+    /// How the `/cd` refusal names the interrupt key; `None` lets it say Esc (#237).
+    fn interrupt_label(&self) -> Option<String> {
+        None
+    }
 }
 
 pub trait ComposerDeadline {
@@ -424,7 +446,25 @@ pub struct AppState {
     /// Bumped when the session state is replaced.
     pub source_epoch: u64,
     pub checklist: ChecklistTracker,
+    /// How notices name the approvals toggle key; `None` when it is unbound (#237).
+    pub toggle_label: Option<String>,
     open_keys: Vec<PromptKey>,
+    /// The approval settings Hermes last confirmed, made when the first session opens.
+    permissions: Option<PermissionsState>,
+    /// The calls behind the permissions effects; a new one with every connection.
+    permissions_service: Option<Arc<PermissionsService>>,
+    /// The `/cd` reducer: at most one folder check or move at a time (#237).
+    cd: CdState,
+    /// The moves' own request ids and fences, apart from the model picker's (#237).
+    cd_ledger: MutationLedger,
+    /// The foreground session's folder and branch (#237).
+    folder: SessionFolder,
+    /// The home folder `~` stands for in `/cd` (#237).
+    pub home: Option<PathBuf>,
+    /// How the `/cd` refusal names the interrupt key (#237).
+    pub interrupt_label: Option<String>,
+    /// The folder check and the move; a new one with every connection (#237).
+    workspace_service: Option<Arc<WorkspaceService>>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
     link: Option<Link>,
@@ -452,6 +492,7 @@ impl AppState {
     pub fn new(launch_id: impl Into<String>) -> Self {
         let launch_id = launch_id.into();
         let ledger = MutationLedger::new(&launch_id);
+        let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
             models: ModelsState::new(&launch_id, Ok(SavedModels::empty())),
             model_service: None,
@@ -513,6 +554,15 @@ impl AppState {
             checklist: ChecklistTracker::new(),
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
+            toggle_label: Some(DEFAULT_TOGGLE_LABEL.to_string()),
+            permissions: None,
+            permissions_service: None,
+            cd: CdState::new(),
+            cd_ledger,
+            folder: SessionFolder::default(),
+            home: None,
+            interrupt_label: None,
+            workspace_service: None,
             service: None,
             link: None,
             prompts: None,
@@ -565,8 +615,11 @@ impl AppState {
             source_epoch: self.source_epoch,
             checklist: self.checklist.live(),
             checklist_expanded: self.checklist.expanded(),
-            // The permissions wiring lands with the green work (#237).
-            approvals: None,
+            approvals: self
+                .permissions
+                .as_ref()
+                .and_then(PermissionsState::segment),
+            folder: opened.map(|_| &self.folder),
         }
     }
 
@@ -714,6 +767,8 @@ pub enum AppMessage {
     },
     /// A permissions reducer input (#237).
     Permissions(PermissionsInput),
+    /// A `/cd` folder check or move finished (#237).
+    Cd(CdInput),
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -825,6 +880,10 @@ pub enum AppEffect {
         /// Whether the bypass should be on.
         off: bool,
     },
+    /// Read an approval setting or write the profile's mode (#237).
+    Permissions(PermissionsEffect),
+    /// Check a `/cd` folder or send the move (#237).
+    Cd(CdEffect),
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -1022,6 +1081,12 @@ fn rebuild_after_rewind(
     if fresh.title.is_none() {
         fresh.title = old.and_then(|old| old.title);
     }
+    state.folder =
+        SessionFolder::from_snapshot(fresh.info.cwd.as_deref(), fresh.info.branch.as_deref());
+    state
+        .cd_ledger
+        .fences_mut(&fresh.session_id)
+        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
     state.opened = Some(fresh);
     state.source_epoch = state.source_epoch.wrapping_add(1);
     if state.pager_open {
@@ -1290,9 +1355,8 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
-        // The permissions wiring lands with the green work; until then replies change
-        // nothing (#237).
-        AppMessage::Permissions(_) => Vec::new(),
+        AppMessage::Permissions(input) => permissions(state, input),
+        AppMessage::Cd(input) => cd_input(state, input),
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -1485,7 +1549,12 @@ fn local_effect(
             state.quitting = true;
             return vec![AppEffect::Quit];
         }
-        LocalAction::Model | LocalAction::Effort | LocalAction::Skin | LocalAction::Theme => {
+        LocalAction::Model
+        | LocalAction::Effort
+        | LocalAction::Skin
+        | LocalAction::Theme
+        | LocalAction::Permissions
+        | LocalAction::Cd => {
             return model_command(state, action, &argument);
         }
         LocalAction::Rewind
@@ -1647,6 +1716,92 @@ fn route(
     effects
 }
 
+/// Feed the permissions reducer and turn its effects into executor effects. Before the first
+/// session opens there is no permissions state, and inputs change nothing.
+fn permissions(state: &mut AppState, input: PermissionsInput) -> Vec<AppEffect> {
+    let label = state.toggle_label.clone();
+    let Some(permissions) = state.permissions.as_mut() else {
+        return Vec::new();
+    };
+    permissions
+        .update(input, label.as_deref())
+        .into_iter()
+        .filter_map(|effect| match effect {
+            PermissionsEffect::SetSessionOff {
+                session_id,
+                generation,
+                off,
+            } => Some(AppEffect::SetSessionOff {
+                session_id,
+                generation,
+                off,
+            }),
+            PermissionsEffect::Notice { text, .. } => Some(notice_lines(&text)),
+            // `update` ends every message with a redraw.
+            PermissionsEffect::Redraw => None,
+            effect => Some(AppEffect::Permissions(effect)),
+        })
+        .collect()
+}
+
+/// `/permissions`: a parsed command goes to the reducer; anything else prints the usage line.
+fn permissions_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    match parse_permissions_command(argument) {
+        Ok(command) => permissions(
+            state,
+            PermissionsInput::Command {
+                command,
+                now: Instant::now(),
+            },
+        ),
+        Err(usage) => vec![notice_lines(&usage)],
+    }
+}
+
+/// Feed the `/cd` reducer with the foreground session's folder, and turn its effects into
+/// executor effects. A confirmed move replaces the one folder the status line draws.
+fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
+    let foreground = state
+        .opened
+        .as_ref()
+        .filter(|_| !state.session_gone)
+        .map(|opened| opened.session_id.clone());
+    let turn_running = state
+        .opened
+        .as_ref()
+        .is_some_and(|opened| *opened.state.turn() == talaria_core::session::TurnState::Running);
+    let ctx = CdContext {
+        session_id: foreground.as_deref(),
+        turn_running,
+        folder: &state.folder,
+        home: state.home.as_deref(),
+        interrupt_label: state.interrupt_label.as_deref(),
+    };
+    let produced = state.cd.update(&ctx, &mut state.cd_ledger, input);
+    let mut effects = Vec::new();
+    for effect in produced {
+        match effect {
+            CdEffect::UpdateFolder {
+                session_id,
+                cwd,
+                branch,
+            } => {
+                if foreground.as_deref() == Some(session_id.as_str()) {
+                    state.folder.apply_move(&cwd, branch.as_deref());
+                }
+            }
+            CdEffect::Notice { kind, text } if state.opened.is_some() => {
+                effects.extend(reduce(state, Event::Notice { kind, text }));
+            }
+            CdEffect::Notice { text, .. } => effects.push(notice_lines(&text)),
+            effect @ (CdEffect::CheckFolder { .. } | CdEffect::Send(_)) => {
+                effects.push(AppEffect::Cd(effect));
+            }
+        }
+    }
+    effects
+}
+
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
         UserAction::Rewind(key) => rewind_input(state, RewindInput::Key(key)),
@@ -1786,10 +1941,11 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                     text,
                 })];
             };
-            let folder = opened
-                .info
+            let folder = state
+                .folder
                 .cwd
                 .as_deref()
+                .or(opened.info.cwd.as_deref())
                 .map(Path::new)
                 .unwrap_or(&state.attachment_folder);
             let rule = state.attachments.rule();
@@ -1816,9 +1972,11 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 Vec::new()
             }
         }
-        // The permissions wiring lands with the green work; until then the toggle sends
-        // nothing (#237).
-        UserAction::ApprovalsToggle { .. } => Vec::new(),
+        // A completion list or a focused card keeps the key for itself (#237).
+        UserAction::ApprovalsToggle { context } => match context {
+            ToggleContext::Composer => permissions(state, PermissionsInput::ToggleKey),
+            ToggleContext::Completion | ToggleContext::Card => Vec::new(),
+        },
     }
 }
 
@@ -1969,6 +2127,14 @@ fn commands_follow(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect>
 /// Apply a finished command's outcome: notices into the transcript, a directive's prompt
 /// through the normal submission path with a fresh id, a refused bare name dimmed.
 fn command_done(state: &mut AppState, typed: &str, outcome: CommandOutcome) -> Vec<AppEffect> {
+    // Hermes's own `/yolo` and `/approvals` push no event, so both settings are read again (#237).
+    let name = parse_slash_line(typed)
+        .map(|line| line.name)
+        .unwrap_or_default();
+    let reread = state
+        .opened
+        .as_ref()
+        .and_then(|opened| hermes_command_finished(&opened.session_id, &name, &outcome));
     let mut effects = Vec::new();
     for action in outcome_actions(outcome, typed) {
         match action {
@@ -1998,6 +2164,9 @@ fn command_done(state: &mut AppState, typed: &str, outcome: CommandOutcome) -> V
                 effects.extend(refreshed);
             }
         }
+    }
+    if let Some(input) = reread {
+        effects.extend(permissions(state, input));
     }
     effects
 }
@@ -2038,6 +2207,8 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
         | LocalAction::Retry
         | LocalAction::Rollback
         | LocalAction::Diff => return rewind_command(state, action, argument),
+        LocalAction::Permissions => return permissions_command(state, argument),
+        LocalAction::Cd => return cd_input(state, CdInput::Command(parse_cd_command(argument))),
         _ => return Vec::new(),
     };
     models_input(
@@ -2479,6 +2650,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 effects.extend(route(state, produced, None));
             }
             effects.extend(commands_follow(state, CommandsInput::Connected));
+            effects.extend(permissions(state, PermissionsInput::ConnectionOpened));
             effects
         }
         LinkEvent::State(LinkState::Reconnecting { .. }) => {
@@ -2538,6 +2710,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     .unwrap_or("")
                     .to_owned();
                 let payload = inbound.raw.get("payload").cloned().unwrap_or(Value::Null);
+                let completed = type_name == "message.complete";
                 if let Some(sequence) = seq {
                     opened.cursor.last_sequence = opened.cursor.last_sequence.max(sequence);
                 }
@@ -2553,6 +2726,16 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 let produced =
                     apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
                 effects.extend(route(state, produced, None));
+                // The move's fences and the folder come from this session's own events (#237).
+                state
+                    .cd_ledger
+                    .fences_mut(&session_id)
+                    .observe(&session_id, &type_name, &payload);
+                if type_name == "session.info"
+                    && let Some(cwd) = payload.get("cwd").and_then(Value::as_str)
+                {
+                    state.folder.apply_info_cwd(cwd);
+                }
                 if let Some(input) = rewound {
                     effects.extend(rewind_input(state, input));
                 }
@@ -2562,11 +2745,19 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 effects.extend(models_input(
                     state,
                     ModelsInput::SessionEvent {
-                        session_id,
+                        session_id: session_id.clone(),
                         type_name,
                         payload,
                     },
                 ));
+                if completed {
+                    // Hermes pushes no event when an approval setting changes, so a finished
+                    // turn reads both again (#237).
+                    effects.extend(permissions(
+                        state,
+                        PermissionsInput::TurnCompleted { session_id },
+                    ));
+                }
                 effects
             }
             Inbound::ServerRequest(request) => vec![AppEffect::ServerRequest(request)],
@@ -2600,9 +2791,11 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 return Vec::new();
             }
             state.session_gone = true;
-            link_notice(&event)
+            let mut effects = link_notice(&event)
                 .map(|text| vec![notice_lines(&text)])
-                .unwrap_or_default()
+                .unwrap_or_default();
+            effects.extend(permissions(state, PermissionsInput::SessionClosed));
+            effects
         }
     }
 }
@@ -2660,11 +2853,17 @@ fn opened_session(
             .attachments
             .on_session_change(&SessionId::new(&opened.session_id)),
     ));
+    state.folder =
+        SessionFolder::from_snapshot(opened.info.cwd.as_deref(), opened.info.branch.as_deref());
+    state
+        .cd_ledger
+        .fences_mut(&session_id)
+        .adopt(Some(opened.revision), Some(opened.execution_generation));
     state.opened = Some(opened);
     state.link_state = LinkView::Connected;
     effects.extend(commands_follow(
         state,
-        CommandsInput::ForegroundSession(Some(session_id)),
+        CommandsInput::ForegroundSession(Some(session_id.clone())),
     ));
     state.source_epoch += 1;
     if state.pager_open {
@@ -2683,6 +2882,17 @@ fn opened_session(
     if let Some(notice) = notice.filter(|notice| !notice.is_empty()) {
         effects.push(notice_lines(&notice));
     }
+    // The snapshot's `yolo` is never read: it is false after a gateway restart until the next
+    // turn (#237). `install` made the state when the connection opened; a session that opens
+    // without it makes it here.
+    let profile = state.profile.clone();
+    state
+        .permissions
+        .get_or_insert_with(|| PermissionsState::new(profile));
+    effects.extend(permissions(
+        state,
+        PermissionsInput::SessionOpened { session_id },
+    ));
     while let Some(text) = state.held.pop_front() {
         if state
             .held_attachments
@@ -2832,7 +3042,9 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         Ok(fresh) => fresh,
         Err(OpenError::NotFound) => {
             state.session_gone = true;
-            return vec![notice_lines(SESSION_GONE_NOTICE)];
+            let mut effects = vec![notice_lines(SESSION_GONE_NOTICE)];
+            effects.extend(permissions(state, PermissionsInput::SessionClosed));
+            return effects;
         }
         Err(_) => return vec![notice_lines(REFRESH_FAILED_NOTICE)],
     };
@@ -2868,12 +3080,22 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
             execution_generation: Some(fresh.execution_generation),
         },
     ));
+    state
+        .cd_ledger
+        .fences_mut(&fresh.session_id)
+        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
     let mut fresh = fresh;
     // A snapshot holds no shell or side work; pending rows keep their ids and timeout.
     carry_over(&mut old.state, &mut fresh.state);
     if fresh.title.is_none() {
         fresh.title = old.title;
     }
+    state.folder =
+        SessionFolder::from_snapshot(fresh.info.cwd.as_deref(), fresh.info.branch.as_deref());
+    state
+        .cd_ledger
+        .fences_mut(&fresh.session_id)
+        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
     state.opened = Some(fresh);
     state.source_epoch = state.source_epoch.wrapping_add(1);
     if state.pager_open {
@@ -4523,8 +4745,21 @@ fn apply<S: Screen>(
                     }
                 });
             }
-            // The permissions wiring lands with the green work (#237).
-            AppEffect::SetSessionOff { .. } => {}
+            AppEffect::SetSessionOff {
+                session_id,
+                generation,
+                off,
+            } => run_permissions(
+                state,
+                executor,
+                PermissionsEffect::SetSessionOff {
+                    session_id,
+                    generation,
+                    off,
+                },
+            ),
+            AppEffect::Permissions(effect) => run_permissions(state, executor, effect),
+            AppEffect::Cd(effect) => run_cd(state, executor, effect),
         }
     }
     sync_attachment_view(state, screen, Instant::now());
@@ -4588,6 +4823,10 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         ready: None,
         describe: skin,
     });
+    // Made once, when the first connection opens, so notices can name the profile (#237).
+    state
+        .permissions
+        .get_or_insert_with(|| PermissionsState::new(profile_name.clone()));
     state.profile = profile_name;
     let mut commands = CommandService::new(link.client());
     if let Some(mut replies) = commands.take_replies() {
@@ -4602,6 +4841,12 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     }
     state.command_service = Some(commands);
     state.link = Some(link);
+    state.permissions_service = service
+        .client()
+        .map(|client| Arc::new(PermissionsService::new(Arc::new(client.clone()))));
+    state.workspace_service = service
+        .client()
+        .map(|client| Arc::new(WorkspaceService::new(MutationClient::new(client.clone()))));
     state.service = Some(service);
     state.model_service = Some(Arc::new(crate::models::ModelService::new(
         state
@@ -4626,6 +4871,90 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         }
     });
     AppMessage::Opened { opened, notice }
+}
+
+/// Run one permissions call on a task; its reply comes back as a message. With no connection
+/// the call is not sent, and the reducer hears that at once.
+fn run_permissions(state: &AppState, executor: &Executor, effect: PermissionsEffect) {
+    let Some(service) = state.permissions_service.clone() else {
+        if let Some(input) = not_sent(effect) {
+            let _ = executor.sender.send(AppMessage::Permissions(input));
+        }
+        return;
+    };
+    let sender = executor.sender.clone();
+    tokio::spawn(async move {
+        if let Some(input) = service.execute(effect).await {
+            let _ = sender.send(AppMessage::Permissions(input));
+        }
+    });
+}
+
+/// The reply to a permissions call that could not be sent.
+fn not_sent(effect: PermissionsEffect) -> Option<PermissionsInput> {
+    Some(match effect {
+        PermissionsEffect::ReadProfileMode { generation } => PermissionsInput::ProfileModeRead {
+            generation,
+            result: Err(PermissionsFailure::NotSent),
+        },
+        PermissionsEffect::ReadSessionOff {
+            session_id,
+            generation,
+        } => PermissionsInput::SessionOffRead {
+            session_id,
+            generation,
+            result: Err(PermissionsFailure::NotSent),
+        },
+        PermissionsEffect::SetSessionOff {
+            session_id,
+            generation,
+            off,
+        } => PermissionsInput::SessionOffSet {
+            session_id,
+            generation,
+            sent: off,
+            result: Err(PermissionsFailure::NotSent),
+        },
+        PermissionsEffect::SetProfileMode { generation, mode } => {
+            PermissionsInput::ProfileModeSet {
+                generation,
+                sent: mode,
+                result: Err(PermissionsFailure::NotSent),
+            }
+        }
+        PermissionsEffect::Notice { .. } | PermissionsEffect::Redraw => return None,
+    })
+}
+
+/// Run one `/cd` check or move on a task; its answer comes back as a message. With no
+/// connection the move is not sent and the folder counts as unreadable.
+fn run_cd(state: &AppState, executor: &Executor, effect: CdEffect) {
+    let sender = executor.sender.clone();
+    let Some(service) = state.workspace_service.clone() else {
+        let input = match effect {
+            CdEffect::CheckFolder { session_id, target } => Some(CdInput::Checked {
+                session_id,
+                target,
+                check: FolderCheck::Unreadable,
+            }),
+            CdEffect::Send(request) => Some(CdInput::Outcome {
+                request,
+                outcome: MutationOutcome::NotSent {
+                    reason: "Talaria is not connected to Hermes".to_string(),
+                },
+            }),
+            CdEffect::UpdateFolder { .. } | CdEffect::Notice { .. } => None,
+        };
+        if let Some(input) = input {
+            let _ = sender.send(AppMessage::Cd(input));
+        }
+        return;
+    };
+    tokio::spawn(async move {
+        if let Some(input) = service.execute(effect).await {
+            let _ = sender.send(AppMessage::Cd(input));
+        }
+    });
 }
 
 fn earliest(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
@@ -4672,6 +5001,9 @@ pub async fn run<S: Screen>(
     state.attachments.set_home(state.attachment_home.clone());
     state.attachment_folder = launch.folder.clone();
     state.key_bindings = setup.keys.clone();
+    state.toggle_label = screen.toggle_label();
+    state.interrupt_label = screen.interrupt_label();
+    state.home = std::env::var_os("HOME").map(PathBuf::from);
     state.profile = launch.profile.trim().to_lowercase();
     state.list_title = setup.list_title;
     state.model = launch.model.clone();

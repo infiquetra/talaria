@@ -214,6 +214,7 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     let mut pieces: Vec<(Segment, String, Tone)> = Vec::new();
     add(&mut pieces, Segment::Connection, connection_segment(inputs));
     add(&mut pieces, Segment::Model, model_segment(inputs));
+    add(&mut pieces, Segment::Approvals, approvals_segment(inputs));
     add(&mut pieces, Segment::Folder, folder_segment(inputs));
     add(&mut pieces, Segment::Context, context_segment(inputs));
     add(&mut pieces, Segment::Cost, cost_segment(inputs));
@@ -305,6 +306,16 @@ fn model_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
         }
     }
     Some((sanitize(&text).into_owned(), Tone::Muted))
+}
+
+/// The approvals segment: the text and tone the caller handed over, when there is one.
+fn approvals_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+    let approvals = inputs.approvals.as_ref()?;
+    let text = sanitize(approvals.text.trim()).into_owned();
+    if text.is_empty() {
+        return None;
+    }
+    Some((text, approvals.tone))
 }
 
 /// The folder segment: the working folder and the branch.

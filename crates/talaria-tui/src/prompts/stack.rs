@@ -290,7 +290,10 @@ impl PromptStack {
                     .collect();
                 if card.field {
                     match key.code {
-                        KeyCode::Tab | KeyCode::Esc => {
+                        // Shift+Tab is the approvals toggle's key; the card keeps its state.
+                        KeyCode::Tab | KeyCode::Esc
+                            if !(key.mods.shift && key.code == KeyCode::Tab) =>
+                        {
                             card.field = false;
                             None
                         }
@@ -319,7 +322,7 @@ impl PromptStack {
                                 (card.selected + 1).min(choices.len().saturating_sub(1));
                             None
                         }
-                        KeyCode::Tab => {
+                        KeyCode::Tab if !key.mods.shift => {
                             card.field = true;
                             None
                         }

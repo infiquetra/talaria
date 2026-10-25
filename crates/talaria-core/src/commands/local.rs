@@ -167,6 +167,7 @@ const BUILTIN: &[LocalCommand] = &[
     },
     LocalCommand {
         name: "permissions",
+        tag: "talaria",
         aliases: &[],
         summary: "Show or change the approval tiers",
         args_hint: "[manual | smart | off | session off | session default]",
@@ -175,6 +176,7 @@ const BUILTIN: &[LocalCommand] = &[
     },
     LocalCommand {
         name: "cd",
+        tag: "talaria",
         aliases: &[],
         summary: "Show or move the session's working folder",
         args_hint: "[<path>]",
