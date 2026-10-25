@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use talaria_core::attention::AlertKind;
 use toml::{Table, Value};
 
 /// The shared file for favourites and defaults on this machine.
@@ -85,6 +86,14 @@ pub struct Config {
     pub status: StatusConfig,
     /// Names the status command may see. Filtering happens elsewhere.
     pub environment: EnvironmentConfig,
+    /// External editor settings (issue 228; stub: defaults only, not parsed yet).
+    pub editor: EditorConfig,
+    /// Prompt history settings (issue 228; stub: defaults only, not parsed yet).
+    pub history: HistoryConfig,
+    /// Notification settings (issue 228; stub: defaults only, not parsed yet).
+    pub notifications: NotificationsConfig,
+    /// Herdr reporting settings (issue 228; stub: defaults only, not parsed yet).
+    pub herdr: HerdrConfig,
 }
 
 /// Status command text and how often it runs.
@@ -103,6 +112,38 @@ pub struct EnvironmentConfig {
     pub allowlist: Vec<String>,
 }
 
+/// External editor command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorConfig {
+    /// The command line, still one string. Blank means the environment, then a fallback.
+    pub command: String,
+}
+
+/// Prompt history file use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryConfig {
+    /// Read and write the history file. The default is true.
+    pub save: bool,
+}
+
+/// Bell and desktop notification channels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationsConfig {
+    /// Kinds that ring the terminal bell.
+    pub bell: Vec<AlertKind>,
+    /// Kinds that send a desktop notification.
+    pub desktop: Vec<AlertKind>,
+    /// A finished turn alerts only at or above these seconds.
+    pub done_after_seconds: u64,
+}
+
+/// Herdr pane state reporting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HerdrConfig {
+    /// Report working, blocked and idle to Herdr when inside Herdr. The default is true.
+    pub report_state: bool,
+}
+
 /// A configuration plus the notices produced while reading it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedConfig {
@@ -114,6 +155,9 @@ pub struct LoadedConfig {
 
 /// Default seconds between status command runs.
 pub const DEFAULT_STATUS_INTERVAL_SECONDS: u64 = 5;
+
+/// Default seconds a finished turn must have run to alert.
+pub const DEFAULT_DONE_AFTER_SECONDS: u64 = 20;
 
 /// The accepted range of `status.interval_seconds`.
 const INTERVAL_RANGE: std::ops::RangeInclusive<i64> = 1..=3600;
@@ -135,6 +179,16 @@ impl Default for Config {
             environment: EnvironmentConfig {
                 allowlist: Vec::new(),
             },
+            editor: EditorConfig {
+                command: String::new(),
+            },
+            history: HistoryConfig { save: true },
+            notifications: NotificationsConfig {
+                bell: vec![AlertKind::NeedsYou, AlertKind::Failed],
+                desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+                done_after_seconds: DEFAULT_DONE_AFTER_SECONDS,
+            },
+            herdr: HerdrConfig { report_state: true },
         }
     }
 }

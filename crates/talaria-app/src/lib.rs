@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod commands;
+pub mod comforts;
 pub mod config;
 pub mod connection;
 pub mod failure;

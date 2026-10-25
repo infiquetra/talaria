@@ -2354,6 +2354,7 @@ dependencies = [
  "hermes-contract",
  "proptest",
  "ratatui",
+ "rustix",
  "serde",
  "serde_json",
  "talaria-core",

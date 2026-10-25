@@ -141,6 +141,9 @@ pub enum Action {
     CompletionAccept,
     /// Close the open completion list.
     CompletionClose,
+    OpenEditor,
+    HistorySearch,
+    Suspend,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -172,7 +175,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 27] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -197,6 +200,9 @@ impl Action {
         Self::CompletionPrev,
         Self::CompletionAccept,
         Self::CompletionClose,
+        Self::OpenEditor,
+        Self::HistorySearch,
+        Self::Suspend,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -227,6 +233,9 @@ impl Action {
             Self::CompletionPrev => "completion_prev",
             Self::CompletionAccept => "completion_accept",
             Self::CompletionClose => "completion_close",
+            Self::OpenEditor => "open_editor",
+            Self::HistorySearch => "history_search",
+            Self::Suspend => "suspend",
         }
     }
 
@@ -282,6 +291,8 @@ impl Action {
             Self::CompletionPrev => &["up", "ctrl+p"],
             Self::CompletionAccept => &["tab"],
             Self::CompletionClose => &["esc"],
+            // Stub: no chords until the build binds the defaults (issue 228).
+            Self::OpenEditor | Self::HistorySearch | Self::Suspend => &[],
         }
     }
 }
@@ -902,7 +913,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 24);
+        assert_eq!(Action::ALL.len(), 27);
         for action in Action::ALL {
             let context = match action {
                 Action::CompletionNext
@@ -1076,7 +1087,7 @@ mod tests {
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
         // The composer actions, plus the four the slash palette brought with it.
-        assert_eq!(Action::ALL.len(), 24);
+        assert_eq!(Action::ALL.len(), 27);
     }
 
     #[test]

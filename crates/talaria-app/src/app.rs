@@ -429,6 +429,8 @@ pub enum AppEffect {
     },
     /// Drop the pending completion request.
     CancelCompletion,
+    /// Report the foreground pane state (issue 228; stub: never produced yet).
+    ReportPane(talaria_core::attention::PaneReport),
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -2312,6 +2314,8 @@ fn apply<S: Screen>(
                     commands.cancel_completion();
                 }
             }
+            // #228: the build reports this to Herdr; never produced yet.
+            AppEffect::ReportPane(_) => {}
         }
     }
     redraw

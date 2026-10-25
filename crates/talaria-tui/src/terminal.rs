@@ -1317,3 +1317,67 @@ where
         handle: Some(handle),
     })
 }
+
+// Comfort hand-off additions (issue 228). Stubs: every body is built later.
+
+impl InputThread {
+    /// Stop polling for keys; returns once the thread stopped polling.
+    pub fn pause(&self) -> io::Result<()> {
+        todo!("#228")
+    }
+
+    /// Poll for keys again.
+    pub fn resume(&self) {
+        todo!("#228")
+    }
+}
+
+impl TerminalGuard {
+    /// Leave raw mode, for handing the terminal to another program.
+    pub fn leave_raw(&self) -> io::Result<()> {
+        todo!("#228")
+    }
+
+    /// Re-enter raw mode, before any probe.
+    pub fn enter_raw(&self) -> io::Result<()> {
+        todo!("#228")
+    }
+}
+
+impl<W: io::Write> InlineTerminal<W> {
+    /// Clear the live region, restore modes, and hold later output.
+    pub fn release(&mut self) -> io::Result<()> {
+        todo!("#228")
+    }
+
+    /// Reset modes a child may have left, probe, place the viewport, write held output.
+    pub fn reacquire(
+        &mut self,
+        probe: &mut dyn FnMut() -> io::Result<ProbeReply>,
+    ) -> io::Result<()> {
+        let _ = probe;
+        todo!("#228")
+    }
+
+    /// Re-assert modes and repaint in place, without moving the viewport.
+    pub fn reassert_modes(&mut self) -> io::Result<()> {
+        todo!("#228")
+    }
+
+    /// Write alert bytes, or keep the most urgent one while released.
+    pub fn alert(&mut self, bytes: Vec<u8>, urgency: u8) -> io::Result<()> {
+        let _ = (bytes, urgency);
+        todo!("#228")
+    }
+
+    /// Whether the terminal is currently released.
+    pub fn is_released(&self) -> bool {
+        todo!("#228")
+    }
+}
+
+/// Bell plus desktop notification bytes for one alert text.
+pub fn alert_bytes(text: &str, bell: bool, desktop: bool, in_tmux: bool) -> Vec<u8> {
+    let _ = (text, bell, desktop, in_tmux);
+    todo!("#228")
+}
