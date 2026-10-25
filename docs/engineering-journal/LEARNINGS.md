@@ -28,6 +28,71 @@
 
 **Generalizable rule.** A frame routed somewhere special still goes through the reducer that tracks sequence numbers.
 
+## 2026-10-25 — Input integrations must preserve context and draft ownership
+
+**Evidence.** Combining completion keys with terminal comforts compiled, but a
+different order in the action enum and its lookup table shifted seven bindings.
+A completion binding could also shadow suspension outside the completion list.
+Programmatic editor and history loads needed to update the application's draft,
+just as ordinary typing did.
+
+**Mechanism.** Binding vectors use action discriminants as indexes, so enum and
+table order must agree. Composer and completion resolution now use their own
+contexts. Local draft replacements report their new text before a palette-close
+action; this closes the current draft without reopening an older completion.
+
+**Generalizable rule.** Preserve indexing and context boundaries when combining
+input features, and send programmatic draft changes through the same state path
+as typing.
+
+## 2026-10-24 — An alternate-screen reset can restore a stale cursor
+
+**Evidence.** Returning from vi preserved the edited draft but erased forty visible
+history rows. An emulator regression reproduced the loss after a child had already
+returned to the primary screen; the same forced exit was safe in another emulator.
+
+**Mechanism.** Resetting the scroll region homes the cursor, so the child must be
+positioned after history again once that reset completes. Disabling the alternate
+screen can also restore a stale primary cursor even when the primary screen is
+already active. Saving the active screen's current cursor before the forced exit
+preserves primary position without changing the saved primary cursor when the
+child is still in the alternate screen. The subsequent probe can then safely
+place the viewport without clearing earlier history.
+
+**Generalizable rule.** Treat mode resets that restore saved state as potentially
+non-idempotent; preserve the active screen's position before forcing a handoff.
+
+## 2026-10-24 — Suspended time must not consume a resume deadline
+
+**Evidence.** The live client resumed a counting reply after more than ten seconds
+stopped, preserved all sixty numbers, but incorrectly reported an ignored stop.
+
+**Mechanism.** A timeout started before the stop includes the entire suspended
+interval. A worker can resume before another thread handles the continue signal,
+so checking the flag before an already-expired deadline is insufficient. Starting
+the bounded wait after the stop call returns leaves time for signal delivery.
+
+**Generalizable rule.** Start a resume deadline after the blocking stop returns;
+time when the process cannot run is not evidence that a signal was ignored.
+
+## 2026-10-24 — A terminal probe is output, but it is not a ready input surface
+
+**Evidence.** The comforts pseudo-terminal checks sent draft bytes after seeing the
+startup cursor query. Those bytes were consumed by the probe, before the key
+reader started. Waiting for the rendered composer instead preserved the draft;
+waiting for the editor result after interruption preserved subsequent typing.
+The editor, search, suspend, resume and ignored-stop checks then all passed.
+
+**Mechanism.** Terminal ownership passes through explicit pause, mode release,
+child execution, raw-mode restoration, input discard, probe and reader resume.
+The application continues reducing messages while the child runs, and queues
+terminal output until ownership returns. Reporter failures enter the same input
+channel immediately rather than waiting for another state change to drain them.
+
+**Generalizable rule.** Synchronize tests on the surface that accepts input,
+and make ownership handoffs explicit; bytes written during setup do not prove
+the reader is ready.
+
 ## 2026-10-24
 
 ### The slash palette fixture keeps the file name as its scenario

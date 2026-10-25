@@ -183,6 +183,30 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn load_draft(&mut self, text: &str);
     /// Give the terminal back. Later draws write nothing.
     fn restore(&mut self);
+    /// Emit an attention alert between frames.
+    fn alert(&mut self, _alert: &talaria_core::attention::Alert) {}
+    /// Report the pane without blocking the application.
+    fn report_pane(
+        &mut self,
+        _pane: &talaria_core::attention::PaneReport,
+        _session: Option<(&str, &str)>,
+    ) {
+    }
+    /// Configured alert channels for this interactive screen.
+    fn attention_config(&self) -> talaria_core::attention::AttentionConfig {
+        talaria_core::attention::AttentionConfig {
+            bell: vec![
+                talaria_core::attention::AlertKind::NeedsYou,
+                talaria_core::attention::AlertKind::Failed,
+            ],
+            desktop: vec![
+                talaria_core::attention::AlertKind::NeedsYou,
+                talaria_core::attention::AlertKind::Done,
+                talaria_core::attention::AlertKind::Failed,
+            ],
+            done_after: Duration::from_secs(20),
+        }
+    }
 }
 
 pub trait ComposerDeadline {
@@ -210,6 +234,8 @@ pub struct AppState {
     model_service: Option<Arc<crate::models::ModelService>>,
     model_notice_counter: u64,
     model_warnings: BTreeSet<String>,
+    attention: talaria_core::attention::AttentionTracker,
+    attention_at: Instant,
     pub opened: Option<OpenedSession>,
     pub held: VecDeque<String>,
     pub launch_id: String,
@@ -260,6 +286,21 @@ impl AppState {
             model_service: None,
             model_notice_counter: 0,
             model_warnings: BTreeSet::new(),
+            attention: talaria_core::attention::AttentionTracker::new(
+                talaria_core::attention::AttentionConfig {
+                    bell: vec![
+                        talaria_core::attention::AlertKind::NeedsYou,
+                        talaria_core::attention::AlertKind::Failed,
+                    ],
+                    desktop: vec![
+                        talaria_core::attention::AlertKind::NeedsYou,
+                        talaria_core::attention::AlertKind::Done,
+                        talaria_core::attention::AlertKind::Failed,
+                    ],
+                    done_after: Duration::from_secs(20),
+                },
+            ),
+            attention_at: Instant::now(),
             opened: None,
             held: VecDeque::new(),
             launch_id,
@@ -397,6 +438,12 @@ pub enum AppEffect {
         value: Zeroizing<String>,
     },
     ServerRequest(ServerRequest),
+    /// Settle a server request that Hermes withdrew.
+    CancelRequest {
+        id: String,
+        method: String,
+        reason: String,
+    },
     ConnectionOpened(u64),
     PromptsChanged(Vec<PromptKey>),
     Track {
@@ -429,8 +476,10 @@ pub enum AppEffect {
     },
     /// Drop the pending completion request.
     CancelCompletion,
-    /// Report the foreground pane state (issue 228; stub: never produced yet).
+    /// Report the foreground pane state.
     ReportPane(talaria_core::attention::PaneReport),
+    /// Emit a configured foreground alert.
+    Alert(talaria_core::attention::Alert),
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -740,6 +789,12 @@ fn return_prompt(state: &mut AppState, text: String, attachments: bool) -> Vec<A
 
 /// Apply one message. No input or output: the effects say what to do.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
+    let mut snapshot = attention_snapshot(state);
+    let previous_session = state
+        .opened
+        .as_ref()
+        .map(|o| (o.session_id.clone(), o.title.clone()));
+    let restored = matches!(&message, AppMessage::Opened { .. });
     let mut effects = match message {
         AppMessage::Models(input) => models_input(state, input),
         AppMessage::User(action) => user_action(state, action),
@@ -778,9 +833,79 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
     }
+    if let Some(opened) = &state.opened {
+        let session = (opened.session_id.clone(), opened.title.clone());
+        if previous_session.as_ref() != Some(&session) {
+            if previous_session.as_ref().map(|(id, _)| id) != Some(&opened.session_id) {
+                snapshot = crate::comforts::AttentionSnapshot::from(
+                    &SessionState::empty(SessionId::new("foreground")),
+                    &[],
+                );
+            }
+            let label = opened
+                .title
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    opened
+                        .info
+                        .cwd
+                        .as_deref()
+                        .and_then(|cwd| std::path::Path::new(cwd).file_name())
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| "session".into());
+            let out = state
+                .attention
+                .observe(talaria_core::attention::Activity::SessionChanged {
+                    session_id: opened.session_id.as_str().into(),
+                    label,
+                });
+            if let Some(pane) = out.pane {
+                effects.push(AppEffect::ReportPane(pane));
+            } else {
+                effects.push(AppEffect::ReportPane(state.attention.pane()));
+            }
+        }
+    }
+    for activity in crate::comforts::activities_between(
+        &snapshot,
+        &attention_snapshot(state),
+        restored,
+        state.attention_at,
+    ) {
+        let out = state.attention.observe(activity);
+        if let Some(pane) = out.pane {
+            effects.push(AppEffect::ReportPane(pane));
+        }
+        if let Some(alert) = out.alert {
+            effects.push(AppEffect::Alert(alert));
+        }
+    }
     effects.extend(commit_ready(state));
     effects.push(AppEffect::Redraw);
     effects
+}
+
+fn attention_snapshot(state: &AppState) -> crate::comforts::AttentionSnapshot {
+    let empty = SessionState::empty(talaria_core::session::SessionId::new("foreground"));
+    let masked: Vec<_> = state
+        .masked
+        .iter()
+        .filter(|m| {
+            m.session_id.as_deref().is_none_or(|id| {
+                state
+                    .opened
+                    .as_ref()
+                    .is_none_or(|o| o.session_id.as_str() == id)
+            })
+        })
+        .cloned()
+        .collect();
+    crate::comforts::AttentionSnapshot::from(
+        state.opened.as_ref().map_or(&empty, |o| &o.state),
+        &masked,
+    )
 }
 
 /// Feed the reducer and turn its effects into executor effects.
@@ -1226,6 +1351,22 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     return Vec::new();
                 }
                 let session_id = opened.session_id.clone();
+                let mut effects = Vec::new();
+                match &inbound.frame.notification {
+                    hermes_contract::events::Notification::RequestCancel(payload) => {
+                        effects.push(AppEffect::CancelRequest {
+                            id: payload.id.clone(),
+                            method: payload.method.clone(),
+                            reason: payload.reason.clone(),
+                        })
+                    }
+                    hermes_contract::events::Notification::SessionTitle(payload)
+                        if payload.session_id == opened.session_id.as_str() =>
+                    {
+                        opened.title = Some(payload.title.clone())
+                    }
+                    _ => {}
+                }
                 let type_name = inbound
                     .raw
                     .get("type")
@@ -1247,7 +1388,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 });
                 let produced =
                     apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
-                let mut effects = route(state, produced, None);
+                effects.extend(route(state, produced, None));
                 if let Some(input) = rewound {
                     effects.extend(rewind_input(state, input));
                 }
@@ -2098,6 +2239,7 @@ fn apply<S: Screen>(
     screen: &mut S,
     executor: &Executor,
 ) -> bool {
+    state.attention_at = Instant::now();
     let mut redraw = false;
     for effect in update(state, message) {
         match effect {
@@ -2244,6 +2386,18 @@ fn apply<S: Screen>(
                     (Vec::new(), notice_texts(notices))
                 });
             }
+            AppEffect::CancelRequest { id, method, reason } => {
+                let Some(prompts) = &state.prompts else {
+                    continue;
+                };
+                executor.prompt_task(prompts, move |prompts| async move {
+                    let notices = prompts
+                        .lock()
+                        .await
+                        .on_request_cancel(&id, &method, &reason);
+                    (Vec::new(), notice_texts(notices))
+                });
+            }
             AppEffect::ConnectionOpened(generation) => {
                 let Some(prompts) = &state.prompts else {
                     continue;
@@ -2314,8 +2468,14 @@ fn apply<S: Screen>(
                     commands.cancel_completion();
                 }
             }
-            // #228: the build reports this to Herdr; never produced yet.
-            AppEffect::ReportPane(_) => {}
+            AppEffect::ReportPane(pane) => screen.report_pane(
+                &pane,
+                state
+                    .opened
+                    .as_ref()
+                    .map(|o| (o.session_id.as_str(), state.profile.as_str())),
+            ),
+            AppEffect::Alert(alert) => screen.alert(&alert),
         }
     }
     redraw
@@ -2408,12 +2568,14 @@ pub async fn run<S: Screen>(
         state.model_warnings.insert(warning.clone());
         setup.notices.push(warning);
     }
+    state.attention = talaria_core::attention::AttentionTracker::new(screen.attention_config());
     state.profile = launch.profile.trim().to_lowercase();
     state.list_title = setup.list_title;
     state.model = launch.model.clone();
     state.effort = launch.effort.clone();
     sync_models(&mut state, screen);
     screen.draw(&state.view());
+    screen.report_pane(&state.attention.pane(), None);
     if !setup.notices.is_empty() {
         screen.commit_lines(
             setup
@@ -2563,4 +2725,78 @@ pub async fn run<S: Screen>(
     screen.restore();
     outcome.stderr.push_str(&held_text(&state.held));
     outcome
+}
+
+#[cfg(test)]
+mod comfort_event_tests {
+    use super::*;
+
+    fn state() -> AppState {
+        let snapshot =
+            serde_json::from_str(include_str!("../tests/data/open_approval.json")).unwrap();
+        let mut state = AppState::new("comfort-test");
+        state.opened = Some(OpenedSession::from_snapshot(snapshot));
+        state
+    }
+
+    fn inbound(state: &AppState, kind: &str, payload: Value) -> AppMessage {
+        let opened = state.opened.as_ref().unwrap();
+        let raw = json!({"session_id":opened.session_id,"replay_epoch":opened.cursor.replay_epoch,"seq":opened.cursor.last_sequence+1,"type":kind,"payload":payload});
+        AppMessage::Link(LinkEvent::Inbound {
+            item: Inbound::Event(hermes_client::channel::InboundEvent {
+                generation: hermes_client::channel::Generation(1),
+                frame: EventFrame::from_params(&raw).unwrap(),
+                raw,
+            }),
+            replayed: false,
+        })
+    }
+
+    #[test]
+    fn accepted_cancellation_is_forwarded_to_the_prompt_service() {
+        let mut state = state();
+        let payload = hermes_contract::schemas::RequestCancelPayload {
+            id: "masked-1".into(),
+            method: "sudo".into(),
+            reason: "timeout".into(),
+        };
+        let message = inbound(
+            &state,
+            "request.cancel",
+            serde_json::to_value(payload).unwrap(),
+        );
+        let effects = update(&mut state, message);
+        assert!(effects.iter().any(|effect|matches!(effect,AppEffect::CancelRequest {id,method,reason} if id=="masked-1" && method=="sudo" && reason=="timeout")));
+    }
+
+    #[test]
+    fn accepted_title_updates_attention_label() {
+        let mut state = state();
+        let id = state.opened.as_ref().unwrap().session_id.clone();
+        let payload = hermes_contract::schemas::SessionTitlePayload {
+            session_id: id,
+            title: "Current session title".into(),
+        };
+        let message = inbound(
+            &state,
+            "session.title",
+            serde_json::to_value(payload).unwrap(),
+        );
+        update(&mut state, message);
+        assert_eq!(
+            state.opened.as_ref().unwrap().title.as_deref(),
+            Some("Current session title")
+        );
+        let now = Instant::now();
+        state
+            .attention
+            .observe(talaria_core::attention::Activity::TurnStarted { at: now });
+        let output = state
+            .attention
+            .observe(talaria_core::attention::Activity::TurnEnded {
+                outcome: talaria_core::attention::TurnOutcome::Complete,
+                at: now + Duration::from_secs(25),
+            });
+        assert_eq!(output.alert.unwrap().text, "done: Current session title");
+    }
 }

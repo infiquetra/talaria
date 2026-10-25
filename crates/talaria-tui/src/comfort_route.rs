@@ -40,6 +40,18 @@ pub enum Route {
 
 /// Pick the owner for a resolved action under a focus.
 pub fn route(action: Option<Action>, focus: Focus) -> Route {
-    let _ = (action, focus);
-    todo!("#228")
+    if action == Some(Action::Suspend) {
+        return Route::Suspend;
+    }
+    match focus {
+        Focus::Overlay => Route::Overlay,
+        Focus::Search => Route::Search,
+        Focus::Card => Route::Card,
+        Focus::QueueSelection => Route::QueueSelection,
+        Focus::Composer => match action {
+            Some(Action::OpenEditor) => Route::OpenEditor,
+            Some(Action::HistorySearch) => Route::HistorySearch,
+            _ => Route::Composer,
+        },
+    }
 }

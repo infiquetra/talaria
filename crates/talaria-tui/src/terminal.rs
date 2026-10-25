@@ -561,6 +561,8 @@ pub struct InlineTerminal<W: io::Write> {
     dirty: bool,
     /// `restore` ran; nothing more is written.
     closed: bool,
+    released: bool,
+    held_alert: Option<(u8, Vec<u8>)>,
 }
 
 impl<W: io::Write> InlineTerminal<W> {
@@ -598,6 +600,8 @@ impl<W: io::Write> InlineTerminal<W> {
             queued: Vec::new(),
             dirty: false,
             closed: false,
+            released: false,
+            held_alert: None,
         };
         let pushed = term.caps.keyboard_enhancement;
         term.link.lock().active = true;
@@ -654,7 +658,7 @@ impl<W: io::Write> InlineTerminal<W> {
             return Ok(());
         }
         let lines: Vec<Line<'static>> = lines.into_iter().map(sanitize_line).collect();
-        if self.overlay.is_some() || !self.placed {
+        if self.released || self.overlay.is_some() || !self.placed {
             self.queued.extend(lines);
             return Ok(());
         }
@@ -670,7 +674,7 @@ impl<W: io::Write> InlineTerminal<W> {
     /// Redraw the live region, writing only the cells that changed. Nothing changed, nothing
     /// written.
     pub fn draw_live(&mut self, view: &LiveView<'_>) -> io::Result<FrameStats> {
-        if self.closed || self.overlay.is_some() || !self.placed {
+        if self.closed || self.released || self.overlay.is_some() || !self.placed {
             return Ok(FrameStats::default());
         }
         let rects = view.layout(self.cols, max_live_height(self.rows));
@@ -741,6 +745,13 @@ impl<W: io::Write> InlineTerminal<W> {
     /// above the top are history and are never cleared.
     pub fn resize(&mut self, cols: u16, rows: u16) -> io::Result<()> {
         if self.closed || (cols, rows) == (self.cols, self.rows) {
+            return Ok(());
+        }
+        if self.released {
+            self.cols = cols;
+            self.rows = rows;
+            self.placed = false;
+            self.forget_frames();
             return Ok(());
         }
         if !self.placed {
@@ -839,7 +850,7 @@ impl<W: io::Write> InlineTerminal<W> {
         &mut self,
         render: impl FnOnce(Rect, &mut Buffer),
     ) -> io::Result<FrameStats> {
-        if self.closed {
+        if self.closed || self.released {
             return Ok(FrameStats::default());
         }
         let Some(mut overlay) = self.overlay.take() else {
@@ -1257,6 +1268,8 @@ impl<W: io::Write> InlineTerminal<W> {
 pub struct InputThread {
     stop: Arc<AtomicBool>,
     finished: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    acknowledged: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -1273,6 +1286,7 @@ impl InputThread {
 impl Drop for InputThread {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        self.resume();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -1290,11 +1304,21 @@ where
     }
     let stop = Arc::new(AtomicBool::new(false));
     let finished = Arc::new(AtomicBool::new(false));
+    let paused = Arc::new(AtomicBool::new(false));
+    let acknowledged = Arc::new(AtomicBool::new(false));
     let handle = {
         let stop = Arc::clone(&stop);
         let finished = Arc::clone(&finished);
+        let paused = Arc::clone(&paused);
+        let acknowledged = Arc::clone(&acknowledged);
         thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
+                if paused.load(Ordering::SeqCst) {
+                    acknowledged.store(true, Ordering::SeqCst);
+                    thread::park();
+                    continue;
+                }
+                acknowledged.store(false, Ordering::SeqCst);
                 match crossterm::event::poll(INPUT_POLL) {
                     Ok(true) => match crossterm::event::read() {
                         Ok(event) => {
@@ -1314,40 +1338,80 @@ where
     Some(InputThread {
         stop,
         finished,
+        paused,
+        acknowledged,
         handle: Some(handle),
     })
 }
 
-// Comfort hand-off additions (issue 228). Stubs: every body is built later.
+// Hand off input and terminal ownership without stopping the application.
 
 impl InputThread {
     /// Stop polling for keys; returns once the thread stopped polling.
     pub fn pause(&self) -> io::Result<()> {
-        todo!("#228")
+        self.paused.store(true, Ordering::SeqCst);
+        let start = Instant::now();
+        while !self.acknowledged.load(Ordering::SeqCst) && !self.is_finished() {
+            if start.elapsed() >= Duration::from_millis(100) {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "input reader did not pause",
+                ));
+            }
+            thread::yield_now();
+        }
+        Ok(())
     }
 
     /// Poll for keys again.
     pub fn resume(&self) {
-        todo!("#228")
+        self.paused.store(false, Ordering::SeqCst);
+        if let Some(handle) = &self.handle {
+            handle.thread().unpark();
+        }
     }
 }
 
 impl TerminalGuard {
     /// Leave raw mode, for handing the terminal to another program.
     pub fn leave_raw(&self) -> io::Result<()> {
-        todo!("#228")
+        crossterm::terminal::disable_raw_mode()
     }
 
     /// Re-enter raw mode, before any probe.
     pub fn enter_raw(&self) -> io::Result<()> {
-        todo!("#228")
+        crossterm::terminal::enable_raw_mode()
     }
 }
 
 impl<W: io::Write> InlineTerminal<W> {
     /// Clear the live region, restore modes, and hold later output.
     pub fn release(&mut self) -> io::Result<()> {
-        todo!("#228")
+        if self.released || self.closed {
+            return Ok(());
+        }
+        let mut batch = self.begin();
+        if self.overlay.is_some() {
+            batch.put(ALTERNATE_OFF);
+            batch.mark(Mark::OverlayOff);
+        }
+        if self.placed {
+            self.clear_from_top_relative(&mut batch);
+        }
+        batch.put(RESET_REGION);
+        if self.placed {
+            // Resetting the scroll region homes the cursor; start the child after history.
+            self.jump(&mut batch, 0, self.top);
+        }
+        batch.put(PASTE_OFF);
+        if self.caps.keyboard_enhancement {
+            batch.put(FLAGS_POP);
+        }
+        batch.put(RESET_STYLE);
+        batch.put(SHOW_CURSOR);
+        self.send(batch)?;
+        self.released = true;
+        Ok(())
     }
 
     /// Reset modes a child may have left, probe, place the viewport, write held output.
@@ -1355,29 +1419,196 @@ impl<W: io::Write> InlineTerminal<W> {
         &mut self,
         probe: &mut dyn FnMut() -> io::Result<ProbeReply>,
     ) -> io::Result<()> {
-        let _ = probe;
-        todo!("#228")
+        if !self.released || self.closed {
+            return Ok(());
+        }
+        // Refresh this screen's saved cursor before forcing an alternate-screen exit.
+        // Some terminals restore it even when the child has already left alternate mode.
+        self.out
+            .write_all(b"\x1b7\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l")?;
+        self.out.flush()?;
+        let reply = probe().unwrap_or_default();
+        let mut batch = Batch::default();
+        batch.put(PASTE_ON);
+        batch.put(HIDE_CURSOR);
+        if self.caps.keyboard_enhancement {
+            batch.put(FLAGS_PUSH);
+        }
+        if self.rows >= 3 {
+            self.height = self.height.clamp(1, max_live_height(self.rows));
+            self.cursor = reply
+                .cursor
+                .map_or(self.rows - 1, |(_, row)| row.min(self.rows - 1));
+            self.top = self.cursor;
+            if reply.cursor.is_some_and(|(column, _)| column != 0) {
+                self.jump(&mut batch, 0, self.cursor);
+                self.newline(&mut batch);
+                self.top = self.cursor;
+            }
+            self.placed = true;
+            self.make_room(&mut batch);
+            self.jump(&mut batch, 0, self.top + self.height - 1);
+        }
+        self.forget_frames();
+        self.repaint = true;
+        self.clear = true;
+        if self.overlay.is_some() {
+            batch.put(ALTERNATE_ON);
+            batch.mark(Mark::OverlayOn);
+        } else if self.placed {
+            self.write_queue(&mut batch)?;
+        }
+        self.send(batch)?;
+        self.released = false;
+        if let Some((_, bytes)) = self.held_alert.take() {
+            self.out.write_all(&bytes)?;
+            self.out.flush()?;
+        }
+        Ok(())
     }
 
     /// Re-assert modes and repaint in place, without moving the viewport.
     pub fn reassert_modes(&mut self) -> io::Result<()> {
-        todo!("#228")
+        if self.released || self.closed {
+            return Ok(());
+        }
+        self.out
+            .write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l")?;
+        self.out.write_all(PASTE_ON)?;
+        self.out.write_all(HIDE_CURSOR)?;
+        if self.caps.keyboard_enhancement {
+            self.out.write_all(FLAGS_POP)?;
+            self.out.write_all(FLAGS_PUSH)?;
+        }
+        self.forget_frames();
+        self.repaint = true;
+        self.out.flush()
     }
 
     /// Write alert bytes, or keep the most urgent one while released.
     pub fn alert(&mut self, bytes: Vec<u8>, urgency: u8) -> io::Result<()> {
-        let _ = (bytes, urgency);
-        todo!("#228")
+        if self.closed {
+            return Ok(());
+        }
+        if self.released {
+            if self
+                .held_alert
+                .as_ref()
+                .is_none_or(|(previous, _)| urgency >= *previous)
+            {
+                self.held_alert = Some((urgency, bytes));
+            }
+            return Ok(());
+        }
+        self.out.write_all(&bytes)?;
+        self.out.flush()
     }
 
     /// Whether the terminal is currently released.
     pub fn is_released(&self) -> bool {
-        todo!("#228")
+        self.released
     }
 }
 
 /// Bell plus desktop notification bytes for one alert text.
 pub fn alert_bytes(text: &str, bell: bool, desktop: bool, in_tmux: bool) -> Vec<u8> {
-    let _ = (text, bell, desktop, in_tmux);
-    todo!("#228")
+    let mut bytes = Vec::new();
+    if bell {
+        bytes.push(0x07);
+    }
+    if desktop {
+        let body = talaria_core::attention::sanitize_alert_field(text, 120);
+        let payload = format!("\x1b]9;Talaria: {body}\x07");
+        if in_tmux {
+            bytes.extend_from_slice(b"\x1bPtmux;");
+            bytes.extend_from_slice(payload.replace('\u{1b}', "\x1b\x1b").as_bytes());
+            bytes.extend_from_slice(b"\x1b\\");
+        } else {
+            bytes.extend_from_slice(payload.as_bytes());
+        }
+    }
+    bytes
+}
+
+/// Discard child input before probing again, after the caller has re-entered raw mode.
+pub fn probe_reacquire(deadline: Duration) -> io::Result<ProbeReply> {
+    rustix::termios::tcflush(io::stdin(), rustix::termios::QueueSelector::IFlush)?;
+    probe_startup(deadline).map_err(|_| io::Error::other("terminal probe failed"))
+}
+
+#[cfg(test)]
+mod reacquire_tests {
+    use super::*;
+
+    #[derive(Clone)]
+    struct Emulator(Arc<Mutex<vt100::Parser>>);
+
+    impl io::Write for Emulator {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().process(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn reacquire_keeps_history_after_completed_or_abandoned_child() {
+        for child_left_alternate in [false, true] {
+            let emulator = Emulator(Arc::new(Mutex::new(vt100::Parser::new(12, 40, 100))));
+            emulator
+                .0
+                .lock()
+                .unwrap()
+                .process(b"\x1b7history-a\r\nhistory-b\r\nhistory-c\r\n");
+            let mut terminal = InlineTerminal::new(
+                emulator.clone(),
+                (40, 12),
+                3,
+                ProbeReply {
+                    cursor: Some((0, 3)),
+                    ..ProbeReply::default()
+                },
+                RestoreLink::detached(),
+            )
+            .unwrap();
+            terminal.release().unwrap();
+            assert_eq!(
+                emulator.0.lock().unwrap().screen().cursor_position(),
+                (3, 0)
+            );
+            emulator.0.lock().unwrap().process(if child_left_alternate {
+                b"\x1b[?1049hchild"
+            } else {
+                b"\x1b[?47hchild\x1b[?47l"
+            });
+            terminal
+                .reacquire(&mut || {
+                    let (row, column) = emulator.0.lock().unwrap().screen().cursor_position();
+                    Ok(ProbeReply {
+                        cursor: Some((column, row)),
+                        ..ProbeReply::default()
+                    })
+                })
+                .unwrap();
+            let composer = crate::live::PlainTextSection::new("composer");
+            terminal
+                .draw_live(&LiveView {
+                    sections: vec![&composer],
+                })
+                .unwrap();
+            let parser = emulator.0.lock().unwrap();
+            assert!(!parser.screen().alternate_screen());
+            assert!(
+                parser
+                    .screen()
+                    .contents()
+                    .starts_with("history-a\nhistory-b\nhistory-c\n"),
+                "child left alternate screen: {child_left_alternate}; screen: {:?}",
+                parser.screen().contents()
+            );
+        }
+    }
 }

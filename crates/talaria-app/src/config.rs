@@ -86,13 +86,13 @@ pub struct Config {
     pub status: StatusConfig,
     /// Names the status command may see. Filtering happens elsewhere.
     pub environment: EnvironmentConfig,
-    /// External editor settings (issue 228; stub: defaults only, not parsed yet).
+    /// External editor settings.
     pub editor: EditorConfig,
-    /// Prompt history settings (issue 228; stub: defaults only, not parsed yet).
+    /// Prompt history settings.
     pub history: HistoryConfig,
-    /// Notification settings (issue 228; stub: defaults only, not parsed yet).
+    /// Notification settings.
     pub notifications: NotificationsConfig,
-    /// Herdr reporting settings (issue 228; stub: defaults only, not parsed yet).
+    /// Herdr reporting settings.
     pub herdr: HerdrConfig,
 }
 
@@ -221,7 +221,15 @@ pub fn parse(text: &str) -> LoadedConfig {
 
     let mut config = Config::default();
     let mut notices = Vec::new();
-    for name in ["keys", "status", "environment"] {
+    for name in [
+        "keys",
+        "status",
+        "environment",
+        "editor",
+        "history",
+        "notifications",
+        "herdr",
+    ] {
         let Some(value) = table.get(name) else {
             continue;
         };
@@ -234,11 +242,15 @@ pub fn parse(text: &str) -> LoadedConfig {
         match name {
             "keys" => config.keys = read_keys(section, &mut notices),
             "status" => config.status = read_status(section, &mut notices),
-            _ => config.environment = read_environment(section, &mut notices),
+            "environment" => config.environment = read_environment(section, &mut notices),
+            _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
     for (name, value) in &table {
-        if matches!(name.as_str(), "keys" | "status" | "environment") {
+        if matches!(
+            name.as_str(),
+            "keys" | "status" | "environment" | "editor" | "history" | "notifications" | "herdr"
+        ) {
             continue;
         }
         let shown = if value.is_table() {
@@ -360,6 +372,38 @@ fn read_environment(section: &Table, notices: &mut Vec<String>) -> EnvironmentCo
 
 fn unknown_setting(table: &str, key: &str) -> String {
     format!("Ignoring {table}.{key} in {FILE}: it is not a known setting.")
+}
+
+fn read_comforts(table: &str, section: &Table, config: &mut Config, notices: &mut Vec<String>) {
+    for (key, value) in section {
+        match (table,key.as_str()) {
+            ("editor","command") => match value.as_str() {
+                Some(text) => config.editor.command=text.into(),
+                None => notices.push(format!("editor.command in {FILE} must be a text string; using the default.")),
+            },
+            ("history","save") | ("herdr","report_state") => match value.as_bool() {
+                Some(enabled) => if table=="history" { config.history.save=enabled; } else { config.herdr.report_state=enabled; },
+                None => notices.push(format!("{table}.{key} in {FILE} must be true or false; using true.")),
+            },
+            ("notifications","done_after_seconds") => match value.as_integer() {
+                Some(n) if (0..=86400).contains(&n) => config.notifications.done_after_seconds=n as u64,
+                _ => notices.push("[notifications] done_after_seconds must be a whole number from 0 to 86400; using 20.".into()),
+            },
+            ("notifications", "bell" | "desktop") => {
+                let Some(items)=value.as_array().filter(|items| items.iter().all(|v|v.as_str().is_some())) else {
+                    notices.push(format!("[notifications] {key} must be a list of notification kinds; using the default.")); continue;
+                };
+                let mut kinds=Vec::new();
+                for item in items {
+                    let text=item.as_str().unwrap_or_default();
+                    let kind=match text { "needs_you"=>AlertKind::NeedsYou,"done"=>AlertKind::Done,"failed"=>AlertKind::Failed,_=>{notices.push(format!("Unknown notification kind \"{text}\" in [notifications] {key}; it is ignored."));continue;} };
+                    if !kinds.contains(&kind) { kinds.push(kind); }
+                }
+                if key=="bell" { config.notifications.bell=kinds; } else { config.notifications.desktop=kinds; }
+            }
+            _ => notices.push(unknown_setting(table,key)),
+        }
+    }
 }
 
 /// Read a configuration file. A missing file is defaults and no notice; any other read error
