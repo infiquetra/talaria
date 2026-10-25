@@ -34,6 +34,11 @@ yank = ["ctrl+y"]
 open_editor = ["ctrl+g", "alt+g"]
 history_search = ["ctrl+r"]
 suspend = ["ctrl+z"]
+completion_next = ["down", "ctrl+n"]
+completion_prev = ["up", "ctrl+p"]
+completion_accept = ["tab"]
+completion_close = ["esc"]
+attach_clipboard_image = ["ctrl+v", "alt+v"]
 
 [editor]
 command = ""
@@ -48,6 +53,9 @@ done_after_seconds = 20
 
 [herdr]
 report_state = true
+[composer]
+paste_collapse_lines = 5
+paste_collapse_chars = 2000
 
 [status]
 # command = "~/.talaria/status.sh"
@@ -99,6 +107,8 @@ blocked means a prompt is still visible, working means a turn is running, otherw
 Environment overrides, read once at start: `TALARIA_THEME` (`light`, `dark` or `auto`) beats
 `theme.mode`; `TALARIA_REDUCED_MOTION` (`1`, `true`, `yes`, `on`, `0`, `false`, `no` or `off`)
 beats `ui.reduced_motion`; a non-empty `NO_COLOR` turns colour off. See [themes](themes.md).
+| `composer.paste_collapse_lines` | whole number, 0 or more | 5 | A paste of this many lines becomes a label. 0 turns the line rule off. |
+| `composer.paste_collapse_chars` | whole number, 0 or more | 2000 | A paste of this many characters becomes a label. 0 turns the character rule off. |
 
 ## Default keys
 
@@ -126,8 +136,10 @@ beats `ui.reduced_motion`; a non-empty `NO_COLOR` turns colour off. See [themes]
 | `model_scope` | Ctrl+G | Toggle whether the choice also applies to new Talaria sessions. |
 | `model_favourite` | Ctrl+F | Star or unstar the selected model. |
 | `model_refresh` | Ctrl+R | Refresh the model list; gateway actions can wait behind this call. |
+| `attach_clipboard_image` | Ctrl+V, Alt+V | Attach the image on the clipboard. |
 
-Tab accepts a row only while a completion list is open. A tab inside pasted text is kept.
+Tab accepts the highlighted row of a completion list. A tab inside pasted text is kept.
+Completion keys share chords with composer keys. Each applies only while its list is open.
 
 Picker actions resolve before composer actions while the model overlay is open.
 The same chord may be bound in these two separate contexts. Typing filters the list;
@@ -212,7 +224,7 @@ another way out once a later release adds one.
 
 ## Coming from 0.6
 
-- These tables are now ignored, each with a notice: `theme`, `ui`, `composer`, `notifications`,
+- These tables are now ignored, each with a notice: `theme`, `ui`, `notifications`,
   `profiles`, `connections`.
 - These `[status]` settings are now ignored: `segments`, `cwd_max_columns`,
   `git_branch_max_columns`, `agent_model_max_columns`.

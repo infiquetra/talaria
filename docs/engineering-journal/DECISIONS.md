@@ -120,6 +120,15 @@ reports with session identity and resume arguments.
 state. Reports carry increasing sequence numbers, sanitized messages and a
 bounded deadline. Failures return once through the application event channel;
 exit releases reporting authority within a separate bounded wait.
+### Image labels stay in the text
+
+**Decision.** Image labels stay in the text. A draft such as `compare [Image #1] with [Image #2]` is sent with those labels in place. The attachments carry the image paths beside the text.
+
+**Rationale.** The labels tell the model which sentence refers to which image. Issue 224.
+
+**Rejected alternatives.** Strip the labels before send.
+
+**Revisit when** the gateway rejects the label text.
 
 ### Restore, re-read, then rewind only if the chosen prompt is still active
 
@@ -130,6 +139,25 @@ exit releases reporting authority within a separate bounded wait.
 **Rejected alternatives.** Rewind first and restore second (the restore then removes whatever is newest after that rewind). Treat `/diff` as `git diff` (that hides the checkpoint comparison).
 
 **Revisit when** Hermes stops removing a turn during a whole-folder restore, or the operator chooses git diff as the meaning of `/diff`.
+### Paste history restores payloads only through explicit recall
+
+**Decision.** A bounded, process-wide paste archive retains one copy of each paste's
+text. Editing or submitting a draft releases its active paste chips. Only an explicit
+history recall restores archived paste chips; typing an old label never restores a
+payload. Oldest texts are evicted across active drafts and history under the same
+16 MiB budget, while one oversized paste can remain as the sole retained text.
+
+Media for a submitted draft is transferred to that submission's identity. A receipt
+releases it; a refusal or unknown outcome restores the original display and its owned
+payloads. A later draft cannot attach an older image merely by reusing its label.
+
+**Rationale.** Issue #224 requires useful pasted-text history while preserving the
+rule that edited or hand-retyped labels do not silently regain attachments.
+
+**Rejected alternatives.** Retaining every label as active, restoring payloads on
+every non-typed edit, or discarding archived paste text after admission.
+
+**Revisit when** draft history stores expanded text instead of display labels.
 
 ## 2026-10-23
 

@@ -36,7 +36,7 @@ pub(crate) fn forbidden_control(c: char) -> bool {
 
 /// Pasted or loaded text, cleaned: line breaks normalised, controls removed, and each cluster
 /// that would draw nothing dropped, as if the text went into an empty draft.
-pub(crate) fn clean_text(text: &str) -> String {
+pub fn clean_text(text: &str) -> String {
     let normalised = text.replace("\r\n", "\n").replace('\r', "\n");
     let kept: String = normalised
         .chars()
@@ -207,6 +207,19 @@ impl Draft {
         self.text = text;
         self.caret = self.text.len();
         self.edited();
+    }
+
+    /// Replace a valid UTF-8 byte range and keep the caret on a grapheme boundary.
+    /// Invalid ranges leave the draft unchanged.
+    pub(crate) fn replace_range(&mut self, range: std::ops::Range<usize>, text: &str) -> bool {
+        if self.text.get(range.clone()).is_none() {
+            return false;
+        }
+        let end = range.start + text.len();
+        self.text.replace_range(range, text);
+        self.caret = snap(&self.text, end);
+        self.edited();
+        true
     }
 
     /// Put the caret at a byte offset, on a boundary.

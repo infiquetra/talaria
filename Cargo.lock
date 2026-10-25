@@ -2348,6 +2348,7 @@ name = "talaria-app"
 version = "0.7.0-dev"
 dependencies = [
  "alacritty_terminal",
+ "base64",
  "crossterm",
  "futures-util",
  "getrandom 0.3.4",

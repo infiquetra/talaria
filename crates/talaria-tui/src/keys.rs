@@ -144,6 +144,7 @@ pub enum Action {
     OpenEditor,
     HistorySearch,
     Suspend,
+    AttachClipboardImage,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -175,7 +176,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 28] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -203,6 +204,7 @@ impl Action {
         Self::OpenEditor,
         Self::HistorySearch,
         Self::Suspend,
+        Self::AttachClipboardImage,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -236,6 +238,7 @@ impl Action {
             Self::OpenEditor => "open_editor",
             Self::HistorySearch => "history_search",
             Self::Suspend => "suspend",
+            Self::AttachClipboardImage => "attach_clipboard_image",
         }
     }
 
@@ -294,6 +297,7 @@ impl Action {
             Self::OpenEditor => &["ctrl+g", "alt+g"],
             Self::HistorySearch => &["ctrl+r"],
             Self::Suspend => &["ctrl+z"],
+            Self::AttachClipboardImage => &["ctrl+v", "alt+v"],
         }
     }
 }
@@ -930,16 +934,21 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 27);
+        assert_eq!(Action::ALL.len(), 28);
         for action in Action::ALL {
-            let context = match action {
+            let completion = matches!(
+                action,
                 Action::CompletionNext
-                | Action::CompletionPrev
-                | Action::CompletionAccept
-                | Action::CompletionClose => KeyContext::Completion,
-                _ => KeyContext::Composer,
+                    | Action::CompletionPrev
+                    | Action::CompletionAccept
+                    | Action::CompletionClose
+            );
+            let wanted = if completion {
+                KeyContext::Completion
+            } else {
+                KeyContext::Composer
             };
-            assert_eq!(action.context(), context);
+            assert_eq!(action.context(), wanted);
             let name = action.config_name();
             assert_eq!(Action::from_config_name(name), Some(action));
         }
@@ -971,6 +980,7 @@ mod tests {
             (Action::CompletionPrev, vec!["Up", "Ctrl+P"]),
             (Action::CompletionAccept, vec!["Tab"]),
             (Action::CompletionClose, vec!["Esc"]),
+            (Action::AttachClipboardImage, vec!["Ctrl+V", "Alt+V"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1104,7 +1114,7 @@ mod tests {
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
         // The composer actions, plus the four the slash palette brought with it.
-        assert_eq!(Action::ALL.len(), 27);
+        assert_eq!(Action::ALL.len(), 28);
     }
 
     #[test]

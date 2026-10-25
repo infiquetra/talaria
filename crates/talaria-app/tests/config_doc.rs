@@ -16,6 +16,8 @@ fn doc_default_shape_loads_cleanly() {
     assert_eq!(loaded.config.status.interval_seconds, 5);
     assert_eq!(loaded.config.status.command, None);
     assert!(loaded.config.environment.allowlist.is_empty());
+    assert_eq!(loaded.config.composer.paste_collapse_lines, 5);
+    assert_eq!(loaded.config.composer.paste_collapse_chars, 2000);
     assert_eq!(loaded.config.keys, default_keys());
     assert_eq!(
         loaded.config,
@@ -70,6 +72,11 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("open_editor", &["ctrl+g", "alt+g"][..]),
         ("history_search", &["ctrl+r"][..]),
         ("suspend", &["ctrl+z"][..]),
+        ("completion_next", &["down", "ctrl+n"][..]),
+        ("completion_prev", &["up", "ctrl+p"][..]),
+        ("completion_accept", &["tab"][..]),
+        ("completion_close", &["esc"][..]),
+        ("attach_clipboard_image", &["ctrl+v", "alt+v"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

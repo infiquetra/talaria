@@ -6,12 +6,13 @@ pub mod recall;
 mod render;
 pub mod wrap;
 
+pub use buffer::clean_text;
 pub use render::ComposerSection;
 
 use std::time::{Duration, Instant};
 
 use crate::keys::{Action, Key, KeyCode, KeyKind, KeyMap};
-use buffer::{Draft, clean_text, logical_rows, prev_boundary, row_of};
+use buffer::{Draft, logical_rows, prev_boundary, row_of};
 use paste_burst::{CharStep, EnterStep, PasteBurst};
 use recall::Recall;
 use wrap::{Row, wrap};
@@ -88,6 +89,9 @@ pub struct Composer {
     cache: Option<RowCache>,
     scroll_top: usize,
     prepared: Option<Prepared>,
+    highlights: Vec<(std::ops::Range<usize>, ratatui::style::Style)>,
+    highlight_revision: u64,
+    last_history_recall: bool,
 }
 
 impl Composer {
@@ -114,11 +118,15 @@ impl Composer {
             cache: None,
             scroll_top: 0,
             prepared: None,
+            highlights: Vec::new(),
+            highlight_revision: 0,
+            last_history_recall: false,
         }
     }
 
     /// Apply one key.
     pub fn handle_key(&mut self, key: Key, ctx: ComposerContext, now: Instant) -> ComposerOutcome {
+        self.last_history_recall = false;
         if key.kind == KeyKind::Release {
             return ComposerOutcome::Unchanged;
         }
@@ -185,6 +193,17 @@ impl Composer {
         }
     }
 
+    /// Put any buffered raw-key burst into the draft before taking an insertion snapshot.
+    pub fn flush_pending(&mut self) {
+        self.flush_burst();
+    }
+
+    /// Raw keys are temporarily held outside the visible draft until the burst is flushed.
+    #[must_use]
+    pub fn is_collecting_burst(&self) -> bool {
+        self.burst.is_active()
+    }
+
     /// When the caller should wake with no key, if something is pending.
     #[must_use]
     pub fn next_tick(&self) -> Option<Instant> {
@@ -201,10 +220,38 @@ impl Composer {
         self.draft.text()
     }
 
+    /// Replace a UTF-8 byte range with safe text in one edit. Invalid ranges do nothing.
+    /// The caret ends after the insertion, advanced to a grapheme boundary when necessary.
+    pub fn replace_range(&mut self, range: std::ops::Range<usize>, text: &str) {
+        self.flush_burst();
+        self.burst.reset();
+        self.run.clear();
+        if self.draft.replace_range(range, &clean_text(text)) {
+            self.recall.end();
+            self.disarm();
+        }
+    }
+
+    /// Mark live labels. The screen maps accent and dimmed onto these styles.
+    pub fn set_highlights(&mut self, spans: Vec<(std::ops::Range<usize>, ratatui::style::Style)>) {
+        let text = self.draft.text();
+        self.highlights = spans
+            .into_iter()
+            .filter(|(range, _)| range.start < range.end && text.get(range.clone()).is_some())
+            .collect();
+        self.highlight_revision = self.draft.revision();
+    }
+
     /// Byte offset of the caret, on a grapheme boundary.
     #[must_use]
     pub fn caret(&self) -> usize {
         self.draft.caret()
+    }
+
+    /// Whether the last key actually recalled a history entry or restored its saved draft.
+    #[must_use]
+    pub fn last_history_recall(&self) -> bool {
+        self.last_history_recall
     }
 
     /// The draft has no characters. Spaces are not empty.
@@ -506,7 +553,8 @@ impl Composer {
             | Action::CompletionClose
             | Action::OpenEditor
             | Action::HistorySearch
-            | Action::Suspend => {}
+            | Action::Suspend
+            | Action::AttachClipboardImage => {}
         }
         false
     }
@@ -524,6 +572,7 @@ impl Composer {
             return false;
         };
         self.draft.replace(shown);
+        self.last_history_recall = true;
         let rows = self.current_rows();
         let first = &rows[0];
         let end = if first.hard_break_after || rows.len() == 1 {
@@ -543,6 +592,7 @@ impl Composer {
         match self.recall.newer(self.draft.text()) {
             Some(shown) => {
                 self.draft.replace(shown);
+                self.last_history_recall = true;
                 true
             }
             None => {
@@ -609,5 +659,98 @@ fn merge(flushed: bool, outcome: ComposerOutcome) -> ComposerOutcome {
         ComposerOutcome::Changed
     } else {
         outcome
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Composer;
+    use crate::keys::KeyMap;
+    use ratatui::style::Style;
+
+    #[test]
+    fn replacement_cleans_text_and_keeps_a_valid_caret() {
+        let mut composer = Composer::new(KeyMap::defaults());
+        composer.load("see @cal tail".into());
+        composer.replace_range(4..8, &format!("@file:calc.py{}\r\n", char::from(27)));
+        assert_eq!(composer.text(), "see @file:calc.py\n tail");
+        assert_eq!(composer.caret(), "see @file:calc.py\n".len());
+
+        composer.load("éx".into());
+        composer.replace_range(1..2, "wrong");
+        assert_eq!(composer.text(), "éx");
+        composer.replace_range(0..2, "a");
+        assert_eq!(composer.text(), "ax");
+        assert_eq!(composer.caret(), 1);
+
+        composer.load("a\u{301}z".into());
+        composer.replace_range(0..1, "e");
+        assert_eq!(composer.text(), "e\u{301}z");
+        assert_eq!(composer.caret(), "e\u{301}".len());
+    }
+
+    #[test]
+    fn highlights_are_valid_byte_ranges_for_one_revision() {
+        let mut composer = Composer::new(KeyMap::defaults());
+        composer.load("é label".into());
+        composer.set_highlights(vec![
+            (0..2, Style::default()),
+            (1..2, Style::default()),
+            (3..99, Style::default()),
+        ]);
+        assert_eq!(composer.highlights.len(), 1);
+        assert_eq!(composer.highlight_revision, composer.draft.revision());
+        composer.replace_range(0..2, "x");
+        assert_ne!(composer.highlight_revision, composer.draft.revision());
+    }
+
+    #[test]
+    fn recall_flag_tracks_history_instead_of_caret_motion() {
+        use super::{ComposerContext, ComposerOutcome};
+        use crate::keys::Key;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut composer = Composer::with_history(KeyMap::defaults(), vec!["old".into()]);
+        composer.load("new".into());
+        let now = std::time::Instant::now();
+        let ctx = ComposerContext {
+            turn_running: false,
+        };
+        let key = |code| Key::from(KeyEvent::new(code, KeyModifiers::NONE));
+        assert_eq!(
+            composer.handle_key(key(KeyCode::Up), ctx, now),
+            ComposerOutcome::Changed
+        );
+        assert!(composer.last_history_recall());
+        composer.handle_key(key(KeyCode::Left), ctx, now);
+        assert!(!composer.last_history_recall());
+        composer.handle_key(key(KeyCode::Down), ctx, now);
+        assert!(composer.last_history_recall());
+        assert_eq!(composer.text(), "new");
+    }
+
+    #[test]
+    fn flushing_before_an_insertion_snapshot_preserves_typing_order() {
+        use super::ComposerContext;
+        use crate::keys::Key;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut composer = Composer::new(KeyMap::defaults());
+        let now = std::time::Instant::now();
+        let ctx = ComposerContext {
+            turn_running: false,
+        };
+        for character in ['A', 'B', 'C'] {
+            composer.handle_key(
+                Key::from(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE)),
+                ctx,
+                now,
+            );
+        }
+        assert_eq!(composer.text(), "");
+        composer.flush_pending();
+        assert_eq!(composer.text(), "ABC");
+        let caret = composer.caret();
+        composer.replace_range(caret..caret, "[Image #1]");
+        assert_eq!(composer.text(), "ABC[Image #1]");
+        assert_eq!(composer.caret(), composer.text().len());
     }
 }

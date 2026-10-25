@@ -243,6 +243,7 @@ async fn send_prompt(service: &SessionService, session_id: &str, text: &str, n: 
             session_id: SessionId::new(session_id),
             text: text.to_string(),
             submission_id: format!("talaria-live-rewind-{n}"),
+            attachments: Vec::new(),
         })
         .await;
     assert!(

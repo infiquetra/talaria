@@ -11,15 +11,18 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
 use talaria_app::app::{
-    self, ComposerDeadline, LinkView, Outcome, RunSetup, Screen, StatusHost, UserAction, View,
+    self, AttachmentView, ComposerDeadline, LinkView, Outcome, RunSetup, Screen, StatusHost,
+    UserAction, View,
 };
 use talaria_app::appearance::AppearanceView;
+use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
 use talaria_app::comforts::{editor, herdr::HerdrReporter, prompt_history::PromptHistory, suspend};
 use talaria_app::config::{self, LoadedConfig};
 use talaria_app::connection::OpenConnection;
@@ -28,6 +31,7 @@ use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
 use talaria_core::appearance::ThemeReport;
+use talaria_core::attachments::CollapseRule;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
 use talaria_core::commands::PaletteInput;
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
@@ -35,7 +39,7 @@ use talaria_core::mutation::Confirmation;
 use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
-use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome};
+use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome, clean_text};
 use talaria_tui::context_view::{
     CompactingSection, ContextStyle, compact_block, context_block, error_block, notice_block,
     prebuild_block, usage_block,
@@ -49,6 +53,7 @@ use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
 use talaria_tui::markdown::MarkdownTheme;
 use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
+use talaria_tui::mention::MentionSection;
 use talaria_tui::model_picker::{ModelConfirmSection, draw_model_picker};
 use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
@@ -135,8 +140,9 @@ pub struct TuiScreen {
     connecting: bool,
     /// The key map, for the composer, the completion list and the model picker.
     keymap: KeyMap,
-    /// The draft and caret last reported to the loop.
     reported: (String, usize),
+    attachments: AttachmentView,
+    attachment_rule: CollapseRule,
     /// Terminal rows, for the palette's height cap.
     rows: u16,
     picker: Option<ModelOverlay>,
@@ -229,6 +235,58 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
     None
 }
 
+/// Route only keys that the current immutable attachment view can consume.
+fn attachment_key(
+    keymap: &KeyMap,
+    key: &Key,
+    view: &AttachmentView,
+    draft: &str,
+    caret: usize,
+) -> Option<AttachmentAction> {
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    let bound = |action| keymap.chords(action).iter().any(|chord| chord.matches(key));
+    if !draft.starts_with('/')
+        && let Some(mention) = &view.mention
+    {
+        for (key_action, action) in [
+            (Action::CompletionNext, AttachmentAction::CompletionNext),
+            (Action::CompletionPrev, AttachmentAction::CompletionPrev),
+            (Action::CompletionAccept, AttachmentAction::CompletionAccept),
+            (Action::CompletionClose, AttachmentAction::CompletionClose),
+        ] {
+            if bound(key_action) {
+                return Some(action);
+            }
+        }
+        if !mention.rows.is_empty() && bound(Action::Submit) {
+            return Some(AttachmentAction::Submit);
+        }
+    }
+    if bound(Action::AttachClipboardImage) {
+        return Some(AttachmentAction::AttachClipboardImage);
+    }
+    for (key_action, action) in [
+        (Action::DeleteBackward, AttachmentAction::DeleteBackward),
+        (Action::DeleteForward, AttachmentAction::DeleteForward),
+    ] {
+        if bound(key_action)
+            && view.highlights.iter().any(|(range, _)| {
+                draft.get(range.clone()).is_some()
+                    && if key_action == Action::DeleteBackward {
+                        range.end == caret
+                    } else {
+                        range.start == caret
+                    }
+            })
+        {
+            return Some(action);
+        }
+    }
+    None
+}
+
 fn confirmation_key(key: Key, focused: Option<Instant>, now: Instant) -> Option<ConfirmKey> {
     if key.kind == KeyKind::Release
         || key.mods.ctrl
@@ -307,6 +365,71 @@ impl CellLines for CapturedCells<'_> {
             .map_or(self.current, |theme| theme.as_ref());
         ThemedCells { theme }.lines(cell, width)
     }
+}
+
+fn flush_draft_actions(composer: &mut Composer, now: Instant) -> Vec<UserAction> {
+    let before = (composer.text().to_string(), composer.caret());
+    composer.flush_pending();
+    if before == (composer.text().to_string(), composer.caret()) {
+        return Vec::new();
+    }
+    vec![UserAction::DraftEdited {
+        text: composer.text().to_string(),
+        caret: composer.caret(),
+        typed: true,
+        recalled: false,
+        now,
+    }]
+}
+
+fn paste_actions(composer: &mut Composer, text: &str, now: Instant) -> Vec<UserAction> {
+    let mut actions = flush_draft_actions(composer, now);
+    actions.push(UserAction::Paste {
+        text: clean_text(text),
+        draft: composer.text().to_string(),
+        caret: composer.caret(),
+    });
+    actions
+}
+
+fn composer_key_actions(
+    composer: &mut Composer,
+    key: Key,
+    ctx: ComposerContext,
+    now: Instant,
+) -> Vec<UserAction> {
+    let before = (composer.text().to_string(), composer.caret());
+    let outcome = composer.handle_key(key, ctx, now);
+    if let ComposerOutcome::Submit(text) = outcome {
+        return vec![UserAction::Submit(text)];
+    }
+    let eligible =
+        outcome == ComposerOutcome::Unchanged && composer.is_empty() && !ctx.turn_running;
+    let mut actions = match outcome {
+        ComposerOutcome::Interrupt => vec![UserAction::Interrupt],
+        ComposerOutcome::ExitRequested => vec![UserAction::Quit],
+        _ => Vec::new(),
+    };
+    if key.kind != KeyKind::Release && key.code == KeyCode::Esc {
+        actions.push(UserAction::Escape { eligible });
+        // Two quick Esc bytes can arrive as one Esc with Alt held: count it twice.
+        if eligible && key.mods.alt {
+            actions.push(UserAction::Escape { eligible });
+        }
+    }
+    if !composer.is_collecting_burst()
+        && (before != (composer.text().to_string(), composer.caret())
+            || composer.last_history_recall())
+    {
+        actions.push(UserAction::DraftEdited {
+            text: composer.text().to_string(),
+            caret: composer.caret(),
+            typed: true,
+            recalled: composer.last_history_recall(),
+            now,
+        });
+    }
+    actions
 }
 
 fn masked_method(kind: MaskedKind) -> &'static str {
@@ -527,12 +650,38 @@ impl TuiScreen {
     /// Tell the loop when the draft or the caret moved, so the slash palette follows it. A
     /// submitted draft is not reported: the loop knows the composer took it.
     fn report_draft(&mut self, actions: &mut Vec<UserAction>) {
+        if self.composer.is_collecting_burst() {
+            return;
+        }
+        if !actions
+            .iter()
+            .any(|action| matches!(action, UserAction::Submit(_)))
+            && actions
+                .iter()
+                .any(|action| matches!(action, UserAction::DraftEdited { .. }))
+        {
+            self.reported = (self.composer.text().to_owned(), self.composer.caret());
+            return;
+        }
+        let previous_len = actions.len();
         sync_reported_draft(
             self.composer.text(),
             self.composer.caret(),
             &mut self.reported,
             actions,
         );
+        if actions.len() > previous_len
+            && let Some(UserAction::Palette(PaletteInput::DraftChanged { text, caret })) =
+                actions.first()
+        {
+            actions[0] = UserAction::DraftEdited {
+                text: text.clone(),
+                caret: *caret,
+                typed: false,
+                recalled: false,
+                now: Instant::now(),
+            };
+        }
     }
 
     /// The shell-mode title follows the draft: set while it starts with `!`, cleared otherwise.
@@ -634,7 +783,9 @@ impl TuiScreen {
                         CompletionAction::Accept => PaletteInput::Accept,
                         CompletionAction::Close => PaletteInput::Close,
                     };
-                    return vec![UserAction::Palette(input)];
+                    let mut actions = flush_draft_actions(&mut self.composer, now);
+                    actions.push(UserAction::Palette(input));
+                    return actions;
                 }
                 self.sync_confirmation_focus(now);
                 let control_c = key.mods.ctrl
@@ -651,7 +802,36 @@ impl TuiScreen {
                     && self.keymap.resolve_model(KeyContext::Composer, &key)
                         == Some(ModelAction::ModelPicker)
                 {
-                    return vec![UserAction::OpenModels];
+                    let mut actions = flush_draft_actions(&mut self.composer, now);
+                    actions.push(UserAction::OpenModels);
+                    return actions;
+                }
+                let mut actions = Vec::new();
+                if attachment_key(
+                    &self.keymap,
+                    &key,
+                    &self.attachments,
+                    self.composer.text(),
+                    self.composer.caret(),
+                )
+                .is_some()
+                {
+                    actions = flush_draft_actions(&mut self.composer, now);
+                    if let Some(action) = attachment_key(
+                        &self.keymap,
+                        &key,
+                        &self.attachments,
+                        self.composer.text(),
+                        self.composer.caret(),
+                    ) {
+                        actions.push(UserAction::AttachmentKey {
+                            action,
+                            text: self.composer.text().to_string(),
+                            caret: self.composer.caret(),
+                            now,
+                        });
+                        return actions;
+                    }
                 }
                 if route == talaria_tui::comfort_route::Route::OpenEditor {
                     let _ = self.composer.handle_key(
@@ -685,19 +865,18 @@ impl TuiScreen {
                 let ctx = ComposerContext {
                     turn_running: view.turn_running(),
                 };
-                let escape = key.kind != KeyKind::Release && key.code == KeyCode::Esc;
-                let outcome = self.composer.handle_key(key, ctx, now);
-                let eligible = escape
-                    && outcome == ComposerOutcome::Unchanged
-                    && self.composer.is_empty()
-                    && !view.palette.open
-                    && !view.turn_running();
-                let mut actions = self.composer_action(outcome, view.state.is_some());
-                if escape {
-                    actions.push(UserAction::Escape { eligible });
-                    // Two quick Esc bytes can arrive as one Esc with Alt held: count it twice.
-                    if eligible && key.mods.alt {
-                        actions.push(UserAction::Escape { eligible });
+                for action in composer_key_actions(&mut self.composer, key, ctx, now) {
+                    match action {
+                        UserAction::Submit(text) => {
+                            actions.extend(self.composer_action(
+                                ComposerOutcome::Submit(text),
+                                view.state.is_some(),
+                            ))
+                        }
+                        UserAction::Escape { eligible } => actions.push(UserAction::Escape {
+                            eligible: eligible && !view.palette.open,
+                        }),
+                        action => actions.push(action),
                     }
                 }
                 actions
@@ -719,8 +898,7 @@ impl TuiScreen {
                 if self.confirmation_takes_keys() {
                     return Vec::new();
                 }
-                let outcome = self.composer.handle_paste(&text);
-                self.composer_action(outcome, view.state.is_some())
+                paste_actions(&mut self.composer, &text, now)
             }
             Event::Resize(cols, rows) => {
                 self.rows = rows;
@@ -966,6 +1144,12 @@ impl Screen for TuiScreen {
             now_ms: view.now_ms,
             theme: &side_theme,
         });
+        let mention = self
+            .attachments
+            .mention
+            .as_ref()
+            .filter(|_| !self.composer.text().starts_with('/'))
+            .map(MentionSection::new);
         let composer = self.composer.section(width, COMPOSER_ROWS);
         let compacting = CompactingSection {
             line: view.compacting_line,
@@ -991,6 +1175,9 @@ impl Screen for TuiScreen {
         if let Some(search) = &search {
             sections.push(search);
         } else {
+            if let Some(mention) = &mention {
+                sections.push(mention);
+            }
             sections.push(&composer);
             if !composer_is_empty || prompts.is_none() {
                 sections.push(&palette);
@@ -1067,6 +1254,43 @@ impl Screen for TuiScreen {
         self.composer.load(text.to_string());
         self.reported = (self.composer.text().to_owned(), self.composer.caret());
         self.sync_title();
+    }
+
+    fn edit_draft(&mut self, range: std::ops::Range<usize>, text: &str) -> Option<(String, usize)> {
+        self.composer.replace_range(range, text);
+        self.draft_snapshot()
+    }
+
+    fn draft_snapshot(&self) -> Option<(String, usize)> {
+        (!self.composer.is_collecting_burst())
+            .then(|| (self.composer.text().to_string(), self.composer.caret()))
+    }
+
+    fn flush_draft(&mut self) -> Option<(String, usize)> {
+        self.composer.flush_pending();
+        self.draft_snapshot()
+    }
+
+    fn sync_attachments(&mut self, view: AttachmentView) {
+        self.composer.set_highlights(
+            view.highlights
+                .iter()
+                .map(|(range, style)| {
+                    (
+                        range.clone(),
+                        match style {
+                            LabelStyle::Accent => Style::default().fg(Color::Cyan),
+                            LabelStyle::Dimmed => Style::default().add_modifier(Modifier::DIM),
+                        },
+                    )
+                })
+                .collect(),
+        );
+        self.attachments = view;
+    }
+
+    fn attachment_rule(&self) -> CollapseRule {
+        self.attachment_rule
     }
 
     fn restore(&mut self) {
@@ -1398,6 +1622,10 @@ fn session(
     config: config::Config,
     settings: ThemeSettings,
 ) -> Result<Outcome, TerminalError> {
+    let attachment_rule = CollapseRule {
+        lines: config.composer.paste_collapse_lines,
+        chars: config.composer.paste_collapse_chars,
+    };
     let guard = TerminalGuard::acquire()?;
     let probe = probe_startup(PROBE_DEADLINE)?;
     // Light or dark is decided once, from the start-up probe; `/theme` overrides it per session.
@@ -1485,6 +1713,8 @@ fn session(
         rewind_open: false,
         rewind_rows: 0,
         rewind_theme: rewind_theme(),
+        attachments: AttachmentView::default(),
+        attachment_rule,
     };
     let notify = sender.clone();
     suspend::spawn_sigcont_watch(
@@ -1579,14 +1809,18 @@ fn unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        TuiScreen, confirmation_key, picker_key, preview_text, should_record_submission,
-        sync_reported_draft,
+        TuiScreen, attachment_key, composer_key_actions, confirmation_key, paste_actions,
+        picker_key, preview_text, should_record_submission, sync_reported_draft,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
+    use talaria_app::app::AttachmentView;
     use talaria_app::app::{AppMessage, AppState, UserAction, update};
+    use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
+    use talaria_core::attachments::MentionView;
     use talaria_core::models::{ConfirmKey, PickerKey};
+    use talaria_tui::composer::{Composer, ComposerContext};
     use talaria_tui::keys::{Key, KeyMap};
     use talaria_tui::markdown::{MarkdownOptions, render_markdown};
 
@@ -1718,5 +1952,152 @@ mod tests {
         assert_eq!(confirmation_key(ctrl_c, Some(now), ready), None);
         let shifted = Key::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
         assert_eq!(confirmation_key(shifted, Some(now), ready), None);
+    }
+
+    #[test]
+    fn attachment_keys_follow_open_list_and_live_label_boundaries() {
+        let map = KeyMap::defaults();
+        let key = |code, mods| Key::from(KeyEvent::new(code, mods));
+        let plain = |code| key(code, KeyModifiers::NONE);
+        let mut view = AttachmentView::default();
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Down), &view, "@a", 2),
+            None
+        );
+        assert_eq!(
+            attachment_key(
+                &map,
+                &key(KeyCode::Char('v'), KeyModifiers::CONTROL),
+                &view,
+                "",
+                0
+            ),
+            Some(AttachmentAction::AttachClipboardImage)
+        );
+        view.mention = Some(MentionView {
+            rows: Vec::new(),
+            selected: None,
+            status: None,
+            footer: "",
+        });
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Down), &view, "@a", 2),
+            Some(AttachmentAction::CompletionNext)
+        );
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Enter), &view, "@a", 2),
+            None
+        );
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Esc), &view, "@a", 2),
+            Some(AttachmentAction::CompletionClose)
+        );
+        view.mention
+            .as_mut()
+            .expect("open")
+            .rows
+            .push(("a".into(), String::new()));
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Enter), &view, "@a", 2),
+            Some(AttachmentAction::Submit)
+        );
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Tab), &view, "/help", 5),
+            None
+        );
+        view.highlights.push((0..10, LabelStyle::Accent));
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Backspace), &view, "[Image #1]", 10),
+            Some(AttachmentAction::DeleteBackward)
+        );
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Backspace), &view, "[Image #1]", 9),
+            None
+        );
+        assert_eq!(
+            attachment_key(&map, &plain(KeyCode::Delete), &view, "[Image #1]", 0),
+            Some(AttachmentAction::DeleteForward)
+        );
+    }
+
+    #[test]
+    fn composer_escape_preserves_rewind_eligibility() {
+        use talaria_app::app::UserAction;
+        for (text, running, modifiers, count) in [
+            ("", false, KeyModifiers::NONE, 1),
+            ("", false, KeyModifiers::ALT, 2),
+            ("draft", false, KeyModifiers::NONE, 0),
+            ("", true, KeyModifiers::NONE, 0),
+        ] {
+            let mut composer = Composer::new(KeyMap::defaults());
+            composer.load(text.to_string());
+            let actions = composer_key_actions(
+                &mut composer,
+                Key::from(KeyEvent::new(KeyCode::Esc, modifiers)),
+                ComposerContext {
+                    turn_running: running,
+                },
+                Instant::now(),
+            );
+            assert_eq!(
+                actions
+                    .iter()
+                    .filter(|action| matches!(action, UserAction::Escape { eligible: true }))
+                    .count(),
+                count,
+            );
+        }
+    }
+
+    #[test]
+    fn collected_raw_keys_never_report_a_false_clear() {
+        let mut composer = Composer::new(KeyMap::defaults());
+        let now = std::time::Instant::now();
+        for character in ['a', 'b', 'c'] {
+            let actions = composer_key_actions(
+                &mut composer,
+                Key::from(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE)),
+                ComposerContext {
+                    turn_running: false,
+                },
+                now,
+            );
+            assert!(!actions.iter().any(|action| matches!(action,
+                talaria_app::app::UserAction::DraftEdited { text, .. } if text.is_empty()
+            )));
+            if character == 'c' {
+                assert!(actions.is_empty());
+                assert!(composer.is_collecting_burst());
+            }
+        }
+    }
+
+    #[test]
+    fn bracketed_paste_follows_buffered_raw_keys() {
+        use talaria_app::app::UserAction;
+        let mut composer = Composer::new(KeyMap::defaults());
+        let now = std::time::Instant::now();
+        for character in ['a', 'b', 'c'] {
+            composer_key_actions(
+                &mut composer,
+                Key::from(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE)),
+                ComposerContext {
+                    turn_running: false,
+                },
+                now,
+            );
+        }
+        let actions = paste_actions(&mut composer, "P", now);
+        assert_eq!(actions.len(), 2);
+        assert!(matches!(&actions[0], UserAction::DraftEdited {
+            text, caret: 3, typed: true, recalled: false, ..
+        } if text == "abc"));
+        let UserAction::Paste { text, draft, caret } = &actions[1] else {
+            panic!("paste follows the canonical draft update");
+        };
+        assert_eq!(draft, "abc");
+        assert_eq!(*caret, 3);
+        composer.replace_range(*caret..*caret, text);
+        assert_eq!(composer.text(), "abcP");
     }
 }

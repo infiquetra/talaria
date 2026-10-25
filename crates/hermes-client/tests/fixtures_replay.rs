@@ -17,7 +17,8 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 11] = [
+const NAMES: [&str; 12] = [
+    "attachments-mention-image",
     "plain-answer",
     "tool-diff",
     "approval",
@@ -69,8 +70,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn all_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 12,
-        "expected twelve fixtures in fixtures/frames, found {}",
+        files.len() == 13,
+        "expected thirteen fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -141,7 +142,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 #[test]
 fn every_fixture_exists() {
     let fixtures = all_fixtures();
-    assert_eq!(fixtures.len(), 11);
+    assert_eq!(fixtures.len(), 12);
 }
 
 #[test]
@@ -425,6 +426,36 @@ fn scenario_evidence_present() {
                     position(&events, "subagent.complete", 0).is_some(),
                     "{name}: no subagent.complete"
                 );
+            }
+            "attachments-mention-image" => {
+                assert_eq!(
+                    completed_statuses(&events),
+                    ["complete"],
+                    "{name}: message.complete statuses"
+                );
+                let outbound: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| record["kind"] == "frame" && record["dir"] == "out")
+                    .map(|record| &record["frame"])
+                    .collect();
+                let call = |method: &str| {
+                    outbound
+                        .iter()
+                        .find(|frame| frame["method"] == method)
+                        .unwrap_or_else(|| panic!("{name}: no outbound {method}"))
+                };
+                assert_eq!(call("complete.path")["params"]["word"], "@calc", "{name}");
+                let _ = call("image.attach_bytes");
+                let submit = call("prompt.submit");
+                assert_eq!(
+                    submit["params"]["text"], "[Image #1] What colour is this image? One word.",
+                    "{name}"
+                );
+                assert!(
+                    submit["params"]["attachments"].is_array(),
+                    "{name}: prompt.submit has no attachments"
+                );
+                let _ = call("session.resume");
             }
             "queued-prompt" => {
                 let first_complete = position(&events, "message.complete", 0);

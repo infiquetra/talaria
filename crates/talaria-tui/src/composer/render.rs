@@ -65,6 +65,14 @@ impl<'a> ComposerSection<'a> {
         let mut caret_drawn = false;
         for (offset, cluster) in text[row.start..row.end].grapheme_indices(true) {
             let mut style = Style::default();
+            if composer.highlight_revision == composer.draft.revision() {
+                let start = row.start + offset;
+                for (range, highlight) in &composer.highlights {
+                    if range.start <= start && start + cluster.len() <= range.end {
+                        style = style.patch(*highlight);
+                    }
+                }
+            }
             if caret_here && row.start + offset == caret {
                 style = style.add_modifier(reversed);
                 caret_drawn = true;
@@ -79,7 +87,11 @@ impl<'a> ComposerSection<'a> {
             }
             if cluster == "\t" {
                 for space in 0..4 {
-                    let cell_style = if space == 0 { style } else { Style::default() };
+                    let cell_style = if space == 0 {
+                        style
+                    } else {
+                        style.remove_modifier(reversed)
+                    };
                     out.push((" ".to_string(), cell_style));
                 }
             } else {

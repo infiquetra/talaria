@@ -99,6 +99,17 @@ pub struct Config {
     pub theme: ThemeConfig,
     /// Interface settings from `[ui]`.
     pub ui: UiConfig,
+    /// When a paste becomes a label.
+    pub composer: ComposerConfig,
+}
+
+/// Paste collapse thresholds. Zero turns that rule off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposerConfig {
+    /// Line count that collapses a paste. The default is 5.
+    pub paste_collapse_lines: usize,
+    /// Character count that collapses a paste. The default is 2,000.
+    pub paste_collapse_chars: usize,
 }
 
 /// Status command text and how often it runs.
@@ -181,6 +192,11 @@ pub const DEFAULT_STATUS_INTERVAL_SECONDS: u64 = 5;
 
 /// Default seconds a finished turn must have run to alert.
 pub const DEFAULT_DONE_AFTER_SECONDS: u64 = 20;
+/// Default line count for paste collapse.
+pub const DEFAULT_PASTE_COLLAPSE_LINES: usize = 5;
+
+/// Default character count for paste collapse.
+pub const DEFAULT_PASTE_COLLAPSE_CHARS: usize = 2000;
 
 /// The accepted range of `status.interval_seconds`.
 const INTERVAL_RANGE: std::ops::RangeInclusive<i64> = 1..=3600;
@@ -220,6 +236,16 @@ impl Default for Config {
             ui: UiConfig {
                 reduced_motion: false,
             },
+            composer: ComposerConfig::default(),
+        }
+    }
+}
+
+impl Default for ComposerConfig {
+    fn default() -> Self {
+        Self {
+            paste_collapse_lines: DEFAULT_PASTE_COLLAPSE_LINES,
+            paste_collapse_chars: DEFAULT_PASTE_COLLAPSE_CHARS,
         }
     }
 }
@@ -262,6 +288,7 @@ pub fn parse(text: &str) -> LoadedConfig {
         "herdr",
         "theme",
         "ui",
+        "composer",
     ] {
         let Some(value) = table.get(name) else {
             continue;
@@ -278,6 +305,7 @@ pub fn parse(text: &str) -> LoadedConfig {
             "environment" => config.environment = read_environment(section, &mut notices),
             "theme" => config.theme = read_theme(section, &mut notices),
             "ui" => config.ui = read_ui(section, &mut notices),
+            "composer" => config.composer = read_composer(section, &mut notices),
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
@@ -293,6 +321,7 @@ pub fn parse(text: &str) -> LoadedConfig {
                 | "herdr"
                 | "theme"
                 | "ui"
+                | "composer"
         ) {
             continue;
         }
@@ -463,6 +492,34 @@ fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
         }
     }
     ui
+}
+
+fn read_composer(section: &Table, notices: &mut Vec<String>) -> ComposerConfig {
+    let mut composer = ComposerConfig::default();
+    for (name, value) in section {
+        let fallback = match name.as_str() {
+            "paste_collapse_lines" => DEFAULT_PASTE_COLLAPSE_LINES,
+            "paste_collapse_chars" => DEFAULT_PASTE_COLLAPSE_CHARS,
+            _ => {
+                notices.push(unknown_setting("composer", name));
+                continue;
+            }
+        };
+        match value.as_integer() {
+            Some(number) if number >= 0 => {
+                let count = usize::try_from(number).unwrap_or(fallback);
+                if name == "paste_collapse_lines" {
+                    composer.paste_collapse_lines = count;
+                } else {
+                    composer.paste_collapse_chars = count;
+                }
+            }
+            _ => notices.push(format!(
+                "composer.{name} in {FILE} must be a non-negative whole number; using {fallback}."
+            )),
+        }
+    }
+    composer
 }
 
 fn unknown_setting(table: &str, key: &str) -> String {
@@ -671,6 +728,37 @@ mod tests {
         );
         assert_eq!(loaded.config.status.interval_seconds, 5);
         assert!(loaded.config.environment.allowlist.is_empty());
+    }
+
+    #[test]
+    fn composer_bad_value_uses_the_default() {
+        let lines = "composer.paste_collapse_lines in ~/.talaria/config.toml must be a \
+                     non-negative whole number; using 5.";
+        let chars = "composer.paste_collapse_chars in ~/.talaria/config.toml must be a \
+                     non-negative whole number; using 2000.";
+        for text in [
+            "[composer]\npaste_collapse_lines = -1\n",
+            "[composer]\npaste_collapse_lines = 1.5\n",
+            "[composer]\npaste_collapse_lines = \"x\"\n",
+        ] {
+            let loaded = parse(text);
+            assert_eq!(loaded.notices, vec![lines.to_string()], "{text}");
+            assert_eq!(loaded.config.composer.paste_collapse_lines, 5);
+        }
+        let loaded = parse("[composer]\npaste_collapse_chars = -1\ncolour = 1\n");
+        assert_eq!(
+            loaded.notices,
+            vec![
+                "Ignoring composer.colour in ~/.talaria/config.toml: it is not a known setting."
+                    .to_string(),
+                chars.to_string(),
+            ]
+        );
+        assert_eq!(loaded.config.composer.paste_collapse_chars, 2000);
+        let loaded = parse("[composer]\npaste_collapse_lines = 0\npaste_collapse_chars = 0\n");
+        assert!(loaded.notices.is_empty());
+        assert_eq!(loaded.config.composer.paste_collapse_lines, 0);
+        assert_eq!(loaded.config.composer.paste_collapse_chars, 0);
     }
 
     #[test]

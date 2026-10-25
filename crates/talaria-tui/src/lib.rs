@@ -9,6 +9,7 @@ pub mod history_search;
 pub mod keys;
 pub mod live;
 pub mod markdown;
+pub mod mention;
 pub mod model_picker;
 pub mod palette;
 pub mod prompts;

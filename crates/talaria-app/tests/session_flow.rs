@@ -1699,6 +1699,7 @@ async fn enter_during_a_running_turn_sends_prompt_submit() {
             session_id: SessionId::new("local-session-1"),
             text: "and then".to_string(),
             submission_id: "talaria-0123456789abcdef-1".to_string(),
+            attachments: Vec::new(),
         }
     );
     assert_eq!(
