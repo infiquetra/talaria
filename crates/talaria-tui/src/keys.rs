@@ -9,6 +9,8 @@ use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
 pub enum KeyContext {
     /// The draft box at the bottom of the screen.
     Composer,
+    /// An open completion list: the slash palette or the `@` list. Issue #223.
+    Completion,
 }
 
 /// One composer command a key chord can run.
@@ -34,11 +36,46 @@ pub enum Action {
     KillToLineEnd,
     KillToLineStart,
     Yank,
+    /// Next row in an open completion list.
+    CompletionNext,
+    /// Previous row in an open completion list.
+    CompletionPrev,
+    /// Accept the selected completion.
+    CompletionAccept,
+    /// Close the open completion list.
+    CompletionClose,
+}
+
+/// What a key does in an open completion list: the slash palette or the `@` list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionAction {
+    /// Select the next row.
+    Next,
+    /// Select the previous row.
+    Prev,
+    /// Accept the selected row.
+    Accept,
+    /// Close the list.
+    Close,
+}
+
+impl CompletionAction {
+    /// The completion meaning of a key-map action, for the four completion actions.
+    #[must_use]
+    pub const fn from_action(action: Action) -> Option<Self> {
+        match action {
+            Action::CompletionNext => Some(Self::Next),
+            Action::CompletionPrev => Some(Self::Prev),
+            Action::CompletionAccept => Some(Self::Accept),
+            Action::CompletionClose => Some(Self::Close),
+            _ => None,
+        }
+    }
 }
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 24] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -59,6 +96,10 @@ impl Action {
         Self::KillToLineEnd,
         Self::KillToLineStart,
         Self::Yank,
+        Self::CompletionNext,
+        Self::CompletionPrev,
+        Self::CompletionAccept,
+        Self::CompletionClose,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -85,6 +126,10 @@ impl Action {
             Self::KillToLineEnd => "kill_to_line_end",
             Self::KillToLineStart => "kill_to_line_start",
             Self::Yank => "yank",
+            Self::CompletionNext => "completion_next",
+            Self::CompletionPrev => "completion_prev",
+            Self::CompletionAccept => "completion_accept",
+            Self::CompletionClose => "completion_close",
         }
     }
 
@@ -99,7 +144,13 @@ impl Action {
     /// The screen this action belongs to.
     #[must_use]
     pub const fn context(self) -> KeyContext {
-        KeyContext::Composer
+        match self {
+            Self::CompletionNext
+            | Self::CompletionPrev
+            | Self::CompletionAccept
+            | Self::CompletionClose => KeyContext::Completion,
+            _ => KeyContext::Composer,
+        }
     }
 
     /// Position in [`Self::ALL`].
@@ -130,6 +181,10 @@ impl Action {
             Self::KillToLineEnd => &["ctrl+k"],
             Self::KillToLineStart => &["ctrl+u"],
             Self::Yank => &["ctrl+y"],
+            Self::CompletionNext => &["down", "ctrl+n"],
+            Self::CompletionPrev => &["up", "ctrl+p"],
+            Self::CompletionAccept => &["tab"],
+            Self::CompletionClose => &["esc"],
         }
     }
 }
@@ -576,6 +631,18 @@ impl KeyMap {
         lost.into_iter().map(|(_, notice)| notice).collect()
     }
 
+    /// The completion-list action bound to this key, if any. Only the four actions of
+    /// [`KeyContext::Completion`] are looked at, so a chord shared with the composer still
+    /// reaches the list while it is open.
+    #[must_use]
+    pub fn completion(&self, key: &Key) -> Option<CompletionAction> {
+        Action::ALL
+            .into_iter()
+            .filter(|action| action.context() == KeyContext::Completion)
+            .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
+            .and_then(CompletionAction::from_action)
+    }
+
     /// The action bound to this key, if any.
     #[must_use]
     pub fn resolve(&self, key: &Key) -> Option<Action> {
@@ -715,9 +782,16 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 20);
+        assert_eq!(Action::ALL.len(), 24);
         for action in Action::ALL {
-            assert_eq!(action.context(), KeyContext::Composer);
+            let context = match action {
+                Action::CompletionNext
+                | Action::CompletionPrev
+                | Action::CompletionAccept
+                | Action::CompletionClose => KeyContext::Completion,
+                _ => KeyContext::Composer,
+            };
+            assert_eq!(action.context(), context);
             let name = action.config_name();
             assert_eq!(Action::from_config_name(name), Some(action));
         }
@@ -745,6 +819,10 @@ mod tests {
             (Action::KillToLineEnd, vec!["Ctrl+K"]),
             (Action::KillToLineStart, vec!["Ctrl+U"]),
             (Action::Yank, vec!["Ctrl+Y"]),
+            (Action::CompletionNext, vec!["Down", "Ctrl+N"]),
+            (Action::CompletionPrev, vec!["Up", "Ctrl+P"]),
+            (Action::CompletionAccept, vec!["Tab"]),
+            (Action::CompletionClose, vec!["Esc"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -760,7 +838,10 @@ mod tests {
                     "{label} is bound to {}",
                     action.config_name()
                 );
-                if let Some((_, other)) = seen.iter().find(|(held, _)| held == chord) {
+                if let Some((_, other)) = seen
+                    .iter()
+                    .find(|(held, other)| held == chord && other.context() == action.context())
+                {
                     panic!(
                         "{} shares {label} with {}",
                         action.config_name(),

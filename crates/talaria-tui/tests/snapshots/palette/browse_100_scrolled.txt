@@ -1,0 +1,10 @@
+  /resume           Resume a session (usage: /resume <id>)                                   hermes
+  /title            Set the title (usage: /title <text>)                                     hermes
+  Info
+  /help             Show available commands (usage: /help [filter])                          hermes
+  /version          Show the Hermes version                                                  hermes
+  /plan             Plan a task (usage: /plan <task>)                                        hermes
+  /usage            Show token usage                                                         hermes
+  Skills
+  /fixture-skill-1  Fixture skill 1                                                   skill · local
+↑↓ choose · Tab complete · Enter run · Esc close                                            12 of 12

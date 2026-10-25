@@ -1,0 +1,10 @@
+  Talaria
+  /quit             Leave Talaria; the session keeps running in Hermes                                                                                  talaria
+  Session
+  /new              Start a new session (usage: /new [name])                                                                                             hermes
+  /branch           Show the git branch (usage: /branch)                                                                                                 hermes
+  /resume           Resume a session (usage: /resume <id>)                                                                                               hermes
+  /title            Set the title (usage: /title <text>)                                                                                                 hermes
+  Info
+  /help             Show available commands (usage: /help [filter])                                                                                      hermes
+↑↓ choose · Tab complete · Enter run · Esc close                                                                                                        12 of 12

@@ -33,7 +33,7 @@ enum Command {
     Record {
         #[arg(long, default_value = "fixtures/frames")]
         out: PathBuf,
-        /// Record only these scenarios (repeatable). Default: all seven.
+        /// Record only these scenarios (repeatable). Default: every named scenario.
         #[arg(long)]
         scenario: Vec<String>,
         /// The Hermes home. Default: the one Talaria would use.

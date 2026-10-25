@@ -1966,42 +1966,8 @@ async fn interrupt_with_open_approval_denies_first() {
 async fn other_slash_lines_are_not_sent() {
     assert_eq!(slash_line("/quit"), Slash::Quit);
     assert_eq!(slash_line("/quit "), Slash::Quit);
-    match slash_line("/help") {
-        Slash::Notice(text) => {
-            assert!(text.contains("Only /quit works in this version."));
-        }
-        other => panic!("{other:?}"),
-    }
-    assert_eq!(slash_line(" /quit"), Slash::NotSlash);
-    assert_eq!(slash_line("/"), Slash::NotSlash);
-    assert_eq!(slash_line("//path"), Slash::NotSlash);
 
-    let rig = in_process().await;
-    let opened = rig.open(new_request()).await.expect("created");
-    let mut app = AppState::new(LAUNCH_ID);
-    opened_effects(&mut app, opened);
-
-    // `/help` sends nothing, shows the notice, and puts the text back.
-    let effects = submit(&mut app, "/help");
-    assert!(sent_prompts(&effects).is_empty());
-    assert!(
-        committed_lines(&effects)
-            .iter()
-            .any(|line| line.contains("Only /quit works in this version. To send text that starts with a slash, put a space before it."))
-    );
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, AppEffect::LoadDraft(text) if text == "/help"))
-    );
-    assert!(!app.quitting);
-
-    // A leading space makes it ordinary text, sent exactly as typed.
-    let effects = submit(&mut app, " /help");
-    assert_eq!(sent_prompts(&effects).len(), 1);
-    assert_eq!(sent_prompts(&effects)[0].0, " /help");
-
-    // `/quit`, with or without trailing space, quits.
+    // `/quit`, with or without trailing space, quits and sends nothing.
     for text in ["/quit", "/quit "] {
         let mut app = AppState::new(LAUNCH_ID);
         let effects = submit(&mut app, text);

@@ -1,0 +1,2 @@
+  usage: /plan <task>
+↑↓ choose · Tab complete · Enter run · Esc close                         0 of 12

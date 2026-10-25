@@ -1,0 +1,3 @@
+  Talaria
+  /quit  Leave Talaria; the session keeps running in Hermes             talaria
+completion unavailable: gateway timed out

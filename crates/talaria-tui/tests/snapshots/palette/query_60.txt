@@ -1,0 +1,4 @@
+  /plan             Plan a task (usage: /plan <task>)
+  /plan-fast        A faster plan (usage: /plan-fast <task>)
+  /fixture-skill-1  Fixture skill 1
+↑↓ choose · Tab complete · Enter run · Esc close     3 of 12

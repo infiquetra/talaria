@@ -1,0 +1,2 @@
+  /worktree  Open a fresh worktree                           not available here
+↑↓ choose · Tab complete · Enter run · Esc close                         1 of 12

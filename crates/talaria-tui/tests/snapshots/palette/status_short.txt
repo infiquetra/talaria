@@ -1,0 +1,3 @@
+  Talaria
+  /quit             Leave Talaria; the session keeps running in Hermes  talaria
+↑↓ choose · Tab complete · Enter run · Esc close                        12 of 12

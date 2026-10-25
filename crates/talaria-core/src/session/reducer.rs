@@ -108,6 +108,33 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
             state.interrupted = false;
             Vec::new()
         }
+        Event::SubmitCommand {
+            text,
+            display,
+            submission_id,
+        } => {
+            if text.trim().is_empty() {
+                return Vec::new();
+            }
+            let placed = state.turn != TurnState::Running && state.submissions.is_empty();
+            if placed {
+                state.user(display.clone());
+            }
+            state.submissions.push_back(super::state::Submission {
+                id: submission_id.clone(),
+                text: text.clone(),
+                placed,
+            });
+            vec![Effect::SendPrompt {
+                session_id: state.session_id.clone(),
+                text: text.clone(),
+                submission_id: submission_id.clone(),
+            }]
+        }
+        Event::Notice { kind, text } => {
+            state.notice(*kind, text.clone(), None);
+            Vec::new()
+        }
         _ => super::prompts::apply(state, &event),
     };
     state.advance_prefix();

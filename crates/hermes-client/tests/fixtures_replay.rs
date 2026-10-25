@@ -1,10 +1,9 @@
-//! Test row 13: the seven live-recorded fixtures under `fixtures/frames/` exist, replay
-//! in order through the shared decode function, and carry the evidence each scenario promises
-//! (spec section 8.4).
+//! The fixtures under `fixtures/frames/` exist, replay in order through the shared decode
+//! function, and carry the evidence each scenario promises.
 //!
-//! These tests read the real files. They are red until the fixtures exist, with the message
-//! `expected seven fixtures in fixtures/frames, found N`. A failure names the fixture and the
-//! rule, never the content of a frame.
+//! These tests read the real files. They fail with the message
+//! `expected eight fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! names the fixture and the rule, never the content of a frame.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,7 +16,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 7] = [
+const NAMES: [&str; 8] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -25,6 +24,7 @@ const NAMES: [&str; 7] = [
     "interrupted",
     "subagent-batch",
     "queued-prompt",
+    "slash-palette",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -57,14 +57,14 @@ fn jsonl_files() -> Vec<PathBuf> {
     files
 }
 
-/// Asserts the seven fixtures exist, then returns `(name, path)` for each, in the order of
+/// Asserts the eight fixtures exist, then returns `(name, path)` for each, in the order of
 /// `NAMES`. Every test in this file starts here so that none of them can index into a missing
 /// file.
 fn seven_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 7,
-        "expected seven fixtures in fixtures/frames, found {}",
+        files.len() == 8,
+        "expected eight fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -135,7 +135,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 #[test]
 fn seven_fixtures_exist() {
     let fixtures = seven_fixtures();
-    assert_eq!(fixtures.len(), 7);
+    assert_eq!(fixtures.len(), 8);
 }
 
 #[test]
@@ -308,6 +308,53 @@ async fn each_replays_recorded_inbound_sequence() {
     }
 }
 
+/// Issue #223: a catalogue with a skill, two completion replies, five slash replies, and a
+/// finished turn. Requests are matched to replies in file order because a later call can reuse
+/// an earlier JSON-RPC id.
+fn slash_palette_evidence(name: &str, records: &[Value], events: &[(String, Value)]) {
+    let catalog = records.iter().any(|record| {
+        record["dir"] == "in"
+            && record["frame"]["result"]["skills"]
+                .as_object()
+                .is_some_and(|skills| !skills.is_empty())
+    });
+    assert!(catalog, "{name}: no commands.catalog result with a skill");
+    let mut method_for: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    let mut complete = 0;
+    let mut exec = 0;
+    for record in records {
+        let frame = &record["frame"];
+        let Some(id) = frame["id"].as_i64() else {
+            continue;
+        };
+        if record["dir"] == "out" {
+            if let Some(method) = frame["method"].as_str() {
+                method_for.insert(id, method.to_owned());
+            }
+        } else if record["dir"] == "in" {
+            let Some(method) = method_for.get(&id) else {
+                continue;
+            };
+            let replied = frame.get("result").is_some() || frame.get("error").is_some();
+            if !replied {
+                continue;
+            }
+            if method == "complete.slash" && frame["result"]["items"].is_array() {
+                complete += 1;
+            }
+            if method == "slash.exec" {
+                exec += 1;
+            }
+        }
+    }
+    assert_eq!(complete, 2, "{name}: complete.slash results");
+    assert_eq!(exec, 5, "{name}: slash.exec replies");
+    assert!(
+        events.iter().any(|(kind, _)| kind == "message.complete"),
+        "{name}: no message.complete"
+    );
+}
+
 #[test]
 fn scenario_evidence_present() {
     for (name, path) in seven_fixtures() {
@@ -391,6 +438,7 @@ fn scenario_evidence_present() {
                     "{name}: message.complete statuses"
                 );
             }
+            "slash-palette" => slash_palette_evidence(name, &records, &events),
             other => panic!("unlisted fixture {other}"),
         }
     }

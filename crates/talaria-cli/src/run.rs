@@ -19,16 +19,18 @@ use talaria_app::connection::OpenConnection;
 use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
+use talaria_core::commands::PaletteInput;
 use talaria_core::session::{
     AssistantCell, Cell, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
 use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome};
 use talaria_tui::history::CellLines;
-use talaria_tui::keys::{Key, KeyMap};
+use talaria_tui::keys::{CompletionAction, Key, KeyKind, KeyMap};
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
 use talaria_tui::markdown::MarkdownTheme;
 use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
+use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::status::{
     CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay, SessionRef,
@@ -73,6 +75,12 @@ pub struct TuiScreen {
     cells: MarkdownCellLines,
     sender: mpsc::UnboundedSender<ScreenInput>,
     connecting: bool,
+    /// The key map, for the keys of an open completion list.
+    keys: KeyMap,
+    /// The draft and caret last reported to the loop.
+    reported: (String, usize),
+    /// Terminal rows, for the palette's height cap.
+    rows: u16,
 }
 
 fn masked_method(kind: MaskedKind) -> &'static str {
@@ -227,6 +235,27 @@ impl TuiScreen {
         Some(actions)
     }
 
+    /// Tell the loop when the draft or the caret moved, so the slash palette follows it. A
+    /// submitted draft is not reported: the loop knows the composer took it.
+    fn report_draft(&mut self, actions: &mut Vec<UserAction>) {
+        if actions
+            .iter()
+            .any(|action| matches!(action, UserAction::Submit(_)))
+        {
+            self.reported = (String::new(), 0);
+            return;
+        }
+        let now = (self.composer.text(), self.composer.caret());
+        if (self.reported.0.as_str(), self.reported.1) == now {
+            return;
+        }
+        self.reported = (now.0.to_owned(), now.1);
+        actions.push(UserAction::Palette(PaletteInput::DraftChanged {
+            text: self.reported.0.clone(),
+            caret: self.reported.1,
+        }));
+    }
+
     fn composer_action(outcome: ComposerOutcome) -> Vec<UserAction> {
         match outcome {
             ComposerOutcome::Submit(text) => vec![UserAction::Submit(text)],
@@ -249,18 +278,36 @@ impl TuiScreen {
                 if let Some(actions) = Self::prompt_actions(self.prompts.handle_key(key, now)) {
                     return actions;
                 }
+                // An open completion list takes its four keys before the composer does.
+                if view.palette.open
+                    && key.kind != KeyKind::Release
+                    && let Some(action) = self.keys.completion(&key)
+                {
+                    let input = match action {
+                        CompletionAction::Next => PaletteInput::Next,
+                        CompletionAction::Prev => PaletteInput::Prev,
+                        CompletionAction::Accept => PaletteInput::Accept,
+                        CompletionAction::Close => PaletteInput::Close,
+                    };
+                    return vec![UserAction::Palette(input)];
+                }
                 let ctx = ComposerContext {
                     turn_running: view.turn_running(),
                 };
-                Self::composer_action(self.composer.handle_key(key, ctx, now))
+                let mut actions = Self::composer_action(self.composer.handle_key(key, ctx, now));
+                self.report_draft(&mut actions);
+                actions
             }
             Event::Paste(text) => {
                 if let Some(actions) = Self::prompt_actions(self.prompts.handle_paste(&text, now)) {
                     return actions;
                 }
-                Self::composer_action(self.composer.handle_paste(&text))
+                let mut actions = Self::composer_action(self.composer.handle_paste(&text));
+                self.report_draft(&mut actions);
+                actions
             }
             Event::Resize(cols, rows) => {
+                self.rows = rows;
                 let _ = self.terminal.resize(cols, rows);
                 Vec::new()
             }
@@ -354,6 +401,7 @@ impl Screen for TuiScreen {
         let connecting = PlainTextSection::new(CONNECTING);
         let status = StatusSection::new(&self.inputs, self.external.segment(), &self.palette);
         let prompts = self.prompts.section();
+        let palette = PaletteSection::new(view.palette, self.rows);
         let composer = self.composer.section(width, COMPOSER_ROWS);
         let mut sections: Vec<&dyn LiveSection> = vec![&tail];
         if let Some(prompts) = &prompts {
@@ -363,6 +411,7 @@ impl Screen for TuiScreen {
             sections.push(&connecting);
         }
         sections.push(&composer);
+        sections.push(&palette);
         sections.push(&status);
         let _ = self.terminal.draw_live(&LiveView { sections });
     }
@@ -379,6 +428,7 @@ impl Screen for TuiScreen {
 
     fn load_draft(&mut self, text: &str) {
         self.composer.load(text.to_string());
+        self.reported = (self.composer.text().to_owned(), self.composer.caret());
     }
 
     fn restore(&mut self) {
@@ -545,6 +595,7 @@ fn session(
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
     let (sender, receiver) = mpsc::unbounded_channel();
+    let keys = keymap.clone();
     let mut composer = Composer::new(keymap);
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     let mut screen = TuiScreen {
@@ -561,6 +612,9 @@ fn session(
         cells: MarkdownCellLines::new(true, MarkdownTheme::default()),
         sender: sender.clone(),
         connecting: true,
+        keys,
+        reported: (String::new(), 0),
+        rows: size.1,
     };
     let input: Option<InputThread> =
         spawn_input(move |event| sender.send(ScreenInput::Terminal(event)).is_ok());
