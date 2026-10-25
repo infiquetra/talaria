@@ -572,10 +572,12 @@ impl AppState {
     #[must_use]
     pub fn new(launch_id: impl Into<String>) -> Self {
         let launch_id = launch_id.into();
+        // Hermes keeps receipts by request id for the whole session, so each ledger numbers
+        // its requests under its own prefix: a rename and a model pick never share an id.
         let ledger = MutationLedger::new(&launch_id);
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
-            models: ModelsState::new(&launch_id, Ok(SavedModels::empty())),
+            models: ModelsState::new(&format!("{launch_id}-model"), Ok(SavedModels::empty())),
             model_service: None,
             model_notice_counter: 0,
             model_warnings: BTreeSet::new(),
@@ -1462,6 +1464,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         .as_ref()
         .map(|o| (o.session_id.clone(), o.title.clone()));
     let restored = matches!(&message, AppMessage::Opened { .. });
+    let settled = mutation_session(&message);
     let mut redraw = match &message {
         AppMessage::PromptDone { events, notices, masked } => {
             !notices.is_empty() || masked.is_some() || events.iter().any(|event| {
@@ -1627,6 +1630,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             redact,
         } => exported(state, result, format, redact),
     };
+    if let Some(session_id) = settled {
+        share_fences(state, &session_id);
+    }
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
     }
@@ -2012,14 +2018,67 @@ fn route(
     effects
 }
 
+/// The session a mutation reply answers for, so its fences reach every ledger once it settles.
+fn mutation_session(message: &AppMessage) -> Option<String> {
+    let request = match message {
+        AppMessage::Mutated { request, .. }
+        | AppMessage::BranchSent { request, .. }
+        | AppMessage::RowRenamed { request, .. }
+        | AppMessage::CompactDone { request, .. }
+        | AppMessage::Cd(CdInput::Outcome { request, .. })
+        | AppMessage::Models(ModelsInput::MutationReturned { request, .. }) => request,
+        _ => return None,
+    };
+    Some(request.session_id.clone())
+}
+
+/// The ledgers of session actions, folder moves and model picks fence the same session. What
+/// one learns from a reply the others adopt, so a change sent right after another kind of
+/// change presents the newer fences instead of being refused and sent again. Session events
+/// already reach all three; a reply can arrive before its event.
+fn share_fences(state: &mut AppState, session_id: &str) {
+    let learned = [
+        state.ledger.fences(session_id),
+        state.cd_ledger.fences(session_id),
+        state.models.fences(session_id),
+    ];
+    for fences in learned {
+        state
+            .ledger
+            .fences_mut(session_id)
+            .adopt(fences.revision, fences.execution_generation);
+        state
+            .cd_ledger
+            .fences_mut(session_id)
+            .adopt(fences.revision, fences.execution_generation);
+        state.models.adopt_fences(session_id, fences);
+    }
+}
+
 /// Feed the permissions reducer and turn its effects into executor effects. Before the first
 /// session opens there is no permissions state, and inputs change nothing.
+///
+/// The session bypass is the value `/yolo` sets, so a reply that wrote or read it also reads
+/// the standing yolo mode again, as a finished `/yolo` does. A call that was never sent changed
+/// nothing, so it reads nothing.
 fn permissions(state: &mut AppState, input: PermissionsInput) -> Vec<AppEffect> {
     let label = state.toggle_label.clone();
+    let bypass = match &input {
+        PermissionsInput::SessionOffSet {
+            session_id, result, ..
+        }
+        | PermissionsInput::SessionOffRead {
+            session_id, result, ..
+        } => Some((
+            session_id.clone(),
+            !matches!(result, Err(PermissionsFailure::NotSent)),
+        )),
+        _ => None,
+    };
     let Some(permissions) = state.permissions.as_mut() else {
         return Vec::new();
     };
-    permissions
+    let mut effects: Vec<AppEffect> = permissions
         .update(input, label.as_deref())
         .into_iter()
         .filter_map(|effect| match effect {
@@ -2037,7 +2096,22 @@ fn permissions(state: &mut AppState, input: PermissionsInput) -> Vec<AppEffect> 
             PermissionsEffect::Redraw => None,
             effect => Some(AppEffect::Permissions(effect)),
         })
-        .collect()
+        .collect();
+    if let Some((session_id, sent)) = bypass {
+        effects.extend(automation_event(
+            state,
+            AutomationEvent::CommandFinished {
+                session_id,
+                canonical: "yolo".to_string(),
+                result: if sent {
+                    CommandResult::Output
+                } else {
+                    CommandResult::NotRun
+                },
+            },
+        ));
+    }
+    effects
 }
 
 /// `/permissions`: a parsed command goes to the reducer; anything else prints the usage line.
@@ -6532,7 +6606,10 @@ pub async fn run<S: Screen>(
     mut inputs: mpsc::UnboundedReceiver<S::Input>,
 ) -> Outcome {
     let mut state = AppState::new(setup.launch_id.clone());
-    state.models = ModelsState::new(&setup.launch_id, crate::config::load_models());
+    state.models = ModelsState::new(
+        &format!("{}-model", setup.launch_id),
+        crate::config::load_models(),
+    );
     state
         .models
         .set_display_zone(crate::config::model_display_zone());

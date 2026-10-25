@@ -107,6 +107,13 @@ pub fn bind_stale(path: &Path, mode: u32) {
         panic!("stale socket setup failed");
     }
     set_mode(path, mode);
+    // A child spawned by another test thread can still hold the listener until its exec closes it.
+    for _ in 0..200 {
+        if std::os::unix::net::UnixStream::connect(path).is_err() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 pub struct DeleteOnDrop(pub PathBuf);

@@ -343,7 +343,10 @@ async fn live_session_bypass_and_move() {
         .await
         .expect("the mode rereads");
     let value = mode.get("value").cloned().unwrap_or(Value::Null);
-    println!("LIVE_PERMISSIONS_PROFILE_MODE: {value}");
+    println!(
+        "LIVE_PERMISSIONS_PROFILE_MODE: {}",
+        value.as_str().unwrap_or_default()
+    );
     assert_eq!(value, Value::String("manual".to_owned()));
     client.close().await;
 

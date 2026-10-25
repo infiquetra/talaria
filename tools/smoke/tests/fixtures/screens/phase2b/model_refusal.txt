@@ -1,0 +1,1 @@
+· Hermes could not switch to no-such-model-xyz: it does not know that model on Ollama Cloud, or the provider is not set up. Nothing changed.

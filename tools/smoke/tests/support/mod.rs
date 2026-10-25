@@ -35,8 +35,12 @@ pub mod paster2a;
 
 pub use paster2a::{FakePaster, PasterCall, PasterRecorded};
 
+#[path = "scratch2b.rs"]
+pub mod scratch2b;
 #[path = "scripts2a.rs"]
 pub mod scripts2a;
+#[path = "scripts2b.rs"]
+pub mod scripts2b;
 
 #[path = "tmux_fake.rs"]
 pub mod tmux_fake;
@@ -116,6 +120,14 @@ impl StageBuilder {
     /// Writes the file under the pane's working folder (`{path, text}`).
     pub fn write_in_cwd(self, path: &str, text: &str) -> Self {
         self.set("write_in_cwd", json!({"path": path, "text": text}))
+    }
+
+    /// Writes the file under the pane's working folder and sets its mode (`{path, text, mode}`).
+    pub fn write_in_cwd_with_mode(self, path: &str, text: &str, mode: u32) -> Self {
+        self.set(
+            "write_in_cwd",
+            json!({"path": path, "text": text, "mode": mode}),
+        )
     }
 
     /// The text `pane get` reports from now on.
@@ -225,6 +237,11 @@ impl RuleBuilder {
 
     pub fn write_in_cwd(mut self, path: &str, text: &str) -> Self {
         self.stage = self.stage.write_in_cwd(path, text);
+        self
+    }
+
+    pub fn write_in_cwd_with_mode(mut self, path: &str, text: &str, mode: u32) -> Self {
+        self.stage = self.stage.write_in_cwd_with_mode(path, text, mode);
         self
     }
 

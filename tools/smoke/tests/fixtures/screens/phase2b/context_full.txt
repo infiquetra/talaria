@@ -1,0 +1,16 @@
+/context
+Context · minimax-m3.1-flash · 13,395 / 1,000,000 tokens (1%)
+■ ▣ ▦ ▨ · · · · · · · · · · · · · · · ·
+· · · · · · · · · · · · · · · · · · · ·
+· · · · · · · · · · · · · · · · · · · ·
+· · · · · · · · · · · · · · · · · · · ·
+· · · · · · · · · · · · · · · · · · · ·
+Estimated usage by category
+■ System prompt           ~3,598 tokens   0.4%
+▣ Tool definitions        ~9,202 tokens   0.9%
+▦ Subagent definitions    ~1,166 tokens   0.1%
+▨ Conversation              ~255 tokens   0.0%
+· Free space            ~985,779 tokens  98.6%
+Source: provider usage; category counts are local estimates.
+Context files
+  ✓ SOUL.md  ~274 tokens

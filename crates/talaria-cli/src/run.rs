@@ -520,7 +520,8 @@ impl Look {
 }
 
 /// The tool cell renderer for a theme: tool rows in the theme's tool styles, other cells plain.
-fn tool_cells(theme: &Theme) -> ToolCellLines {
+/// A cut preview names the key that opens the transcript, when one is bound.
+fn tool_cells(theme: &Theme, keymap: &KeyMap) -> ToolCellLines {
     ToolCellLines::new(
         Box::new(MarkdownCellLines::new(true, MarkdownTheme::default())),
         ToolRenderOptions {
@@ -528,7 +529,9 @@ fn tool_cells(theme: &Theme) -> ToolCellLines {
             theme: theme.tool.clone(),
             color: theme.color,
             detail: Detail::Compact,
-            expand_hint: None,
+            expand_hint: keymap
+                .label(Action::TranscriptOpen)
+                .map(|label| format!("{label} to view")),
             elapsed: None,
         },
     )
@@ -552,6 +555,37 @@ impl CellLines for CapturedCells<'_> {
             .map_or(self.current, |theme| theme.as_ref());
         ThemedCells { theme }.lines(cell, width)
     }
+}
+
+/// Load a history entry into the composer and report it as a recall, so the paste placeholders
+/// it holds get their text back.
+fn recall_draft(
+    composer: &mut Composer,
+    reported: &mut (String, usize),
+    text: String,
+    now: Instant,
+) -> UserAction {
+    composer.load(text);
+    *reported = (composer.text().to_owned(), composer.caret());
+    UserAction::DraftEdited {
+        text: reported.0.clone(),
+        caret: reported.1,
+        typed: false,
+        recalled: true,
+        now,
+    }
+}
+
+/// The draft once no burst is held back. The caller passes it to the loop, so it also becomes
+/// the reported draft and the next key does not report it again.
+fn reported_snapshot(
+    composer: &Composer,
+    reported: &mut (String, usize),
+) -> Option<(String, usize)> {
+    let snapshot = (!composer.is_collecting_burst())
+        .then(|| (composer.text().to_string(), composer.caret()))?;
+    reported.clone_from(&snapshot);
+    Some(snapshot)
 }
 
 fn flush_draft_actions(composer: &mut Composer, now: Instant) -> Vec<UserAction> {
@@ -883,7 +917,7 @@ impl TuiScreen {
         };
         self.composer.set_style(theme.composer);
         self.palette = theme.status;
-        self.cells = tool_cells(&theme);
+        self.cells = tool_cells(&theme, &self.keymap);
         self.tool_theme = theme.tool.clone();
         self.theme = Arc::new(theme);
     }
@@ -1184,16 +1218,18 @@ impl TuiScreen {
                         .collect();
                 }
                 if let Some(search) = &mut self.search {
+                    let mut actions = Vec::new();
+                    Self::close_palette(&mut actions);
                     match search.handle_key(key, std::time::SystemTime::now()) {
                         SearchOutcome::Accept(text) => {
-                            self.composer.load(text);
                             self.search = None;
+                            let recalled =
+                                recall_draft(&mut self.composer, &mut self.reported, text, now);
+                            actions.insert(0, recalled);
                         }
                         SearchOutcome::Cancel => self.search = None,
                         _ => {}
                     }
-                    let mut actions = Vec::new();
-                    Self::close_palette(&mut actions);
                     return actions;
                 }
                 if self.opens_transcript(&key) {
@@ -1576,6 +1612,8 @@ impl TuiScreen {
 impl ComposerDeadline for TuiScreen {
     fn tick(&mut self, now: Instant) {
         let _ = self.composer.tick(now);
+        // The loop reads the draft a flushed burst left right after this tick.
+        let _ = reported_snapshot(&self.composer, &mut self.reported);
         self.sync_title();
     }
 
@@ -1976,7 +2014,7 @@ impl Screen for TuiScreen {
 
     fn edit_draft(&mut self, range: std::ops::Range<usize>, text: &str) -> Option<(String, usize)> {
         self.composer.replace_range(range, text);
-        self.draft_snapshot()
+        reported_snapshot(&self.composer, &mut self.reported)
     }
 
     fn draft_snapshot(&self) -> Option<(String, usize)> {
@@ -1986,7 +2024,7 @@ impl Screen for TuiScreen {
 
     fn flush_draft(&mut self) -> Option<(String, usize)> {
         self.composer.flush_pending();
-        self.draft_snapshot()
+        reported_snapshot(&self.composer, &mut self.reported)
     }
 
     fn sync_attachments(&mut self, view: AttachmentView) {
@@ -2422,7 +2460,7 @@ fn session(
             ..StatusInputs::default()
         },
         palette: theme.status,
-        cells: tool_cells(&theme),
+        cells: tool_cells(&theme, &keymap),
         clock: ToolClock::new(),
         tool_theme: theme.tool.clone(),
         look,
@@ -2546,10 +2584,12 @@ fn unix_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        TuiScreen, attachment_key, composer_key_actions, confirmation_key, paste_actions,
-        picker_key, preview_text, should_record_submission, sync_reported_draft,
+        CellLines, TuiScreen, attachment_key, composer_key_actions, confirmation_key,
+        paste_actions, picker_key, preview_text, recall_draft, reported_snapshot,
+        should_record_submission, sync_reported_draft, tool_cells,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use serde_json::json;
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
     use talaria_app::app::AttachmentView;
@@ -2557,9 +2597,14 @@ mod tests {
     use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
     use talaria_core::attachments::MentionView;
     use talaria_core::models::{ConfirmKey, PickerKey};
+    use talaria_core::session::{Cell, CellId, ToolCell, ToolStatus};
     use talaria_tui::composer::{Composer, ComposerContext};
     use talaria_tui::keys::{Key, KeyMap};
     use talaria_tui::markdown::{MarkdownOptions, render_markdown};
+    use talaria_tui::theme::{
+        ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors,
+        ThemeInputs,
+    };
 
     #[test]
     fn rejected_side_submissions_stay_out_of_persistent_history() {
@@ -2836,5 +2881,167 @@ mod tests {
         assert_eq!(*caret, 3);
         composer.replace_range(*caret..*caret, text);
         assert_eq!(composer.text(), "abcP");
+    }
+    /// A finished shell call with ten output lines, so its compact preview is cut.
+    fn ten_line_tool() -> Cell {
+        Cell::Tool(ToolCell {
+            id: CellId::new(1),
+            tool_id: "call-1".to_string(),
+            name: "terminal".to_string(),
+            context: None,
+            args: Some(json!({"command": "seq 1 10"})),
+            labels: Vec::new(),
+            status: ToolStatus::Succeeded,
+            progress: None,
+            summary: None,
+            result: Some(
+                json!({"output": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10", "exit_code": 0, "error": null})
+                    .to_string(),
+            ),
+            diff: None,
+            duration_s: Some(0.1),
+        })
+    }
+
+    #[test]
+    fn scrollback_tool_cells_name_the_transcript_key() {
+        let theme = talaria_tui::theme::resolve(&ThemeInputs {
+            skin: None,
+            skipped: &[],
+            follow_hermes_skin: false,
+            polarity: (Polarity::Dark, PolaritySource::Config),
+            depth: (ColorDepth::None, DepthSource::Config),
+            motion: (Motion::Full, MotionSource::Default),
+            terminal: TerminalColors::default(),
+        });
+        let last_row = |keymap: &KeyMap| {
+            let lines = tool_cells(&theme, keymap).lines(&ten_line_tool(), 100);
+            lines.last().map(ToString::to_string).unwrap_or_default()
+        };
+        assert_eq!(
+            last_row(&KeyMap::defaults()),
+            "     … +7 lines (Ctrl+O to view)"
+        );
+        let entries = BTreeMap::from([("transcript_open".to_string(), vec!["ctrl+t".to_string()])]);
+        let (rebound, _) = KeyMap::from_entries(&entries);
+        assert_eq!(last_row(&rebound), "     … +7 lines (Ctrl+T to view)");
+    }
+
+    #[test]
+    fn accepted_search_entry_restores_its_paste_placeholder() {
+        let mut state = AppState::new("search-recall");
+        let label = state
+            .attachments
+            .chips
+            .collapse_paste(&"pasted line\n".repeat(120));
+        assert_eq!(label, "[Pasted text #1 +120 lines]");
+        // The submission cleared the draft, so the paste is archived.
+        state.attachments.chips.reconcile("");
+        let entry = format!("summarize {label}");
+
+        // A plain report of the loaded entry leaves the placeholder as typed text.
+        let _ = update(
+            &mut state,
+            AppMessage::ForegroundKey(UserAction::DraftEdited {
+                text: entry.clone(),
+                caret: entry.len(),
+                typed: false,
+                recalled: false,
+                now: Instant::now(),
+            }),
+        );
+        assert!(state.attachments.chips.live(&entry).is_empty());
+
+        let mut composer = Composer::new(KeyMap::defaults());
+        let mut reported = (String::new(), 0);
+        let action = recall_draft(&mut composer, &mut reported, entry.clone(), Instant::now());
+        assert!(matches!(&action, UserAction::DraftEdited {
+            text, caret, typed: false, recalled: true, ..
+        } if *text == entry && *caret == entry.len()));
+        assert_eq!(reported, (entry.clone(), entry.len()));
+        assert_eq!(composer.text(), entry);
+
+        let _ = update(&mut state, AppMessage::ForegroundKey(action));
+        assert_eq!(state.attachments.chips.live(&entry).len(), 1);
+        let expanded = state.attachments.chips.expand(&entry).expect("expands");
+        assert_eq!(expanded.text.matches("pasted line").count(), 120);
+    }
+
+    #[test]
+    fn accepted_search_entry_is_reported_before_the_palette_closes() {
+        for was_open in [false, true] {
+            let mut composer = Composer::new(KeyMap::defaults());
+            let mut reported = (String::new(), 0);
+            let mut actions = Vec::new();
+            TuiScreen::close_palette(&mut actions);
+            actions.insert(
+                0,
+                recall_draft(&mut composer, &mut reported, "/help".into(), Instant::now()),
+            );
+            let mut state = AppState::new("search-palette");
+            state.palette.open = was_open;
+            for action in actions {
+                let _ = update(&mut state, AppMessage::ForegroundKey(action));
+            }
+            assert_eq!(state.draft, "/help");
+            assert!(!state.palette.open);
+        }
+    }
+
+    #[test]
+    fn flushed_burst_snapshot_is_the_reported_draft() {
+        let typed = |composer: &mut Composer, now| {
+            for character in ['@', 's', 'r'] {
+                composer_key_actions(
+                    composer,
+                    Key::from(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE)),
+                    ComposerContext {
+                        turn_running: false,
+                    },
+                    now,
+                );
+            }
+            assert!(composer.is_collecting_burst());
+        };
+        let tab = || {
+            vec![UserAction::AttachmentKey {
+                action: AttachmentAction::CompletionAccept,
+                text: "@sr".into(),
+                caret: 3,
+                now: Instant::now(),
+            }]
+        };
+
+        // The composer timer flushes the burst; the loop reads the draft right after.
+        let mut composer = Composer::new(KeyMap::defaults());
+        let start = Instant::now();
+        typed(&mut composer, start);
+        let mut reported = (String::new(), 0);
+        assert_eq!(reported_snapshot(&composer, &mut reported), None);
+        assert_eq!(reported, (String::new(), 0));
+        let due = composer.next_tick().expect("the burst waits for its timer");
+        let _ = composer.tick(due);
+        let snapshot = reported_snapshot(&composer, &mut reported).expect("the burst is flushed");
+        assert_eq!(snapshot, ("@sr".to_string(), 3));
+        assert_eq!(reported, snapshot);
+
+        // The next Tab goes to the mention list alone.
+        let mut actions = tab();
+        sync_reported_draft("@sr", 3, &mut reported, &mut actions);
+        assert_eq!(actions.len(), 1);
+        // A stale report would put a draft edit ahead of it, which closes the list.
+        let mut stale = (String::new(), 0);
+        let mut actions = tab();
+        sync_reported_draft("@sr", 3, &mut stale, &mut actions);
+        assert_eq!(actions.len(), 2);
+
+        // An explicit flush before an asynchronous edit records the same way.
+        let mut composer = Composer::new(KeyMap::defaults());
+        typed(&mut composer, start);
+        let mut reported = (String::new(), 0);
+        composer.flush_pending();
+        let snapshot = reported_snapshot(&composer, &mut reported).expect("the burst is flushed");
+        assert_eq!(snapshot, ("@sr".to_string(), 3));
+        assert_eq!(reported, snapshot);
     }
 }

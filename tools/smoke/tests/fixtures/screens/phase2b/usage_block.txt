@@ -1,0 +1,9 @@
+/usage
+Usage · this session
+  Model        minimax-m3.1-flash (ollama-cloud)
+  Tokens       input 74 · output 12 · reasoning 0 · total 40,101
+  Cache        read 40,015 · write 0 · hit 100%
+  API calls    3 · average latency 1.0 s · 4.0 tokens/s
+  Context      13,395 / 1,000,000 tokens (1%)
+  Compactions  0
+  Cost         not reported by Hermes for this session

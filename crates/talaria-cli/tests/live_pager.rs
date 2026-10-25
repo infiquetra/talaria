@@ -103,7 +103,8 @@ fn cell_text(cell: &Cell) -> Option<(&str, String)> {
 }
 
 async fn run_live(record: &Path) {
-    let folder = std::env::temp_dir();
+    let temp = tempfile::tempdir().expect("a scratch folder");
+    let folder = temp.path().to_path_buf();
     let mut connection = connect(&launch(&folder, record.to_path_buf()), &hermes_home())
         .await
         .unwrap_or_else(|error| panic!("{}", public_reason(&error.render())));

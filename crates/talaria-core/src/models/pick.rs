@@ -1294,6 +1294,12 @@ impl ModelsState {
     pub fn fences(&self, session_id: &str) -> Fences {
         self.ledger.fences(session_id)
     }
+    /// Adopt fences another ledger learned for the session; the larger numbers win.
+    pub fn adopt_fences(&mut self, session_id: &str, fences: Fences) {
+        self.ledger
+            .fences_mut(session_id)
+            .adopt(fences.revision, fences.execution_generation);
+    }
 }
 
 #[cfg(test)]
