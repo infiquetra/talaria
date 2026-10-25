@@ -113,6 +113,7 @@ async fn attempt(
         model: MODEL.to_owned(),
         provider: PROVIDER.to_owned(),
         scratch: scratch.path().to_path_buf(),
+        second: None,
         attempt_timeout: Duration::from_secs(120),
     };
     let result = run_scenario(&client, &mut inbound, scenario, &config).await;

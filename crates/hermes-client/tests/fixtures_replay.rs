@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 16] = [
+const NAMES: [&str; 20] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -34,6 +34,10 @@ const NAMES: [&str; 16] = [
     "permissions-cd",
     "hermes-commands",
     "session-picker",
+    "model-switch",
+    "queue-edit-remove",
+    "queue-steer",
+    "queue-move-send-now",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -47,6 +51,20 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         "permissions-cd" => &[],
         // The command scenario submits no prompt, so no turn ends in the recording.
         "hermes-commands" => &[],
+        // The picker and the model switch submit no prompt either.
+        "session-picker" => &["complete"],
+        "model-switch" => &[],
+        // The queue scenarios settle two of their prompts without a status, so their
+        // headers list the outcome the turn ended with.
+        "queue-edit-remove" => &["cancelled", "cancelled", "complete", "complete", "complete"],
+        "queue-steer" => &["complete", "steered"],
+        "queue-move-send-now" => &[
+            "cancelled",
+            "interrupted",
+            "complete",
+            "complete",
+            "complete",
+        ],
         _ => &["complete"],
     }
 }
@@ -134,16 +152,23 @@ fn position(events: &[(String, Value)], kind: &str, from: usize) -> Option<usize
         .map(|(index, _)| index)
 }
 
+/// How a turn ended: its `status`, or its `outcome` when it settled without a status. The
+/// recorder that wrote the headers uses the same rule, so a turn that was cancelled or
+/// steered reads the same here as it does there.
+fn turn_status(payload: &Value) -> String {
+    ["status", "outcome"]
+        .iter()
+        .filter_map(|key| payload[*key].as_str())
+        .find(|text| !text.is_empty())
+        .unwrap_or_default()
+        .to_owned()
+}
+
 fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
     events
         .iter()
         .filter(|(kind, _)| kind == "message.complete")
-        .map(|(_, params)| {
-            params["payload"]["status"]
-                .as_str()
-                .unwrap_or("")
-                .to_owned()
-        })
+        .map(|(_, params)| turn_status(&params["payload"]))
         .collect()
 }
 
@@ -151,7 +176,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 16);
+    assert_eq!(fixtures.len(), 20);
 }
 
 #[test]
@@ -228,12 +253,7 @@ fn each_ends_with_expected_status() {
                 frame.frame["method"] == "event"
                     && frame.frame["params"]["type"] == "message.complete"
             })
-            .map(|frame| {
-                frame.frame["params"]["payload"]["status"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_owned()
-            })
+            .map(|frame| turn_status(&frame.frame["params"]["payload"]))
             .collect();
         let wanted: Vec<String> = expected_statuses(name)
             .iter()
@@ -616,6 +636,50 @@ fn scenario_evidence_present() {
                     position(&events, "session.updated", 0).is_some()
                         || position(&events, "message.complete", 0).is_some(),
                     "{name}: no session event"
+                );
+            }
+            "model-switch" => {
+                let sent: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| record["dir"] == "out")
+                    .map(|record| &record["frame"])
+                    .collect();
+                let mutations = sent
+                    .iter()
+                    .filter(|frame| frame["method"] == "session.mutate")
+                    .count();
+                assert!(
+                    mutations >= 3,
+                    "{name}: {mutations} outbound session.mutate frames, want at least 3"
+                );
+            }
+            "queue-edit-remove" | "queue-steer" | "queue-move-send-now" => {
+                let sent: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| record["dir"] == "out")
+                    .map(|record| &record["frame"])
+                    .collect();
+                let submits = sent
+                    .iter()
+                    .filter(|frame| frame["method"] == "prompt.submit")
+                    .count();
+                assert!(
+                    submits >= 2,
+                    "{name}: {submits} outbound prompt.submit frames, want at least 2"
+                );
+                // The queue the session reported is what the scenario acts on.
+                let pending = events
+                    .iter()
+                    .any(|(_, params)| params["payload"]["pending"].is_array());
+                assert!(pending, "{name}: no session.info with a pending list");
+                let wanted = match name {
+                    "queue-edit-remove" => "prompt.cancel",
+                    "queue-steer" => "prompt.steer_queued",
+                    _ => "session.interrupt",
+                };
+                assert!(
+                    sent.iter().any(|frame| frame["method"] == wanted),
+                    "{name}: no outbound {wanted}"
                 );
             }
             other => panic!("unlisted fixture {other}"),
