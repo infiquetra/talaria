@@ -51,7 +51,7 @@ struct Cli {
     /// The provider the model comes from.
     #[arg(long, global = true, default_value = "ollama-cloud")]
     provider: String,
-    /// The whole run, in seconds [default: 300 for phase1, 1800 for phase2a].
+    /// The whole run, in seconds [default: 300 for phase1, 1800 for phase2a, 1500 for phase2b].
     #[arg(long, global = true)]
     deadline_secs: Option<u64>,
     /// The scale of the per-step limits; the deadline and the quiet periods stay.
@@ -60,7 +60,7 @@ struct Cli {
     /// Where the failure report is written.
     #[arg(long, global = true)]
     report_dir: Option<PathBuf>,
-    /// Which suite runs: phase1, or phase2a for the phase 2a features.
+    /// Which suite runs: phase1, phase2a, or phase2b.
     #[arg(long, global = true, default_value = "phase1")]
     suite: Suite,
     /// The tmux command line the phase2a suite pastes through.
@@ -102,6 +102,11 @@ fn run(cli: &Cli) -> Result<u8, String> {
     }
     if cli.deadline_secs == Some(0) {
         return Err("--deadline-secs must be above 0.".to_owned());
+    }
+    if suite == Suite::Phase2b
+        && (cli.model != "minimax-m3.1-flash" || cli.provider != "ollama-cloud")
+    {
+        return Err("phase2b needs the default provider and model (ollama-cloud, minimax-m3.1-flash): its expected texts name them".to_owned());
     }
     if let Some(dir) = &cli.report_dir
         && !dir.is_dir()
@@ -157,6 +162,14 @@ fn run(cli: &Cli) -> Result<u8, String> {
             hermes_home.as_deref(),
             &temp_root,
         )?;
+    }
+    if suite == Suite::Phase2b {
+        let root = temp_root.to_string_lossy();
+        if root.contains(' ') || root.contains('\'') {
+            return Err(scrubber.scrub(&format!(
+                "The scratch folder would be under {root}, which holds a space or a single quote; set TMPDIR to a folder without either."
+            )));
+        }
     }
 
     let herdr = HerdrCli::new(&cli.herdr, &workspace);
@@ -272,12 +285,6 @@ fn run(cli: &Cli) -> Result<u8, String> {
         scrubber.scrub(&config.talaria.display().to_string())
     );
     println!("herdr: {}", scrubber.scrub(&herdr.version()));
-
-    if suite == Suite::Phase2b
-        && (cli.model != "minimax-m3.1-flash" || cli.provider != "ollama-cloud")
-    {
-        return Err("phase2b needs the default provider and model (ollama-cloud, minimax-m3.1-flash): its expected texts name them".to_owned());
-    }
 
     let clock = SystemClock::new();
     let report = match suite {

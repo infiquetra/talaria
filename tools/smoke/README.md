@@ -13,10 +13,10 @@ Run `cargo run -q -p smoke -- run` from a Herdr pane. The options are:
 | `--profile` | The profile the session runs in. |
 | `--model` | The model the session uses. |
 | `--provider` | The provider the model comes from. |
-| `--deadline-secs` | The whole run, in seconds: 300 for `phase1` and 1800 for `phase2a` unless given. |
+| `--deadline-secs` | The whole run, in seconds: 300 for `phase1`, 1800 for `phase2a`, and 1500 for `phase2b` unless given. |
 | `--step-scale` | The scale of the per-step limits. |
 | `--report-dir` | Where the failure report is written. |
-| `--suite` | `phase1` (the default) or `phase2a`, the suite for the phase 2a features. |
+| `--suite` | `phase1` (the default), `phase2a`, or `phase2b`, the suite for session controls. |
 | `--tmux` | The tmux command line the `phase2a` suite pastes through; the default is `tmux`. |
 
 `--step-scale` multiplies the per-step limits only: the shell wait, the startup wait, the reply
@@ -73,6 +73,48 @@ Talaria inside tmux, `tmux-pane`, `paste-collapse` (a 120-line bracketed paste b
 `file-drop` (a pasted outside path becomes a file label), `paste-editor` (a paste label survives
 Ctrl+G) and `tmux-quit`.
 
+## Session-control suite
+
+Run `smoke run --suite phase2b` with the fixture profile, provider `ollama-cloud` and model
+`minimax-m3.1-flash`. Other models and providers are refused during preflight because the
+expected screen texts name these defaults. This suite needs no tmux. Help lists all three
+suites; the unknown-suite error retains its earlier wording for compatibility.
+
+The fixture profile must have `approvals.mode: manual` and at least two available Ollama Cloud
+models. Its instructions must keep the rewind check's code words in conversation context,
+without writing persistent memory, and answer those setup prompts with only `ok`. File
+checkpoints are unnecessary because the check rewinds only the conversation. Use a short
+temporary root and, for a gateway outside the default home, the launcher described above.
+
+The fifteen steps run in this order: `startup`, `context-empty`, `permission`, `model-picker`,
+`model-refusal`, `rewind`, `plain-answer`, `steer-idle`, `context`, `hermes-commands`,
+`rename-export`, `queue`, `cd`, `quit`, and `headless`. Startup and plain-answer reuse the
+original checks. The exit check uses the plain-answer token for both retained-output checks.
+The headless section verifies the answer and empty error stream, then a clean no-gateway
+failure with one JSON line and exit code 4.
+
+The run creates two private scratch git folders and removes the entire scratch directory,
+including exports and print outputs, after success, failure, panic, or interruption. File
+contents and permissions are checked before cleanup. Terminal status and overlays are read
+from the visible screen; notices and replies use unwrapped recent text. A failed step stops
+the run and captures its pane. Only `steer-idle` and the queue's missing-indicator check retry,
+once, after the screen settles. The repeat reads only its own prompt's subsequent lines.
+
+Only `permission` may skip, when Herdr rejects both toggle-key names. A skip stops the run
+with exit 3, or fails with exit 1 when `TALARIA_LIVE_REQUIRE=1`. A failed toggle check attempts
+to restore this session's default. The suite never changes the profile approval setting.
+Its exact screen wording and source citations live in `src/wording2b.rs`.
+
+Set `CARGO_TARGET_DIR` to a private build directory before running the offline checks:
+
+```sh
+cargo test -p smoke
+cargo fmt -p smoke --check
+cargo clippy -p smoke --all-targets -- -D warnings
+```
+
+The ignored live tests run only when the live gateway is available for this suite.
+
 ## Reading a failure
 
 A failing step prints the screen of the pane it was in and writes the same text, with the
@@ -87,6 +129,11 @@ constant and its test change together); it is never a reason to relax the step.
 A pane text that reports the gateway or profile unavailable makes the acceptance result blocked
 by the environment, not failed. The script cannot tell the two apart: it reports a failure and
 leaves the reading to the reader.
+
+For `phase2b`, a startup failure can mean that the gateway is unavailable or the launcher
+selected the wrong home. A skipped `permission` check means Herdr rejected both toggle-key
+names. A queue check that never observes an indicator can mean the model did not run the
+requested 25-second sleep; read the captured tool output before classifying that failure.
 
 Every private path and name in the printed text, in the report and in the report path is
 replaced by a placeholder: the scratch project, the temporary directory, the home directory, the

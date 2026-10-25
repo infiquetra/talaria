@@ -1,7 +1,5 @@
 //! Which suite runs: the first suite, the phase 2a suite of issue #229, or the phase 2b
 //! suite of issue #238.
-//!
-//! Stage 0 stub: the phase 2b additions panic `not implemented`.
 
 use std::str::FromStr;
 
@@ -25,6 +23,7 @@ impl FromStr for Suite {
         match s {
             "phase1" => Ok(Suite::Phase1),
             "phase2a" => Ok(Suite::Phase2a),
+            "phase2b" => Ok(Suite::Phase2b),
             _ => Err(format!("unknown suite '{s}'; use phase1 or phase2a")),
         }
     }
@@ -32,12 +31,12 @@ impl FromStr for Suite {
 
 impl Suite {
     /// The default `--deadline-secs`: 300 for the first suite, 1800 for phase 2a, 1500 for
-    /// phase 2b. Stage 0 stub.
+    /// phase 2b.
     pub fn default_deadline_secs(self) -> u64 {
         match self {
             Suite::Phase1 => 300,
             Suite::Phase2a => 1800,
-            Suite::Phase2b => unimplemented!("not implemented"),
+            Suite::Phase2b => 1500,
         }
     }
 }

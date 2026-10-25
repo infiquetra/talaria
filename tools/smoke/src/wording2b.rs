@@ -2,6 +2,7 @@
 //!
 //! Every line is copied from the final body of its accepted issue. Each group names its
 //! source as the issue number and the scenario title.
+//! Keep these literal texts separate from the runner's timeout and failure explanations.
 
 // #234, scenario "Nothing to measure before the first prompt"
 /// The context header and its hint before the first prompt.
