@@ -10,6 +10,10 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+tempfile.workspace = true
+rustix.workspace = true
+signal-hook.workspace = true
+shell-words.workspace = true
 talaria-core.workspace = true
 hermes-client.workspace = true
 hermes-contract.workspace = true
@@ -25,6 +29,7 @@ crossterm.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 proptest.workspace = true
 ratatui.workspace = true
+rustix.workspace = true
 serde_json.workspace = true
 talaria-tui.workspace = true
 tempfile.workspace = true

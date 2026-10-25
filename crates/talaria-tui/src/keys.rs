@@ -141,6 +141,9 @@ pub enum Action {
     CompletionAccept,
     /// Close the open completion list.
     CompletionClose,
+    OpenEditor,
+    HistorySearch,
+    Suspend,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -172,7 +175,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 27] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -197,6 +200,9 @@ impl Action {
         Self::CompletionPrev,
         Self::CompletionAccept,
         Self::CompletionClose,
+        Self::OpenEditor,
+        Self::HistorySearch,
+        Self::Suspend,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -227,6 +233,9 @@ impl Action {
             Self::CompletionPrev => "completion_prev",
             Self::CompletionAccept => "completion_accept",
             Self::CompletionClose => "completion_close",
+            Self::OpenEditor => "open_editor",
+            Self::HistorySearch => "history_search",
+            Self::Suspend => "suspend",
         }
     }
 
@@ -282,6 +291,9 @@ impl Action {
             Self::CompletionPrev => &["up", "ctrl+p"],
             Self::CompletionAccept => &["tab"],
             Self::CompletionClose => &["esc"],
+            Self::OpenEditor => &["ctrl+g", "alt+g"],
+            Self::HistorySearch => &["ctrl+r"],
+            Self::Suspend => &["ctrl+z"],
         }
     }
 }
@@ -750,11 +762,12 @@ impl KeyMap {
             .and_then(CompletionAction::from_action)
     }
 
-    /// The action bound to this key, if any.
+    /// The composer action bound to this key, if any.
     #[must_use]
     pub fn resolve(&self, key: &Key) -> Option<Action> {
         Action::ALL
             .into_iter()
+            .filter(|action| action.context() == KeyContext::Composer)
             .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
     }
 
@@ -803,7 +816,7 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-    use super::{Action, Key, KeyChord, KeyContext, KeyMap, ModelAction};
+    use super::{Action, CompletionAction, Key, KeyChord, KeyContext, KeyMap, ModelAction};
 
     fn parse(text: &str) -> Result<KeyChord, String> {
         KeyChord::parse(text, KeyContext::Composer)
@@ -901,8 +914,23 @@ mod tests {
     }
 
     #[test]
+    fn completion_chords_do_not_shadow_composer_comforts() {
+        let (map, notices) =
+            KeyMap::from_entries(&entries(&[("completion_next", &["ctrl+g", "ctrl+z"])]));
+        assert!(notices.is_empty(), "{notices:?}");
+        for (character, action) in [('g', Action::OpenEditor), ('z', Action::Suspend)] {
+            let key = Key::from(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::CONTROL,
+            ));
+            assert_eq!(map.resolve(&key), Some(action));
+            assert_eq!(map.completion(&key), Some(CompletionAction::Next));
+        }
+    }
+
+    #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 24);
+        assert_eq!(Action::ALL.len(), 27);
         for action in Action::ALL {
             let context = match action {
                 Action::CompletionNext
@@ -1076,7 +1104,7 @@ mod tests {
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
         // The composer actions, plus the four the slash palette brought with it.
-        assert_eq!(Action::ALL.len(), 24);
+        assert_eq!(Action::ALL.len(), 27);
     }
 
     #[test]

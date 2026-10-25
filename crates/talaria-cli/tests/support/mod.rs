@@ -117,6 +117,7 @@ pub struct Launch {
     hermes_home: Option<PathBuf>,
     cwd: Option<PathBuf>,
     answer_queries: bool,
+    extra_env: Vec<(String, String)>,
 }
 
 impl Launch {
@@ -131,6 +132,7 @@ impl Launch {
             hermes_home: None,
             cwd: None,
             answer_queries: false,
+            extra_env: Vec::new(),
         }
     }
 
@@ -178,6 +180,12 @@ impl Launch {
         self
     }
 
+    /// Set one more variable in the child's clean environment.
+    pub fn env(mut self, key: &str, value: &str) -> Self {
+        self.extra_env.push((key.to_owned(), value.to_owned()));
+        self
+    }
+
     pub fn spawn(self) -> Terminal {
         warm_up();
         let pair = native_pty_system()
@@ -214,6 +222,9 @@ impl Launch {
         command.env("TMPDIR", &self.home);
         if let Ok(profile) = std::env::var("LLVM_PROFILE_FILE") {
             command.env("LLVM_PROFILE_FILE", profile);
+        }
+        for (key, value) in &self.extra_env {
+            command.env(key, value);
         }
         let spawned = Instant::now();
         let child = pair.slave.spawn_command(command).expect("spawn in pty");

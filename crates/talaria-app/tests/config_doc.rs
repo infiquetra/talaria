@@ -67,6 +67,9 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("kill_to_line_end", &["ctrl+k"][..]),
         ("kill_to_line_start", &["ctrl+u"][..]),
         ("yank", &["ctrl+y"][..]),
+        ("open_editor", &["ctrl+g", "alt+g"][..]),
+        ("history_search", &["ctrl+r"][..]),
+        ("suspend", &["ctrl+z"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

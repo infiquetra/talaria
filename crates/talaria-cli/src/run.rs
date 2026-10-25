@@ -11,14 +11,20 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use ratatui::text::Line;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use talaria_app::app::{
     self, ComposerDeadline, LinkView, Outcome, RunSetup, Screen, StatusHost, UserAction, View,
 };
+use talaria_app::comforts::{editor, herdr::HerdrReporter, prompt_history::PromptHistory, suspend};
 use talaria_app::config::{self, LoadedConfig};
 use talaria_app::connection::OpenConnection;
 use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
+use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
 use talaria_core::commands::PaletteInput;
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
@@ -27,7 +33,10 @@ use talaria_core::session::{
 };
 use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome};
 use talaria_tui::history::CellLines;
-use talaria_tui::keys::{CompletionAction, Key, KeyCode, KeyContext, KeyKind, KeyMap, ModelAction};
+use talaria_tui::history_search::{HistorySearch, SearchOutcome};
+use talaria_tui::keys::{
+    Action, CompletionAction, Key, KeyCode, KeyContext, KeyKind, KeyMap, ModelAction,
+};
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
 use talaria_tui::markdown::MarkdownTheme;
 use talaria_tui::markdown::cells::MarkdownCellLines;
@@ -67,11 +76,28 @@ const CONNECTING: &str = "Connecting to Hermes\u{2026}";
 pub enum ScreenInput {
     Terminal(crossterm::event::Event),
     Status(CommandResult),
+    Edited(editor::EditResult),
+    Resumed(suspend::SuspendResult),
+    Continued,
+    ComfortNotice(String),
 }
 
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
 /// status line.
 pub struct TuiScreen {
+    guard: TerminalGuard,
+    input: Option<InputThread>,
+    history: PromptHistory,
+    search: Option<HistorySearch>,
+    config: config::Config,
+    folder: std::path::PathBuf,
+    reporter: Option<HerdrReporter>,
+    pane: PaneReport,
+    report_session: Option<(String, String)>,
+    expected: Arc<AtomicBool>,
+    released: Arc<AtomicBool>,
+    continued: Arc<AtomicBool>,
+    compact_started: bool,
     terminal: InlineTerminal<Stdout>,
     composer: Composer,
     prompts: PromptStack,
@@ -403,31 +429,31 @@ impl TuiScreen {
     /// Tell the loop when the draft or the caret moved, so the slash palette follows it. A
     /// submitted draft is not reported: the loop knows the composer took it.
     fn report_draft(&mut self, actions: &mut Vec<UserAction>) {
-        if actions
-            .iter()
-            .any(|action| matches!(action, UserAction::Submit(_)))
-        {
-            self.reported = (String::new(), 0);
-            return;
-        }
-        let now = (self.composer.text(), self.composer.caret());
-        if (self.reported.0.as_str(), self.reported.1) == now {
-            return;
-        }
-        self.reported = (now.0.to_owned(), now.1);
-        actions.push(UserAction::Palette(PaletteInput::DraftChanged {
-            text: self.reported.0.clone(),
-            caret: self.reported.1,
-        }));
+        sync_reported_draft(
+            self.composer.text(),
+            self.composer.caret(),
+            &mut self.reported,
+            actions,
+        );
     }
 
-    fn composer_action(outcome: ComposerOutcome) -> Vec<UserAction> {
+    fn composer_action(&mut self, outcome: ComposerOutcome) -> Vec<UserAction> {
         match outcome {
-            ComposerOutcome::Submit(text) => vec![UserAction::Submit(text)],
+            ComposerOutcome::Submit(text) => {
+                let mut actions = vec![UserAction::Submit(text.clone())];
+                if let Some(notice) = self.history.append(&text) {
+                    actions.push(UserAction::Notice(notice));
+                }
+                actions
+            }
             ComposerOutcome::Interrupt => vec![UserAction::Interrupt],
             ComposerOutcome::ExitRequested => vec![UserAction::Quit],
             ComposerOutcome::Unchanged | ComposerOutcome::Changed => Vec::new(),
         }
+    }
+
+    fn close_palette(actions: &mut Vec<UserAction>) {
+        actions.insert(0, UserAction::Palette(PaletteInput::Close));
     }
 
     fn terminal_input(
@@ -439,21 +465,60 @@ impl TuiScreen {
         use crossterm::event::Event;
         match event {
             Event::Key(raw) => {
+                if self.terminal.is_released() {
+                    return Vec::new();
+                }
+                let key = Key::from(raw);
+                let action = self.keymap.resolve(&key);
+                let focus = if self.search.is_some() {
+                    talaria_tui::comfort_route::Focus::Search
+                } else if self.composer.is_empty() && self.prompts.section().is_some() {
+                    talaria_tui::comfort_route::Focus::Card
+                } else {
+                    talaria_tui::comfort_route::Focus::Composer
+                };
+                let route = talaria_tui::comfort_route::route(action, focus);
+                if route == talaria_tui::comfort_route::Route::Suspend {
+                    let _ = self.composer.handle_key(
+                        key,
+                        ComposerContext {
+                            turn_running: view.turn_running(),
+                        },
+                        now,
+                    );
+                    let mut actions = self.start_suspend();
+                    Self::close_palette(&mut actions);
+                    return actions;
+                }
                 if let Some(rewind) = &view.rewind {
                     return self.rewind_key(&raw, rewind.screen);
                 }
-                let key = Key::from(raw);
                 if self.picker_open {
                     return picker_key(&self.keymap, key)
                         .map(UserAction::ModelPicker)
                         .into_iter()
                         .collect();
                 }
-                if let Some(actions) = Self::prompt_actions(self.prompts.handle_key(key, now)) {
+                if let Some(search) = &mut self.search {
+                    match search.handle_key(key, std::time::SystemTime::now()) {
+                        SearchOutcome::Accept(text) => {
+                            self.composer.load(text);
+                            self.search = None;
+                        }
+                        SearchOutcome::Cancel => self.search = None,
+                        _ => {}
+                    }
+                    let mut actions = Vec::new();
+                    Self::close_palette(&mut actions);
+                    return actions;
+                }
+                if let Some(mut actions) = Self::prompt_actions(self.prompts.handle_key(key, now)) {
+                    Self::close_palette(&mut actions);
                     return actions;
                 }
                 // An open completion list takes its four keys before the composer does.
                 if view.palette.open
+                    && focus == talaria_tui::comfort_route::Focus::Composer
                     && key.kind != KeyKind::Release
                     && let Some(action) = self.keymap.completion(&key)
                 {
@@ -482,6 +547,35 @@ impl TuiScreen {
                 {
                     return vec![UserAction::OpenModels];
                 }
+                if route == talaria_tui::comfort_route::Route::OpenEditor {
+                    let _ = self.composer.handle_key(
+                        key,
+                        ComposerContext {
+                            turn_running: view.turn_running(),
+                        },
+                        now,
+                    );
+                    let mut actions = self.start_editor();
+                    Self::close_palette(&mut actions);
+                    return actions;
+                }
+                if route == talaria_tui::comfort_route::Route::HistorySearch {
+                    let _ = self.composer.handle_key(
+                        key,
+                        ComposerContext {
+                            turn_running: view.turn_running(),
+                        },
+                        now,
+                    );
+                    self.search = Some(HistorySearch::open(
+                        self.history.snapshot(),
+                        self.composer.text().into(),
+                        self.keymap.chords(Action::HistorySearch).to_vec(),
+                    ));
+                    let mut actions = Vec::new();
+                    Self::close_palette(&mut actions);
+                    return actions;
+                }
                 let ctx = ComposerContext {
                     turn_running: view.turn_running(),
                 };
@@ -492,7 +586,7 @@ impl TuiScreen {
                     && self.composer.is_empty()
                     && !view.palette.open
                     && !view.turn_running();
-                let mut actions = Self::composer_action(outcome);
+                let mut actions = self.composer_action(outcome);
                 if escape {
                     actions.push(UserAction::Escape { eligible });
                     // Two quick Esc bytes can arrive as one Esc with Alt held: count it twice.
@@ -500,22 +594,27 @@ impl TuiScreen {
                         actions.push(UserAction::Escape { eligible });
                     }
                 }
-                self.report_draft(&mut actions);
                 actions
             }
             Event::Paste(text) => {
-                if view.rewind.is_some() || self.picker_open {
+                if self.terminal.is_released() || view.rewind.is_some() || self.picker_open {
                     return Vec::new();
                 }
-                if let Some(actions) = Self::prompt_actions(self.prompts.handle_paste(&text, now)) {
+                if let Some(search) = &mut self.search {
+                    search.handle_paste(&text);
+                    return Vec::new();
+                }
+                if let Some(mut actions) =
+                    Self::prompt_actions(self.prompts.handle_paste(&text, now))
+                {
+                    Self::close_palette(&mut actions);
                     return actions;
                 }
                 if self.confirmation_takes_keys() {
                     return Vec::new();
                 }
-                let mut actions = Self::composer_action(self.composer.handle_paste(&text));
-                self.report_draft(&mut actions);
-                actions
+                let outcome = self.composer.handle_paste(&text);
+                self.composer_action(outcome)
             }
             Event::Resize(cols, rows) => {
                 self.rows = rows;
@@ -611,19 +710,59 @@ impl Screen for TuiScreen {
     fn input(&mut self, input: ScreenInput, view: &View<'_>, now: Instant) -> Vec<UserAction> {
         self.sync_prompts(view, now);
         self.sync_confirmation_focus(now);
-        let actions = match input {
+        let mut actions = match input {
             ScreenInput::Terminal(event) => self.terminal_input(event, view, now),
             ScreenInput::Status(result) => {
                 self.external.apply(&result);
                 Vec::new()
             }
+            ScreenInput::Edited(result) => {
+                self.take_terminal();
+                match result {
+                    editor::EditResult::Loaded(text) => {
+                        self.composer.load(text);
+                        Vec::new()
+                    }
+                    editor::EditResult::Cleared => {
+                        self.composer.load(String::new());
+                        vec![UserAction::Notice(editor::cleared_notice())]
+                    }
+                    editor::EditResult::Unchanged { hint: true } => {
+                        vec![UserAction::Notice(editor::unchanged_hint_notice())]
+                    }
+                    editor::EditResult::Failed(notice) => vec![UserAction::Notice(notice)],
+                    _ => Vec::new(),
+                }
+            }
+            ScreenInput::Resumed(result) => {
+                self.take_terminal();
+                self.expected.store(false, Ordering::SeqCst);
+                if result == suspend::SuspendResult::NotStopped {
+                    vec![UserAction::Notice(
+                        "Suspend did not take effect: the stop signal is ignored in this terminal."
+                            .into(),
+                    )]
+                } else {
+                    Vec::new()
+                }
+            }
+            ScreenInput::Continued => {
+                let _ = self.guard.enter_raw();
+                let _ = self.terminal.reassert_modes();
+                Vec::new()
+            }
+            ScreenInput::ComfortNotice(text) => vec![UserAction::Notice(text)],
         };
+        self.report_draft(&mut actions);
         self.draw(view);
         actions
     }
 
     fn draw(&mut self, view: &View<'_>) {
         let now = Instant::now();
+        if let Some(cwd) = view.info.and_then(|info| info.cwd.as_deref()) {
+            self.folder = std::path::PathBuf::from(cwd);
+        }
         self.connecting = view.state.is_none() && view.link == LinkView::Connecting;
         self.inputs = status_inputs(view, self.inputs.home_dir.clone());
         self.sync_prompts(view, now);
@@ -694,6 +833,7 @@ impl Screen for TuiScreen {
         } else {
             None
         };
+        let composer_is_empty = self.composer.is_empty();
         let composer = self.composer.section(width, COMPOSER_ROWS);
         let mut sections: Vec<&dyn LiveSection> = vec![&tail, &drafting];
         if let Some(prompts) = &prompts {
@@ -705,10 +845,34 @@ impl Screen for TuiScreen {
         if self.connecting {
             sections.push(&connecting);
         }
-        sections.push(&composer);
-        sections.push(&palette);
+        let search = self
+            .search
+            .as_ref()
+            .map(|s| s.section(std::time::SystemTime::now()));
+        if let Some(search) = &search {
+            sections.push(search);
+        } else {
+            sections.push(&composer);
+            if !composer_is_empty || prompts.is_none() {
+                sections.push(&palette);
+            }
+        }
         sections.push(&status);
         let _ = self.terminal.draw_live(&LiveView { sections });
+        if !self.compact_started {
+            self.compact_started = true;
+            let history = self.history.clone();
+            let sender = self.sender.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Err(error) = history.compact() {
+                    let _ = sender.send(ScreenInput::ComfortNotice(
+                        talaria_app::comforts::prompt_history::compact_failed_notice(
+                            &editor::io_reason(&error),
+                        ),
+                    ));
+                }
+            });
+        }
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
@@ -728,7 +892,134 @@ impl Screen for TuiScreen {
 
     fn restore(&mut self) {
         let _ = self.terminal.restore();
+        let _ = self.guard.leave_raw();
+        if let Some(reporter) = self.reporter.take() {
+            reporter.release(Duration::from_millis(500));
+        }
     }
+
+    fn attention_config(&self) -> AttentionConfig {
+        AttentionConfig {
+            bell: self.config.notifications.bell.clone(),
+            desktop: self.config.notifications.desktop.clone(),
+            done_after: Duration::from_secs(self.config.notifications.done_after_seconds),
+        }
+    }
+
+    fn alert(&mut self, alert: &Alert) {
+        let tmux = std::env::var_os("TMUX").is_some_and(|s| !s.is_empty());
+        let bytes =
+            talaria_tui::terminal::alert_bytes(&alert.text, alert.bell, alert.desktop, tmux);
+        let _ = self
+            .terminal
+            .alert(bytes, talaria_core::attention::urgency(alert.kind));
+    }
+
+    fn report_pane(&mut self, pane: &PaneReport, session: Option<(&str, &str)>) {
+        self.pane = pane.clone();
+        self.report_session = session.map(|(id, profile)| (id.into(), profile.into()));
+        if let Some(reporter) = &self.reporter {
+            reporter.report(pane, session);
+            for notice in reporter.take_notices() {
+                let _ = self.sender.send(ScreenInput::ComfortNotice(notice));
+            }
+        }
+    }
+}
+
+impl TuiScreen {
+    fn release_terminal(&mut self) -> io::Result<()> {
+        if let Some(input) = &self.input {
+            input.pause()?;
+        }
+        self.terminal.release()?;
+        self.guard.leave_raw()?;
+        self.released.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn take_terminal(&mut self) {
+        let _ = self.guard.enter_raw();
+        if let Ok((cols, rows)) = terminal_size() {
+            let _ = self.terminal.resize(cols, rows);
+        }
+        let _ = self
+            .terminal
+            .reacquire(&mut || talaria_tui::terminal::probe_reacquire(PROBE_DEADLINE));
+        self.released.store(false, Ordering::SeqCst);
+        if let Some(input) = &self.input {
+            input.resume();
+        }
+        if let Some(reporter) = &self.reporter {
+            reporter.report(
+                &self.pane,
+                self.report_session
+                    .as_ref()
+                    .map(|(id, profile)| (id.as_str(), profile.as_str())),
+            );
+        }
+    }
+
+    fn start_editor(&mut self) -> Vec<UserAction> {
+        let argv = match editor::resolve_editor(
+            Some(&self.config.editor.command),
+            &|key| std::env::var(key).ok(),
+            &executable_on_path,
+        ) {
+            Ok(argv) => argv,
+            Err(editor::EditorError::Parse(reason)) => {
+                return vec![UserAction::Notice(editor::parse_notice(&reason))];
+            }
+        };
+        if let Err(error) = self.release_terminal() {
+            self.take_terminal();
+            return vec![UserAction::Notice(format!(
+                "Could not release the terminal ({:?}).",
+                error.kind()
+            ))];
+        }
+        let draft = self.composer.text().to_string();
+        let folder = self.folder.clone();
+        let sender = self.sender.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = editor::edit_draft(&argv, &draft, &folder, &std::env::temp_dir());
+            let _ = sender.send(ScreenInput::Edited(result));
+        });
+        Vec::new()
+    }
+
+    fn start_suspend(&mut self) -> Vec<UserAction> {
+        if !suspend::job_control_available() {
+            return vec![UserAction::Notice("Ctrl+Z cannot suspend here: Talaria was not started from a shell with job control. Use /quit; the session keeps running in Hermes.".into())];
+        }
+        self.continued.store(false, Ordering::SeqCst);
+        self.expected.store(true, Ordering::SeqCst);
+        if self.release_terminal().is_err() {
+            self.take_terminal();
+            self.expected.store(false, Ordering::SeqCst);
+            return Vec::new();
+        }
+        let flag = Arc::clone(&self.continued);
+        let sender = self.sender.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = suspend::suspend_process(&flag);
+            let _ = sender.send(ScreenInput::Resumed(result));
+        });
+        Vec::new()
+    }
+}
+
+fn executable_on_path(name: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |p: &std::path::Path| {
+        p.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if name.contains('/') {
+        return executable(std::path::Path::new(name));
+    }
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| executable(&dir.join(name))))
 }
 
 fn fail(failure: &LaunchFailure) -> ExitCode {
@@ -864,7 +1155,7 @@ pub fn run(mut launch: Launch) -> ExitCode {
         }
     }
     let status = status_service(&loaded, &launch.folder, &mut setup.notices);
-    let outcome = match session(&runtime, launch, setup, keymap, status) {
+    let outcome = match session(&runtime, launch, setup, keymap, status, loaded.config) {
         Ok(outcome) => outcome,
         Err(TerminalError::NotATerminal) => return fail(&failure::no_terminal()),
         Err(TerminalError::Io(_)) => {
@@ -883,6 +1174,7 @@ fn session(
     setup: RunSetup,
     keymap: KeyMap,
     status: Option<StatusCommandService>,
+    config: config::Config,
 ) -> Result<Outcome, TerminalError> {
     let guard = TerminalGuard::acquire()?;
     let probe = probe_startup(PROBE_DEADLINE)?;
@@ -890,9 +1182,47 @@ fn session(
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
     let (sender, receiver) = mpsc::unbounded_channel();
-    let mut composer = Composer::new(keymap.clone());
+    let history_dir = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join(".talaria");
+    let workspace = talaria_app::comforts::prompt_history::history_workspace(&launch.folder);
+    let (history, history_notice) = PromptHistory::open(
+        &history_dir,
+        config.history.save,
+        &workspace.to_string_lossy(),
+    );
+    let mut setup = setup;
+    setup.notices.extend(history_notice);
+    let mut composer = Composer::with_history(keymap.clone(), history.composer_seed());
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     let mut screen = TuiScreen {
+        guard,
+        input: None,
+        history,
+        search: None,
+        folder: launch.folder.clone(),
+        reporter: HerdrReporter::from_env_with_notices(
+            config.herdr.report_state,
+            &|key| std::env::var(key).ok(),
+            unix_millis,
+            {
+                let sender = sender.clone();
+                move |notice| {
+                    let _ = sender.send(ScreenInput::ComfortNotice(notice));
+                }
+            },
+        ),
+        config,
+        pane: PaneReport {
+            state: PaneState::Idle,
+            message: None,
+        },
+        report_session: None,
+        expected: Arc::new(AtomicBool::new(false)),
+        released: Arc::new(AtomicBool::new(false)),
+        continued: Arc::new(AtomicBool::new(false)),
+        compact_started: false,
         terminal,
         composer,
         prompts: PromptStack::new(),
@@ -929,13 +1259,22 @@ fn session(
         rewind_rows: 0,
         rewind_theme: rewind_theme(),
     };
-    let input: Option<InputThread> =
-        spawn_input(move |event| sender.send(ScreenInput::Terminal(event)).is_ok());
+    let notify = sender.clone();
+    suspend::spawn_sigcont_watch(
+        screen.expected.clone(),
+        screen.released.clone(),
+        screen.continued.clone(),
+        move || {
+            let _ = notify.send(ScreenInput::Continued);
+        },
+    )
+    .map_err(TerminalError::Io)?;
+    suspend::catch_interrupts_while_released().map_err(TerminalError::Io)?;
+    screen.input = spawn_input(move |event| sender.send(ScreenInput::Terminal(event)).is_ok());
     let outcome = runtime.block_on(app::run(launch, setup, &mut screen, receiver));
     screen.restore();
-    drop(input);
+    drop(screen.input.take());
     drop(screen);
-    drop(guard);
     Ok(outcome)
 }
 
@@ -959,12 +1298,45 @@ fn rewind_theme() -> RewindTheme {
     }
 }
 
+fn sync_reported_draft(
+    text: &str,
+    caret: usize,
+    reported: &mut (String, usize),
+    actions: &mut Vec<UserAction>,
+) {
+    if actions
+        .iter()
+        .any(|action| matches!(action, UserAction::Submit(_)))
+    {
+        *reported = (String::new(), 0);
+        return;
+    }
+    if (reported.0.as_str(), reported.1) == (text, caret) {
+        return;
+    }
+    *reported = (text.to_owned(), caret);
+    actions.insert(
+        0,
+        UserAction::Palette(PaletteInput::DraftChanged {
+            text: text.to_owned(),
+            caret,
+        }),
+    );
+}
+
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{confirmation_key, picker_key, preview_text};
+    use super::{TuiScreen, confirmation_key, picker_key, preview_text, sync_reported_draft};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
+    use talaria_app::app::{AppMessage, AppState, UserAction, update};
     use talaria_core::models::{ConfirmKey, PickerKey};
     use talaria_tui::keys::{Key, KeyMap};
     use talaria_tui::markdown::{MarkdownOptions, render_markdown};
@@ -974,6 +1346,34 @@ mod tests {
         let lines = render_markdown(text, &MarkdownOptions::default());
         let skip = lines.len().saturating_sub(rows);
         lines.iter().skip(skip).map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn loaded_draft_is_reported_before_closing_the_palette() {
+        for was_open in [false, true] {
+            let mut reported = (String::new(), 0);
+            let mut actions = Vec::new();
+            TuiScreen::close_palette(&mut actions);
+            sync_reported_draft("/help", 5, &mut reported, &mut actions);
+            let mut state = AppState::new("draft-sync");
+            state.palette.open = was_open;
+            for action in actions {
+                let _ = update(&mut state, AppMessage::ForegroundKey(action));
+            }
+            assert_eq!(state.draft, "/help");
+            assert!(!state.palette.open);
+            assert_eq!(reported, ("/help".into(), 5));
+        }
+    }
+
+    #[test]
+    fn submission_does_not_report_the_composers_cleared_draft() {
+        let mut reported = ("/help".into(), 5);
+        let mut actions = vec![UserAction::Submit("/help".into())];
+        sync_reported_draft("", 0, &mut reported, &mut actions);
+        assert_eq!(reported, (String::new(), 0));
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(&actions[0], UserAction::Submit(text) if text == "/help"));
     }
 
     #[test]

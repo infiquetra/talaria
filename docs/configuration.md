@@ -31,6 +31,23 @@ delete_word_backward = ["ctrl+w", "alt+backspace"]
 kill_to_line_end = ["ctrl+k"]
 kill_to_line_start = ["ctrl+u"]
 yank = ["ctrl+y"]
+open_editor = ["ctrl+g", "alt+g"]
+history_search = ["ctrl+r"]
+suspend = ["ctrl+z"]
+
+[editor]
+command = ""
+
+[history]
+save = true
+
+[notifications]
+bell = ["needs_you", "failed"]
+desktop = ["needs_you", "done", "failed"]
+done_after_seconds = 20
+
+[herdr]
+report_state = true
 
 [status]
 # command = "~/.talaria/status.sh"
@@ -41,6 +58,24 @@ allowlist = []
 ```
 
 ## Schema
+
+Ctrl+G opens the draft in the configured editor, then `$VISUAL`, `$EDITOR`, or an installed
+fallback. Graphical editors need a wait flag. Changes return to the composer unsent.
+Ctrl+R searches saved prompts; Tab switches between this folder and all folders. Enter loads
+the selected text without sending; Esc restores the original draft. Ctrl+Z suspends to a
+job-control shell; `fg` restores the terminal and the draft.
+
+History lives in `~/.talaria/history.jsonl`: version, Unix timestamp, workspace folder key and
+prompt text, one JSON object per line. Its folder is private and its file is owner-readable
+and writable only. A leading space or more than 100,000 characters keeps a prompt in memory
+only. `[history] save = false` disables both reading and writing. Startup reads at most 1 MiB;
+after the first frame, files over 4 MiB are compacted to the newest 5,000 lines within 1 MiB.
+
+Notification kinds are `needs_you`, `done`, and `failed`. Bell and desktop lists independently
+choose channels. A completed turn alerts only after `done_after_seconds` (0–86400, default 20).
+Interrupted turns and restored prompts stay silent. Desktop delivery depends on the terminal.
+`[herdr] report_state` enables pane reporting when the process was launched inside Herdr;
+blocked means a prompt is still visible, working means a turn is running, otherwise idle.
 
 | Setting | Type | Default | Meaning |
 |---|---|---|---|

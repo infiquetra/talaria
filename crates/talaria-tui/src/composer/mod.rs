@@ -489,7 +489,10 @@ impl Composer {
             | Action::CompletionNext
             | Action::CompletionPrev
             | Action::CompletionAccept
-            | Action::CompletionClose => {}
+            | Action::CompletionClose
+            | Action::OpenEditor
+            | Action::HistorySearch
+            | Action::Suspend => {}
         }
         false
     }

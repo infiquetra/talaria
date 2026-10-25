@@ -45,6 +45,54 @@
 **Rejected alternatives.** Browse order within a match class (fails both cases). Shorter names first (fails the `/ers` case).
 
 **Revisit when** the unit specification and the tests are reconciled on this order.
+### Draft editing, history search and shell suspension have explicit keys
+
+**Decision.** Ctrl+G opens the external editor, with Alt+G as its fallback;
+Ctrl+R opens history search; Ctrl+Z suspends the interactive client. Edited and
+recalled text returns to the composer unsent. The bindings remain configurable.
+
+**Evidence.** `crates/talaria-tui/src/keys.rs` defines the three actions and
+defaults. `comfort_keys`, `history_search` and `comforts_pty` exercise routing,
+unsent loading, editor return and suspension.
+
+**Mechanism.** The terminal owner routes suspension before other input, gives
+active overlays and cards their existing priority, and flushes pending composer
+typing before handing a draft to the editor or search. Input pauses while a child
+owns the terminal; reacquisition restores modes and probes before reading again.
+
+### Submitted history and attention preferences belong to the client
+
+**Decision.** Keep a separate versioned `.talaria/history.jsonl` in the user's
+home rather than sharing another client's history. `[history]` controls saving;
+`[notifications]` selects bell and desktop alert kinds and the minimum completion
+duration; `[herdr]` controls pane reporting.
+
+**Evidence.** `crates/talaria-app/src/comforts/prompt_history.rs` implements the
+store, and `crates/talaria-app/src/config.rs` parses the tables documented in
+`docs/configuration.md`. The `prompt_history`, `config_comforts`, `config_doc`
+and `attention` tests cover persistence, permissions, opt-out and alert policy.
+
+**Mechanism.** Startup reads only a bounded tail of private JSON-lines history;
+accepted submissions append independently of the transcript. Leading-space and
+oversized entries remain in memory. Compaction runs after the first frame.
+Configuration feeds a pure attention tracker, which decides whether an event
+needs an alert independently of terminal output and pane reporting.
+
+### Herdr integration uses its command-line reporting interface
+
+**Decision.** Invoke `herdr pane report-agent` and `herdr pane release-agent`
+instead of depending on Herdr's private control protocol. Reporting is enabled
+only in the advertised Herdr environment and may be disabled in configuration.
+
+**Evidence.** `crates/talaria-app/src/comforts/herdr.rs` constructs the commands;
+the `herdr` tests check argument ordering, sequence numbers, coalescing, failure
+notices and release. The live comforts check captures idle, working and blocked
+reports with session identity and resume arguments.
+
+**Mechanism.** A worker keeps one child in flight and retains the newest pending
+state. Reports carry increasing sequence numbers, sanitized messages and a
+bounded deadline. Failures return once through the application event channel;
+exit releases reporting authority within a separate bounded wait.
 
 ### Restore, re-read, then rewind only if the chosen prompt is still active
 
