@@ -29,6 +29,11 @@ use talaria_core::models::{
     PickerKey, PickerView, SavedModels, parse_effort_command, parse_model_command,
 };
 use talaria_core::mutation::Confirmation;
+use talaria_core::rewind::{
+    CallFailure, DiffCommand, DiffSource, DoubleEsc, Reply, RewindEffect, RewindInput, RewindKey,
+    RewindState, RewindView, RollbackCommand, parse_diff as parse_diff_command, parse_rollback,
+    parse_undo, text as rewind_text, update as rewind_update,
+};
 use talaria_core::session::{
     Cell, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState, SessionId, SessionState,
 };
@@ -85,6 +90,15 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// A key for the open rewind overlay. Issue #233.
+    Rewind(RewindKey),
+    /// How many list rows the rewind overlay shows.
+    RewindViewport(u16),
+    /// Esc reached the composer. `eligible` when the composer was empty and idle: two eligible
+    /// presses close together open the rewind overlay.
+    Escape {
+        eligible: bool,
+    },
     OpenModels,
     ModelPicker(PickerKey),
     ModelConfirm(ConfirmKey),
@@ -130,6 +144,8 @@ pub struct View<'a> {
     pub held: usize,
     /// The slash palette under the composer.
     pub palette: &'a PaletteState,
+    /// The rewind overlay, while it is open. Issue #233.
+    pub rewind: Option<RewindView<'a>>,
 }
 
 impl View<'_> {
@@ -220,6 +236,12 @@ pub struct AppState {
     pub commands: CommandsState,
     /// Commands Talaria runs itself.
     pub local: LocalCommandTable,
+    /// The rewind overlay and the typed rewind commands. Issue #233.
+    rewind: RewindState,
+    /// Two quick eligible Esc presses open the rewind overlay.
+    double_esc: DoubleEsc,
+    /// The `/retry` submission still waiting for its outcome, with its text.
+    retry: Option<(String, String)>,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
@@ -257,6 +279,9 @@ impl AppState {
             palette: PaletteState::closed(),
             commands: CommandsState::default(),
             local: LocalCommandTable::builtin(),
+            rewind: RewindState::default(),
+            double_esc: DoubleEsc::default(),
+            retry: None,
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
@@ -288,6 +313,7 @@ impl AppState {
             masked: &self.masked,
             held: self.held.len(),
             palette: &self.palette,
+            rewind: self.rewind.is_open().then(|| self.rewind.view(wall_ms())),
         }
     }
 
@@ -341,11 +367,18 @@ pub enum AppMessage {
         typed: String,
         outcome: CommandOutcome,
     },
+    /// A rewind call's reply, or another rewind input. Issue #233.
+    Rewind(talaria_core::rewind::RewindInput),
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
 pub enum AppEffect {
     Models(ModelsEffect),
+    /// Run one rewind call; its reply comes back as [`AppMessage::Rewind`]. Issue #233.
+    Rewind {
+        ticket: u64,
+        call: talaria_core::rewind::Call,
+    },
     CommitLines(Vec<String>),
     CommitCells(Range<usize>),
     Redraw,
@@ -495,6 +528,214 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
         .collect()
 }
 
+/// How a foreground rebuild was caused.
+pub enum RebuildMode {
+    /// Gap recovery, unchanged.
+    AfterGap,
+    /// A rewind or a restore finished. `notice` is committed and nothing above it is reprinted.
+    AfterRewind { notice: Vec<String> },
+}
+
+/// Replace the foreground session from a fresh snapshot.
+///
+/// `AfterGap` calls the existing gap recovery. `AfterRewind` is issue 233.
+pub fn rebuild_foreground(
+    state: &mut AppState,
+    snapshot: Value,
+    mode: RebuildMode,
+) -> Vec<AppEffect> {
+    match mode {
+        RebuildMode::AfterGap => rebuild_after_gap(state, snapshot),
+        RebuildMode::AfterRewind { notice } => rebuild_after_rewind(state, snapshot, notice),
+    }
+}
+
+fn rebuild_after_gap(state: &mut AppState, snapshot: Value) -> Vec<AppEffect> {
+    let result =
+        match serde_json::from_value::<hermes_contract::schemas::CanonicalSnapshot>(snapshot) {
+            Ok(decoded) => Ok(crate::sessions::OpenedSession::from_snapshot(decoded)),
+            Err(_) => Err(crate::sessions::OpenError::Link(
+                "the session reply did not decode".to_string(),
+            )),
+        };
+    recovered(state, result)
+}
+
+/// Replace the foreground state after a rewind or a restore without printing anything again.
+///
+/// Cells already in scrollback are matched in order and skipped; the notice is committed, then
+/// any final cell this pane never showed (another window's new turn), once.
+fn rebuild_after_rewind(
+    state: &mut AppState,
+    snapshot: Value,
+    notice: Vec<String>,
+) -> Vec<AppEffect> {
+    let fresh =
+        match serde_json::from_value::<hermes_contract::schemas::CanonicalSnapshot>(snapshot) {
+            Ok(decoded) => crate::sessions::OpenedSession::from_snapshot(decoded),
+            Err(_) => {
+                return vec![notice_lines(&rewind_text::reload_failed(
+                    "the session reply did not decode",
+                ))];
+            }
+        };
+    let old = state.opened.take();
+    let shown: &[Cell] = old.as_ref().map_or(&[], |old| {
+        &old.state.cells()[..state.committed_cells.min(old.state.cells().len())]
+    });
+    let cells = fresh.state.cells();
+    let total = final_prefix(cells);
+    let mut position = 0;
+    let mut unseen: Vec<usize> = Vec::new();
+    for (index, cell) in cells[..total].iter().enumerate() {
+        match shown[position..].iter().position(|seen| seen == cell) {
+            Some(offset) => position += offset + 1,
+            None => unseen.push(index),
+        }
+    }
+    let mut effects = Vec::new();
+    if !notice.is_empty() {
+        effects.push(AppEffect::CommitLines(notice));
+    }
+    let mut start = 0;
+    while start < unseen.len() {
+        let mut end = start + 1;
+        while end < unseen.len() && unseen[end] == unseen[end - 1] + 1 {
+            end += 1;
+        }
+        effects.push(AppEffect::CommitCells(unseen[start]..unseen[end - 1] + 1));
+        start = end;
+    }
+    state.committed_cells = total;
+    effects.push(AppEffect::Resync {
+        session_id: fresh.session_id.clone(),
+        cursor: fresh.cursor.clone(),
+    });
+    effects.extend(models_input(
+        state,
+        ModelsInput::SessionOpened {
+            session_id: fresh.session_id.clone(),
+            revision: Some(fresh.revision),
+            execution_generation: Some(fresh.execution_generation),
+        },
+    ));
+    let mut fresh = fresh;
+    if fresh.title.is_none() {
+        fresh.title = old.and_then(|old| old.title);
+    }
+    state.opened = Some(fresh);
+    effects
+}
+
+/// Wall-clock milliseconds, for the double Esc window and the prompts' ages.
+fn wall_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// One of the five rewind commands, typed or picked. Issue #233.
+fn rewind_command(state: &mut AppState, action: LocalAction, argument: &str) -> Vec<AppEffect> {
+    let name = match action {
+        LocalAction::Rewind => "rewind",
+        LocalAction::Undo => "undo",
+        LocalAction::Retry => "retry",
+        LocalAction::Rollback => "rollback",
+        _ => "diff",
+    };
+    if state.link_failed {
+        return vec![notice_lines(&format!(
+            "Talaria is not connected to Hermes, so /{name} did not run."
+        ))];
+    }
+    let Some(opened) = state.opened.as_ref().filter(|_| !state.session_gone) else {
+        return vec![notice_lines(&no_session_notice(name))];
+    };
+    let turn_running = *opened.state.turn() == talaria_core::session::TurnState::Running;
+    let input = match action {
+        LocalAction::Rewind => RewindInput::Open { turn_running },
+        LocalAction::Undo => match parse_undo(argument) {
+            Ok(n) => RewindInput::Undo { n, turn_running },
+            Err(()) => return vec![notice_lines(rewind_text::UNDO_USAGE)],
+        },
+        LocalAction::Retry => RewindInput::Retry { turn_running },
+        LocalAction::Rollback => match parse_rollback(argument) {
+            RollbackCommand::List => RewindInput::OpenCheckpoints,
+            RollbackCommand::Diff(target) => RewindInput::OpenDiff(DiffSource::Checkpoint(target)),
+            RollbackCommand::Restore {
+                target,
+                file_path,
+                all,
+            } => RewindInput::TypedRestore {
+                target,
+                file_path,
+                all,
+                turn_running,
+            },
+            RollbackCommand::BadTarget(target) => {
+                return vec![notice_lines(&rewind_text::no_such_checkpoint(&target))];
+            }
+            RollbackCommand::Usage => return vec![notice_lines(rewind_text::ROLLBACK_USAGE)],
+        },
+        _ => match parse_diff_command(argument) {
+            DiffCommand::Session { stat_only } => {
+                RewindInput::OpenDiff(DiffSource::Session { stat_only })
+            }
+            DiffCommand::GitView => return vec![notice_lines(rewind_text::GIT_DIFF_HINT)],
+        },
+    };
+    rewind_input(state, input)
+}
+
+/// Apply one rewind input and carry out what it asks for.
+fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
+    let mut effects = Vec::new();
+    for effect in rewind_update(&mut state.rewind, input, wall_ms()) {
+        match effect {
+            RewindEffect::Call { ticket, call } => effects.push(AppEffect::Rewind { ticket, call }),
+            RewindEffect::Rebuild { snapshot, notice } => effects.extend(rebuild_foreground(
+                state,
+                snapshot,
+                RebuildMode::AfterRewind { notice },
+            )),
+            RewindEffect::ReturnPrompt { text, attachments } => {
+                effects.extend(return_prompt(state, text, attachments));
+            }
+            RewindEffect::Submit(text) => {
+                let submission_id = state.next_submission_id();
+                state.retry = Some((submission_id.clone(), text.clone()));
+                effects.extend(reduce(
+                    state,
+                    Event::Submit {
+                        text,
+                        submission_id,
+                    },
+                ));
+            }
+            RewindEffect::Notice(_, text) => effects.push(notice_lines(&text)),
+        }
+    }
+    effects.push(AppEffect::Redraw);
+    effects
+}
+
+/// Put a rewound prompt back, but only into an empty composer; a draft is never overwritten.
+fn return_prompt(state: &mut AppState, text: String, attachments: bool) -> Vec<AppEffect> {
+    let mut effects = if !state.draft.is_empty() {
+        vec![notice_lines(&rewind_text::draft_kept(&text))]
+    } else if text.is_empty() {
+        Vec::new()
+    } else {
+        load_draft(state, text)
+    };
+    if attachments {
+        effects.push(notice_lines(rewind_text::ATTACHMENTS_NOT_RESTORED));
+    }
+    effects
+}
+
 /// Apply one message. No input or output: the effects say what to do.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let mut effects = match message {
@@ -523,6 +764,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects
         }
         AppMessage::Recovered(result) => recovered(state, result),
+        AppMessage::Rewind(input) => rewind_input(state, input),
         AppMessage::ForegroundKey(action) => foreground_key(state, action),
         AppMessage::Commands(CommandReply::Commands(input)) => commands_input(state, input),
         AppMessage::Commands(CommandReply::Palette(input)) => {
@@ -576,6 +818,20 @@ fn route(
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
+        UserAction::Rewind(key) => rewind_input(state, RewindInput::Key(key)),
+        UserAction::RewindViewport(rows) => rewind_input(state, RewindInput::Viewport(rows)),
+        UserAction::Escape { eligible } => {
+            if state.double_esc.press(wall_ms(), eligible) && state.opened.is_some() {
+                rewind_input(
+                    state,
+                    RewindInput::Open {
+                        turn_running: false,
+                    },
+                )
+            } else {
+                Vec::new()
+            }
+        }
         UserAction::OpenModels => models_input(
             state,
             ModelsInput::OpenPicker {
@@ -837,6 +1093,11 @@ fn local_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
     let command = match action {
         LocalAction::Model => parse_model_command(argument).map(ModelCommandOrEffort::Model),
         LocalAction::Effort => parse_effort_command(argument).map(ModelCommandOrEffort::Effort),
+        LocalAction::Rewind
+        | LocalAction::Undo
+        | LocalAction::Retry
+        | LocalAction::Rollback
+        | LocalAction::Diff => return rewind_command(state, action, argument),
         _ => return Vec::new(),
     };
     models_input(
@@ -973,12 +1234,21 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 if let Some(sequence) = seq {
                     opened.cursor.last_sequence = opened.cursor.last_sequence.max(sequence);
                 }
-                let produced = if type_name == "session.updated" {
-                    Vec::new()
-                } else {
-                    apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw)
-                };
+                // `session.updated` still reaches the session reducer, which keeps the replay
+                // cursor moving; a rewind from another window also rebuilds. Issue #233.
+                let rewound = (type_name == "session.updated"
+                    && payload.get("operation").and_then(Value::as_str) == Some("rewind"))
+                .then(|| RewindInput::SessionUpdated {
+                    operation: "rewind".to_string(),
+                    revision: payload.get("revision").and_then(Value::as_i64),
+                    rewound_count: payload.get("rewound_count").and_then(Value::as_u64),
+                });
+                let produced =
+                    apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
                 let mut effects = route(state, produced, None);
+                if let Some(input) = rewound {
+                    effects.extend(rewind_input(state, input));
+                }
                 effects.extend(models_input(
                     state,
                     ModelsInput::SessionEvent {
@@ -1087,6 +1357,26 @@ fn opened_session(
 }
 
 fn submit_done(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec<AppEffect> {
+    let retried = state
+        .retry
+        .take_if(|(retry_id, _)| *retry_id == id)
+        .map(|(_, text)| text);
+    let mut effects = submit_outcome(state, id, outcome.clone());
+    // `/retry` already removed the prompt, so a send that did not go through returns it.
+    if let Some(text) = retried {
+        match outcome {
+            ExecuteOutcome::Refused { reason } => {
+                effects.push(notice_lines(&rewind_text::resend_failed(&reason)));
+                effects.extend(return_prompt(state, text, false));
+            }
+            ExecuteOutcome::OutcomeUnknown => effects.extend(return_prompt(state, text, false)),
+            ExecuteOutcome::Sent | ExecuteOutcome::VoiceStopped => {}
+        }
+    }
+    effects
+}
+
+fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec<AppEffect> {
     let (reason, notice) = match outcome {
         ExecuteOutcome::Sent => return Vec::new(),
         ExecuteOutcome::Refused { reason } => ("refused", failure::prompt_refused_notice(&reason)),
@@ -1809,6 +2099,33 @@ fn apply<S: Screen>(
     let mut redraw = false;
     for effect in update(state, message) {
         match effect {
+            AppEffect::Rewind { ticket, call } => {
+                let client = state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned();
+                let session_id = state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.session_id.clone());
+                executor.send_later(async move {
+                    let input = match (client, session_id) {
+                        (Some(client), Some(session_id)) => {
+                            crate::rewind::RewindService::new(client, session_id)
+                                .execute(ticket, call)
+                                .await
+                        }
+                        _ => RewindInput::Reply {
+                            ticket,
+                            reply: Reply::Failed(CallFailure::NotSent(
+                                "no session is open".to_string(),
+                            )),
+                        },
+                    };
+                    AppMessage::Rewind(input)
+                });
+            }
             AppEffect::Models(effect) => match effect {
                 ModelsEffect::OpenOverlay | ModelsEffect::CloseOverlay => redraw = true,
                 ModelsEffect::Notice { level, text, .. } => {

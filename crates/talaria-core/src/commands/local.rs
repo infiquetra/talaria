@@ -16,6 +16,16 @@ pub enum LocalAction {
     Model,
     /// Choose the reasoning level of the foreground session.
     Effort,
+    /// Open the rewind overlay. Issue #233.
+    Rewind,
+    /// Remove the last N prompts. Issue #233.
+    Undo,
+    /// Remove the last prompt and send it again. Issue #233.
+    Retry,
+    /// List, compare, or restore file checkpoints. Issue #233.
+    Rollback,
+    /// Show the session diff. Issue #233.
+    Diff,
 }
 
 /// One local command.
@@ -71,6 +81,50 @@ const BUILTIN: &[LocalCommand] = &[
     },
 ];
 
+/// The five rewind commands, in table order. Issue #233.
+pub const LOCAL_COMMANDS: &[LocalCommand] = &[
+    LocalCommand {
+        name: "rewind",
+        aliases: &["checkpoint"],
+        summary: "Go back to an earlier prompt: rewind the conversation, and restore files when checkpoints are on",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Rewind,
+    },
+    LocalCommand {
+        name: "undo",
+        aliases: &[],
+        summary: "Remove your last N prompts and their replies (default 1)",
+        args_hint: "[N]",
+        takes_argument: true,
+        action: LocalAction::Undo,
+    },
+    LocalCommand {
+        name: "retry",
+        aliases: &[],
+        summary: "Remove the last prompt and its reply, then send the prompt again",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Retry,
+    },
+    LocalCommand {
+        name: "rollback",
+        aliases: &[],
+        summary: "List, compare or restore file checkpoints",
+        args_hint: "[list] | diff <n> | <n> [file] [--all]",
+        takes_argument: true,
+        action: LocalAction::Rollback,
+    },
+    LocalCommand {
+        name: "diff",
+        aliases: &[],
+        summary: "Show what changed since Hermes's oldest kept checkpoint",
+        args_hint: "[--stat]",
+        takes_argument: true,
+        action: LocalAction::Diff,
+    },
+];
+
 /// The ordered local table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalCommandTable {
@@ -78,11 +132,11 @@ pub struct LocalCommandTable {
 }
 
 impl LocalCommandTable {
-    /// The built-in table. This unit's only entry is `/quit`.
+    /// The built-in table: `/quit`, the model commands, then the rewind commands.
     #[must_use]
     pub fn builtin() -> Self {
         Self {
-            commands: BUILTIN.to_vec(),
+            commands: BUILTIN.iter().chain(LOCAL_COMMANDS).copied().collect(),
         }
     }
 

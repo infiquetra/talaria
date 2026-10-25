@@ -409,6 +409,8 @@ struct State {
     /// A turn is running, so `/plan` answers with the busy text.
     turn_running: bool,
     sess: SessionSide,
+    /// Checkpoint, diff and rewind answers. Issue #233.
+    rewind: RewindSide,
 }
 
 struct Shared {
@@ -495,6 +497,7 @@ fn new_shared(
             gateway_without_command_dispatch: false,
             turn_running: false,
             sess: SessionSide::new(),
+            rewind: RewindSide::default(),
         }),
         changed: Notify::new(),
     })
@@ -1411,7 +1414,7 @@ pub const INSTANCE_ID: &str = "0123456789abcdef0123456789abcdef";
 pub const CODE_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
 /// The handshake, session, finite-turn, and model methods the mock answers.
-pub const SESSION_METHODS: [&str; 14] = [
+pub const SESSION_METHODS: [&str; 18] = [
     "runtime.describe",
     "client.capabilities",
     "session.create",
@@ -1426,6 +1429,10 @@ pub const SESSION_METHODS: [&str; 14] = [
     "config.get",
     "config.set",
     "session.mutate",
+    "rollback.list",
+    "rollback.diff",
+    "rollback.restore",
+    "rollback.session_diff",
 ];
 
 /// Finite-turn scenarios, enabled only by headless flow tests.
@@ -1797,6 +1804,12 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
                 "operation",
                 "payload",
             ],
+        ),
+        "rollback.list" | "rollback.session_diff" => (vec!["session_id"], vec!["session_id"]),
+        "rollback.diff" => (vec!["session_id", "hash"], vec!["session_id", "hash"]),
+        "rollback.restore" => (
+            vec!["session_id", "hash"],
+            vec!["session_id", "hash", "file_path", "all"],
         ),
         _ => (Vec::new(), Vec::new()),
     }
@@ -2173,10 +2186,16 @@ fn plan_session_method(
         "model.options" => handle_model_options(state, params),
         "config.get" => handle_config_get(state, params),
         "config.set" => handle_config_set(state, params),
+        "session.mutate" if params["operation"] == "rewind" => handle_rewind_mutate(state, params),
         "session.mutate" => handle_session_mutate(state, params),
+        "rollback.list" => Ok(handle_rollback_list(state)),
+        "rollback.diff" => Ok(handle_rollback_diff(state)),
+        "rollback.restore" => handle_rollback_restore(state, params),
+        "rollback.session_diff" => Ok(handle_rollback_session_diff(state)),
         _ => handle_interrupt(state, params),
     };
     if matches!(behavior, Behavior::DropBeforeReply) {
+        state.rewind.after_reply.clear();
         state.kill_after = true;
         return;
     }
@@ -2194,6 +2213,7 @@ fn plan_session_method(
     }
     let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
     outgoing.push((delay, text, reply_meta(id, method)));
+    flush_after_reply(state, delay, outgoing);
     if voice {
         return;
     }
@@ -3384,3 +3404,4 @@ impl Deref for MockServer {
 
 // Model catalogue, effort and fenced mutate handlers. Issue 230.
 include!("mock_model.rs");
+include!("mock_rewind.rs");
