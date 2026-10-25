@@ -10,6 +10,7 @@
 #[path = "support/mock_gateway.rs"]
 mod mock_gateway;
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -412,6 +413,7 @@ impl Rig {
             preopened: None,
             list_title: None,
             notices: Vec::new(),
+            keys: BTreeMap::new(),
         }
     }
 

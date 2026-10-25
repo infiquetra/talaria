@@ -554,7 +554,23 @@ impl Composer {
             | Action::OpenEditor
             | Action::HistorySearch
             | Action::Suspend
-            | Action::AttachClipboardImage => {}
+            | Action::AttachClipboardImage
+            | Action::TranscriptOpen
+            | Action::PagerLineUp
+            | Action::PagerLineDown
+            | Action::PagerPageUp
+            | Action::PagerPageDown
+            | Action::PagerHalfUp
+            | Action::PagerHalfDown
+            | Action::PagerTop
+            | Action::PagerBottom
+            | Action::PagerPrevPrompt
+            | Action::PagerNextPrompt
+            | Action::PagerSearch
+            | Action::PagerNextMatch
+            | Action::PagerPrevMatch
+            | Action::PagerDetails
+            | Action::PagerClose => {}
         }
         false
     }

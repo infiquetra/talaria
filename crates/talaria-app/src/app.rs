@@ -369,6 +369,10 @@ pub struct AppState {
     pub now_ms: u64,
     /// The Hermes skin and the session's light or dark override.
     pub appearance: AppearanceService,
+    /// Bindings from the keys table. Issue 222 reads these while routing the transcript.
+    pub key_bindings: BTreeMap<String, Vec<String>>,
+    /// The transcript pager is open.
+    pub pager_open: bool,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
@@ -447,6 +451,8 @@ impl AppState {
                 TerminalColors::default(),
                 (Polarity::Dark, PolaritySource::Default),
             ),
+            key_bindings: BTreeMap::new(),
+            pager_open: false,
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
@@ -515,11 +521,51 @@ impl AppState {
     }
 }
 
+/// One key the terminal delivered. Issue 222 routes it to the transcript when that screen is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InputKey {
+    /// The key, without modifiers.
+    pub code: InputCode,
+    /// Control was held.
+    pub ctrl: bool,
+    /// Alt was held.
+    pub alt: bool,
+    /// Shift was held.
+    pub shift: bool,
+}
+
+/// The key half of [`InputKey`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputCode {
+    /// A character, including space.
+    Char(char),
+    /// Enter.
+    Enter,
+    /// Escape.
+    Esc,
+    /// Backspace.
+    Backspace,
+    /// Up arrow.
+    Up,
+    /// Down arrow.
+    Down,
+    /// Page Up.
+    PageUp,
+    /// Page Down.
+    PageDown,
+    /// Home.
+    Home,
+    /// End.
+    End,
+}
+
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
     Models(ModelsInput),
     User(UserAction),
+    /// A key from the terminal.
+    Input(InputKey),
     Link(LinkEvent),
     /// The session is open: commit its history, track it, send held prompts.
     Opened {
@@ -1022,6 +1068,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects.extend(link_event(state, event));
             effects
         }
+        AppMessage::Input(_) => todo!(),
         AppMessage::Opened { opened, notice } => opened_session(state, opened, notice),
         AppMessage::SubmitDone {
             submission_id,

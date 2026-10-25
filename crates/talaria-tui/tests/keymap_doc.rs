@@ -69,6 +69,25 @@ fn expected(action: Action) -> Vec<String> {
         Action::HistorySearch => &["Ctrl+R"],
         Action::Suspend => &["Ctrl+Z"],
         Action::AttachClipboardImage => &["Ctrl+V", "Alt+V"],
+        // Issue 222 adds these names. They have no built-in chord until the configuration
+        // document lists one, so this table stays equal to the defaults.
+        // Issue 222 adds the transcript keys, with the chords the specification settles.
+        Action::TranscriptOpen => &["Ctrl+O"],
+        Action::PagerLineUp => &["Up", "K"],
+        Action::PagerLineDown => &["Down", "J"],
+        Action::PagerPageUp => &["PageUp", "B"],
+        Action::PagerPageDown => &["PageDown", "Space"],
+        Action::PagerHalfUp => &["Ctrl+U"],
+        Action::PagerHalfDown => &["Ctrl+D"],
+        Action::PagerTop => &["G", "Home"],
+        Action::PagerBottom => &["Shift+G", "End"],
+        Action::PagerPrevPrompt => &["{"],
+        Action::PagerNextPrompt => &["}"],
+        Action::PagerSearch => &["/"],
+        Action::PagerNextMatch => &["N"],
+        Action::PagerPrevMatch => &["Shift+N"],
+        Action::PagerDetails => &["T"],
+        Action::PagerClose => &["Q"],
     };
     labels.iter().map(|label| (*label).to_string()).collect()
 }

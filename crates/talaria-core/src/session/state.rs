@@ -196,6 +196,14 @@ impl SessionState {
         self.drafting.as_deref()
     }
 
+    /// Whether the resume left older summarized history out.
+    ///
+    /// Issue 222 reads the flag from the first row of `messages` only. The check is not written yet.
+    #[must_use]
+    pub fn history_truncated(&self) -> bool {
+        todo!()
+    }
+
     /// Pending shell and side work.
     pub fn side(&self) -> &SideTasks {
         &self.side
