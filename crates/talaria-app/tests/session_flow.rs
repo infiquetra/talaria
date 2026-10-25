@@ -2212,14 +2212,15 @@ fn user_config_and_key_map_notices_are_committed_at_start() {
         std::fs::write(directory.join("config.toml"), text).expect("config");
     };
 
-    // A table Talaria does not read gives a notice from the file reader.
+    // A table Talaria does not read gives a notice from the file reader. [theme] is read since
+    // #227, so a typo table stands in.
     let home = tempfile::tempdir().expect("home");
-    write(home.path(), "[theme]\nname = \"x\"\n");
+    write(home.path(), "[theme_typo]\nname = \"x\"\n");
     let notices = startup_notices(home.path());
     assert!(
         notices
             .iter()
-            .any(|notice| notice.contains("Ignoring [theme]")),
+            .any(|notice| notice.contains("Ignoring [theme_typo]")),
         "{notices:?}"
     );
 

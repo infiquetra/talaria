@@ -25,12 +25,14 @@ zeroize.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+alacritty_terminal.workspace = true
 crossterm.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 proptest.workspace = true
 ratatui.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
+vte.workspace = true
 talaria-tui.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

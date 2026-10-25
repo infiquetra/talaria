@@ -69,6 +69,8 @@ pub struct TerminalCaps {
 pub struct ProbeReply {
     pub caps: TerminalCaps,
     pub cursor: Option<(u16, u16)>,
+    /// The OSC 10 and 11 colour answers (issue 227; stub: the parser fills them later).
+    pub colors: crate::theme::TerminalColors,
 }
 
 /// The four queries, written once at start-up: cursor position, keyboard flags, the

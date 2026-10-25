@@ -1,5 +1,6 @@
 //! Domain state and pure reducers without input, output or terminal libraries.
 
+pub mod appearance;
 pub mod attention;
 pub mod commands;
 pub mod context;

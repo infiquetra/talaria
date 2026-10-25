@@ -2347,6 +2347,7 @@ dependencies = [
 name = "talaria-app"
 version = "0.7.0-dev"
 dependencies = [
+ "alacritty_terminal",
  "crossterm",
  "futures-util",
  "getrandom 0.3.4",
@@ -2367,6 +2368,7 @@ dependencies = [
  "tokio-tungstenite",
  "toml",
  "vt100",
+ "vte",
  "zeroize",
 ]
 

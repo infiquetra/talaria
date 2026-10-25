@@ -16,4 +16,5 @@ pub mod rewind;
 pub mod side;
 pub mod status;
 pub mod terminal;
+pub mod theme;
 pub mod tool_cell;

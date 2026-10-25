@@ -84,6 +84,7 @@ fn draw(stack: &PromptStack) -> Drawn {
             keyboard_enhancement: false,
         },
         cursor: Some((0, 0)),
+        ..Default::default()
     };
     let mut terminal = InlineTerminal::new(
         sink.clone(),
