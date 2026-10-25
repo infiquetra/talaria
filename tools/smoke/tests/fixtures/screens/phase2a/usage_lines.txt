@@ -1,0 +1,2 @@
+· Usage: /skin [name]. A skin name is letters, digits, dot, dash or underscore, up to 64 characters.
+· Usage: /theme [light|dark|auto]

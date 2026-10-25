@@ -20,6 +20,30 @@ pub struct SmokeConfig {
     pub seed: Option<u64>,
 }
 
+/// Everything the phase 2a run needs beyond [`SmokeConfig`].
+pub struct Phase2aConfig {
+    /// The tmux executable the tmux section drives.
+    pub tmux: PathBuf,
+}
+
+/// `KEY='value' '<path>' args...; echo SMOKE_EXIT:$?`
+pub fn launch_line_env(env: &[(&str, &str)], talaria: &Path, args: &[&str]) -> String {
+    let mut line = String::new();
+    for (key, value) in env {
+        line.push_str(key);
+        line.push('=');
+        line.push_str(&shell_quote(value));
+        line.push(' ');
+    }
+    line.push_str(&launch_line(talaria, args));
+    line
+}
+
+/// The value in single quotes, with each single quote written as `'\''`.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// `'<path>' args...; echo SMOKE_EXIT:$?`
 pub fn launch_line(talaria: &Path, args: &[&str]) -> String {
     let mut line = format!("'{}'", talaria.display());

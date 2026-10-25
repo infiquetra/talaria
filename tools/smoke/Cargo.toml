@@ -18,6 +18,11 @@ name = "fake-herdr"
 path = "tests/support/fake_herdr.rs"
 test = false
 
+[[bin]]
+name = "fake_tmux"
+path = "tests/support/fake_tmux.rs"
+test = false
+
 [dependencies]
 clap.workspace = true
 rand.workspace = true

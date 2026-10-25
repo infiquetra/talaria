@@ -63,6 +63,11 @@ pub trait Terminal {
     ) -> Result<String, TermError>;
     /// Command lines of the foreground processes.
     fn foreground(&self, pane: &PaneId) -> Result<Vec<String>, TermError>;
+    /// The agent-state report of the pane (`herdr pane get`), for the pane-state step.
+    /// The default errors, so the first suite's fakes compile unchanged.
+    fn pane_get(&self, _pane: &PaneId) -> Result<String, TermError> {
+        Err(TermError::Parse("pane get is not supported".to_owned()))
+    }
     fn tab_exists(&self, tab: &TabId) -> Result<bool, TermError>;
     fn close_tab(&self, tab: &TabId) -> Result<(), TermError>;
     /// The output of `--version`.
@@ -226,6 +231,16 @@ impl Terminal for HerdrCli {
             .filter_map(Value::as_str)
             .map(str::to_owned)
             .collect())
+    }
+
+    /// The agent Herdr recognised in the pane and its state, one per line. The rest of the
+    /// answer names folders and titles, which no step reads.
+    fn pane_get(&self, pane: &PaneId) -> Result<String, TermError> {
+        let answer = self.call(&["pane", "get", &pane.0])?;
+        let agent = Self::text_at(&answer, &["result", "pane", "agent"]).unwrap_or_default();
+        let status =
+            Self::text_at(&answer, &["result", "pane", "agent_status"]).unwrap_or_default();
+        Ok(format!("{agent}\n{status}"))
     }
 
     fn tab_exists(&self, tab: &TabId) -> Result<bool, TermError> {

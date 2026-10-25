@@ -30,6 +30,17 @@ use smoke::{Clock, NewTab, PaneId, ReadSource, TabId, TermError, Terminal};
 #[path = "script.rs"]
 pub mod script;
 
+#[path = "paster2a.rs"]
+pub mod paster2a;
+
+pub use paster2a::{FakePaster, PasterCall, PasterRecorded};
+
+#[path = "scripts2a.rs"]
+pub mod scripts2a;
+
+#[path = "tmux_fake.rs"]
+pub mod tmux_fake;
+
 #[allow(unused_imports)]
 pub use script::{
     FIRST, FIRST_PANE_ID, Failure, Input, Machine, SECOND, SECOND_PANE_ID, Script, TAB_ID,
@@ -102,6 +113,16 @@ impl StageBuilder {
         self.set("remove_in_cwd", json!(path))
     }
 
+    /// Writes the file under the pane's working folder (`{path, text}`).
+    pub fn write_in_cwd(self, path: &str, text: &str) -> Self {
+        self.set("write_in_cwd", json!({"path": path, "text": text}))
+    }
+
+    /// The text `pane get` reports from now on.
+    pub fn get(self, text: &str) -> Self {
+        self.set("get", json!(text))
+    }
+
     pub fn clear(self) -> Self {
         self.set("clear", json!(true))
     }
@@ -155,6 +176,11 @@ impl RuleBuilder {
         Self::new("send_keys", matches)
     }
 
+    /// Fires on pasted text that matches; the fake paster feeds the same machine.
+    pub fn paste(matches: &str) -> Self {
+        Self::new("paste", matches)
+    }
+
     /// May fire again and again (default: once).
     pub fn repeat(mut self) -> Self {
         self.once = false;
@@ -194,6 +220,16 @@ impl RuleBuilder {
 
     pub fn remove_in_cwd(mut self, path: &str) -> Self {
         self.stage = self.stage.remove_in_cwd(path);
+        self
+    }
+
+    pub fn write_in_cwd(mut self, path: &str, text: &str) -> Self {
+        self.stage = self.stage.write_in_cwd(path, text);
+        self
+    }
+
+    pub fn get(mut self, text: &str) -> Self {
+        self.stage = self.stage.get(text);
         self
     }
 
@@ -964,6 +1000,9 @@ pub enum Call {
     Foreground {
         pane: String,
     },
+    PaneGet {
+        pane: String,
+    },
     TabExists {
         tab: String,
     },
@@ -984,6 +1023,7 @@ impl Call {
             Call::SendKeys { .. } => "pane send-keys",
             Call::Read { .. } => "pane read",
             Call::Foreground { .. } => "pane process-info",
+            Call::PaneGet { .. } => "pane get",
             Call::TabExists { .. } => "tab list",
             Call::CloseTab { .. } => "tab close",
             Call::Version => "version",
@@ -1076,6 +1116,22 @@ impl<'a> FakeTerminal<'a> {
 
     pub fn from_builder(script: &ScriptBuilder, clock: &'a dyn Clock) -> Self {
         Self::new(script.build(), clock)
+    }
+
+    /// Feeds pasted text to the machine as a `paste` input on the named pane; the fake paster
+    /// shares the machine through this. Returns whether a rule fired.
+    pub fn paste_into(&self, pane: &str, text: &str) -> bool {
+        self.lock().machine.typed(pane, Input::Paste, text)
+    }
+
+    /// Every typed text that fired a rule on the named pane, oldest first.
+    pub fn typed_texts(&self, pane: &str) -> Vec<String> {
+        self.lock().machine.typed_texts(pane)
+    }
+
+    /// Pushes a value to the machine's remembered list.
+    pub fn note_remembered(&self, value: String) {
+        self.lock().machine.note(value);
     }
 
     /// Panics (with [`PANIC_MESSAGE`]) on the first call for which the predicate holds. The
@@ -1307,6 +1363,15 @@ impl Terminal for FakeTerminal<'_> {
         let inner = self.begin(call, Some(&pane.0))?;
         let name = Self::pane_of(&inner, pane)?;
         Ok(inner.machine.foreground(name))
+    }
+
+    fn pane_get(&self, pane: &PaneId) -> Result<String, TermError> {
+        let call = Call::PaneGet {
+            pane: pane.0.clone(),
+        };
+        let inner = self.begin(call, Some(&pane.0))?;
+        let name = Self::pane_of(&inner, pane)?;
+        Ok(inner.machine.pane_get_text(name))
     }
 
     fn tab_exists(&self, tab: &TabId) -> Result<bool, TermError> {

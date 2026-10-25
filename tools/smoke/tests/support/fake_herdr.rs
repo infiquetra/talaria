@@ -310,6 +310,7 @@ fn handle(ctx: &mut Ctx, args: &[String]) -> Result<String, Stop> {
         ["pane", "send-keys", ..] => pane_keys(ctx, &args[2..]),
         ["pane", "read", ..] => pane_read(ctx, &args[2..]),
         ["pane", "process-info", ..] => pane_info(ctx, &args[2..]),
+        ["pane", "get", ..] => pane_get(ctx, &args[2..]),
         _ => Err(Stop::Syntax(format!("unknown command: {}", args.join(" ")))),
     }
 }
@@ -409,6 +410,14 @@ fn pane_read(ctx: &mut Ctx, rest: &[String]) -> Result<String, Stop> {
     } else {
         ctx.machine.recent(pane, lines)
     })
+}
+
+fn pane_get(ctx: &mut Ctx, rest: &[String]) -> Result<String, Stop> {
+    let parsed = parse(rest, 1..=1, &[], &[], &[])?;
+    let pane = ctx.pane(&parsed.positionals[0])?;
+    ctx.call("pane get", Some(pane))?;
+    // A read-only call: it changes no state, so it logs no event.
+    Ok(ctx.machine.pane_get_text(pane))
 }
 
 fn pane_info(ctx: &mut Ctx, rest: &[String]) -> Result<String, Stop> {

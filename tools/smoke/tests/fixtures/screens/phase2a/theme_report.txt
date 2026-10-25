@@ -1,0 +1,5 @@
+· Theme
+·   Skin: default from Hermes
+·   Background: dark (terminal text colour #00ff00)
+·   Colours: 24-bit (COLORTERM)
+·   Motion: full (default)
