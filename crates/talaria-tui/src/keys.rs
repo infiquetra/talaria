@@ -403,24 +403,24 @@ impl Action {
             Self::HistorySearch => &["ctrl+r"],
             Self::Suspend => &["ctrl+z"],
             Self::AttachClipboardImage => &["ctrl+v", "alt+v"],
-            // Issue 222: the sixteen transcript chords are not built in yet, so the
-            // configuration document still matches this map.
-            Self::TranscriptOpen
-            | Self::PagerLineUp
-            | Self::PagerLineDown
-            | Self::PagerPageUp
-            | Self::PagerPageDown
-            | Self::PagerHalfUp
-            | Self::PagerHalfDown
-            | Self::PagerTop
-            | Self::PagerBottom
-            | Self::PagerPrevPrompt
-            | Self::PagerNextPrompt
-            | Self::PagerSearch
-            | Self::PagerNextMatch
-            | Self::PagerPrevMatch
-            | Self::PagerDetails
-            | Self::PagerClose => &[],
+            // Issue 222: the transcript chords. The plain letters belong to the transcript
+            // screen only, so they never stop the composer from typing.
+            Self::TranscriptOpen => &["ctrl+o"],
+            Self::PagerLineUp => &["up", "k"],
+            Self::PagerLineDown => &["down", "j"],
+            Self::PagerPageUp => &["pageup", "b"],
+            Self::PagerPageDown => &["pagedown", "space"],
+            Self::PagerHalfUp => &["ctrl+u"],
+            Self::PagerHalfDown => &["ctrl+d"],
+            Self::PagerTop => &["g", "home"],
+            Self::PagerBottom => &["shift+g", "end"],
+            Self::PagerPrevPrompt => &["{"],
+            Self::PagerNextPrompt => &["}"],
+            Self::PagerSearch => &["/"],
+            Self::PagerNextMatch => &["n"],
+            Self::PagerPrevMatch => &["shift+n"],
+            Self::PagerDetails => &["t"],
+            Self::PagerClose => &["q"],
         }
     }
 }
@@ -606,6 +606,9 @@ impl KeyChord {
             *slot = true;
         }
         chord.code = parse_key(key, &mut chord.shift)?;
+        if context == KeyContext::Pager && Self::is_pager_reserved(&chord) {
+            return Err("reserved in the transcript pager".to_string());
+        }
         let printable = matches!(chord.code, KeyCode::Char(_));
         if context == KeyContext::Composer
             && printable
@@ -614,6 +617,12 @@ impl KeyChord {
             return Err("a plain letter would stop that key from typing".to_string());
         }
         Ok(chord)
+    }
+
+    /// Whether the transcript screen keeps this chord for itself. Escape cancels a search and
+    /// Control-C closes the screen; neither may be bound to an action.
+    fn is_pager_reserved(chord: &Self) -> bool {
+        chord.code == KeyCode::Esc || (chord.ctrl && chord.code == KeyCode::Char('c'))
     }
 
     /// Whether this chord matches a key. Releases and hyper or meta never match.
@@ -779,7 +788,7 @@ impl KeyMap {
             };
             let mut parsed: Vec<KeyChord> = Vec::new();
             for text in texts {
-                match KeyChord::parse(text, action.context()) {
+                match KeyChord::parse(text, parse_context(action)) {
                     Ok(chord) => {
                         if chord.is_risky() {
                             notices.push(format!(
@@ -828,7 +837,7 @@ impl KeyMap {
                 let chord = self.chords[holder.index()][position].clone();
                 let holders: Vec<Binding> = Binding::all()
                     .filter(|other| {
-                        other.context() == holder.context()
+                        parse_context(*other) == parse_context(holder)
                             && self.chords[other.index()].contains(&chord)
                     })
                     .collect();
@@ -889,12 +898,16 @@ impl KeyMap {
             .and_then(CompletionAction::from_action)
     }
 
-    /// The composer action bound to this key, if any.
+    /// The action bound to this key, if any.
+    /// The action bound to this key in the given context, if any.
+    ///
+    /// Only the actions of that context are considered, so a key that names a transcript
+    /// action never stops the composer from typing it.
     #[must_use]
-    pub fn resolve(&self, key: &Key) -> Option<Action> {
+    pub fn resolve(&self, key: &Key, context: KeyContext) -> Option<Action> {
         Action::ALL
             .into_iter()
-            .filter(|action| action.context() == KeyContext::Composer)
+            .filter(|action| action.context() == context)
             .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
     }
 
@@ -925,6 +938,17 @@ impl KeyMap {
     #[must_use]
     pub fn label(&self, action: Action) -> Option<String> {
         self.chords(action).first().map(KeyChord::label)
+    }
+}
+
+/// The context a chord of a binding is read in.
+///
+/// The transcript key is read in the transcript context, so a plain letter may open the
+/// transcript. Every other binding is read in the context it runs in.
+fn parse_context(binding: Binding) -> KeyContext {
+    match binding {
+        Binding::Composer(Action::TranscriptOpen) => KeyContext::Pager,
+        other => other.context(),
     }
 }
 

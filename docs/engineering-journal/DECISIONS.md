@@ -41,6 +41,30 @@ figure (a timer, and frames while the screen is idle).
 **Revisit when** the fleet view needs a context figure per session, or a
 background session's compaction becomes visible.
 
+### The transcript pager reads the session in memory and calls no gateway method
+
+**Decision.** The full-screen transcript is drawn from the cells the session already holds: the
+snapshot the session was opened with, plus every event since. Opening it, searching it, jumping
+between the developer's prompts and closing it send nothing to Hermes. The only thing the gateway
+told us about older history is the flag on the first row of the resume reply, which the
+application keeps as one boolean and shows as a banner.
+
+**Rationale.** The snapshot is already taken when the session opens, so the transcript has
+everything it can safely show without another round trip. A second resume is not a read: it
+re-runs the gateway's policy refresh, re-asks a deferred model pick and can leave an orphan
+runtime behind, and the history verb returns only the live rows with no size budget, so a long
+lineage can exceed the eight-mebibyte frame limit and close the whole connection. A transcript
+that cannot fail on the network is worth more than one that asks.
+
+**Rejected alternatives.** A second resume when the pager opens (it has side effects, and it
+returns the same bounded history). The history verb (it drops the archived rows and has no
+budget). The dashboard's bounded history route (a REST surface the architecture reserves for
+calls with no RPC). Keeping a client-side copy of every event for the life of the process (it
+duplicates the store).
+
+**Revisit when** the gateway offers a bounded, read-only history verb on the socket, so the
+archived rows the resume reply leaves out can be fetched in pages.
+
 ## 2026-10-24
 
 ### Slash palette keys, one-command fallback, and the synthetic frame log (issue #223)
