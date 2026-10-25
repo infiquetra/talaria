@@ -18,7 +18,9 @@ use serde_json::{Value, json};
 /// The scenarios of the fixture set, in the order the script records them.
 /// `slash-palette` is recognized here; its frames come from the slash command steps, not from
 /// a model prompt.
-pub const SCENARIOS: [&str; 12] = [
+/// `hermes-commands` is recorded by its own command steps, too: it never
+/// submits a prompt.
+pub const SCENARIOS: [&str; 13] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -31,6 +33,7 @@ pub const SCENARIOS: [&str; 12] = [
     "context-compaction",
     "attachments-mention-image",
     "todo-checklist",
+    "hermes-commands",
 ];
 
 /// The shell command the approval scenario asks for. `manual` mode raises an approval for it.
@@ -148,6 +151,7 @@ impl Scenario {
                 ],
                 &["complete"],
             ),
+            "hermes-commands" => (&[], &[]),
             _ => return None,
         };
         Some(Scenario {
@@ -513,6 +517,7 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
                 return Err(NO_TODO_SNAPSHOT.to_owned());
             }
         }
+        "hermes-commands" => hermes_commands_evidence(source)?,
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -754,6 +759,242 @@ fn slash_palette_evidence(source: &ReplaySource) -> Result<(), String> {
     Ok(())
 }
 
+/// The command steps of the `hermes-commands` scenario, in order. Issue #236.
+///
+/// Every `send` result is recorded and never submitted, so the recording holds no turn the
+/// client started. The goal judge may finish the goal on its own, and a loop fires at once.
+const COMMAND_STEPS: [&str; 11] = [
+    "goal reply with the word ok",
+    "subgoal keep it short",
+    "loop 45m talaria fixture check",
+    "loop pause",
+    "loop resume",
+    "loop stop",
+    "goal pause",
+    "goal clear",
+    "heartbeat every 1h talaria fixture ping",
+    "heartbeat clear",
+    "loop 45m",
+];
+
+/// How long a step of the command scenario waits for its answer.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Drive the `hermes-commands` scenario: a session, the three attach reads, the command steps,
+/// the mode round trip and the last read. No prompt is ever submitted.
+async fn drive_commands(
+    client: &Client,
+    inbound: &mut InboundStream,
+    config: &DriverConfig,
+) -> AttemptResult {
+    let options = call_options(COMMAND_TIMEOUT);
+    let created = client
+        .call_raw(
+            "session.create",
+            json!({"source": "cli", "cwd": config.scratch.to_string_lossy(),
+                   "model": config.model, "provider": config.provider}),
+            CallOptions::default(),
+        )
+        .await;
+    let snapshot = match created {
+        Ok(snapshot) => snapshot,
+        Err(error) => return AttemptResult::Failed(format!("session.create failed: {error}")),
+    };
+    let Some(session_id) = snapshot["session_id"].as_str() else {
+        return AttemptResult::Failed("the session snapshot has no session_id".to_owned());
+    };
+    if let Err(reason) = check_info(&snapshot["info"], config) {
+        return AttemptResult::Failed(reason);
+    }
+    let session = session_id.to_owned();
+
+    // The three attach reads. YOLO must be off before the run touches anything.
+    if let Err(reason) = client
+        .call_raw(
+            "session.control.read",
+            json!({"session_id": session}),
+            options,
+        )
+        .await
+    {
+        return AttemptResult::Failed(format!("session.control.read failed: {reason}"));
+    }
+    let yolo = match read_mode(client, &session, "yolo", options).await {
+        Ok(value) => value,
+        Err(reason) => return AttemptResult::Failed(reason),
+    };
+    if yolo.as_deref() != Some("0") {
+        return AttemptResult::PreconditionAbsent(format!("yolo is already on ({yolo:?})"));
+    }
+    if let Err(reason) = read_mode(client, &session, "fast", options).await {
+        return AttemptResult::Failed(reason);
+    }
+
+    // The command steps, each one recorded with its answer.
+    for step in COMMAND_STEPS {
+        if let Err(reason) = run_step(client, &session, step, options).await {
+            return AttemptResult::Failed(reason);
+        }
+    }
+
+    // YOLO on, read back, YOLO off, read back. Then the fast mode, which changes nothing here.
+    if let Err(reason) = run_step(client, &session, "yolo", options).await {
+        return AttemptResult::Failed(reason);
+    }
+    if let Err(reason) = read_mode(client, &session, "yolo", options).await {
+        return AttemptResult::Failed(reason);
+    }
+    if let Err(reason) = run_step(client, &session, "yolo", options).await {
+        return AttemptResult::Failed(reason);
+    }
+    if let Err(reason) = read_mode(client, &session, "yolo", options).await {
+        return AttemptResult::Failed(reason);
+    }
+    if let Err(reason) = run_step(client, &session, "fast", options).await {
+        return AttemptResult::Failed(reason);
+    }
+    if let Err(reason) = read_mode(client, &session, "fast", options).await {
+        return AttemptResult::Failed(reason);
+    }
+    // A plan queues a turn that is never submitted.
+    if let Err(reason) = run_step(client, &session, "plan write a haiku about rain", options).await
+    {
+        return AttemptResult::Failed(reason);
+    }
+
+    // The events arrive after the commands, so the recording waits for the stream to go
+    // quiet: the goal judge and the loop wakeup both answer later.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while tokio::time::Instant::now() < deadline {
+        let next = tokio::time::timeout(Duration::from_secs(5), inbound.next()).await;
+        match next {
+            Ok(Some(_)) => continue,
+            Ok(None) => break,
+            Err(_) => break,
+        }
+    }
+
+    // The last read: nothing stands any more.
+    let control = match client
+        .call_raw(
+            "session.control.read",
+            json!({"session_id": session}),
+            options,
+        )
+        .await
+    {
+        Ok(control) => control,
+        Err(reason) => {
+            return AttemptResult::Failed(format!("session.control.read failed: {reason}"));
+        }
+    };
+    let snapshot = &control["control"];
+    if !snapshot["goal"].is_null()
+        || !snapshot["loop"].is_null()
+        || !snapshot["heartbeat"].is_null()
+    {
+        return AttemptResult::Failed(format!(
+            "the standing state is not empty at the end: {snapshot}"
+        ));
+    }
+    AttemptResult::Ok
+}
+
+/// Run one slash command through the gateway.
+async fn run_step(
+    client: &Client,
+    session_id: &str,
+    command: &str,
+    options: CallOptions,
+) -> Result<(), String> {
+    client
+        .call_raw(
+            "slash.exec",
+            json!({"command": command, "session_id": session_id}),
+            options,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("slash.exec {command} failed: {error}"))
+}
+
+/// Read one session mode back.
+async fn read_mode(
+    client: &Client,
+    session_id: &str,
+    key: &str,
+    options: CallOptions,
+) -> Result<Option<String>, String> {
+    let reply = client
+        .call_raw(
+            "config.get",
+            json!({"session_id": session_id, "key": key}),
+            options,
+        )
+        .await
+        .map_err(|error| format!("config.get {key} failed: {error}"))?;
+    Ok(reply["value"].as_str().map(str::to_owned))
+}
+
+/// Issue #236. The recording must show the attach reads, the command steps, the mode round trip
+/// and the control updates they produced.
+fn hermes_commands_evidence(source: &ReplaySource) -> Result<(), String> {
+    let mut frames: Vec<_> = source.outbound().chain(source.inbound()).collect();
+    frames.sort_by_key(|frame| frame.seq);
+    let mut method_for: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    let (mut control, mut gets, mut exec) = (0_usize, 0_usize, 0_usize);
+    let mut updates = 0_usize;
+    for frame in frames {
+        let body = &frame.frame;
+        if body["method"] == "event" {
+            if body["params"]["type"] == "session.control.update" {
+                updates += 1;
+            }
+            continue;
+        }
+        if let Some(method) = body.get("method").and_then(Value::as_str) {
+            if let Some(id) = body.get("id").and_then(Value::as_i64) {
+                method_for.insert(id, method.to_owned());
+            }
+            continue;
+        }
+        if body.get("result").is_none() && body.get("error").is_none() {
+            continue;
+        }
+        let Some(id) = body.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        let Some(method) = method_for.get(&id) else {
+            continue;
+        };
+        match method.as_str() {
+            "session.control.read" => control += 1,
+            "config.get" => gets += 1,
+            "slash.exec" => exec += 1,
+            _ => {}
+        }
+    }
+    if control < 2 {
+        return Err(format!("session.control.read replies: {control}"));
+    }
+    if gets < 5 {
+        return Err(format!("config.get replies: {gets}"));
+    }
+    if exec < 15 {
+        return Err(format!("slash.exec replies: {exec}"));
+    }
+    if updates < 5 {
+        let kinds: Vec<String> = recorded_events(source)
+            .iter()
+            .map(|(kind, _)| kind.clone())
+            .collect();
+        return Err(format!(
+            "session.control.update events: {updates}; the events were {kinds:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// Drive one attempt over a connected client and its inbound stream (the events come
 /// only from the stream `Client::start` returned). Never writes the file itself.
 pub async fn run_scenario(
@@ -770,6 +1011,20 @@ pub async fn run_scenario(
             "{} is recorded by its command steps, not by a model prompt",
             scenario.name,
         ));
+    }
+    if scenario.name == "hermes-commands" {
+        let outcome = tokio::time::timeout(
+            config.attempt_timeout,
+            drive_commands(client, inbound, config),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            AttemptResult::Failed(format!(
+                "the attempt ran longer than {} s",
+                config.attempt_timeout.as_secs()
+            ))
+        });
+        return outcome;
     }
     let mut session = Session::default();
     let outcome = tokio::time::timeout(

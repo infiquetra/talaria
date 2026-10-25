@@ -3,6 +3,7 @@
 pub mod appearance;
 pub mod attachments;
 pub mod attention;
+pub mod automation;
 pub mod checklist;
 pub mod commands;
 pub mod context;

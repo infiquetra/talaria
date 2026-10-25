@@ -2,7 +2,7 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected eighteen fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected nineteen fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch and the three queue recordings, covered by their own replay tests.
 
@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 14] = [
+const NAMES: [&str; 15] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -32,6 +32,7 @@ const NAMES: [&str; 14] = [
     "shell-and-btw",
     "todo-checklist",
     "permissions-cd",
+    "hermes-commands",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -43,6 +44,8 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         "context-compaction" => &["complete"; 17],
         // The permissions run holds no turn, so no turn ever completes.
         "permissions-cd" => &[],
+        // The command scenario submits no prompt, so no turn ends in the recording.
+        "hermes-commands" => &[],
         _ => &["complete"],
     }
 }
@@ -74,8 +77,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 18,
-        "expected eighteen fixtures in fixtures/frames, found {}",
+        files.len() == 19,
+        "expected nineteen fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -147,6 +150,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
+    assert_eq!(fixtures.len(), 15);
 }
 
 #[test]
@@ -366,6 +370,53 @@ fn slash_palette_evidence(name: &str, records: &[Value], events: &[(String, Valu
     );
 }
 
+/// Issue #236. The recording shows the attach reads, the command steps, the mode round trip
+/// and the control updates they produced.
+fn hermes_commands_evidence(name: &str, records: &[Value], events: &[(String, Value)]) {
+    let mut method_for: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    let (mut control, mut gets, mut exec) = (0_usize, 0_usize, 0_usize);
+    for record in records {
+        let frame = &record["frame"];
+        let Some(id) = frame["id"].as_i64() else {
+            continue;
+        };
+        if record["dir"] == "out" {
+            if let Some(method) = frame["method"].as_str() {
+                method_for.insert(id, method.to_owned());
+            }
+        } else if record["dir"] == "in" {
+            let Some(method) = method_for.get(&id) else {
+                continue;
+            };
+            let replied = frame.get("result").is_some() || frame.get("error").is_some();
+            if !replied {
+                continue;
+            }
+            match method.as_str() {
+                "session.control.read" => control += 1,
+                "config.get" => gets += 1,
+                "slash.exec" => exec += 1,
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(control, 2, "{name}: session.control.read replies");
+    assert_eq!(gets, 5, "{name}: config.get replies");
+    assert_eq!(exec, 15, "{name}: slash.exec replies");
+    let updates = events
+        .iter()
+        .filter(|(kind, _)| kind == "session.control.update")
+        .count();
+    assert!(
+        updates >= 5,
+        "{name}: session.control.update events: {updates}"
+    );
+    assert!(
+        !events.iter().any(|(kind, _)| kind == "message.complete"),
+        "{name}: the recording holds no turn"
+    );
+}
+
 #[test]
 fn scenario_evidence_present() {
     for (name, path) in listed_fixtures() {
@@ -558,6 +609,7 @@ fn scenario_evidence_present() {
                     "{name}: no todo.updated"
                 );
             }
+            "hermes-commands" => hermes_commands_evidence(name, &records, &events),
             other => panic!("unlisted fixture {other}"),
         }
     }

@@ -171,10 +171,11 @@ fn scenario_table_matches_the_spec() {
             "context-compaction",
             "attachments-mention-image",
             "todo-checklist",
+            "hermes-commands",
         ]
     );
     assert!(Scenario::named("not-a-scenario").is_none());
-    let table: [(&str, &[&str], &[&str]); 12] = [
+    let table: [(&str, &[&str], &[&str]); 13] = [
         (
             "plain-answer",
             &["Reply with exactly the single word: pong. Do not use any tools."],
@@ -263,6 +264,8 @@ fn scenario_table_matches_the_spec() {
             ],
             &["complete"],
         ),
+        // The command scenario submits no prompt, so no turn ends in the recording.
+        ("hermes-commands", &[], &[]),
     ];
     for (name, prompts, statuses) in table {
         let scenario = scenario(name);

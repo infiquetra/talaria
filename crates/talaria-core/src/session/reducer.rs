@@ -144,6 +144,9 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
         | Event::QueueCallUnknown { .. }
         | Event::SteerResult(_)
         | Event::QueueReconcileDue { .. } => crate::queue::flow::on_event(state, &event),
+        Event::HermesCommand { .. } => {
+            todo!("#236")
+        }
         _ => super::prompts::apply(state, &event),
     };
     state.advance_prefix();

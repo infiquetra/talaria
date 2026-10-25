@@ -157,6 +157,7 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Prompt(cell) => prompt_line(cell),
         Cell::Shell(cell) => shell_line(cell),
         Cell::Side(cell) => side_line(cell),
+        Cell::HermesCommand(cell) => format!("hermes-command {}", quote(&cell.typed)),
     }
 }
 

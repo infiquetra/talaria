@@ -138,6 +138,7 @@ fn cell_text(cell: &Cell) -> String {
         Cell::Prompt(cell) => format!("prompt: {}", cell.command.clone().unwrap_or_default()),
         Cell::Shell(cell) => format!("shell: {}", cell.command),
         Cell::Side(cell) => format!("side: {}", cell.question),
+        Cell::HermesCommand(cell) => format!("hermes-command: {}", cell.typed),
     }
 }
 

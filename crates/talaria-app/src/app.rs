@@ -20,6 +20,7 @@ use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
 use talaria_core::attachments::{Chip, CollapseRule, Expanded, reference_notice};
+use talaria_core::automation::{AutomationEffect, AutomationEvent, AutomationState};
 use talaria_core::checklist::{Checklist, ChecklistCommit, ChecklistTracker};
 use talaria_core::commands::local;
 use talaria_core::commands::{
@@ -482,6 +483,8 @@ pub struct AppState {
     prompts: Option<Arc<Mutex<PromptService>>>,
     pending: Option<JoinHandle<Result<Ready, LaunchFailure>>>,
     command_service: Option<CommandService>,
+    /// Standing automation state.
+    pub automation: AutomationState,
     /// Mentions, paste labels and staged images for the open draft.
     pub attachments: AttachmentsState,
     caret: usize,
@@ -587,6 +590,7 @@ impl AppState {
             submitted_attachments: BTreeMap::new(),
             held_attachments: VecDeque::new(),
             failed_attachments: VecDeque::new(),
+            automation: AutomationState::default(),
         }
     }
 
@@ -732,6 +736,8 @@ pub enum AppMessage {
     ForegroundKey(UserAction),
     /// A catalogue fetch or a completion finished.
     Commands(CommandReply),
+    /// An automation service reply. Issue #236.
+    Automation(AutomationEvent),
     /// A slash command finished; `typed` is the line as it was run.
     CommandDone {
         typed: String,
@@ -901,6 +907,8 @@ pub enum AppEffect {
     Permissions(PermissionsEffect),
     /// Check a `/cd` folder or send the move (#237).
     Cd(CdEffect),
+    /// One automation reducer effect. Issue #236.
+    Automation(AutomationEffect),
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -1374,6 +1382,8 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::Permissions(input) => permissions(state, input),
         AppMessage::Cd(input) => cd_input(state, input),
+        // The automation wiring lands with issue #236; until then replies change nothing.
+        AppMessage::Automation(_) => Vec::new(),
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -3336,6 +3346,9 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Prompt(prompt) => prompt.command.clone().unwrap_or_default(),
         Cell::Shell(shell) => format!("! {}", shell.command),
         Cell::Side(side) => format!("btw \u{b7} {}", side.question),
+        Cell::HermesCommand(_) => {
+            todo!("#236")
+        }
     };
     plain(text.lines().next().unwrap_or_default())
 }
@@ -4964,6 +4977,8 @@ fn apply<S: Screen>(
             ),
             AppEffect::Permissions(effect) => run_permissions(state, executor, effect),
             AppEffect::Cd(effect) => run_cd(state, executor, effect),
+            // The automation wiring lands with issue #236.
+            AppEffect::Automation(_) => {}
         }
     }
     sync_attachment_view(state, screen, Instant::now());

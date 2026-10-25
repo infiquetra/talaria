@@ -33,6 +33,9 @@ impl CellLines for PlainCellLines {
             Cell::Side(side) => {
                 crate::side::side_cell_lines(side, width, &crate::side::SideTheme::default())
             }
+            Cell::HermesCommand(_) => {
+                todo!("#236")
+            }
         }
     }
 }
