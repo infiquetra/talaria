@@ -58,9 +58,11 @@ fn observe(
     let scratch =
         tempfile::tempdir().map_err(|_| BenchError::Io("measurement directory".into()))?;
     let binary_report = scratch.path().join("child.json");
+    // The child starts in its own temporary home, so a relative scenario path would not resolve.
+    let fixture_arg = std::fs::canonicalize(fixture).unwrap_or_else(|_| fixture.to_path_buf());
     let mut args = vec![
         "--bench-replay".into(),
-        fixture.to_string_lossy().into_owned(),
+        fixture_arg.to_string_lossy().into_owned(),
         "--bench-report".into(),
         binary_report.to_string_lossy().into_owned(),
     ];

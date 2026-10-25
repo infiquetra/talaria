@@ -2,9 +2,9 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected fourteen fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected eighteen fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
-//! the model-switch recording, covered by its own replay tests.
+//! the model-switch and the three queue recordings, covered by their own replay tests.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -74,8 +74,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 15,
-        "expected fifteen fixtures in fixtures/frames, found {}",
+        files.len() == 18,
+        "expected eighteen fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES

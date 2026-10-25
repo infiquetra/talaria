@@ -337,6 +337,16 @@ impl SessionService {
                     reason: "not_a_session_call".to_string(),
                 };
             }
+            // Issue 232. Queue and steer. Queue calls go through the queue service.
+            Effect::CancelQueued { .. }
+            | Effect::ReplaceQueued { .. }
+            | Effect::SteerQueued { .. }
+            | Effect::Steer { .. }
+            | Effect::ResolveUnknown { .. } => {
+                return ExecuteOutcome::Refused {
+                    reason: "not_sent".to_string(),
+                };
+            }
         };
         match result {
             Ok(()) => ExecuteOutcome::Sent,

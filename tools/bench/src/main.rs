@@ -1,4 +1,4 @@
-//! `talaria-bench generate | run`.
+//! `talaria-bench generate | generate-queue | run`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -7,9 +7,9 @@ use talaria_bench::{BenchError, Budgets, RunOptions};
 fn command() -> Result<u8, BenchError> {
     let mut args = std::env::args().skip(1);
     let verb = args.next().unwrap_or_default();
-    if verb != "run" && verb != "generate" {
+    if !["run", "generate", "generate-queue"].contains(&verb.as_str()) {
         return Err(BenchError::BudgetsInvalid(
-            "expected generate or run".into(),
+            "expected generate, generate-queue or run".into(),
         ));
     }
     let mut binary = PathBuf::from("target/release/talaria");
@@ -54,6 +54,14 @@ fn command() -> Result<u8, BenchError> {
         talaria_bench::generate(
             &fixtures,
             &out.ok_or_else(|| BenchError::BudgetsInvalid("generate needs --out".into()))?,
+            &budgets,
+        )?;
+        return Ok(0);
+    }
+    if verb == "generate-queue" {
+        talaria_bench::generate_queue(
+            &fixtures,
+            &out.ok_or_else(|| BenchError::BudgetsInvalid("generate-queue needs --out".into()))?,
             &budgets,
         )?;
         return Ok(0);

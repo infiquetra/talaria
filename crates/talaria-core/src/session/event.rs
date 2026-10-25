@@ -5,7 +5,9 @@ use serde_json::Value;
 use crate::attachments::Attachment;
 
 use super::{NoticeKind, PromptKey, SessionId};
+use crate::queue::{AdmissionId, QueueAction, SubmissionId};
 use crate::side::{RequestId, ShellOutcome};
+use hermes_contract::schemas::{AdmissionStatus, CanonicalCorrectionResult};
 
 /// One reducer input.
 ///
@@ -155,5 +157,47 @@ pub enum Event {
     SideClock {
         /// App-clock time now.
         now_ms: u64,
+    },
+    /// A queue call returned an admission. Issue 232. Queue and steer.
+    QueueCallResult {
+        /// Which call this receipt answers.
+        action: QueueAction,
+        /// Row the call named. Absent for a submit and for typed steer.
+        admission_id: Option<AdmissionId>,
+        /// Id sent with a submit or a replace. Absent otherwise.
+        submission_id: Option<SubmissionId>,
+        /// Receipt body.
+        result: AdmissionStatus,
+    },
+    /// A queue call was refused. Issue 232. Queue and steer.
+    QueueCallRefused {
+        /// Which call was refused.
+        action: QueueAction,
+        /// Row the call named, when it named one.
+        admission_id: Option<AdmissionId>,
+        /// Refusal reason string.
+        reason: String,
+        /// Extra text from the refusal, when present.
+        detail: Option<String>,
+    },
+    /// A queue call's outcome is unknown. Issue 232. Queue and steer.
+    QueueCallUnknown {
+        /// Which call was lost.
+        action: QueueAction,
+        /// Row the call named, when it named one.
+        admission_id: Option<AdmissionId>,
+        /// Id sent with a submit or a replace, when one was sent.
+        submission_id: Option<SubmissionId>,
+    },
+    /// `session.steer` answered. Issue 232. Queue and steer.
+    SteerResult(CanonicalCorrectionResult),
+    /// The wait after a lost queue reply has ended. Issue 232. Queue and steer.
+    QueueReconcileDue {
+        /// Call that was lost.
+        action: QueueAction,
+        /// Row that call named, when it named one.
+        admission_id: Option<AdmissionId>,
+        /// Id sent with that call, when one was sent.
+        submission_id: Option<SubmissionId>,
     },
 }

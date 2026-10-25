@@ -3,6 +3,7 @@
 use crate::attachments::Attachment;
 
 use super::{AnswerRefusal, PromptKey, SessionId};
+use crate::queue::{AdmissionId, SubmissionId};
 use crate::side::RequestId;
 
 /// A follow-up the application may send. Comparing these to recorded outbound frames is the test.
@@ -65,5 +66,48 @@ pub enum Effect {
         request_id: RequestId,
         /// Question text.
         question: String,
+    },
+    /// `prompt.cancel` for one queued row. Issue 232. Queue and steer.
+    CancelQueued {
+        /// Target session.
+        session_id: SessionId,
+        /// Row that must not run.
+        admission_id: AdmissionId,
+    },
+    /// `prompt.replace_queued`. Issue 232. Queue and steer.
+    ReplaceQueued {
+        /// Target session.
+        session_id: SessionId,
+        /// Row being retired.
+        admission_id: AdmissionId,
+        /// Fresh id for the text admitted at the back.
+        submission_id: SubmissionId,
+        /// Text admitted at the back.
+        text: String,
+    },
+    /// `prompt.steer_queued`. Issue 232. Queue and steer.
+    SteerQueued {
+        /// Target session.
+        session_id: SessionId,
+        /// Queued row to steer into the running turn.
+        admission_id: AdmissionId,
+    },
+    /// `session.steer`. Issue 232. Queue and steer.
+    Steer {
+        /// Target session.
+        session_id: SessionId,
+        /// Generation the note is aimed at.
+        execution_generation: i64,
+        /// Note the agent should read.
+        text: String,
+    },
+    /// `prompt.resolve_unknown`. Issue 232. Queue and steer.
+    ResolveUnknown {
+        /// Target session.
+        session_id: SessionId,
+        /// Lost row to discard.
+        admission_id: AdmissionId,
+        /// Generation stored on that row.
+        execution_generation: i64,
     },
 }

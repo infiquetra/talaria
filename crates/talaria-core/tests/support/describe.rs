@@ -96,6 +96,45 @@ pub fn effect_line(effect: &Effect) -> String {
             request_id.0,
             quote(question)
         ),
+        Effect::CancelQueued {
+            session_id,
+            admission_id,
+        } => format!(
+            " CancelQueued session={} admission={}",
+            session_id.as_str(),
+            admission_id.0
+        ),
+        Effect::ReplaceQueued {
+            session_id,
+            admission_id,
+            submission_id,
+            ..
+        } => format!(
+            " ReplaceQueued session={} admission={} submission={}",
+            session_id.as_str(),
+            admission_id.0,
+            submission_id.0
+        ),
+        Effect::SteerQueued {
+            session_id,
+            admission_id,
+        } => format!(
+            " SteerQueued session={} admission={}",
+            session_id.as_str(),
+            admission_id.0
+        ),
+        Effect::Steer { session_id, .. } => {
+            format!(" Steer session={}", session_id.as_str())
+        }
+        Effect::ResolveUnknown {
+            session_id,
+            admission_id,
+            execution_generation,
+        } => format!(
+            " ResolveUnknown session={} admission={} generation={execution_generation}",
+            session_id.as_str(),
+            admission_id.0
+        ),
     }
 }
 

@@ -129,6 +129,10 @@ pub struct SessionState {
     pub(crate) drafting: Option<String>,
     pub(crate) side: SideTasks,
     pub(crate) history_truncated: bool,
+    /// Admissions this session is showing or waiting to draw.
+    ///
+    /// Issue 232. Queue and steer. Empty until a snapshot or fanout is applied.
+    pub queue: crate::queue::QueueState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -173,6 +177,7 @@ impl SessionState {
             drafting: None,
             side: SideTasks::default(),
             history_truncated: false,
+            queue: crate::queue::QueueState::default(),
         }
     }
 

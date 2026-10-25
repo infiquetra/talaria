@@ -15,6 +15,8 @@ pub enum KeyContext {
     ModelPicker,
     /// The full-screen transcript.
     Pager,
+    /// A queued row is selected. Issue 232. Queue and steer.
+    QueueSelection,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -112,7 +114,7 @@ impl Binding {
     }
 }
 
-/// One composer command a key chord can run.
+/// One command a key chord can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Action {
     Submit,
@@ -183,6 +185,24 @@ pub enum Action {
     ToggleTasks,
     /// Switches this session's approvals off or back on (#237).
     ApprovalsToggle,
+    /// Edit the selected queued row. Issue 232. Queue and steer.
+    QueueEdit,
+    /// Remove the selected queued row, or discard a lost one.
+    QueueRemove,
+    /// Steer the selected queued row into the running turn.
+    QueueSteer,
+    /// Send the selected queued row now.
+    QueueSendNow,
+    /// Move the selected queued row toward the head.
+    QueueMoveUp,
+    /// Move the selected queued row toward the tail.
+    QueueMoveDown,
+    /// Leave selection. Does not interrupt.
+    QueueLeave,
+    /// Send the draft now.
+    ComposerSendNow,
+    /// Steer the draft. Unbound until a person sets a key.
+    ComposerSteer,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -214,7 +234,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 55] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -261,6 +281,15 @@ impl Action {
         Self::PagerClose,
         Self::ToggleTasks,
         Self::ApprovalsToggle,
+        Self::QueueEdit,
+        Self::QueueRemove,
+        Self::QueueSteer,
+        Self::QueueSendNow,
+        Self::QueueMoveUp,
+        Self::QueueMoveDown,
+        Self::QueueLeave,
+        Self::ComposerSendNow,
+        Self::ComposerSteer,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -313,6 +342,15 @@ impl Action {
             Self::PagerClose => "pager_close",
             Self::ToggleTasks => "toggle_tasks",
             Self::ApprovalsToggle => "approvals_toggle",
+            Self::QueueEdit => "queue_edit",
+            Self::QueueRemove => "queue_remove",
+            Self::QueueSteer => "queue_steer",
+            Self::QueueSendNow => "queue_send_now",
+            Self::QueueMoveUp => "queue_move_up",
+            Self::QueueMoveDown => "queue_move_down",
+            Self::QueueLeave => "queue_leave",
+            Self::ComposerSendNow => "composer_send_now",
+            Self::ComposerSteer => "composer_steer",
         }
     }
 
@@ -358,7 +396,9 @@ impl Action {
             | Self::Suspend
             | Self::AttachClipboardImage
             | Self::ToggleTasks
-            | Self::ApprovalsToggle => KeyContext::Composer,
+            | Self::ApprovalsToggle
+            | Self::ComposerSendNow
+            | Self::ComposerSteer => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
             | Self::PagerPageUp
@@ -374,6 +414,13 @@ impl Action {
             | Self::PagerPrevMatch
             | Self::PagerDetails
             | Self::PagerClose => KeyContext::Pager,
+            Self::QueueEdit
+            | Self::QueueRemove
+            | Self::QueueSteer
+            | Self::QueueSendNow
+            | Self::QueueMoveUp
+            | Self::QueueMoveDown
+            | Self::QueueLeave => KeyContext::QueueSelection,
         }
     }
 
@@ -433,6 +480,15 @@ impl Action {
             Self::PagerClose => &["q"],
             Self::ToggleTasks => &["ctrl+t"],
             Self::ApprovalsToggle => &["shift+tab"],
+            Self::QueueEdit => &["enter", "e"],
+            Self::QueueRemove => &["d", "delete", "ctrl+x"],
+            Self::QueueSteer => &["s"],
+            Self::QueueSendNow => &["n"],
+            Self::QueueMoveUp => &["K", "shift+up"],
+            Self::QueueMoveDown => &["J", "shift+down"],
+            Self::QueueLeave => &["esc"],
+            Self::ComposerSendNow => &["ctrl+enter"],
+            Self::ComposerSteer => &[],
         }
     }
 }
@@ -924,6 +980,15 @@ impl KeyMap {
             .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
     }
 
+    /// The action bound to this key in one context. Issue 232. Queue and steer.
+    #[must_use]
+    pub fn resolve_in(&self, key: &Key, context: KeyContext) -> Option<Action> {
+        Action::ALL.into_iter().find(|action| {
+            action.context() == context
+                && self.chords(*action).iter().any(|chord| chord.matches(key))
+        })
+    }
+
     /// Model actions are resolved in their active context before ordinary composer actions.
     #[must_use]
     pub fn resolve_model(&self, context: KeyContext, key: &Key) -> Option<ModelAction> {
@@ -1106,9 +1171,38 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        // Issue 222 adds sixteen transcript actions to the twenty-four actions main holds.
-        assert_eq!(Action::ALL.len(), 46);
+        assert_eq!(Action::ALL.len(), 55);
         for action in Action::ALL {
+            let wanted = match action {
+                Action::CompletionNext
+                | Action::CompletionPrev
+                | Action::CompletionAccept
+                | Action::CompletionClose => KeyContext::Completion,
+                Action::PagerLineUp
+                | Action::PagerLineDown
+                | Action::PagerPageUp
+                | Action::PagerPageDown
+                | Action::PagerHalfUp
+                | Action::PagerHalfDown
+                | Action::PagerTop
+                | Action::PagerBottom
+                | Action::PagerPrevPrompt
+                | Action::PagerNextPrompt
+                | Action::PagerSearch
+                | Action::PagerNextMatch
+                | Action::PagerPrevMatch
+                | Action::PagerDetails
+                | Action::PagerClose => KeyContext::Pager,
+                Action::QueueEdit
+                | Action::QueueRemove
+                | Action::QueueSteer
+                | Action::QueueSendNow
+                | Action::QueueMoveUp
+                | Action::QueueMoveDown
+                | Action::QueueLeave => KeyContext::QueueSelection,
+                _ => KeyContext::Composer,
+            };
+            assert_eq!(action.context(), wanted);
             let name = action.config_name();
             assert_eq!(Action::from_config_name(name), Some(action), "{name}");
             let context = match action {
@@ -1131,10 +1225,22 @@ mod tests {
                 | Action::PagerPrevMatch
                 | Action::PagerDetails
                 | Action::PagerClose => KeyContext::Pager,
+                Action::QueueEdit
+                | Action::QueueRemove
+                | Action::QueueSteer
+                | Action::QueueSendNow
+                | Action::QueueMoveUp
+                | Action::QueueMoveDown
+                | Action::QueueLeave => KeyContext::QueueSelection,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), context, "{name}");
         }
+        assert_eq!(Action::QueueEdit.context(), KeyContext::QueueSelection);
+        assert_eq!(Action::QueueLeave.context(), KeyContext::QueueSelection);
+        assert_eq!(Action::ComposerSendNow.context(), KeyContext::Composer);
+        assert_eq!(Action::ComposerSteer.context(), KeyContext::Composer);
+        assert!(Action::ComposerSteer.default_chords().is_empty());
         assert_eq!(Action::from_config_name("not_an_action"), None);
 
         let map = KeyMap::defaults();
@@ -1185,6 +1291,15 @@ mod tests {
             (Action::PagerClose, vec!["Q"]),
             (Action::ToggleTasks, vec!["Ctrl+T"]),
             (Action::ApprovalsToggle, vec!["Shift+Tab"]),
+            (Action::QueueEdit, vec!["Enter", "E"]),
+            (Action::QueueRemove, vec!["D", "Delete", "Ctrl+X"]),
+            (Action::QueueSteer, vec!["S"]),
+            (Action::QueueSendNow, vec!["N"]),
+            (Action::QueueMoveUp, vec!["Shift+K", "Shift+Up"]),
+            (Action::QueueMoveDown, vec!["Shift+J", "Shift+Down"]),
+            (Action::QueueLeave, vec!["Esc"]),
+            (Action::ComposerSendNow, vec!["Ctrl+Enter"]),
+            (Action::ComposerSteer, vec![]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1322,8 +1437,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        // The composer actions, plus the four the slash palette brought with it.
-        assert_eq!(Action::ALL.len(), 46);
+        assert_eq!(Action::ALL.len(), 55);
     }
 
     #[test]

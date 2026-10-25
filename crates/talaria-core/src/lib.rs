@@ -11,6 +11,7 @@ pub mod models;
 pub mod mutation;
 pub mod permissions;
 pub mod prompt_history;
+pub mod queue;
 pub mod rewind;
 pub mod session;
 pub mod side;

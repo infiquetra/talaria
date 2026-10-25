@@ -1711,6 +1711,12 @@ fn route(
             Effect::RunShell { .. } | Effect::AskSide { .. } => {
                 effects.push(AppEffect::Side(effect));
             }
+            // Issue 232. Queue and steer. The queue service will run these calls.
+            Effect::CancelQueued { .. }
+            | Effect::ReplaceQueued { .. }
+            | Effect::SteerQueued { .. }
+            | Effect::Steer { .. }
+            | Effect::ResolveUnknown { .. } => {}
         }
     }
     effects

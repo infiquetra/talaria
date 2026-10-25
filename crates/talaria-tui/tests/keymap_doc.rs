@@ -90,6 +90,15 @@ fn expected(action: Action) -> Vec<String> {
         Action::PagerClose => &["Q"],
         Action::ToggleTasks => &["Ctrl+T"],
         Action::ApprovalsToggle => &["Shift+Tab"],
+        Action::QueueEdit => &["Enter", "E"],
+        Action::QueueRemove => &["D", "Delete", "Ctrl+X"],
+        Action::QueueSteer => &["S"],
+        Action::QueueSendNow => &["N"],
+        Action::QueueMoveUp => &["Shift+K", "Shift+Up"],
+        Action::QueueMoveDown => &["Shift+J", "Shift+Down"],
+        Action::QueueLeave => &["Esc"],
+        Action::ComposerSendNow => &["Ctrl+Enter"],
+        Action::ComposerSteer => &[],
     };
     labels.iter().map(|label| (*label).to_string()).collect()
 }

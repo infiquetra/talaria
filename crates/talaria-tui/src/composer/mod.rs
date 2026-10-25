@@ -572,7 +572,16 @@ impl Composer {
             | Action::PagerDetails
             | Action::PagerClose
             | Action::ToggleTasks
-            | Action::ApprovalsToggle => {}
+            | Action::ApprovalsToggle
+            | Action::QueueEdit
+            | Action::QueueRemove
+            | Action::QueueSteer
+            | Action::QueueSendNow
+            | Action::QueueMoveUp
+            | Action::QueueMoveDown
+            | Action::QueueLeave
+            | Action::ComposerSendNow
+            | Action::ComposerSteer => {}
         }
         false
     }

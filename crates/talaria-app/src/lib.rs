@@ -17,6 +17,7 @@ pub mod models_file;
 pub mod mutation;
 pub mod permissions;
 pub mod prompts;
+pub mod queue;
 pub mod rewind;
 pub mod sessions;
 pub mod side;
