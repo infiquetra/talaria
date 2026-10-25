@@ -15,9 +15,9 @@ use hermes_client::{
     mint_ticket, scan_for_secrets, scan_literals, ws_url,
 };
 use record_fixture::{
-    AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, Preflight, PreflightInput, SCENARIOS,
-    Scenario, ScratchDir, build_substitutions, check_evidence, never_ensure, preflight,
-    run_scenario,
+    AttemptResult, DiscoveryFacts, DriverConfig, EXTRA_SCENARIOS, EnvFacts, Preflight,
+    PreflightInput, SCENARIOS, Scenario, ScratchDir, build_substitutions, check_evidence,
+    never_ensure, preflight, run_scenario, scrub_recording,
 };
 
 #[derive(Parser)]
@@ -33,7 +33,7 @@ enum Command {
     Record {
         #[arg(long, default_value = "fixtures/frames")]
         out: PathBuf,
-        /// Record only these scenarios (repeatable). Default: all seven.
+        /// Record only these scenarios (repeatable). Default: the seven prompt scenarios.
         #[arg(long)]
         scenario: Vec<String>,
         /// The Hermes home. Default: the one Talaria would use.
@@ -148,8 +148,9 @@ async fn record(settings: &RecordSettings) -> Outcome {
             Some(scenario) => scenarios.push(scenario),
             None => {
                 eprintln!(
-                    "unknown scenario {name}; the scenarios are: {}",
-                    SCENARIOS.join(", ")
+                    "unknown scenario {name}; the scenarios are: {}, {}",
+                    SCENARIOS.join(", "),
+                    EXTRA_SCENARIOS.join(", ")
                 );
                 return Outcome::Precondition;
             }
@@ -283,6 +284,16 @@ impl Attempt<'_> {
         let recorded = self.record_to(&hidden, &mut temp).await;
         if let Err(step) = recorded {
             return step;
+        }
+        match std::fs::read_to_string(&hidden)
+            .map_err(|_| "the recording could not be read back".to_owned())
+            .and_then(|text| scrub_recording(name, &text))
+            .and_then(|text| {
+                std::fs::write(&hidden, text)
+                    .map_err(|_| "the scrubbed recording could not be saved".to_owned())
+            }) {
+            Ok(()) => {}
+            Err(reason) => return Step::Stop(reason),
         }
         let source = match ReplaySource::open(&hidden) {
             Ok(source) => source,

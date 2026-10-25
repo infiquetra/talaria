@@ -27,6 +27,15 @@ const NAMES: [&str; 7] = [
     "queued-prompt",
 ];
 
+/// Fixtures recorded for later features. They only have to exist; their evidence is checked by
+/// the recorder when it writes them.
+const EXTRA_NAMES: [&str; 4] = [
+    "slash-palette",
+    "shell-and-btw",
+    "todo-checklist",
+    "attachments-mention-image",
+];
+
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
 fn expected_statuses(name: &str) -> &'static [&'static str] {
     match name {
@@ -63,10 +72,16 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn seven_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 7,
+        files.len() == NAMES.len() + EXTRA_NAMES.len(),
         "expected seven fixtures in fixtures/frames, found {}",
         files.len()
     );
+    for name in EXTRA_NAMES {
+        assert!(
+            files.contains(&fixtures_dir().join(format!("{name}.jsonl"))),
+            "expected fixture {name}.jsonl in fixtures/frames"
+        );
+    }
     NAMES
         .iter()
         .map(|name| {

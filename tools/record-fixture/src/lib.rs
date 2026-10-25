@@ -25,6 +25,28 @@ pub const SCENARIOS: [&str; 7] = [
     "queued-prompt",
 ];
 
+/// The scenarios that need more than a prompt: they call other gateway methods or look for events
+/// the seven above never raise. `record --scenario <name>` names them; a bare `record` does not.
+pub const EXTRA_SCENARIOS: [&str; 4] = [
+    "slash-palette",
+    "shell-and-btw",
+    "todo-checklist",
+    "attachments-mention-image",
+];
+
+/// The prompt of the todo checklist scenario. It holds no double quote.
+const TODO_PROMPT: &str = "Use your todo_list tool to write a plan with exactly three items: create a.txt, run sleep 30, create b.txt. Before each step mark it in_progress with the todo_list tool, and after it mark it completed. Do the steps in this folder. Then reply with the single word: done.";
+
+/// The text the attachments scenario submits, and the question it asks about the image.
+const IMAGE_PROMPT: &str = "[Image #1] What colour is this image? One word.";
+
+/// A 1 by 1 red PNG (69 bytes), base64 encoded.
+const RED_PNG_BASE64: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+/// How long the side question may take to answer.
+const SIDE_ANSWER_TIMEOUT: Duration = Duration::from_secs(180);
+
 /// The shell command the approval scenario asks for. `manual` mode raises an approval for it.
 const DELETE_COMMAND: &str = "rm -rf .pytest_cache";
 
@@ -86,6 +108,9 @@ impl Scenario {
                 ],
                 &["complete", "complete"],
             ),
+            "todo-checklist" => (&[TODO_PROMPT], &["complete"]),
+            // These three send their own requests; the driver submits their turns itself.
+            "slash-palette" | "shell-and-btw" | "attachments-mention-image" => (&[], &["complete"]),
             _ => return None,
         };
         Some(Scenario {
@@ -405,6 +430,59 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
                 return Err("the second turn did not start after the first completed".to_owned());
             }
         }
+        "slash-palette" => {
+            let replies = |method: &str| {
+                source
+                    .outbound()
+                    .filter(|frame| frame.frame["method"] == method)
+                    .count()
+            };
+            let catalogue_has_skills = source.inbound().any(|frame| {
+                frame.frame["result"]["skills"]
+                    .as_object()
+                    .is_some_and(|skills| !skills.is_empty())
+            });
+            if !catalogue_has_skills {
+                return Err("no commands.catalog result with a skill".to_owned());
+            }
+            if replies("complete.slash") < 2 {
+                return Err("fewer than two complete.slash calls".to_owned());
+            }
+            if replies("slash.exec") < 5 {
+                return Err("fewer than five slash.exec calls".to_owned());
+            }
+        }
+        "shell-and-btw" => {
+            if !has("btw.complete") {
+                return Err("no btw.complete".to_owned());
+            }
+            let shell_calls = source
+                .outbound()
+                .filter(|frame| frame.frame["method"] == "shell.exec")
+                .count();
+            if shell_calls < 3 {
+                return Err("fewer than three shell.exec calls".to_owned());
+            }
+        }
+        "todo-checklist" => {
+            if !has("todo.updated") {
+                return Err("the model did not use the todo tool".to_owned());
+            }
+        }
+        "attachments-mention-image" => {
+            let attached = source
+                .inbound()
+                .any(|frame| frame.frame["result"]["attached"] == true);
+            if !attached {
+                return Err("no image.attach_bytes result with attached true".to_owned());
+            }
+            let resumed = source
+                .outbound()
+                .any(|frame| frame.frame["method"] == "session.resume");
+            if !resumed {
+                return Err("no session.resume call".to_owned());
+            }
+        }
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -443,6 +521,386 @@ pub fn build_substitutions(
         }
     }
     pairs
+}
+
+/// Rewrite a finished recording so it holds nothing that names the host's own setup. Runs before
+/// the evidence check and the scan; an error stops the attempt and nothing is kept.
+pub fn scrub_recording(scenario: &str, text: &str) -> Result<String, String> {
+    // A model sometimes quotes the working folder in its own words, shortened or not.
+    let folder =
+        regex::Regex::new(r#"(/private)?/var/folders/([^/\s"\\]+/)*record-fixture-[A-Za-z0-9]+"#)
+            .map_err(|_| "the temporary folder pattern did not compile".to_owned())?;
+    let text = folder.replace_all(text, "<tmp>");
+    let shortened = regex::Regex::new(r"(/private)?/var/folders/\.\.\.")
+        .map_err(|_| "the shortened folder pattern did not compile".to_owned())?;
+    let text = shortened.replace_all(&text, "<tmp>");
+    // A model also names the isolated Hermes home it can see; it is only a stand-in for `~/.hermes`.
+    let text = text.replace(".hermes-talaria-test", ".hermes");
+    // A path a model streams can be cut between two deltas: the end of the first, then the
+    // start of the second, which the recorder's whole-path substitutions cannot match.
+    let cut_end = regex::Regex::new(r#"(/private)?/var/folders(/[A-Za-z0-9_.-]*)*""#)
+        .map_err(|_| "the cut folder pattern did not compile".to_owned())?;
+    let text = cut_end.replace_all(&text, "<tmp>\"");
+    let cut_start = regex::Regex::new(r#"("text":")[A-Za-z0-9_]+/T/record-fixture-[A-Za-z0-9]+"#)
+        .map_err(|_| "the cut folder pattern did not compile".to_owned())?;
+    let text = cut_start.replace_all(&text, "$1").into_owned();
+    if text.contains("var/folders") {
+        return Err("a temporary folder path survived the scrub".to_owned());
+    }
+    match scenario {
+        "slash-palette" | "shell-and-btw" | "todo-checklist" | "attachments-mention-image" => {
+            scrub_skill_names(&text)
+        }
+        _ => Ok(text),
+    }
+}
+
+/// One line of a recording split around its `frame` value, so a rewrite leaves every other
+/// byte of the line (and the order of its keys) alone.
+struct FrameLine<'a> {
+    before: &'a str,
+    frame: Value,
+    after: &'a str,
+}
+
+fn split_frame(line: &str) -> Option<FrameLine<'_>> {
+    const KEY: &str = ",\"frame\":";
+    let start = line.find(KEY)? + KEY.len();
+    let mut stream = serde_json::Deserializer::from_str(&line[start..]).into_iter::<Value>();
+    let frame = stream.next()?.ok()?;
+    let end = start + stream.byte_offset();
+    Some(FrameLine {
+        before: &line[..start],
+        frame,
+        after: &line[end..],
+    })
+}
+
+/// The skills of the host, numbered in order of first appearance.
+#[derive(Default)]
+struct SkillNames {
+    order: Vec<String>,
+    /// Patterns for the names that cannot be ordinary prose, built by `prepare_prose`.
+    prose: Vec<(regex::Regex, String)>,
+}
+
+impl SkillNames {
+    fn learn(&mut self, name: &str) {
+        let name = name.trim_start_matches('/');
+        if !name.is_empty() && !self.order.iter().any(|known| known == name) {
+            self.order.push(name.to_owned());
+        }
+    }
+
+    fn number(&self, name: &str) -> Option<usize> {
+        let name = name.trim_start_matches('/');
+        self.order
+            .iter()
+            .position(|known| known == name)
+            .map(|at| at + 1)
+    }
+
+    fn placeholder(&self, name: &str) -> Option<String> {
+        self.number(name)
+            .map(|number| format!("fixture-skill-{number}"))
+    }
+
+    fn description(&self, name: &str) -> Option<String> {
+        self.number(name)
+            .map(|number| format!("Fixture skill {number}"))
+    }
+
+    /// Build the patterns that find a distinctive skill name in a model's own words. Short plain
+    /// words (`box`, `codex`) also occur in public registry descriptions, so they are left out.
+    fn prepare_prose(&mut self) -> Result<(), String> {
+        self.prose.clear();
+        for name in &self.order {
+            if !(name.contains('-') || name.chars().count() >= 8) {
+                continue;
+            }
+            let pattern = regex::Regex::new(&format!(
+                "(?P<before>^|[^A-Za-z0-9_-]){}(?P<after>$|[^A-Za-z0-9_-])",
+                regex::escape(name)
+            ))
+            .map_err(|_| "a skill name did not make a pattern".to_owned())?;
+            let placeholder = self.placeholder(name).unwrap_or_default();
+            self.prose.push((pattern, placeholder));
+        }
+        Ok(())
+    }
+
+    /// `text` with every distinctive skill name in it replaced.
+    fn replace_prose(&self, text: &str) -> Option<String> {
+        let mut current: Option<String> = None;
+        for (pattern, placeholder) in &self.prose {
+            // Two names side by side share a boundary character, so repeat until none is left.
+            while pattern.is_match(current.as_deref().unwrap_or(text)) {
+                let replaced = pattern
+                    .replace_all(
+                        current.as_deref().unwrap_or(text),
+                        format!("${{before}}{placeholder}${{after}}"),
+                    )
+                    .into_owned();
+                current = Some(replaced);
+            }
+        }
+        current
+    }
+
+    /// `name` with the skill's own name swapped for its placeholder, leading slashes kept.
+    fn rename(&self, name: &str) -> Option<String> {
+        let bare = name.trim_start_matches('/');
+        let slashes = &name[..name.len() - bare.len()];
+        self.placeholder(bare)
+            .map(|placeholder| format!("{slashes}{placeholder}"))
+    }
+
+    /// A command line whose first word is a skill, with that word renamed.
+    fn rename_leading_word(&self, line: &str) -> Option<String> {
+        let end = line.find(char::is_whitespace).unwrap_or(line.len());
+        self.rename(&line[..end])
+            .map(|renamed| format!("{renamed}{}", &line[end..]))
+    }
+}
+
+/// Learn the skills a catalogue result names, in the order of its `pairs` and then its `skills`.
+/// Refuses a catalogue with a command that is neither a registry command nor a skill: that is a
+/// plugin or user command, which the scrub does not rename.
+fn learn_catalogue(names: &mut SkillNames, result: &Value) -> Result<(), String> {
+    let skills = result["skills"]
+        .as_object()
+        .ok_or("the catalogue has no skills")?;
+    if result["plugin_commands"]
+        .as_object()
+        .is_some_and(|map| !map.is_empty())
+    {
+        return Err(
+            "the catalogue lists plugin commands, which the scrub does not rename".to_owned(),
+        );
+    }
+    let registry: Vec<&str> = ["canon", "commands"]
+        .iter()
+        .filter_map(|key| result[*key].as_object())
+        .flat_map(|map| map.keys().map(|name| name.trim_start_matches('/')))
+        .collect();
+    for pair in result["pairs"].as_array().into_iter().flatten() {
+        let Some(command) = pair[0].as_str().map(|name| name.trim_start_matches('/')) else {
+            continue;
+        };
+        if skills.contains_key(&format!("/{command}")) {
+            names.learn(command);
+        } else if !registry.contains(&command) {
+            return Err(
+                "the catalogue lists a command that is neither registry nor skill".to_owned(),
+            );
+        }
+    }
+    for name in skills.keys() {
+        names.learn(name);
+    }
+    Ok(())
+}
+
+/// Learn skills named anywhere else: the session's `info.skills` lists, completion items of kind
+/// `skill` and `skill` directives.
+fn learn_elsewhere(names: &mut SkillNames, value: &Value) {
+    match value {
+        Value::Array(items) => items.iter().for_each(|item| learn_elsewhere(names, item)),
+        Value::Object(map) => {
+            if map.get("kind").and_then(Value::as_str) == Some("skill")
+                && let Some(text) = map.get("text").and_then(Value::as_str)
+            {
+                names.learn(text);
+            }
+            if map.get("type").and_then(Value::as_str) == Some("skill")
+                && let Some(name) = map.get("name").and_then(Value::as_str)
+            {
+                names.learn(name);
+            }
+            for (key, child) in map {
+                if key == "skills"
+                    && let Some(groups) = child.as_object()
+                {
+                    for list in groups.values().filter_map(Value::as_array) {
+                        list.iter()
+                            .filter_map(Value::as_str)
+                            .for_each(|name| names.learn(name));
+                    }
+                }
+                learn_elsewhere(names, child);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The replacement for one string value, or `None` to leave it as it is.
+fn renamed_text(
+    names: &SkillNames,
+    key: &str,
+    text: &str,
+    kind: ObjectKind,
+    own: Option<&str>,
+) -> Option<String> {
+    match (key, own, kind) {
+        ("text", Some(name), ObjectKind::Item) => names.placeholder(name),
+        ("meta", Some(name), ObjectKind::Item) => {
+            let mark = if text.starts_with("\u{26a1} ") {
+                "\u{26a1} "
+            } else {
+                ""
+            };
+            names
+                .description(name)
+                .map(|description| format!("{mark}{description}"))
+        }
+        ("name", Some(name), ObjectKind::Directive) => names.placeholder(name),
+        ("message", Some(name), ObjectKind::Directive) => {
+            let placeholder = names.placeholder(name)?;
+            let header = text.lines().next().unwrap_or_default();
+            let header = header.replace(&format!("\"{name}\""), &format!("\"{placeholder}\""));
+            Some(format!("{header}\nFixture skill body."))
+        }
+        ("notice", Some(name), ObjectKind::Directive) => names
+            .placeholder(name)
+            .map(|placeholder| text.replace(name, &placeholder)),
+        ("display" | "command", _, _) => names.rename_leading_word(text),
+        ("text", _, _) if text.starts_with('/') => names.rename_leading_word(text),
+        _ => None,
+    }
+}
+
+/// What an object is, for the names it holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ObjectKind {
+    /// A completion item of kind `skill`.
+    Item,
+    /// A `skill` directive of a slash reply.
+    Directive,
+    Other,
+}
+
+fn rewrite_names(value: &mut Value, names: &SkillNames) {
+    match value {
+        Value::String(text) => {
+            if let Some(replaced) = names.replace_prose(text) {
+                *text = replaced;
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|item| rewrite_names(item, names)),
+        Value::Object(map) => {
+            let kind = if map.get("kind").and_then(Value::as_str) == Some("skill") {
+                ObjectKind::Item
+            } else if map.get("type").and_then(Value::as_str) == Some("skill") {
+                ObjectKind::Directive
+            } else {
+                ObjectKind::Other
+            };
+            let own = match kind {
+                ObjectKind::Item => map.get("text"),
+                ObjectKind::Directive => map.get("name"),
+                ObjectKind::Other => None,
+            }
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+            let old = std::mem::take(map);
+            for (key, mut child) in old {
+                let new_key = names.rename(&key).unwrap_or_else(|| key.clone());
+                match (key.as_str(), &mut child) {
+                    // Public registry data: the argument choices of registry commands.
+                    ("sub", _) => {}
+                    ("warning" | "plugin_discovery_error", Value::String(text)) => {
+                        if !text.is_empty() {
+                            "fixture warning".clone_into(text);
+                        }
+                    }
+                    ("skills", Value::Object(groups)) => {
+                        for list in groups.values_mut().filter_map(Value::as_array_mut) {
+                            for entry in list.iter_mut() {
+                                if let Some(placeholder) =
+                                    entry.as_str().and_then(|name| names.placeholder(name))
+                                {
+                                    *entry = Value::String(placeholder);
+                                }
+                            }
+                        }
+                        rewrite_names(&mut child, names);
+                    }
+                    ("pairs", Value::Array(pairs)) => {
+                        for pair in pairs {
+                            let renamed = pair[0]
+                                .as_str()
+                                .and_then(|name| names.rename(name).zip(names.description(name)));
+                            if let Some((command, description)) = renamed {
+                                *pair = json!([command, description]);
+                            }
+                        }
+                    }
+                    (key, Value::String(text)) => {
+                        let renamed = renamed_text(names, key, text, kind, own.as_deref());
+                        if let Some(replaced) = renamed {
+                            *text = replaced;
+                        } else if let Some(replaced) = names.replace_prose(text) {
+                            *text = replaced;
+                        }
+                    }
+                    _ => rewrite_names(&mut child, names),
+                }
+                map.insert(new_key, child);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The skill renaming of the slash palette recording: every skill becomes `fixture-skill-<n>`,
+/// its description `Fixture skill <n>`, and a skill directive's body `Fixture skill body.`
+fn scrub_skill_names(text: &str) -> Result<String, String> {
+    let mut lines: Vec<(&str, Option<FrameLine<'_>>)> =
+        text.lines().map(|line| (line, split_frame(line))).collect();
+    let mut names = SkillNames::default();
+    let catalogue = lines
+        .iter()
+        .filter_map(|(_, parsed)| parsed.as_ref())
+        .find(|line| line.frame["result"]["skills"].is_object());
+    if let Some(catalogue) = catalogue {
+        learn_catalogue(&mut names, &catalogue.frame["result"])?;
+    }
+    for parsed in lines.iter().filter_map(|(_, parsed)| parsed.as_ref()) {
+        learn_elsewhere(&mut names, &parsed.frame);
+    }
+    names.prepare_prose()?;
+    let mut output = String::with_capacity(text.len());
+    for (line, parsed) in &mut lines {
+        match parsed {
+            Some(parsed) => {
+                rewrite_names(&mut parsed.frame, &names);
+                let frame = serde_json::to_string(&parsed.frame)
+                    .map_err(|_| "a rewritten frame did not encode".to_owned())?;
+                output.push_str(parsed.before);
+                output.push_str(&frame);
+                output.push_str(parsed.after);
+            }
+            None => output.push_str(line),
+        }
+        output.push('\n');
+    }
+    for name in &names.order {
+        // Short plain words (`box`, `codex`) also occur in public registry descriptions, so only
+        // names that cannot be ordinary prose are searched for in the text.
+        if !(name.contains('-') || name.chars().count() >= 8) {
+            continue;
+        }
+        let token = regex::Regex::new(&format!(
+            "(^|[^A-Za-z0-9_-]){}($|[^A-Za-z0-9_-])",
+            regex::escape(name)
+        ))
+        .map_err(|_| "a skill name did not make a pattern".to_owned())?;
+        if token.is_match(&output) {
+            return Err("a skill name survived the scrub".to_owned());
+        }
+    }
+    Ok(output)
 }
 
 /// What the driver has seen of the session so far.
@@ -625,27 +1083,20 @@ async fn drive(
         return AttemptResult::Failed(reason);
     }
 
-    if let Err(reason) = submit(client, session, &scenario.prompts[0]).await {
-        return AttemptResult::Failed(reason);
-    }
-    while session.statuses.len() < scenario.expected_statuses.len() {
-        let Some(item) = inbound.next().await else {
-            return failed("the inbound stream ended");
-        };
-        match item {
-            Inbound::Event(event) => {
-                if let Some(result) = on_event(client, scenario, session, &event.raw).await {
-                    return result;
-                }
-            }
-            Inbound::ServerRequest(request) => {
-                let _ = request
-                    .responder
-                    .fail(-32601, "the fixture script does not answer this request")
-                    .await;
-            }
-            Inbound::Closed(_) => return failed("the connection closed during the attempt"),
-            Inbound::Malformed(_) => {}
+    if scenario.prompts.is_empty() {
+        if let Err(reason) = run_steps(client, inbound, scenario, config, session).await {
+            return AttemptResult::Failed(reason);
+        }
+    } else {
+        if let Err(reason) = submit(client, session, &scenario.prompts[0]).await {
+            return AttemptResult::Failed(reason);
+        }
+        if let Err(reason) = pump(client, inbound, scenario, session, |session, _| {
+            session.statuses.len() >= scenario.expected_statuses.len()
+        })
+        .await
+        {
+            return AttemptResult::Failed(reason);
         }
     }
     if scenario.name == "subagent-batch" {
@@ -678,6 +1129,266 @@ async fn drive(
         ));
     }
     AttemptResult::Ok
+}
+
+/// Read the session's events until `done` says the wait is over. Requests the script does not
+/// expect are refused, as in every scenario.
+async fn pump(
+    client: &Client,
+    inbound: &mut InboundStream,
+    scenario: &Scenario,
+    session: &mut Session,
+    mut done: impl FnMut(&Session, &Value) -> bool,
+) -> Result<(), String> {
+    while !done(session, &Value::Null) {
+        let Some(item) = inbound.next().await else {
+            return Err("the inbound stream ended".to_owned());
+        };
+        match item {
+            Inbound::Event(event) => {
+                if let Some(
+                    AttemptResult::Failed(reason) | AttemptResult::PreconditionAbsent(reason),
+                ) = on_event(client, scenario, session, &event.raw).await
+                {
+                    return Err(reason);
+                }
+                if done(session, &event.raw) {
+                    return Ok(());
+                }
+            }
+            Inbound::ServerRequest(request) => {
+                let _ = request
+                    .responder
+                    .fail(-32601, "the fixture script does not answer this request")
+                    .await;
+            }
+            Inbound::Closed(_) => return Err("the connection closed during the attempt".to_owned()),
+            Inbound::Malformed(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Wait for the next event of type `kind` from this session, for at most `limit`.
+async fn wait_for_event(
+    client: &Client,
+    inbound: &mut InboundStream,
+    scenario: &Scenario,
+    session: &mut Session,
+    kind: &str,
+    limit: Duration,
+) -> Result<(), String> {
+    let mut seen = false;
+    let waited = tokio::time::timeout(
+        limit,
+        pump(client, inbound, scenario, session, |_, event| {
+            seen |= event["type"] == kind;
+            seen
+        }),
+    )
+    .await;
+    match waited {
+        Ok(result) => result,
+        Err(_) => Err(format!("no {kind} within {} s", limit.as_secs())),
+    }
+}
+
+/// Submit `text` and wait until that turn's `message.complete` has arrived.
+async fn submit_and_wait(
+    client: &Client,
+    inbound: &mut InboundStream,
+    scenario: &Scenario,
+    session: &mut Session,
+    text: &str,
+) -> Result<(), String> {
+    submit(client, session, text).await?;
+    let target = session.submitted;
+    pump(client, inbound, scenario, session, |session, _| {
+        session.statuses.len() >= target
+    })
+    .await
+}
+
+/// A call whose failure fails the attempt.
+async fn call(client: &Client, method: &str, params: Value) -> Result<Value, String> {
+    client
+        .call_raw(method, params, CallOptions::default())
+        .await
+        .map_err(|error| format!("{method} failed: {error}"))
+}
+
+/// A call whose refusal is part of the recording: the error is kept, not raised.
+async fn call_either(client: &Client, method: &str, params: Value) -> Value {
+    client
+        .call_raw(method, params, CallOptions::default())
+        .await
+        .unwrap_or(Value::Null)
+}
+
+/// The requests of the scenarios that send more than a prompt.
+async fn run_steps(
+    client: &Client,
+    inbound: &mut InboundStream,
+    scenario: &Scenario,
+    config: &DriverConfig,
+    session: &mut Session,
+) -> Result<(), String> {
+    let id = session.session_id.clone();
+    match scenario.name.as_str() {
+        "slash-palette" => {
+            let catalogue = call(client, "commands.catalog", json!({"session_id": id})).await?;
+            let skill = catalogue["skills"]
+                .as_object()
+                .and_then(|skills| skills.keys().next().cloned())
+                .ok_or("the catalogue holds no skill")?;
+            let skill = skill.trim_start_matches('/').to_owned();
+            call(
+                client,
+                "complete.slash",
+                json!({"session_id": id, "text": "/he"}),
+            )
+            .await?;
+            let personality = call(
+                client,
+                "complete.slash",
+                json!({"session_id": id, "text": "/personality "}),
+            )
+            .await?;
+            if personality["items"].as_array().is_none_or(Vec::is_empty) {
+                call(
+                    client,
+                    "complete.slash",
+                    json!({"session_id": id, "text": "/help "}),
+                )
+                .await?;
+            }
+            call_either(
+                client,
+                "slash.exec",
+                json!({"session_id": id, "command": "version"}),
+            )
+            .await;
+            let plan = call_either(
+                client,
+                "slash.exec",
+                json!({"session_id": id, "command": "plan write a haiku about rain"}),
+            )
+            .await;
+            let message = find_send_message(&plan).ok_or("/plan returned no message to send")?;
+            submit_and_wait(client, inbound, scenario, session, &message).await?;
+            call_either(
+                client,
+                "slash.exec",
+                json!({"session_id": id, "command": format!("{skill} tidy")}),
+            )
+            .await;
+            call_either(
+                client,
+                "slash.exec",
+                json!({"session_id": id, "command": "worktree"}),
+            )
+            .await;
+            call_either(
+                client,
+                "slash.exec",
+                json!({"session_id": id, "command": "nonexistent-talaria-check"}),
+            )
+            .await;
+        }
+        "shell-and-btw" => {
+            for command in [
+                "echo talaria-shell-ok",
+                "echo oops >&2; exit 3",
+                "rm -r ./talaria-uat-does-not-exist",
+            ] {
+                call_either(
+                    client,
+                    "shell.exec",
+                    json!({"session_id": id, "command": command}),
+                )
+                .await;
+            }
+            submit_and_wait(
+                client,
+                inbound,
+                scenario,
+                session,
+                "Reply with the single word ready.",
+            )
+            .await?;
+            call(
+                client,
+                "prompt.btw",
+                json!({"session_id": id, "text": "What single word did you just reply with?"}),
+            )
+            .await?;
+            wait_for_event(
+                client,
+                inbound,
+                scenario,
+                session,
+                "btw.complete",
+                SIDE_ANSWER_TIMEOUT,
+            )
+            .await?;
+        }
+        "attachments-mention-image" => {
+            std::fs::create_dir_all(config.scratch.join("src"))
+                .and_then(|()| {
+                    std::fs::write(
+                        config.scratch.join("src/calc.py"),
+                        "def add(a, b):\n    return a + b\n",
+                    )
+                })
+                .map_err(|_| "the scratch project could not hold src/calc.py".to_owned())?;
+            call(
+                client,
+                "complete.path",
+                json!({"session_id": id, "word": "@calc"}),
+            )
+            .await?;
+            let staged = call(
+                client,
+                "image.attach_bytes",
+                json!({"session_id": id, "content_base64": RED_PNG_BASE64,
+                       "filename": "red-1x1.png"}),
+            )
+            .await?;
+            let path = staged["path"]
+                .as_str()
+                .ok_or("the staged image has no path")?;
+            let mime = staged["mime"].as_str().unwrap_or("image/png");
+            let mut params = submit_params(&id, IMAGE_PROMPT)?;
+            params["attachments"] = json!([{"path": path, "mime": mime}]);
+            session.submitted += 1;
+            session.turn_running = true;
+            call(client, "prompt.submit", params).await?;
+            let target = session.submitted;
+            pump(client, inbound, scenario, session, |session, _| {
+                session.statuses.len() >= target
+            })
+            .await?;
+            call(client, "session.resume", json!({"session_id": id})).await?;
+        }
+        other => return Err(format!("{other} has no steps")),
+    }
+    Ok(())
+}
+
+/// The `message` of the first `send` directive anywhere in a slash reply.
+fn find_send_message(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            if map.get("type").and_then(Value::as_str) == Some("send")
+                && let Some(message) = map.get("message").and_then(Value::as_str)
+            {
+                return Some(message.to_owned());
+            }
+            map.values().find_map(find_send_message)
+        }
+        Value::Array(items) => items.iter().find_map(find_send_message),
+        _ => None,
+    }
 }
 
 async fn submit(client: &Client, session: &mut Session, text: &str) -> Result<(), String> {
@@ -769,7 +1480,11 @@ async fn on_event(
             );
             session.pending_approvals.push(prompt.clone());
             let expected = scenario.name == "approval" && !session.approval_answered;
-            let choice = if expected { "once" } else { "deny" };
+            let harmless = scenario.name == "todo-checklist"
+                && payload["command"]
+                    .as_str()
+                    .is_some_and(is_plain_todo_command);
+            let choice = if expected || harmless { "once" } else { "deny" };
             session.approval_answered |= expected;
             let answered = client
                 .call_raw(
@@ -779,7 +1494,10 @@ async fn on_event(
                     CallOptions::default(),
                 )
                 .await;
-            if !expected {
+            // These scenarios' turns may ask to write a file or run a command; denying it still
+            // ends the turn, so it does not fail the attempt.
+            let tolerant = EXTRA_SCENARIOS.contains(&scenario.name.as_str());
+            if !expected && !harmless && !tolerant {
                 return Some(AttemptResult::Failed(
                     "an approval nobody expected appeared; it was denied".to_owned(),
                 ));
@@ -834,6 +1552,18 @@ async fn on_event(
         _ => {}
     }
     None
+}
+
+/// A command the todo scenario's plan can ask for (`sleep 30`, creating `a.txt` or `b.txt`):
+/// plain words and file names only, no pipes, substitutions, removals or network tools.
+fn is_plain_todo_command(command: &str) -> bool {
+    let command = command.trim();
+    let first = command.split_whitespace().next().unwrap_or_default();
+    ["sleep", "touch", "echo", "printf", "cat", "ls", "pwd"].contains(&first)
+        && !command.contains("rm ")
+        && command
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || " ._/-=:\"'><".contains(ch))
 }
 
 fn payload_generation(payload: &Value, session: &Session) -> Value {
