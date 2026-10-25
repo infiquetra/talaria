@@ -1,4 +1,4 @@
-//! Record the seven live fixtures, replay one, and scan a directory for secrets.
+//! Record the live fixtures, replay one, and scan a directory for secrets.
 //!
 //! The script never starts a gateway, never runs `hermes`, never calls `config.set`, and never
 //! sends `unattended`. Discovery uses `EnsurePolicy::Never`. A missing precondition is exit 2
@@ -13,6 +13,10 @@ use hermes_client::{
     Purpose, ReplaySource, Scope, connect_with, discover_with, handshake, mint_ticket,
 };
 use serde_json::{Value, json};
+
+mod scripted;
+
+pub use scripted::SCRIPTED_SCENARIOS;
 
 /// The seven scenarios of the fixture set, in the order the script records them.
 pub const SCENARIOS: [&str; 7] = [
@@ -33,7 +37,7 @@ const NO_APPROVAL_CARD: &str =
     "no approval card appeared; the profile `fixture` must set `approvals.mode: manual`";
 
 /// How long each cleanup call may take.
-const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A scenario: its file name stem, prompts and what a good recording shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +50,9 @@ pub struct Scenario {
 impl Scenario {
     /// The scenario named `name`, or `None` when it is not one of [`SCENARIOS`].
     pub fn named(name: &str) -> Option<Scenario> {
+        if let Some(scripted) = scripted::scenario(name) {
+            return Some(scripted);
+        }
         let (prompts, statuses): (&[&str], &[&str]) = match name {
             "plain-answer" => (
                 &["Reply with exactly the single word: pong. Do not use any tools."],
@@ -151,6 +158,8 @@ pub struct DriverConfig {
     pub model: String,
     pub provider: String,
     pub scratch: PathBuf,
+    /// A second project folder, for the scenarios that move the session between two.
+    pub second: Option<PathBuf>,
     pub attempt_timeout: std::time::Duration,
 }
 
@@ -166,6 +175,7 @@ pub enum AttemptResult {
 #[derive(Debug)]
 pub struct ScratchDir {
     path: PathBuf,
+    second: Option<PathBuf>,
 }
 
 impl ScratchDir {
@@ -174,21 +184,51 @@ impl ScratchDir {
             .prefix("record-fixture-")
             .tempdir()?
             .keep();
-        let scratch = ScratchDir { path };
+        let scratch = ScratchDir { path, second: None };
         std::fs::write(scratch.path.join("notes.txt"), "alpha\nbeta\n")?;
         std::fs::create_dir(scratch.path.join(".pytest_cache"))?;
+        Ok(scratch)
+    }
+
+    /// The project folder a scenario needs. `permissions-cd` gets two git repositories, because
+    /// it moves the session from one to the other.
+    pub fn create_for(scenario: &str) -> std::io::Result<ScratchDir> {
+        let mut scratch = ScratchDir::create()?;
+        if scenario == "permissions-cd" {
+            let second = tempfile::Builder::new()
+                .prefix("record-fixture-second-")
+                .tempdir()?
+                .keep();
+            std::fs::write(second.join("notes.txt"), "gamma\n")?;
+            scratch.second = Some(second);
+            for folder in std::iter::once(&scratch.path).chain(scratch.second.iter()) {
+                let status = std::process::Command::new("git")
+                    .args(["init", "-q"])
+                    .current_dir(folder)
+                    .status()?;
+                if !status.success() {
+                    return Err(std::io::Error::other("git init failed"));
+                }
+            }
+        }
         Ok(scratch)
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    pub fn second(&self) -> Option<&Path> {
+        self.second.as_deref()
+    }
 }
 
 impl Drop for ScratchDir {
     fn drop(&mut self) {
-        if std::fs::remove_dir_all(&self.path).is_err() && self.path.exists() {
-            eprintln!("note: the scratch project could not be removed");
+        for path in std::iter::once(&self.path).chain(self.second.iter()) {
+            if std::fs::remove_dir_all(path).is_err() && path.exists() {
+                eprintln!("note: the scratch project could not be removed");
+            }
         }
     }
 }
@@ -306,10 +346,21 @@ pub async fn preflight(input: &PreflightInput) -> Result<Preflight, Precondition
     })
 }
 
-fn call_options(timeout: Duration) -> CallOptions {
+pub(crate) fn call_options(timeout: Duration) -> CallOptions {
     CallOptions {
         timeout: Some(timeout),
     }
+}
+
+/// How a turn ended: its `status`, or its `outcome` when it never ran (a cancelled or steered
+/// prompt settles without a status).
+pub fn turn_status(payload: &Value) -> String {
+    ["status", "outcome"]
+        .iter()
+        .filter_map(|key| payload[*key].as_str())
+        .find(|text| !text.is_empty())
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// `(event type, params)` of every inbound event frame of a recording.
@@ -339,12 +390,7 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
     let statuses: Vec<String> = events
         .iter()
         .filter(|(kind, _)| kind == "message.complete")
-        .map(|(_, params)| {
-            params["payload"]["status"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned()
-        })
+        .map(|(_, params)| turn_status(&params["payload"]))
         .collect();
     if statuses != scenario.expected_statuses {
         return Err(format!(
@@ -405,6 +451,7 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
                 return Err("the second turn did not start after the first completed".to_owned());
             }
         }
+        other if scripted::handles(other) => scripted::check_evidence(scenario, source)?,
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -445,6 +492,94 @@ pub fn build_substitutions(
     pairs
 }
 
+/// The substitutions of one scenario: the general list, with the folder names the scenario
+/// prints replaced by fixed project names when it asks for them.
+pub fn build_scenario_substitutions(
+    scenario: &str,
+    facts: &DiscoveryFacts,
+    env: &EnvFacts,
+    scratch: &ScratchDir,
+) -> Vec<(String, String)> {
+    let mut pairs = build_substitutions(facts, env, scratch.path());
+    if scenario != "permissions-cd" {
+        return pairs;
+    }
+    let canonical = |path: &Path| {
+        std::fs::canonicalize(path)
+            .map(|resolved| resolved.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.to_string_lossy().into_owned())
+    };
+    let mut set = |needle: String, replacement: &str| {
+        pairs.retain(|(known, _)| *known != needle);
+        pairs.push((needle, replacement.to_owned()));
+    };
+    for (folder, name) in [
+        (Some(scratch.path()), "/work/proj-a"),
+        (scratch.second(), "/work/proj-b"),
+    ] {
+        if let Some(folder) = folder {
+            set(folder.to_string_lossy().into_owned(), name);
+            set(canonical(folder), name);
+        }
+    }
+    set(facts.profile_id.clone(), "/hermes-home/profiles/fixture");
+    pairs
+}
+
+/// Value-level scrubbing a scenario asks for, applied to the recorded lines. Substitution
+/// cannot do it: the values differ from run to run and must become fixed placeholders.
+pub fn scrub_recording(scenario: &str, text: &str) -> String {
+    if scenario != "model-switch" {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        match serde_json::from_str::<Value>(line) {
+            Ok(mut value) => {
+                scrub_provider_fields(&mut value);
+                out.push_str(&value.to_string());
+            }
+            Err(_) => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// `api_url` becomes a reserved example address; the accounts of a usage block become
+/// `account-<n>` in the order the gateway listed them.
+fn scrub_provider_fields(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map.iter_mut() {
+                if key == "api_url" && inner.is_string() {
+                    *inner = Value::String("https://example.invalid/v1".to_owned());
+                } else if key == "accounts" {
+                    if let Value::Array(accounts) = inner {
+                        for (index, account) in accounts.iter_mut().enumerate() {
+                            if let Value::Object(fields) = account {
+                                for field in ["label", "id"] {
+                                    if fields.contains_key(field) {
+                                        fields.insert(
+                                            field.to_owned(),
+                                            Value::String(format!("account-{}", index + 1)),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    scrub_provider_fields(inner);
+                } else {
+                    scrub_provider_fields(inner);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(scrub_provider_fields),
+        _ => {}
+    }
+}
+
 /// What the driver has seen of the session so far.
 #[derive(Debug, Default)]
 struct Session {
@@ -471,7 +606,7 @@ struct Session {
 const SUBAGENT_LINGER: Duration = Duration::from_secs(60);
 
 /// A submission id no other submission of this process shares.
-fn submission_id() -> String {
+pub(crate) fn submission_id() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let started = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -483,7 +618,7 @@ fn submission_id() -> String {
 }
 
 /// `prompt.submit` with exactly `session_id`, `text` and `submission_id`; never `unattended`.
-fn submit_params(session_id: &str, text: &str) -> Result<Value, String> {
+pub(crate) fn submit_params(session_id: &str, text: &str) -> Result<Value, String> {
     let params =
         hermes_contract::overrides::prompt_submit_params(session_id, text, submission_id());
     hermes_contract::overrides::check_prompt_submit(&params).map_err(|error| error.to_string())?;
@@ -505,6 +640,9 @@ pub async fn run_scenario(
     scenario: &Scenario,
     config: &DriverConfig,
 ) -> AttemptResult {
+    if scripted::handles(&scenario.name) {
+        return scripted::run(client, inbound, scenario, config).await;
+    }
     let mut session = Session::default();
     let outcome = tokio::time::timeout(
         config.attempt_timeout,
@@ -575,7 +713,7 @@ fn same_path(left: &str, right: &Path) -> bool {
 }
 
 /// The provenance check of section 8.4 on the snapshot's `info` block.
-fn check_info(info: &Value, config: &DriverConfig) -> Result<(), String> {
+pub(crate) fn check_info(info: &Value, config: &DriverConfig) -> Result<(), String> {
     let provider = info["provider"].as_str();
     if provider != Some(config.provider.as_str()) {
         return Err("the session reports another provider than requested".to_owned());

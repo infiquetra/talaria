@@ -113,6 +113,7 @@ async fn attempt(
         model: MODEL.to_owned(),
         provider: PROVIDER.to_owned(),
         scratch: scratch.path().to_path_buf(),
+        second: None,
         attempt_timeout: Duration::from_secs(120),
     };
     let result = run_scenario(&client, &mut inbound, scenario, &config).await;
@@ -140,7 +141,7 @@ async fn live_plain_answer_records_and_replays() {
     let host = gethostname::gethostname().to_string_lossy().into_owned();
     let home = default_home();
 
-    // Preconditions (REQ-17): the same check the script makes, with discovery that never starts
+    // Preconditions: the same check the script makes, with discovery that never starts
     // a gateway. A missing precondition is a skip, not a failure.
     let input = PreflightInput {
         hermes_home: home.clone(),

@@ -37,6 +37,7 @@ fn driver_config(scratch: &Path, attempt_timeout: Duration) -> DriverConfig {
         model: MODEL.to_owned(),
         provider: PROVIDER.to_owned(),
         scratch: scratch.to_path_buf(),
+        second: None,
         attempt_timeout,
     }
 }

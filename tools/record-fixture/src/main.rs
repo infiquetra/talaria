@@ -16,8 +16,8 @@ use hermes_client::{
 };
 use record_fixture::{
     AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, Preflight, PreflightInput, SCENARIOS,
-    Scenario, ScratchDir, build_substitutions, check_evidence, never_ensure, preflight,
-    run_scenario,
+    SCRIPTED_SCENARIOS, Scenario, ScratchDir, build_scenario_substitutions, check_evidence,
+    never_ensure, preflight, run_scenario, scrub_recording, turn_status,
 };
 
 #[derive(Parser)]
@@ -148,8 +148,9 @@ async fn record(settings: &RecordSettings) -> Outcome {
             Some(scenario) => scenarios.push(scenario),
             None => {
                 eprintln!(
-                    "unknown scenario {name}; the scenarios are: {}",
-                    SCENARIOS.join(", ")
+                    "unknown scenario {name}; the scenarios are: {}, {}",
+                    SCENARIOS.join(", "),
+                    SCRIPTED_SCENARIOS.join(", ")
                 );
                 return Outcome::Precondition;
             }
@@ -202,11 +203,23 @@ async fn record(settings: &RecordSettings) -> Outcome {
         let mut last = String::new();
         let mut recorded = false;
         for number in 1..=settings.attempts {
+            // A scripted scenario changes files and git state, so each attempt gets its own folders.
+            let own = if SCRIPTED_SCENARIOS.contains(&scenario.name.as_str()) {
+                match ScratchDir::create_for(&scenario.name) {
+                    Ok(own) => Some(own),
+                    Err(_) => {
+                        eprintln!("the scratch project could not be created");
+                        return Outcome::Failure;
+                    }
+                }
+            } else {
+                None
+            };
             let attempt = Attempt {
                 settings,
                 checked: &checked,
                 env: &env,
-                scratch: &scratch,
+                scratch: own.as_ref().unwrap_or(&scratch),
                 forbidden: &forbidden,
                 scenario,
                 number,
@@ -284,6 +297,9 @@ impl Attempt<'_> {
         if let Err(step) = recorded {
             return step;
         }
+        if scrub_file(&hidden, name).is_err() {
+            return Step::Retry("the recording could not be scrubbed".to_owned());
+        }
         let source = match ReplaySource::open(&hidden) {
             Ok(source) => source,
             Err(error) => return Step::Retry(format!("the recording did not open: {error}")),
@@ -353,7 +369,12 @@ impl Attempt<'_> {
             }),
             scenario: Some(self.scenario.name.clone()),
             expected_statuses: self.scenario.expected_statuses.clone(),
-            substitutions: build_substitutions(&facts, self.env, self.scratch.path()),
+            substitutions: build_scenario_substitutions(
+                &self.scenario.name,
+                &facts,
+                self.env,
+                self.scratch,
+            ),
             queue_capacity: None,
         };
         let recorder = Recorder::create(hidden, options)
@@ -369,6 +390,7 @@ impl Attempt<'_> {
             model: self.settings.model.clone(),
             provider: self.settings.provider.clone(),
             scratch: self.scratch.path().to_path_buf(),
+            second: self.scratch.second().map(Path::to_path_buf),
             attempt_timeout: self.settings.attempt_timeout,
         };
         let result = run_scenario(&client, &mut inbound, self.scenario, &config).await;
@@ -383,6 +405,16 @@ impl Attempt<'_> {
             AttemptResult::PreconditionAbsent(reason) => Err(Step::Precondition(reason)),
         }
     }
+}
+
+/// Apply the scenario's value-level scrub to a finished recording, line by line.
+fn scrub_file(path: &Path, scenario: &str) -> std::io::Result<()> {
+    let text = std::fs::read_to_string(path)?;
+    let scrubbed = scrub_recording(scenario, &text);
+    if scrubbed != text {
+        std::fs::write(path, scrubbed)?;
+    }
+    Ok(())
 }
 
 async fn replay(file: &Path, speed: &str) -> Outcome {
@@ -408,12 +440,7 @@ async fn replay(file: &Path, speed: &str) -> Outcome {
                 continue;
             };
             if frame["method"] == "event" && frame["params"]["type"] == "message.complete" {
-                statuses.push(
-                    frame["params"]["payload"]["status"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                );
+                statuses.push(turn_status(&frame["params"]["payload"]));
             }
         }
         statuses
