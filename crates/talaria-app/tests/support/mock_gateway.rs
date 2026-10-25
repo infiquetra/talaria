@@ -1384,8 +1384,8 @@ pub const INSTANCE_ID: &str = "0123456789abcdef0123456789abcdef";
 /// The code revision the mock's gateway reports.
 pub const CODE_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
-/// The methods the session side answers: the two handshake calls and the six session calls.
-pub const SESSION_METHODS: [&str; 8] = [
+/// The methods the session side answers, including finite-turn receipt and cancellation.
+pub const SESSION_METHODS: [&str; 10] = [
     "runtime.describe",
     "client.capabilities",
     "session.create",
@@ -1394,7 +1394,20 @@ pub const SESSION_METHODS: [&str; 8] = [
     "session.detach",
     "prompt.submit",
     "session.interrupt",
+    "prompt.receipt",
+    "prompt.cancel",
 ];
+
+/// Finite-turn scenarios, enabled only by headless flow tests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadlessScenario {
+    Complete,
+    BeforeReply,
+    ReceiptFailure,
+    StartedStop,
+    QueuedStop,
+    ServerRequest,
+}
 
 /// What the mock does with the next request of a method.
 #[derive(Clone, Debug)]
@@ -1458,6 +1471,7 @@ pub struct Submission {
 }
 
 struct SessionSide {
+    headless: Option<HeadlessScenario>,
     profile_id: String,
     sources: Vec<String>,
     parameters: Vec<String>,
@@ -1489,6 +1503,7 @@ struct SessionSide {
 impl SessionSide {
     fn new() -> Self {
         Self {
+            headless: None,
             profile_id: "fixture".to_owned(),
             sources: vec!["tui".to_owned(), "cli".to_owned()],
             parameters: [
@@ -1661,9 +1676,20 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             vec!["session_id", "subscription_id", "end_reason"],
         ),
         "prompt.submit" => {
-            let keys = vec!["session_id", "text", "submission_id"];
+            let mut keys = vec!["session_id", "text", "submission_id"];
+            if params.get("finite").is_some() {
+                keys.push("finite");
+            }
             (keys.clone(), keys)
         }
+        "prompt.receipt" => (
+            vec!["session_id", "admission_id", "include_result"],
+            vec!["session_id", "admission_id", "include_result"],
+        ),
+        "prompt.cancel" => (
+            vec!["session_id", "admission_id"],
+            vec!["session_id", "admission_id"],
+        ),
         "session.interrupt" => {
             let keys = vec!["session_id", "execution_generation"];
             (keys.clone(), keys)
@@ -1716,6 +1742,13 @@ fn check_params(method: &str, params: &Value) -> Vec<String> {
         }
     }
     let (required, allowed) = client_shape(method, params);
+    if method == "prompt.submit"
+        && object
+            .get("finite")
+            .is_some_and(|value| value != &json!(true))
+    {
+        fields.insert("finite".to_owned());
+    }
     for key in object.keys() {
         if !allowed.contains(&key.as_str()) {
             fields.insert(key.clone());
@@ -1779,7 +1812,13 @@ fn plan_session_method(
     params: &Value,
     outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
 ) {
-    let fields = check_params(method, params);
+    let mut fields = check_params(method, params);
+    if method == "prompt.submit"
+        && state.sess.headless.is_some()
+        && params.get("finite") != Some(&json!(true))
+    {
+        fields.push("finite".to_owned());
+    }
     if !fields.is_empty() {
         state.sess.violations.push(Violation {
             method: method.to_owned(),
@@ -1827,6 +1866,8 @@ fn plan_session_method(
         "session.list" => handle_list(state, params),
         "session.detach" => Ok(handle_detach(state, params)),
         "prompt.submit" => Ok(handle_submit(state, params, voice)),
+        "prompt.receipt" => Ok(headless_receipt(state, params)),
+        "prompt.cancel" => Ok(headless_receipt(state, params)),
         _ => handle_interrupt(state, params),
     };
     if matches!(behavior, Behavior::DropBeforeReply) {
@@ -1860,6 +1901,69 @@ fn plan_session_method(
             outgoing.push((delay, text, meta));
         }
     }
+    if method == "prompt.submit" && state.sess.headless == Some(HeadlessScenario::BeforeReply) {
+        outgoing.rotate_left(1);
+    }
+    if state.sess.headless.is_some() && matches!(method, "prompt.cancel" | "session.interrupt") {
+        let mut frames = headless_events();
+        let mut frame = frames.pop().expect("recorded completion");
+        frame["params"]["payload"]["text"] = json!("");
+        frame["params"]["payload"]["content"] = json!("");
+        frame["params"]["payload"]["outcome"] = json!("cancelled");
+        frame["params"]["payload"]["status"] = json!("interrupted");
+        if method == "prompt.cancel" {
+            frame["params"]
+                .as_object_mut()
+                .expect("params")
+                .remove("execution_generation");
+            frame["params"]["payload"]
+                .as_object_mut()
+                .expect("payload")
+                .remove("status");
+        }
+        for (text, meta) in replay_texts(state, &[frame]) {
+            outgoing.insert(0, (delay, text, meta));
+        }
+    }
+}
+
+fn headless_receipt(state: &State, params: &Value) -> Value {
+    let stopped = matches!(
+        state.sess.headless,
+        Some(HeadlessScenario::StartedStop | HeadlessScenario::QueuedStop)
+    );
+    let mut receipt = json!({
+        "admission_id": params["admission_id"],
+        "ref": {"profile_id": state.sess.profile_id, "session_id": params["session_id"]},
+        "sequence": 1, "status": "terminal",
+        "outcome": if stopped { "cancelled" } else { "completed" },
+        "authority_epoch": 1,
+        "execution_generation": state.sess.gens.get(params["session_id"].as_str().unwrap_or_default()),
+    });
+    if params["include_result"] == true {
+        receipt["result"] = json!({
+            "completed": !stopped, "failed": false, "partial": false,
+            "interrupted": stopped, "final_response": if stopped { "" } else { "5555" },
+            "turn_exit_reason": if stopped { "interrupted" } else { "text_response(stop)" },
+            "input_tokens": 12, "output_tokens": 4, "total_tokens": 16, "api_calls": 1,
+        });
+    }
+    receipt
+}
+
+/// The committed finite-turn recording, with the admission allocated by this mock.
+pub fn headless_events() -> Vec<Value> {
+    include_str!("../data/headless/finite_turn.frames.jsonl")
+        .lines()
+        .map(|line| {
+            let mut frame: Value = serde_json::from_str(line).expect("recorded finite frame");
+            frame["params"]["admission_id"] = json!("adm-1");
+            if frame["params"]["type"] == "message.complete" {
+                frame["params"]["payload"]["admission_id"] = json!("adm-1");
+            }
+            frame
+        })
+        .collect()
 }
 
 fn describe_result(state: &State) -> Value {
@@ -2043,10 +2147,14 @@ fn handle_submit(state: &mut State, params: &Value, voice: bool) -> Value {
         "admission_id": format!("adm-{number}"),
         "ref": {"profile_id": state.sess.profile_id, "session_id": session_id},
         "sequence": number,
-        "status": "started",
+        "status": if matches!(state.sess.headless, Some(HeadlessScenario::QueuedStop | HeadlessScenario::ServerRequest)) { "queued" } else { "started" },
         "outcome": null,
         "authority_epoch": 1,
-        "execution_generation": state.sess.gens.get(&session_id).copied().unwrap_or(1),
+        "execution_generation": if matches!(state.sess.headless, Some(HeadlessScenario::QueuedStop | HeadlessScenario::ServerRequest)) {
+            None
+        } else {
+            Some(state.sess.gens.get(&session_id).copied().unwrap_or(1))
+        },
     })
 }
 
@@ -2116,6 +2224,36 @@ fn replay_texts(state: &mut State, frames: &[Value]) -> Vec<(String, Meta)> {
 }
 
 impl MockGateway {
+    /// Enable finite frames without changing the interactive fixture defaults.
+    pub fn configure_headless(&self, scenario: HeadlessScenario) {
+        lock(&self.shared).sess.headless = Some(scenario);
+        self.set_session_create_descriptor(
+            &["cli", "tui", "gui", "acp", "tool", "oneshot"],
+            &[
+                "source",
+                "request_id",
+                "cwd",
+                "model",
+                "provider",
+                "reasoning",
+            ],
+        );
+        let mut frames = headless_events();
+        match scenario {
+            HeadlessScenario::StartedStop => {
+                frames.truncate(1);
+            }
+            HeadlessScenario::QueuedStop | HeadlessScenario::ServerRequest => frames.clear(),
+            _ => {}
+        }
+        self.replay_after("prompt.submit", frames);
+        if scenario == HeadlessScenario::ReceiptFailure {
+            self.set_behavior(
+                "prompt.receipt",
+                Behavior::Refuse("receipt_unavailable".to_owned()),
+            );
+        }
+    }
     /// The profile id the mock reports in `runtime.describe` and in the refs it builds. The
     /// default is `fixture`; a standalone gateway sets it from the ticket it accepted.
     pub fn set_profile_id(&self, profile_id: &str) {

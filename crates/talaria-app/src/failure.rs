@@ -194,7 +194,7 @@ pub fn refusal(reason: &str) -> LaunchFailure {
 pub fn no_terminal() -> LaunchFailure {
     failure(
         "a terminal is required on standard input and standard output.",
-        "Run it in a terminal pane. Scripted use (talaria -p) arrives in a later release.",
+        "Run it in a terminal pane, or use talaria -p \"<prompt>\" in scripts.",
         USAGE,
     )
 }

@@ -4429,3 +4429,36 @@ has room for width reflow in the smaller pane.
 
 **Generalizable rule.** Leave resize headroom in live output and account for
 physical reflow before clearing its old position.
+
+## 2026-10-24 — Finite headless turns need raw admission evidence
+
+**Evidence.** Issue #235 verifies Hermes v0.22.4 (`4d04303818b6`),
+`gateway/session_finite.py`, `gateway/session_controls.py`, and the generated
+contract. A finite submit carries exactly the session, text, submission id and
+`finite: true`; it preserves the gateway's default denial policy.
+
+**Mechanism.** The closed `MessageCompletePayload` schema omits admission and
+outcome fields that the gateway publishes. Read the recorded raw event payload
+to correlate our admission and judge its outcome. The shared session projection
+also omits pending admission rows, so the headless adapter refreshes the raw
+snapshot with a read-only resume after opening or recovery.
+
+A queued cancel can settle before its reply. A `stale_generation` refusal means
+the admission started; recover only its generation before interrupting. Never
+resend an unknown submit or interrupt whichever turn happens to be current.
+
+Initial live acceptance exposed a narrower gateway safety boundary: the recursive
+delete was blocked, but the model then used separate file and directory removal
+commands. The finite flag preserves the gateway's policy; it does not prove that
+every equivalent command will be denied. The probe now asks for the exact command
+once, explicitly forbids alternatives after denial, and still requires the actual
+terminal attempt and blocked result in its recording. Manual acceptance also
+makes the fixture directory read-only before the attempt. The live suite and
+manual scenario then pass with the marker intact and no approval question.
+
+Coverage on this host uses Homebrew's versioned LLVM tools matching the LLVM
+version reported by `rustc -vV`, supplied through `LLVM_COV` and `LLVM_PROFDATA`.
+The generic formula alias need not exist even when compatible tools are installed.
+
+**Generalizable rule.** Preserve admission identity through completion, cancel
+and recovery; use raw extension fields where a generated projection loses them.
