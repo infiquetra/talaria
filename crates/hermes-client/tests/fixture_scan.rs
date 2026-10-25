@@ -33,8 +33,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn fixture_texts() -> Vec<(String, String)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 8,
-        "expected eight fixtures in fixtures/frames, found {}",
+        files.len() == 9,
+        "expected nine fixtures in fixtures/frames, found {}",
         files.len()
     );
     files

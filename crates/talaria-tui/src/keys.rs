@@ -11,6 +11,103 @@ pub enum KeyContext {
     Composer,
     /// An open completion list: the slash palette or the `@` list. Issue #223.
     Completion,
+    /// The full-screen model picker, before composer bindings.
+    ModelPicker,
+}
+
+/// Model commands use separate contexts without changing composer editing actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ModelAction {
+    ModelPicker,
+    EffortDown,
+    EffortUp,
+    ModelScope,
+    ModelFavourite,
+    ModelRefresh,
+}
+
+impl ModelAction {
+    pub const ALL: [Self; 6] = [
+        Self::ModelPicker,
+        Self::EffortDown,
+        Self::EffortUp,
+        Self::ModelScope,
+        Self::ModelFavourite,
+        Self::ModelRefresh,
+    ];
+
+    pub const fn config_name(self) -> &'static str {
+        match self {
+            Self::ModelPicker => "model_picker",
+            Self::EffortDown => "effort_down",
+            Self::EffortUp => "effort_up",
+            Self::ModelScope => "model_scope",
+            Self::ModelFavourite => "model_favourite",
+            Self::ModelRefresh => "model_refresh",
+        }
+    }
+
+    pub fn from_config_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|action| action.config_name() == name)
+    }
+
+    pub const fn context(self) -> KeyContext {
+        match self {
+            Self::ModelPicker => KeyContext::Composer,
+            _ => KeyContext::ModelPicker,
+        }
+    }
+
+    const fn default_chords(self) -> &'static [&'static str] {
+        match self {
+            Self::ModelPicker => &["alt+p"],
+            Self::EffortDown => &["left"],
+            Self::EffortUp => &["right"],
+            Self::ModelScope => &["ctrl+g"],
+            Self::ModelFavourite => &["ctrl+f"],
+            Self::ModelRefresh => &["ctrl+r"],
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Binding {
+    Composer(Action),
+    Model(ModelAction),
+}
+
+impl Binding {
+    fn all() -> impl Iterator<Item = Self> {
+        Action::ALL
+            .into_iter()
+            .map(Self::Composer)
+            .chain(ModelAction::ALL.into_iter().map(Self::Model))
+    }
+    fn index(self) -> usize {
+        match self {
+            Self::Composer(action) => action.index(),
+            Self::Model(action) => Action::ALL.len() + action as usize,
+        }
+    }
+    fn context(self) -> KeyContext {
+        match self {
+            Self::Composer(action) => action.context(),
+            Self::Model(action) => action.context(),
+        }
+    }
+    fn config_name(self) -> &'static str {
+        match self {
+            Self::Composer(action) => action.config_name(),
+            Self::Model(action) => action.config_name(),
+        }
+    }
+    fn from_config_name(name: &str) -> Option<Self> {
+        Action::from_config_name(name)
+            .map(Self::Composer)
+            .or_else(|| ModelAction::from_config_name(name).map(Self::Model))
+    }
 }
 
 /// One composer command a key chord can run.
@@ -511,6 +608,13 @@ impl KeyMap {
         let chords = Action::ALL
             .iter()
             .map(|action| default_chords(*action))
+            .chain(ModelAction::ALL.into_iter().map(|action| {
+                action
+                    .default_chords()
+                    .iter()
+                    .filter_map(|text| KeyChord::parse(text, action.context()).ok())
+                    .collect()
+            }))
             .collect();
         Self { chords }
     }
@@ -521,11 +625,11 @@ impl KeyMap {
     #[must_use]
     pub fn from_entries(entries: &BTreeMap<String, Vec<String>>) -> (Self, Vec<String>) {
         let mut map = Self::defaults();
-        let mut explicit = [false; Action::ALL.len()];
+        let mut explicit = [false; Action::ALL.len() + ModelAction::ALL.len()];
         let mut notices = Vec::new();
 
         for (name, texts) in entries {
-            let Some(action) = Action::from_config_name(name) else {
+            let Some(action) = Binding::from_config_name(name) else {
                 let known: Vec<&str> = Action::ALL.iter().map(|a| a.config_name()).collect();
                 notices.push(format!(
                     "Ignoring [keys] {name} in {FILE}: it is not a known action. Known actions: \
@@ -559,7 +663,11 @@ impl KeyMap {
             if !texts.is_empty() && parsed.is_empty() {
                 notices.push(format!(
                     "[keys] {name} in {FILE} has no usable key; using the default ({}).",
-                    map.labels(action).join(", ")
+                    map.chords[action.index()]
+                        .iter()
+                        .map(KeyChord::label)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
                 continue;
             }
@@ -572,15 +680,14 @@ impl KeyMap {
     }
 
     /// Give each chord held by more than one action of a context to one winner.
-    fn resolve_conflicts(&mut self, explicit: &[bool; Action::ALL.len()]) -> Vec<String> {
+    fn resolve_conflicts(&mut self, explicit: &[bool]) -> Vec<String> {
         // (loser index, notice), sorted by loser at the end.
         let mut lost: Vec<(usize, String)> = Vec::new();
-        for holder in Action::ALL {
+        for holder in Binding::all() {
             let mut position = 0;
             while position < self.chords[holder.index()].len() {
                 let chord = self.chords[holder.index()][position].clone();
-                let holders: Vec<Action> = Action::ALL
-                    .into_iter()
+                let holders: Vec<Binding> = Binding::all()
                     .filter(|other| {
                         other.context() == holder.context()
                             && self.chords[other.index()].contains(&chord)
@@ -651,6 +758,23 @@ impl KeyMap {
             .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
     }
 
+    /// Model actions are resolved in their active context before ordinary composer actions.
+    #[must_use]
+    pub fn resolve_model(&self, context: KeyContext, key: &Key) -> Option<ModelAction> {
+        ModelAction::ALL.into_iter().find(|action| {
+            action.context() == context
+                && self
+                    .model_chords(*action)
+                    .iter()
+                    .any(|chord| chord.matches(key))
+        })
+    }
+
+    #[must_use]
+    pub fn model_chords(&self, action: ModelAction) -> &[KeyChord] {
+        &self.chords[Binding::Model(action).index()]
+    }
+
     /// Chords bound to one action, in binding order.
     #[must_use]
     pub fn chords(&self, action: Action) -> &[KeyChord] {
@@ -661,10 +785,6 @@ impl KeyMap {
     #[must_use]
     pub fn label(&self, action: Action) -> Option<String> {
         self.chords(action).first().map(KeyChord::label)
-    }
-
-    fn labels(&self, action: Action) -> Vec<String> {
-        self.chords(action).iter().map(KeyChord::label).collect()
     }
 }
 
@@ -683,7 +803,7 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-    use super::{Action, Key, KeyChord, KeyContext, KeyMap};
+    use super::{Action, Key, KeyChord, KeyContext, KeyMap, ModelAction};
 
     fn parse(text: &str) -> Result<KeyChord, String> {
         KeyChord::parse(text, KeyContext::Composer)
@@ -937,5 +1057,47 @@ mod tests {
         );
         assert_eq!(labels(&map, Action::Submit), vec!["Esc".to_string()]);
         assert_eq!(labels(&map, Action::Interrupt), Vec::<String>::new());
+    }
+
+    #[test]
+    fn model_bindings_use_their_own_context_and_keep_composer_editing() {
+        let map = KeyMap::defaults();
+        let left = Key::from(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(map.resolve(&left), Some(Action::MoveLeft));
+        assert_eq!(
+            map.resolve_model(KeyContext::ModelPicker, &left),
+            Some(ModelAction::EffortDown)
+        );
+        assert_eq!(map.resolve_model(KeyContext::Composer, &left), None);
+        let open = Key::from(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT));
+        assert_eq!(
+            map.resolve_model(KeyContext::Composer, &open),
+            Some(ModelAction::ModelPicker)
+        );
+        assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
+        // The composer actions, plus the four the slash palette brought with it.
+        assert_eq!(Action::ALL.len(), 24);
+    }
+
+    #[test]
+    fn explicit_model_binding_wins_within_its_context_only() {
+        let (map, notices) = KeyMap::from_entries(&entries(&[
+            ("model_picker", &["ctrl+u"]),
+            ("model_scope", &["ctrl+r"]),
+        ]));
+        assert_eq!(map.chords(Action::KillToLineStart), &[]);
+        assert_eq!(map.model_chords(ModelAction::ModelRefresh), &[]);
+        let ctrl_r = Key::from(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert_eq!(
+            map.resolve_model(KeyContext::ModelPicker, &ctrl_r),
+            Some(ModelAction::ModelScope)
+        );
+        assert_eq!(notices.len(), 2);
+        let (map, notices) = KeyMap::from_entries(&entries(&[("model_refresh", &["bad chord"])]));
+        assert_eq!(notices.len(), 2);
+        assert_eq!(
+            map.model_chords(ModelAction::ModelRefresh)[0].label(),
+            "Ctrl+R"
+        );
     }
 }

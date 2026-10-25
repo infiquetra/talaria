@@ -6,7 +6,8 @@ environment overrides. A missing file is fine: every setting has a default.
 
 ## The default file
 
-This is the whole file with every setting at its default. Copying it unchanged changes nothing.
+This file keeps every setting at its default. Picker bindings use their defaults when
+omitted; they are listed in the key table below. Copying this unchanged changes nothing.
 
 ```toml
 [keys]
@@ -69,8 +70,41 @@ allowlist = []
 | `completion_prev` | Up, Ctrl+P | Previous row in an open completion list. |
 | `completion_accept` | Tab | Accept the selected completion. |
 | `completion_close` | Esc | Close the open completion list. |
+| `model_picker` | Alt+P | Open the foreground session's model picker from the composer. |
+| `effort_down`, `effort_up` | Left, Right | Change the chosen reasoning level in the model picker. |
+| `model_scope` | Ctrl+G | Toggle whether the choice also applies to new Talaria sessions. |
+| `model_favourite` | Ctrl+F | Star or unstar the selected model. |
+| `model_refresh` | Ctrl+R | Refresh the model list; gateway actions can wait behind this call. |
 
 Tab accepts a row only while a completion list is open. A tab inside pasted text is kept.
+
+Picker actions resolve before composer actions while the model overlay is open.
+The same chord may be bound in these two separate contexts. Typing filters the list;
+Esc clears the filter, then closes the picker. Enter switches only this session unless
+Ctrl+G selected the wider scope. A confirmation card uses Enter or Y to switch and
+Esc or N to keep the current model; a draft must be cleared before these keys answer it.
+
+## Saved model choices
+
+`~/.talaria/models.json` stores favourites and defaults for new Talaria sessions:
+
+```json
+{"version":1,"favourites":["ollama-cloud::minimax-m3.1-flash"],"defaults":{"fixture":{"model":"minimax-m3.1-flash","provider":"ollama-cloud","effort":"high"}}}
+```
+
+The model, provider and effort fields are optional. Saving a model keeps model and
+provider together; saving effort changes only that field. `/effort default --default`
+removes saved effort. Unknown top-level keys are ignored and dropped on the next write.
+Malformed files are left untouched, with favourites and defaults disabled until repaired.
+Writes use a private temporary file and atomic replacement; new folders are mode 700
+and files mode 600.
+
+`--model` or `--provider` overrides the saved model/provider pair; `--effort` overrides
+saved effort. Continue and resume ignore saved defaults. New sessions validate a saved
+model against the profile catalogue before creating it. Unavailable saved model/provider
+fields are dropped together, keeping effort; unsupported create fields are also dropped.
+A typed create refusal carrying saved fields retries once without those fields.
+These defaults never change Hermes's profile default.
 
 ## Writing a key
 

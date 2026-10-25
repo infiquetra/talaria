@@ -89,3 +89,75 @@ fn archived_truncated_is_written_only_when_present() {
     let plain = serde_json::to_value(TranscriptMessageOverride::default()).expect("serialises");
     assert_eq!(plain, serde_json::json!({}));
 }
+
+#[test]
+fn mutation_receipts_keep_recorded_projections_and_confirmation_fields() {
+    use hermes_contract::methods::canonical::session_mutate;
+    use serde_json::{Value, json};
+
+    let recording = include_str!("../../../fixtures/frames/model-switch.jsonl");
+    let mut receipts = 0;
+    for line in recording.lines() {
+        let row: Value = serde_json::from_str(line).expect("recorded row");
+        let Some(result) = row.pointer("/frame/result") else {
+            continue;
+        };
+        if result.get("operation").is_none() {
+            continue;
+        }
+        let typed: session_mutate::Result =
+            serde_json::from_value(result.clone()).expect("receipt");
+        assert_eq!(
+            serde_json::to_value(typed).expect("encoded receipt"),
+            *result
+        );
+        receipts += 1;
+    }
+    assert_eq!(receipts, 3);
+
+    // These are the extra fields returned by the pinned model preparation handler.
+    let result = json!({
+        "session_id": "session", "operation": "model", "status": "confirmation_required",
+        "confirm": "token", "confirm_message": "Confirm the switch.",
+        "target_model": "glm-5", "target_provider": "ollama-cloud",
+        "model": "glm-5", "provider": "ollama-cloud", "effort": "high",
+        "execution_generation": 4,
+        "warnings": [{"kind": "cost", "title": "Cost", "message": "Confirm the switch."}],
+    });
+    let typed: session_mutate::Result =
+        serde_json::from_value(result.clone()).expect("confirmation");
+    assert_eq!(
+        serde_json::to_value(typed).expect("encoded confirmation"),
+        result
+    );
+}
+
+#[test]
+fn catalogue_refresh_is_omitted_until_requested() {
+    use hermes_contract::methods::legacy::model_options;
+    use serde_json::json;
+
+    let mut params = model_options::Params {
+        session_id: Some("session".into()),
+        explicit_only: true,
+        include_unconfigured: true,
+        ..Default::default()
+    };
+    let normal = serde_json::to_value(&params).expect("catalogue params");
+    assert_eq!(
+        normal,
+        json!({"session_id": "session", "explicit_only": true, "include_unconfigured": true})
+    );
+    params.refresh = true;
+    let refreshed = serde_json::to_value(params).expect("refresh params");
+    assert_eq!(refreshed["refresh"], json!(true));
+
+    let profile = model_options::Params {
+        explicit_only: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(profile).expect("profile params"),
+        json!({"explicit_only": true})
+    );
+}

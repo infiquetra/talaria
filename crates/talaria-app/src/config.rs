@@ -10,6 +10,72 @@ use std::path::{Path, PathBuf};
 
 use toml::{Table, Value};
 
+/// The shared file for favourites and defaults on this machine.
+#[must_use]
+pub fn models_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".talaria/models.json"))
+}
+
+/// Match Hermes's public label for a served profile home.
+#[must_use]
+pub fn served_model_profile(profile_id: &str) -> &str {
+    let home = Path::new(profile_id);
+    if home
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|s| s.to_str())
+        == Some("profiles")
+        && let Some(name) = home
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|name| !name.starts_with('.'))
+    {
+        name
+    } else {
+        "default"
+    }
+}
+
+/// The local offset is supplied to pure catalogue formatting as data.
+#[must_use]
+pub fn model_display_zone() -> talaria_core::models::DisplayZone {
+    let offset = std::process::Command::new("date")
+        .arg("+%z")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|value| {
+            let value = value.trim();
+            let bytes = value.as_bytes();
+            if bytes.len() != 5
+                || !matches!(bytes[0], b'+' | b'-')
+                || !bytes[1..].iter().all(u8::is_ascii_digit)
+            {
+                return None;
+            }
+            let hours = value[1..3].parse::<i32>().ok()?;
+            let minutes = value[3..5].parse::<i32>().ok()?;
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            Some((hours * 60 + minutes) * if bytes[0] == b'-' { -1 } else { 1 })
+        })
+        .unwrap_or(0);
+    talaria_core::models::DisplayZone {
+        minutes_east: offset,
+    }
+}
+
+/// Read model choices before the application begins handling input.
+pub fn load_models() -> Result<talaria_core::models::SavedModels, String> {
+    use crate::models_file::SavedModelsFile;
+    match models_path() {
+        Some(path) => talaria_core::models::SavedModels::read(&path),
+        None => Err("~/.talaria/models.json could not be read (the home folder is unavailable); favourites and saved defaults are off until it is fixed or removed.".into()),
+    }
+}
+
 /// Raw settings read from the configuration file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {

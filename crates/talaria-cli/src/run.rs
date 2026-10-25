@@ -20,16 +20,19 @@ use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
 use talaria_core::commands::PaletteInput;
+use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
+use talaria_core::mutation::Confirmation;
 use talaria_core::session::{
     AssistantCell, Cell, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
 use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome};
 use talaria_tui::history::CellLines;
-use talaria_tui::keys::{CompletionAction, Key, KeyKind, KeyMap};
+use talaria_tui::keys::{CompletionAction, Key, KeyCode, KeyContext, KeyKind, KeyMap, ModelAction};
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
 use talaria_tui::markdown::MarkdownTheme;
 use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
+use talaria_tui::model_picker::{ModelConfirmSection, draw_model_picker};
 use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::status::{
@@ -82,12 +85,115 @@ pub struct TuiScreen {
     tool_theme: ToolTheme,
     sender: mpsc::UnboundedSender<ScreenInput>,
     connecting: bool,
-    /// The key map, for the keys of an open completion list.
-    keys: KeyMap,
+    /// The key map, for the composer, the completion list and the model picker.
+    keymap: KeyMap,
     /// The draft and caret last reported to the loop.
     reported: (String, usize),
     /// Terminal rows, for the palette's height cap.
     rows: u16,
+    picker: Option<ModelOverlay>,
+    picker_open: bool,
+    confirmation: Option<Confirmation>,
+    confirmation_focused: Option<Instant>,
+}
+
+struct ModelOverlay {
+    title: String,
+    filter: String,
+    effort: String,
+    hints: String,
+    refreshing: bool,
+    rows: Vec<PickerRow>,
+    selected: Option<usize>,
+    banner: Option<String>,
+}
+
+impl ModelOverlay {
+    fn from_view(view: PickerView<'_>) -> Self {
+        Self {
+            title: view.title.into(),
+            filter: view.filter.into(),
+            effort: view.effort.into(),
+            hints: view.hints.into(),
+            refreshing: view.refreshing,
+            rows: view.rows.to_vec(),
+            selected: view.selected,
+            banner: view.banner.map(String::from),
+        }
+    }
+
+    fn view(&self) -> PickerView<'_> {
+        PickerView {
+            title: &self.title,
+            filter: &self.filter,
+            effort: &self.effort,
+            hints: &self.hints,
+            refreshing: self.refreshing,
+            rows: &self.rows,
+            selected: self.selected,
+            banner: self.banner.as_deref(),
+        }
+    }
+}
+
+fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    if let Some(action) = keymap.resolve_model(KeyContext::ModelPicker, &key) {
+        return match action {
+            ModelAction::EffortDown => Some(PickerKey::Left),
+            ModelAction::EffortUp => Some(PickerKey::Right),
+            ModelAction::ModelScope => Some(PickerKey::ToggleScope),
+            ModelAction::ModelFavourite => Some(PickerKey::ToggleFavourite),
+            ModelAction::ModelRefresh => Some(PickerKey::Refresh),
+            ModelAction::ModelPicker => None,
+        };
+    }
+    let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other;
+    if plain {
+        return match key.code {
+            KeyCode::Char(c) if !c.is_control() => Some(PickerKey::Char(c)),
+            KeyCode::Enter if !key.mods.shift => Some(PickerKey::Enter),
+            KeyCode::Esc if !key.mods.shift => Some(PickerKey::Escape),
+            KeyCode::Backspace if !key.mods.shift => Some(PickerKey::Backspace),
+            KeyCode::Up if !key.mods.shift => Some(PickerKey::Up),
+            KeyCode::Down if !key.mods.shift => Some(PickerKey::Down),
+            KeyCode::PageUp if !key.mods.shift => Some(PickerKey::PageUp),
+            KeyCode::PageDown if !key.mods.shift => Some(PickerKey::PageDown),
+            KeyCode::Home if !key.mods.shift => Some(PickerKey::Home),
+            KeyCode::End if !key.mods.shift => Some(PickerKey::End),
+            _ => None,
+        };
+    }
+    if key.mods.ctrl && !key.mods.alt && !key.mods.shift && !key.mods.super_key && !key.mods.other {
+        return match key.code {
+            KeyCode::Char('c') => Some(PickerKey::Close),
+            KeyCode::Char('u') => Some(PickerKey::ClearFilter),
+            _ => None,
+        };
+    }
+    None
+}
+
+fn confirmation_key(key: Key, focused: Option<Instant>, now: Instant) -> Option<ConfirmKey> {
+    if key.kind == KeyKind::Release
+        || key.mods.ctrl
+        || key.mods.alt
+        || key.mods.super_key
+        || key.mods.other
+        || key.mods.shift
+    {
+        return None;
+    }
+    if !focused.is_some_and(|at| now.saturating_duration_since(at) >= Duration::from_millis(250)) {
+        return None;
+    }
+    match key.code {
+        KeyCode::Enter | KeyCode::Char('y') => Some(ConfirmKey::Accept),
+        KeyCode::Esc | KeyCode::Char('n') => Some(ConfirmKey::Decline),
+        _ => None,
+    }
 }
 
 fn masked_method(kind: MaskedKind) -> &'static str {
@@ -196,6 +302,30 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
 }
 
 impl TuiScreen {
+    fn confirmation_takes_keys(&self) -> bool {
+        !self.picker_open
+            && self.confirmation.is_some()
+            && self.prompts.section().is_none()
+            && self.composer.is_empty()
+    }
+
+    fn sync_confirmation_focus(&mut self, now: Instant) {
+        if self.confirmation_takes_keys() {
+            self.confirmation_focused.get_or_insert(now);
+        } else {
+            self.confirmation_focused = None;
+        }
+    }
+
+    fn draw_picker(&mut self) {
+        if let Some(picker) = &self.picker {
+            let view = picker.view();
+            let _ = self
+                .terminal
+                .draw_overlay(|area, buf| draw_model_picker(&view, area, buf));
+        }
+    }
+
     fn sync_prompts(&mut self, view: &View<'_>, now: Instant) {
         let open: Vec<&PromptCell> = view
             .state
@@ -282,13 +412,19 @@ impl TuiScreen {
         match event {
             Event::Key(key) => {
                 let key = Key::from(key);
+                if self.picker_open {
+                    return picker_key(&self.keymap, key)
+                        .map(UserAction::ModelPicker)
+                        .into_iter()
+                        .collect();
+                }
                 if let Some(actions) = Self::prompt_actions(self.prompts.handle_key(key, now)) {
                     return actions;
                 }
                 // An open completion list takes its four keys before the composer does.
                 if view.palette.open
                     && key.kind != KeyKind::Release
-                    && let Some(action) = self.keys.completion(&key)
+                    && let Some(action) = self.keymap.completion(&key)
                 {
                     let input = match action {
                         CompletionAction::Next => PaletteInput::Next,
@@ -298,6 +434,23 @@ impl TuiScreen {
                     };
                     return vec![UserAction::Palette(input)];
                 }
+                self.sync_confirmation_focus(now);
+                let control_c = key.mods.ctrl
+                    && !key.mods.alt
+                    && !key.mods.super_key
+                    && matches!(key.code, KeyCode::Char('c' | 'C'));
+                if self.confirmation_takes_keys() && !control_c {
+                    return confirmation_key(key, self.confirmation_focused, now)
+                        .map(UserAction::ModelConfirm)
+                        .into_iter()
+                        .collect();
+                }
+                if !view.palette.open
+                    && self.keymap.resolve_model(KeyContext::Composer, &key)
+                        == Some(ModelAction::ModelPicker)
+                {
+                    return vec![UserAction::OpenModels];
+                }
                 let ctx = ComposerContext {
                     turn_running: view.turn_running(),
                 };
@@ -306,8 +459,14 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(text) => {
+                if self.picker_open {
+                    return Vec::new();
+                }
                 if let Some(actions) = Self::prompt_actions(self.prompts.handle_paste(&text, now)) {
                     return actions;
+                }
+                if self.confirmation_takes_keys() {
+                    return Vec::new();
                 }
                 let mut actions = Self::composer_action(self.composer.handle_paste(&text));
                 self.report_draft(&mut actions);
@@ -373,8 +532,40 @@ impl StatusHost for TuiScreen {
 impl Screen for TuiScreen {
     type Input = ScreenInput;
 
+    fn model_list_height(&self) -> usize {
+        terminal_size().map_or(10, |(_, rows)| usize::from(rows.saturating_sub(3)).max(3))
+    }
+
+    fn sync_models(&mut self, picker: Option<PickerView<'_>>, confirmation: Option<&Confirmation>) {
+        match picker {
+            Some(view) => {
+                if !self.picker_open {
+                    let _ = self.terminal.open_overlay();
+                    self.picker_open = true;
+                }
+                self.picker = Some(ModelOverlay::from_view(view));
+                self.draw_picker();
+            }
+            None => {
+                self.picker = None;
+                if self.picker_open {
+                    let _ = self.terminal.close_overlay();
+                    self.picker_open = false;
+                }
+            }
+        }
+        if self.confirmation.as_ref().map(|card| &card.token)
+            != confirmation.map(|card| &card.token)
+        {
+            self.confirmation_focused = None;
+        }
+        self.confirmation = confirmation.cloned();
+        self.sync_confirmation_focus(Instant::now());
+    }
+
     fn input(&mut self, input: ScreenInput, view: &View<'_>, now: Instant) -> Vec<UserAction> {
         self.sync_prompts(view, now);
+        self.sync_confirmation_focus(now);
         let actions = match input {
             ScreenInput::Terminal(event) => self.terminal_input(event, view, now),
             ScreenInput::Status(result) => {
@@ -396,6 +587,11 @@ impl Screen for TuiScreen {
             now,
         );
         self.cells.set_clock(&self.clock, now);
+        self.sync_confirmation_focus(now);
+        if self.picker_open {
+            self.draw_picker();
+            return;
+        }
         let width = self.terminal.viewport().width;
         let mut tail: Vec<Line<'static>> = view
             .state
@@ -425,10 +621,26 @@ impl Screen for TuiScreen {
         let status = StatusSection::new(&self.inputs, self.external.segment(), &self.palette);
         let prompts = self.prompts.section();
         let palette = PaletteSection::new(view.palette, self.rows);
+        let confirmation = if prompts.is_none() {
+            self.confirmation.as_ref().map(|card| {
+                let section =
+                    ModelConfirmSection::new(card, view.model.unwrap_or("the current model"));
+                if self.composer.is_empty() {
+                    section
+                } else {
+                    section.waiting_on_draft()
+                }
+            })
+        } else {
+            None
+        };
         let composer = self.composer.section(width, COMPOSER_ROWS);
         let mut sections: Vec<&dyn LiveSection> = vec![&tail, &drafting];
         if let Some(prompts) = &prompts {
             sections.push(prompts);
+        }
+        if let Some(confirmation) = &confirmation {
+            sections.push(confirmation);
         }
         if self.connecting {
             sections.push(&connecting);
@@ -618,8 +830,7 @@ fn session(
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
     let (sender, receiver) = mpsc::unbounded_channel();
-    let keys = keymap.clone();
-    let mut composer = Composer::new(keymap);
+    let mut composer = Composer::new(keymap.clone());
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     let mut screen = TuiScreen {
         terminal,
@@ -647,9 +858,13 @@ fn session(
         tool_theme: ToolTheme::default(),
         sender: sender.clone(),
         connecting: true,
-        keys,
+        keymap,
         reported: (String::new(), 0),
         rows: size.1,
+        picker: None,
+        picker_open: false,
+        confirmation: None,
+        confirmation_focused: None,
     };
     let input: Option<InputThread> =
         spawn_input(move |event| sender.send(ScreenInput::Terminal(event)).is_ok());
@@ -663,7 +878,12 @@ fn session(
 
 #[cfg(test)]
 mod tests {
-    use super::preview_text;
+    use super::{confirmation_key, picker_key, preview_text};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
+    use talaria_core::models::{ConfirmKey, PickerKey};
+    use talaria_tui::keys::{Key, KeyMap};
     use talaria_tui::markdown::{MarkdownOptions, render_markdown};
 
     /// The bottom `rows` rows of a rendering, as plain text.
@@ -695,5 +915,56 @@ mod tests {
         assert_eq!(preview_text(&fenced, 80), None);
         let table = format!("| a | b |\n|---|---|\n{}", "| 1 | 2 |\n".repeat(200));
         assert_eq!(preview_text(&table, 80), None);
+    }
+
+    #[test]
+    fn picker_keys_use_the_overlay_configuration_and_keep_typed_text() {
+        let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
+            "model_scope".to_string(),
+            vec!["ctrl+r".to_string()],
+        )]));
+        assert_eq!(notices.len(), 1);
+        let key = |code, mods| Key::from(KeyEvent::new(code, mods));
+        assert_eq!(
+            picker_key(&map, key(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            Some(PickerKey::ToggleScope)
+        );
+        assert_eq!(
+            picker_key(&map, key(KeyCode::Char('G'), KeyModifiers::SHIFT)),
+            Some(PickerKey::Char('G'))
+        );
+        assert_eq!(
+            picker_key(&map, key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(PickerKey::Close)
+        );
+        assert_eq!(
+            picker_key(&map, key(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            Some(PickerKey::ClearFilter)
+        );
+        assert_eq!(
+            picker_key(&map, key(KeyCode::Char('p'), KeyModifiers::ALT)),
+            None
+        );
+    }
+
+    #[test]
+    fn confirmation_requires_the_focus_guard_and_only_its_fixed_keys() {
+        let now = Instant::now();
+        let enter = Key::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(confirmation_key(enter, Some(now), now), None);
+        let ready = now + Duration::from_millis(250);
+        assert_eq!(
+            confirmation_key(enter, Some(now), ready),
+            Some(ConfirmKey::Accept)
+        );
+        let escape = Key::from(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            confirmation_key(escape, Some(now), ready),
+            Some(ConfirmKey::Decline)
+        );
+        let ctrl_c = Key::from(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(confirmation_key(ctrl_c, Some(now), ready), None);
+        let shifted = Key::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_eq!(confirmation_key(shifted, Some(now), ready), None);
     }
 }

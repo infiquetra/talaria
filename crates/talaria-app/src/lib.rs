@@ -7,5 +7,8 @@ pub mod connection;
 pub mod failure;
 pub mod headless;
 pub mod launch;
+pub mod models;
+pub mod models_file;
+pub mod mutation;
 pub mod prompts;
 pub mod sessions;

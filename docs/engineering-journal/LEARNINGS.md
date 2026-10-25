@@ -4537,3 +4537,40 @@ The generic formula alias need not exist even when compatible tools are installe
 
 **Generalizable rule.** Preserve admission identity through completion, cancel
 and recovery; use raw extension fields where a generated projection loses them.
+
+## 2026-10-24 — Model changes need complete typed receipts and monotonic fences
+
+**Evidence.** Issue #230 checks Hermes v0.22.4 (`4d04303818b6`), its mutation
+writer, deferred-pick drain and configuration handlers. Fence refusals carry the
+current revision and execution generation in their data. Adopt each number only
+when it increases, then retry once with a new request id. An unanswered request
+must retain its original id, payload and fences for an explicit identical retry.
+
+**Mechanism.** Typify discards undeclared receipt fields even when the upstream
+schema says `additionalProperties: true`. Projecting this result with an empty
+schema for extra properties preserves the complete receipt in a flattened map.
+The generated model-options parameters also omit false optional flags, so a
+profile catalogue request contains only the documented explicit-list flag.
+
+The reasoning configuration key is handled by Hermes although its generated
+description omits it. A busy effort mutation falls back once to a session-scoped
+configuration write, omitting scope and confirmation options entirely. Hermes
+holds the effort until the turn ends and applies it before a deferred model pick;
+Talaria keeps no competing pending-effort queue. A repeated old-model information
+event does not prove that the deferred switch settled.
+
+Hermes accepts an unknown model at session creation, so saved choices need a
+profile catalogue check before create. A typed refusal carrying saved fields
+retries once without those fields; a lost reply follows the existing exact retry.
+Runtime profile identifiers are homes rather than display names; reuse the
+resolved public name or apply Hermes's named-profile-home rule before looking up
+per-profile defaults. Saved-file codecs stay pure; the application owns reading,
+private permissions and atomic replacement.
+
+The live provider-refusal check also showed that committing a notice below a
+full-screen overlay hides it until the overlay closes. Row refusals therefore
+remain in the transcript and appear as a wrapped picker banner, with the
+selected row and effort footer still visible.
+
+**Generalizable rule.** Test typed round trips and exact request keys against the
+owner's actual behavior, and keep retry identity separate from current fences.

@@ -6,6 +6,7 @@ pub mod history;
 pub mod keys;
 pub mod live;
 pub mod markdown;
+pub mod model_picker;
 pub mod palette;
 pub mod prompts;
 pub mod status;

@@ -40,12 +40,19 @@ pub struct OpenedSession {
     /// `info.title`, when the gateway sent one.
     pub title: Option<String>,
     pub cursor: Cursor,
+    pub revision: i64,
+    pub execution_generation: i64,
+    pub launch_notices: Vec<String>,
+    pub effort: Option<String>,
 }
 
 impl OpenedSession {
     /// Build the session from a create or resume result.
     #[must_use]
     pub fn from_snapshot(snapshot: CanonicalSnapshot) -> Self {
+        let revision = snapshot.revision;
+        let execution_generation = snapshot.execution_generation;
+        let effort = snapshot.info.reasoning_effort.clone();
         let cursor = Cursor {
             replay_epoch: snapshot.replay_epoch.clone(),
             last_sequence: u64::try_from(snapshot.last_sequence).unwrap_or(0),
@@ -76,6 +83,10 @@ impl OpenedSession {
             info,
             title,
             cursor,
+            revision,
+            execution_generation,
+            launch_notices: Vec::new(),
+            effort,
         }
     }
 }
@@ -118,6 +129,7 @@ pub enum DetachOutcome {
 pub struct SessionService {
     launch_id: String,
     client: Option<Client>,
+    create_defaults: Option<(String, crate::models::OfferedCreateKeys)>,
 }
 
 impl SessionService {
@@ -127,6 +139,7 @@ impl SessionService {
         Self {
             launch_id: launch_id.into(),
             client: None,
+            create_defaults: None,
         }
     }
 
@@ -136,6 +149,7 @@ impl SessionService {
         Self {
             launch_id: launch_id.into(),
             client: Some(client),
+            create_defaults: None,
         }
     }
 
@@ -147,6 +161,16 @@ impl SessionService {
     #[must_use]
     pub fn client(&self) -> Option<&Client> {
         self.client.as_ref()
+    }
+
+    /// Reuse the launch handshake's profile and offered create fields.
+    #[must_use]
+    pub fn with_create_defaults(mut self, profile: &str, parameters: &[String]) -> Self {
+        self.create_defaults = Some((
+            profile.into(),
+            crate::models::OfferedCreateKeys(parameters.iter().cloned().collect()),
+        ));
+        self
     }
 
     async fn call(
@@ -171,6 +195,60 @@ impl SessionService {
     /// Create, continue, or resume. `-c` checks the session's folder against the workspace and
     /// detaches a session that is outside it or whose folder is unknown.
     pub async fn open(&self, request: SessionRequest) -> Result<OpenedSession, OpenError> {
+        let SessionRequest::New(new) = request else {
+            return self.open_planned(request).await;
+        };
+        let loaded = tokio::task::spawn_blocking(crate::config::load_models).await;
+        let saved = match loaded {
+            Ok(Ok(saved)) if !saved.defaults.is_empty() => saved,
+            Ok(Err(notice)) => {
+                let mut opened = self.open_planned(SessionRequest::New(new)).await?;
+                opened.launch_notices.push(notice);
+                return Ok(opened);
+            }
+            _ => return self.open_planned(SessionRequest::New(new)).await,
+        };
+        let (profile, offered) = match &self.create_defaults {
+            Some(context) => context.clone(),
+            None => {
+                let Some(client) = &self.client else {
+                    return self.open_planned(SessionRequest::New(new)).await;
+                };
+                let describe = client
+                    .call::<hermes_contract::methods::canonical::runtime_describe::Marker>(
+                        hermes_contract::schemas::RuntimeDescribeParams(serde_json::Map::new()),
+                    )
+                    .await
+                    .map_err(open_error)?;
+                (
+                    crate::config::served_model_profile(&describe.profile_id).to_owned(),
+                    crate::models::OfferedCreateKeys(
+                        describe.session_create.parameters.into_iter().collect(),
+                    ),
+                )
+            }
+        };
+        let flags = crate::models::FlagsGiven {
+            model_or_provider: new.model.is_some() || new.provider.is_some(),
+            effort: new.reasoning.is_some(),
+        };
+        let (mut opened, notices) = crate::models::open_with_saved_default(
+            self,
+            new,
+            saved.defaults.get(&profile),
+            flags,
+            &offered,
+        )
+        .await?;
+        opened.launch_notices.extend(notices);
+        Ok(opened)
+    }
+
+    /// Execute a plan whose saved fields have already been checked.
+    pub(crate) async fn open_planned(
+        &self,
+        request: SessionRequest,
+    ) -> Result<OpenedSession, OpenError> {
         match request {
             SessionRequest::New(new) => self.create(&new).await,
             SessionRequest::Latest { workspace } => {
