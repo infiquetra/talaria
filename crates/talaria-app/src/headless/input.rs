@@ -14,8 +14,23 @@ pub enum PromptError {
 
 /// Join the argument and the piped bytes into the text to send.
 pub fn assemble_prompt(arg: Option<&str>, stdin: Option<&[u8]>) -> Result<String, PromptError> {
-    let _ = (arg, stdin);
-    todo!("#235")
+    let bytes = stdin.unwrap_or_default();
+    if bytes.len() > MAX_STDIN_BYTES {
+        return Err(PromptError::StdinTooLarge);
+    }
+    let input = std::str::from_utf8(bytes).map_err(|_| PromptError::NotUtf8)?;
+    let text = match arg {
+        Some(arg) if !input.is_empty() => format!("{arg}\n\n{input}"),
+        Some(arg) => arg.to_string(),
+        None => input.to_string(),
+    };
+    if text.len() > MAX_STDIN_BYTES {
+        return Err(PromptError::PromptTooLarge);
+    }
+    if text.trim().is_empty() {
+        return Err(PromptError::Empty);
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

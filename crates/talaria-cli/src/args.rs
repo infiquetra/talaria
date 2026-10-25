@@ -27,12 +27,13 @@ fn reject_bench(value: &str) -> Result<String, String> {
     Err("see --help".into())
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Clone, Parser)]
 #[command(
     name = "talaria",
     version,
     about = "Talk to a Hermes session from the terminal.",
-    color = ColorChoice::Never
+    color = ColorChoice::Never,
+    after_long_help = "Print mode runs one finite prompt without a screen. -p takes a prompt, not a profile name.\nPass < /dev/null when standard input is an open pipe you do not mean to send.\nWithout --timeout, talaria -p waits as long as the turn runs; set --timeout in automated jobs.\nPrint exits: 0 completed, 1 failed or unknown, 2 usage, 3 input required, 4 not started,\n124 timed out, 129 hangup, 130 interrupted, 143 terminated.\nJSON format: docs/formats/print-result-v1.md"
 )]
 pub struct Cli {
     #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
@@ -57,7 +58,7 @@ pub struct Cli {
     pub prompt: Option<String>,
     #[arg(long = "output-format")]
     pub output_format: Option<String>,
-    #[arg(long = "timeout")]
+    #[arg(long = "timeout", allow_hyphen_values = true)]
     pub timeout: Option<String>,
     #[arg(long = "bench-replay", value_name = "FIXTURE", value_parser = reject_bench)]
     pub bench_replay: Option<String>,
@@ -194,6 +195,66 @@ pub struct PrintUsageError {
 
 /// Check the print options by hand after clap, with or without `-p`.
 pub fn validate_print_options(cli: &Cli) -> Result<(), PrintUsageError> {
-    let _ = cli;
-    todo!("#235")
+    let error = |what: String, next_step: String| PrintUsageError { what, next_step };
+    if !cli.print {
+        let option = if cli.prompt.is_some() {
+            Some("a prompt on the command line")
+        } else if cli.output_format.is_some() {
+            Some("--output-format")
+        } else if cli.timeout.is_some() {
+            Some("--timeout")
+        } else {
+            None
+        };
+        if let Some(option) = option {
+            return Err(error(
+                format!("{option} only works with -p."),
+                format!("Add -p, or drop {option}."),
+            ));
+        }
+        return Ok(());
+    }
+    if let Some(format) = &cli.output_format {
+        match format.as_str() {
+            "text" | "json" => {}
+            "stream-json" => {
+                return Err(error(
+                    "streaming JSON output is not available yet.".into(),
+                    "Use --output-format json.".into(),
+                ));
+            }
+            _ => {
+                return Err(error(
+                    format!(
+                        "--output-format must be text or json (got {}).",
+                        talaria_app::headless::output::neutralise_line(format)
+                    ),
+                    "Pick one of those values.".into(),
+                ));
+            }
+        }
+    }
+    if let Some(timeout) = &cli.timeout {
+        let valid = !timeout.is_empty()
+            && timeout.bytes().all(|b| b.is_ascii_digit())
+            && timeout
+                .parse::<u64>()
+                .is_ok_and(|value| (1..=86400).contains(&value));
+        if !valid {
+            return Err(error(
+                format!(
+                    "--timeout must be a whole number of seconds from 1 to 86400 (got {}).",
+                    talaria_app::headless::output::neutralise_line(timeout)
+                ),
+                "Pick a value in that range.".into(),
+            ));
+        }
+    }
+    if matches!(cli.resume, Some(None)) {
+        return Err(error(
+            "talaria -p needs a session id after --resume.".into(),
+            "Find one with talaria --resume, then pass it.".into(),
+        ));
+    }
+    Ok(())
 }

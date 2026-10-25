@@ -22,6 +22,10 @@ fn main() -> ExitCode {
     }
     match talaria_cli::args::Cli::try_parse() {
         Ok(cli) => {
+            if let Err(error) = talaria_cli::args::validate_print_options(&cli) {
+                eprint!("talaria: {}\nNext step: {}\n", error.what, error.next_step);
+                return ExitCode::from(2);
+            }
             if cli.print {
                 return ExitCode::from(talaria_cli::print::run_print(&cli, started));
             }

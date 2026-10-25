@@ -3640,3 +3640,24 @@ Hermes. A wrapper type with `#[serde(flatten)]` around the generated row would c
 
 **Revisit when.** Hermes declares `archived_truncated` in its published contract; delete the splice
 and the custom deserializer, then regenerate.
+
+## 2026-10-24 — Headless print owns one finite admission
+
+**Decision.** `talaria -p` creates sessions with source `oneshot`, keeping scripted
+runs out of interactive pickers while allowing explicit resume by session id.
+It uses the shared session opening and recovery service, then refreshes the raw
+snapshot to inspect pending admissions without changing that service's API.
+
+Completion outcome takes precedence over contradictory legacy status fields;
+status is the fallback when outcome is absent. A voice-stop response exits 4
+because no headless answer was started, although Hermes's interactive client
+treats that response as success. A local signal or deadline cancels our queued
+admission or interrupts only our known execution generation, then detaches;
+detachment alone does not stop gateway execution. Other failures preserve their
+documented exit codes, and JSON always emits one versioned result object.
+
+**Rationale.** Scripts need stable exit semantics and must never stop another
+viewer's work. Raw completion and pending fields compensate for narrow generated
+projections at the adapter boundary. Issue #230 owns saved-default integration
+in the shared launch and session modules; this implementation leaves those
+modules unchanged.

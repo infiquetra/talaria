@@ -20,26 +20,24 @@ pub fn submit_params_finite(
     text: &str,
     submission_id: &str,
 ) -> serde_json::Value {
-    let _ = (session_id, text, submission_id);
-    todo!("#235")
+    serde_json::json!({"session_id": session_id, "text": text,
+        "submission_id": submission_id, "finite": true})
 }
 
 /// Build the receipt frame, always asking for the stored turn result.
 pub fn receipt_params(session_id: &str, admission_id: &str) -> serde_json::Value {
-    let _ = (session_id, admission_id);
-    todo!("#235")
+    serde_json::json!({"session_id": session_id, "admission_id": admission_id,
+        "include_result": true})
 }
 
 /// Build the cancel frame for one queued admission.
 pub fn cancel_params(session_id: &str, admission_id: &str) -> serde_json::Value {
-    let _ = (session_id, admission_id);
-    todo!("#235")
+    serde_json::json!({"session_id": session_id, "admission_id": admission_id})
 }
 
 /// Build the interrupt frame for one running generation.
 pub fn interrupt_params(session_id: &str, execution_generation: i64) -> serde_json::Value {
-    let _ = (session_id, execution_generation);
-    todo!("#235")
+    serde_json::json!({"session_id": session_id, "execution_generation": execution_generation})
 }
 
 /// Build the deny frame for one approval prompt.
@@ -48,8 +46,8 @@ pub fn approval_deny_params(
     execution_generation: i64,
     prompt_id: &str,
 ) -> serde_json::Value {
-    let _ = (session_id, execution_generation, prompt_id);
-    todo!("#235")
+    serde_json::json!({"session_id": session_id, "execution_generation": execution_generation,
+        "prompt_id": prompt_id, "choice": "deny"})
 }
 
 /// Build the skip frame for one question prompt.
@@ -58,8 +56,8 @@ pub fn clarify_skip_params(
     execution_generation: i64,
     prompt_id: &str,
 ) -> serde_json::Value {
-    let _ = (session_id, execution_generation, prompt_id);
-    todo!("#235")
+    serde_json::json!({"session_id": session_id, "execution_generation": execution_generation,
+        "prompt_id": prompt_id, "answer": ""})
 }
 
 /// Plan the session, then mark a new one as a headless run.
@@ -68,6 +66,19 @@ pub fn plan_headless(
     request_id: String,
     describe: &RuntimeDescribeResult,
 ) -> Result<SessionRequest, HeadlessStartError> {
-    let _ = (launch, request_id, describe);
-    todo!("#235")
+    if launch.mode == crate::launch::StartMode::New
+        && !describe
+            .session_create
+            .sources
+            .iter()
+            .any(|source| source == ONESHOT_SOURCE)
+    {
+        return Err(HeadlessStartError::OneshotMissing);
+    }
+    let mut request = crate::launch::plan(launch, request_id, describe)
+        .map_err(|error| HeadlessStartError::Plan(error.into()))?;
+    if let SessionRequest::New(session) = &mut request {
+        session.source = ONESHOT_SOURCE.to_string();
+    }
+    Ok(request)
 }

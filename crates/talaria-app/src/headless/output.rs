@@ -1,5 +1,6 @@
 //! Judging a settled turn and rendering text and JSON output.
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::headless::run::StopCause;
@@ -17,7 +18,7 @@ pub enum RunStatus {
 }
 
 /// Token and cost figures, each absent unless Hermes reported it well-typed.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct Usage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
@@ -51,7 +52,7 @@ pub struct HeadlessResult {
 }
 
 /// The two failure lines.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ErrorText {
     pub what: String,
     pub next_step: String,
@@ -72,8 +73,19 @@ pub fn effective_outcome(
     receipt_outcome: Option<&str>,
     completion_status: Option<&str>,
 ) -> Option<String> {
-    let _ = (completion_outcome, receipt_outcome, completion_status);
-    todo!("#235")
+    completion_outcome
+        .or(receipt_outcome)
+        .map(str::to_string)
+        .or_else(|| {
+            completion_status.map(|status| {
+                match status {
+                    "complete" => "completed",
+                    "interrupted" => "cancelled",
+                    _ => "failed",
+                }
+                .to_string()
+            })
+        })
 }
 
 /// Judge a settled turn, or a stop, into a status and an exit code.
@@ -83,44 +95,177 @@ pub fn judge(
     outcome: Option<&str>,
     result: Option<&Value>,
 ) -> (RunStatus, u8) {
-    let _ = (stop, status, outcome, result);
-    todo!("#235")
+    if let Some((cause, point)) = stop
+        && (point != StopPoint::AfterStart
+            || matches!(outcome, None | Some("cancelled" | "interrupted")))
+    {
+        return match cause {
+            StopCause::Timeout => (RunStatus::TimedOut, 124),
+            StopCause::Signal(1) => (RunStatus::Interrupted, 129),
+            StopCause::Signal(15) => (RunStatus::Interrupted, 143),
+            StopCause::Signal(_) => (RunStatus::Interrupted, 130),
+        };
+    }
+    let flag = |key: &str| {
+        result
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_bool)
+    };
+    if flag("interrupted") == Some(true)
+        || matches!(outcome, Some("cancelled" | "interrupted"))
+        || (outcome.is_none() && status == Some("interrupted"))
+    {
+        return (RunStatus::Interrupted, 130);
+    }
+    if matches!(outcome, None | Some("unknown")) {
+        return (RunStatus::Unknown, 1);
+    }
+    if flag("failed") == Some(true)
+        || flag("partial") == Some(true)
+        || flag("completed") == Some(false)
+        || outcome != Some("completed")
+    {
+        return (RunStatus::Failed, 1);
+    }
+    (RunStatus::Completed, 0)
 }
 
 /// Read the nine usage figures from the stored turn result only.
 pub fn usage_from_result(result: &Value) -> Usage {
-    let _ = result;
-    todo!("#235")
+    let counter = |key: &str| result.get(key).and_then(Value::as_u64);
+    Usage {
+        input_tokens: counter("input_tokens"),
+        output_tokens: counter("output_tokens"),
+        cache_read_tokens: counter("cache_read_tokens"),
+        cache_write_tokens: counter("cache_write_tokens"),
+        reasoning_tokens: counter("reasoning_tokens"),
+        total_tokens: counter("total_tokens"),
+        api_calls: counter("api_calls"),
+        estimated_cost_usd: result
+            .get("estimated_cost_usd")
+            .and_then(Value::as_f64)
+            .filter(|cost| cost.is_finite() && *cost >= 0.0),
+        cost_status: result
+            .get("cost_status")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
 }
 
 /// Render the one JSON line, ending with a newline.
 pub fn render_json(result: &HeadlessResult) -> String {
-    let _ = result;
-    todo!("#235")
+    let status = match result.status {
+        RunStatus::Completed => "completed",
+        RunStatus::Failed => "failed",
+        RunStatus::Unknown => "unknown",
+        RunStatus::InputRequired => "input_required",
+        RunStatus::NotStarted => "not_started",
+        RunStatus::TimedOut => "timed_out",
+        RunStatus::Interrupted => "interrupted",
+    };
+    #[derive(Serialize)]
+    struct ResultLine<'a> {
+        #[serde(rename = "type")]
+        kind: &'static str,
+        version: u8,
+        status: &'static str,
+        exit_code: u8,
+        text: &'a str,
+        session_id: &'a Option<String>,
+        profile: &'a Option<String>,
+        model: &'a Option<String>,
+        provider: &'a Option<String>,
+        admission_id: &'a Option<String>,
+        duration_ms: u64,
+        outcome: &'a Option<String>,
+        turn_exit_reason: &'a Option<String>,
+        usage: &'a Usage,
+        warnings: &'a [String],
+        error: &'a Option<ErrorText>,
+    }
+    let value = ResultLine {
+        kind: "result",
+        version: 1,
+        status,
+        exit_code: result.exit_code,
+        text: &result.text,
+        session_id: &result.session_id,
+        profile: &result.profile,
+        model: &result.model,
+        provider: &result.provider,
+        admission_id: &result.admission_id,
+        duration_ms: result.duration_ms,
+        outcome: &result.outcome,
+        turn_exit_reason: &result.turn_exit_reason,
+        usage: &result.usage,
+        warnings: &result.warnings,
+        error: &result.error,
+    };
+    let mut line = serde_json::to_string(&value).expect("result fields serialize to JSON");
+    line.push('\n');
+    line
 }
 
 /// Render the text answer, made terminal-safe only for a terminal.
 pub fn render_text_stdout(result: &HeadlessResult, stdout_is_terminal: bool) -> Vec<u8> {
-    let _ = (result, stdout_is_terminal);
-    todo!("#235")
+    let mut text = if stdout_is_terminal {
+        terminal_safe(&result.text)
+    } else {
+        result.text.clone()
+    };
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.into_bytes()
 }
 
 /// Render the failure lines and warnings for standard error.
 pub fn render_stderr(result: &HeadlessResult) -> Vec<u8> {
-    let _ = result;
-    todo!("#235")
+    let mut text = String::new();
+    if result.exit_code != 0 {
+        if let Some(error) = &result.error {
+            text.push_str(&format!(
+                "talaria: {}\nNext step: {}\n",
+                error.what, error.next_step
+            ));
+        }
+        if let Some(hint) = &result.resume_hint {
+            text.push_str(hint);
+            if !hint.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+    }
+    for warning in &result.warnings {
+        text.push_str(&format!("talaria: warning: {warning}\n"));
+    }
+    text.into_bytes()
 }
 
 /// The answer for a terminal: controls become `?`, newline and tab stay.
 pub fn terminal_safe(text: &str) -> String {
-    let _ = text;
-    todo!("#235")
+    text.chars()
+        .map(|ch| {
+            if ch != '\n' && ch != '\t' && is_control(ch) {
+                '?'
+            } else {
+                ch
+            }
+        })
+        .collect()
 }
 
 /// A warning or failure piece: every control becomes `?`, nothing stays.
 pub fn neutralise_line(text: &str) -> String {
-    let _ = text;
-    todo!("#235")
+    text.chars()
+        .map(|ch| if is_control(ch) { '?' } else { ch })
+        .collect()
+}
+
+fn is_control(ch: char) -> bool {
+    ch.is_control()
+        || matches!(ch,
+        '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
 #[cfg(test)]

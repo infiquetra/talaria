@@ -1,6 +1,4 @@
 //! Headless print mode: run one prompt without a screen and print the answer.
-//!
-//! The tracking issue cited in the stubs below holds the full contract.
 
 pub mod input;
 pub mod output;
