@@ -84,39 +84,129 @@ fn handle_model_options(state: &State, params: &Value) -> Result<Value, String> 
     Ok(chosen.clone())
 }
 
-fn handle_config_get(state: &State, params: &Value) -> Result<Value, String> {
-    if params["key"].as_str() != Some("reasoning") {
-        return Err("invalid_params".to_owned());
+fn handle_config_get(state: &mut State, params: &Value) -> Result<Value, String> {
+    // Hermes: gateway/session_config.py L65-L113. A queued raw result answers verbatim
+    // first. (#237)
+    if let Some(raw) = state
+        .sess
+        .config_raw
+        .get_mut("config.get")
+        .and_then(VecDeque::pop_front)
+    {
+        return Ok(raw);
     }
-    Ok(json!({"value": state.sess.reasoning_value, "display": "show"}))
+    match params["key"].as_str().unwrap_or_default() {
+        "reasoning" => Ok(json!({"value": state.sess.reasoning_value, "display": "show"})),
+        // Hermes: gateway/session_config.py L65-L113. The profile read answers the
+        // configured mode, or `permission_denied` while the switch is on. (#237)
+        "approvals.mode" => {
+            if state.sess.mode_read_denied {
+                return Err("permission_denied".to_owned());
+            }
+            Ok(json!({"value": state.sess.approvals_mode}))
+        }
+        // Hermes: gateway/session_busy_controls.py L145-L153. The bypass read answers the
+        // stored bypass. (#237)
+        "yolo" => {
+            let sid = params["session_id"].as_str().unwrap_or_default();
+            let on = state.sess.session_bypass.get(sid).copied().unwrap_or(false);
+            Ok(json!({
+                "key": "yolo",
+                "value": if on { "1" } else { "0" },
+                "scope": "session",
+            }))
+        }
+        _ => Err("invalid_params".to_owned()),
+    }
 }
 
 fn handle_config_set(state: &mut State, params: &Value) -> Result<Value, String> {
+    if let Some(raw) = state
+        .sess
+        .config_raw
+        .get_mut("config.set")
+        .and_then(VecDeque::pop_front)
+    {
+        return Ok(raw);
+    }
     if params.get("confirm_expensive_model").is_some() {
         return Err("invalid_params".to_owned());
     }
+    let key = params["key"].as_str().unwrap_or_default();
     if let Some(scope) = params.get("scope") {
+        // Hermes: gateway/session_tui_config.py L312-L337 for the scope trap. Only a
+        // global yolo write flips the profile mode; any other scoped write must name a
+        // real scope. (#237)
+        if key == "yolo" && scope.as_str() == Some("global") {
+            state.sess.approvals_mode = if state.sess.approvals_mode == "off" {
+                "manual"
+            } else {
+                "off"
+            }
+            .to_owned();
+            state.sess.yolo_global_flip = true;
+            return Ok(json!({"key": "yolo", "value": params["value"], "scope": "global"}));
+        }
         match scope.as_str() {
             Some("session" | "global") => {}
             _ => return Err("invalid_params".to_owned()),
         }
     }
-    if params["key"].as_str() != Some("reasoning") {
-        return Err("invalid_params".to_owned());
+    match key {
+        "reasoning" => {
+            let value = params.get("value").cloned().unwrap_or(Value::Null);
+            let word = value.as_str().unwrap_or("");
+            if !EFFORT_WORDS.contains(&word) {
+                return Err("invalid_params".to_owned());
+            }
+            if state.sess.config_set_mode == "refuse" {
+                return Err("permission_denied".to_owned());
+            }
+            if state.sess.config_set_mode == "drop" {
+                state.sess.suppress_reply = true;
+            }
+            let scope = params["scope"].as_str().unwrap_or("session");
+            Ok(json!({"key": "reasoning", "value": value, "scope": scope}))
+        }
+        // Hermes: gateway/session_tui_config.py L300-L309 for the profile write;
+        // gateway/session_busy_controls.py L128-L160 and tools/approval_yolo.py L31-L43
+        // for the bypass write. (#237)
+        "yolo" => {
+            let sid = params["session_id"].as_str().unwrap_or_default().to_owned();
+            let on = match params.get("value").and_then(Value::as_str) {
+                None => {
+                    let flipped = !state
+                        .sess
+                        .session_bypass
+                        .get(&sid)
+                        .copied()
+                        .unwrap_or(false);
+                    state.sess.yolo_toggle = true;
+                    flipped
+                }
+                Some("1") => true,
+                Some("0") => false,
+                Some(_) => return Err("invalid_params".to_owned()),
+            };
+            state.sess.session_bypass.insert(sid, on);
+            Ok(json!({
+                "key": "yolo",
+                "value": if on { "1" } else { "0" },
+                "scope": "session",
+            }))
+        }
+        "approvals.mode" => match params["value"].as_str() {
+            Some(word @ ("manual" | "smart" | "off")) => {
+                if state.sess.storage_unavailable {
+                    return Err("storage_unavailable".to_owned());
+                }
+                state.sess.approvals_mode = word.to_owned();
+                Ok(json!({"key": "approvals.mode", "value": word}))
+            }
+            _ => Err("invalid_params".to_owned()),
+        },
+        _ => Err("invalid_params".to_owned()),
     }
-    let value = params.get("value").cloned().unwrap_or(Value::Null);
-    let word = value.as_str().unwrap_or("");
-    if !EFFORT_WORDS.contains(&word) {
-        return Err("invalid_params".to_owned());
-    }
-    if state.sess.config_set_mode == "refuse" {
-        return Err("permission_denied".to_owned());
-    }
-    if state.sess.config_set_mode == "drop" {
-        state.sess.suppress_reply = true;
-    }
-    let scope = params["scope"].as_str().unwrap_or("session");
-    Ok(json!({"key": "reasoning", "value": value, "scope": scope}))
 }
 
 fn mutate_fingerprint(params: &Value) -> Value {

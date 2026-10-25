@@ -3969,3 +3969,76 @@ Talaria cannot see).
 
 **Revisit when.** Terminals report their 16-colour palette at start-up as reliably as they answer
 OSC 10 and 11.
+
+## 2026-10-24 — Shift+Tab switches the session bypass only
+
+**Decision.** For #237, Shift+Tab (`approvals_toggle`) sends `config.set {session_id, key: "yolo",
+value: "1" | "0"}` for the session in front, with the value always explicit. It never changes the
+profile's `approvals.mode`. This departs from the roadmap row, which cycled the mode; the planning
+ruling on #214 approved the departure.
+
+**Rationale.** The profile's mode is shared by every session of the profile, background sessions
+included, so a key that cycles it changes what runs elsewhere. Hermes's own terminal interface binds
+Shift+Tab to the same per-session toggle (`ui-tui/src/app/useInputHandlers.ts`). An explicit value
+makes a retry idempotent, where an absent value toggles and a retry undoes itself.
+
+**Rejected alternatives.** Cycling `approvals.mode` with `config.set`: it reaches background
+sessions. Sending `yolo` with `scope: "global"`: Hermes routes that to a different handler that
+flips the whole profile between `off` and `manual`, losing `smart` (see `LEARNINGS.md`, same date).
+
+**Revisit when.** Hermes offers a per-session approval mode, or the operator answers the open
+question on this decision differently.
+
+## 2026-10-24 — The approvals segment shows only values Hermes confirmed
+
+**Decision.** For #237, Talaria stores neither approval setting. The segment shows `manual` or
+`smart` only when Hermes's last answers confirmed both the profile's mode and that the session's
+bypass is off. A failed read, or a write or Hermes command whose outcome could not be confirmed,
+shows `approvals: unknown` until the next successful read. The bypass is read only with
+`config.get yolo`, never from a snapshot or a `session.info` event.
+
+**Rationale.** A wrong `manual` hides that dangerous commands run without asking. The snapshot's
+`yolo` is the in-memory flag, which is false after a gateway restart while the stored bypass is
+still on (see `LEARNINGS.md`, same date).
+
+**Rejected alternatives.** Keeping the last known value through a failed read: it can show a
+setting that no longer holds. Polling: Hermes sends no change event, and reads at session open,
+turn end and reconnect cover the changes Talaria can cause or observe.
+
+**Revisit when.** Hermes publishes an event when either setting changes.
+
+## 2026-10-24 — `/permissions`, not `/approvals`, and `/cd` refused while a turn runs
+
+**Decision.** For #237, Talaria's local command for the approval settings is `/permissions`
+(`manual`, `smart`, `off` twice within 30 seconds, `session off`, `session default`), and Hermes's
+own `/approvals` stays a pass-through to Hermes. `/cd` is refused while a turn runs.
+
+**Rationale.** Reusing `/approvals` would shadow a Hermes command with different arguments.
+Hermes Desktop disables its folder change while a turn runs, and a move mid-turn would change the
+folder under a running tool. `off` changes every session of the profile, so it needs a second
+command.
+
+**Rejected alternatives.** Intercepting `/approvals`; queueing `/cd` until the turn ends, which
+hides when the move happens.
+
+**Revisit when.** The operator answers the open questions on these two choices differently, or
+Hermes lets a move wait for the turn.
+
+## 2026-10-25 — One app-held folder feeds the status line and `/cd`
+
+**Decision.** For #237, the application keeps one `SessionFolder` for the foreground session
+(`crates/talaria-app/src/app.rs`, field `folder`). It is seeded from the opened session's snapshot,
+takes `session.info`'s `cwd` for that session only, and takes a confirmed move's folder and branch.
+The view hands it to the status line, which no longer reads the snapshot's `cwd` and `branch`, and
+the `/cd` reducer resolves relative paths against it.
+
+**Rationale.** A move changes the folder without a new snapshot, and `session.info` carries the new
+`cwd` but no branch. Reading the snapshot would show the old folder after a move. A second copy
+would let the status line and `/cd` disagree about where the session works.
+
+**Rejected alternatives.** Patching the opened session's summary in place, which gives the session
+summary two writers; asking Hermes for a fresh snapshot after every move, which costs a round trip
+and still lacks the branch until it answers.
+
+**Revisit when.** Hermes's `session.info` reports the branch, or the session summary gains a folder
+owner of its own.

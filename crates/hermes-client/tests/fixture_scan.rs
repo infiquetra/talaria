@@ -29,12 +29,12 @@ fn jsonl_files() -> Vec<PathBuf> {
     files
 }
 
-/// Asserts the fourteen fixtures exist and returns `(file name, text)` for each, in name order.
+/// Asserts the fifteen fixtures exist and returns `(file name, text)` for each, in name order.
 fn fixture_texts() -> Vec<(String, String)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 14,
-        "expected fourteen fixtures in fixtures/frames, found {}",
+        files.len() == 15,
+        "expected fifteen fixtures in fixtures/frames, found {}",
         files.len()
     );
     files

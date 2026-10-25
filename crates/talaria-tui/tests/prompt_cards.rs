@@ -1398,3 +1398,35 @@ fn stack_draws_a_foreign_session_and_a_counter_after_the_header() {
     assert_eq!(key, foreign.key);
     assert_eq!(choice, "deny");
 }
+
+/// Shift+Tab is the approvals toggle's key (#237): a focused card takes it and keeps its state, so
+/// it never opens or closes the note field.
+#[test]
+fn shift_tab_leaves_the_note_field_alone() {
+    let cell = standard_approval();
+    let shift_tab = press(
+        KeyCode::Tab,
+        Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    );
+
+    // On the choices, Shift+Tab opens no note field: a digit still sends its choice.
+    let mut rig = Rig::approval(&cell);
+    rig.press(shift_tab).nothing();
+    let (_, choice, note) = rig.press(ch('1')).approve();
+    assert_eq!(choice, "once");
+    assert_eq!(note, None);
+
+    // In the note field, Shift+Tab does not leave it: a digit is still text.
+    let mut rig = Rig::approval(&cell);
+    rig.press(named(KeyCode::Tab)).nothing();
+    rig.press(shift_tab).nothing();
+    rig.type_text("1");
+    assert!(
+        has_row(&rig.rows(), "note: 1"),
+        "the digit stays in the note: {:?}",
+        rig.rows()
+    );
+}

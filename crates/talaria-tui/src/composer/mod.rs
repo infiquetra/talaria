@@ -571,7 +571,8 @@ impl Composer {
             | Action::PagerPrevMatch
             | Action::PagerDetails
             | Action::PagerClose
-            | Action::ToggleTasks => {}
+            | Action::ToggleTasks
+            | Action::ApprovalsToggle => {}
         }
         false
     }

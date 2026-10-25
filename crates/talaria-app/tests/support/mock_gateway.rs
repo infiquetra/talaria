@@ -1531,6 +1531,16 @@ pub enum Behavior {
         /// The error message.
         message: String,
     },
+    /// Answer with an error of this code and message, without doing the work. `data` carries
+    /// the reason only when one is given.
+    FailCode {
+        /// The JSON-RPC error code.
+        code: i64,
+        /// The error message.
+        message: String,
+        /// The `data.reason`, when the error has one.
+        reason: Option<String>,
+    },
     /// `prompt.submit` only: answer `{"voice_stopped": true}`. The one reply that is not checked
     /// against the contract.
     VoiceStopped,
@@ -1629,6 +1639,20 @@ struct SessionSide {
     skin_catalog: HashMap<String, Value>,
     config_skin: String,
     config_skin_null: bool,
+    // Permissions and moves (#237).
+    approvals_mode: String,
+    mode_read_denied: bool,
+    session_bypass: HashMap<String, bool>,
+    restarted: bool,
+    yolo_global_flip: bool,
+    yolo_toggle: bool,
+    storage_unavailable: bool,
+    mutate_folders: HashSet<String>,
+    mutate_branch: Option<String>,
+    mutate_conflict_once: Option<(i64, i64)>,
+    mutate_receipts: HashMap<String, Value>,
+    revs: HashMap<String, i64>,
+    config_raw: HashMap<String, VecDeque<Value>>,
 }
 
 impl SessionSide {
@@ -1686,6 +1710,19 @@ impl SessionSide {
             skin_catalog: HashMap::new(),
             config_skin: "default".to_owned(),
             config_skin_null: false,
+            approvals_mode: "manual".to_owned(),
+            mode_read_denied: false,
+            session_bypass: HashMap::new(),
+            restarted: false,
+            yolo_global_flip: false,
+            yolo_toggle: false,
+            storage_unavailable: false,
+            mutate_folders: HashSet::new(),
+            mutate_branch: None,
+            mutate_conflict_once: None,
+            mutate_receipts: HashMap::new(),
+            revs: HashMap::new(),
+            config_raw: HashMap::new(),
         }
     }
 }
@@ -1869,18 +1906,47 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
                 "profile",
             ],
         ),
-        "config.get" => (vec!["key"], vec!["session_id", "profile", "key", "cwd"]),
-        "config.set" => (
-            vec!["key", "value"],
-            vec![
-                "session_id",
-                "profile",
-                "key",
-                "value",
-                "scope",
-                "confirm_expensive_model",
-            ],
-        ),
+        // Hermes: gateway/session_config.py L65-L113. The bypass read names its session; the
+        // profile read may carry one but needs none.
+        "config.get" => {
+            let mut required = vec!["key"];
+            if params.get("key") == Some(&json!("yolo")) {
+                required.push("session_id");
+            }
+            (required, vec!["session_id", "profile", "key", "cwd"])
+        }
+        // Hermes: gateway/session_tui_config.py L300-L309, L312-L337. `scope` stays allowed so
+        // the handler can trap it; the bypass write names its session and may omit the value
+        // to toggle.
+        "config.set" => {
+            if params.get("key") == Some(&json!("yolo")) {
+                (
+                    vec!["session_id", "key"],
+                    vec![
+                        "session_id",
+                        "profile",
+                        "key",
+                        "value",
+                        "scope",
+                        "confirm_expensive_model",
+                    ],
+                )
+            } else {
+                (
+                    vec!["key", "value"],
+                    vec![
+                        "session_id",
+                        "profile",
+                        "key",
+                        "value",
+                        "scope",
+                        "confirm_expensive_model",
+                    ],
+                )
+            }
+        }
+        // Hermes: gateway/session_mutations.py L142-L148. The workspace move always carries a
+        // generation; other operations may omit it.
         "session.context_breakdown" => (vec!["session_id"], vec!["session_id", "profile"]),
         "session.stats" => (vec!["session_id"], vec!["session_id"]),
         "usage.bars" => (Vec::new(), vec!["profile"]),
@@ -2320,7 +2386,24 @@ fn plan_session_method(
             outgoing.push((None, bare_error_text(id, message), reply_meta(id, method)));
             return;
         }
+        Behavior::FailCode {
+            code,
+            message,
+            reason,
+        } => {
+            let mut error = json!({"code": code, "message": message});
+            if let Some(reason) = reason {
+                error["data"] = json!({"reason": reason});
+            }
+            let text = json!({"jsonrpc": "2.0", "id": id, "error": error}).to_string();
+            outgoing.push((None, text, reply_meta(id, method)));
+            return;
+        }
         _ => {}
+    }
+    if method == "session.mutate" && params["operation"].as_str() == Some("workspace") {
+        plan_mutate(state, id, params, delay, &behavior, outgoing);
+        return;
     }
     let voice = matches!(behavior, Behavior::VoiceStopped);
     let result = match method {
@@ -2564,6 +2647,23 @@ fn attach(state: &mut State, mut snapshot: Value, via: &str) -> Value {
         .entry(session_id.clone())
         .or_insert(own_generation);
     snapshot["execution_generation"] = json!(generation);
+    let own_revision = snapshot["revision"].as_i64().unwrap_or(1);
+    state
+        .sess
+        .revs
+        .entry(session_id.clone())
+        .or_insert(own_revision);
+    // Hermes: gateway/session_busy_controls.py L145-L153. After a gateway restart the snapshot
+    // omits the persisted bypass, so it reports off while a read still reports on (#237).
+    let bypass = state
+        .sess
+        .session_bypass
+        .get(&session_id)
+        .copied()
+        .unwrap_or(false);
+    if state.sess.restarted || bypass {
+        snapshot["info"]["yolo"] = json!(bypass && !state.sess.restarted);
+    }
     let last = snapshot["last_sequence"].as_u64().unwrap_or(0);
     state.next_seq = state.next_seq.max(last + 1);
     snapshot["last_sequence"] = json!(state.next_seq - 1);
@@ -2682,6 +2782,114 @@ fn handle_detach(state: &mut State, params: &Value) -> Value {
         at: Instant::now(),
     });
     json!({"session_id": session_id, "subscription_id": subscription, "detached": detached})
+}
+
+// Hermes: gateway/session_mutations.py L142-L148 for the request keys,
+// hermes_state_mutations.py L28-L29 for the workspace payload,
+// gateway/session_mutation_policy.py L37-L55 for the gateway-relative path,
+// hermes_state_runtime.py L516-L521 for the rewritten rows and L544-L547 for the result,
+// hermes_state_runtime.py L461-L480 for the stored receipt,
+// gateway/session_events.py L38-L52 and gateway/session_controls.py L304-L329 for the
+// event frame. A resend of a request id answers the stored receipt. (#237)
+fn plan_mutate(
+    state: &mut State,
+    id: &Value,
+    params: &Value,
+    delay: Option<Duration>,
+    behavior: &Behavior,
+    outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
+) {
+    let meta = reply_meta(id, "session.mutate");
+    let sid = params["session_id"].as_str().unwrap_or_default().to_owned();
+    let request_id = params["request_id"].as_str().unwrap_or_default().to_owned();
+    let payload = params.get("payload").and_then(Value::as_object);
+    let cwd = payload
+        .and_then(|payload| payload.get("cwd"))
+        .and_then(Value::as_str);
+    if !payload.is_some_and(|payload| payload.len() == 1 && payload.contains_key("cwd"))
+        || cwd.is_none()
+    {
+        outgoing.push((None, refusal_text(id, "invalid_params", None), meta));
+        return;
+    }
+    let cwd = cwd.unwrap_or_default().to_owned();
+    if !cwd.starts_with('/') || !state.sess.mutate_folders.contains(&cwd) {
+        outgoing.push((None, refusal_text(id, "invalid_params", None), meta));
+        return;
+    }
+    if let Some((revision, generation)) = state.sess.mutate_conflict_once.take() {
+        state.sess.revs.insert(sid.clone(), revision);
+        state.sess.gens.insert(sid, generation);
+        let text = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": REFUSAL_CODE,
+                "message": "revision_conflict",
+                "data": {
+                    "reason": "revision_conflict",
+                    "revision": revision,
+                    "execution_generation": generation,
+                },
+            },
+        })
+        .to_string();
+        outgoing.push((None, text, meta));
+        return;
+    }
+    if let Some(receipt) = state.sess.mutate_receipts.get(&request_id).cloned() {
+        let text = json!({"jsonrpc": "2.0", "id": id, "result": receipt}).to_string();
+        outgoing.push((delay, text, meta));
+        return;
+    }
+    let revision = state.sess.revs.get(&sid).copied().unwrap_or(1) + 1;
+    let generation = state.sess.gens.get(&sid).copied().unwrap_or(1) + 1;
+    state.sess.revs.insert(sid.clone(), revision);
+    state.sess.gens.insert(sid.clone(), generation);
+    let branch = state.sess.mutate_branch.clone();
+    let receipt = json!({
+        "session_id": sid,
+        "revision": revision,
+        "execution_generation": generation,
+        "operation": "workspace",
+        "cwd": cwd,
+        "branch": branch,
+        "git_repo_root": branch.as_ref().map(|_| cwd.clone()),
+    });
+    state
+        .sess
+        .mutate_receipts
+        .insert(request_id, receipt.clone());
+    if let Some(stored) = state.sess.sessions.get_mut(&sid) {
+        stored["revision"] = json!(revision);
+        stored["execution_generation"] = json!(generation);
+        stored["info"]["cwd"] = json!(cwd);
+        match branch {
+            Some(branch) => stored["info"]["branch"] = json!(branch),
+            None => {
+                if let Some(info) = stored["info"].as_object_mut() {
+                    info.remove("branch");
+                }
+            }
+        }
+    }
+    if matches!(behavior, Behavior::DropBeforeReply) {
+        state.kill_after = true;
+        return;
+    }
+    let text = json!({"jsonrpc": "2.0", "id": id, "result": receipt}).to_string();
+    outgoing.push((delay, text, meta));
+    let yolo = state
+        .sess
+        .session_bypass
+        .get(&sid)
+        .copied()
+        .unwrap_or(false)
+        && !state.sess.restarted;
+    let info = event_text(state, "session.info", json!({"cwd": cwd, "yolo": yolo}));
+    outgoing.push((delay, info, event_meta("session.info")));
+    let updated = event_text(state, "session.updated", receipt);
+    outgoing.push((delay, updated, event_meta("session.updated")));
 }
 
 fn handle_submit(state: &mut State, params: &Value, voice: bool) -> Value {
@@ -3062,6 +3270,72 @@ impl MockGateway {
     /// The session's current `execution_generation`, once it is tracked.
     pub fn generation(&self, session_id: &str) -> Option<i64> {
         lock(&self.shared).sess.gens.get(session_id).copied()
+    }
+
+    /// The approval mode `config.get approvals.mode` answers (#237).
+    pub fn set_approvals_mode(&self, mode: &str) {
+        lock(&self.shared).sess.approvals_mode = mode.to_owned();
+    }
+
+    /// While on, `config.get approvals.mode` answers `permission_denied` (#237).
+    pub fn set_mode_read_denied(&self, denied: bool) {
+        lock(&self.shared).sess.mode_read_denied = denied;
+    }
+
+    /// The stored bypass `config.get yolo` reports for one session (#237).
+    pub fn set_session_bypass(&self, session_id: &str, on: bool) {
+        lock(&self.shared)
+            .sess
+            .session_bypass
+            .insert(session_id.to_owned(), on);
+    }
+
+    /// While on, snapshots and `session.info` report the bypass off even when the stored
+    /// bypass is on, as after a gateway restart (#237).
+    pub fn set_restarted(&self, restarted: bool) {
+        lock(&self.shared).sess.restarted = restarted;
+    }
+
+    /// Whether a `config.set yolo` with global scope flipped the profile mode (#237).
+    pub fn yolo_global_flip(&self) -> bool {
+        lock(&self.shared).sess.yolo_global_flip
+    }
+
+    /// Whether a `config.set yolo` without a value toggled the bypass (#237).
+    pub fn yolo_toggle(&self) -> bool {
+        lock(&self.shared).sess.yolo_toggle
+    }
+
+    /// While on, `config.set approvals.mode` answers `storage_unavailable` (#237).
+    pub fn set_storage_unavailable(&self, unavailable: bool) {
+        lock(&self.shared).sess.storage_unavailable = unavailable;
+    }
+
+    /// The folders `session.mutate workspace` accepts as a `cwd` (#237).
+    pub fn set_mutate_folders(&self, folders: &[&str]) {
+        lock(&self.shared).sess.mutate_folders =
+            folders.iter().map(|name| (*name).to_owned()).collect();
+    }
+
+    /// The branch the next committed move reports, or none (#237).
+    pub fn set_mutate_branch(&self, branch: Option<&str>) {
+        lock(&self.shared).sess.mutate_branch = branch.map(str::to_owned);
+    }
+
+    /// Answer the next `session.mutate workspace` with one `revision_conflict` carrying
+    /// these fresh fences (#237).
+    pub fn set_mutate_conflict_once(&self, revision: i64, generation: i64) {
+        lock(&self.shared).sess.mutate_conflict_once = Some((revision, generation));
+    }
+
+    /// Answer the next call of this config method with this result verbatim (#237).
+    pub fn queue_config_raw(&self, method: &str, result: Value) {
+        lock(&self.shared)
+            .sess
+            .config_raw
+            .entry(method.to_owned())
+            .or_default()
+            .push_back(result);
     }
 
     /// Every request the mock found wrong.

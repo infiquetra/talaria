@@ -4957,3 +4957,40 @@ the live rows and no flag at all, so no banner can be shown for that case.
 **Generalizable rule.** A flag that one server sets on one row of one array is read from that row
 and nowhere else, and a missing flag is absence rather than a false one; a case the flag cannot
 express needs a banner of its own or a documented gap.
+
+## 2026-10-24 — `config.set yolo` with any `scope` rewrites the profile's mode
+
+**Evidence.** Hermes v0.22.4 (the pinned commit), `gateway/session_tui_config.py:175`: `config_set`
+sends `key == 'yolo' and 'scope' in params` to `_set_command_setting` (line 312), where
+`scope: "global"` flips the profile's `approvals.mode` between `off` and `manual`.
+
+**Mechanism.** The `scope` form is Hermes's own "zap" for the whole profile. A profile at `smart`
+comes back as `manual`. Without `scope` the same key changes only the session's bypass.
+
+**Generalizable rule.** Never send `scope` with `yolo`; send `{session_id, key: "yolo", value}` only.
+
+## 2026-10-24 — A snapshot's `yolo` is false after a gateway restart while the bypass is on
+
+**Evidence.** Hermes v0.22.4, `gateway/session_local.py:446-461`: `_classic_cli_fields`, which
+fills the snapshot's and `session.info`'s `yolo`, reads only the launch policy and the in-memory
+flag. `gateway/session_busy_controls.py:150-153`, the `config.get yolo` path, re-arms the flag and
+ORs in the stored copy ("After a restart only the persisted copy is set until the next turn
+re-arms it: still ON").
+
+**Mechanism.** The stored bypass survives a restart, but the in-memory flag is set again only by
+the next turn, so a resumed session can report `yolo: false` while its next command runs without
+asking.
+
+**Generalizable rule.** Read the bypass with `config.get yolo`; never from a snapshot or an event.
+
+## 2026-10-24 — Hermes resolves a `/cd` path in the gateway's folder
+
+**Evidence.** Hermes v0.22.4, `gateway/session_mutation_policy.py:47`: `prepare_workspace`
+resolves the `session.mutate` workspace path with `os.path.abspath(os.path.expanduser(...))` in the
+gateway process, then refuses a path that is not a folder with `invalid_params` (line 48).
+
+**Mechanism.** A relative path or `~` resolves against the gateway process's working folder and
+home, not the session's, so `/cd ../api` would land somewhere the developer did not mean.
+
+**Generalizable rule.** Resolve `~` and relative paths against the session's folder in Talaria and
+send Hermes only absolute, normalised paths.

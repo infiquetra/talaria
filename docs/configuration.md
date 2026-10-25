@@ -56,6 +56,7 @@ pager_prev_match = ["shift+n"]
 pager_details = ["t"]
 pager_close = ["q"]
 toggle_tasks = ["ctrl+t"]
+approvals_toggle = ["shift+tab"]
 
 [editor]
 command = ""
@@ -172,6 +173,7 @@ beats `ui.reduced_motion`; a non-empty `NO_COLOR` turns colour off. See [themes]
 | `pager_details` | T | Switch between the full cell and the compact one. |
 | `pager_close` | Q | Close the transcript. |
 | `toggle_tasks` | Ctrl+T | Show the agent's task checklist in one row, or every step of it, above the composer. |
+| `approvals_toggle` | Shift+Tab | Switch this session's approvals off or back on. |
 
 Tab accepts the highlighted row of a completion list. A tab inside pasted text is kept.
 Completion keys share chords with composer keys. Each applies only while its list is open.
@@ -256,6 +258,49 @@ never by its full path.
   action keeps its defaults.
 - A key bound to two actions: one keeps it, the other gets a notice.
 - A default key taken by another action, leaving its action with no key: a notice says so.
+
+## Approvals
+
+The status line shows whether Hermes asks before running a dangerous command in this session:
+`approvals: manual` or `approvals: smart` (the profile's mode, and this session's bypass is off),
+`approvals: off` (the profile asks for nothing), `approvals: off (this session)` (this session's
+bypass is on) or `approvals: unknown` (a read failed, or a change could not be confirmed). Talaria
+shows only values Hermes confirmed; it stores none of them.
+
+`approvals_toggle` (Shift+Tab) switches this session's bypass on or off, and only this session's.
+While the profile's mode is `off` it changes nothing and says so. A completion list or an
+approval card that has the key keeps it. Unbind it with `approvals_toggle = []`.
+
+Hermes sends no event when a setting changes, so Talaria reads both again when a session opens,
+when a turn ends, after a reconnect, and after Hermes's own `/yolo` or `/approvals` runs. A change
+made in another window shows after the next of these. A gateway started with `--yolo` is not
+visible here: the line may say `manual` while Hermes approves everything.
+
+`/permissions` shows and changes both settings. Words are case-insensitive.
+
+```text
+/permissions                    show this session's setting, the profile's mode and the bypass
+/permissions manual|smart|off   set the profile's mode, for every session of the profile
+/permissions session off        approvals off for this session only
+/permissions session default    this session follows the profile's mode again
+```
+
+The profile's mode is shared by every session of the profile, background sessions included, and
+needs no open session. `/permissions off` first explains that and asks to be run again: the same
+command within 30 seconds sends it. Another `/permissions` command, the toggle key, a session change
+or a reconnect cancels the wait. Hermes's own `/approvals` still runs as a Hermes command.
+
+## Working folder
+
+`/cd` alone shows the session's working folder. `/cd <folder>` moves the session there and keeps
+the conversation; its next command runs in the new folder, and the status line shows the new
+folder and branch.
+
+- `~` and `~/rest` use your home folder; `~name` is refused. A relative path starts from the
+  session's folder, not from where Talaria or Hermes was started. One pair of outer quotes is
+  removed; spaces inside the path are kept.
+- Talaria checks that the folder exists before it asks Hermes, and Hermes decides last.
+- `/cd` is refused while a turn runs: wait for it, or press Esc to stop it, then run `/cd` again.
 
 ## Terminals and keys
 

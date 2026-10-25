@@ -80,6 +80,17 @@ pub struct StatusInputs {
     pub subagents_terminal: u32,
     /// The token counts, when they have been observed.
     pub usage_tokens: Option<TokenUsage>,
+    /// The approvals segment, when the permissions state shows one (#237).
+    pub approvals: Option<ApprovalsSegment>,
+}
+
+/// The approvals segment text and tone, handed over by the caller.
+#[derive(Clone, Debug)]
+pub struct ApprovalsSegment {
+    /// The full segment text, for example `approvals: smart`.
+    pub text: String,
+    /// The tone the segment is drawn with.
+    pub tone: Tone,
 }
 
 /// The segment the external command contributes.
@@ -110,13 +121,16 @@ pub enum Segment {
     Cost,
     /// The external command's text.
     External,
+    /// The approvals state (#237).
+    Approvals,
 }
 
 impl Segment {
     /// Every segment, from the one dropped last to the one dropped first.
-    pub const ALL: [Segment; 8] = [
+    pub const ALL: [Segment; 9] = [
         Segment::Connection,
         Segment::NeedsYou,
+        Segment::Approvals,
         Segment::Model,
         Segment::Context,
         Segment::Folder,
@@ -125,17 +139,18 @@ impl Segment {
         Segment::External,
     ];
 
-    /// 1 is dropped last, 8 first.
+    /// 1 is dropped last, 9 first.
     pub fn priority(self) -> u8 {
         match self {
             Segment::Connection => 1,
             Segment::NeedsYou => 2,
-            Segment::Model => 3,
-            Segment::Context => 4,
-            Segment::Folder => 5,
-            Segment::Working => 6,
-            Segment::Cost => 7,
-            Segment::External => 8,
+            Segment::Approvals => 3,
+            Segment::Model => 4,
+            Segment::Context => 5,
+            Segment::Folder => 6,
+            Segment::Working => 7,
+            Segment::Cost => 8,
+            Segment::External => 9,
         }
     }
 
@@ -144,12 +159,13 @@ impl Segment {
         match self {
             Segment::Connection => 1,
             Segment::Model => 2,
-            Segment::Folder => 3,
-            Segment::Context => 4,
-            Segment::Cost => 5,
-            Segment::NeedsYou => 6,
-            Segment::Working => 7,
-            Segment::External => 8,
+            Segment::Approvals => 3,
+            Segment::Folder => 4,
+            Segment::Context => 5,
+            Segment::Cost => 6,
+            Segment::NeedsYou => 7,
+            Segment::Working => 8,
+            Segment::External => 9,
         }
     }
 }
@@ -198,6 +214,7 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     let mut pieces: Vec<(Segment, String, Tone)> = Vec::new();
     add(&mut pieces, Segment::Connection, connection_segment(inputs));
     add(&mut pieces, Segment::Model, model_segment(inputs));
+    add(&mut pieces, Segment::Approvals, approvals_segment(inputs));
     add(&mut pieces, Segment::Folder, folder_segment(inputs));
     add(&mut pieces, Segment::Context, context_segment(inputs));
     add(&mut pieces, Segment::Cost, cost_segment(inputs));
@@ -289,6 +306,16 @@ fn model_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
         }
     }
     Some((sanitize(&text).into_owned(), Tone::Muted))
+}
+
+/// The approvals segment: the text and tone the caller handed over, when there is one.
+fn approvals_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+    let approvals = inputs.approvals.as_ref()?;
+    let text = sanitize(approvals.text.trim()).into_owned();
+    if text.is_empty() {
+        return None;
+    }
+    Some((text, approvals.tone))
 }
 
 /// The folder segment: the working folder and the branch.
