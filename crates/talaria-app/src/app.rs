@@ -19,13 +19,21 @@ use hermes_client::replay::{Cursor, ReplayGap};
 use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
+use talaria_core::commands::{
+    CommandOutcome, CommandsEffect, CommandsInput, CommandsState, LocalAction, LocalCommandTable,
+    PaletteContext, PaletteEffect, PaletteInput, PaletteState, palette_update, parse_slash_line,
+    state_update,
+};
 use talaria_core::session::{
-    Cell, Effect, Event, PromptKey, PromptKind, PromptState, SessionId, SessionState,
+    Cell, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState, SessionId, SessionState,
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
+use crate::commands::{
+    AppAction, CommandReply, CommandService, no_session_notice, outcome_actions,
+};
 use crate::connection::{ConnectionService, OpenConnection, find_git_toplevel};
 use crate::failure::{self, LaunchFailure};
 use crate::launch::{
@@ -52,7 +60,6 @@ const MESSAGE_BATCH: usize = 64;
 
 pub const SESSION_GONE_NOTICE: &str = "This session no longer exists on the gateway.";
 pub const STILL_WORKING: &str = "The agent is still working on it in the background.";
-pub const SLASH_NOTICE: &str = "Only /quit works in this version. To send text that starts with a slash, put a space before it.";
 pub const HELD_FULL_NOTICE: &str =
     "Too many prompts are waiting for Hermes. Wait a moment, then send this one again.";
 pub const REFRESHED_NOTICE: &str = "Reconnected. The transcript was refreshed.";
@@ -94,6 +101,8 @@ pub enum UserAction {
     },
     /// A line the screen wants shown.
     Notice(String),
+    /// The draft changed, or a completion-list key was pressed. Issue #223.
+    Palette(PaletteInput),
 }
 
 /// Everything the screen draws from, borrowed for one draw.
@@ -108,6 +117,8 @@ pub struct View<'a> {
     pub effort: Option<&'a str>,
     pub masked: &'a [MaskedRequestInfo],
     pub held: usize,
+    /// The slash palette under the composer.
+    pub palette: &'a PaletteState,
 }
 
 impl View<'_> {
@@ -179,13 +190,18 @@ pub struct AppState {
     /// Composer draft. The slash palette reads it. Issue #223.
     pub draft: String,
     /// Slash palette. Closed until a slash draft opens it. Issue #223.
-    pub palette: talaria_core::commands::PaletteState,
+    pub palette: PaletteState,
+    /// The catalogue store for this connection.
+    pub commands: CommandsState,
+    /// Commands Talaria runs itself.
+    pub local: LocalCommandTable,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
     link: Option<Link>,
     prompts: Option<Arc<Mutex<PromptService>>>,
     pending: Option<JoinHandle<Result<Ready, LaunchFailure>>>,
+    command_service: Option<CommandService>,
 }
 
 impl AppState {
@@ -208,13 +224,16 @@ impl AppState {
             effort: None,
             masked: Vec::new(),
             draft: String::new(),
-            palette: talaria_core::commands::PaletteState::closed(),
+            palette: PaletteState::closed(),
+            commands: CommandsState::default(),
+            local: LocalCommandTable::builtin(),
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
             link: None,
             prompts: None,
             pending: None,
+            command_service: None,
         }
     }
 
@@ -238,6 +257,7 @@ impl AppState {
             effort: self.effort.as_deref(),
             masked: &self.masked,
             held: self.held.len(),
+            palette: &self.palette,
         }
     }
 
@@ -283,6 +303,13 @@ pub enum AppMessage {
     Recovered(Result<OpenedSession, OpenError>),
     /// A key while Talaria is in the foreground. Issue #223 routes the open palette here.
     ForegroundKey(UserAction),
+    /// A catalogue fetch or a completion finished.
+    Commands(CommandReply),
+    /// A slash command finished; `typed` is the line as it was run.
+    CommandDone {
+        typed: String,
+        outcome: CommandOutcome,
+    },
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -317,6 +344,26 @@ pub enum AppEffect {
     },
     Recover(ReplayGap),
     Quit,
+    /// Run a Hermes slash command (`slash.exec`) in the background.
+    RunCommand {
+        session_id: String,
+        typed: String,
+    },
+    /// `commands.catalog`, after `after`.
+    FetchCatalog {
+        request_id: u64,
+        session_id: Option<String>,
+        after: Duration,
+    },
+    /// `complete.slash` for the draft, once it has been still for `after`.
+    RequestCompletion {
+        request_id: u64,
+        text: String,
+        after: Duration,
+        session_id: Option<String>,
+    },
+    /// Drop the pending completion request.
+    CancelCompletion,
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -350,10 +397,13 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects
         }
         AppMessage::Recovered(result) => recovered(state, result),
-        AppMessage::ForegroundKey(action) => {
-            let _ = (&state.draft, state.palette.open, action);
-            todo!()
+        AppMessage::ForegroundKey(action) => foreground_key(state, action),
+        AppMessage::Commands(CommandReply::Commands(input)) => commands_input(state, input),
+        AppMessage::Commands(CommandReply::Palette(input)) => {
+            let (effects, _) = palette(state, input);
+            effects
         }
+        AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
     };
     effects.extend(commit_ready(state));
     effects.push(AppEffect::Redraw);
@@ -397,7 +447,22 @@ fn route(
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
-        UserAction::Submit(text) => submit(state, text),
+        UserAction::Submit(text) => {
+            // The composer has taken the draft.
+            let mut effects = if state.draft.is_empty() && !state.palette.open {
+                Vec::new()
+            } else {
+                palette_input(
+                    state,
+                    PaletteInput::DraftChanged {
+                        text: String::new(),
+                        caret: 0,
+                    },
+                )
+            };
+            effects.extend(submit(state, text));
+            effects
+        }
         UserAction::Interrupt => {
             if state.interrupting {
                 return Vec::new();
@@ -424,7 +489,208 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             vec![AppEffect::AnswerMasked { request_id, value }]
         }
         UserAction::Notice(text) => vec![notice_lines(&text)],
+        UserAction::Palette(input) => palette_input(state, input),
     }
+}
+
+/// Keys in the foreground: an open palette takes Enter and Esc before the composer and the
+/// turn do, so Esc closes the palette and never interrupts a running turn.
+fn foreground_key(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
+    if !state.palette.open {
+        return user_action(state, action);
+    }
+    match action {
+        UserAction::Interrupt => palette_input(state, PaletteInput::Close),
+        UserAction::Submit(text) => palette_enter(state, text),
+        other => user_action(state, other),
+    }
+}
+
+/// Apply one palette input and turn its completion request into an executor effect. The
+/// draft and run effects come back for the caller, which knows what the composer holds.
+fn palette(state: &mut AppState, input: PaletteInput) -> (Vec<AppEffect>, Vec<PaletteEffect>) {
+    let pending = state.palette.request_id;
+    let ctx = PaletteContext {
+        catalog: state.commands.catalog.as_ref(),
+        catalog_status: &state.commands.status,
+        local: &state.local,
+        refused: &state.commands.refused,
+    };
+    let produced = palette_update(&mut state.palette, input, &ctx);
+    let mut effects = Vec::new();
+    let mut rest = Vec::new();
+    let mut requested = false;
+    for effect in produced {
+        match effect {
+            PaletteEffect::RequestCompletion {
+                request_id,
+                text,
+                after,
+            } => {
+                requested = true;
+                effects.push(AppEffect::RequestCompletion {
+                    request_id,
+                    text,
+                    after,
+                    session_id: state.commands.bound_session.clone(),
+                });
+            }
+            PaletteEffect::Redraw => {}
+            other => rest.push(other),
+        }
+    }
+    if pending != 0 && !requested && state.palette.request_id != pending {
+        effects.insert(0, AppEffect::CancelCompletion);
+    }
+    (effects, rest)
+}
+
+/// The composer will hold `text`: load it and let the palette follow.
+fn load_draft(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    state.draft.clone_from(&text);
+    let caret = text.len();
+    let (mut effects, _) = palette(
+        state,
+        PaletteInput::DraftChanged {
+            text: text.clone(),
+            caret,
+        },
+    );
+    effects.insert(0, AppEffect::LoadDraft(text));
+    effects
+}
+
+/// Follow what a palette key asked for: run a line (the composer is left empty), or put a
+/// completed draft into the composer.
+fn follow(state: &mut AppState, produced: Vec<PaletteEffect>) -> Vec<AppEffect> {
+    let mut replace = None;
+    for effect in produced {
+        match effect {
+            PaletteEffect::Run { line } => {
+                state.draft.clear();
+                let (mut effects, _) = palette(
+                    state,
+                    PaletteInput::DraftChanged {
+                        text: String::new(),
+                        caret: 0,
+                    },
+                );
+                effects.extend(submit(state, line));
+                return effects;
+            }
+            PaletteEffect::ReplaceDraft { text } => replace = Some(text),
+            PaletteEffect::RequestCompletion { .. } | PaletteEffect::Redraw => {}
+        }
+    }
+    replace.map_or_else(Vec::new, |text| load_draft(state, text))
+}
+
+fn palette_input(state: &mut AppState, input: PaletteInput) -> Vec<AppEffect> {
+    if let PaletteInput::DraftChanged { text, .. } = &input {
+        state.draft.clone_from(text);
+    }
+    let (mut effects, produced) = palette(state, input);
+    effects.extend(follow(state, produced));
+    effects
+}
+
+/// Enter while the palette is open. The composer has already taken the draft, so when the
+/// palette neither runs nor completes anything the draft goes back.
+fn palette_enter(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    let (mut effects, produced) = palette(state, PaletteInput::Enter);
+    if produced.is_empty() {
+        effects.push(AppEffect::LoadDraft(text));
+        return effects;
+    }
+    effects.extend(follow(state, produced));
+    effects
+}
+
+/// Apply one catalogue store input and turn its effects into executor effects.
+fn commands_input(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect> {
+    let mut effects = Vec::new();
+    for effect in state_update(&mut state.commands, input) {
+        match effect {
+            CommandsEffect::FetchCatalog {
+                request_id,
+                session_id,
+                after,
+            } => effects.push(AppEffect::FetchCatalog {
+                request_id,
+                session_id,
+                after,
+            }),
+            CommandsEffect::CatalogUpdated => {
+                let (refreshed, _) = palette(state, PaletteInput::CatalogChanged);
+                effects.extend(refreshed);
+            }
+        }
+    }
+    effects
+}
+
+/// The catalogue store follows the connection only once the session service exists.
+fn commands_follow(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect> {
+    if state.service.is_none() {
+        return Vec::new();
+    }
+    commands_input(state, input)
+}
+
+/// Apply a finished command's outcome: notices into the transcript, a directive's prompt
+/// through the normal submission path with a fresh id, a refused bare name dimmed.
+fn command_done(state: &mut AppState, typed: &str, outcome: CommandOutcome) -> Vec<AppEffect> {
+    let mut effects = Vec::new();
+    for action in outcome_actions(outcome, typed) {
+        match action {
+            AppAction::Event(Event::SubmitCommand { text, display, .. }) => {
+                let submission_id = state.next_submission_id();
+                effects.extend(reduce(
+                    state,
+                    Event::SubmitCommand {
+                        text,
+                        display,
+                        submission_id,
+                    },
+                ));
+            }
+            AppAction::Event(Event::Notice { kind, text }) if state.opened.is_some() => {
+                effects.extend(reduce(state, Event::Notice { kind, text }));
+            }
+            AppAction::Event(Event::Notice { text, .. }) => effects.push(notice_lines(&text)),
+            AppAction::Event(event) => effects.extend(reduce(state, event)),
+            AppAction::LoadDraft(text) => effects.extend(load_draft(state, text)),
+            AppAction::Refused { name } => {
+                effects.extend(commands_input(state, CommandsInput::Refused { name }));
+            }
+            AppAction::Key(action) => effects.extend(user_action(state, action)),
+            AppAction::CatalogUpdated => {
+                let (refreshed, _) = palette(state, PaletteInput::CatalogChanged);
+                effects.extend(refreshed);
+            }
+        }
+    }
+    effects
+}
+
+/// A slash line that names a Hermes command: run it through the session's gateway, or say why
+/// it cannot run. Nothing is sent without a session.
+fn run_command(state: &mut AppState, typed: String) -> Vec<AppEffect> {
+    let name = parse_slash_line(&typed)
+        .map(|line| line.name)
+        .unwrap_or_default();
+    if state.link_failed {
+        return vec![notice_lines(&format!(
+            "Talaria is not connected to Hermes, so /{name} did not run."
+        ))];
+    }
+    let Some(opened) = state.opened.as_ref().filter(|_| !state.session_gone) else {
+        return vec![notice_lines(&no_session_notice(&name))];
+    };
+    vec![AppEffect::RunCommand {
+        session_id: opened.session_id.clone(),
+        typed,
+    }]
 }
 
 fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
@@ -436,7 +702,20 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
             state.quitting = true;
             return vec![AppEffect::Quit];
         }
-        Slash::Notice(notice) => return vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
+        Slash::Notice(notice) => {
+            return match state.opened {
+                Some(_) => reduce(
+                    state,
+                    Event::Notice {
+                        kind: NoticeKind::Error,
+                        text: notice,
+                    },
+                ),
+                None => vec![notice_lines(&notice)],
+            };
+        }
+        Slash::Command(line) => return run_command(state, line),
+        Slash::Nothing => return Vec::new(),
         Slash::NotSlash => {}
     }
     if state.session_gone || state.link_failed {
@@ -490,6 +769,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 let produced = note_connection(&mut opened.state, generation);
                 effects.extend(route(state, produced, None));
             }
+            effects.extend(commands_follow(state, CommandsInput::Connected));
             effects
         }
         LinkEvent::State(LinkState::Reconnecting { .. }) => {
@@ -508,6 +788,12 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .unwrap_or_default()
         }
         LinkEvent::Inbound { item, .. } => match item {
+            // A skill root moved: refetch the catalogue. It is not a session event.
+            Inbound::Event(inbound)
+                if inbound.raw.get("type").and_then(Value::as_str) == Some("skills.changed") =>
+            {
+                commands_follow(state, CommandsInput::SkillsChanged)
+            }
             Inbound::Event(inbound) => {
                 let Some(opened) = state.opened.as_mut() else {
                     return Vec::new();
@@ -583,8 +869,13 @@ fn opened_session(
         session_id: opened.session_id.clone(),
         cursor: opened.cursor.clone(),
     });
+    let session_id = opened.session_id.clone();
     state.opened = Some(opened);
     state.link_state = LinkView::Connected;
+    effects.extend(commands_follow(
+        state,
+        CommandsInput::ForegroundSession(Some(session_id)),
+    ));
     if let Some(notice) = notice.filter(|notice| !notice.is_empty()) {
         effects.push(notice_lines(&notice));
     }
@@ -841,25 +1132,45 @@ pub fn hold_prompt(state: &mut AppState, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// What a submitted line is, before anything is sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Slash {
+    /// `/quit` or `/exit`: detach and leave.
     Quit,
+    /// A local command refused locally, with the notice to show.
     Notice(String),
+    /// A Hermes command, as typed. It goes to `slash.exec`.
+    Command(String),
+    /// A bare `/`: nothing runs.
+    Nothing,
+    /// Ordinary text for the model.
     NotSlash,
 }
 
-/// A line whose first character is `/` and whose second is a letter is a slash line.
+/// Sort a submitted line: local commands first (they win over Hermes commands of the same
+/// name and send nothing), then Hermes commands, then prose. The grammar is
+/// [`talaria_core::commands::parse_slash_line`].
 #[must_use]
 pub fn slash_line(text: &str) -> Slash {
-    let mut chars = text.chars();
-    let is_slash = chars.next() == Some('/') && chars.next().is_some_and(char::is_alphabetic);
-    if !is_slash {
-        Slash::NotSlash
-    } else if text.trim_end() == "/quit" {
-        Slash::Quit
-    } else {
-        Slash::Notice(SLASH_NOTICE.to_string())
+    let Some(line) = parse_slash_line(text) else {
+        return Slash::NotSlash;
+    };
+    if line.name.is_empty() {
+        return Slash::Nothing;
     }
+    if let Some(command) = LocalCommandTable::builtin().find(&line.name) {
+        if !command.takes_argument && !line.arg.is_empty() {
+            return Slash::Notice(format!("/{} does not take an argument.", line.name));
+        }
+        return match command.action {
+            LocalAction::Quit => Slash::Quit,
+            _ => Slash::Notice(format!(
+                "/{} is not available in this version of Talaria.",
+                line.name
+            )),
+        };
+    }
+    Slash::Command(text.to_string())
 }
 
 /// The immediate answer this client writes for a server request of kind `name`: the
@@ -1356,6 +1667,40 @@ fn apply<S: Screen>(
                     .send_later(async move { AppMessage::Recovered(service.recover(gap).await) });
             }
             AppEffect::Quit => state.quitting = true,
+            AppEffect::RunCommand { session_id, typed } => {
+                let Some(commands) = &state.command_service else {
+                    continue;
+                };
+                let mut runner = commands.runner(state.commands.catalog.clone());
+                executor.send_later(async move {
+                    let outcome = runner.dispatch(&session_id, &typed).await;
+                    AppMessage::CommandDone { typed, outcome }
+                });
+            }
+            AppEffect::FetchCatalog {
+                request_id,
+                session_id,
+                after,
+            } => {
+                if let Some(commands) = state.command_service.as_mut() {
+                    commands.start_fetch(request_id, session_id, after);
+                }
+            }
+            AppEffect::RequestCompletion {
+                request_id,
+                text,
+                after,
+                session_id,
+            } => {
+                if let Some(commands) = state.command_service.as_mut() {
+                    commands.request_completion(request_id, text, after, session_id);
+                }
+            }
+            AppEffect::CancelCompletion => {
+                if let Some(commands) = state.command_service.as_mut() {
+                    commands.cancel_completion();
+                }
+            }
         }
     }
     redraw
@@ -1376,6 +1721,18 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         ..
     } = connection;
     state.profile = profile_name;
+    let mut commands = CommandService::new(link.client());
+    if let Some(mut replies) = commands.take_replies() {
+        let sender = executor.sender.clone();
+        tokio::spawn(async move {
+            while let Some(reply) = replies.recv().await {
+                if sender.send(AppMessage::Commands(reply)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    state.command_service = Some(commands);
     state.link = Some(link);
     state.service = Some(service);
     let counter = Arc::clone(&state.counter);
@@ -1457,7 +1814,7 @@ pub async fn run<S: Screen>(
                 let Some(input) = input else { break Ending::InputClosed };
                 let actions = screen.input(input, &state.view(), Instant::now());
                 for action in actions {
-                    redraw |= apply(&mut state, AppMessage::User(action), screen, &executor);
+                    redraw |= apply(&mut state, AppMessage::ForegroundKey(action), screen, &executor);
                 }
             }
             Some(message) = messages.recv() => {
@@ -1503,7 +1860,12 @@ pub async fn run<S: Screen>(
                 let Ok(input) = inputs.try_recv() else { break };
                 let actions = screen.input(input, &state.view(), Instant::now());
                 for action in actions {
-                    redraw |= apply(&mut state, AppMessage::User(action), screen, &executor);
+                    redraw |= apply(
+                        &mut state,
+                        AppMessage::ForegroundKey(action),
+                        screen,
+                        &executor,
+                    );
                 }
             }
             if !woke_on_message || state.quitting || drained == MESSAGE_BATCH {

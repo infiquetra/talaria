@@ -46,6 +46,33 @@ pub enum Action {
     CompletionClose,
 }
 
+/// What a key does in an open completion list: the slash palette or the `@` list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionAction {
+    /// Select the next row.
+    Next,
+    /// Select the previous row.
+    Prev,
+    /// Accept the selected row.
+    Accept,
+    /// Close the list.
+    Close,
+}
+
+impl CompletionAction {
+    /// The completion meaning of a key-map action, for the four completion actions.
+    #[must_use]
+    pub const fn from_action(action: Action) -> Option<Self> {
+        match action {
+            Action::CompletionNext => Some(Self::Next),
+            Action::CompletionPrev => Some(Self::Prev),
+            Action::CompletionAccept => Some(Self::Accept),
+            Action::CompletionClose => Some(Self::Close),
+            _ => None,
+        }
+    }
+}
+
 impl Action {
     /// Every action, in the order used for conflicts and notices.
     pub const ALL: [Self; 24] = [
@@ -602,6 +629,18 @@ impl KeyMap {
         }
         lost.sort_by_key(|(index, _)| *index);
         lost.into_iter().map(|(_, notice)| notice).collect()
+    }
+
+    /// The completion-list action bound to this key, if any. Only the four actions of
+    /// [`KeyContext::Completion`] are looked at, so a chord shared with the composer still
+    /// reaches the list while it is open.
+    #[must_use]
+    pub fn completion(&self, key: &Key) -> Option<CompletionAction> {
+        Action::ALL
+            .into_iter()
+            .filter(|action| action.context() == KeyContext::Completion)
+            .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
+            .and_then(CompletionAction::from_action)
     }
 
     /// The action bound to this key, if any.

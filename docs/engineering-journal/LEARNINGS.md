@@ -28,6 +28,30 @@
 
 **Generalizable rule.** An overlay that must disappear completely belongs in the live region, not in committed history.
 
+### A refusal hint marks a slash name as known, even when the catalogue omits it
+
+**Evidence.** `crates/talaria-core/src/commands/outcome.rs` (`unsupported`); `crates/talaria-app/src/commands.rs` (`CommandRunner::describe`); `crates/talaria-app/tests/commands_replay.rs`, whose mock catalogue has no `/worktree` but expects the "not available" wording for it. Issue #223.
+
+**Mechanism.** Hermes attaches `data.detail` to an `unsupported_command` refusal only from its hint table for registry commands; a name it does not know gets no hint. So a name counts as known when the held catalogue lists it or the refusal carries a hint. When no catalogue has arrived yet, the runner fetches one before wording an `unsupported_command` refusal; only when that fetch fails does the "no catalogue" wording apply.
+
+**Generalizable rule.** When the wording of an answer depends on state that the answer itself proves, read the proof from the answer before falling back to cached state.
+
+### The keymap's resolve is not context-aware
+
+**Evidence.** `crates/talaria-tui/src/keys.rs` (`KeyMap::resolve`, `KeyMap::completion`); `crates/talaria-cli/src/run.rs` (`terminal_input`). Issue #223.
+
+**Mechanism.** `KeyMap::resolve` returns the first action in `Action::ALL` order whose chord matches, so a composer action shadows a completion action bound to the same chord (Up, Down, Esc). While a completion list is open the screen asks `KeyMap::completion` first, which looks only at the completion context; otherwise the composer gets the key.
+
+**Generalizable rule.** When one key means different things by context, look it up by context, never by a global order.
+
+### Enter is decided by the palette after the composer has already taken the draft
+
+**Evidence.** `crates/talaria-app/src/app.rs` (`palette_enter`, `follow`); `crates/talaria-cli/src/run.rs` (`report_draft`). Issue #223.
+
+**Mechanism.** The composer clears its draft and records history on Enter before the loop sees the key. The loop therefore puts the draft back when the palette neither runs nor completes anything, loads `/name ` when Enter completed a command that takes an argument, and leaves the composer empty when a line runs. The screen does not report the draft after a submit: that empty draft would arrive after the loop's load and close the palette the loop had just reopened.
+
+**Generalizable rule.** When two owners react to one key, one decides and tells the other; never let both report the result.
+
 ### An empty acceptance record is a filled record with no results, not a skeleton
 
 **Evidence.** `docs/acceptance/v0.7.0/phase-1.md` and `docs/acceptance/v0.7.0/check-record.sh`

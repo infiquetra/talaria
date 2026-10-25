@@ -14,6 +14,26 @@
 
 **Revisit when** the operator's recording replaces `fixtures/frames/slash-palette.jsonl` and the header no longer contains `synthetic`.
 
+### A slash directive's prompt has one submit path in the application (issue #223)
+
+**Decision.** `CommandRunner::dispatch` runs `slash.exec`, its one `command.dispatch` fallback and one alias, and never submits a prompt. The application loop uses it and turns a `send` or `skill` directive into `Event::SubmitCommand`, so the session reducer emits the single `prompt.submit` through the ordered prompt worker. `CommandService::execute` is the entry point for callers without that pipeline (the mock and live tests): it dispatches and then submits the directive's prompt itself.
+
+**Rationale.** The tests drive `CommandService::execute` alone and expect `prompt.submit` on the wire. The loop must keep prompt order, the held-prompt queue and the existing failure notices, which only the reducer path gives. Calling `execute` from the loop would send the prompt twice.
+
+**Rejected alternatives.** The loop calls `execute` and drops the reducer's `SendPrompt` (prompts could overtake each other, and a refused prompt would lose its notice). `execute` never submits (the mock tests expect the submit).
+
+**Revisit when** the tests drive the application loop instead of the service.
+
+### The palette's local filter ranks by match, then local commands, then name (issue #223)
+
+**Decision.** For `/query` the local filter sorts by exact name, then prefix, then substring; within one of those, local commands come first, then names in alphabetical order. The `complete.slash` reply still replaces the Hermes rows in Hermes's order.
+
+**Rationale.** The decision-table test needs `/pla` to choose `/plan` over `/plan-fast` and, for `/ers`, one Down to land on `/version` after `/personality`; both hold with name order and neither holds with the catalogue's browse order, which the unit specification named.
+
+**Rejected alternatives.** Browse order within a match class (fails both cases). Shorter names first (fails the `/ers` case).
+
+**Revisit when** the unit specification and the tests are reconciled on this order.
+
 ## 2026-10-23
 
 ### Prompt-card calls run in spawned tasks behind one async lock

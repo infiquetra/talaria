@@ -88,9 +88,98 @@ pub enum CommandsEffect {
     CatalogUpdated,
 }
 
-/// Apply one input. Issue #223. The body is a stub.
+impl CommandsState {
+    fn fetch(&mut self, after: Duration) -> CommandsEffect {
+        let request_id = self.next_id;
+        self.next_id += 1;
+        self.in_flight = Some(request_id);
+        CommandsEffect::FetchCatalog {
+            request_id,
+            session_id: self.bound_session.clone(),
+            after,
+        }
+    }
+
+    fn loading(&mut self) {
+        if self.status != CatalogStatus::Ready {
+            self.status = CatalogStatus::Loading;
+        }
+    }
+}
+
+/// How long the one automatic retry waits after a failed fetch.
+pub const RETRY_AFTER: Duration = Duration::from_secs(2);
+
+/// Apply one input. Issue #223.
+///
+/// A new connection or a new foreground session fetches at once and abandons a fetch in
+/// flight, whose reply then has an older id and is ignored. `skills.changed` during a fetch
+/// asks for exactly one more fetch after it. A failed fetch keeps the old catalogue and is
+/// retried once, two seconds later.
 #[must_use]
 pub fn update(state: &mut CommandsState, input: CommandsInput) -> Vec<CommandsEffect> {
-    let _ = (state, input);
-    todo!()
+    match input {
+        CommandsInput::Connected => {
+            state.refused.clear();
+            state.retried = false;
+            state.dirty = false;
+            state.loading();
+            vec![state.fetch(Duration::ZERO)]
+        }
+        CommandsInput::ForegroundSession(session) => {
+            if session == state.bound_session {
+                return Vec::new();
+            }
+            state.bound_session = session;
+            state.dirty = false;
+            state.loading();
+            vec![state.fetch(Duration::ZERO)]
+        }
+        CommandsInput::SkillsChanged => {
+            if state.in_flight.is_some() {
+                state.dirty = true;
+                Vec::new()
+            } else {
+                vec![state.fetch(Duration::ZERO)]
+            }
+        }
+        CommandsInput::CatalogArrived { request_id, result } => {
+            if state.in_flight != Some(request_id) {
+                return Vec::new();
+            }
+            state.in_flight = None;
+            state.catalog = Some(CommandCatalog::from_result(&result));
+            state.status = CatalogStatus::Ready;
+            state.retried = false;
+            let mut effects = vec![CommandsEffect::CatalogUpdated];
+            if state.dirty {
+                state.dirty = false;
+                effects.push(state.fetch(Duration::ZERO));
+            }
+            effects
+        }
+        CommandsInput::CatalogFailed { request_id, reason } => {
+            if state.in_flight != Some(request_id) {
+                return Vec::new();
+            }
+            state.in_flight = None;
+            state.status = CatalogStatus::Failed(reason);
+            let mut effects = vec![CommandsEffect::CatalogUpdated];
+            if state.dirty {
+                state.dirty = false;
+                effects.push(state.fetch(Duration::ZERO));
+            } else if !state.retried {
+                state.retried = true;
+                effects.push(state.fetch(RETRY_AFTER));
+            }
+            effects
+        }
+        CommandsInput::Refused { name } => {
+            let bare = name.trim().trim_start_matches('/').to_lowercase();
+            if !bare.is_empty() {
+                state.refused.insert(bare);
+            }
+            vec![CommandsEffect::CatalogUpdated]
+        }
+    }
 }
