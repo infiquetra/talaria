@@ -92,6 +92,7 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
             Vec::new()
         }
         Event::Interrupt => {
+            state.drafting = None;
             if let (TurnState::Running, Some(execution_generation)) =
                 (&state.turn, state.execution_generation)
             {
@@ -148,6 +149,25 @@ fn session(
     generation: Option<i64>,
     unknown: bool,
 ) {
+    // The drafted tool name ends when the call starts (even while latched, so a stale name
+    // never shows) or the turn ends. It is set only while no interrupt is latched.
+    if matches!(
+        name,
+        "tool.start" | "message.start" | "message.complete" | "error"
+    ) {
+        state.drafting = None;
+    }
+    if name == "tool.generating" {
+        if !state.interrupted {
+            state.drafting = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned);
+        }
+        return;
+    }
     if state.interrupted
         && matches!(
             name,

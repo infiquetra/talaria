@@ -24,6 +24,7 @@ tokio.workspace = true
 crossterm.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 proptest.workspace = true
+ratatui.workspace = true
 serde_json.workspace = true
 talaria-tui.workspace = true
 tempfile.workspace = true

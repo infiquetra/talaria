@@ -12,6 +12,7 @@ pub mod reducer;
 pub mod snapshot;
 pub mod state;
 pub mod text;
+pub mod tool_view;
 pub mod usage;
 
 pub use cell::{
@@ -23,3 +24,6 @@ pub use event::Event;
 pub use ids::{CellId, PromptKey, SessionId};
 pub use reducer::update;
 pub use state::{ReplayCursor, SessionState, StatusNote, TodoState, TurnOutcome, TurnState, Usage};
+pub use tool_view::{
+    OutcomeView, OutputView, ToolView, format_duration, format_progress, tool_view,
+};

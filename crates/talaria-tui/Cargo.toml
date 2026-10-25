@@ -42,5 +42,9 @@ talaria-app.workspace = true
 name = "markdown_stream"
 harness = false
 
+[[bench]]
+name = "tool_cells"
+harness = false
+
 [lints]
 workspace = true
