@@ -51,6 +51,14 @@ pub struct Cli {
     pub record: Option<PathBuf>,
     #[arg(long)]
     pub no_ensure: bool,
+    #[arg(short = 'p', long = "print")]
+    pub print: bool,
+    #[arg(value_name = "PROMPT")]
+    pub prompt: Option<String>,
+    #[arg(long = "output-format")]
+    pub output_format: Option<String>,
+    #[arg(long = "timeout")]
+    pub timeout: Option<String>,
     #[arg(long = "bench-replay", value_name = "FIXTURE", value_parser = reject_bench)]
     pub bench_replay: Option<String>,
     #[arg(long = "bench-speed", value_name = "SPEED", value_parser = reject_bench)]
@@ -175,4 +183,17 @@ fn cut_quoted(text: &str) -> String {
         }
     }
     out
+}
+
+/// Why the print options are unusable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrintUsageError {
+    pub what: String,
+    pub next_step: String,
+}
+
+/// Check the print options by hand after clap, with or without `-p`.
+pub fn validate_print_options(cli: &Cli) -> Result<(), PrintUsageError> {
+    let _ = cli;
+    todo!("#235")
 }

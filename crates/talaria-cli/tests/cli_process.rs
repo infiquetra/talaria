@@ -73,7 +73,7 @@ fn not_a_terminal_exits_2_without_escape_bytes() {
     assert_eq!(
         stderr,
         "talaria: a terminal is required on standard input and standard output.\n\
-         Next step: Run it in a terminal pane. Scripted use (talaria -p) arrives in a later release.\n"
+         Next step: Run it in a terminal pane, or use talaria -p \"<prompt>\" in scripts.\n"
     );
     assert_eq!(
         stderr
