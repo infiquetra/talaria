@@ -7,6 +7,7 @@ use super::{
     Cell, CellId, NoticeCell, NoticeKind, PromptCell, PromptKey, PromptState, SessionId,
     Settlement, ToolStatus, UserCell,
 };
+use crate::automation::HermesCommandCell;
 use crate::side::SideTasks;
 
 /// Whether a turn is idle, running, or finished.
@@ -337,6 +338,11 @@ impl SessionState {
             id: self.next_id(),
             text,
         }));
+    }
+
+    /// Append one of Hermes's own command replies. The cell is final when it exists.
+    pub(crate) fn hermes_command(&mut self, cell: HermesCommandCell) {
+        self.cells.push(Cell::HermesCommand(cell));
     }
 
     pub(crate) fn notice(

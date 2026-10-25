@@ -40,9 +40,7 @@ impl Cell {
             Self::Tool(cell) => cell.status != ToolStatus::Running,
             Self::Prompt(cell) => cell.sealed,
             Self::Shell(_) | Self::Side(_) => true,
-            Self::HermesCommand(_) => {
-                todo!("#236")
-            }
+            Self::HermesCommand(_) => true,
         }
     }
 }

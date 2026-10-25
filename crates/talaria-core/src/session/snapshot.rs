@@ -59,6 +59,8 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
                             None,
                         );
                     } else {
+                        let text = crate::automation::fold_user_text(&text)
+                            .map_or(text, |folded| folded.display);
                         state.user(text);
                     }
                 }

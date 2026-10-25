@@ -1,8 +1,16 @@
-//! The automation reducer: standing state in, effects out. Stubs.
+//! The automation reducer: standing state in, effects out.
 //!
 //! Behavior contract: issue 236.
 
 use std::collections::BTreeSet;
+
+use hermes_contract::schemas::{
+    GoalSnapshot, GoalSnapshotWaitBarrier, HeartbeatSnapshot, LoopSnapshot, SessionControlSnapshot,
+    Type as WaitTargetType,
+};
+
+use super::present::PLAN_MODE_NOTE;
+use super::rows::rows;
 
 /// What reached the automation state.
 #[derive(Clone, Debug)]
@@ -270,7 +278,6 @@ pub struct HeartbeatView {
 
 /// The automation state of one foreground session.
 #[derive(Clone, Debug, Default)]
-#[allow(dead_code)]
 pub struct AutomationState {
     session_id: Option<String>,
     control: ControlStatus,
@@ -283,7 +290,6 @@ pub struct AutomationState {
 }
 
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
 struct PendingMode {
     token: u64,
     after_command: bool,
@@ -299,21 +305,343 @@ impl<T> Default for ModeValue<T> {
 impl AutomationState {
     /// Both mode values, for the rows and for sibling readers.
     pub fn modes(&self) -> (ModeValue<bool>, ModeValue<FastMode>) {
-        let _ = self;
-        todo!("#236")
+        (self.yolo, self.fast)
     }
+
+    /// The shown view, when one is ready.
+    pub(crate) fn view(&self) -> Option<&ControlView> {
+        match &self.control {
+            ControlStatus::Ready(view) => Some(view),
+            _ => None,
+        }
+    }
+
+    fn new_token(&mut self) -> u64 {
+        self.next_token += 1;
+        self.next_token
+    }
+
+    /// What the rows read: whether a view is shown, its revision, and both modes.
+    fn drawn(&self) -> Drawn {
+        (
+            self.view().map(|view| view.revision.clone()),
+            self.yolo,
+            self.fast,
+        )
+    }
+
+    /// True when a goal, loop or heartbeat row shows. Row presence never depends on the time.
+    fn control_rows_visible(&self) -> bool {
+        self.view().is_some_and(ControlView::has_rows)
+    }
+
+    /// Show `view`, keeping the held one when its revision is equal.
+    fn show(&mut self, view: ControlView) {
+        let same = self
+            .view()
+            .is_some_and(|held| held.revision == view.revision);
+        if !same {
+            self.control = ControlStatus::Ready(view);
+        }
+    }
+
+    fn pending(&self, key: ModeKey) -> Option<PendingMode> {
+        self.pending_mode[mode_index(key)]
+    }
+}
+
+type Drawn = (Option<String>, ModeValue<bool>, ModeValue<FastMode>);
+
+fn mode_index(key: ModeKey) -> usize {
+    match key {
+        ModeKey::Yolo => 0,
+        ModeKey::Fast => 1,
+    }
+}
+
+fn shown(status: &str) -> bool {
+    status == "active" || status == "paused"
 }
 
 impl ControlView {
     /// Decode through the generated snapshot type, then check the epoch times.
     pub fn decode(value: &serde_json::Value) -> Result<ControlView, DecodeError> {
-        let _ = value;
-        todo!("#236")
+        let snapshot: SessionControlSnapshot = serde_json::from_value(value.clone())
+            .map_err(|error| DecodeError(error.to_string()))?;
+        Self::from_snapshot(snapshot)
     }
+
+    /// Convert a snapshot the client already decoded, checking the epoch times.
+    pub fn from_snapshot(snapshot: SessionControlSnapshot) -> Result<ControlView, DecodeError> {
+        Ok(ControlView {
+            goal: snapshot.goal.map(goal_view).transpose()?,
+            loop_: snapshot.loop_.map(loop_view).transpose()?,
+            heartbeat: snapshot.heartbeat.map(heartbeat_view).transpose()?,
+            revision: snapshot.revision,
+        })
+    }
+
+    fn has_rows(&self) -> bool {
+        self.goal.as_ref().is_some_and(|goal| shown(&goal.status))
+            || self
+                .loop_
+                .as_ref()
+                .is_some_and(|loop_| shown(&loop_.status))
+            || self
+                .heartbeat
+                .as_ref()
+                .is_some_and(|heartbeat| shown(&heartbeat.status))
+    }
+}
+
+/// Epoch seconds as epoch milliseconds; a negative time is a decode error.
+fn epoch_ms(seconds: f64, field: &str) -> Result<u64, DecodeError> {
+    if seconds < 0.0 {
+        return Err(DecodeError(format!("{field} is negative")));
+    }
+    // A float-to-integer `as` cast saturates, so a huge time clamps to u64::MAX.
+    Ok((seconds * 1000.0).round() as u64)
+}
+
+fn goal_view(goal: GoalSnapshot) -> Result<GoalView, DecodeError> {
+    if let Some(created_at) = goal.created_at {
+        epoch_ms(created_at, "goal.created_at")?;
+    }
+    let wait = match goal.wait_barrier {
+        None => None,
+        Some(GoalSnapshotWaitBarrier::Until(until)) => Some(WaitView::Until {
+            until_ms: epoch_ms(until.until_at, "goal.wait_barrier.until_at")?,
+            reason: until.reason,
+        }),
+        Some(GoalSnapshotWaitBarrier::Target(target)) => {
+            let (text, reason) = (target.target.to_string(), target.reason);
+            Some(match target.type_ {
+                WaitTargetType::Session => WaitView::Session {
+                    target: text,
+                    reason,
+                },
+                WaitTargetType::Pid => WaitView::Pid {
+                    target: text,
+                    reason,
+                },
+            })
+        }
+    };
+    Ok(GoalView {
+        title: goal.title,
+        status: goal.status,
+        turns_used: goal.turns_used,
+        max_turns: goal.max_turns,
+        subgoals: goal.subgoals.len(),
+        gates: goal.gates.len(),
+        paused_reason: goal.paused_reason,
+        wait,
+    })
+}
+
+fn loop_view(loop_: LoopSnapshot) -> Result<LoopView, DecodeError> {
+    epoch_ms(loop_.last_fired_at, "loop.last_fired_at")?;
+    Ok(LoopView {
+        next_due_ms: epoch_ms(loop_.next_due_at, "loop.next_due_at")?,
+        created_ms: epoch_ms(loop_.created_at, "loop.created_at")?,
+        self_paced: loop_.mode == "self_paced",
+        prompt: loop_.prompt,
+        status: loop_.status,
+        interval_seconds: loop_.interval_seconds,
+        times: loop_.times,
+        ticks_fired: loop_.ticks_fired,
+        awaiting_response: loop_.awaiting_response,
+        deferred_by_goal: loop_.deferred_by_goal,
+        paused_reason: loop_.paused_reason,
+    })
+}
+
+fn heartbeat_view(heartbeat: HeartbeatSnapshot) -> Result<HeartbeatView, DecodeError> {
+    let created = epoch_ms(heartbeat.created_at, "heartbeat.created_at")?;
+    let fired = epoch_ms(heartbeat.last_fired_at, "heartbeat.last_fired_at")?;
+    let from = if fired > 0 { fired } else { created };
+    let interval_ms = u64::try_from(heartbeat.interval_seconds)
+        .unwrap_or(0)
+        .saturating_mul(1000);
+    Ok(HeartbeatView {
+        prompt: heartbeat.prompt,
+        status: heartbeat.status,
+        interval_seconds: heartbeat.interval_seconds,
+        fire_count: heartbeat.fire_count,
+        next_due_ms: from.saturating_add(interval_ms),
+    })
 }
 
 /// Fold one event into the state, answering the app's effects.
 pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<AutomationEffect> {
-    let _ = (state, event);
-    todo!("#236")
+    let before = state.drawn();
+    let mut effects = Vec::new();
+    match event {
+        AutomationEvent::Attached { session_id } => {
+            state.session_id = Some(session_id.clone());
+            state.control = ControlStatus::Reading;
+            state.yolo = ModeValue::NotRead;
+            state.fast = ModeValue::NotRead;
+            let control = state.new_token();
+            state.pending_control = Some(control);
+            effects.push(AutomationEffect::ReadControl {
+                session_id: session_id.clone(),
+                token: control,
+            });
+            for key in [ModeKey::Yolo, ModeKey::Fast] {
+                let token = state.new_token();
+                state.pending_mode[mode_index(key)] = Some(PendingMode {
+                    token,
+                    after_command: false,
+                });
+                effects.push(AutomationEffect::ReadMode {
+                    session_id: session_id.clone(),
+                    key,
+                    token,
+                });
+            }
+            effects.push(AutomationEffect::Redraw);
+            return effects;
+        }
+        AutomationEvent::Detached => {
+            let visible = !rows(state, 0).is_empty();
+            state.session_id = None;
+            state.control = ControlStatus::NotRead;
+            state.pending_control = None;
+            state.yolo = ModeValue::NotRead;
+            state.fast = ModeValue::NotRead;
+            state.pending_mode = [None, None];
+            if visible {
+                effects.push(AutomationEffect::Redraw);
+            }
+            return effects;
+        }
+        AutomationEvent::ControlRead { token, result } => {
+            if state.pending_control != Some(token) {
+                return effects;
+            }
+            state.pending_control = None;
+            let visible = state.control_rows_visible();
+            match result {
+                Ok(view) => state.show(view),
+                Err(ReadFailure::MethodMissing) => {
+                    state.control = ControlStatus::Unavailable("unknown_method".to_owned());
+                }
+                Err(ReadFailure::Refused(reason)) => {
+                    state.control = ControlStatus::Unavailable(reason);
+                }
+                Err(ReadFailure::TimedOut | ReadFailure::Lost | ReadFailure::BadResult) => {
+                    state.control = ControlStatus::NotRead;
+                }
+            }
+            if state.view().is_none() {
+                if visible {
+                    effects.push(AutomationEffect::Redraw);
+                }
+                return effects;
+            }
+        }
+        AutomationEvent::ControlUpdated { session_id, raw } => {
+            if state.session_id.as_deref() != Some(session_id.as_str()) {
+                return effects;
+            }
+            let Ok(view) = ControlView::decode(&raw) else {
+                return effects;
+            };
+            state.pending_control = None;
+            state.show(view);
+        }
+        AutomationEvent::StatusNote {
+            session_id,
+            kind,
+            text,
+        } => {
+            let foreground = state.session_id.as_deref() == Some(session_id.as_str());
+            let automation = matches!(kind.as_str(), "goal" | "loop" | "heartbeat");
+            if foreground && automation && !text.trim().is_empty() {
+                effects.push(AutomationEffect::Notice { text });
+            }
+            return effects;
+        }
+        AutomationEvent::CommandFinished {
+            session_id,
+            canonical,
+            result,
+        } => {
+            if state.session_id.as_deref() != Some(session_id.as_str()) {
+                return effects;
+            }
+            let key = match canonical.as_str() {
+                "yolo" => Some(ModeKey::Yolo),
+                "fast" => Some(ModeKey::Fast),
+                _ => None,
+            };
+            if let Some(key) = key {
+                if result != CommandResult::NotRun {
+                    let token = state.new_token();
+                    state.pending_mode[mode_index(key)] = Some(PendingMode {
+                        token,
+                        after_command: true,
+                    });
+                    effects.push(AutomationEffect::ReadMode {
+                        session_id,
+                        key,
+                        token,
+                    });
+                }
+            } else if canonical == "plan"
+                && result == CommandResult::Submit
+                && state.plan_noted.insert(session_id)
+            {
+                effects.push(AutomationEffect::Notice {
+                    text: PLAN_MODE_NOTE.to_owned(),
+                });
+            }
+            return effects;
+        }
+        AutomationEvent::ModeRead {
+            session_id,
+            key,
+            token,
+            result,
+        } => {
+            if state.session_id.as_deref() != Some(session_id.as_str()) {
+                return effects;
+            }
+            let Some(pending) = state.pending(key).filter(|pending| pending.token == token) else {
+                return effects;
+            };
+            state.pending_mode[mode_index(key)] = None;
+            let quiet = !pending.after_command
+                && matches!(
+                    result,
+                    Err(ReadFailure::MethodMissing | ReadFailure::Refused(_))
+                );
+            if quiet {
+                return effects;
+            }
+            let value = result.ok().flatten();
+            match key {
+                ModeKey::Yolo => {
+                    state.yolo = match value.as_deref() {
+                        Some("1") => ModeValue::Known(true),
+                        Some("0") => ModeValue::Known(false),
+                        _ => ModeValue::Unknown,
+                    };
+                }
+                ModeKey::Fast => {
+                    state.fast = match value.as_deref() {
+                        Some("normal") => ModeValue::Known(FastMode::Normal),
+                        Some("fast") => ModeValue::Known(FastMode::Fast),
+                        Some("ultrafast") => ModeValue::Known(FastMode::Ultrafast),
+                        _ => ModeValue::Unknown,
+                    };
+                }
+            }
+        }
+    }
+    if state.drawn() != before {
+        effects.push(AutomationEffect::Redraw);
+    }
+    effects
 }

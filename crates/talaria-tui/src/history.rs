@@ -33,8 +33,13 @@ impl CellLines for PlainCellLines {
             Cell::Side(side) => {
                 crate::side::side_cell_lines(side, width, &crate::side::SideTheme::default())
             }
-            Cell::HermesCommand(_) => {
-                todo!("#236")
+            Cell::HermesCommand(command) => {
+                let typed = Style::default().add_modifier(Modifier::DIM | Modifier::BOLD);
+                let mut lines = vec![Line::styled(command.typed.clone(), typed)];
+                for piece in split_lines(&command.body) {
+                    lines.push(Line::styled(format!("  {piece}"), Style::default()));
+                }
+                lines
             }
         }
     }

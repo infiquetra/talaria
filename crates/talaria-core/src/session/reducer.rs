@@ -144,8 +144,9 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
         | Event::QueueCallUnknown { .. }
         | Event::SteerResult(_)
         | Event::QueueReconcileDue { .. } => crate::queue::flow::on_event(state, &event),
-        Event::HermesCommand { .. } => {
-            todo!("#236")
+        Event::HermesCommand { cell } => {
+            state.hermes_command(cell.clone());
+            Vec::new()
         }
         _ => super::prompts::apply(state, &event),
     };

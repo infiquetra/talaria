@@ -20,7 +20,9 @@ use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
 use talaria_core::attachments::{Chip, CollapseRule, Expanded, reference_notice};
-use talaria_core::automation::{AutomationEffect, AutomationEvent, AutomationState};
+use talaria_core::automation::{
+    AutomationEffect, AutomationEvent, AutomationState, CommandResult, canonical_name,
+};
 use talaria_core::checklist::{Checklist, ChecklistCommit, ChecklistTracker};
 use talaria_core::commands::local;
 use talaria_core::commands::{
@@ -65,6 +67,7 @@ use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
 use crate::attachments::{AttachmentEffect, AttachmentEvent, AttachmentsState};
+use crate::automation::{AutomationService, AutomationTicker, automation_actions, wall_clock_ms};
 use crate::commands::{
     AppAction, CommandReply, CommandService, no_session_notice, outcome_actions,
 };
@@ -238,8 +241,11 @@ pub struct View<'a> {
     pub context_hidden: bool,
     /// The compacting line, while a compaction runs.
     pub compacting_line: Option<CompactingLine>,
-    /// The milliseconds since the loop started, for the compacting line.
-    /// App-clock milliseconds of the latest message, for the side-tasks section.
+    /// The standing automation rows above the composer. Issue #236.
+    pub automation: &'a AutomationState,
+    /// Epoch milliseconds used by standing automation countdowns.
+    pub automation_now_ms: u64,
+    /// Elapsed application milliseconds for side tasks and compaction.
     pub now_ms: u64,
     /// The transcript screen is open, so every key belongs to it.
     pub pager_open: bool,
@@ -485,6 +491,8 @@ pub struct AppState {
     command_service: Option<CommandService>,
     /// Standing automation state.
     pub automation: AutomationState,
+    automation_ticker: AutomationTicker,
+    automation_deadline: Option<Instant>,
     /// Mentions, paste labels and staged images for the open draft.
     pub attachments: AttachmentsState,
     caret: usize,
@@ -591,6 +599,8 @@ impl AppState {
             held_attachments: VecDeque::new(),
             failed_attachments: VecDeque::new(),
             automation: AutomationState::default(),
+            automation_ticker: AutomationTicker::default(),
+            automation_deadline: None,
         }
     }
 
@@ -635,7 +645,21 @@ impl AppState {
                 .as_ref()
                 .and_then(PermissionsState::segment),
             folder: opened.map(|_| &self.folder),
+            automation: &self.automation,
+            automation_now_ms: wall_clock_ms(),
         }
+    }
+
+    /// Arm the next countdown change, and say whether the section's text changed.
+    ///
+    /// The ticker compares the rows' text with the last call, so the app wakes only when a
+    /// countdown changes what it shows.
+    fn automation_wake(&mut self, now: Instant) -> bool {
+        let wake = self
+            .automation_ticker
+            .on_wake(&self.automation, wall_clock_ms());
+        self.automation_deadline = wake.next_in.map(|after| now + after);
+        wake.redraw
     }
 
     fn next_submission_id(&mut self) -> String {
@@ -1382,8 +1406,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::Permissions(input) => permissions(state, input),
         AppMessage::Cd(input) => cd_input(state, input),
-        // The automation wiring lands with issue #236; until then replies change nothing.
-        AppMessage::Automation(_) => Vec::new(),
+        AppMessage::Automation(event) => automation_event(state, event),
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -1716,11 +1739,12 @@ fn attachment_event(state: &mut AppState, event: AttachmentEvent) -> Vec<AppEffe
 /// Feed the reducer and turn its effects into executor effects.
 fn reduce(state: &mut AppState, event: Event) -> Vec<AppEffect> {
     let observed = observe_context(state, &event);
+    let mut effects = automation_from_session(state, &event);
     let Some(opened) = state.opened.as_mut() else {
-        return Vec::new();
+        return effects;
     };
     let produced = talaria_core::session::update(&mut opened.state, event);
-    let mut effects = route(state, produced, None);
+    effects.extend(route(state, produced, None));
     effects.extend(observed);
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
@@ -2174,6 +2198,9 @@ fn commands_follow(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect>
 
 /// Apply a finished command's outcome: notices into the transcript, a directive's prompt
 /// through the normal submission path with a fresh id, a refused bare name dimmed.
+///
+/// A presented command's reply becomes a cell instead of a notice, and the standing state
+/// hears that the command finished.
 fn command_done(state: &mut AppState, typed: &str, outcome: CommandOutcome) -> Vec<AppEffect> {
     // Hermes's own `/yolo` and `/approvals` push no event, so both settings are read again (#237).
     let name = parse_slash_line(typed)
@@ -2184,7 +2211,14 @@ fn command_done(state: &mut AppState, typed: &str, outcome: CommandOutcome) -> V
         .as_ref()
         .and_then(|opened| hermes_command_finished(&opened.session_id, &name, &outcome));
     let mut effects = Vec::new();
-    for action in outcome_actions(outcome, typed) {
+    let catalog = state.commands.catalog.clone();
+    let presented = automation_actions(typed, &outcome, catalog.as_ref());
+    let actions = if presented.is_empty() {
+        outcome_actions(outcome.clone(), typed)
+    } else {
+        presented
+    };
+    for action in actions {
         match action {
             AppAction::Event(Event::SubmitCommand { text, display, .. }) => {
                 let submission_id = state.next_submission_id();
@@ -2216,7 +2250,117 @@ fn command_done(state: &mut AppState, typed: &str, outcome: CommandOutcome) -> V
     if let Some(input) = reread {
         effects.extend(permissions(state, input));
     }
+    // The standing state hears about every presented command, whatever it did.
+    if let Some(canonical) = canonical_name(typed, catalog.as_ref())
+        && let Some(session_id) = state
+            .opened
+            .as_ref()
+            .map(|opened| opened.session_id.clone())
+    {
+        effects.extend(automation_event(
+            state,
+            AutomationEvent::CommandFinished {
+                session_id,
+                canonical,
+                result: command_result(&outcome),
+            },
+        ));
+    }
     effects
+}
+
+// ---------------------------------------------------------------------------------------------
+// The standing automation state: the goal, the loop, the heartbeat and the session modes
+// ---------------------------------------------------------------------------------------------
+
+/// Fold one automation event into the standing state, turning its effects into app effects.
+fn automation_event(state: &mut AppState, event: AutomationEvent) -> Vec<AppEffect> {
+    let mut effects = Vec::new();
+    for effect in talaria_core::automation::update(&mut state.automation, event) {
+        match effect {
+            AutomationEffect::ReadControl { .. } | AutomationEffect::ReadMode { .. } => {
+                effects.push(AppEffect::Automation(effect));
+            }
+            AutomationEffect::Notice { text } => effects.extend(notice_effect(state, text)),
+            AutomationEffect::Redraw => {}
+        }
+    }
+    // The rows may have changed, so the next countdown is armed now.
+    state.automation_wake(Instant::now());
+    effects
+}
+
+/// One notice in the transcript, or as plain lines when no session is open.
+fn notice_effect(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    if state.opened.is_some() {
+        reduce(
+            state,
+            Event::Notice {
+                kind: NoticeKind::System,
+                text,
+            },
+        )
+    } else {
+        vec![notice_lines(&text)]
+    }
+}
+
+/// Route a session event to the standing state when it is one of its events.
+///
+/// The control update and the status note are ordinary session events, so they arrive on the
+/// same path as every other frame. The state drops what belongs to another session.
+fn automation_from_session(state: &mut AppState, event: &Event) -> Vec<AppEffect> {
+    let Event::Session {
+        session_id,
+        frame,
+        raw,
+    } = event
+    else {
+        return Vec::new();
+    };
+    automation_from_frame(state, session_id.as_str(), frame, raw)
+}
+
+/// Route one session frame to the standing state.
+fn automation_from_frame(
+    state: &mut AppState,
+    session_id: &str,
+    frame: &EventFrame,
+    raw: &Value,
+) -> Vec<AppEffect> {
+    let payload = &raw["payload"];
+    match frame.type_name().unwrap_or("") {
+        "session.control.update" => automation_event(
+            state,
+            AutomationEvent::ControlUpdated {
+                session_id: session_id.to_owned(),
+                raw: payload["control"].clone(),
+            },
+        ),
+        "status.update" => automation_event(
+            state,
+            AutomationEvent::StatusNote {
+                session_id: session_id.to_owned(),
+                kind: payload["kind"].as_str().unwrap_or_default().to_owned(),
+                text: payload["text"].as_str().unwrap_or_default().to_owned(),
+            },
+        ),
+        _ => Vec::new(),
+    }
+}
+
+/// What a finished command did, as the standing state reads it.
+fn command_result(outcome: &CommandOutcome) -> CommandResult {
+    match outcome {
+        CommandOutcome::Output { .. } => CommandResult::Output,
+        CommandOutcome::Submit { .. } => CommandResult::Submit,
+        CommandOutcome::OutcomeUnknown { .. } => CommandResult::Unknown,
+        CommandOutcome::Refused { .. }
+        | CommandOutcome::Failed { .. }
+        | CommandOutcome::Prefill { .. }
+        | CommandOutcome::Rerun { .. }
+        | CommandOutcome::Nothing => CommandResult::NotRun,
+    }
 }
 
 /// A slash line that names a Hermes command: run it through the session's gateway, or say why
@@ -2793,11 +2937,11 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 commands_follow(state, CommandsInput::SkillsChanged)
             }
             Inbound::Event(inbound) => {
+                let session = inbound.raw.get("session_id").and_then(Value::as_str);
+                let (epoch, seq) = event_position(&inbound.raw);
                 let Some(opened) = state.opened.as_mut() else {
                     return Vec::new();
                 };
-                let session = inbound.raw.get("session_id").and_then(Value::as_str);
-                let (epoch, seq) = event_position(&inbound.raw);
                 if session != Some(opened.session_id.as_str())
                     || !accept_event(&opened.cursor, epoch, seq)
                 {
@@ -2820,6 +2964,12 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     }
                     _ => {}
                 }
+                effects.extend(automation_from_frame(
+                    state,
+                    &session_id,
+                    &inbound.frame,
+                    &inbound.raw,
+                ));
                 let type_name = inbound
                     .raw
                     .get("type")
@@ -2828,6 +2978,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     .to_owned();
                 let payload = inbound.raw.get("payload").cloned().unwrap_or(Value::Null);
                 let completed = type_name == "message.complete";
+                let Some(opened) = state.opened.as_mut() else {
+                    return effects;
+                };
                 if let Some(sequence) = seq {
                     opened.cursor.last_sequence = opened.cursor.last_sequence.max(sequence);
                 }
@@ -2912,6 +3065,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .map(|text| vec![notice_lines(&text)])
                 .unwrap_or_default();
             effects.extend(permissions(state, PermissionsInput::SessionClosed));
+            effects.extend(automation_event(state, AutomationEvent::Detached));
             effects
         }
     }
@@ -2978,6 +3132,13 @@ fn opened_session(
         .adopt(Some(opened.revision), Some(opened.execution_generation));
     state.opened = Some(opened);
     state.link_state = LinkView::Connected;
+    // An attached session reads the standing state once.
+    effects.extend(automation_event(
+        state,
+        AutomationEvent::Attached {
+            session_id: session_id.clone(),
+        },
+    ));
     effects.extend(commands_follow(
         state,
         CommandsInput::ForegroundSession(Some(session_id.clone())),
@@ -3199,6 +3360,7 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
             state.session_gone = true;
             let mut effects = vec![notice_lines(SESSION_GONE_NOTICE)];
             effects.extend(permissions(state, PermissionsInput::SessionClosed));
+            effects.extend(automation_event(state, AutomationEvent::Detached));
             return effects;
         }
         Err(_) => return vec![notice_lines(REFRESH_FAILED_NOTICE)],
@@ -3245,6 +3407,7 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
     if fresh.title.is_none() {
         fresh.title = old.title;
     }
+    let session_id = fresh.session_id.clone();
     state.folder =
         SessionFolder::from_snapshot(fresh.info.cwd.as_deref(), fresh.info.branch.as_deref());
     state
@@ -3256,6 +3419,13 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
     }
+    // A re-attached session reads the standing state again.
+    effects.extend(automation_event(
+        state,
+        AutomationEvent::Attached {
+            session_id: session_id.clone(),
+        },
+    ));
     effects.push(notice_lines(REFRESHED_NOTICE));
     effects
 }
@@ -3346,9 +3516,7 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Prompt(prompt) => prompt.command.clone().unwrap_or_default(),
         Cell::Shell(shell) => format!("! {}", shell.command),
         Cell::Side(side) => format!("btw \u{b7} {}", side.question),
-        Cell::HermesCommand(_) => {
-            todo!("#236")
-        }
+        Cell::HermesCommand(command) => command.typed.clone(),
     };
     plain(text.lines().next().unwrap_or_default())
 }
@@ -4977,8 +5145,18 @@ fn apply<S: Screen>(
             ),
             AppEffect::Permissions(effect) => run_permissions(state, executor, effect),
             AppEffect::Cd(effect) => run_cd(state, executor, effect),
-            // The automation wiring lands with issue #236.
-            AppEffect::Automation(_) => {}
+            AppEffect::Automation(effect) => {
+                let Some(client) = state.service.as_ref().and_then(SessionService::client) else {
+                    continue;
+                };
+                let service = AutomationService::new(client.clone());
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    if let Some(event) = service.execute(effect).await {
+                        let _ = sender.send(AppMessage::Automation(event));
+                    }
+                });
+            }
         }
     }
     sync_attachment_view(state, screen, Instant::now());
@@ -5176,11 +5354,9 @@ fn run_cd(state: &AppState, executor: &Executor, effect: CdEffect) {
     });
 }
 
-fn earliest(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
-    }
+/// The earliest of any number of deadlines.
+fn earliest_of(deadlines: impl IntoIterator<Item = Option<Instant>>) -> Option<Instant> {
+    deadlines.into_iter().flatten().min()
 }
 
 /// What ended the loop.
@@ -5257,10 +5433,7 @@ pub async fn run<S: Screen>(
         let now = Instant::now();
         state.now_ms = executor.now_ms();
         let side_due = side_wake(&state, &executor);
-        let deadline = earliest(
-            earliest(screen.next_tick(), screen.next_wake(now)),
-            side_due,
-        );
+        let deadline = earliest_of([screen.next_tick(), screen.next_wake(now), side_due]);
         // A compacting line counts its seconds, so the screen wakes once a second
         // while one is shown.
         let deadline = if state
@@ -5269,11 +5442,12 @@ pub async fn run<S: Screen>(
             .is_some_and(|opened| state.context.compacting_line(&opened.session_id).is_some())
         {
             let wait = 1_000 - state.now_ms % 1_000;
-            earliest(deadline, Some(now + Duration::from_millis(wait)))
+            earliest_of([deadline, Some(now + Duration::from_millis(wait))])
         } else {
             deadline
         };
-        let deadline = earliest(deadline, state.attachments.next_deadline());
+        let deadline = earliest_of([deadline, state.attachments.next_deadline()]);
+        let deadline = earliest_of([deadline, state.automation_deadline]);
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
@@ -5323,6 +5497,8 @@ pub async fn run<S: Screen>(
                         }), screen, &executor);
                 }
                 let _ = apply(&mut state, AppMessage::AttachmentTick(now), screen, &executor);
+                // A countdown that changed its text arms the next one.
+                state.automation_wake(now);
                 redraw = true;
             }
             Some(()) = async { match terminate.as_mut() { Some(stream) => stream.recv().await, None => std::future::pending().await } } => {
