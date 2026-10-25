@@ -33,11 +33,15 @@ use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
 use talaria_core::appearance::ThemeReport;
 use talaria_core::attachments::CollapseRule;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
+use talaria_core::checklist::ChecklistCommit;
 use talaria_core::commands::PaletteInput;
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
+};
+use talaria_tui::checklist::{
+    ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS, SHORT_TERMINAL_ROWS, committed_block_lines,
 };
 use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome, clean_text};
 use talaria_tui::context_view::{
@@ -143,6 +147,9 @@ pub struct TuiScreen {
     theme: Arc<Theme>,
     /// The theme each assistant or reasoning cell started under, until it is committed.
     captured: HashMap<CellId, Arc<Theme>>,
+    /// The checklist's styles: the same choice of colour the Markdown renderer makes.
+    checklist_style: ChecklistStyle,
+    color: bool,
     sender: mpsc::UnboundedSender<ScreenInput>,
     connecting: bool,
     /// The key map, for the composer, the completion list and the model picker.
@@ -639,6 +646,12 @@ impl TuiScreen {
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
     fn set_theme(&mut self, theme: Theme) {
+        self.color = theme.color;
+        self.checklist_style = if theme.color {
+            ChecklistStyle::default()
+        } else {
+            ChecklistStyle::plain()
+        };
         self.composer.set_style(theme.composer);
         self.palette = theme.status;
         self.cells = tool_cells(&theme);
@@ -823,6 +836,11 @@ impl TuiScreen {
                     let mut actions = flush_draft_actions(&mut self.composer, now);
                     actions.extend(input.map(UserAction::Input));
                     return actions;
+                }
+                // The checklist key is looked up whatever has focus, so a card keeps
+                // its focus and the key never reaches the composer.
+                if self.keymap.resolve(&key, KeyContext::Composer) == Some(Action::ToggleTasks) {
+                    return vec![UserAction::ToggleTasks];
                 }
                 if let Some(mut actions) = Self::prompt_actions(self.prompts.handle_key(key, now)) {
                     Self::close_palette(&mut actions);
@@ -1158,6 +1176,7 @@ impl TuiScreen {
                 details,
                 markdown: MarkdownOptions {
                     width: width.saturating_sub(2).max(8),
+                    color: self.color,
                     ..MarkdownOptions::default()
                 },
                 theme: PagerTheme::default(),
@@ -1166,7 +1185,7 @@ impl TuiScreen {
             ToolRenderOptions {
                 width,
                 theme: self.tool_theme.clone(),
-                color: std::env::var_os("NO_COLOR").is_none(),
+                color: self.color,
                 detail: match details {
                     Details::Expanded => Detail::Full,
                     Details::Compact => Detail::Compact,
@@ -1427,6 +1446,21 @@ impl Screen for TuiScreen {
             line: view.compacting_line,
             now_ms: view.now_ms,
         };
+        // The task checklist sits above the composer, and is one row on a short screen.
+        let max_rows = if self.rows < SHORT_TERMINAL_ROWS {
+            1
+        } else {
+            PANEL_MAX_ROWS
+        };
+        let checklist = view.checklist.map(|list| {
+            ChecklistSection::new(
+                list,
+                view.checklist_expanded,
+                max_rows,
+                self.keymap.label(Action::ToggleTasks),
+                &self.checklist_style,
+            )
+        });
         let mut sections: Vec<&dyn LiveSection> = vec![&tail, &drafting];
         if let Some(prompts) = &prompts {
             sections.push(prompts);
@@ -1449,6 +1483,9 @@ impl Screen for TuiScreen {
         } else {
             if let Some(mention) = &mention {
                 sections.push(mention);
+            }
+            if let Some(checklist) = &checklist {
+                sections.push(checklist);
             }
             sections.push(&composer);
             if !composer_is_empty || prompts.is_none() {
@@ -1509,6 +1546,12 @@ impl Screen for TuiScreen {
             } => error_block(typed, command, method, sid, error, width, &style),
             ContextBlock::Notice(notice) => notice_block(notice, width, &style),
         };
+        let _ = self.terminal.commit_lines(lines);
+    }
+
+    fn commit_checklist(&mut self, commit: &ChecklistCommit) {
+        let width = self.terminal.viewport().width;
+        let lines = committed_block_lines(commit, width, &self.checklist_style);
         let _ = self.terminal.commit_lines(lines);
     }
 
@@ -1922,6 +1965,7 @@ fn session(
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
     let (sender, receiver) = mpsc::unbounded_channel();
+    let color = theme.color;
     let history_dir = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
@@ -1980,6 +2024,12 @@ fn session(
         look,
         theme: Arc::new(theme),
         captured: HashMap::new(),
+        checklist_style: if color {
+            ChecklistStyle::default()
+        } else {
+            ChecklistStyle::plain()
+        },
+        color,
         sender: sender.clone(),
         connecting: true,
         keymap,

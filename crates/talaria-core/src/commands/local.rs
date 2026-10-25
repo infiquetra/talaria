@@ -12,6 +12,8 @@
 pub enum LocalAction {
     /// Leave Talaria. The Hermes session keeps running.
     Quit,
+    /// Collapse or expand the agent's task checklist.
+    Tasks,
     /// Choose the model of the foreground session.
     Model,
     /// Choose the reasoning level of the foreground session.
@@ -77,6 +79,15 @@ const BUILTIN: &[LocalCommand] = &[
         takes_argument: false,
         action: LocalAction::Quit,
         tag: "talaria",
+    },
+    LocalCommand {
+        name: "tasks",
+        tag: "talaria",
+        aliases: &[],
+        summary: "Collapse or expand the agent's task checklist",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Tasks,
     },
     LocalCommand {
         name: "model",

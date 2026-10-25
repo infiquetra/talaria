@@ -20,6 +20,7 @@ use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
 use talaria_core::attachments::{Chip, CollapseRule, Expanded, reference_notice};
+use talaria_core::checklist::{Checklist, ChecklistCommit, ChecklistTracker};
 use talaria_core::commands::local;
 use talaria_core::commands::{
     CommandOutcome, CommandsEffect, CommandsInput, CommandsState, LocalAction, LocalCommandTable,
@@ -178,6 +179,8 @@ pub enum UserAction {
         draft: String,
         caret: usize,
     },
+    /// Flip the task checklist panel. Never reaches the composer.
+    ToggleTasks,
 }
 
 /// Everything the screen draws from, borrowed for one draw.
@@ -209,6 +212,10 @@ pub struct View<'a> {
     pub pager_typing: bool,
     /// Bumped when the session state was replaced.
     pub source_epoch: u64,
+    /// The agent's task checklist while the turn runs.
+    pub checklist: Option<&'a Checklist>,
+    /// Whether the checklist panel shows every row.
+    pub checklist_expanded: bool,
 }
 
 impl View<'_> {
@@ -244,6 +251,8 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn commit_lines(&mut self, lines: Vec<String>);
     /// Write a context block into the scrollback, once.
     fn commit_context(&mut self, block: &ContextBlock);
+    /// Write the agent's task checklist into the scrollback, once.
+    fn commit_checklist(&mut self, _commit: &ChecklistCommit) {}
     /// Render cells into the scrollback, once.
     fn commit_cells(&mut self, cells: &[Cell]);
     /// Put text back into the composer.
@@ -395,6 +404,7 @@ pub struct AppState {
     pub pager_typed_len: usize,
     /// Bumped when the session state is replaced.
     pub source_epoch: u64,
+    pub checklist: ChecklistTracker,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
@@ -481,6 +491,7 @@ impl AppState {
             pager_confirmed_before_typing: false,
             pager_typed_len: 0,
             source_epoch: 0,
+            checklist: ChecklistTracker::new(),
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
@@ -533,6 +544,8 @@ impl AppState {
             pager_open: self.pager_open,
             pager_typing: self.pager_typing,
             source_epoch: self.source_epoch,
+            checklist: self.checklist.live(),
+            checklist_expanded: self.checklist.expanded(),
         }
     }
 
@@ -703,6 +716,8 @@ pub enum AppEffect {
     },
     /// Write a context block into the scrollback.
     CommitContext(ContextBlock),
+    /// The task checklist, written into the scrollback as a block.
+    CommitChecklist(ChecklistCommit),
     CommitCells(Range<usize>),
     Redraw,
     /// The transcript screen is open, closed, or takes a key.
@@ -1102,8 +1117,26 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         .as_ref()
         .map(|o| (o.session_id.clone(), o.title.clone()));
     let restored = matches!(&message, AppMessage::Opened { .. });
+    let mut redraw = match &message {
+        AppMessage::PromptDone { events, notices, masked } => {
+            !notices.is_empty() || masked.is_some() || events.iter().any(|event| {
+                !matches!(event, Event::Session { frame, .. } if frame.type_name() == Some("todo.updated"))
+            })
+        }
+        AppMessage::Link(LinkEvent::Inbound { item: Inbound::Event(event), .. }) => {
+            event.frame.type_name() != Some("todo.updated")
+        }
+        AppMessage::Input(key) if !state.pager_open && tasks_key(state, key) => false,
+        _ => true,
+    };
     let mut effects = match message {
         AppMessage::Models(input) => models_input(state, input),
+        // The toggle asks for its own redraw: one when a panel is there, none otherwise.
+        AppMessage::User(UserAction::ToggleTasks)
+        | AppMessage::ForegroundKey(UserAction::ToggleTasks) => {
+            redraw = false;
+            user_action(state, UserAction::ToggleTasks)
+        }
         AppMessage::User(action) => user_action(state, action),
         AppMessage::Link(event) => {
             let mut effects = skin_changed(state, &event);
@@ -1284,7 +1317,33 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects.push(AppEffect::CommitContext(block));
         }
     }
-    effects.push(AppEffect::Redraw);
+    effects.extend(checklist_effects(state));
+    if redraw
+        && !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Redraw))
+    {
+        effects.push(AppEffect::Redraw);
+    }
+    effects
+}
+
+/// Observe checklist changes after committing the turn's last cell.
+fn checklist_effects(state: &mut AppState) -> Vec<AppEffect> {
+    let Some(opened) = state.opened.as_ref() else {
+        return Vec::new();
+    };
+    let observed = state
+        .checklist
+        .observe(opened.state.todo(), opened.state.turn());
+    let mut effects: Vec<_> = observed
+        .commit
+        .map(AppEffect::CommitChecklist)
+        .into_iter()
+        .collect();
+    if observed.live_changed {
+        effects.push(AppEffect::Redraw);
+    }
     effects
 }
 
@@ -1382,6 +1441,10 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Tasks {
+        return crate::commands::local_action(action)
+            .map_or_else(Vec::new, |action| user_action(state, action));
+    }
     match action {
         LocalAction::Quit => {
             state.quitting = true;
@@ -1710,6 +1773,14 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             attachment_effects(effects)
         }
         UserAction::Input(key) => input_key(state, key),
+        UserAction::ToggleTasks => {
+            // The panel form flips whatever has focus; the composer never sees the key.
+            if !state.pager_open && state.checklist.toggle() {
+                vec![AppEffect::Redraw]
+            } else {
+                Vec::new()
+            }
+        }
     }
 }
 
@@ -2065,6 +2136,9 @@ fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
             state.pager_typed_len = 0;
             return vec![AppEffect::Transcript(TranscriptAction::Open)];
         }
+        if tasks_key(state, &key) {
+            return user_action(state, UserAction::ToggleTasks);
+        }
         return Vec::new();
     }
 
@@ -2123,6 +2197,12 @@ fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
         state.pager_typed_len = 0;
     }
     vec![AppEffect::Transcript(TranscriptAction::Key(key))]
+}
+
+fn tasks_key(state: &AppState, key: &InputKey) -> bool {
+    chords(state, "toggle_tasks", "ctrl+t")
+        .iter()
+        .any(|chord| chord.matches(key))
 }
 
 /// Route a submitted draft. A `!` command is recognised first, on the raw draft, then a side
@@ -2551,6 +2631,16 @@ fn opened_session(
     state.source_epoch += 1;
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
+    }
+    // The snapshot's plan: live while the turn runs, a block in the scrollback when the
+    // session is idle, because there is no turn to show it in.
+    let running = state
+        .opened
+        .as_ref()
+        .is_some_and(|opened| *opened.state.turn() == TurnState::Running);
+    let todo = state.opened.as_ref().and_then(|opened| opened.state.todo());
+    if let Some(commit) = state.checklist.attach(todo, running) {
+        effects.push(AppEffect::CommitChecklist(commit));
     }
     if let Some(notice) = notice.filter(|notice| !notice.is_empty()) {
         effects.push(notice_lines(&notice));
@@ -4098,6 +4188,7 @@ fn apply<S: Screen>(
             AppEffect::CompactRequest { request, typed } => {
                 executor.send_later(compact_task(state, request, typed));
             }
+            AppEffect::CommitChecklist(commit) => screen.commit_checklist(&commit),
             AppEffect::CommitCells(range) => {
                 if let Some(opened) = &state.opened {
                     let cells = opened.state.cells();
@@ -4801,5 +4892,41 @@ mod comfort_event_tests {
                 at: now + Duration::from_secs(25),
             });
         assert_eq!(output.alert.unwrap().text, "done: Current session title");
+    }
+}
+
+#[cfg(test)]
+mod checklist_command_tests {
+    use super::*;
+    use talaria_core::session::TodoState;
+
+    #[test]
+    fn tasks_command_uses_the_local_table_and_toggles_without_a_gateway_call() {
+        let command = LocalCommandTable::builtin()
+            .find("tasks")
+            .copied()
+            .expect("local tasks");
+        assert_eq!(command.action, LocalAction::Tasks);
+        assert_eq!(
+            slash_line("/tasks"),
+            Slash::Local(LocalAction::Tasks, String::new())
+        );
+        assert!(matches!(slash_line("/tasks extra"), Slash::Notice(_)));
+        let mut state = AppState::new("0123456789abcdef");
+        state.checklist.attach(
+            Some(&TodoState {
+                revision: 1,
+                todos: vec![json!({"id":"1", "content":"A step", "status":"pending"})],
+            }),
+            true,
+        );
+        let expanded = state.checklist.expanded();
+        let effects = update(
+            &mut state,
+            AppMessage::User(UserAction::Submit("/tasks".into())),
+        );
+        assert_eq!(state.checklist.expanded(), !expanded);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(effects[0], AppEffect::Redraw));
     }
 }

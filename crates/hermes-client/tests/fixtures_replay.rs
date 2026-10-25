@@ -2,7 +2,7 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected twelve fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected thirteen fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch recording, covered by its own replay tests.
 
@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 12] = [
+const NAMES: [&str; 13] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -30,6 +30,7 @@ const NAMES: [&str; 12] = [
     "rewind-and-rollback",
     "context-compaction",
     "shell-and-btw",
+    "todo-checklist",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -70,8 +71,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn all_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 13,
-        "expected thirteen fixtures in fixtures/frames, found {}",
+        files.len() == 14,
+        "expected fourteen fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -142,7 +143,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 #[test]
 fn every_fixture_exists() {
     let fixtures = all_fixtures();
-    assert_eq!(fixtures.len(), 12);
+    assert_eq!(fixtures.len(), 13);
 }
 
 #[test]
@@ -520,6 +521,12 @@ fn scenario_evidence_present() {
                         && record["frame"]["error"]["data"]["reason"] == "dangerous_command"
                 });
                 assert!(refused, "{name}: no dangerous_command refusal");
+            }
+            "todo-checklist" => {
+                assert!(
+                    position(&events, "todo.updated", 0).is_some(),
+                    "{name}: no todo.updated"
+                );
             }
             other => panic!("unlisted fixture {other}"),
         }

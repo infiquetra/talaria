@@ -300,6 +300,44 @@ The reducer strips the escapes. The parser drops the header by its `┊` marker 
 A `summary` is used only when one happens to be present.
 
 **Generalizable rule.** Build the screen on fields every transport sends; treat a field one transport adds as an optional extra, never as the source.
+### The gateway sends the whole plan, and only to the turn that owns the screen
+
+**Evidence.** `crates/talaria-core/src/checklist.rs` (the model and the tracker) and
+`crates/talaria-tui/src/checklist.rs` (the panel and the block); the recorded session
+`fixtures/frames/todo-checklist.jsonl`, whose eight `todo.updated` frames carry revisions 1 to 8
+and never a partial list; Hermes v0.22.4 `gateway/run_turn_progress.py:870-873` (the gateway
+publishes the snapshot right after the tool completes, and only for a turn with an approval
+owner on a local source), `gateway/local_viewer_events.py:206-226` (the tool's own result carries
+the list and the revision), `tools/todo_tool.py:287-290` (the tool's names) and
+`ui-tui/src/content/hotkeys.ts:33` (the terminal interface binds Ctrl+T to its subagent overlay).
+
+**Mechanism.** The agent keeps a short plan in its todo tool and sends the whole plan as one
+event every time the tool runs, so a client replaces its copy and never merges. The tool is
+deferred behind the tool-search bridge by default, and the bridge unwraps the name before the
+event reaches the gateway, so the event still names the tool. The arguments a tool call carries
+when it starts may hold only part of the list, so reading them would show a row that never
+existed. Because the event is published only for the turn that owns the screen, a client that
+does not own the turn never sees a plan at all.
+
+**Generalizable rule.** Take a plan from the event that carries all of it, replace it whole, and
+ignore the arguments a call announces on the way in.
+
+### A scrollback commit scrolls the screen, so the top row leaves it
+
+**Evidence.** `insert_rows` and `repaint_live_rows` in `crates/talaria-tui/src/terminal.rs`; the
+commit in `crates/talaria-tui/tests/checklist_render.rs` writes two rows into a terminal whose
+live region is two rows tall, and the emulator shows the row that was on the screen before the
+commit one line further up.
+
+**Mechanism.** A commit cannot write above the live region without scrolling, because the
+terminal's own scrollback only fills when the screen scrolls. The live region is painted again
+below the new rows, and each of its rows costs one newline at the last row, so the screen moves
+up by the height of the live region and the rows above it leave the visible area. Nothing is
+erased: the rows are in the terminal's scrollback, and the emulator that keeps that history is
+the one that can show them.
+
+**Generalizable rule.** After writing to a terminal's history, read the history, not the screen:
+the screen scrolls by the height of whatever lives at the bottom of it.
 
 ### Hermes restore rewinds the newest turn and ignores the queue
 

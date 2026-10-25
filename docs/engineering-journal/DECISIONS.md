@@ -153,6 +153,27 @@ exit releases reporting authority within a separate bounded wait.
 **Rejected alternatives.** Strip the labels before send.
 
 **Revisit when** the gateway rejects the label text.
+### The task checklist is written to the scrollback when the turn ends, and shown again only when it changes
+
+**Decision.** The agent's task checklist is a panel above the composer while the turn runs, one
+row per step, with the counts in its header. Ctrl+T collapses it to one row that still names the
+step in progress. When the turn ends, the final list is written once into the terminal's own
+scrollback as a block, and the panel disappears. A list that was already written comes back as a
+live panel only when the agent writes it again with a higher revision; a process that resumes an
+idle session writes the plan it finds once, as a block, and nothing more.
+
+**Rationale.** Finished output belongs in native scrollback, where the terminal's search and copy
+work, and the block then stays as the record of where the plan stood. A panel that lingers for a
+few seconds after the turn would need a timer, and the budget for an idle screen is zero frames.
+A plan that reappears above the composer on every prompt reads as new work and is not.
+
+**Rejected alternatives.** A timed linger before the panel goes (a timer, and a frame budget the
+screen does not have); showing the plan optimistically from the arguments a tool call announces
+when it starts (those arguments may hold only part of the list, so a row can appear that never
+existed); a counter in the status line (it loses the steps, which is the part a person reads).
+
+**Revisit when** the fleet view needs a checklist per session, or a background session's plan
+becomes visible.
 
 ### Restore, re-read, then rewind only if the chosen prompt is still active
 

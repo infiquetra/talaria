@@ -94,6 +94,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("pager_prev_match", &["shift+n"][..]),
         ("pager_details", &["t"][..]),
         ("pager_close", &["q"][..]),
+        ("toggle_tasks", &["ctrl+t"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

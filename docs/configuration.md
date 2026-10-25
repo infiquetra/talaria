@@ -55,6 +55,7 @@ pager_next_match = ["n"]
 pager_prev_match = ["shift+n"]
 pager_details = ["t"]
 pager_close = ["q"]
+toggle_tasks = ["ctrl+t"]
 
 [editor]
 command = ""
@@ -170,6 +171,7 @@ beats `ui.reduced_motion`; a non-empty `NO_COLOR` turns colour off. See [themes]
 | `pager_prev_match` | Shift+N | The previous search match. |
 | `pager_details` | T | Switch between the full cell and the compact one. |
 | `pager_close` | Q | Close the transcript. |
+| `toggle_tasks` | Ctrl+T | Show the agent's task checklist in one row, or every step of it, above the composer. |
 
 Tab accepts the highlighted row of a completion list. A tab inside pasted text is kept.
 Completion keys share chords with composer keys. Each applies only while its list is open.

@@ -570,7 +570,8 @@ impl Composer {
             | Action::PagerNextMatch
             | Action::PagerPrevMatch
             | Action::PagerDetails
-            | Action::PagerClose => {}
+            | Action::PagerClose
+            | Action::ToggleTasks => {}
         }
         false
     }
