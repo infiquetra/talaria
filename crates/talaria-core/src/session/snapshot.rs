@@ -18,6 +18,12 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
     state.subscription_id = Some(snapshot.subscription_id);
     state.stored_session_id = Some(snapshot.stored_session_id);
     state.queued_admissions_ignored = snapshot.pending.len();
+    // Hermes sets the flag on the first row of `messages` only. The display rows never carry it.
+    state.history_truncated = snapshot
+        .messages
+        .first()
+        .and_then(|row| row.archived_truncated)
+        .unwrap_or(false);
     state.turn = if snapshot.running {
         TurnState::Running
     } else {

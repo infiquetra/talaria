@@ -13,6 +13,8 @@ pub enum KeyContext {
     Completion,
     /// The full-screen model picker, before composer bindings.
     ModelPicker,
+    /// The full-screen transcript.
+    Pager,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -145,6 +147,38 @@ pub enum Action {
     HistorySearch,
     Suspend,
     AttachClipboardImage,
+    /// Open the transcript from the draft, or close it when it is already open.
+    TranscriptOpen,
+    /// One line toward the start of the transcript.
+    PagerLineUp,
+    /// One line toward the end of the transcript.
+    PagerLineDown,
+    /// A page toward the start of the transcript.
+    PagerPageUp,
+    /// A page toward the end of the transcript.
+    PagerPageDown,
+    /// Half a page toward the start of the transcript.
+    PagerHalfUp,
+    /// Half a page toward the end of the transcript.
+    PagerHalfDown,
+    /// The start of the transcript.
+    PagerTop,
+    /// The end of the transcript.
+    PagerBottom,
+    /// The previous message the person sent.
+    PagerPrevPrompt,
+    /// The next message the person sent.
+    PagerNextPrompt,
+    /// Start typing a search.
+    PagerSearch,
+    /// The next search match.
+    PagerNextMatch,
+    /// The previous search match.
+    PagerPrevMatch,
+    /// Switch expanded and compact cells.
+    PagerDetails,
+    /// Close the transcript.
+    PagerClose,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -176,7 +210,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 44] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -205,6 +239,22 @@ impl Action {
         Self::HistorySearch,
         Self::Suspend,
         Self::AttachClipboardImage,
+        Self::TranscriptOpen,
+        Self::PagerLineUp,
+        Self::PagerLineDown,
+        Self::PagerPageUp,
+        Self::PagerPageDown,
+        Self::PagerHalfUp,
+        Self::PagerHalfDown,
+        Self::PagerTop,
+        Self::PagerBottom,
+        Self::PagerPrevPrompt,
+        Self::PagerNextPrompt,
+        Self::PagerSearch,
+        Self::PagerNextMatch,
+        Self::PagerPrevMatch,
+        Self::PagerDetails,
+        Self::PagerClose,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -239,6 +289,22 @@ impl Action {
             Self::HistorySearch => "history_search",
             Self::Suspend => "suspend",
             Self::AttachClipboardImage => "attach_clipboard_image",
+            Self::TranscriptOpen => "transcript_open",
+            Self::PagerLineUp => "pager_line_up",
+            Self::PagerLineDown => "pager_line_down",
+            Self::PagerPageUp => "pager_page_up",
+            Self::PagerPageDown => "pager_page_down",
+            Self::PagerHalfUp => "pager_half_up",
+            Self::PagerHalfDown => "pager_half_down",
+            Self::PagerTop => "pager_top",
+            Self::PagerBottom => "pager_bottom",
+            Self::PagerPrevPrompt => "pager_prev_prompt",
+            Self::PagerNextPrompt => "pager_next_prompt",
+            Self::PagerSearch => "pager_search",
+            Self::PagerNextMatch => "pager_next_match",
+            Self::PagerPrevMatch => "pager_prev_match",
+            Self::PagerDetails => "pager_details",
+            Self::PagerClose => "pager_close",
         }
     }
 
@@ -258,7 +324,46 @@ impl Action {
             | Self::CompletionPrev
             | Self::CompletionAccept
             | Self::CompletionClose => KeyContext::Completion,
-            _ => KeyContext::Composer,
+            Self::Submit
+            | Self::Newline
+            | Self::Interrupt
+            | Self::Cancel
+            | Self::MoveLeft
+            | Self::MoveRight
+            | Self::MoveUp
+            | Self::MoveDown
+            | Self::LineStart
+            | Self::LineEnd
+            | Self::BufferStart
+            | Self::BufferEnd
+            | Self::WordLeft
+            | Self::WordRight
+            | Self::DeleteBackward
+            | Self::DeleteForward
+            | Self::DeleteWordBackward
+            | Self::KillToLineEnd
+            | Self::KillToLineStart
+            | Self::Yank
+            | Self::TranscriptOpen
+            | Self::OpenEditor
+            | Self::HistorySearch
+            | Self::Suspend
+            | Self::AttachClipboardImage => KeyContext::Composer,
+            Self::PagerLineUp
+            | Self::PagerLineDown
+            | Self::PagerPageUp
+            | Self::PagerPageDown
+            | Self::PagerHalfUp
+            | Self::PagerHalfDown
+            | Self::PagerTop
+            | Self::PagerBottom
+            | Self::PagerPrevPrompt
+            | Self::PagerNextPrompt
+            | Self::PagerSearch
+            | Self::PagerNextMatch
+            | Self::PagerPrevMatch
+            | Self::PagerDetails
+            | Self::PagerClose => KeyContext::Pager,
         }
     }
 
@@ -298,6 +403,24 @@ impl Action {
             Self::HistorySearch => &["ctrl+r"],
             Self::Suspend => &["ctrl+z"],
             Self::AttachClipboardImage => &["ctrl+v", "alt+v"],
+            // Issue 222: the transcript chords. The plain letters belong to the transcript
+            // screen only, so they never stop the composer from typing.
+            Self::TranscriptOpen => &["ctrl+o"],
+            Self::PagerLineUp => &["up", "k"],
+            Self::PagerLineDown => &["down", "j"],
+            Self::PagerPageUp => &["pageup", "b"],
+            Self::PagerPageDown => &["pagedown", "space"],
+            Self::PagerHalfUp => &["ctrl+u"],
+            Self::PagerHalfDown => &["ctrl+d"],
+            Self::PagerTop => &["g", "home"],
+            Self::PagerBottom => &["shift+g", "end"],
+            Self::PagerPrevPrompt => &["{"],
+            Self::PagerNextPrompt => &["}"],
+            Self::PagerSearch => &["/"],
+            Self::PagerNextMatch => &["n"],
+            Self::PagerPrevMatch => &["shift+n"],
+            Self::PagerDetails => &["t"],
+            Self::PagerClose => &["q"],
         }
     }
 }
@@ -483,6 +606,9 @@ impl KeyChord {
             *slot = true;
         }
         chord.code = parse_key(key, &mut chord.shift)?;
+        if context == KeyContext::Pager && Self::is_pager_reserved(&chord) {
+            return Err("reserved in the transcript pager".to_string());
+        }
         let printable = matches!(chord.code, KeyCode::Char(_));
         if context == KeyContext::Composer
             && printable
@@ -491,6 +617,12 @@ impl KeyChord {
             return Err("a plain letter would stop that key from typing".to_string());
         }
         Ok(chord)
+    }
+
+    /// Whether the transcript screen keeps this chord for itself. Escape cancels a search and
+    /// Control-C closes the screen; neither may be bound to an action.
+    fn is_pager_reserved(chord: &Self) -> bool {
+        chord.code == KeyCode::Esc || (chord.ctrl && chord.code == KeyCode::Char('c'))
     }
 
     /// Whether this chord matches a key. Releases and hyper or meta never match.
@@ -656,7 +788,7 @@ impl KeyMap {
             };
             let mut parsed: Vec<KeyChord> = Vec::new();
             for text in texts {
-                match KeyChord::parse(text, action.context()) {
+                match KeyChord::parse(text, parse_context(action)) {
                     Ok(chord) => {
                         if chord.is_risky() {
                             notices.push(format!(
@@ -705,7 +837,7 @@ impl KeyMap {
                 let chord = self.chords[holder.index()][position].clone();
                 let holders: Vec<Binding> = Binding::all()
                     .filter(|other| {
-                        other.context() == holder.context()
+                        parse_context(*other) == parse_context(holder)
                             && self.chords[other.index()].contains(&chord)
                     })
                     .collect();
@@ -766,12 +898,16 @@ impl KeyMap {
             .and_then(CompletionAction::from_action)
     }
 
-    /// The composer action bound to this key, if any.
+    /// The action bound to this key, if any.
+    /// The action bound to this key in the given context, if any.
+    ///
+    /// Only the actions of that context are considered, so a key that names a transcript
+    /// action never stops the composer from typing it.
     #[must_use]
-    pub fn resolve(&self, key: &Key) -> Option<Action> {
+    pub fn resolve(&self, key: &Key, context: KeyContext) -> Option<Action> {
         Action::ALL
             .into_iter()
-            .filter(|action| action.context() == KeyContext::Composer)
+            .filter(|action| action.context() == context)
             .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
     }
 
@@ -802,6 +938,17 @@ impl KeyMap {
     #[must_use]
     pub fn label(&self, action: Action) -> Option<String> {
         self.chords(action).first().map(KeyChord::label)
+    }
+}
+
+/// The context a chord of a binding is read in.
+///
+/// The transcript key is read in the transcript context, so a plain letter may open the
+/// transcript. Every other binding is read in the context it runs in.
+fn parse_context(binding: Binding) -> KeyContext {
+    match binding {
+        Binding::Composer(Action::TranscriptOpen) => KeyContext::Pager,
+        other => other.context(),
     }
 }
 
@@ -890,22 +1037,28 @@ mod tests {
         let map = KeyMap::defaults();
         let backspace = Key::from(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         let ctrl_h = Key::from(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
-        assert_eq!(map.resolve(&backspace), Some(Action::DeleteBackward));
-        assert_eq!(map.resolve(&ctrl_h), Some(Action::DeleteBackward));
+        assert_eq!(
+            map.resolve(&backspace, KeyContext::Composer),
+            Some(Action::DeleteBackward)
+        );
+        assert_eq!(
+            map.resolve(&ctrl_h, KeyContext::Composer),
+            Some(Action::DeleteBackward)
+        );
 
         let hyper = Key::from(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::HYPER));
-        assert_eq!(map.resolve(&hyper), None);
+        assert_eq!(map.resolve(&hyper, KeyContext::Composer), None);
         assert!(!shift_enter.matches(&hyper));
 
         let back_tab = Key::from(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
-        assert_eq!(map.resolve(&back_tab), None);
+        assert_eq!(map.resolve(&back_tab, KeyContext::Composer), None);
 
         let release = Key::from(KeyEvent::new_with_kind(
             KeyCode::Enter,
             KeyModifiers::NONE,
             KeyEventKind::Release,
         ));
-        assert_eq!(map.resolve(&release), None);
+        assert_eq!(map.resolve(&release, KeyContext::Composer), None);
         assert!(!plain_enter.matches(&release));
 
         let repeat = Key::from(KeyEvent::new_with_kind(
@@ -913,7 +1066,10 @@ mod tests {
             KeyModifiers::NONE,
             KeyEventKind::Repeat,
         ));
-        assert_eq!(map.resolve(&repeat), Some(Action::Submit));
+        assert_eq!(
+            map.resolve(&repeat, KeyContext::Composer),
+            Some(Action::Submit)
+        );
         assert!(plain_enter.matches(&repeat));
     }
 
@@ -927,30 +1083,41 @@ mod tests {
                 KeyCode::Char(character),
                 KeyModifiers::CONTROL,
             ));
-            assert_eq!(map.resolve(&key), Some(action));
+            assert_eq!(map.resolve(&key, KeyContext::Composer), Some(action));
             assert_eq!(map.completion(&key), Some(CompletionAction::Next));
         }
     }
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 28);
+        // Issue 222 adds sixteen transcript actions to the twenty-four actions main holds.
+        assert_eq!(Action::ALL.len(), 44);
         for action in Action::ALL {
-            let completion = matches!(
-                action,
-                Action::CompletionNext
-                    | Action::CompletionPrev
-                    | Action::CompletionAccept
-                    | Action::CompletionClose
-            );
-            let wanted = if completion {
-                KeyContext::Completion
-            } else {
-                KeyContext::Composer
-            };
-            assert_eq!(action.context(), wanted);
             let name = action.config_name();
-            assert_eq!(Action::from_config_name(name), Some(action));
+            assert_eq!(Action::from_config_name(name), Some(action), "{name}");
+            let context = match action {
+                Action::CompletionNext
+                | Action::CompletionPrev
+                | Action::CompletionAccept
+                | Action::CompletionClose => KeyContext::Completion,
+                Action::PagerLineUp
+                | Action::PagerLineDown
+                | Action::PagerPageUp
+                | Action::PagerPageDown
+                | Action::PagerHalfUp
+                | Action::PagerHalfDown
+                | Action::PagerTop
+                | Action::PagerBottom
+                | Action::PagerPrevPrompt
+                | Action::PagerNextPrompt
+                | Action::PagerSearch
+                | Action::PagerNextMatch
+                | Action::PagerPrevMatch
+                | Action::PagerDetails
+                | Action::PagerClose => KeyContext::Pager,
+                _ => KeyContext::Composer,
+            };
+            assert_eq!(action.context(), context, "{name}");
         }
         assert_eq!(Action::from_config_name("not_an_action"), None);
 
@@ -980,14 +1147,35 @@ mod tests {
             (Action::CompletionPrev, vec!["Up", "Ctrl+P"]),
             (Action::CompletionAccept, vec!["Tab"]),
             (Action::CompletionClose, vec!["Esc"]),
+            (Action::OpenEditor, vec!["Ctrl+G", "Alt+G"]),
+            (Action::HistorySearch, vec!["Ctrl+R"]),
+            (Action::Suspend, vec!["Ctrl+Z"]),
             (Action::AttachClipboardImage, vec!["Ctrl+V", "Alt+V"]),
+            (Action::TranscriptOpen, vec!["Ctrl+O"]),
+            (Action::PagerLineUp, vec!["Up", "K"]),
+            (Action::PagerLineDown, vec!["Down", "J"]),
+            (Action::PagerPageUp, vec!["PageUp", "B"]),
+            (Action::PagerPageDown, vec!["PageDown", "Space"]),
+            (Action::PagerHalfUp, vec!["Ctrl+U"]),
+            (Action::PagerHalfDown, vec!["Ctrl+D"]),
+            (Action::PagerTop, vec!["G", "Home"]),
+            (Action::PagerBottom, vec!["Shift+G", "End"]),
+            (Action::PagerPrevPrompt, vec!["{"]),
+            (Action::PagerNextPrompt, vec!["}"]),
+            (Action::PagerSearch, vec!["/"]),
+            (Action::PagerNextMatch, vec!["N"]),
+            (Action::PagerPrevMatch, vec!["Shift+N"]),
+            (Action::PagerDetails, vec!["T"]),
+            (Action::PagerClose, vec!["Q"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
         }
 
         let risky = ["F1", "F2", "Ctrl+B", "Ctrl+S"];
-        let mut seen: Vec<(KeyChord, Action)> = Vec::new();
+        // The same chord may belong to two contexts. It may not belong to two actions of one
+        // context.
+        let mut seen: Vec<(KeyContext, KeyChord, Action)> = Vec::new();
         for action in Action::ALL {
             for chord in map.chords(action) {
                 let label = chord.label();
@@ -996,9 +1184,9 @@ mod tests {
                     "{label} is bound to {}",
                     action.config_name()
                 );
-                if let Some((_, other)) = seen
+                if let Some((_, _, other)) = seen
                     .iter()
-                    .find(|(held, other)| held == chord && other.context() == action.context())
+                    .find(|(context, held, _)| *context == action.context() && held == chord)
                 {
                     panic!(
                         "{} shares {label} with {}",
@@ -1006,7 +1194,7 @@ mod tests {
                         other.config_name()
                     );
                 }
-                seen.push((chord.clone(), action));
+                seen.push((action.context(), chord.clone(), action));
             }
         }
 
@@ -1017,7 +1205,7 @@ mod tests {
             (KeyCode::Char('s'), KeyModifiers::CONTROL),
         ] {
             let key = Key::from(KeyEvent::new(code, mods));
-            assert_eq!(map.resolve(&key), None);
+            assert_eq!(map.resolve(&key, KeyContext::Composer), None);
         }
     }
 
@@ -1101,7 +1289,10 @@ mod tests {
     fn model_bindings_use_their_own_context_and_keep_composer_editing() {
         let map = KeyMap::defaults();
         let left = Key::from(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-        assert_eq!(map.resolve(&left), Some(Action::MoveLeft));
+        assert_eq!(
+            map.resolve(&left, KeyContext::Composer),
+            Some(Action::MoveLeft)
+        );
         assert_eq!(
             map.resolve_model(KeyContext::ModelPicker, &left),
             Some(ModelAction::EffortDown)
@@ -1114,7 +1305,7 @@ mod tests {
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
         // The composer actions, plus the four the slash palette brought with it.
-        assert_eq!(Action::ALL.len(), 28);
+        assert_eq!(Action::ALL.len(), 44);
     }
 
     #[test]

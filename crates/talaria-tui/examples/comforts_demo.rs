@@ -149,7 +149,7 @@ fn run() -> io::Result<()> {
         let outcome = match event {
             Some(Event::Key(event)) => {
                 let key = Key::from(event);
-                let action = map.resolve(&key);
+                let action = map.resolve(&key, talaria_tui::keys::KeyContext::Composer);
                 if matches!(action, Some(Action::OpenEditor | Action::HistorySearch)) {
                     let _ = composer.handle_key(
                         key,

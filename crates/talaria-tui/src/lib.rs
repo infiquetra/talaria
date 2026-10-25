@@ -11,6 +11,7 @@ pub mod live;
 pub mod markdown;
 pub mod mention;
 pub mod model_picker;
+pub mod pager;
 pub mod palette;
 pub mod prompts;
 pub mod rewind;

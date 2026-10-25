@@ -46,5 +46,9 @@ harness = false
 name = "tool_cells"
 harness = false
 
+[[bench]]
+name = "pager"
+harness = false
+
 [lints]
 workspace = true

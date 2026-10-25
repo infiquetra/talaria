@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use talaria_tui::comfort_route::{Focus, Route, route};
-use talaria_tui::keys::{Action, Key, KeyCode, KeyKind, KeyMap, Mods};
+use talaria_tui::keys::{Action, Key, KeyCode, KeyContext, KeyKind, KeyMap, Mods};
 
 fn press(code: KeyCode, ctrl: bool, alt: bool) -> Key {
     Key {
@@ -25,10 +25,22 @@ fn new_actions_safe_and_unique() {
     let ctrl_r = || press(KeyCode::Char('r'), true, false);
     let ctrl_z = || press(KeyCode::Char('z'), true, false);
 
-    assert_eq!(map.resolve(&ctrl_g()), Some(Action::OpenEditor));
-    assert_eq!(map.resolve(&alt_g()), Some(Action::OpenEditor));
-    assert_eq!(map.resolve(&ctrl_r()), Some(Action::HistorySearch));
-    assert_eq!(map.resolve(&ctrl_z()), Some(Action::Suspend));
+    assert_eq!(
+        map.resolve(&ctrl_g(), KeyContext::Composer),
+        Some(Action::OpenEditor)
+    );
+    assert_eq!(
+        map.resolve(&alt_g(), KeyContext::Composer),
+        Some(Action::OpenEditor)
+    );
+    assert_eq!(
+        map.resolve(&ctrl_r(), KeyContext::Composer),
+        Some(Action::HistorySearch)
+    );
+    assert_eq!(
+        map.resolve(&ctrl_z(), KeyContext::Composer),
+        Some(Action::Suspend)
+    );
 
     for action in Action::ALL {
         for chord in map.chords(action) {
@@ -59,10 +71,17 @@ fn new_actions_safe_and_unique() {
     let (map, notices) = KeyMap::from_entries(&entries);
     assert!(notices.is_empty(), "{notices:?}");
     assert_eq!(
-        map.resolve(&press(KeyCode::Char('x'), true, false)),
+        map.resolve(
+            &press(KeyCode::Char('x'), true, false),
+            KeyContext::Composer
+        ),
         Some(Action::Suspend)
     );
-    assert_eq!(map.resolve(&ctrl_z()), None, "rebinding moves the chord");
+    assert_eq!(
+        map.resolve(&ctrl_z(), KeyContext::Composer),
+        None,
+        "rebinding moves the chord"
+    );
 }
 
 #[test]

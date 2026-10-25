@@ -39,6 +39,22 @@ completion_prev = ["up", "ctrl+p"]
 completion_accept = ["tab"]
 completion_close = ["esc"]
 attach_clipboard_image = ["ctrl+v", "alt+v"]
+transcript_open = ["ctrl+o"]
+pager_line_up = ["up", "k"]
+pager_line_down = ["down", "j"]
+pager_page_up = ["pageup", "b"]
+pager_page_down = ["pagedown", "space"]
+pager_half_up = ["ctrl+u"]
+pager_half_down = ["ctrl+d"]
+pager_top = ["g", "home"]
+pager_bottom = ["shift+g", "end"]
+pager_prev_prompt = ["{"]
+pager_next_prompt = ["}"]
+pager_search = ["/"]
+pager_next_match = ["n"]
+pager_prev_match = ["shift+n"]
+pager_details = ["t"]
+pager_close = ["q"]
 
 [editor]
 command = ""
@@ -56,6 +72,7 @@ report_state = true
 [composer]
 paste_collapse_lines = 5
 paste_collapse_chars = 2000
+
 
 [status]
 # command = "~/.talaria/status.sh"
@@ -137,6 +154,22 @@ beats `ui.reduced_motion`; a non-empty `NO_COLOR` turns colour off. See [themes]
 | `model_favourite` | Ctrl+F | Star or unstar the selected model. |
 | `model_refresh` | Ctrl+R | Refresh the model list; gateway actions can wait behind this call. |
 | `attach_clipboard_image` | Ctrl+V, Alt+V | Attach the image on the clipboard. |
+| `transcript_open` | Ctrl+O | Open the full-screen transcript. While it is open, the same key closes it. |
+| `pager_line_up` | Up, K | One line toward the start of the transcript. |
+| `pager_line_down` | Down, J | One line toward the end of the transcript. |
+| `pager_page_up` | PageUp, B | One page toward the start of the transcript. |
+| `pager_page_down` | PageDown, Space | One page toward the end of the transcript. Space never closes it. |
+| `pager_half_up` | Ctrl+U | Half a page toward the start of the transcript. |
+| `pager_half_down` | Ctrl+D | Half a page toward the end of the transcript. |
+| `pager_top` | G, Home | The start of the transcript. |
+| `pager_bottom` | Shift+G, End | The end of the transcript, following new output. |
+| `pager_prev_prompt` | { | The previous message you sent. |
+| `pager_next_prompt` | } | The next message you sent. |
+| `pager_search` | / | Search the whole transcript. |
+| `pager_next_match` | N | The next search match. |
+| `pager_prev_match` | Shift+N | The previous search match. |
+| `pager_details` | T | Switch between the full cell and the compact one. |
+| `pager_close` | Q | Close the transcript. |
 
 Tab accepts the highlighted row of a completion list. A tab inside pasted text is kept.
 Completion keys share chords with composer keys. Each applies only while its list is open.
@@ -168,6 +201,20 @@ model against the profile catalogue before creating it. Unavailable saved model/
 fields are dropped together, keeping effort; unsupported create fields are also dropped.
 A typed create refusal carrying saved fields retries once without those fields.
 These defaults never change Hermes's profile default.
+
+## The transcript screen
+
+The full-screen transcript has its own key context. A plain letter is a transcript key there and
+never reaches your draft, so the same letter may name a transcript key and a draft key.
+
+Esc and Ctrl+C are fixed in the transcript and cannot be bound to anything. Esc cancels a search,
+then clears the search, then closes the transcript. Ctrl+C always closes the transcript. Neither
+one interrupts the agent, and neither one touches your draft.
+
+`transcript_open` is checked before the transcript keys, so binding it to a letter that is also a
+transcript key still closes the transcript. The key names the transcript prints on screen, in the
+hints, in the banner and in the "window too small" line, are the built-in defaults and do not
+follow your bindings.
 
 ## Writing a key
 

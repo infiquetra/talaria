@@ -159,6 +159,22 @@ client's, or the gateway's automatic one — until a fresh reading arrives.
 **Generalizable rule.** After an event that invalidates a cached measurement,
 hide the measurement until it is measured again; do not show a stale one.
 
+## 2026-10-25 — An open transcript must hear search keys and streamed cells
+
+**Evidence.** `input_key` and the inbound arm of `link_event` in `crates/talaria-app/src/app.rs`; the key arm of `apply_transcript` in `crates/talaria-cli/src/run.rs`. Issue #222.
+
+**Mechanism.** The close key and Escape were decided before the search prompt, so a letter typed into a search closed the transcript, and the first Escape after a confirmed search closed it instead of clearing the query. Escape is reserved on the transcript screen and is not a binding, so the screen maps a bare Escape to the pager's escape action itself. A streamed session event updates the cells the transcript is showing, so an open transcript is told that the cells changed.
+
+**Generalizable rule.** Keys that belong to an open prompt are routed before the screen's close keys, and a view that is open is told when the data it shows changes.
+
+## 2026-10-25 — A search keystroke must not rescan the match list per row
+
+**Evidence.** `draw_body` in `crates/talaria-tui/src/pager/mod.rs`; `folded_search_text` and `find_all` in `crates/talaria-tui/src/pager/search.rs`; the `first search keystroke` row of `crates/talaria-tui/benches/pager.rs`, whose budget is 50 ms. Issue #222.
+
+**Mechanism.** The body asked for the current cell's rendered hits, and counted that cell's matches with a linear filter, on every row of the viewport. The match list is ordered by cell, so the count is the width of one slice and two binary searches find it. The rendered hits are the same for every row of the cell, so they are computed once when the cell changes. An ASCII cell used to build three temporary vectors per cell and to allocate a lowered copy of each field; ASCII text is now folded in place and its matches are written straight into the result.
+
+**Generalizable rule.** A cost that depends on the cell, not the row, belongs outside the row loop, and a count in a sorted list is a pair of binary searches.
+
 ## 2026-10-24
 
 ### The slash palette fixture keeps the file name as its scenario
@@ -4843,3 +4859,63 @@ keeps no history for rows scrolled out of a partial scroll region.
 
 **Generalizable rule.** In an emulator snapshot, start the live region at the height it will be
 drawn at, or read committed lines through a harness that keeps scrollback.
+
+## 2026-10-24 — A key map with two contexts needs a context-aware lookup
+
+**Evidence.** `KeyMap::resolve` in `crates/talaria-tui/src/keys.rs`; the transcript actions
+added to `Action::ALL`; the composer regression in `crates/talaria-cli/tests/cli_process.rs`,
+where the typed line lost its `t`, `n` and its spaces because the transcript had bound them.
+
+**Mechanism.** The lookup used to walk every action and return the first chord that matched, so
+one map could only serve one screen. The transcript added plain letters (`t`, `n`, space, `g`,
+`j`, `k`, `b`, `q`) as its own chords, and the composer, which asks the same map, found the
+transcript action first and never typed the character. The lookup now takes the context and only
+considers the actions of that screen, and the conflict check reads the same context. The
+transcript's own key is read in the transcript context, so a plain letter may open the
+transcript; the composer refuses a plain letter for its own actions, because that would stop
+the key from typing.
+
+**Generalizable rule.** A shared key map with more than one screen needs the lookup to name the
+screen; a first-match lookup over every action lets the newest screen swallow the oldest
+screen's typing.
+
+## 2026-10-24 — A case fold that changes the byte length needs character offsets
+
+**Evidence.** `fold` and `find_all` in `crates/talaria-tui/src/pager/search.rs`; the property
+test `prop_find_all_equals_naive_scan` in `crates/talaria-tui/tests/pager_prop.rs`, which
+compares every match with a character-by-character scan.
+
+**Mechanism.** Folding one character at a time keeps the count of characters, but not the count
+of bytes: `Ⱥ` (two bytes) folds to `ⱥ` (three bytes), and `ẞ` (three bytes) folds to `ß` (two
+bytes). A search that reported byte offsets would point at the wrong place for those two
+characters, and a search that folded the whole text with `str::to_lowercase` would change the
+count of characters, because `İ` folds to two characters. The index therefore keeps the raw and
+the folded text, matches on the folded text, and converts every byte offset to a character
+offset in one pass.
+
+**Generalizable rule.** When a text transform is not one byte to one byte, report positions in
+characters and convert them in a single pass; a per-match conversion turns a fast search into a
+quadratic one.
+
+## 2026-10-25
+
+### The truncated-history flag lives on the first row of the resume reply, and only there
+
+**Evidence.** `SessionState::history_truncated` in `crates/talaria-core/src/session/state.rs` and
+its reader in `crates/talaria-core/src/session/snapshot.rs`; the flag's own deserializer in
+`crates/hermes-contract/src/overrides.rs`; the test in
+`crates/talaria-core/tests/session_history_truncated.rs`.
+
+**Mechanism.** Hermes keeps the stored history of a session's compaction lineage in the resume
+reply. The live rows are never dropped; the archived rows that fit in what the live rows leave of
+the three-mebibyte reply budget are added, and when that budget left older archived rows out,
+Hermes sets `archived_truncated` on the first row of `messages` and on no other. The display
+rows are rebuilt from a fixed key list and carry neither that flag nor the archived marker, so
+the flag has to be read from `messages[0]` before the display rows are chosen. The value is the
+JSON boolean `true` and nothing else: a string, a number, or an absent key all mean that the
+reply did not say so. When the lineage is over the gateway's own resume cap the reply holds only
+the live rows and no flag at all, so no banner can be shown for that case.
+
+**Generalizable rule.** A flag that one server sets on one row of one array is read from that row
+and nowhere else, and a missing flag is absence rather than a false one; a case the flag cannot
+express needs a banner of its own or a documented gap.

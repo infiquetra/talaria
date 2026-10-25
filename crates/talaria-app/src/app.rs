@@ -135,6 +135,8 @@ pub enum UserAction {
     Interrupt,
     /// `/quit` or the composer's exit request.
     Quit,
+    /// A key the transcript screen owns.
+    Input(InputKey),
     /// An approval card was answered.
     Approve {
         key: PromptKey,
@@ -201,6 +203,12 @@ pub struct View<'a> {
     /// The milliseconds since the loop started, for the compacting line.
     /// App-clock milliseconds of the latest message, for the side-tasks section.
     pub now_ms: u64,
+    /// The transcript screen is open, so every key belongs to it.
+    pub pager_open: bool,
+    /// The transcript screen is taking a search query.
+    pub pager_typing: bool,
+    /// Bumped when the session state was replaced.
+    pub source_epoch: u64,
 }
 
 impl View<'_> {
@@ -230,6 +238,8 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn input(&mut self, input: Self::Input, view: &View<'_>, now: Instant) -> Vec<UserAction>;
     /// Draw the live region.
     fn draw(&mut self, view: &View<'_>);
+    /// Open, close, or drive the transcript screen.
+    fn transcript(&mut self, _action: TranscriptAction) {}
     /// Write plain lines into the scrollback, once.
     fn commit_lines(&mut self, lines: Vec<String>);
     /// Write a context block into the scrollback, once.
@@ -369,6 +379,22 @@ pub struct AppState {
     pub now_ms: u64,
     /// The Hermes skin and the session's light or dark override.
     pub appearance: AppearanceService,
+    /// Bindings from the keys table. Issue 222 reads these while routing the transcript.
+    pub key_bindings: BTreeMap<String, Vec<String>>,
+    /// The transcript pager is open.
+    pub pager_open: bool,
+    /// The transcript screen is taking a search query.
+    pub pager_typing: bool,
+    /// A search has been confirmed and is still showing.
+    pub pager_confirmed: bool,
+    /// A search was confirmed at least once since the transcript opened.
+    pub pager_has_last_confirmed: bool,
+    /// Whether a search was confirmed when the prompt started taking keys.
+    pub pager_confirmed_before_typing: bool,
+    /// Characters typed into the search prompt that is open now.
+    pub pager_typed_len: usize,
+    /// Bumped when the session state is replaced.
+    pub source_epoch: u64,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
@@ -447,6 +473,14 @@ impl AppState {
                 TerminalColors::default(),
                 (Polarity::Dark, PolaritySource::Default),
             ),
+            key_bindings: BTreeMap::new(),
+            pager_open: false,
+            pager_typing: false,
+            pager_confirmed: false,
+            pager_has_last_confirmed: false,
+            pager_confirmed_before_typing: false,
+            pager_typed_len: 0,
+            source_epoch: 0,
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
@@ -496,6 +530,9 @@ impl AppState {
                 .as_ref()
                 .and_then(|opened| self.context.compacting_line(&opened.session_id)),
             now_ms: self.now_ms,
+            pager_open: self.pager_open,
+            pager_typing: self.pager_typing,
+            source_epoch: self.source_epoch,
         }
     }
 
@@ -515,11 +552,64 @@ impl AppState {
     }
 }
 
+/// One key the terminal delivered. Issue 222 routes it to the transcript when that screen is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InputKey {
+    /// The key, without modifiers.
+    pub code: InputCode,
+    /// Control was held.
+    pub ctrl: bool,
+    /// Alt was held.
+    pub alt: bool,
+    /// Shift was held.
+    pub shift: bool,
+}
+
+/// The key half of [`InputKey`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputCode {
+    /// A character, including space.
+    Char(char),
+    /// Enter.
+    Enter,
+    /// Escape.
+    Esc,
+    /// Backspace.
+    Backspace,
+    /// Up arrow.
+    Up,
+    /// Down arrow.
+    Down,
+    /// Page Up.
+    PageUp,
+    /// Page Down.
+    PageDown,
+    /// Home.
+    Home,
+    /// End.
+    End,
+}
+
+/// What the application asks of the transcript screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranscriptAction {
+    /// Open the transcript.
+    Open,
+    /// Close the transcript.
+    Close,
+    /// Apply one key to the transcript.
+    Key(InputKey),
+    /// The session changed while the transcript was open.
+    Changed,
+}
+
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
     Models(ModelsInput),
     User(UserAction),
+    /// A key from the terminal.
+    Input(InputKey),
     Link(LinkEvent),
     /// The session is open: commit its history, track it, send held prompts.
     Opened {
@@ -615,6 +705,8 @@ pub enum AppEffect {
     CommitContext(ContextBlock),
     CommitCells(Range<usize>),
     Redraw,
+    /// The transcript screen is open, closed, or takes a key.
+    Transcript(TranscriptAction),
     LoadDraft(String),
     /// Take the draft back out of Up-arrow recall: the composer recorded it on Enter, but it
     /// was a hint or a usage notice, not a prompt.
@@ -884,6 +976,10 @@ fn rebuild_after_rewind(
         fresh.title = old.and_then(|old| old.title);
     }
     state.opened = Some(fresh);
+    state.source_epoch = state.source_epoch.wrapping_add(1);
+    if state.pager_open {
+        effects.push(AppEffect::Transcript(TranscriptAction::Changed));
+    }
     effects
 }
 
@@ -1022,6 +1118,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects.extend(link_event(state, event));
             effects
         }
+        AppMessage::Input(key) => input_key(state, key),
         AppMessage::Opened { opened, notice } => opened_session(state, opened, notice),
         AppMessage::SubmitDone {
             submission_id,
@@ -1417,6 +1514,9 @@ fn reduce(state: &mut AppState, event: Event) -> Vec<AppEffect> {
     let produced = talaria_core::session::update(&mut opened.state, event);
     let mut effects = route(state, produced, None);
     effects.extend(observed);
+    if state.pager_open {
+        effects.push(AppEffect::Transcript(TranscriptAction::Changed));
+    }
     effects
 }
 
@@ -1609,6 +1709,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 .collect();
             attachment_effects(effects)
         }
+        UserAction::Input(key) => input_key(state, key),
     }
 }
 
@@ -1838,6 +1939,190 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
             command,
         },
     )
+}
+
+/// One key binding, read from the configuration file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Chord {
+    /// The key, with the letter in lower case.
+    code: InputCode,
+    /// Control was held.
+    ctrl: bool,
+    /// Alt was held.
+    alt: bool,
+    /// Shift was held.
+    shift: bool,
+}
+
+impl Chord {
+    /// Read a chord such as `ctrl+o` or `q`.
+    fn parse(text: &str) -> Option<Self> {
+        let mut parts = text.split('+').map(str::trim);
+        let key = parts.next_back()?;
+        let mut chord = Self {
+            code: InputCode::Char(' '),
+            ctrl: false,
+            alt: false,
+            shift: false,
+        };
+        for modifier in parts {
+            match modifier.to_lowercase().as_str() {
+                "ctrl" | "control" => chord.ctrl = true,
+                "alt" | "option" => chord.alt = true,
+                "shift" => chord.shift = true,
+                _ => return None,
+            }
+        }
+        chord.code = key_code(key, &mut chord.shift)?;
+        Some(chord)
+    }
+
+    /// Whether this chord is the key.
+    fn matches(&self, key: &InputKey) -> bool {
+        if self.ctrl != key.ctrl || self.alt != key.alt {
+            return false;
+        }
+        match (self.code, key.code) {
+            (InputCode::Char(want), InputCode::Char(got)) => {
+                let shifted = key.shift || got.is_uppercase();
+                lower(got) == want && self.shift == shifted
+            }
+            (want, got) => want == got,
+        }
+    }
+}
+
+/// The key of a chord, with an uppercase letter meaning shift.
+fn key_code(text: &str, shift: &mut bool) -> Option<InputCode> {
+    let name = text.to_lowercase();
+    let code = match name.as_str() {
+        "enter" => InputCode::Enter,
+        "esc" | "escape" => InputCode::Esc,
+        "backspace" => InputCode::Backspace,
+        "up" => InputCode::Up,
+        "down" => InputCode::Down,
+        "pageup" => InputCode::PageUp,
+        "pagedown" => InputCode::PageDown,
+        "home" => InputCode::Home,
+        "end" => InputCode::End,
+        "space" => InputCode::Char(' '),
+        _ => {
+            let mut characters = text.chars();
+            let character = characters.next()?;
+            if characters.next().is_some() {
+                return None;
+            }
+            if character.is_uppercase() {
+                *shift = true;
+            }
+            InputCode::Char(lower(character))
+        }
+    };
+    Some(code)
+}
+
+/// The lower-case form of a character, when it is one character.
+fn lower(character: char) -> char {
+    let mut lowered = character.to_lowercase();
+    match (lowered.next(), lowered.next()) {
+        (Some(single), None) => single,
+        _ => character,
+    }
+}
+
+/// The chords bound to one action, with the built-in default when the file names none.
+fn chords(state: &AppState, name: &str, default: &str) -> Vec<Chord> {
+    let texts: Vec<&str> = match state.key_bindings.get(name) {
+        Some(texts) => texts.iter().map(String::as_str).collect(),
+        None => vec![default],
+    };
+    texts.iter().filter_map(|text| Chord::parse(text)).collect()
+}
+
+/// Route one key to the transcript screen.
+///
+/// The screen opens with the transcript key. While a search is being typed, the keys belong to
+/// the query, so a letter that would otherwise close the screen is typed instead. Escape clears
+/// a confirmed search and leaves the screen open. A second Escape, the close key, the transcript
+/// key, and Control-C close it. Control-C never interrupts the turn.
+fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
+    let open = chords(state, "transcript_open", "ctrl+o");
+    let close = chords(state, "pager_close", "q");
+    let search = chords(state, "pager_search", "/");
+    let is_open = open.iter().any(|chord| chord.matches(&key));
+    let is_close = close.iter().any(|chord| chord.matches(&key));
+    let is_search = search.iter().any(|chord| chord.matches(&key));
+    let interrupt = key.ctrl && matches!(key.code, InputCode::Char('c'));
+
+    if !state.pager_open {
+        if is_open {
+            state.pager_open = true;
+            state.pager_typing = false;
+            state.pager_confirmed = false;
+            // A fresh pager has no remembered query.
+            state.pager_has_last_confirmed = false;
+            state.pager_confirmed_before_typing = false;
+            state.pager_typed_len = 0;
+            return vec![AppEffect::Transcript(TranscriptAction::Open)];
+        }
+        return Vec::new();
+    }
+
+    if interrupt {
+        state.pager_open = false;
+        state.pager_typing = false;
+        state.pager_confirmed = false;
+        return vec![AppEffect::Transcript(TranscriptAction::Close)];
+    }
+    if state.pager_typing {
+        match key.code {
+            InputCode::Enter => {
+                state.pager_typing = false;
+                if state.pager_typed_len > 0 || state.pager_has_last_confirmed {
+                    state.pager_confirmed = true;
+                    state.pager_has_last_confirmed = true;
+                } else {
+                    state.pager_confirmed = state.pager_confirmed_before_typing;
+                }
+            }
+            InputCode::Esc => {
+                state.pager_typing = false;
+                state.pager_confirmed = state.pager_confirmed_before_typing;
+            }
+            InputCode::Backspace => {
+                if state.pager_typed_len == 0 {
+                    state.pager_typing = false;
+                    state.pager_confirmed = state.pager_confirmed_before_typing;
+                } else {
+                    state.pager_typed_len -= 1;
+                }
+            }
+            InputCode::Char(_) if !key.ctrl && !key.alt && state.pager_typed_len < 256 => {
+                state.pager_typed_len += 1;
+            }
+            _ => {}
+        }
+        return vec![AppEffect::Transcript(TranscriptAction::Key(key))];
+    }
+    if is_open || is_close {
+        state.pager_open = false;
+        state.pager_confirmed = false;
+        return vec![AppEffect::Transcript(TranscriptAction::Close)];
+    }
+    if key.code == InputCode::Esc {
+        if state.pager_confirmed {
+            state.pager_confirmed = false;
+            return vec![AppEffect::Transcript(TranscriptAction::Key(key))];
+        }
+        state.pager_open = false;
+        return vec![AppEffect::Transcript(TranscriptAction::Close)];
+    }
+    if is_search {
+        state.pager_typing = true;
+        state.pager_confirmed_before_typing = state.pager_confirmed;
+        state.pager_typed_len = 0;
+    }
+    vec![AppEffect::Transcript(TranscriptAction::Key(key))]
 }
 
 /// Route a submitted draft. A `!` command is recognised first, on the raw draft, then a side
@@ -2153,6 +2438,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 if let Some(input) = rewound {
                     effects.extend(rewind_input(state, input));
                 }
+                if state.pager_open {
+                    effects.push(AppEffect::Transcript(TranscriptAction::Changed));
+                }
                 effects.extend(models_input(
                     state,
                     ModelsInput::SessionEvent {
@@ -2260,6 +2548,10 @@ fn opened_session(
         state,
         CommandsInput::ForegroundSession(Some(session_id)),
     ));
+    state.source_epoch += 1;
+    if state.pager_open {
+        effects.push(AppEffect::Transcript(TranscriptAction::Changed));
+    }
     if let Some(notice) = notice.filter(|notice| !notice.is_empty()) {
         effects.push(notice_lines(&notice));
     }
@@ -2455,6 +2747,10 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         fresh.title = old.title;
     }
     state.opened = Some(fresh);
+    state.source_epoch = state.source_epoch.wrapping_add(1);
+    if state.pager_open {
+        effects.push(AppEffect::Transcript(TranscriptAction::Changed));
+    }
     effects.push(notice_lines(REFRESHED_NOTICE));
     effects
 }
@@ -3387,6 +3683,8 @@ pub struct RunSetup {
     pub list_title: Option<String>,
     /// Configuration and key map notices, committed with the first frame.
     pub notices: Vec<String>,
+    /// The key table of the configuration file.
+    pub keys: BTreeMap<String, Vec<String>>,
 }
 
 fn held_text(held: &VecDeque<String>) -> String {
@@ -3852,6 +4150,10 @@ fn apply<S: Screen>(
                     .execute(effect);
                 }
             },
+            AppEffect::Transcript(action) => {
+                screen.transcript(action);
+                redraw = true;
+            }
             AppEffect::Send(effect) => {
                 let Some(service) = state.service.clone() else {
                     continue;
@@ -4238,6 +4540,7 @@ pub async fn run<S: Screen>(
         .unwrap_or_default();
     state.attachments.set_home(state.attachment_home.clone());
     state.attachment_folder = launch.folder.clone();
+    state.key_bindings = setup.keys.clone();
     state.profile = launch.profile.trim().to_lowercase();
     state.list_title = setup.list_title;
     state.model = launch.model.clone();

@@ -18,8 +18,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use talaria_app::app::{
-    self, AttachmentView, ComposerDeadline, LinkView, Outcome, RunSetup, Screen, StatusHost,
-    UserAction, View,
+    self, AttachmentView, ComposerDeadline, InputCode, InputKey, LinkView, Outcome, RunSetup,
+    Screen, StatusHost, TranscriptAction, UserAction, View,
 };
 use talaria_app::appearance::AppearanceView;
 use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
@@ -44,17 +44,21 @@ use talaria_tui::context_view::{
     CompactingSection, ContextStyle, compact_block, context_block, error_block, notice_block,
     prebuild_block, usage_block,
 };
-use talaria_tui::history::CellLines;
+use talaria_tui::history::{CellLines, PlainCellLines};
 use talaria_tui::history_search::{HistorySearch, SearchOutcome};
 use talaria_tui::keys::{
     Action, CompletionAction, Key, KeyCode, KeyContext, KeyKind, KeyMap, ModelAction,
 };
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
-use talaria_tui::markdown::MarkdownTheme;
 use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
+use talaria_tui::markdown::{MarkdownOptions, MarkdownTheme};
 use talaria_tui::mention::MentionSection;
 use talaria_tui::model_picker::{ModelConfirmSection, draw_model_picker};
+use talaria_tui::pager::{
+    ConnectionBanner, Details, Pager, PagerAction, PagerCellLines, PagerContext, PagerTheme,
+    SearchIndex, SearchInput,
+};
 use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
@@ -91,6 +95,9 @@ const PREVIEW_MIN_LINES: usize = 80;
 const MAX_TAIL_ROWS: usize = 15;
 /// Shown under the composer until the session is open.
 const CONNECTING: &str = "Connecting to Hermes\u{2026}";
+
+/// The plain renderer, for the cell kinds the transcript does not know.
+static PLAIN_CELLS: PlainCellLines = PlainCellLines;
 
 /// One raw input for the screen.
 pub enum ScreenInput {
@@ -154,6 +161,10 @@ pub struct TuiScreen {
     /// The list rows last reported to the loop, so paging moves by what is visible.
     rewind_rows: u16,
     rewind_theme: RewindTheme,
+    /// The transcript screen, while it is open.
+    transcript: Option<Transcript>,
+    /// What the application asked of the transcript screen.
+    transcript_actions: Vec<TranscriptAction>,
 }
 
 struct ModelOverlay {
@@ -430,6 +441,40 @@ fn composer_key_actions(
         });
     }
     actions
+}
+
+/// The transcript screen and the search text of the final cells.
+struct Transcript {
+    pager: Pager,
+    index: SearchIndex,
+    dirty: bool,
+}
+
+/// The key of one terminal event, in the form the application routes.
+fn input_key(event: &crossterm::event::KeyEvent) -> Option<InputKey> {
+    use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
+    if event.kind != KeyEventKind::Press {
+        return None;
+    }
+    let code = match event.code {
+        KeyCode::Char(character) => InputCode::Char(character),
+        KeyCode::Enter => InputCode::Enter,
+        KeyCode::Esc => InputCode::Esc,
+        KeyCode::Backspace => InputCode::Backspace,
+        KeyCode::Up => InputCode::Up,
+        KeyCode::Down => InputCode::Down,
+        KeyCode::PageUp => InputCode::PageUp,
+        KeyCode::PageDown => InputCode::PageDown,
+        KeyCode::Home => InputCode::Home,
+        KeyCode::End => InputCode::End,
+        _ => return None,
+    };
+    Some(InputKey {
+        code,
+        ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
+        alt: event.modifiers.contains(KeyModifiers::ALT),
+        shift: event.modifiers.contains(KeyModifiers::SHIFT),
+    })
 }
 
 fn masked_method(kind: MaskedKind) -> &'static str {
@@ -723,8 +768,14 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                let input = input_key(&raw);
+                if view.pager_open {
+                    return input
+                        .map(|key| vec![UserAction::Input(key)])
+                        .unwrap_or_default();
+                }
                 let key = Key::from(raw);
-                let action = self.keymap.resolve(&key);
+                let action = self.keymap.resolve(&key, KeyContext::Composer);
                 let focus = if self.search.is_some() {
                     talaria_tui::comfort_route::Focus::Search
                 } else if self.composer.is_empty() && self.prompts.section().is_some() {
@@ -748,6 +799,7 @@ impl TuiScreen {
                 if let Some(rewind) = &view.rewind {
                     return self.rewind_key(&raw, rewind.screen);
                 }
+                let key = Key::from(raw);
                 if self.picker_open {
                     return picker_key(&self.keymap, key)
                         .map(UserAction::ModelPicker)
@@ -765,6 +817,11 @@ impl TuiScreen {
                     }
                     let mut actions = Vec::new();
                     Self::close_palette(&mut actions);
+                    return actions;
+                }
+                if self.opens_transcript(&key) {
+                    let mut actions = flush_draft_actions(&mut self.composer, now);
+                    actions.extend(input.map(UserAction::Input));
                     return actions;
                 }
                 if let Some(mut actions) = Self::prompt_actions(self.prompts.handle_key(key, now)) {
@@ -882,7 +939,24 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(text) => {
-                if self.terminal.is_released() || view.rewind.is_some() || self.picker_open {
+                if self.terminal.is_released() {
+                    return Vec::new();
+                }
+                if view.pager_typing {
+                    let first = text.split('\n').next().unwrap_or("");
+                    return first
+                        .chars()
+                        .map(|character| {
+                            UserAction::Input(InputKey {
+                                code: InputCode::Char(character),
+                                ctrl: false,
+                                alt: false,
+                                shift: false,
+                            })
+                        })
+                        .collect();
+                }
+                if view.pager_open || view.rewind.is_some() || self.picker_open {
                     return Vec::new();
                 }
                 if let Some(search) = &mut self.search {
@@ -907,6 +981,203 @@ impl TuiScreen {
             }
             _ => Vec::new(),
         }
+    }
+}
+
+/// The facts the transcript screen draws.
+fn transcript_context<'a>(view: &'a View<'a>) -> PagerContext<'a> {
+    let cells = view.state.map_or(&[][..], |state| state.cells());
+    let title = view.title.unwrap_or("");
+    let running = view.turn_running();
+    let needs_answer = !view.masked.is_empty()
+        || view
+            .state
+            .is_some_and(|state| state.open_prompts().next().is_some());
+    let connection = match view.link {
+        LinkView::Connected => ConnectionBanner::Connected,
+        LinkView::Connecting | LinkView::Reconnecting => ConnectionBanner::Reconnecting,
+        LinkView::Failed | LinkView::Closed => ConnectionBanner::Disconnected,
+    };
+    let history_truncated = view.state.is_some_and(|state| state.history_truncated());
+    PagerContext {
+        cells,
+        source_epoch: view.source_epoch,
+        title,
+        running,
+        needs_answer,
+        connection,
+        history_truncated,
+    }
+}
+
+/// The terminal key of an application key.
+fn tui_key(key: InputKey) -> Key {
+    let code = match key.code {
+        InputCode::Char(character) => KeyCode::Char(character),
+        InputCode::Enter => KeyCode::Enter,
+        InputCode::Esc => KeyCode::Esc,
+        InputCode::Backspace => KeyCode::Backspace,
+        InputCode::Up => KeyCode::Up,
+        InputCode::Down => KeyCode::Down,
+        InputCode::PageUp => KeyCode::PageUp,
+        InputCode::PageDown => KeyCode::PageDown,
+        InputCode::Home => KeyCode::Home,
+        InputCode::End => KeyCode::End,
+    };
+    Key {
+        code,
+        mods: talaria_tui::keys::Mods {
+            ctrl: key.ctrl,
+            alt: key.alt,
+            shift: key.shift,
+            super_key: false,
+            other: false,
+        },
+        kind: KeyKind::Press,
+    }
+}
+
+/// The transcript action of a key-map action.
+fn pager_action(action: Action) -> Option<PagerAction> {
+    Some(match action {
+        Action::PagerLineUp => PagerAction::LineUp,
+        Action::PagerLineDown => PagerAction::LineDown,
+        Action::PagerPageUp => PagerAction::PageUp,
+        Action::PagerPageDown => PagerAction::PageDown,
+        Action::PagerHalfUp => PagerAction::HalfPageUp,
+        Action::PagerHalfDown => PagerAction::HalfPageDown,
+        Action::PagerTop => PagerAction::Top,
+        Action::PagerBottom => PagerAction::Bottom,
+        Action::PagerPrevPrompt => PagerAction::PrevPrompt,
+        Action::PagerNextPrompt => PagerAction::NextPrompt,
+        Action::PagerSearch => PagerAction::StartSearch,
+        Action::PagerNextMatch => PagerAction::NextMatch,
+        Action::PagerPrevMatch => PagerAction::PrevMatch,
+        Action::PagerDetails => PagerAction::ToggleDetails,
+        Action::PagerClose => PagerAction::Close,
+        _ => return None,
+    })
+}
+
+impl TuiScreen {
+    /// Whether the key opens the transcript.
+    fn opens_transcript(&self, key: &Key) -> bool {
+        self.keymap
+            .chords(Action::TranscriptOpen)
+            .iter()
+            .any(|chord| chord.matches(key))
+    }
+
+    /// Apply what the application asked of the transcript screen.
+    fn apply_transcript(&mut self, view: &View<'_>) {
+        if self.transcript_actions.is_empty() {
+            return;
+        }
+        let actions = std::mem::take(&mut self.transcript_actions);
+        let width = self.terminal.viewport().width;
+        let height = self.terminal.viewport().height;
+        for action in actions {
+            match action {
+                TranscriptAction::Open => {
+                    let ctx = transcript_context(view);
+                    let mut index = SearchIndex::new();
+                    let pager = Pager::open(&ctx, width, height, &mut index);
+                    self.transcript = Some(Transcript {
+                        pager,
+                        index,
+                        dirty: false,
+                    });
+                }
+                TranscriptAction::Close => self.transcript = None,
+                TranscriptAction::Changed => {
+                    if let Some(transcript) = self.transcript.as_mut() {
+                        transcript.dirty = true;
+                    }
+                }
+                TranscriptAction::Key(key) => {
+                    // Escape is reserved in the pager context, so the key map does not bind it.
+                    // A bare Escape still has to reach the pager, where it clears a confirmed
+                    // search before a later Escape closes the screen.
+                    let action =
+                        if key.code == InputCode::Esc && !key.ctrl && !key.alt && !key.shift {
+                            Some(PagerAction::Escape)
+                        } else {
+                            self.keymap
+                                .resolve(&tui_key(key), KeyContext::Pager)
+                                .and_then(pager_action)
+                        };
+                    let Some(transcript) = self.transcript.as_mut() else {
+                        continue;
+                    };
+                    let ctx = transcript_context(view);
+                    if transcript.pager.is_typing_search() {
+                        let input = match key.code {
+                            InputCode::Enter => Some(SearchInput::Enter),
+                            InputCode::Esc => Some(SearchInput::Escape),
+                            InputCode::Backspace => Some(SearchInput::Backspace),
+                            InputCode::Char(character) => Some(SearchInput::Char(character)),
+                            _ => None,
+                        };
+                        if let Some(input) = input {
+                            transcript.pager.handle_search_input(
+                                input,
+                                &ctx,
+                                &mut transcript.index,
+                            );
+                        }
+                    } else if let Some(action) = action {
+                        transcript
+                            .pager
+                            .handle_action(action, &ctx, &mut transcript.index);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Draw the transcript over the live view, or close it.
+    fn draw_transcript(&mut self, view: &View<'_>) {
+        let Some(transcript) = self.transcript.as_mut() else {
+            let _ = self.terminal.close_overlay();
+            return;
+        };
+        let ctx = transcript_context(view);
+        if transcript.dirty {
+            transcript
+                .pager
+                .content_changed(&ctx, &mut transcript.index);
+            transcript.dirty = false;
+        }
+        let _ = self.terminal.open_overlay();
+        let width = self.terminal.viewport().width;
+        let height = self.terminal.viewport().height;
+        transcript.pager.resize(width, height);
+        let details = transcript.pager.details();
+        let renderer = ToolCellLines::new(
+            Box::new(PagerCellLines {
+                details,
+                markdown: MarkdownOptions {
+                    width: width.saturating_sub(2).max(8),
+                    ..MarkdownOptions::default()
+                },
+                theme: PagerTheme::default(),
+                other: &PLAIN_CELLS,
+            }),
+            ToolRenderOptions {
+                width,
+                theme: self.tool_theme.clone(),
+                color: std::env::var_os("NO_COLOR").is_none(),
+                detail: match details {
+                    Details::Expanded => Detail::Full,
+                    Details::Compact => Detail::Compact,
+                },
+                expand_hint: None,
+                elapsed: None,
+            },
+        );
+        let _ = self
+            .terminal
+            .draw_overlay(|area, buf| transcript.pager.draw(area, buf, &ctx, &renderer));
     }
 }
 
@@ -1045,6 +1316,7 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        self.apply_transcript(view);
         let now = Instant::now();
         if let Some(cwd) = view.info.and_then(|info| info.cwd.as_deref()) {
             self.folder = std::path::PathBuf::from(cwd);
@@ -1073,7 +1345,7 @@ impl Screen for TuiScreen {
             let _ = self.terminal.close_overlay();
             self.rewind_open = false;
         }
-        if self.picker_open {
+        if self.picker_open && self.transcript.is_none() {
             self.draw_picker();
             return;
         }
@@ -1202,6 +1474,12 @@ impl Screen for TuiScreen {
                 }
             });
         }
+        drop(search);
+        self.draw_transcript(view);
+    }
+
+    fn transcript(&mut self, action: TranscriptAction) {
+        self.transcript_actions.push(action);
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
@@ -1572,6 +1850,7 @@ pub fn run(mut launch: Launch) -> ExitCode {
         preopened: None,
         list_title: None,
         notices,
+        keys: loaded.config.keys.clone(),
     };
     if launch.mode == StartMode::Resume(None) {
         match pick_session(&runtime, &launch, &home, &launch_id) {
@@ -1715,6 +1994,8 @@ fn session(
         rewind_theme: rewind_theme(),
         attachments: AttachmentView::default(),
         attachment_rule,
+        transcript: None,
+        transcript_actions: Vec::new(),
     };
     let notify = sender.clone();
     suspend::spawn_sigcont_watch(

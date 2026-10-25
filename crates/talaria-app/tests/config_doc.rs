@@ -77,6 +77,23 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("completion_accept", &["tab"][..]),
         ("completion_close", &["esc"][..]),
         ("attach_clipboard_image", &["ctrl+v", "alt+v"][..]),
+        // Issue 222 adds the transcript keys to the documented file.
+        ("transcript_open", &["ctrl+o"][..]),
+        ("pager_line_up", &["up", "k"][..]),
+        ("pager_line_down", &["down", "j"][..]),
+        ("pager_page_up", &["pageup", "b"][..]),
+        ("pager_page_down", &["pagedown", "space"][..]),
+        ("pager_half_up", &["ctrl+u"][..]),
+        ("pager_half_down", &["ctrl+d"][..]),
+        ("pager_top", &["g", "home"][..]),
+        ("pager_bottom", &["shift+g", "end"][..]),
+        ("pager_prev_prompt", &["{"][..]),
+        ("pager_next_prompt", &["}"][..]),
+        ("pager_search", &["/"][..]),
+        ("pager_next_match", &["n"][..]),
+        ("pager_prev_match", &["shift+n"][..]),
+        ("pager_details", &["t"][..]),
+        ("pager_close", &["q"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

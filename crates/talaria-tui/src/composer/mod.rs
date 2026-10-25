@@ -11,7 +11,7 @@ pub use render::ComposerSection;
 
 use std::time::{Duration, Instant};
 
-use crate::keys::{Action, Key, KeyCode, KeyKind, KeyMap};
+use crate::keys::{Action, Key, KeyCode, KeyContext, KeyKind, KeyMap};
 use buffer::{Draft, logical_rows, prev_boundary, row_of};
 use paste_burst::{CharStep, EnterStep, PasteBurst};
 use recall::Recall;
@@ -130,7 +130,7 @@ impl Composer {
         if key.kind == KeyKind::Release {
             return ComposerOutcome::Unchanged;
         }
-        let action = self.keymap.resolve(&key);
+        let action = self.keymap.resolve(&key, KeyContext::Composer);
         let mods = key.mods;
         let plain = match key.code {
             KeyCode::Char(c) if !(mods.ctrl || mods.alt || mods.super_key || mods.other) => Some(c),
@@ -554,7 +554,23 @@ impl Composer {
             | Action::OpenEditor
             | Action::HistorySearch
             | Action::Suspend
-            | Action::AttachClipboardImage => {}
+            | Action::AttachClipboardImage
+            | Action::TranscriptOpen
+            | Action::PagerLineUp
+            | Action::PagerLineDown
+            | Action::PagerPageUp
+            | Action::PagerPageDown
+            | Action::PagerHalfUp
+            | Action::PagerHalfDown
+            | Action::PagerTop
+            | Action::PagerBottom
+            | Action::PagerPrevPrompt
+            | Action::PagerNextPrompt
+            | Action::PagerSearch
+            | Action::PagerNextMatch
+            | Action::PagerPrevMatch
+            | Action::PagerDetails
+            | Action::PagerClose => {}
         }
         false
     }

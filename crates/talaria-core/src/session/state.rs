@@ -128,6 +128,7 @@ pub struct SessionState {
     /// The tool name `tool.generating` reported, until the call starts or the turn ends.
     pub(crate) drafting: Option<String>,
     pub(crate) side: SideTasks,
+    pub(crate) history_truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -171,6 +172,7 @@ impl SessionState {
             queued_admissions_ignored: 0,
             drafting: None,
             side: SideTasks::default(),
+            history_truncated: false,
         }
     }
 
@@ -194,6 +196,15 @@ impl SessionState {
     #[must_use]
     pub fn drafting_tool(&self) -> Option<&str> {
         self.drafting.as_deref()
+    }
+
+    /// Whether the resume left older summarized history out.
+    ///
+    /// Hermes sets the flag on the first row of `messages` only, and only when the byte budget
+    /// left older archived rows out. A display row never carries it.
+    #[must_use]
+    pub fn history_truncated(&self) -> bool {
+        self.history_truncated
     }
 
     /// Pending shell and side work.
