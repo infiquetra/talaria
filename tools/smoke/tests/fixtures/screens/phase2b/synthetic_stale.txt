@@ -1,0 +1,2 @@
+synthetic stale read: the shell prompt from before Talaria launched
+$ talaria --no-ensure --profile fixture --provider ollama-cloud --model minimax-m3.1-flash

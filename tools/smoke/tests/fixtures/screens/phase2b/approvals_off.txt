@@ -1,0 +1,6 @@
+· Approvals off for this session only: Hermes will run commands it would normally ask about. Rules that always block a command still apply. Shift+Tab turns approvals bac
+k on.
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Shift+Enter adds a line.                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: off (this session) │ <scratch>/a (main)

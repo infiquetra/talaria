@@ -1,0 +1,5 @@
+Renamed to "fixture smoke ko528ee4".
+This session is called "fixture smoke ko528ee4". Type /rename <new title> to change it.
+Give the session a new title:
+Exported "fixture smoke ko528ee4" to ./hermes_session_local-d2ef42e4e097020e57cfec2baef711bcf9de02ad2704fc0721adba4ae98a72ad.md (797 B, Markdown, secrets redacted).
+Use a file name ending in .md, .json or .html.

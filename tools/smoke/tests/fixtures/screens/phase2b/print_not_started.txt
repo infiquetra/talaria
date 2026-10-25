@@ -1,0 +1,3 @@
+{"type":"result","version":1,"status":"not_started","exit_code":4,"text":"","session_id":null,"profile":null,"model":null,"provider":null,"admission_id":null,"duration_ms":1,"outcome":null,"turn_exit_reason":null,"usage":{"input_tokens":null,"output_tokens":null,"cache_read_tokens":null,"cache_write_tokens":null,"reasoning_tokens":null,"total_tokens":null,"api_calls":null,"estimated_cost_usd":null,"cost_status":null},"warnings":[],"error":{"what":"no Hermes gateway is running for this home.","next_step":"Run `hermes gateway ensure --json` to start the Hermes gateway, then try again."}}
+talaria: no Hermes gateway is running for this home.
+Next step: Run `hermes gateway ensure --json` to start the Hermes gateway, then try again.

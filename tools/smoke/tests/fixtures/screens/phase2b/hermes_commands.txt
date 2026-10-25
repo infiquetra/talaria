@@ -1,0 +1,4 @@
+/fast
+  ⚡ /fast is only available for OpenAI models that support Priority Processing.
+/loop 45m
+  /loop: missing prompt (usage: /loop [interval] \<prompt\>)
