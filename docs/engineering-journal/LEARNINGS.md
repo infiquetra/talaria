@@ -4711,3 +4711,26 @@ selected row and effort footer still visible.
 
 **Generalizable rule.** Test typed round trips and exact request keys against the
 owner's actual behavior, and keep retry identity separate from current fences.
+## 2026-10-24 — A final cell inserted before a streaming one must move every stored cell index
+
+**Evidence.** Shell and side results for #225 are inserted at `final_prefix_len()` by
+`SessionState::insert_final` (`crates/talaria-core/src/session/state.rs`), so they commit at once
+above a reply that is still streaming. The reducer keeps cell positions in `assistant`,
+`reasoning`, `tools`, `prompts` and `turn_start`. With the insert alone, every side test passed,
+but a `message.delta` arriving after a shell cell landed looked up the stale assistant index,
+found the shell cell and was dropped: `streaming_reply_and_tool_keep_their_cells_after_a_side_cell_lands`
+in `crates/talaria-core/tests/side_reduce.rs` read `["live"]` instead of `["live and more"]`
+until `insert_final` shifted those indexes.
+
+**Mechanism.** A pending cell would block every later commit, because the commit ledger writes
+only the longest final prefix, so a side result goes before the first unfinished cell instead of
+at the end. Everything the reducer remembers by position at or after that point moves one place.
+The reducer writes through a stored index only when the cell there has the expected variant, so a
+stale index fails silently rather than panicking. A second hazard sits outside the client: Hermes
+serves one connection's requests one at a time (`tui_gateway/ws.py:103`, `:476-488` at the pinned
+commit; only `session.context_breakdown` runs beside the lane), and `shell.exec` awaits its
+subprocess inside the handler for up to 30 seconds (`gateway/session_shell.py:18`, `:54`), so a
+running `!` delays a later interrupt or approval on the same socket while events keep flowing.
+
+**Generalizable rule.** When a list that other state indexes into gains a mid-list insert, shift
+every stored index in the same helper, and test a write that arrives after the insert.

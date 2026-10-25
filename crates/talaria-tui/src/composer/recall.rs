@@ -15,6 +15,8 @@ pub struct Recall {
     scratch: Option<String>,
     /// Edited text of recalled entries, by index, for the rest of the browse.
     edits: BTreeMap<usize, String>,
+    /// Whether the latest `add` pushed an entry.
+    just_added: bool,
 }
 
 impl Recall {
@@ -36,14 +38,25 @@ impl Recall {
 
     /// Add a prompt: never blank, never equal to the one before; the oldest goes past the cap.
     pub fn add(&mut self, text: String) {
+        self.just_added = false;
         if text.trim().is_empty() || self.entries.last() == Some(&text) {
             return;
         }
         self.entries.push(text);
+        self.just_added = true;
         if self.entries.len() > MAX_HISTORY {
             let extra = self.entries.len() - MAX_HISTORY;
             self.entries.drain(..extra);
         }
+    }
+
+    /// Remove the entry the latest `add` pushed, when it is `text`. An `add` that changed nothing
+    /// leaves nothing to take back, so an older equal entry is never removed.
+    pub fn forget_last(&mut self, text: &str) {
+        if self.just_added && self.entries.last().map(String::as_str) == Some(text) {
+            self.entries.pop();
+        }
+        self.just_added = false;
     }
 
     /// Whether a walk is in progress.
@@ -106,5 +119,28 @@ impl Recall {
                 self.edits.insert(index, draft.to_string());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Recall;
+
+    #[test]
+    fn forget_last_takes_back_only_what_the_last_add_pushed() {
+        let mut recall = Recall::with_entries(vec!["first".to_string()]);
+        recall.add("!".to_string());
+        recall.forget_last("!");
+        assert_eq!(recall.entries(), ["first"]);
+        // A repeat of the newest entry is not pushed, so there is nothing to take back.
+        recall.add("first".to_string());
+        recall.forget_last("first");
+        assert_eq!(recall.entries(), ["first"]);
+        // Another text leaves the entry alone, and a second call does nothing.
+        recall.add("again".to_string());
+        recall.forget_last("other");
+        assert_eq!(recall.entries(), ["first", "again"]);
+        recall.forget_last("again");
+        assert_eq!(recall.entries(), ["first", "again"]);
     }
 }

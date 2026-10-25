@@ -328,7 +328,9 @@ impl SessionService {
             }
             Effect::RespondApproval { .. }
             | Effect::RespondClarify { .. }
-            | Effect::RefuseAnswer { .. } => {
+            | Effect::RefuseAnswer { .. }
+            | Effect::RunShell { .. }
+            | Effect::AskSide { .. } => {
                 return ExecuteOutcome::Refused {
                     reason: "not_a_session_call".to_string(),
                 };

@@ -2,7 +2,7 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected ten fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected twelve fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch recording, covered by its own replay tests.
 
@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 10] = [
+const NAMES: [&str; 11] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -28,6 +28,7 @@ const NAMES: [&str; 10] = [
     "slash-palette",
     "rewind-and-rollback",
     "context-compaction",
+    "shell-and-btw",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -62,14 +63,14 @@ fn jsonl_files() -> Vec<PathBuf> {
     files
 }
 
-/// Asserts the eight fixtures exist, then returns `(name, path)` for each, in the order of
+/// Asserts the nine fixtures exist, then returns `(name, path)` for each, in the order of
 /// `NAMES`. Every test in this file starts here so that none of them can index into a missing
 /// file.
-fn seven_fixtures() -> Vec<(&'static str, PathBuf)> {
+fn all_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 11,
-        "expected eleven fixtures in fixtures/frames, found {}",
+        files.len() == 12,
+        "expected twelve fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -138,14 +139,14 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 }
 
 #[test]
-fn seven_fixtures_exist() {
-    let fixtures = seven_fixtures();
-    assert_eq!(fixtures.len(), 10);
+fn every_fixture_exists() {
+    let fixtures = all_fixtures();
+    assert_eq!(fixtures.len(), 11);
 }
 
 #[test]
 fn each_has_v3_header_and_gapless_seq() {
-    for (name, path) in seven_fixtures() {
+    for (name, path) in all_fixtures() {
         let records = records(name, &path);
         let header = &records[0];
         assert_eq!(header["kind"], "header", "{name}: line 1 is not a header");
@@ -206,7 +207,7 @@ fn each_has_v3_header_and_gapless_seq() {
 
 #[test]
 fn each_ends_with_expected_status() {
-    for (name, path) in seven_fixtures() {
+    for (name, path) in all_fixtures() {
         let source = ReplaySource::open(&path)
             .unwrap_or_else(|error| panic!("{name}: could not open the fixture: {error}"));
         assert!(!source.truncated(), "{name}: the recording is cut short");
@@ -239,7 +240,7 @@ fn each_ends_with_expected_status() {
 
 #[tokio::test]
 async fn each_replays_recorded_inbound_sequence() {
-    for (name, path) in seven_fixtures() {
+    for (name, path) in all_fixtures() {
         // What the recorder wrote, read straight from the file.
         let written: Vec<(u64, Value)> = records(name, &path)
             .iter()
@@ -362,7 +363,7 @@ fn slash_palette_evidence(name: &str, records: &[Value], events: &[(String, Valu
 
 #[test]
 fn scenario_evidence_present() {
-    for (name, path) in seven_fixtures() {
+    for (name, path) in all_fixtures() {
         let records = records(name, &path);
         let events = inbound_events(&records);
         assert!(!events.is_empty(), "{name}: no inbound events");
@@ -477,6 +478,18 @@ fn scenario_evidence_present() {
                     "{name}: no session.updated"
                 );
             }
+            "shell-and-btw" => {
+                assert!(
+                    position(&events, "btw.complete", 0).is_some(),
+                    "{name}: no btw.complete"
+                );
+                let refused = records.iter().any(|record| {
+                    record["kind"] == "frame"
+                        && record["dir"] == "in"
+                        && record["frame"]["error"]["data"]["reason"] == "dangerous_command"
+                });
+                assert!(refused, "{name}: no dangerous_command refusal");
+            }
             other => panic!("unlisted fixture {other}"),
         }
     }
@@ -484,7 +497,7 @@ fn scenario_evidence_present() {
 
 #[test]
 fn clarify_answer_is_withheld() {
-    let fixtures = seven_fixtures();
+    let fixtures = all_fixtures();
     let (name, path) = fixtures
         .iter()
         .find(|(name, _)| *name == "clarification")

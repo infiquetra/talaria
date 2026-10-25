@@ -136,6 +136,16 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
             state.notice(*kind, text.clone(), None);
             Vec::new()
         }
+        Event::ShellRequested { .. }
+        | Event::ShellEmpty
+        | Event::ShellFinished { .. }
+        | Event::SideAsked { .. }
+        | Event::SideUsage
+        | Event::SideAccepted { .. }
+        | Event::SideRefused { .. }
+        | Event::SideNotSent { .. }
+        | Event::SideUnknown { .. }
+        | Event::SideClock { .. } => crate::side::reduce::apply(state, &event),
         _ => super::prompts::apply(state, &event),
     };
     state.advance_prefix();
@@ -184,6 +194,7 @@ fn session(
         return;
     }
     match name {
+        "btw.complete" => crate::side::reduce::btw_complete(state, payload),
         "message.start" => {
             state.begin_turn();
             state.execution_generation = generation;

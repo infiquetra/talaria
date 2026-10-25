@@ -3,6 +3,7 @@
 use serde_json::Value;
 
 use super::{CellId, PromptKey};
+use crate::side::{ShellCell, SideCell};
 
 /// One transcript row, in arrival order.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +20,10 @@ pub enum Cell {
     Notice(NoticeCell),
     /// An approval or clarification.
     Prompt(PromptCell),
+    /// One finished shell command. Final when created.
+    Shell(ShellCell),
+    /// One finished side question. Final when created.
+    Side(SideCell),
 }
 
 impl Cell {
@@ -31,6 +36,7 @@ impl Cell {
             Self::Reasoning(cell) => cell.sealed,
             Self::Tool(cell) => cell.status != ToolStatus::Running,
             Self::Prompt(cell) => cell.sealed,
+            Self::Shell(_) | Self::Side(_) => true,
         }
     }
 }

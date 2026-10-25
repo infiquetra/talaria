@@ -223,6 +223,12 @@ impl Composer {
         self.recall.entries()
     }
 
+    /// Take back the history entry that submitting `text` just made, when it made one. For a
+    /// submit that turned out to be a hint, not a prompt. Earlier entries are never touched.
+    pub fn forget_submitted(&mut self, text: &str) {
+        self.recall.forget_last(text);
+    }
+
     /// Replace the draft. The caret lands at the end. History is unchanged.
     pub fn load(&mut self, text: String) {
         self.clear();

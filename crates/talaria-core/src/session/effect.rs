@@ -1,6 +1,7 @@
 //! Effects are data. The application sends them. The reducer does not.
 
 use super::{AnswerRefusal, PromptKey, SessionId};
+use crate::side::RequestId;
 
 /// A follow-up the application may send. Comparing these to recorded outbound frames is the test.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,5 +43,23 @@ pub enum Effect {
         key: PromptKey,
         /// First failing check.
         reason: AnswerRefusal,
+    },
+    /// `shell.exec` with exactly `session_id` and `command`.
+    RunShell {
+        /// Target session.
+        session_id: SessionId,
+        /// Id the reducer allocated.
+        request_id: RequestId,
+        /// Command text.
+        command: String,
+    },
+    /// `prompt.btw` with exactly `session_id` and `text`.
+    AskSide {
+        /// Target session.
+        session_id: SessionId,
+        /// Id the reducer allocated.
+        request_id: RequestId,
+        /// Question text.
+        question: String,
     },
 }

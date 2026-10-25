@@ -9,3 +9,4 @@ pub mod mutation;
 pub mod prompt_history;
 pub mod rewind;
 pub mod session;
+pub mod side;

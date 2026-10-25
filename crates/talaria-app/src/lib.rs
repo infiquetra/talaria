@@ -15,3 +15,4 @@ pub mod mutation;
 pub mod prompts;
 pub mod rewind;
 pub mod sessions;
+pub mod side;

@@ -7,6 +7,7 @@ use super::{
     Cell, CellId, NoticeCell, NoticeKind, PromptCell, PromptKey, PromptState, SessionId,
     Settlement, ToolStatus, UserCell,
 };
+use crate::side::SideTasks;
 
 /// Whether a turn is idle, running, or finished.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -126,6 +127,7 @@ pub struct SessionState {
     pub(crate) queued_admissions_ignored: usize,
     /// The tool name `tool.generating` reported, until the call starts or the turn ends.
     pub(crate) drafting: Option<String>,
+    pub(crate) side: SideTasks,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -168,6 +170,7 @@ impl SessionState {
             unknown: Vec::new(),
             queued_admissions_ignored: 0,
             drafting: None,
+            side: SideTasks::default(),
         }
     }
 
@@ -191,6 +194,34 @@ impl SessionState {
     #[must_use]
     pub fn drafting_tool(&self) -> Option<&str> {
         self.drafting.as_deref()
+    }
+
+    /// Pending shell and side work.
+    pub fn side(&self) -> &SideTasks {
+        &self.side
+    }
+
+    /// Pending shell and side work, to change.
+    pub fn side_mut(&mut self) -> &mut SideTasks {
+        &mut self.side
+    }
+
+    /// Insert one final cell at [`Self::final_prefix_len`], so it commits at once even while a
+    /// reply streams after it. The stored positions of later cells move with them.
+    pub fn insert_final(&mut self, cell: Cell) {
+        let at = self.final_prefix.min(self.cells.len());
+        self.cells.insert(at, cell);
+        let shift = |index: &mut usize| {
+            if *index >= at {
+                *index += 1;
+            }
+        };
+        shift(&mut self.turn_start);
+        self.assistant.iter_mut().for_each(shift);
+        self.reasoning.iter_mut().for_each(shift);
+        self.tools.values_mut().for_each(shift);
+        self.prompts.values_mut().for_each(shift);
+        self.advance_prefix();
     }
 
     /// How many leading cells are final. The count never shrinks.

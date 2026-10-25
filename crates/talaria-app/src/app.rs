@@ -43,6 +43,10 @@ use talaria_core::session::{
     Cell, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState, SessionId, SessionState,
     TurnState,
 };
+use talaria_core::side::{
+    NO_SESSION_NOTICE, SHELL_EMPTY_HINT, SIDE_USAGE, Submission, btw_command, carry_over, classify,
+    next_tick,
+};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
@@ -62,6 +66,7 @@ use crate::sessions::{
     DetachOutcome, ExecuteOutcome, OpenError, OpenedSession, SessionInfoSummary, SessionService,
     accept_event, submission_id,
 };
+use crate::side::{self, SideService};
 
 /// How long a quit waits for a create or resume that is still in flight.
 pub const QUIT_WAIT: Duration = Duration::from_secs(5);
@@ -158,6 +163,7 @@ pub struct View<'a> {
     /// The compacting line, while a compaction runs.
     pub compacting_line: Option<CompactingLine>,
     /// The milliseconds since the loop started, for the compacting line.
+    /// App-clock milliseconds of the latest message, for the side-tasks section.
     pub now_ms: u64,
 }
 
@@ -196,6 +202,8 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn commit_cells(&mut self, cells: &[Cell]);
     /// Put text back into the composer.
     fn load_draft(&mut self, text: &str);
+    /// Take a draft the composer recorded on Enter back out of Up-arrow recall.
+    fn unrecord_submit(&mut self, _text: &str) {}
     /// Give the terminal back. Later draws write nothing.
     fn restore(&mut self);
     /// Emit an attention alert between frames.
@@ -290,6 +298,8 @@ pub struct AppState {
     /// The context blocks that wait for the turn to end.
     pub context_blocks: HeldBlocks<ContextBlock>,
     /// The milliseconds since the loop started, stamped before every message.
+    /// App-clock milliseconds since the loop started, as of the message being applied. The loop
+    /// sets it; [`update`] only reads it, for the start time of a shell command or side question.
     pub now_ms: u64,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
@@ -457,6 +467,13 @@ pub enum AppMessage {
         outcome: MutationOutcome,
         typed: String,
     },
+    /// One app-clock wake-up while side work may be pending.
+    Tick {
+        /// App-clock time now.
+        now_ms: u64,
+    },
+    /// What a shell command or side question came back with.
+    SideDone(Vec<Event>),
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -485,8 +502,13 @@ pub enum AppEffect {
     CommitCells(Range<usize>),
     Redraw,
     LoadDraft(String),
+    /// Take the draft back out of Up-arrow recall: the composer recorded it on Enter, but it
+    /// was a hint or a usage notice, not a prompt.
+    UnrecordSubmit(String),
     /// `prompt.submit`.
     Send(Effect),
+    /// `shell.exec` or `prompt.btw`, started at once: never queued behind a prompt or a turn.
+    Side(Effect),
     /// Deny open approvals, then `session.interrupt`.
     Interrupt(Effect),
     /// An approval or clarification answer, with the note to attach first.
@@ -691,7 +713,7 @@ fn rebuild_after_rewind(
                 ))];
             }
         };
-    let old = state.opened.take();
+    let mut old = state.opened.take();
     let shown: &[Cell] = old.as_ref().map_or(&[], |old| {
         &old.state.cells()[..state.committed_cells.min(old.state.cells().len())]
     });
@@ -732,6 +754,9 @@ fn rebuild_after_rewind(
         },
     ));
     let mut fresh = fresh;
+    if let Some(old) = &mut old {
+        carry_over(&mut old.state, &mut fresh.state);
+    }
     if fresh.title.is_none() {
         fresh.title = old.and_then(|old| old.title);
     }
@@ -896,6 +921,25 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             outcome,
             typed,
         } => compact_done(state, request, outcome, typed),
+        AppMessage::Tick { now_ms } => {
+            state.now_ms = now_ms;
+            let pending = state
+                .opened
+                .as_ref()
+                .is_some_and(|opened| !opened.state.side().pending.is_empty());
+            // Idle means zero frames: with nothing pending a wake-up changes nothing.
+            if !pending {
+                return Vec::new();
+            }
+            reduce(state, Event::SideClock { now_ms })
+        }
+        AppMessage::SideDone(events) => {
+            let mut effects = Vec::new();
+            for event in events {
+                effects.extend(reduce(state, event));
+            }
+            effects
+        }
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -1041,7 +1085,9 @@ fn local_line(text: &str) -> Option<Result<(LocalAction, String), String>> {
     let trimmed = text.trim();
     let name = trimmed.strip_prefix('/')?;
     let name = name.split_whitespace().next().unwrap_or(name);
-    local::lookup(name).map(|_| local::parse(trimmed))
+    local::lookup(name)
+        .filter(|command| command.action != LocalAction::Btw)
+        .map(|_| local::parse(trimmed))
 }
 
 /// The effect a local command asks for.
@@ -1177,6 +1223,9 @@ fn route(
                 effect,
                 note: note.take(),
             }),
+            Effect::RunShell { .. } | Effect::AskSide { .. } => {
+                effects.push(AppEffect::Side(effect));
+            }
         }
     }
     effects
@@ -1476,6 +1525,9 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
     )
 }
 
+/// Route a submitted draft. A `!` command is recognised first, on the raw draft, then a side
+/// question, then slash lines, then the held-prompt rule and `prompt.submit`. Neither a command
+/// nor a side question is ever held or queued behind a turn.
 fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         return Vec::new();
@@ -1489,7 +1541,30 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
             Err(reason) => vec![notice_lines(&reason), AppEffect::LoadDraft(text)],
         };
     }
+    match classify(&text) {
+        Submission::ShellEmpty => {
+            return local_notice(state, Event::ShellEmpty, SHELL_EMPTY_HINT, text);
+        }
+        Submission::Shell(command) => {
+            let started_ms = state.now_ms;
+            return side_request(
+                state,
+                text,
+                Event::ShellRequested {
+                    command,
+                    started_ms,
+                },
+            );
+        }
+        Submission::Prompt => {}
+    }
     match slash_line(&text) {
+        Slash::Btw(argument) => {
+            return match btw_command(&argument, state.now_ms) {
+                event @ Event::SideAsked { .. } => side_request(state, text, event),
+                event => local_notice(state, event, SIDE_USAGE, text),
+            };
+        }
         Slash::Quit => {
             state.quitting = true;
             return vec![AppEffect::Quit];
@@ -1529,6 +1604,26 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
         };
     }
     send_text(state, text)
+}
+
+/// A blank-command hint or the usage line: a notice with or without a session, and no call.
+/// The composer is already empty, and `draft` leaves Up-arrow recall: it was not a prompt.
+fn local_notice(state: &mut AppState, event: Event, text: &str, draft: String) -> Vec<AppEffect> {
+    let mut effects = if state.opened.is_some() {
+        reduce(state, event)
+    } else {
+        vec![notice_lines(text)]
+    };
+    effects.push(AppEffect::UnrecordSubmit(draft));
+    effects
+}
+
+/// A command or side question needs a session. Without one nothing is sent and the draft stays.
+fn side_request(state: &mut AppState, draft: String, event: Event) -> Vec<AppEffect> {
+    if state.opened.is_none() {
+        return vec![notice_lines(NO_SESSION_NOTICE), AppEffect::LoadDraft(draft)];
+    }
+    reduce(state, event)
 }
 
 fn send_text(state: &mut AppState, text: String) -> Vec<AppEffect> {
@@ -1816,7 +1911,7 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         }
         Err(_) => return vec![notice_lines(REFRESH_FAILED_NOTICE)],
     };
-    let Some(old) = state.opened.take() else {
+    let Some(mut old) = state.opened.take() else {
         return Vec::new();
     };
     let shown = state.committed_cells;
@@ -1849,6 +1944,8 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         },
     ));
     let mut fresh = fresh;
+    // A snapshot holds no shell or side work; pending rows keep their ids and timeout.
+    carry_over(&mut old.state, &mut fresh.state);
     if fresh.title.is_none() {
         fresh.title = old.title;
     }
@@ -1941,6 +2038,8 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Tool(tool) => tool.name.clone(),
         Cell::Notice(notice) => notice.text.clone(),
         Cell::Prompt(prompt) => prompt.command.clone().unwrap_or_default(),
+        Cell::Shell(shell) => format!("! {}", shell.command),
+        Cell::Side(side) => format!("btw \u{b7} {}", side.question),
     };
     plain(text.lines().next().unwrap_or_default())
 }
@@ -2036,6 +2135,9 @@ pub enum Slash {
     Notice(String),
     /// A Hermes command, as typed. It goes to `slash.exec`.
     Command(String),
+    /// `/btw`, with its argument: a side question, sent with `prompt.btw` and never to
+    /// `slash.exec`.
+    Btw(String),
     /// A bare `/`: nothing runs.
     Nothing,
     /// Ordinary text for the model.
@@ -2059,6 +2161,7 @@ pub fn slash_line(text: &str) -> Slash {
         }
         return match command.action {
             LocalAction::Quit => Slash::Quit,
+            LocalAction::Btw => Slash::Btw(line.arg.clone()),
             _ => Slash::Local(command.action, line.arg),
         };
     }
@@ -2382,6 +2485,8 @@ fn held_text(held: &VecDeque<String>) -> String {
 /// The executor side of the loop: everything it needs to start a call.
 struct Executor {
     sender: mpsc::UnboundedSender<AppMessage>,
+    /// Time zero of the app clock that side work is timed by.
+    started: Instant,
     /// Prompts go through one worker, one call at a time, so they reach the gateway in the
     /// order they were submitted.
     prompts: mpsc::UnboundedSender<(SessionService, Effect)>,
@@ -2440,6 +2545,7 @@ impl Executor {
             sender,
             prompts,
             model_files,
+            started: Instant::now(),
         }
     }
 
@@ -2452,6 +2558,11 @@ impl Executor {
             tokio::time::timeout(QUIT_WAIT, waiting).await,
             Ok(Ok(false))
         )
+    }
+
+    /// App-clock milliseconds now.
+    fn now_ms(&self) -> u64 {
+        clock_ms(self.started)
     }
 
     fn send_later(&self, task: impl Future<Output = AppMessage> + Send + 'static) {
@@ -2636,6 +2747,17 @@ fn compact_task(
     }
 }
 
+fn clock_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// When the side-tasks section next changes, while anything is pending.
+fn side_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
+    let opened = state.opened.as_ref()?;
+    let due = next_tick(opened.state.side(), executor.now_ms())?;
+    Some(executor.started + Duration::from_millis(due))
+}
+
 fn notice_texts(notices: Vec<crate::prompts::PromptNotice>) -> Vec<String> {
     notices.into_iter().map(|notice| notice.text).collect()
 }
@@ -2649,6 +2771,7 @@ fn apply<S: Screen>(
 ) -> bool {
     state.attention_at = Instant::now();
     let mut redraw = false;
+    state.now_ms = executor.now_ms();
     for effect in update(state, message) {
         match effect {
             AppEffect::Rewind { ticket, call } => {
@@ -2737,11 +2860,31 @@ fn apply<S: Screen>(
             }
             AppEffect::Redraw => redraw = true,
             AppEffect::LoadDraft(text) => screen.load_draft(&text),
+            AppEffect::UnrecordSubmit(text) => screen.unrecord_submit(&text),
             AppEffect::Send(effect) => {
                 let Some(service) = state.service.clone() else {
                     continue;
                 };
                 let _ = executor.prompts.send((service, effect));
+            }
+            AppEffect::Side(effect) => {
+                let client = state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned();
+                let started = executor.started;
+                executor.send_later(async move {
+                    let events = match client {
+                        Some(client) => {
+                            SideService::new(client)
+                                .execute(effect, move || clock_ms(started))
+                                .await
+                        }
+                        None => side::not_sent(&effect),
+                    };
+                    AppMessage::SideDone(events)
+                });
             }
             AppEffect::Interrupt(effect) => {
                 let (Some(service), Some(opened)) = (state.service.clone(), &state.opened) else {
@@ -3016,11 +3159,14 @@ pub async fn run<S: Screen>(
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
     let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).ok();
 
-    let origin = Instant::now();
     let ending = loop {
         let now = Instant::now();
-        state.now_ms = u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let deadline = earliest(screen.next_tick(), screen.next_wake(now));
+        state.now_ms = executor.now_ms();
+        let side_due = side_wake(&state, &executor);
+        let deadline = earliest(
+            earliest(screen.next_tick(), screen.next_wake(now)),
+            side_due,
+        );
         // A compacting line counts its seconds, so the screen wakes once a second
         // while one is shown.
         let deadline = if state
@@ -3069,6 +3215,11 @@ pub async fn run<S: Screen>(
                 let now = Instant::now();
                 drive_composer(screen, now);
                 screen.on_tick(now);
+                state.now_ms = executor.now_ms();
+                if side_due.is_some_and(|due| due <= now) {
+                    let now_ms = executor.now_ms();
+                    apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
+                }
                 redraw = true;
             }
             Some(()) = async { match terminate.as_mut() { Some(stream) => stream.recv().await, None => std::future::pending().await } } => {

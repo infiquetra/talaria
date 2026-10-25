@@ -3814,3 +3814,32 @@ the storage extension trait belongs to the application layer.
 
 **Revisit when.** Hermes gains a supported profile-default socket operation or
 declares these result and optional-parameter serialization rules explicitly.
+## 2026-10-24 — Route `!` and `/btw` before slash lines, send them at once, and never retry them
+
+**Decision.** The submit path in `crates/talaria-app/src/app.rs` checks, in order: a draft whose
+first character is `!` (on the raw draft), a `/btw` line, slash lines, the held-prompt rule, then
+`prompt.submit`. A blank `!` or `/btw` shows its hint with or without a session; a non-blank one
+with no open session shows the no-session notice and keeps the draft. Both calls start at once in
+their own task (`AppEffect::Side`), never behind a prompt or a turn, and neither is retried: a lost
+shell reply is shown as "may or may not have run", and a lost side reply waits for an answer that
+matches by question. `/btw` calls `prompt.btw` and never `slash.exec`, where Hermes Desktop found
+the answer is lost. `/btw` is an entry of the local command table (`LocalAction::Btw`), so the
+submit path reaches it through the same slash dispatch as `/quit` and calls `btw_command`. A blank
+`!` and a bare `/btw` clear the composer, show their hint, and are taken back out of Up-arrow
+recall, because the composer records every Enter before the app knows what the line was.
+
+**Rationale.** Hermes keeps both calls out of its admission queue, and its own terminal UI runs a
+typed `!` at once while busy; a side question is most useful while the agent works. A command may
+have side effects and a side question costs tokens, and Hermes has a cancel for neither, so an
+unknown outcome is reported, not repeated. The pending work is a row in a live section, never a
+cell, so a missing answer can never hold back scrollback; a 300-second timeout, decided by the
+reducer on the app's clock ticks, reports it instead.
+
+**Rejected alternatives.** Checking `!` ahead of the queued-prompt edit mode, as Hermes's terminal
+UI does: once that mode exists it goes first, so an edited queued prompt that starts with `!`
+stays a prompt. Queuing `!` behind turns would delay a quick `!git status` for a whole turn. A pending cell was rejected because the ledger commits only a final
+prefix. A second connection for `!`, which would stop a running command delaying interrupts, is
+out of scope and left as an operator question.
+
+**Revisit when.** Hermes adds a cancel for either call, makes `shell.exec` run beside its request
+lane, or the slash-command palette merges and takes over `/btw` routing.
