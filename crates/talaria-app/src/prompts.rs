@@ -281,8 +281,10 @@ impl PromptService {
                     events: note
                         .into_iter()
                         .map(|text| Event::Submit {
+                            display: text.clone(),
                             text,
                             submission_id: (self.next_submission_id)(),
+                            attachments: Vec::new(),
                         })
                         .collect(),
                     notices: Vec::new(),

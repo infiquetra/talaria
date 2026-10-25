@@ -98,7 +98,9 @@ fn arb_local() -> impl Strategy<Value = Event> {
         Just(Event::ConnectionOpened { generation: 1 }),
         any::<u8>().prop_map(|n| Event::Submit {
             text: format!("q{n}"),
+            display: format!("q{n}"),
             submission_id: format!("s{n}"),
+            attachments: Vec::new(),
         }),
         Just(Event::AnswerAlreadyResolved {
             key: events::key("p1", 1),

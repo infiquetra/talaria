@@ -298,6 +298,7 @@ async fn execute(
                 session_id,
                 text,
                 submission_id,
+                ..
             } => {
                 client.call_raw("prompt.submit", json!({"session_id":session_id.as_str(), "text":text, "submission_id":submission_id}), CallOptions::default()).await?;
             }

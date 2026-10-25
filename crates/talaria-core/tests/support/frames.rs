@@ -248,8 +248,10 @@ fn submit_event(params: &Value) -> Option<Event> {
         })?
         .to_string();
     Some(Event::Submit {
+        display: text.clone(),
         text,
         submission_id,
+        attachments: Vec::new(),
     })
 }
 

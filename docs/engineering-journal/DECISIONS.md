@@ -120,6 +120,15 @@ reports with session identity and resume arguments.
 state. Reports carry increasing sequence numbers, sanitized messages and a
 bounded deadline. Failures return once through the application event channel;
 exit releases reporting authority within a separate bounded wait.
+### Image labels stay in the text
+
+**Decision.** Image labels stay in the text. A draft such as `compare [Image #1] with [Image #2]` is sent with those labels in place. The attachments carry the image paths beside the text.
+
+**Rationale.** The labels tell the model which sentence refers to which image. Issue 224.
+
+**Rejected alternatives.** Strip the labels before send.
+
+**Revisit when** the gateway rejects the label text.
 
 ### Restore, re-read, then rewind only if the chosen prompt is still active
 

@@ -169,10 +169,11 @@ fn scenario_table_matches_the_spec() {
             "slash-palette",
             "rewind-and-rollback",
             "context-compaction",
+            "attachments-mention-image",
         ]
     );
     assert!(Scenario::named("not-a-scenario").is_none());
-    let table: [(&str, &[&str], &[&str]); 10] = [
+    let table: [(&str, &[&str], &[&str]); 11] = [
         (
             "plain-answer",
             &["Reply with exactly the single word: pong. Do not use any tools."],
@@ -253,6 +254,7 @@ fn scenario_table_matches_the_spec() {
                 "complete", "complete", "complete",
             ],
         ),
+        ("attachments-mention-image", &[], &["complete"]),
     ];
     for (name, prompts, statuses) in table {
         let scenario = scenario(name);

@@ -113,7 +113,9 @@ fn ev_full(
 pub fn submit(text: &str, submission_id: &str) -> Event {
     Event::Submit {
         text: text.to_string(),
+        display: text.to_string(),
         submission_id: submission_id.to_string(),
+        attachments: Vec::new(),
     }
 }
 

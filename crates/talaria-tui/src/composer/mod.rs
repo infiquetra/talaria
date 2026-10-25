@@ -6,12 +6,13 @@ pub mod recall;
 mod render;
 pub mod wrap;
 
+pub use buffer::clean_text;
 pub use render::ComposerSection;
 
 use std::time::{Duration, Instant};
 
 use crate::keys::{Action, Key, KeyCode, KeyKind, KeyMap};
-use buffer::{Draft, clean_text, logical_rows, prev_boundary, row_of};
+use buffer::{Draft, logical_rows, prev_boundary, row_of};
 use paste_burst::{CharStep, EnterStep, PasteBurst};
 use recall::Recall;
 use wrap::{Row, wrap};
@@ -199,6 +200,18 @@ impl Composer {
     #[must_use]
     pub fn text(&self) -> &str {
         self.draft.text()
+    }
+
+    /// Replace `range` with `text` in one edit. The caret ends after the inserted text.
+    pub fn replace_range(&mut self, range: std::ops::Range<usize>, text: &str) {
+        let _ = (range, text, self.draft.text());
+        unimplemented!()
+    }
+
+    /// Mark live labels. The screen maps accent and dimmed onto these styles.
+    pub fn set_highlights(&mut self, spans: Vec<(std::ops::Range<usize>, ratatui::style::Style)>) {
+        let _ = (spans, self.draft.text());
+        unimplemented!()
     }
 
     /// Byte offset of the caret, on a grapheme boundary.
@@ -506,7 +519,8 @@ impl Composer {
             | Action::CompletionClose
             | Action::OpenEditor
             | Action::HistorySearch
-            | Action::Suspend => {}
+            | Action::Suspend
+            | Action::AttachClipboardImage => {}
         }
         false
     }

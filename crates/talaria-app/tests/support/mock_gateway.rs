@@ -419,6 +419,8 @@ struct State {
     sess: SessionSide,
     /// Checkpoint, diff and rewind answers. Issue #233.
     rewind: RewindSide,
+    /// Opt-in replies. Empty keeps the mock's ordinary answers.
+    scripted_results: VecDeque<(Option<Duration>, Value)>,
 }
 
 struct Shared {
@@ -506,6 +508,7 @@ fn new_shared(
             turn_running: false,
             sess: SessionSide::new(),
             rewind: RewindSide::default(),
+            scripted_results: VecDeque::new(),
         }),
         changed: Notify::new(),
     })
@@ -919,6 +922,20 @@ impl MockGateway {
         lock(&self.shared).seen.len()
     }
 
+    /// Answer the next call with `result`, before the ordinary handler.
+    pub fn push_result(&self, result: Value) {
+        lock(&self.shared)
+            .scripted_results
+            .push_back((None, result));
+    }
+
+    /// Answer the next call with `result` after `delay`.
+    pub fn push_result_after(&self, delay: Duration, result: Value) {
+        lock(&self.shared)
+            .scripted_results
+            .push_back((Some(delay), result));
+    }
+
     /// Requests read with this method, in order.
     pub fn requests(&self, method: &str) -> Vec<Seen> {
         self.seen()
@@ -1296,6 +1313,11 @@ fn plan_request(
     params: &Value,
     outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
 ) {
+    if let Some((delay, result)) = state.scripted_results.pop_front() {
+        let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+        outgoing.push((delay, text, reply_meta(id, method)));
+        return;
+    }
     if SESSION_METHODS.contains(&method) || SIDE_METHODS.contains(&method) {
         plan_session_method(state, method, id, params, outgoing);
         return;
@@ -1804,7 +1826,10 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             if params.get("finite").is_some() {
                 keys.push("finite");
             }
-            (keys.clone(), keys)
+            (keys.clone(), {
+                keys.push("attachments");
+                keys
+            })
         }
         "prompt.receipt" => (
             vec!["session_id", "admission_id", "include_result"],

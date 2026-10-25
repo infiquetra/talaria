@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 /// The scenarios of the fixture set, in the order the script records them.
 /// `slash-palette` is recognized here; its frames come from the slash command steps, not from
 /// a model prompt.
-pub const SCENARIOS: [&str; 10] = [
+pub const SCENARIOS: [&str; 11] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -29,6 +29,7 @@ pub const SCENARIOS: [&str; 10] = [
     "slash-palette",
     "rewind-and-rollback",
     "context-compaction",
+    "attachments-mention-image",
 ];
 
 /// The shell command the approval scenario asks for. `manual` mode raises an approval for it.
@@ -133,6 +134,7 @@ impl Scenario {
                     "complete", "complete", "complete", "complete", "complete",
                 ],
             ),
+            "attachments-mention-image" => (&[], &["complete"]),
             _ => return None,
         };
         Some(Scenario {
@@ -468,6 +470,31 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
                 return Err("no usage reading after the compaction".to_owned());
             }
         }
+        "attachments-mention-image" => {
+            let outbound: Vec<&Value> = source.outbound().map(|frame| &frame.frame).collect();
+            let call = |method: &str| outbound.iter().find(|frame| frame["method"] == method);
+            let Some(complete_path) = call("complete.path") else {
+                return Err("no complete.path".to_owned());
+            };
+            if complete_path["params"]["word"] != "@calc" {
+                return Err("complete.path word is not @calc".to_owned());
+            }
+            if call("image.attach_bytes").is_none() {
+                return Err("no image.attach_bytes".to_owned());
+            }
+            let Some(submit) = call("prompt.submit") else {
+                return Err("no prompt.submit".to_owned());
+            };
+            if submit["params"]["text"] != "[Image #1] What colour is this image? One word." {
+                return Err("prompt.submit text is not the image question".to_owned());
+            }
+            if !submit["params"]["attachments"].is_array() {
+                return Err("prompt.submit has no attachments".to_owned());
+            }
+            if call("session.resume").is_none() {
+                return Err("no session.resume".to_owned());
+            }
+        }
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -713,10 +740,14 @@ pub async fn run_scenario(
     scenario: &Scenario,
     config: &DriverConfig,
 ) -> AttemptResult {
-    if scenario.name == "slash-palette" {
-        return AttemptResult::Failed(
-            "slash-palette is recorded by the slash command steps, not by a model prompt".into(),
-        );
+    if matches!(
+        scenario.name.as_str(),
+        "slash-palette" | "attachments-mention-image"
+    ) {
+        return AttemptResult::Failed(format!(
+            "{} is recorded by its command steps, not by a model prompt",
+            scenario.name,
+        ));
     }
     let mut session = Session::default();
     let outcome = tokio::time::timeout(

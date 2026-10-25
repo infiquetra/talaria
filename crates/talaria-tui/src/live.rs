@@ -58,6 +58,17 @@ impl LiveView<'_> {
     }
 }
 
+/// The mention list above the composer. The list is first, so a short screen keeps it.
+#[must_use]
+pub fn mention_then_composer<'a>(
+    mention: &'a dyn LiveSection,
+    composer: &'a dyn LiveSection,
+) -> LiveView<'a> {
+    LiveView {
+        sections: vec![mention, composer],
+    }
+}
+
 /// `rows - 2`, and 0 below three rows.
 pub fn max_live_height(rows: u16) -> u16 {
     rows.saturating_sub(2)

@@ -180,6 +180,29 @@ hide the measurement until it is measured again; do not show a stale one.
 **Mechanism.** The composer clears its draft and records history on Enter before the loop sees the key. The loop therefore puts the draft back when the palette neither runs nor completes anything, loads `/name ` when Enter completed a command that takes an argument, and leaves the composer empty when a line runs. The screen does not report the draft after a submit: that empty draft would arrive after the loop's load and close the palette the loop had just reopened.
 
 **Generalizable rule.** When two owners react to one key, one decides and tells the other; never let both report the result.
+### The attachment fixture's scenario name is the file stem
+
+**Evidence.** `fixtures/frames/attachments-mention-image.jsonl`. `crates/hermes-client/tests/fixtures_replay.rs` requires `header.scenario` to equal the file stem.
+
+**Mechanism.** The unit specification names the recorder scenario `attachments` and issue 224 names the file `attachments-mention-image.jsonl`. The replay test fails when those differ. The header uses the file stem and `synthetic: true`. The recorder returns Failed immediately and does not drive this file as a model prompt.
+
+**Generalizable rule.** The scenario name matches the jsonl stem.
+
+### Shared completion keys are added on the branch that lacks them
+
+**Evidence.** `crates/talaria-tui/src/keys.rs` on `p2-04-mentions-attachments`. `Action::ALL` is 25: the twenty composer actions, the four completion actions, and `attach_clipboard_image`.
+
+**Mechanism.** The slash-palette branch adds the same four completion names and is not in this checkout. The first branch to merge adds them. This branch uses the same names in the completion context. Conflicts are checked per context, so Down stays move-down in the composer and next-row in the list.
+
+**Generalizable rule.** One action name has one context. The count is the composer actions plus the actions this branch adds.
+
+### The attachment update cannot take the terminal key type
+
+**Evidence.** `crates/talaria-core/tests/layering.rs` forbids `talaria-app` from depending on `ratatui` or `crossterm`. `talaria_app::attachments::Action` lists the actions the update routes.
+
+**Mechanism.** The specification types the key argument as the terminal crate's action. A normal dependency on that crate would fail the layering test. The screen maps its keys onto this crate's action enum. A dev-dependency on `ratatui` is only for the release timing test's `TestBackend`.
+
+**Generalizable rule.** A domain update takes its own action enum.
 
 ### Hermes's inline diff is pre-rendered and localised
 

@@ -19,6 +19,7 @@ use hermes_client::replay::{Cursor, ReplayGap};
 use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
+use talaria_core::attachments::CollapseRule;
 use talaria_core::commands::local;
 use talaria_core::commands::{
     CommandOutcome, CommandsEffect, CommandsInput, CommandsState, LocalAction, LocalCommandTable,
@@ -51,6 +52,7 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
+use crate::attachments::AttachmentsState;
 use crate::commands::{
     AppAction, CommandReply, CommandService, no_session_notice, outcome_actions,
 };
@@ -328,6 +330,8 @@ pub struct AppState {
     prompts: Option<Arc<Mutex<PromptService>>>,
     pending: Option<JoinHandle<Result<Ready, LaunchFailure>>>,
     command_service: Option<CommandService>,
+    /// Mentions, paste labels and staged images for the open draft.
+    pub attachments: AttachmentsState,
 }
 
 impl AppState {
@@ -392,6 +396,7 @@ impl AppState {
             prompts: None,
             pending: None,
             command_service: None,
+            attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
         }
     }
 
@@ -507,6 +512,8 @@ pub enum AppMessage {
         /// The connection generation of a reconnect describe.
         generation: Option<u64>,
     },
+    /// A clipboard, drop, or completion result.
+    Attachment(crate::attachments::AttachmentEvent),
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -1010,6 +1017,10 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 effects.push(AppEffect::Appearance);
             }
             effects
+        }
+        AppMessage::Attachment(event) => {
+            let _ = (event, &state.attachments);
+            Vec::new()
         }
     };
     if model_card_blocked(state) {
@@ -1707,8 +1718,10 @@ fn send_text(state: &mut AppState, text: String) -> Vec<AppEffect> {
     reduce(
         state,
         Event::Submit {
+            display: text.clone(),
             text,
             submission_id,
+            attachments: Vec::new(),
         },
     )
 }

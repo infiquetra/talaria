@@ -2,6 +2,8 @@
 
 use serde_json::Value;
 
+use crate::attachments::Attachment;
+
 use super::{NoticeKind, PromptKey, SessionId};
 use crate::side::{RequestId, ShellOutcome};
 
@@ -30,10 +32,14 @@ pub enum Event {
     },
     /// The person submitted text. Blank text does nothing.
     Submit {
-        /// Prompt text.
+        /// Prompt text sent to the gateway. Image labels stay in it.
         text: String,
+        /// The draft as typed, shown in the user cell.
+        display: String,
         /// Client-chosen id. Not de-duplicated here.
         submission_id: String,
+        /// Ready images. Empty when the draft has none.
+        attachments: Vec<Attachment>,
     },
     /// The submit will start no turn. Drops the queue entry. The user cell, if placed, stays.
     SubmitFailed {

@@ -11,6 +11,7 @@ use hermes_client::replay::{Cursor, ReplayGap};
 use hermes_client::rpc::{CallError, CallOptions};
 use hermes_contract::schemas::CanonicalSnapshot;
 use serde_json::{Map, Value, json};
+use talaria_core::attachments::Attachment;
 use talaria_core::session::{Effect, SessionState};
 
 use crate::launch::{Belongs, NewSession, SESSION_SOURCE, SessionRequest, belongs};
@@ -307,8 +308,9 @@ impl SessionService {
                 session_id,
                 text,
                 submission_id,
+                attachments,
             } => {
-                let params = submit_params(session_id.as_str(), &text, &submission_id);
+                let params = submit_frame(session_id.as_str(), &text, &submission_id, &attachments);
                 match self.call("prompt.submit", params, None).await {
                     Ok(reply) if reply.get("voice_stopped") == Some(&Value::Bool(true)) => {
                         return ExecuteOutcome::VoiceStopped;
@@ -479,6 +481,25 @@ pub fn detach_params(session_id: &str, subscription_id: &str) -> Value {
 #[must_use]
 pub fn submit_params(session_id: &str, text: &str, submission_id: &str) -> Value {
     json!({"session_id": session_id, "text": text, "submission_id": submission_id})
+}
+
+/// `prompt.submit`, plus `attachments` only when `attachments` is not empty.
+#[must_use]
+pub fn submit_frame(
+    session_id: &str,
+    text: &str,
+    submission_id: &str,
+    attachments: &[Attachment],
+) -> Value {
+    let mut params = submit_params(session_id, text, submission_id);
+    if !attachments.is_empty() {
+        let pairs = attachments
+            .iter()
+            .map(|item| json!({"path": item.path, "mime": item.mime}))
+            .collect::<Vec<_>>();
+        params["attachments"] = Value::Array(pairs);
+    }
+    params
 }
 
 /// `talaria-<launch id>-<n>`, `n` counting from 1 within a launch.

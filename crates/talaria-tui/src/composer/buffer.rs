@@ -36,7 +36,7 @@ pub(crate) fn forbidden_control(c: char) -> bool {
 
 /// Pasted or loaded text, cleaned: line breaks normalised, controls removed, and each cluster
 /// that would draw nothing dropped, as if the text went into an empty draft.
-pub(crate) fn clean_text(text: &str) -> String {
+pub fn clean_text(text: &str) -> String {
     let normalised = text.replace("\r\n", "\n").replace('\r', "\n");
     let kept: String = normalised
         .chars()

@@ -183,7 +183,9 @@ async fn note_becomes_submit_event_only_after_resolved() {
         executed.events,
         vec![Event::Submit {
             text: NOTE.to_owned(),
+            display: NOTE.to_owned(),
             submission_id: "sub-1".to_owned(),
+            attachments: Vec::new(),
         }]
     );
     assert!(executed.notices.is_empty());
@@ -197,7 +199,9 @@ async fn note_becomes_submit_event_only_after_resolved() {
         executed.events,
         vec![Event::Submit {
             text: "second note".to_owned(),
+            display: "second note".to_owned(),
             submission_id: "sub-2".to_owned(),
+            attachments: Vec::new(),
         }]
     );
 

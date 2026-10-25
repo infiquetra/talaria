@@ -1318,6 +1318,7 @@ fn submit_orders_user_cells_and_failed_submit_is_dropped() {
             session_id,
             text,
             submission_id,
+            ..
         } => {
             assert_eq!(session_id.as_str(), SESSION);
             assert_eq!(text, "now");
