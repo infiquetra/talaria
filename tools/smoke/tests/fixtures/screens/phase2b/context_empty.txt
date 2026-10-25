@@ -1,0 +1,7 @@
+/context
+Context · not measured yet
+Hermes builds this session's agent on the next prompt; until then there is nothing to break down.
+/usage
+Usage · this session
+  No API calls yet in this session.
+  Cost         not reported by Hermes for this session

@@ -16,6 +16,7 @@ use smoke::report::StepOutcome;
 use smoke::scrub::Scrubber;
 use smoke::steps::run_smoke;
 use smoke::steps2a::{run_smoke_2a, scratch_for};
+use smoke::steps2b::run_smoke_2b;
 use smoke::suite::Suite;
 use smoke::terminal::{HerdrCli, Terminal};
 use smoke::tmux::{Paster, TmuxCli};
@@ -88,6 +89,7 @@ fn main() -> ExitCode {
 
 /// The preflight, the run and the printing.
 fn run(cli: &Cli) -> Result<u8, String> {
+    let suite = cli.suite;
     if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
         return Err(NOT_IN_HERDR.to_owned());
     }
@@ -200,10 +202,10 @@ fn run(cli: &Cli) -> Result<u8, String> {
     // every launch line names, is known before it starts.
     let seed = match cli.suite {
         Suite::Phase1 => None,
-        Suite::Phase2a => Some(rand::random::<u64>()),
+        Suite::Phase2a | Suite::Phase2b => Some(rand::random::<u64>()),
     };
-    let (start_line, resume_line) = match seed {
-        Some(seed) => {
+    let (start_line, resume_line) = match (cli.suite, seed) {
+        (Suite::Phase2a, Some(seed)) => {
             let editor = scratch_for(&temp_root, seed).join("smoke-editor.sh");
             let editor = editor.to_string_lossy();
             let env = [("EDITOR", editor.as_ref())];
@@ -228,7 +230,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
                 ),
             )
         }
-        None => (start_line, resume_line),
+        _ => (start_line, resume_line),
     };
     if start_line.chars().count() >= MAX_LAUNCH_LINE
         || resume_line.chars().count() >= MAX_LAUNCH_LINE
@@ -271,10 +273,17 @@ fn run(cli: &Cli) -> Result<u8, String> {
     );
     println!("herdr: {}", scrubber.scrub(&herdr.version()));
 
+    if suite == Suite::Phase2b
+        && (cli.model != "minimax-m3.1-flash" || cli.provider != "ollama-cloud")
+    {
+        return Err("phase2b needs the default provider and model (ollama-cloud, minimax-m3.1-flash): its expected texts name them".to_owned());
+    }
+
     let clock = SystemClock::new();
-    let report = match seed {
-        None => run_smoke(&herdr, &clock, &config, &stop),
-        Some(seed) => {
+    let report = match suite {
+        Suite::Phase1 => run_smoke(&herdr, &clock, &config, &stop),
+        Suite::Phase2a => {
+            let seed = seed.unwrap_or(0);
             let scratch = scratch_for(&config.temp_root, seed);
             let tmux = TmuxCli::new(&cli.tmux, &scratch.join("tmux-exit.txt"), &scratch);
             println!("tmux: {}", scrubber.scrub(&tmux.version()));
@@ -283,6 +292,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
             };
             run_smoke_2a(&herdr, &tmux, &clock, &config, &cfg2, &stop)
         }
+        Suite::Phase2b => run_smoke_2b(&herdr, &clock, &config, &stop),
     };
 
     // The scratch project is known now, so the pane text can name it as well.

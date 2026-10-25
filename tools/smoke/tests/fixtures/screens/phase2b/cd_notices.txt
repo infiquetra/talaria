@@ -1,0 +1,8 @@
+· Moving this session to <scratch>/b…
+· This session now works in <scratch>/b (main). Its next command runs there; the conversation is kept.
+· This session works in <scratch>/b (main). Use /cd <folder> to move it.
+· No folder at <missing-folder>.
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Shift+Enter adds a line.                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ <scratch>/b (main) │ ctx 1%

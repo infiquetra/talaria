@@ -66,11 +66,16 @@
 //! sets the text `pane get` reports for the pane from then on. A stage with `write_in_cwd`
 //! (`{path, text}`) writes the file under the pane's working folder, for the marker file the
 //! wrapped talaria would write on exit.
+//!
+//! The phase 2b suite adds two `write_in_cwd` features. Its `path` expands `$<n>` captures and
+//! remembered values like any other template, and an optional numeric `mode` sets the file mode
+//! after writing, for the exported file the rename step checks.
 
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
@@ -154,6 +159,8 @@ pub struct WriteFile {
     pub path: String,
     /// The content.
     pub text: String,
+    /// The file mode to set after writing, when the script names one.
+    pub mode: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -280,9 +287,14 @@ fn parse_write_in_cwd(object: &Value) -> Result<Option<WriteFile>, String> {
     let Some(entry) = field(object, "write_in_cwd") else {
         return Ok(None);
     };
+    let mode = match number_field(entry, "mode")? {
+        None => None,
+        Some(mode) => Some(u32::try_from(mode).map_err(|_| "write_in_cwd mode is negative")?),
+    };
     Ok(Some(WriteFile {
         path: text_field(entry, "path")?.ok_or("write_in_cwd needs 'path'")?,
         text: text_field(entry, "text")?.ok_or("write_in_cwd needs 'text'")?,
+        mode,
     }))
 }
 
@@ -616,10 +628,13 @@ impl Machine {
     fn apply(&mut self, name: &str, stage: &Stage, caps: &[String]) {
         let appended = stage.append.as_ref().map(|t| self.expand(t, caps));
         let pane_get = stage.get.as_ref().map(|t| self.expand(t, caps));
-        let written = stage
-            .write_in_cwd
-            .as_ref()
-            .map(|file| (file.path.clone(), self.expand(&file.text, caps)));
+        let written = stage.write_in_cwd.as_ref().map(|file| {
+            (
+                self.expand(&file.path, caps),
+                self.expand(&file.text, caps),
+                file.mode,
+            )
+        });
         let foreground = stage.foreground.as_ref().map(|list| {
             list.iter()
                 .map(|t| self.expand(t, caps))
@@ -654,8 +669,8 @@ impl Machine {
         if let (true, Some(relative)) = (touch_fs, &stage.remove_in_cwd) {
             remove_under(&state.cwd, relative);
         }
-        if let (true, Some((path, text))) = (touch_fs, &written) {
-            write_under(&state.cwd, path, text);
+        if let (true, Some((path, text, mode))) = (touch_fs, &written) {
+            write_under(&state.cwd, path, text, *mode);
         }
         if let Some(text) = pane_get {
             state.pane_get = text;
@@ -807,14 +822,17 @@ fn remove_under(cwd: &Path, relative: &str) {
     }
 }
 
-/// Writes `text` to `relative` under `cwd`, creating parent folders. Paths that escape the
-/// folder are ignored, like [`remove_under`].
-fn write_under(cwd: &Path, relative: &str, text: &str) {
+/// Writes `text` to `relative` under `cwd`, creating parent folders. Absolute paths are
+/// ignored, like [`remove_under`]; relative paths may ascend with `..` (the headless
+/// outputs land in the scratch root, one folder above the tab's working folder).
+fn write_under(cwd: &Path, relative: &str, text: &str, mode: Option<u32>) {
     let path = Path::new(relative);
-    if path
-        .components()
-        .any(|c| !matches!(c, Component::Normal(_)))
-    {
+    if path.components().any(|c| {
+        !matches!(
+            c,
+            Component::Normal(_) | Component::CurDir | Component::ParentDir
+        )
+    }) {
         return;
     }
     let target = cwd.join(path);
@@ -822,4 +840,7 @@ fn write_under(cwd: &Path, relative: &str, text: &str) {
         let _ = fs::create_dir_all(parent);
     }
     let _ = fs::write(&target, text);
+    if let Some(mode) = mode {
+        let _ = fs::set_permissions(&target, fs::Permissions::from_mode(mode));
+    }
 }
