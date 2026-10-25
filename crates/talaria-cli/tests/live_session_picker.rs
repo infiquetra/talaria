@@ -49,9 +49,12 @@ fn skip_reason() -> Option<String> {
     }
 }
 
+/// The five tests share one gateway, so they run one at a time.
+static LIVE_LOCK: Mutex<()> = Mutex::new(());
+
 fn begin() -> bool {
     if let Some(reason) = skip_reason() {
-        println!("LIVE_PICKER_RESULT: SKIPPED ({reason})");
+        println!("LIVE_SESSION_PICKER_RESULT: SKIPPED ({reason})");
         if std::env::var("TALARIA_LIVE_REQUIRE").ok().as_deref() == Some("1") {
             panic!("live test skipped: {reason}");
         }
@@ -61,7 +64,7 @@ fn begin() -> bool {
 }
 
 fn passed() {
-    println!("LIVE_PICKER_RESULT: PASSED");
+    println!("LIVE_SESSION_PICKER_RESULT: PASSED");
 }
 
 #[derive(Default)]
@@ -270,6 +273,7 @@ fn project() -> (tempfile::TempDir, PathBuf) {
 #[test]
 #[ignore]
 fn live_picker_lists_healthy_gateway() {
+    let _guard = LIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !begin() {
         return;
     }
@@ -300,6 +304,7 @@ fn live_picker_lists_healthy_gateway() {
             service.close().await;
         }
         times.sort_unstable();
+        println!("picker_open_median_ms: {}", times[2]);
         assert!(
             times[2] <= 500,
             "the median open time is over 500 ms: {times:?}"
@@ -311,6 +316,7 @@ fn live_picker_lists_healthy_gateway() {
 #[test]
 #[ignore]
 fn live_picker_round_trip_and_taken_title() {
+    let _guard = LIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !begin() {
         return;
     }
@@ -386,6 +392,7 @@ fn live_picker_round_trip_and_taken_title() {
 #[test]
 #[ignore]
 fn live_picker_sibling_routes() {
+    let _guard = LIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !begin() {
         return;
     }
@@ -445,6 +452,7 @@ fn live_picker_sibling_routes() {
 #[test]
 #[ignore]
 fn live_picker_branch_and_switch_back() {
+    let _guard = LIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !begin() {
         return;
     }
@@ -496,6 +504,7 @@ fn live_picker_branch_and_switch_back() {
 #[test]
 #[ignore]
 fn live_picker_export_formats() {
+    let _guard = LIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if !begin() {
         return;
     }

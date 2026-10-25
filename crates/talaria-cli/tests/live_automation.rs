@@ -145,7 +145,7 @@ async fn run_command_when_idle(
     live: &mut Live,
     typed: &str,
 ) -> talaria_core::commands::CommandOutcome {
-    for _ in 0..20 {
+    for _ in 0..60 {
         let outcome = run_command(live, typed).await;
         if !said(&outcome).contains("Agent is running") {
             return outcome;
@@ -201,7 +201,8 @@ fn goal_of(update: &Value) -> Option<&Value> {
 }
 
 async fn run_live() {
-    let folder = std::env::temp_dir();
+    let temp = tempfile::tempdir().expect("a scratch folder");
+    let folder = temp.path().to_path_buf();
     let connection = connect(&launch(&folder), &hermes_home())
         .await
         .unwrap_or_else(|error| panic!("{}", public_reason(&error.render())));
@@ -311,7 +312,7 @@ async fn run_live() {
     // Step 5: pause, resume and stop the loop.
     let mut last = Value::Null;
     for typed in ["/loop pause", "/loop resume", "/loop stop"] {
-        let _ = run_command(&mut live, typed).await;
+        let _ = run_command_when_idle(&mut live, typed).await;
         let updates = drain_updates(&mut live.connection, STEP_WAIT).await;
         if let Some(update) = updates.last() {
             last = update.clone();
@@ -323,7 +324,7 @@ async fn run_live() {
     // Step 6: pause and clear the goal.
     let mut last = Value::Null;
     for typed in ["/goal pause", "/goal clear"] {
-        let _ = run_command(&mut live, typed).await;
+        let _ = run_command_when_idle(&mut live, typed).await;
         let updates = drain_updates(&mut live.connection, STEP_WAIT).await;
         if let Some(update) = updates.last() {
             last = update.clone();
@@ -334,7 +335,8 @@ async fn run_live() {
 
     // Step 7: a heartbeat, then its clear.
     let mut last = Value::Null;
-    let set = said(&run_command(&mut live, "/heartbeat every 1h talaria fixture ping").await);
+    let set =
+        said(&run_command_when_idle(&mut live, "/heartbeat every 1h talaria fixture ping").await);
     let updates = drain_updates(&mut live.connection, STEP_WAIT).await;
     assert!(
         updates.iter().any(|update| update["heartbeat"].is_object()),
@@ -344,7 +346,7 @@ async fn run_live() {
         last = update.clone();
     }
     apply_updates(&mut live.state, &session_id, &updates);
-    let clear = said(&run_command(&mut live, "/heartbeat clear").await);
+    let clear = said(&run_command_when_idle(&mut live, "/heartbeat clear").await);
     let updates = drain_updates(&mut live.connection, STEP_WAIT).await;
     assert!(
         updates.iter().any(|update| update["heartbeat"].is_null()),
@@ -360,14 +362,14 @@ async fn run_live() {
     );
 
     // Step 9: YOLO on, then off again.
-    let on = said(&run_command(&mut live, "/yolo").await);
+    let on = said(&run_command_when_idle(&mut live, "/yolo").await);
     assert!(on.contains("YOLO"), "yolo answers, got {on:?}");
     assert_eq!(
         read_mode(&mut live, ModeKey::Yolo).await.as_deref(),
         Some("1"),
         "yolo reads back as on"
     );
-    let off = said(&run_command(&mut live, "/yolo").await);
+    let off = said(&run_command_when_idle(&mut live, "/yolo").await);
     assert!(off.contains("YOLO"), "yolo answers again, got {off:?}");
     assert_eq!(
         read_mode(&mut live, ModeKey::Yolo).await.as_deref(),
@@ -376,7 +378,7 @@ async fn run_live() {
     );
 
     // Step 10: /fast changes nothing on this route.
-    let fast_reply = said(&run_command(&mut live, "/fast").await);
+    let fast_reply = said(&run_command_when_idle(&mut live, "/fast").await);
     assert!(
         fast_reply.contains("Priority Processing"),
         "fast answers, got {fast_reply:?}"
@@ -388,7 +390,7 @@ async fn run_live() {
     );
 
     // Step 11: a plan queues a turn that is never submitted.
-    let plan = said(&run_command(&mut live, "/plan write a haiku about rain").await);
+    let plan = said(&run_command_when_idle(&mut live, "/plan write a haiku about rain").await);
     assert!(!plan.is_empty(), "the plan answers");
 
     // Step 12: the standing state is empty again.

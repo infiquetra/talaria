@@ -1,7 +1,7 @@
 //! The permissions service for #237: the typed calls behind the reducer.
 //!
 //! Reads and writes the profile's approval mode and a session's bypass through
-//! `config.get` and `config.set`. Every call carries an explicit word, never
+//! the config read and write verbs. Every call carries an explicit word, never
 //! asks Hermes to toggle, and never names a profile.
 
 use std::sync::Arc;
