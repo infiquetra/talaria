@@ -1,0 +1,14 @@
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > /                                                                                                                                                                   │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  Talaria
+  /quit                         Leave Talaria; the session keeps running in Hermes                                                                               talaria
+  /tasks                        Collapse or expand the agent's task checklist                                                                                    talaria
+  /model                        Choose the model of this session                                                                                                 talaria
+  /effort                       Choose the reasoning level of this session                                                                                       talaria
+  /context                      Show what fills the model's context window                                                                                       talaria
+  /compact                      Summarize earlier conversation to free context                                                                                   talaria
+  /usage                        Show this session's tokens, calls and cost                                                                                       talaria
+  /btw                          Ask a side question; it is not added to the conversation                                                                         talaria
+↑↓ choose · Tab complete · Enter run · Esc close                                                                                                               109 of 109
+ minimax-m3.1-flash │ approvals: manual │ <scratch>

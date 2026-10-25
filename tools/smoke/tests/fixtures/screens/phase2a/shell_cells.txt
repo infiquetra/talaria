@@ -1,0 +1,8 @@
+! echo heron-4243                                                                                                                                                    0.0s
+  heron-4243
+! rm -r ./keepme                                                                                                                                                     0.0s
+  Hermes refused to run this: it looks dangerous, and ! runs only safe commands. Ask the agent instead, so the command goes through approval.
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Shift+Enter adds a line.                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ <scratch> │ ctx 1%

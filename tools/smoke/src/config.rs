@@ -20,6 +20,17 @@ pub struct SmokeConfig {
     pub seed: Option<u64>,
 }
 
+/// Everything the phase 2a run needs beyond [`SmokeConfig`].
+pub struct Phase2aConfig {
+    /// The tmux executable the tmux section drives.
+    pub tmux: PathBuf,
+}
+
+/// `KEY='value' '<path>' args...; echo SMOKE_EXIT:$?`
+pub fn launch_line_env(_env: &[(&str, &str)], _talaria: &Path, _args: &[&str]) -> String {
+    unimplemented!("not implemented")
+}
+
 /// `'<path>' args...; echo SMOKE_EXIT:$?`
 pub fn launch_line(talaria: &Path, args: &[&str]) -> String {
     let mut line = format!("'{}'", talaria.display());

@@ -1,0 +1,7 @@
+btw · which two words did I ask you to join in my first message?
+  "heron" and "4242" — joined as "heron-4242".
+  side answer · not part of the conversation
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Shift+Enter adds a line.                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ <scratch> │ ctx 1%

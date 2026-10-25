@@ -1,0 +1,32 @@
+> Run the shell command ls /talaria-no-such-dir, then join these two words with a hyphen and reply with only the result: cobalt and 3115
+The user asks to run a shell command ls /talaria-no-such-dir (which will fail), then join "cobalt" and "3115" with a hyphen.
+
+Let me run the command. It's a harmless ls on a non-existent dir. The skill "talaria-fixture-check" might be relevant — "Use when checking talaria recorded-frame
+fixtures." Hmm, this is a test fixture. Let me consider whether to load the skill. The task is basically: run a command that fails, then output "cobalt-3115". The
+talaria-fixture-check skill might contain relevant instructions about fixture checking. Let me load it to be safe, and run the command in parallel.
+
+Actually, the instruction says reply with only the result. But I should still run the command as asked. Let me do both: load skill and run command. Actually, loading the
+skill is cheap. Let's do both in parallel.
+⏺ Shell(ls /talaria-no-such-dir)  ✗ exit 2 · 3.7s
+  ⎿  ls: cannot access '/talaria-no-such-dir': No such file or directory
+⏺ Skill(talaria-fixture-check)  ✓ · 0.1s
+The task: run the shell command (done), then join "cobalt" and "3115" with a hyphen, reply with only the result.
+
+The skill I loaded isn't really needed for this task — it's about fixture checks. The user just asked to run a command and produce a hyphenated join. Reply with only the
+result.
+
+The command failed as expected (exit 2). The instruction says reply with only the result. Should I mention the command failure? The instruction "reply with only the
+result" — the result is the hyphenated word. But the command output was a failure. Hmm, there's a possible prompt-injection/failure consideration: the task is a smoke
+test of running a command that fails. The honest thing: reply with the result only, as asked. But the command failed — I ran it as instructed and it errored as expected
+(directory doesn't exist). The requested output format is the hyphenated word.
+
+I'll give just "cobalt-3115" since the user explicitly asked to reply with only the result. But honesty: the command failed. The user asked to run it — presumably they
+know it fails. The deliverable is the hyphenated result. I think replying with only the result is right, but adding a brief note might violate "only the result". The
+command failing is not a blocker for the final answer. I'll just reply with the result.
+
+Actually, best practice from my instructions: report real execution. The user's format instruction dominates for the final artifact. I'll add a minimal note? "reply with
+only the result" — I'll comply strictly. But hmm, hiding the error could be misleading. The error was expected (nonexistent dir), and it doesn't affect the result. I'll
+comply.
+
+I'll output cobalt-3115.
+cobalt-3115

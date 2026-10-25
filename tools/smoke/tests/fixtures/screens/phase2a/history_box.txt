@@ -1,0 +1,5 @@
+╭ search history · this folder · tab: all folders───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ › heron and 4242▏                                                                                                                                                     │
+│ ▸ Without using any tools, join these two words with a hyphen and reply with only the result: heron and 4242  now                                                     │
+╰ enter: put in composer · esc: cancel──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ <scratch> │ ctx 1%

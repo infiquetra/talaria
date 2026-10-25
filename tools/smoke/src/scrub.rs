@@ -150,3 +150,10 @@ pub fn public_safety_violations(text: &str, needles: &[String]) -> Vec<String> {
     }
     found
 }
+
+/// Reports scrub failures in the text of one phase 2a fixture file: planted absolute paths,
+/// home directories, login names and profile names other than `default` and `fixture`.
+/// Stage 0 stub.
+pub fn public_safety_violations_2a(_text: &str, _needles: &[String]) -> Vec<String> {
+    unimplemented!("not implemented")
+}

@@ -1,0 +1,13 @@
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > /vers                                                                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  /version     Show Hermes Agent version                                                                                                                          hermes
+  /update      Update Hermes Agent to the latest version                                                                                                          hermes
+  /version     Show Hermes Agent version                                                                                                                          hermes
+  /redraw      Force a full UI repaint (recovers from terminal drift)                                                                                             hermes
+  /history     Show conversation history                                                                                                                          hermes
+  /save        Export the current conversation (bare /save shows usage) (usage: /save <json|md|html> [filename] [redact])                                         hermes
+  /refine      Review this conversation now and save lessons to memory/skills (usage: /refine [focus instructions])                                               hermes
+  /reload-mcp  Reload MCP servers from config                                                                                                                     hermes
+↑↓ choose · Tab complete · Enter run · Esc close                                                                                                                 9 of 109
+ minimax-m3.1-flash │ approvals: manual │ <scratch>

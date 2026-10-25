@@ -60,10 +60,17 @@
 //!
 //! The call names of a `fail` entry are `tab create`, `tab list`, `tab close`, `pane split`,
 //! `pane run`, `pane send-text`, `pane send-keys`, `pane read`, `pane process-info` and `version`.
+//!
+//! The phase 2a suite adds three script features. A rule with `on: "paste"` fires on text the
+//! fake paster feeds the machine, and matching runs over the pasted text. A stage with `get`
+//! sets the text `pane get` reports for the pane from then on. A stage with `write_in_cwd`
+//! (`{path, text}`) writes the file under the pane's working folder, for the marker file the
+//! wrapped talaria would write on exit.
 
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
@@ -98,6 +105,7 @@ pub enum Input {
     Run,
     SendText,
     SendKeys,
+    Paste,
 }
 
 impl Input {
@@ -106,6 +114,7 @@ impl Input {
             "run" => Ok(Input::Run),
             "send_text" => Ok(Input::SendText),
             "send_keys" => Ok(Input::SendKeys),
+            "paste" => Ok(Input::Paste),
             other => Err(format!("unknown input kind '{other}'")),
         }
     }
@@ -115,6 +124,7 @@ impl Input {
             Input::Run => "run",
             Input::SendText => "send_text",
             Input::SendKeys => "send_keys",
+            Input::Paste => "paste",
         }
     }
 }
@@ -133,6 +143,17 @@ pub struct Stage {
     pub clear: bool,
     pub wipe: bool,
     pub stop_churn: bool,
+    pub write_in_cwd: Option<WriteFile>,
+    pub get: Option<String>,
+}
+
+/// A file a stage writes under the pane's working folder.
+#[derive(Clone, Debug)]
+pub struct WriteFile {
+    /// The path under the working folder.
+    pub path: String,
+    /// The content.
+    pub text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -250,7 +271,19 @@ fn parse_stage(object: &Value) -> Result<Stage, String> {
         clear: bool_field(object, "clear")?.unwrap_or(false),
         wipe: bool_field(object, "wipe")?.unwrap_or(false),
         stop_churn: bool_field(object, "stop_churn")?.unwrap_or(false),
+        write_in_cwd: parse_write_in_cwd(object)?,
+        get: text_field(object, "get")?,
     })
+}
+
+fn parse_write_in_cwd(object: &Value) -> Result<Option<WriteFile>, String> {
+    let Some(entry) = field(object, "write_in_cwd") else {
+        return Ok(None);
+    };
+    Ok(Some(WriteFile {
+        path: text_field(entry, "path")?.ok_or("write_in_cwd needs 'path'")?,
+        text: text_field(entry, "text")?.ok_or("write_in_cwd needs 'text'")?,
+    }))
 }
 
 static REGEX_CACHE: std::sync::OnceLock<
@@ -362,6 +395,8 @@ struct PaneState {
     cwd: PathBuf,
     used: Vec<bool>,
     fired: Vec<Fired>,
+    /// The text `pane get` reports; rules change it with `get`.
+    pane_get: String,
 }
 
 /// The state machine behind both fakes. It is deterministic: the same calls in the same order give
@@ -392,6 +427,7 @@ impl Machine {
                         cwd: PathBuf::new(),
                         used: vec![false; pane.rules.len()],
                         fired: Vec::new(),
+                        pane_get: String::new(),
                     },
                 )
             })
@@ -447,6 +483,7 @@ impl Machine {
                 cwd: PathBuf::new(),
                 used: Vec::new(),
                 fired: Vec::new(),
+                pane_get: String::new(),
             });
         state.open = true;
         state.text = definition.initial.clone();
@@ -578,6 +615,11 @@ impl Machine {
 
     fn apply(&mut self, name: &str, stage: &Stage, caps: &[String]) {
         let appended = stage.append.as_ref().map(|t| self.expand(t, caps));
+        let pane_get = stage.get.as_ref().map(|t| self.expand(t, caps));
+        let written = stage
+            .write_in_cwd
+            .as_ref()
+            .map(|file| (file.path.clone(), self.expand(&file.text, caps)));
         let foreground = stage.foreground.as_ref().map(|list| {
             list.iter()
                 .map(|t| self.expand(t, caps))
@@ -611,6 +653,12 @@ impl Machine {
         }
         if let (true, Some(relative)) = (touch_fs, &stage.remove_in_cwd) {
             remove_under(&state.cwd, relative);
+        }
+        if let (true, Some((path, text))) = (touch_fs, &written) {
+            write_under(&state.cwd, path, text);
+        }
+        if let Some(text) = pane_get {
+            state.pane_get = text;
         }
         if let Some(text) = appended {
             push_line(state, &text);
@@ -693,6 +741,32 @@ impl Machine {
             .unwrap_or_default()
     }
 
+    /// The text `pane get` reports for the pane; rules change it with `get`.
+    pub fn pane_get_text(&self, name: &str) -> String {
+        self.panes
+            .get(name)
+            .map(|p| p.pane_get.clone())
+            .unwrap_or_default()
+    }
+
+    /// Every typed text that fired a rule on the pane, oldest first.
+    pub fn typed_texts(&self, name: &str) -> Vec<String> {
+        self.panes
+            .get(name)
+            .map(|p| {
+                p.fired
+                    .iter()
+                    .filter_map(|f| f.caps.first().cloned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Pushes a value to the remembered list (the fake paster notes dropped-file tokens).
+    pub fn note(&mut self, value: String) {
+        self.memory.push(value);
+    }
+
     /// The remembered values, oldest first.
     pub fn memory(&self) -> &[String] {
         &self.memory
@@ -731,4 +805,21 @@ fn remove_under(cwd: &Path, relative: &str) {
     } else {
         let _ = std::fs::remove_file(&target);
     }
+}
+
+/// Writes `text` to `relative` under `cwd`, creating parent folders. Paths that escape the
+/// folder are ignored, like [`remove_under`].
+fn write_under(cwd: &Path, relative: &str, text: &str) {
+    let path = Path::new(relative);
+    if path
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return;
+    }
+    let target = cwd.join(path);
+    if let Some(parent) = target.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&target, text);
 }
