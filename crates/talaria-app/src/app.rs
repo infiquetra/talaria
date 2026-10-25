@@ -208,6 +208,8 @@ pub enum UserAction {
         /// Which screen owned the key.
         context: ToggleContext,
     },
+    /// One input for the session picker (#231).
+    Picker(talaria_core::directory::state::PickerInput),
 }
 
 /// Which screen owned the approvals toggle key (#237).
@@ -810,6 +812,8 @@ pub enum AppMessage {
     Permissions(PermissionsInput),
     /// A `/cd` folder check or move finished (#237).
     Cd(CdInput),
+    /// One input for the session picker (#231).
+    Picker(talaria_core::directory::state::PickerInput),
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -1407,6 +1411,8 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Permissions(input) => permissions(state, input),
         AppMessage::Cd(input) => cd_input(state, input),
         AppMessage::Automation(event) => automation_event(state, event),
+        // The picker owns its routing; until it merges, its messages wait here.
+        AppMessage::Picker(_) => Vec::new(),
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -2049,6 +2055,8 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             ToggleContext::Composer => permissions(state, PermissionsInput::ToggleKey),
             ToggleContext::Completion | ToggleContext::Card => Vec::new(),
         },
+        // The picker owns its routing; until it merges, its inputs wait here.
+        UserAction::Picker(_) => Vec::new(),
     }
 }
 

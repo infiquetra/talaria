@@ -18,6 +18,7 @@ pub mod palette;
 pub mod prompts;
 pub mod queue;
 pub mod rewind;
+pub mod session_picker;
 pub mod side;
 pub mod status;
 pub mod terminal;

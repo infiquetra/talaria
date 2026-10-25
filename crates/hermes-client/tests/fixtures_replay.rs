@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 15] = [
+const NAMES: [&str; 16] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -33,6 +33,7 @@ const NAMES: [&str; 15] = [
     "todo-checklist",
     "permissions-cd",
     "hermes-commands",
+    "session-picker",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -77,8 +78,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 19,
-        "expected nineteen fixtures in fixtures/frames, found {}",
+        files.len() == 20,
+        "expected twenty fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -150,7 +151,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 15);
+    assert_eq!(fixtures.len(), 16);
 }
 
 #[test]
@@ -610,6 +611,13 @@ fn scenario_evidence_present() {
                 );
             }
             "hermes-commands" => hermes_commands_evidence(name, &records, &events),
+            "session-picker" => {
+                assert!(
+                    position(&events, "session.updated", 0).is_some()
+                        || position(&events, "message.complete", 0).is_some(),
+                    "{name}: no session event"
+                );
+            }
             other => panic!("unlisted fixture {other}"),
         }
     }

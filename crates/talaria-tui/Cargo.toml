@@ -50,5 +50,9 @@ harness = false
 name = "pager"
 harness = false
 
+[[bench]]
+name = "session_picker"
+harness = false
+
 [lints]
 workspace = true
