@@ -181,6 +181,14 @@ impl SessionState {
         &self.cells
     }
 
+    /// The tool name still being written, if the gateway said one.
+    ///
+    /// Issue 221. Nothing is stored yet, so this is empty.
+    #[must_use]
+    pub fn drafting_tool(&self) -> Option<&str> {
+        None
+    }
+
     /// How many leading cells are final. The count never shrinks.
     pub fn final_prefix_len(&self) -> usize {
         self.final_prefix

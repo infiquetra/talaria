@@ -1,6 +1,7 @@
 //! Terminal rendering, input and overlays projected from domain state.
 
 pub mod composer;
+pub mod diff_view;
 pub mod history;
 pub mod keys;
 pub mod live;
@@ -9,3 +10,4 @@ pub mod palette;
 pub mod prompts;
 pub mod status;
 pub mod terminal;
+pub mod tool_cell;
