@@ -11,12 +11,13 @@ use std::path::PathBuf;
 
 /// The scenarios whose recording is driven by the scripted driver rather than by
 /// a plain model prompt. Their evidence rules live in `scripted.rs`.
-const SCRIPTED: [&str; 5] = [
+const SCRIPTED: [&str; 6] = [
     "queue-edit-remove",
     "queue-steer",
     "queue-move-send-now",
     "model-switch",
     "permissions-cd",
+    "shell-and-btw",
 ];
 
 fn fixtures_dir() -> PathBuf {
@@ -30,8 +31,7 @@ fn the_shipped_recordings_satisfy_their_own_evidence_check() {
     for name in SCRIPTED {
         let path = fixtures_dir().join(format!("{name}.jsonl"));
         let scenario = Scenario::named(name).unwrap_or_else(|| panic!("{name} is not a scenario"));
-        let source =
-            ReplaySource::open(&path).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let source = ReplaySource::open(&path).unwrap_or_else(|error| panic!("{name}: {error}"));
         if let Err(reason) = check_evidence(&scenario, &source) {
             panic!("{name}: {reason}");
         }

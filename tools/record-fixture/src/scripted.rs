@@ -16,12 +16,13 @@ use tokio::time::Instant;
 use crate::{AttemptResult, DriverConfig, Scenario, call_options, check_info, submit_params};
 
 /// The scenarios of this module, in the order they are recorded.
-pub const SCRIPTED_SCENARIOS: [&str; 5] = [
+pub const SCRIPTED_SCENARIOS: [&str; 6] = [
     "queue-edit-remove",
     "queue-steer",
     "queue-move-send-now",
     "model-switch",
     "permissions-cd",
+    "shell-and-btw",
 ];
 
 /// Whether `name` is one of [`SCRIPTED_SCENARIOS`].
@@ -35,6 +36,10 @@ const STEER_PROMPT: &str = "Run sleep 15 and then sleep 15 as two separate shell
 const REWIND_FIRST: &str = "Create a file named notes.txt containing exactly the line alpha. Use your file writing tool, not the terminal. Reply with the word done.";
 const REWIND_SECOND: &str = "In notes.txt replace alpha with beta using your patch or file tool, not the terminal. Reply with the word done.";
 const PICKER_PROMPT: &str = "Reply with exactly the single word: pong. Do not use any tools.";
+/// The prompt of the shell scenario. The side question asks which word it answered with.
+const SHELL_PROMPT: &str = "Reply with the single word ready.";
+/// The side question of the shell scenario, asked while the turn is over.
+const BTW_QUESTION: &str = "What single word did you just reply with?";
 const NUMBER_WORDS: [&str; 16] = [
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
     "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
@@ -66,6 +71,7 @@ pub(crate) fn scenario(name: &str) -> Option<Scenario> {
             ]),
         ),
         "model-switch" | "permissions-cd" => (Vec::new(), Vec::new()),
+        "shell-and-btw" => (owned(&[SHELL_PROMPT]), owned(&["complete"])),
         _ => return None,
     };
     Some(Scenario {
@@ -576,6 +582,7 @@ async fn drive(run: &mut Run<'_>, scenario: &Scenario, config: &DriverConfig) ->
         "queue-steer" => queue_steer(run).await,
         "queue-move-send-now" => queue_move_send_now(run).await,
         "permissions-cd" => permissions_cd(run, config).await,
+        "shell-and-btw" => shell_and_btw(run).await,
         other => Err(Stop::Fail(format!("unknown scripted scenario {other}"))),
     }
 }
@@ -1371,6 +1378,46 @@ async fn permissions_cd(run: &mut Run<'_>, config: &DriverConfig) -> Step {
 }
 
 // -------------------------------------------------------------------------------------------
+// shell-and-btw
+// -------------------------------------------------------------------------------------------
+
+/// The three shell commands the scenario runs: one that succeeds, one that fails with a
+/// non-zero exit code, and one the gateway refuses as a dangerous command.
+const SHELL_COMMANDS: [&str; 3] = [
+    "echo talaria-shell-ok",
+    "echo oops >&2; exit 3",
+    "rm -r ./talaria-uat-does-not-exist",
+];
+
+async fn shell_and_btw(run: &mut Run<'_>) -> Step {
+    run.progress("three shell commands");
+    let sid = run.session_id.clone();
+    for command in SHELL_COMMANDS {
+        // The last command is refused as a dangerous command. The refusal is part of the
+        // recording, so the error is kept rather than raised.
+        let _outcome = run
+            .call_maybe("shell.exec", json!({"session_id": sid, "command": command}))
+            .await?;
+    }
+    run.progress("the reply");
+    run.turn(SHELL_PROMPT).await?;
+    run.progress("the side question");
+    let mark = run.events.len();
+    run.call(
+        "prompt.btw",
+        json!({"session_id": sid, "text": BTW_QUESTION}),
+    )
+    .await?;
+    run.wait_event("btw.complete", mark, TURN_WAIT, |payload| {
+        payload["text"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty())
+    })
+    .await?;
+    Ok(())
+}
+
+// -------------------------------------------------------------------------------------------
 // evidence over a recorded file
 // -------------------------------------------------------------------------------------------
 
@@ -1512,6 +1559,33 @@ pub(crate) fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Resu
             }
             if sent("session.mutate") == 0 {
                 return Err("no session.mutate request".to_owned());
+            }
+        }
+        "shell-and-btw" => {
+            if count_events(source, "btw.complete") == 0 {
+                return Err("no btw.complete event".to_owned());
+            }
+            if sent("shell.exec") < 3 {
+                return Err("fewer than three shell.exec requests".to_owned());
+            }
+            if sent("prompt.btw") == 0 {
+                return Err("no prompt.btw request".to_owned());
+            }
+            let shells = results_of(source, "shell.exec");
+            let first = shells.first().ok_or("no shell.exec reply")?;
+            if first["stdout"].as_str() != Some("talaria-shell-ok\n") {
+                return Err("the first shell command did not print its marker".to_owned());
+            }
+            let second = shells.get(1).ok_or("no second shell.exec reply")?;
+            if second["code"].as_i64() != Some(3) {
+                return Err("the second shell command did not exit with 3".to_owned());
+            }
+            // The third command is refused, so its reply is an error and no result names it.
+            let refused = source
+                .inbound()
+                .any(|frame| frame.frame["error"]["data"]["reason"] == "dangerous_command");
+            if !refused {
+                return Err("no shell.exec refusal for a dangerous command".to_owned());
             }
         }
         _ => {}
