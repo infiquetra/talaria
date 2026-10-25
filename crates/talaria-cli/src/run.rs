@@ -38,6 +38,7 @@ use talaria_core::commands::PaletteInput;
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
+use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
@@ -66,6 +67,7 @@ use talaria_tui::pager::{
 };
 use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
+use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
 use talaria_tui::side::{SideTasksSection, SideTheme, shell_mode_title};
 use talaria_tui::status::{
@@ -173,6 +175,10 @@ pub struct TuiScreen {
     transcript: Option<Transcript>,
     /// What the application asked of the transcript screen.
     transcript_actions: Vec<TranscriptAction>,
+    /// The queued row whose edit the composer holds, once its text is loaded (#232).
+    editing: Option<AdmissionId>,
+    /// The person saved or cancelled the edit; clear the composer when it closes.
+    edit_closing: bool,
 }
 
 struct ModelOverlay {
@@ -557,6 +563,12 @@ fn preview_text(text: &str, limit: usize) -> Option<String> {
     Some(kept.join("\n"))
 }
 
+/// What the queue section draws for the open session (#232).
+fn queue_view(view: &View<'_>) -> Option<QueueView> {
+    view.state
+        .map(|state| state.queue.view(view.turn_running()))
+}
+
 fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
     let open = view.state.map_or(0, |state| state.open_prompts().count());
     let context_percent = if view.context_hidden {
@@ -758,6 +770,9 @@ impl TuiScreen {
 
     /// The shell-mode title follows the draft: set while it starts with `!`, cleared otherwise.
     fn sync_title(&mut self) {
+        if self.editing.is_some() {
+            return;
+        }
         let title = shell_mode_title(self.composer.text()).map(str::to_string);
         self.composer.set_title(title);
     }
@@ -783,11 +798,132 @@ impl TuiScreen {
         actions.insert(0, UserAction::Palette(PaletteInput::Close));
     }
 
+    /// Queue selection and edit mode take their keys after a focused card and before the
+    /// palette and the composer (#232). `None` passes the key on.
+    fn queue_keys(
+        &mut self,
+        raw: crossterm::event::KeyEvent,
+        key: Key,
+        view: &View<'_>,
+        prefix: &mut Vec<UserAction>,
+    ) -> Option<Vec<UserAction>> {
+        if key.kind == KeyKind::Release {
+            return None;
+        }
+        let queue = queue_view(view)?;
+        let bound = self.keymap.resolve(&key, KeyContext::Composer);
+        if queue.editing.is_some() {
+            if bound == Some(Action::Submit) {
+                // An edit saves before the blank-draft rule, slash dispatch and `!`.
+                self.edit_closing = true;
+                let mut actions = flush_draft_actions(&mut self.composer, Instant::now());
+                let text = self.composer.text().to_string();
+                actions.push(UserAction::Queue(QueueIntent::SaveEdit(text)));
+                return Some(actions);
+            }
+            if let Some(intent) = handle_selection_key(raw, &queue, &self.keymap) {
+                self.edit_closing = true;
+                return Some(vec![UserAction::Queue(intent)]);
+            }
+            // Arrows move the caret only: no history while an edit is open.
+            let plain_up = key.code == KeyCode::Up && key.mods == Default::default();
+            return (plain_up && self.composer.cursor_on_first_row()).then(Vec::new);
+        }
+        if queue.selected.is_some() {
+            return match handle_selection_key(raw, &queue, &self.keymap) {
+                Some(intent) => Some(vec![UserAction::Queue(intent)]),
+                None => {
+                    prefix.push(UserAction::Queue(QueueIntent::Leave));
+                    None
+                }
+            };
+        }
+        if self.composer.is_empty()
+            && self.composer.cursor_on_first_row()
+            && let Some(intent) = handle_selection_key(raw, &queue, &self.keymap)
+        {
+            return Some(vec![UserAction::Queue(intent)]);
+        }
+        if matches!(bound, Some(Action::ComposerSendNow | Action::ComposerSteer)) {
+            prefix.extend(flush_draft_actions(&mut self.composer, Instant::now()));
+        }
+        let draft = self.composer.text().to_string();
+        let intent = match bound {
+            Some(Action::ComposerSendNow) if !draft.trim().is_empty() => {
+                QueueIntent::SendDraftNow(draft)
+            }
+            Some(Action::ComposerSteer) if !draft.trim().is_empty() => {
+                QueueIntent::SteerText(draft)
+            }
+            _ => return None,
+        };
+        self.composer.clear();
+        Some(vec![UserAction::Queue(intent)])
+    }
+
+    fn composer_key(&mut self, key: Key, view: &View<'_>, now: Instant) -> Vec<UserAction> {
+        let ctx = ComposerContext {
+            turn_running: view.turn_running(),
+        };
+        let mut actions = Vec::new();
+        for action in composer_key_actions(&mut self.composer, key, ctx, now) {
+            match action {
+                UserAction::Submit(text) => actions.extend(
+                    self.composer_action(ComposerOutcome::Submit(text), view.state.is_some()),
+                ),
+                UserAction::Escape { eligible } => actions.push(UserAction::Escape {
+                    eligible: eligible && !view.palette.open,
+                }),
+                action => actions.push(action),
+            }
+        }
+        actions
+    }
+
+    /// Load an opened edit's text, clear a closed one, and title the composer (#232).
+    fn sync_queue(&mut self, view: &View<'_>) {
+        let state = view.state.map(|state| &state.queue);
+        let open = state.and_then(|queue| queue.edit.as_ref());
+        match (open, &self.editing) {
+            (Some(edit), current) if current.as_ref() != Some(&edit.admission_id) => {
+                self.composer.load(edit.original_text.clone());
+                self.editing = Some(edit.admission_id.clone());
+                self.edit_closing = false;
+            }
+            (None, Some(_)) => {
+                // Saved or cancelled: the draft goes. A row that started keeps it as a draft.
+                if self.edit_closing {
+                    self.composer.clear();
+                }
+                self.editing = None;
+                self.edit_closing = false;
+            }
+            _ => {}
+        }
+        let title = queue_view(view)
+            .and_then(|queue| composer_title(&queue))
+            .or_else(|| shell_mode_title(self.composer.text()).map(str::to_owned));
+        self.composer.set_title(title);
+    }
+
     fn terminal_input(
         &mut self,
         event: crossterm::event::Event,
         view: &View<'_>,
         now: Instant,
+    ) -> Vec<UserAction> {
+        let mut prefix = Vec::new();
+        let mut actions = self.terminal_input_actions(event, view, now, &mut prefix);
+        prefix.append(&mut actions);
+        prefix
+    }
+
+    fn terminal_input_actions(
+        &mut self,
+        event: crossterm::event::Event,
+        view: &View<'_>,
+        now: Instant,
+        prefix: &mut Vec<UserAction>,
     ) -> Vec<UserAction> {
         use crossterm::event::Event;
         match event {
@@ -860,6 +996,20 @@ impl TuiScreen {
                     Self::close_palette(&mut actions);
                     return actions;
                 }
+                self.sync_confirmation_focus(now);
+                let control_c = key.mods.ctrl
+                    && !key.mods.alt
+                    && !key.mods.super_key
+                    && matches!(key.code, KeyCode::Char('c' | 'C'));
+                if self.confirmation_takes_keys() && !control_c {
+                    return confirmation_key(key, self.confirmation_focused, now)
+                        .map(UserAction::ModelConfirm)
+                        .into_iter()
+                        .collect();
+                }
+                if let Some(actions) = self.queue_keys(raw, key, view, prefix) {
+                    return actions;
+                }
                 // An open completion list takes its four keys before the composer does.
                 if view.palette.open
                     && focus == talaria_tui::comfort_route::Focus::Composer
@@ -875,17 +1025,6 @@ impl TuiScreen {
                     let mut actions = flush_draft_actions(&mut self.composer, now);
                     actions.push(UserAction::Palette(input));
                     return actions;
-                }
-                self.sync_confirmation_focus(now);
-                let control_c = key.mods.ctrl
-                    && !key.mods.alt
-                    && !key.mods.super_key
-                    && matches!(key.code, KeyCode::Char('c' | 'C'));
-                if self.confirmation_takes_keys() && !control_c {
-                    return confirmation_key(key, self.confirmation_focused, now)
-                        .map(UserAction::ModelConfirm)
-                        .into_iter()
-                        .collect();
                 }
                 if !view.palette.open
                     && self.keymap.resolve_model(KeyContext::Composer, &key)
@@ -964,23 +1103,7 @@ impl TuiScreen {
                     };
                     return vec![UserAction::ApprovalsToggle { context }];
                 }
-                let ctx = ComposerContext {
-                    turn_running: view.turn_running(),
-                };
-                for action in composer_key_actions(&mut self.composer, key, ctx, now) {
-                    match action {
-                        UserAction::Submit(text) => {
-                            actions.extend(self.composer_action(
-                                ComposerOutcome::Submit(text),
-                                view.state.is_some(),
-                            ))
-                        }
-                        UserAction::Escape { eligible } => actions.push(UserAction::Escape {
-                            eligible: eligible && !view.palette.open,
-                        }),
-                        action => actions.push(action),
-                    }
-                }
+                actions.extend(self.composer_key(key, view, now));
                 actions
             }
             Event::Paste(text) => {
@@ -1370,6 +1493,7 @@ impl Screen for TuiScreen {
         self.connecting = view.state.is_none() && view.link == LinkView::Connecting;
         self.inputs = status_inputs(view, self.inputs.home_dir.clone());
         self.sync_prompts(view, now);
+        self.sync_queue(view);
         self.clock.observe(
             view.state.map(|state| state.cells()).unwrap_or_default(),
             now,
@@ -1468,6 +1592,11 @@ impl Screen for TuiScreen {
             .as_ref()
             .filter(|_| !self.composer.text().starts_with('/'))
             .map(MentionSection::new);
+        let queue = MarkdownTailSection::new(
+            queue_view(view)
+                .map(|queue| render_preview(&queue, width, self.composer.is_empty()))
+                .unwrap_or_default(),
+        );
         let composer = self.composer.section(width, COMPOSER_ROWS);
         let compacting = CompactingSection {
             line: view.compacting_line,
@@ -1508,6 +1637,7 @@ impl Screen for TuiScreen {
         if let Some(search) = &search {
             sections.push(search);
         } else {
+            sections.push(&queue);
             if let Some(mention) = &mention {
                 sections.push(mention);
             }
@@ -1596,6 +1726,12 @@ impl Screen for TuiScreen {
 
     fn unrecord_submit(&mut self, text: &str) {
         self.composer.forget_submitted(text);
+    }
+
+    fn offer_draft(&mut self, text: &str) {
+        if self.composer.is_empty() && self.editing.is_none() {
+            self.composer.load(text.to_string());
+        }
     }
 
     fn load_draft(&mut self, text: &str) {
@@ -2080,6 +2216,8 @@ fn session(
         attachment_rule,
         transcript: None,
         transcript_actions: Vec::new(),
+        editing: None,
+        edit_closing: false,
     };
     let notify = sender.clone();
     suspend::spawn_sigcont_watch(

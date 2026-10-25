@@ -10,6 +10,13 @@ use super::{
 
 pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
     let mut state = SessionState::empty(SessionId::new(snapshot.session_id));
+    state.queue.apply_snapshot(
+        &snapshot.pending,
+        snapshot.authority_epoch,
+        snapshot.execution_generation,
+        &snapshot.replay_epoch,
+        u64::try_from(snapshot.last_sequence).unwrap_or(0),
+    );
     state.cursor = ReplayCursor {
         replay_epoch: Some(snapshot.replay_epoch),
         last_seq: u64::try_from(snapshot.last_sequence).unwrap_or(0),
@@ -42,8 +49,18 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
         });
         match row.role.as_str() {
             "user" => {
+                let steer = row.display_kind.as_deref() == Some("steer");
                 if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
-                    state.user(text);
+                    if steer {
+                        // A steer is a note to the agent, not something the person typed as a prompt.
+                        state.notice(
+                            NoticeKind::System,
+                            crate::queue::flow::history_steer(&text),
+                            None,
+                        );
+                    } else {
+                        state.user(text);
+                    }
                 }
             }
             "assistant" => {

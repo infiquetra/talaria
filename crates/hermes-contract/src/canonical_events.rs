@@ -93,7 +93,10 @@ impl SessionInfoFrame {
     pub fn from_payload(
         payload: &serde_json::Value,
     ) -> Result<SessionInfoFrame, crate::events::DecodeError> {
-        let _ = payload;
-        todo!("Issue 232. Queue and steer.")
+        SessionInfoFrame::deserialize(payload).map_err(|failure| crate::events::DecodeError {
+            event_type: "session.info".to_string(),
+            reason: failure.to_string(),
+            missing_fields: Vec::new(),
+        })
     }
 }

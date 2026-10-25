@@ -139,6 +139,7 @@ pub struct SessionState {
 pub(crate) struct Submission {
     pub(crate) id: String,
     pub(crate) text: String,
+    pub(crate) attachments: Vec<crate::attachments::Attachment>,
     pub(crate) placed: bool,
 }
 

@@ -4994,3 +4994,33 @@ home, not the session's, so `/cd ../api` would land somewhere the developer did 
 
 **Generalizable rule.** Resolve `~` and relative paths against the session's folder in Talaria and
 send Hermes only absolute, normalised paths.
+## 2026-10-25 — An edit or a move re-admits the prompt at the back of the queue
+
+**Evidence.** Hermes v0.22.4 (the pinned commit), `gateway/session_queued_controls.py:209-240`:
+`replace_queued` cancels the queued admission and admits the new text "at the FIFO tail under a
+new identity, in one write", then settles the old row with `_settle_cancelled`. The module states
+"There is no reorder verb: one FIFO per session" (lines 1 to 4).
+
+**Mechanism.** Every edit gets a new admission id at the back, and the retired row draws a
+settlement `message.complete`. Keeping an edited prompt in its place, or moving one, therefore
+takes a plan of further replaces that re-admit the rows behind it in order.
+
+**Generalizable rule.** Treat `prompt.replace_queued` as "retire and append"; restore order with a
+minimal re-admission plan, never by assuming the new admission keeps the old place.
+
+## 2026-10-25 — The contract's `session.info` type lacks the queue fields, and settlements end no turn
+
+**Evidence.** Hermes v0.22.4: the contract types the `session.info` notification as
+`SessionLiveInfo` (`apps/shared/src/gateway-contract.openrpc.json`, schema at line 37349), which
+has no `pending`, `authority_epoch`, `desktop_protocol`, `execution_generation` or `revision` and
+defaults `running` to `false`. The queue fanout publishes exactly those fields
+(`gateway/session_authority.py:405-420`, `_publish_pending`). `_settle_cancelled` (lines 777 to
+798) publishes a `message.complete` with an envelope of only `{authority_epoch, admission_id}` and a
+payload `{text: "", content: "", admission_id, outcome}` for every cancel, steer and replace.
+
+**Mechanism.** Decoding a queue fanout through the generated type drops the queue and reports the
+running turn as stopped. A settlement frame looks like the end of a turn unless it is told apart by
+its missing `execution_generation`.
+
+**Generalizable rule.** Decode the queue fanout from the raw payload with every field optional, and
+classify a `message.complete` with no envelope `execution_generation` as a settlement, not a turn end.

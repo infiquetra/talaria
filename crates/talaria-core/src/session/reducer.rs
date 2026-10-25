@@ -42,11 +42,29 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 }
                 state.cursor.last_seq = seq;
             }
+            // A settlement of a queued row has no turn generation. It never ends the turn.
+            if name == "message.complete"
+                && frame.execution_generation.is_none()
+                && frame.admission_id.is_some()
+            {
+                return Vec::new();
+            }
+            if name == "session.info" {
+                let effects = crate::queue::flow::session_info(
+                    state,
+                    &raw["payload"],
+                    frame.replay_epoch.as_deref(),
+                    frame.seq,
+                );
+                state.advance_prefix();
+                return effects;
+            }
             session(
                 state,
                 name,
                 &raw["payload"],
                 frame.execution_generation,
+                frame.admission_id.as_deref(),
                 matches!(frame.notification, Notification::Unknown(_)),
             );
             Vec::new()
@@ -60,26 +78,7 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
             display,
             submission_id,
             attachments,
-        } => {
-            if text.trim().is_empty() {
-                return Vec::new();
-            }
-            let placed = state.turn != TurnState::Running && state.submissions.is_empty();
-            if placed {
-                state.user(display.clone());
-            }
-            state.submissions.push_back(super::state::Submission {
-                id: submission_id.clone(),
-                text: text.clone(),
-                placed,
-            });
-            vec![Effect::SendPrompt {
-                session_id: state.session_id.clone(),
-                text: text.clone(),
-                submission_id: submission_id.clone(),
-                attachments: attachments.clone(),
-            }]
-        }
+        } => submit(state, text, display, submission_id, attachments),
         Event::SubmitFailed {
             submission_id,
             reason,
@@ -92,22 +91,10 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 state.submissions.remove(index);
                 state.notice(NoticeKind::Error, reason.clone(), None);
             }
+            crate::queue::flow::submit_failed(state, submission_id);
             Vec::new()
         }
-        Event::Interrupt => {
-            state.drafting = None;
-            if let (TurnState::Running, Some(execution_generation)) =
-                (&state.turn, state.execution_generation)
-            {
-                state.interrupted = true;
-                vec![Effect::Interrupt {
-                    session_id: state.session_id.clone(),
-                    execution_generation,
-                }]
-            } else {
-                Vec::new()
-            }
-        }
+        Event::Interrupt => interrupt(state),
         Event::InterruptFailed => {
             state.interrupted = false;
             Vec::new()
@@ -124,9 +111,11 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
             if placed {
                 state.user(display.clone());
             }
+            crate::queue::flow::note_submit(state, text, submission_id, placed);
             state.submissions.push_back(super::state::Submission {
                 id: submission_id.clone(),
                 text: text.clone(),
+                attachments: Vec::new(),
                 placed,
             });
             vec![Effect::SendPrompt {
@@ -150,10 +139,78 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
         | Event::SideNotSent { .. }
         | Event::SideUnknown { .. }
         | Event::SideClock { .. } => crate::side::reduce::apply(state, &event),
+        Event::QueueCallResult { .. }
+        | Event::QueueCallRefused { .. }
+        | Event::QueueCallUnknown { .. }
+        | Event::SteerResult(_)
+        | Event::QueueReconcileDue { .. } => crate::queue::flow::on_event(state, &event),
         _ => super::prompts::apply(state, &event),
     };
     state.advance_prefix();
     effects
+}
+
+/// Queue a prompt of this client and ask for it to be sent.
+///
+/// An idle session draws the user cell at once. A busy one draws it when the prompt starts.
+pub(crate) fn submit(
+    state: &mut SessionState,
+    text: &str,
+    display: &str,
+    submission_id: &str,
+    attachments: &[crate::attachments::Attachment],
+) -> Vec<Effect> {
+    if text.trim().is_empty() {
+        return Vec::new();
+    }
+    let placed = state.turn != TurnState::Running && state.submissions.is_empty();
+    if placed {
+        state.user(display.to_owned());
+    }
+    crate::queue::flow::note_submit(state, text, submission_id, placed);
+    if let Some(entry) = state
+        .queue
+        .ledger
+        .get_mut(&crate::queue::SubmissionId(submission_id.to_owned()))
+    {
+        entry.attachments = attachments
+            .iter()
+            .map(|attachment| {
+                serde_json::json!({
+                    "path": attachment.path, "mime": attachment.mime,
+                })
+            })
+            .collect();
+    }
+    state.submissions.push_back(super::state::Submission {
+        id: submission_id.to_owned(),
+        text: display.to_owned(),
+        attachments: attachments.to_vec(),
+        placed,
+    });
+    vec![Effect::SendPrompt {
+        session_id: state.session_id.clone(),
+        text: text.to_owned(),
+        submission_id: submission_id.to_owned(),
+        attachments: attachments.to_vec(),
+    }]
+}
+
+/// Ask Hermes to stop the running turn. Nothing happens unless a turn runs with a known
+/// generation.
+pub(crate) fn interrupt(state: &mut SessionState) -> Vec<Effect> {
+    state.drafting = None;
+    if let (TurnState::Running, Some(execution_generation)) =
+        (&state.turn, state.execution_generation)
+    {
+        state.interrupted = true;
+        vec![Effect::Interrupt {
+            session_id: state.session_id.clone(),
+            execution_generation,
+        }]
+    } else {
+        Vec::new()
+    }
 }
 
 fn session(
@@ -161,6 +218,7 @@ fn session(
     name: &str,
     payload: &Value,
     generation: Option<i64>,
+    admission: Option<&str>,
     unknown: bool,
 ) {
     // The drafted tool name ends when the call starts (even while latched, so a stale name
@@ -212,11 +270,7 @@ fn session(
                 };
                 state.notice(kind, text.to_owned(), None);
             }
-            if let Some(entry) = state.submissions.pop_front()
-                && !entry.placed
-            {
-                state.user(entry.text);
-            }
+            crate::queue::flow::start_cell(state, admission);
         }
         "message.delta" => match payload.get("text") {
             Some(Value::Null) => state.seal_assistant(),
