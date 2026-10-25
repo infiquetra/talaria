@@ -26,6 +26,7 @@ use futures_util::{SinkExt, StreamExt};
 use hermes_client::{
     Client, ConnectionParts, Generation, Inbound, InboundEvent, InboundStream, ServerRequest,
 };
+use hermes_contract::schemas::{ShellExecResult, TaskIdResult};
 use serde_json::{Map, Value, json};
 use talaria_core::session::{Event, SessionId};
 use tokio::net::TcpStream;
@@ -1277,7 +1278,7 @@ fn plan_request(
     params: &Value,
     outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
 ) {
-    if SESSION_METHODS.contains(&method) {
+    if SESSION_METHODS.contains(&method) || SIDE_METHODS.contains(&method) {
         plan_session_method(state, method, id, params, outgoing);
         return;
     }
@@ -1419,6 +1420,12 @@ pub fn session_event(event: &InboundEvent) -> Event {
 pub const INSTANCE_ID: &str = "0123456789abcdef0123456789abcdef";
 /// The code revision the mock's gateway reports.
 pub const CODE_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// The two side calls, answered by the session side with the same scripted behaviours.
+pub const SIDE_METHODS: [&str; 2] = ["shell.exec", "prompt.btw"];
+
+/// The task id the mock gives every accepted side question.
+pub const SIDE_TASK_ID: &str = "btw_1a2b3c";
 
 /// The handshake, session, finite-turn, model, rollback and context methods the mock answers.
 pub const SESSION_METHODS: [&str; 21] = [
@@ -1775,6 +1782,14 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             let keys = vec!["session_id", "execution_generation"];
             (keys.clone(), keys)
         }
+        "shell.exec" => {
+            let keys = vec!["session_id", "command"];
+            (keys.clone(), keys)
+        }
+        "prompt.btw" => {
+            let keys = vec!["session_id", "text"];
+            (keys.clone(), keys)
+        }
         "client.capabilities" => (Vec::new(), vec!["server_requests"]),
         "commands.catalog" => (Vec::new(), vec!["profile", "session_id"]),
         "complete.slash" => (Vec::new(), vec!["profile", "session_id", "text"]),
@@ -2113,6 +2128,28 @@ fn refusal_text(id: &Value, reason: &str, fields: Option<&[String]>) -> String {
     .to_string()
 }
 
+/// A side-call refusal worded as Hermes words it: `unknown_method` is -32601 and
+/// `storage_unavailable` 5001, every other reason 4001, and `unsupported_terminal_backend` names
+/// the `docker` backend in `detail`.
+fn side_refusal_text(id: &Value, method: &str, reason: &str) -> String {
+    let (code, message) = match reason {
+        "unknown_method" => (-32601, format!("unknown method: {method}")),
+        "storage_unavailable" => (5001, reason.to_owned()),
+        _ => (REFUSAL_CODE, reason.to_owned()),
+    };
+    let mut data = json!({"reason": reason});
+    if reason == "unsupported_terminal_backend" {
+        data["field"] = json!("terminal.backend");
+        data["detail"] = json!("docker");
+    }
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {"code": code, "message": message, "data": data},
+    })
+    .to_string()
+}
+
 fn event_meta(type_name: &str) -> Meta {
     Meta {
         kind: WrittenKind::Event,
@@ -2177,7 +2214,12 @@ fn plan_session_method(
     match &behavior {
         Behavior::Delay(wait) => delay = Some(*wait),
         Behavior::Refuse(reason) => {
-            outgoing.push((None, refusal_text(id, reason, None), reply_meta(id, method)));
+            let text = if SIDE_METHODS.contains(&method) {
+                side_refusal_text(id, method, reason)
+            } else {
+                refusal_text(id, reason, None)
+            };
+            outgoing.push((None, text, reply_meta(id, method)));
             return;
         }
         _ => {}
@@ -2215,6 +2257,14 @@ fn plan_session_method(
         "rollback.diff" => Ok(handle_rollback_diff(state)),
         "rollback.restore" => handle_rollback_restore(state, params),
         "rollback.session_diff" => Ok(handle_rollback_session_diff(state)),
+        "shell.exec" => Ok(json!(ShellExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            code: 0,
+        })),
+        "prompt.btw" => Ok(json!(TaskIdResult {
+            task_id: SIDE_TASK_ID.to_owned(),
+        })),
         _ => handle_interrupt(state, params),
     };
     if matches!(behavior, Behavior::DropBeforeReply) {

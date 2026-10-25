@@ -12,6 +12,7 @@ use talaria_core::session::{
     PromptState, ReasoningCell, SessionState, Settlement, ToolCell, ToolStatus, TurnOutcome,
     TurnState, UserCell,
 };
+use talaria_core::side::{ShellCell, SideCell};
 
 /// The golden body: one cell per line, then turn, final prefix, prompts and unknown types.
 pub fn describe(state: &SessionState) -> String {
@@ -75,6 +76,26 @@ pub fn effect_line(effect: &Effect) -> String {
         Effect::RefuseAnswer { key, reason } => {
             format!("refused: {} {}", refusal_word(*reason), key.prompt_id)
         }
+        Effect::RunShell {
+            session_id,
+            request_id,
+            command,
+        } => format!(
+            " RunShell session={} request={} command={}",
+            session_id.as_str(),
+            request_id.0,
+            quote(command)
+        ),
+        Effect::AskSide {
+            session_id,
+            request_id,
+            question,
+        } => format!(
+            " AskSide session={} request={} question={}",
+            session_id.as_str(),
+            request_id.0,
+            quote(question)
+        ),
     }
 }
 
@@ -95,7 +116,17 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Tool(cell) => tool_line(cell),
         Cell::Notice(cell) => notice_line(cell),
         Cell::Prompt(cell) => prompt_line(cell),
+        Cell::Shell(cell) => shell_line(cell),
+        Cell::Side(cell) => side_line(cell),
     }
+}
+
+fn shell_line(cell: &ShellCell) -> String {
+    format!("shell {} {:?}", quote(&cell.command), cell.outcome)
+}
+
+fn side_line(cell: &SideCell) -> String {
+    format!("side {} {:?}", quote(&cell.question), cell.outcome)
 }
 
 fn user_line(cell: &UserCell) -> String {

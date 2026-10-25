@@ -57,6 +57,8 @@ fn cell_text(cell: &Cell) -> String {
         Cell::Tool(cell) => cell.name.clone(),
         Cell::Notice(cell) => cell.text.clone(),
         Cell::Prompt(cell) => cell.command.clone().unwrap_or_default(),
+        Cell::Shell(cell) => cell.command.clone(),
+        Cell::Side(cell) => cell.question.clone(),
     }
 }
 
@@ -414,6 +416,24 @@ fn wire_refusals_map_to_reasons() {
         }),
         CallFailure::Unreadable
     ));
+}
+
+#[tokio::test]
+async fn rewind_rebuild_preserves_pending_side_work_and_request_ids() {
+    let snapshot = resume_snapshot();
+    let (_mock, mut app) = opened_app(snapshot.clone()).await;
+    update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("!echo retained".to_owned())),
+    );
+    let before = app.opened.as_ref().expect("open").state.side().clone();
+    assert_eq!(before.pending.len(), 1);
+    rebuild_foreground(
+        &mut app,
+        snapshot,
+        RebuildMode::AfterRewind { notice: Vec::new() },
+    );
+    assert_eq!(app.opened.as_ref().expect("open").state.side(), &before);
 }
 
 #[tokio::test]

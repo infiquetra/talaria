@@ -3,6 +3,7 @@
 use serde_json::Value;
 
 use super::{NoticeKind, PromptKey, SessionId};
+use crate::side::{RequestId, ShellOutcome};
 
 /// One reducer input.
 ///
@@ -86,5 +87,67 @@ pub enum Event {
         kind: NoticeKind,
         /// Plain text of the notice.
         text: String,
+    },
+    /// Run one shell command. Allocates a request id and a pending row.
+    ShellRequested {
+        /// Command text.
+        command: String,
+        /// App-clock time the submit ran.
+        started_ms: u64,
+    },
+    /// A bare `!` draft. Shows the hint. No effect.
+    ShellEmpty,
+    /// A shell call settled. Removes the row and inserts one final cell.
+    ShellFinished {
+        /// Id from the request.
+        request_id: RequestId,
+        /// How the call ended.
+        outcome: ShellOutcome,
+        /// App-clock time around the call.
+        duration_ms: u64,
+    },
+    /// Ask one side question. Allocates a request id and a pending row.
+    SideAsked {
+        /// Question text.
+        question: String,
+        /// App-clock time the submit ran.
+        started_ms: u64,
+    },
+    /// A bare side command. Shows the usage text. No effect.
+    SideUsage,
+    /// Hermes accepted the side question and named its task.
+    SideAccepted {
+        /// Id from the request.
+        request_id: RequestId,
+        /// The task to match the answer by.
+        task_id: String,
+        /// App-clock time the reply landed.
+        accepted_ms: u64,
+    },
+    /// Hermes refused the side question.
+    SideRefused {
+        /// Id from the request.
+        request_id: RequestId,
+        /// Refusal reason.
+        reason: String,
+        /// Refusal detail, when a string.
+        detail: Option<String>,
+    },
+    /// The side question was never sent.
+    SideNotSent {
+        /// Id from the request.
+        request_id: RequestId,
+        /// False only for an internal send error.
+        not_connected: bool,
+    },
+    /// The side reply was lost. Keeps the question for a late answer.
+    SideUnknown {
+        /// Id from the request.
+        request_id: RequestId,
+    },
+    /// One app-clock wake-up while side work is pending.
+    SideClock {
+        /// App-clock time now.
+        now_ms: u64,
     },
 }

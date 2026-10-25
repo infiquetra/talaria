@@ -333,6 +333,9 @@ impl SessionService {
                     reason: "not_a_session_call".to_string(),
                 };
             }
+            Effect::RunShell { .. } | Effect::AskSide { .. } => {
+                todo!("#225")
+            }
         };
         match result {
             Ok(()) => ExecuteOutcome::Sent,

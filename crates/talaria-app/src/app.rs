@@ -457,6 +457,11 @@ pub enum AppMessage {
         outcome: MutationOutcome,
         typed: String,
     },
+    /// One app-clock wake-up while side work may be pending.
+    Tick {
+        /// App-clock time now.
+        now_ms: u64,
+    },
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -896,6 +901,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             outcome,
             typed,
         } => compact_done(state, request, outcome, typed),
+        AppMessage::Tick { .. } => {
+            todo!("#225")
+        }
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -1177,6 +1185,9 @@ fn route(
                 effect,
                 note: note.take(),
             }),
+            Effect::RunShell { .. } | Effect::AskSide { .. } => {
+                todo!("#225")
+            }
         }
     }
     effects
@@ -1488,6 +1499,9 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
             }
             Err(reason) => vec![notice_lines(&reason), AppEffect::LoadDraft(text)],
         };
+    }
+    if text.starts_with('!') {
+        todo!("#225")
     }
     match slash_line(&text) {
         Slash::Quit => {
@@ -1941,6 +1955,9 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Tool(tool) => tool.name.clone(),
         Cell::Notice(notice) => notice.text.clone(),
         Cell::Prompt(prompt) => prompt.command.clone().unwrap_or_default(),
+        Cell::Shell(_) | Cell::Side(_) => {
+            todo!("#225")
+        }
     };
     plain(text.lines().next().unwrap_or_default())
 }

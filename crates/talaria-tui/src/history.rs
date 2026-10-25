@@ -27,6 +27,9 @@ impl CellLines for PlainCellLines {
             Cell::Tool(tool) => vec![Line::from(tool_line(tool))],
             Cell::Notice(notice) => prefixed("\u{b7} ", &notice.text, dim),
             Cell::Prompt(prompt) => vec![Line::styled(prompt_line(prompt), dim)],
+            Cell::Shell(_) | Cell::Side(_) => {
+                todo!("#225")
+            }
         }
     }
 }
