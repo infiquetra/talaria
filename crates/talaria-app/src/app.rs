@@ -341,11 +341,18 @@ pub enum AppMessage {
         typed: String,
         outcome: CommandOutcome,
     },
+    /// A rewind call's reply, or another rewind input. Issue #233.
+    Rewind(talaria_core::rewind::RewindInput),
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
 pub enum AppEffect {
     Models(ModelsEffect),
+    /// Run one rewind call; its reply comes back as [`AppMessage::Rewind`]. Issue #233.
+    Rewind {
+        ticket: u64,
+        call: talaria_core::rewind::Call,
+    },
     CommitLines(Vec<String>),
     CommitCells(Range<usize>),
     Redraw,
@@ -495,6 +502,41 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
         .collect()
 }
 
+/// How a foreground rebuild was caused.
+pub enum RebuildMode {
+    /// Gap recovery, unchanged.
+    AfterGap,
+    /// A rewind or a restore finished. `notice` is committed and nothing above it is reprinted.
+    AfterRewind { notice: Vec<String> },
+}
+
+/// Replace the foreground session from a fresh snapshot.
+///
+/// `AfterGap` calls the existing gap recovery. `AfterRewind` is issue 233.
+pub fn rebuild_foreground(
+    state: &mut AppState,
+    snapshot: Value,
+    mode: RebuildMode,
+) -> Vec<AppEffect> {
+    match mode {
+        RebuildMode::AfterGap => rebuild_after_gap(state, snapshot),
+        RebuildMode::AfterRewind { notice: _ } => {
+            todo!("Issue 233. Checkpoint rewind and diff.")
+        }
+    }
+}
+
+fn rebuild_after_gap(state: &mut AppState, snapshot: Value) -> Vec<AppEffect> {
+    let result =
+        match serde_json::from_value::<hermes_contract::schemas::CanonicalSnapshot>(snapshot) {
+            Ok(decoded) => Ok(crate::sessions::OpenedSession::from_snapshot(decoded)),
+            Err(_) => Err(crate::sessions::OpenError::Link(
+                "the session reply did not decode".to_string(),
+            )),
+        };
+    recovered(state, result)
+}
+
 /// Apply one message. No input or output: the effects say what to do.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let mut effects = match message {
@@ -523,6 +565,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects
         }
         AppMessage::Recovered(result) => recovered(state, result),
+        AppMessage::Rewind(_) => Vec::new(),
         AppMessage::ForegroundKey(action) => foreground_key(state, action),
         AppMessage::Commands(CommandReply::Commands(input)) => commands_input(state, input),
         AppMessage::Commands(CommandReply::Palette(input)) => {
@@ -1809,6 +1852,7 @@ fn apply<S: Screen>(
     let mut redraw = false;
     for effect in update(state, message) {
         match effect {
+            AppEffect::Rewind { .. } => {}
             AppEffect::Models(effect) => match effect {
                 ModelsEffect::OpenOverlay | ModelsEffect::CloseOverlay => redraw = true,
                 ModelsEffect::Notice { level, text, .. } => {

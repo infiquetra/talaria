@@ -2,7 +2,7 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected nine fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected ten fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch recording, covered by its own replay tests.
 
@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 8] = [
+const NAMES: [&str; 9] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -26,6 +26,7 @@ const NAMES: [&str; 8] = [
     "subagent-batch",
     "queued-prompt",
     "slash-palette",
+    "rewind-and-rollback",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -33,6 +34,7 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
     match name {
         "interrupted" => &["interrupted"],
         "queued-prompt" => &["complete", "complete"],
+        "rewind-and-rollback" => &["complete", "complete", "complete"],
         _ => &["complete"],
     }
 }
@@ -64,8 +66,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn seven_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 9,
-        "expected nine fixtures in fixtures/frames, found {}",
+        files.len() == 10,
+        "expected ten fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -136,7 +138,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 #[test]
 fn seven_fixtures_exist() {
     let fixtures = seven_fixtures();
-    assert_eq!(fixtures.len(), 8);
+    assert_eq!(fixtures.len(), 9);
 }
 
 #[test]
@@ -440,6 +442,33 @@ fn scenario_evidence_present() {
                 );
             }
             "slash-palette" => slash_palette_evidence(name, &records, &events),
+            "rewind-and-rollback" => {
+                let sent: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| record["dir"] == "out")
+                    .map(|record| &record["frame"])
+                    .collect();
+                for method in [
+                    "rollback.list",
+                    "rollback.diff",
+                    "rollback.restore",
+                    "rollback.session_diff",
+                ] {
+                    assert!(
+                        sent.iter().any(|frame| frame["method"] == method),
+                        "{name}: no outbound {method}"
+                    );
+                }
+                assert!(
+                    sent.iter().any(|frame| frame["method"] == "session.mutate"
+                        && frame["params"]["operation"] == "rewind"),
+                    "{name}: no session.mutate with operation rewind"
+                );
+                assert!(
+                    position(&events, "session.updated", 0).is_some(),
+                    "{name}: no session.updated after the rewind"
+                );
+            }
             other => panic!("unlisted fixture {other}"),
         }
     }

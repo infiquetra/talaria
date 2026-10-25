@@ -79,6 +79,14 @@ A `summary` is used only when one happens to be present.
 
 **Generalizable rule.** Build the screen on fields every transport sends; treat a field one transport adds as an optional extra, never as the source.
 
+### Hermes restore rewinds the newest turn and ignores the queue
+
+**Evidence.** Issue 233. A whole-folder `rollback.restore` removes the newest user turn by Hermes's own rule, and its idle check does not see queued prompts (unit specification facts H17, H46 and H18).
+
+**Mechanism.** The restore can remove a different row from the prompt the person chose, and a session with prompts queued but no running turn still accepts the restore and then refuses the conversation rewind. Talaria restores, reads the session again, and sends `session.mutate` operation `rewind` only when the chosen prompt is still active.
+
+**Generalizable rule.** After a restore, trust a fresh read for what the conversation still contains. Do not assume the target you sent is the turn Hermes removed.
+
 ### An empty acceptance record is a filled record with no results, not a skeleton
 
 **Evidence.** `docs/acceptance/v0.7.0/phase-1.md` and `docs/acceptance/v0.7.0/check-record.sh`

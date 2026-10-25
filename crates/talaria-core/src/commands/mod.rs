@@ -12,7 +12,7 @@ pub mod state;
 pub use catalog::{
     ArgumentMode, CatalogEntry, CatalogResult, CommandCatalog, CommandSource, SkillOrigin,
 };
-pub use local::{LocalAction, LocalCommand, LocalCommandTable};
+pub use local::{LOCAL_COMMANDS, LocalAction, LocalCommand, LocalCommandTable};
 pub use outcome::{CommandOutcome, ErrorView, describe_error, interpret_result};
 pub use palette::{
     CompleteResult, PaletteContext, PaletteEffect, PaletteInput, PaletteRow, PaletteStage,

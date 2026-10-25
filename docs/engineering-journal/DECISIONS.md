@@ -34,6 +34,16 @@
 
 **Revisit when** the unit specification and the tests are reconciled on this order.
 
+### Restore, re-read, then rewind only if the chosen prompt is still active
+
+**Decision.** A rewind that also restores files sends `rollback.restore`, reads the session again, and sends `session.mutate` operation `rewind` only when that read still shows the chosen prompt as active. `/diff` with no git path is `rollback.session_diff`, the comparison against the oldest checkpoint Hermes still keeps.
+
+**Rationale.** Hermes removes the newest exchange by its own rule, which can be a different row from the one the person chose. Sending the rewind before the read would target a row the restore may already have removed. The session diff is the comparison `/diff` promises. Git's own diff stays available as `!git diff`.
+
+**Rejected alternatives.** Rewind first and restore second (the restore then removes whatever is newest after that rewind). Treat `/diff` as `git diff` (that hides the checkpoint comparison).
+
+**Revisit when** Hermes stops removing a turn during a whole-folder restore, or the operator chooses git diff as the meaning of `/diff`.
+
 ## 2026-10-23
 
 ### Prompt-card calls run in spawned tasks behind one async lock
