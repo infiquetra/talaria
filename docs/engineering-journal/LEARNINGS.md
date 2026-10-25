@@ -52,6 +52,33 @@
 
 **Generalizable rule.** When two owners react to one key, one decides and tells the other; never let both report the result.
 
+### Hermes's inline diff is pre-rendered and localised
+
+**Evidence.** `crates/talaria-core/src/diff.rs` (`parse_diff`); `crates/talaria-core/tests/diff_parse.rs` (`header_marker_is_locale_independent`, `multi_file_and_omitted_note`); Hermes v0.22.4 `agent/display.py` lines 752 to 827 and the `review_header` and `omitted_lines` strings in `locales/*.yaml`. Issue #221.
+
+**Mechanism.** `tool.complete`'s `inline_diff` is not a unified diff. Hermes renders it for its own terminal:
+- a localised header line that starts with two spaces and `┊`;
+- one `<from> → <to>` line per file in place of the `---` and `+++` pair, with no separator between files;
+- every row wrapped in colour escapes;
+- after 6 files or 80 lines, a localised `… omitted N diff line(s)` line.
+
+The reducer strips the escapes. The parser drops the header by its `┊` marker without reading its words, opens a file at every `→` line outside a hunk, and keeps the omitted line as a note. Hermes's renderer already loses a removed row whose text starts `-- `, so only a raw diff, whose hunk counts the parser trusts, can show that row.
+
+**Generalizable rule.** When a server pre-renders text for its own screen, parse its structure by markers, never by its localised words.
+
+### The gateway socket never sends a tool summary
+
+**Evidence.** `crates/talaria-core/src/session/tool_view.rs` (the succeeded and failed outcome rules); `crates/talaria-core/tests/tool_view.rs` (`success_with_nonzero_exit_shows_exit_but_stays_succeeded`, `failed_headlines_from_terminal_shapes`); Hermes v0.22.4 `tui_gateway/tool_progress.py` lines 99 to 113, absent from `gateway/run_turn_progress.py` lines 58 to 70. Issue #221.
+
+**Mechanism.** Only the in-process terminal gateway adds `summary` to `tool.complete`, and only for a few tools. Talaria connects to the gateway socket, so `summary` is always absent there. The header headline is therefore worded from what always arrives:
+- `is_error`, which Hermes has already decided;
+- the result's integer `exit_code`;
+- the first non-blank line of `user_summary`, `error`, `exit_code_meaning`, `message` or `reason`.
+
+A `summary` is used only when one happens to be present.
+
+**Generalizable rule.** Build the screen on fields every transport sends; treat a field one transport adds as an optional extra, never as the source.
+
 ### An empty acceptance record is a filled record with no results, not a skeleton
 
 **Evidence.** `docs/acceptance/v0.7.0/phase-1.md` and `docs/acceptance/v0.7.0/check-record.sh`

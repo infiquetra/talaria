@@ -41,6 +41,9 @@ use talaria_tui::terminal::{
     InlineTerminal, InputThread, TerminalError, TerminalGuard, probe_startup, spawn_input,
     terminal_size,
 };
+use talaria_tui::tool_cell::{
+    Detail, DraftingLine, ToolCellLines, ToolClock, ToolRenderOptions, ToolTheme,
+};
 use tokio::sync::mpsc;
 
 /// How long the start-up probe waits for the terminal's answers.
@@ -72,7 +75,11 @@ pub struct TuiScreen {
     external: ExternalDisplay,
     inputs: StatusInputs,
     palette: StatusPalette,
-    cells: MarkdownCellLines,
+    /// Markdown cells, with tool cells drawn as tool rows and diffs.
+    cells: ToolCellLines,
+    /// When each running tool cell was first seen, for its seconds counter.
+    clock: ToolClock,
+    tool_theme: ToolTheme,
     sender: mpsc::UnboundedSender<ScreenInput>,
     connecting: bool,
     /// The key map, for the keys of an open completion list.
@@ -340,10 +347,17 @@ impl StatusHost for TuiScreen {
         });
     }
 
+    /// The status command's next run, or the next whole second of a running tool call. Nothing
+    /// is scheduled while no tool runs, so an idle screen draws nothing.
     fn next_wake(&self, now: Instant) -> Option<Instant> {
-        self.status
+        let status = self
+            .status
             .as_ref()
-            .and_then(|service| service.next_wake(now))
+            .and_then(|service| service.next_wake(now));
+        match (status, self.clock.next_tick(now)) {
+            (Some(status), Some(tick)) => Some(status.min(tick)),
+            (status, tick) => status.or(tick),
+        }
     }
 
     fn shutdown(&mut self) -> impl std::future::Future<Output = ()> + Send {
@@ -377,6 +391,11 @@ impl Screen for TuiScreen {
         self.connecting = view.state.is_none() && view.link == LinkView::Connecting;
         self.inputs = status_inputs(view, self.inputs.home_dir.clone());
         self.sync_prompts(view, now);
+        self.clock.observe(
+            view.state.map(|state| state.cells()).unwrap_or_default(),
+            now,
+        );
+        self.cells.set_clock(&self.clock, now);
         let width = self.terminal.viewport().width;
         let mut tail: Vec<Line<'static>> = view
             .state
@@ -398,12 +417,16 @@ impl Screen for TuiScreen {
             tail.drain(..tail.len() - MAX_TAIL_ROWS);
         }
         let tail = MarkdownTailSection::new(tail);
+        let drafting = DraftingLine {
+            drafted: view.state.and_then(|state| state.drafting_tool()),
+            theme: &self.tool_theme,
+        };
         let connecting = PlainTextSection::new(CONNECTING);
         let status = StatusSection::new(&self.inputs, self.external.segment(), &self.palette);
         let prompts = self.prompts.section();
         let palette = PaletteSection::new(view.palette, self.rows);
         let composer = self.composer.section(width, COMPOSER_ROWS);
-        let mut sections: Vec<&dyn LiveSection> = vec![&tail];
+        let mut sections: Vec<&dyn LiveSection> = vec![&tail, &drafting];
         if let Some(prompts) = &prompts {
             sections.push(prompts);
         }
@@ -609,7 +632,19 @@ fn session(
             ..StatusInputs::default()
         },
         palette: StatusPalette::default(),
-        cells: MarkdownCellLines::new(true, MarkdownTheme::default()),
+        cells: ToolCellLines::new(
+            Box::new(MarkdownCellLines::new(true, MarkdownTheme::default())),
+            ToolRenderOptions {
+                width: 0,
+                theme: ToolTheme::default(),
+                color: std::env::var_os("NO_COLOR").is_none(),
+                detail: Detail::Compact,
+                expand_hint: None,
+                elapsed: None,
+            },
+        ),
+        clock: ToolClock::new(),
+        tool_theme: ToolTheme::default(),
         sender: sender.clone(),
         connecting: true,
         keys,

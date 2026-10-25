@@ -124,6 +124,8 @@ pub struct SessionState {
     pub(crate) needs_resume: bool,
     pub(crate) unknown: Vec<String>,
     pub(crate) queued_admissions_ignored: usize,
+    /// The tool name `tool.generating` reported, until the call starts or the turn ends.
+    pub(crate) drafting: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -165,6 +167,7 @@ impl SessionState {
             needs_resume: false,
             unknown: Vec::new(),
             queued_admissions_ignored: 0,
+            drafting: None,
         }
     }
 
@@ -183,10 +186,11 @@ impl SessionState {
 
     /// The tool name still being written, if the gateway said one.
     ///
-    /// Issue 221. Nothing is stored yet, so this is empty.
+    /// Set by `tool.generating`, which carries no tool id, so it is a status and never a cell.
+    /// Issue 221.
     #[must_use]
     pub fn drafting_tool(&self) -> Option<&str> {
-        None
+        self.drafting.as_deref()
     }
 
     /// How many leading cells are final. The count never shrinks.
