@@ -206,10 +206,21 @@ impl SessionState {
         &mut self.side
     }
 
-    /// Insert one final cell where it commits at once.
+    /// Insert one final cell at [`Self::final_prefix_len`], so it commits at once even while a
+    /// reply streams after it. The stored positions of later cells move with them.
     pub fn insert_final(&mut self, cell: Cell) {
         let at = self.final_prefix.min(self.cells.len());
         self.cells.insert(at, cell);
+        let shift = |index: &mut usize| {
+            if *index >= at {
+                *index += 1;
+            }
+        };
+        shift(&mut self.turn_start);
+        self.assistant.iter_mut().for_each(shift);
+        self.reasoning.iter_mut().for_each(shift);
+        self.tools.values_mut().for_each(shift);
+        self.prompts.values_mut().for_each(shift);
         self.advance_prefix();
     }
 

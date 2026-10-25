@@ -50,6 +50,7 @@ use talaria_tui::model_picker::{ModelConfirmSection, draw_model_picker};
 use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
+use talaria_tui::side::{SideTasksSection, SideTheme, shell_mode_title};
 use talaria_tui::status::{
     CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay, SessionRef,
     StatusCommandService, StatusDocument, StatusInputs, StatusPalette, StatusSection, TurnState,
@@ -450,11 +451,19 @@ impl TuiScreen {
         );
     }
 
-    fn composer_action(&mut self, outcome: ComposerOutcome) -> Vec<UserAction> {
+    /// The shell-mode title follows the draft: set while it starts with `!`, cleared otherwise.
+    fn sync_title(&mut self) {
+        let title = shell_mode_title(self.composer.text()).map(str::to_string);
+        self.composer.set_title(title);
+    }
+
+    fn composer_action(&mut self, outcome: ComposerOutcome, has_session: bool) -> Vec<UserAction> {
         match outcome {
             ComposerOutcome::Submit(text) => {
                 let mut actions = vec![UserAction::Submit(text.clone())];
-                if let Some(notice) = self.history.append(&text) {
+                if should_record_submission(&text, has_session)
+                    && let Some(notice) = self.history.append(&text)
+                {
                     actions.push(UserAction::Notice(notice));
                 }
                 actions
@@ -599,7 +608,7 @@ impl TuiScreen {
                     && self.composer.is_empty()
                     && !view.palette.open
                     && !view.turn_running();
-                let mut actions = self.composer_action(outcome);
+                let mut actions = self.composer_action(outcome, view.state.is_some());
                 if escape {
                     actions.push(UserAction::Escape { eligible });
                     // Two quick Esc bytes can arrive as one Esc with Alt held: count it twice.
@@ -627,7 +636,7 @@ impl TuiScreen {
                     return Vec::new();
                 }
                 let outcome = self.composer.handle_paste(&text);
-                self.composer_action(outcome)
+                self.composer_action(outcome, view.state.is_some())
             }
             Event::Resize(cols, rows) => {
                 self.rows = rows;
@@ -642,6 +651,7 @@ impl TuiScreen {
 impl ComposerDeadline for TuiScreen {
     fn tick(&mut self, now: Instant) {
         let _ = self.composer.tick(now);
+        self.sync_title();
     }
 
     fn next_tick(&self) -> Option<Instant> {
@@ -766,6 +776,7 @@ impl Screen for TuiScreen {
             }
             ScreenInput::ComfortNotice(text) => vec![UserAction::Notice(text)],
         };
+        self.sync_title();
         self.report_draft(&mut actions);
         self.draw(view);
         actions
@@ -847,6 +858,12 @@ impl Screen for TuiScreen {
             None
         };
         let composer_is_empty = self.composer.is_empty();
+        let side_theme = SideTheme::default();
+        let side = view.state.map(|state| SideTasksSection {
+            tasks: state.side(),
+            now_ms: view.now_ms,
+            theme: &side_theme,
+        });
         let composer = self.composer.section(width, COMPOSER_ROWS);
         let compacting = CompactingSection {
             line: view.compacting_line,
@@ -876,6 +893,9 @@ impl Screen for TuiScreen {
             if !composer_is_empty || prompts.is_none() {
                 sections.push(&palette);
             }
+        }
+        if let Some(side) = &side {
+            sections.push(side);
         }
         sections.push(&status);
         let _ = self.terminal.draw_live(&LiveView { sections });
@@ -929,9 +949,14 @@ impl Screen for TuiScreen {
         let _ = self.terminal.commit(cells, &self.cells);
     }
 
+    fn unrecord_submit(&mut self, text: &str) {
+        self.composer.forget_submitted(text);
+    }
+
     fn load_draft(&mut self, text: &str) {
         self.composer.load(text.to_string());
         self.reported = (self.composer.text().to_owned(), self.composer.caret());
+        self.sync_title();
     }
 
     fn restore(&mut self) {
@@ -1368,6 +1393,25 @@ fn sync_reported_draft(
     );
 }
 
+fn should_record_submission(text: &str, has_session: bool) -> bool {
+    use talaria_core::side::{Submission, btw_command, classify};
+
+    match classify(text) {
+        Submission::ShellEmpty => false,
+        Submission::Shell(_) => has_session,
+        Submission::Prompt => match app::slash_line(text) {
+            app::Slash::Btw(argument) => {
+                has_session
+                    && matches!(
+                        btw_command(&argument, 0),
+                        talaria_core::session::Event::SideAsked { .. }
+                    )
+            }
+            _ => true,
+        },
+    }
+}
+
 fn unix_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1376,7 +1420,10 @@ fn unix_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{TuiScreen, confirmation_key, picker_key, preview_text, sync_reported_draft};
+    use super::{
+        TuiScreen, confirmation_key, picker_key, preview_text, should_record_submission,
+        sync_reported_draft,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
@@ -1384,6 +1431,26 @@ mod tests {
     use talaria_core::models::{ConfirmKey, PickerKey};
     use talaria_tui::keys::{Key, KeyMap};
     use talaria_tui::markdown::{MarkdownOptions, render_markdown};
+
+    #[test]
+    fn rejected_side_submissions_stay_out_of_persistent_history() {
+        for (text, has_session) in [
+            ("! ", true),
+            ("/btw", true),
+            ("/btw ", true),
+            ("!echo hello", false),
+            ("/btw hello", false),
+        ] {
+            assert!(!should_record_submission(text, has_session));
+        }
+        for (text, has_session) in [
+            ("!echo hello", true),
+            ("/btw hello", true),
+            ("ordinary prompt", false),
+        ] {
+            assert!(should_record_submission(text, has_session));
+        }
+    }
 
     /// The bottom `rows` rows of a rendering, as plain text.
     fn bottom(text: &str, rows: usize) -> Vec<String> {

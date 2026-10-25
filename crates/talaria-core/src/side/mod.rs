@@ -7,8 +7,9 @@ pub mod text;
 pub use classify::{Submission, classify};
 pub use reduce::btw_command;
 pub use text::{
+    NO_SESSION_NOTICE, QUESTION_NOT_GIVEN, SHELL_EMPTY_HINT, SIDE_UNKNOWN_NOTICE, SIDE_USAGE,
     clean_output, format_duration, shell_outcome_text, shell_refusal_text, side_outcome_text,
-    side_refusal_text,
+    side_refusal_text, side_timeout_notice,
 };
 
 use std::collections::BTreeSet;
@@ -116,13 +117,25 @@ pub struct SideCell {
 }
 
 /// The app-clock time of the next whole-second row change, if any row is pending.
+///
+/// A row shows whole elapsed seconds, so it next changes when the next whole second since it
+/// started is reached. The side timeout is checked on these same wake-ups, at most a second late.
 pub fn next_tick(tasks: &SideTasks, now_ms: u64) -> Option<u64> {
-    let _ = (tasks, now_ms);
-    todo!("#225")
+    tasks
+        .pending
+        .iter()
+        .map(|row| {
+            let elapsed_s = now_ms.saturating_sub(row.started_ms) / 1_000;
+            row.started_ms
+                .saturating_add(elapsed_s.saturating_add(1).saturating_mul(1_000))
+        })
+        .min()
 }
 
 /// Move the side rows and ids from a replaced state into its replacement.
+///
+/// The app calls this when a snapshot replaces the state after a replay gap, so pending rows keep
+/// their timeout and a late answer still matches.
 pub fn carry_over(old: &mut SessionState, new: &mut SessionState) {
-    let _ = (old, new);
-    todo!("#225")
+    new.side = std::mem::take(&mut old.side);
 }

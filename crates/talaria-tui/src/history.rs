@@ -17,7 +17,7 @@ pub trait CellLines {
 pub struct PlainCellLines;
 
 impl CellLines for PlainCellLines {
-    fn lines(&self, cell: &Cell, _width: u16) -> Vec<Line<'static>> {
+    fn lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let dim = Style::default().add_modifier(Modifier::DIM);
         match cell {
@@ -27,8 +27,11 @@ impl CellLines for PlainCellLines {
             Cell::Tool(tool) => vec![Line::from(tool_line(tool))],
             Cell::Notice(notice) => prefixed("\u{b7} ", &notice.text, dim),
             Cell::Prompt(prompt) => vec![Line::styled(prompt_line(prompt), dim)],
-            Cell::Shell(_) | Cell::Side(_) => {
-                todo!("#225")
+            Cell::Shell(shell) => {
+                crate::side::shell_cell_lines(shell, width, &crate::side::SideTheme::default())
+            }
+            Cell::Side(side) => {
+                crate::side::side_cell_lines(side, width, &crate::side::SideTheme::default())
             }
         }
     }

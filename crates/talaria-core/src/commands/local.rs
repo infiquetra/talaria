@@ -32,6 +32,8 @@ pub enum LocalAction {
     Compact,
     /// Show the session's tokens, calls and cost.
     Usage,
+    /// Ask a side question with `prompt.btw`. Never reaches `slash.exec`.
+    Btw,
 }
 
 /// One local command.
@@ -115,6 +117,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::Usage,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "btw",
+        aliases: &[],
+        summary: "Ask a side question; it is not added to the conversation",
+        args_hint: "<question>",
+        takes_argument: true,
+        action: LocalAction::Btw,
         tag: "talaria",
     },
 ];
