@@ -209,6 +209,19 @@ impl Draft {
         self.edited();
     }
 
+    /// Replace a valid UTF-8 byte range and keep the caret on a grapheme boundary.
+    /// Invalid ranges leave the draft unchanged.
+    pub(crate) fn replace_range(&mut self, range: std::ops::Range<usize>, text: &str) -> bool {
+        if self.text.get(range.clone()).is_none() {
+            return false;
+        }
+        let end = range.start + text.len();
+        self.text.replace_range(range, text);
+        self.caret = snap(&self.text, end);
+        self.edited();
+        true
+    }
+
     /// Put the caret at a byte offset, on a boundary.
     pub(crate) fn set_caret(&mut self, at: usize) {
         self.caret = snap(&self.text, at);

@@ -58,7 +58,7 @@ impl LiveView<'_> {
     }
 }
 
-/// The mention list above the composer. The list is first, so a short screen keeps it.
+/// The mention list above the composer. A short screen keeps the composer first.
 #[must_use]
 pub fn mention_then_composer<'a>(
     mention: &'a dyn LiveSection,

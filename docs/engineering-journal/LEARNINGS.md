@@ -27,6 +27,34 @@
 **Mechanism.** The model picker's change (issue #230) stopped passing `session.updated` frames to the reducer. The reducer does nothing visible with them, but it moves its replay cursor on every frame, so skipping one left the cursor behind the gateway's sequence. The frame now goes to the reducer and, when its operation is `rewind`, also to the rewind state.
 
 **Generalizable rule.** A frame routed somewhere special still goes through the reducer that tracks sequence numbers.
+### Failed submissions must retain their own attachment namespace
+
+**Evidence.** Issue #224's application regressions submit an image, begin a new draft
+with a separately staged image using the same visible label, then deliver a late refusal
+or unknown outcome for the first submission.
+
+**Mechanism.** Restoring the first payload directly would overwrite both the newer
+text and its image label. Failed payloads stay owned by their submission until the current
+draft is sent or cleared. Only then does the loop restore the earlier display and media.
+Raw-key burst collection is also temporary editor state, not a deliberate draft clear.
+
+**Generalizable rule.** Recover an older operation only into an available destination;
+derive insertion ranges after buffered input has been committed.
+
+### Editor acknowledgments belong to the transition that made the edit
+
+**Evidence.** Issue #224's live mention check and application draft-ordering regressions.
+
+**Mechanism.** Queuing an unversioned sanitized draft behind another keyboard input
+can replace the newer draft with an older snapshot. Likewise, an attachment arriving
+during a raw-key burst must flush those keys before deriving its insertion range.
+The loop applies the editor's acknowledgment through the pure update before handling
+another external message. Completion edits replace only their query, retaining the
+caret before trailing text. Timer-flushed raw keys remain typed edits for completion;
+bracketed pastes keep their separate routing.
+
+**Generalizable rule.** Reconcile an edit with the authoritative buffer at the same
+event boundary; derive later ranges from the reconciled state.
 
 ## 2026-10-25 — Input integrations must preserve context and draft ownership
 
@@ -180,6 +208,32 @@ hide the measurement until it is measured again; do not show a stale one.
 **Mechanism.** The composer clears its draft and records history on Enter before the loop sees the key. The loop therefore puts the draft back when the palette neither runs nor completes anything, loads `/name ` when Enter completed a command that takes an argument, and leaves the composer empty when a line runs. The screen does not report the draft after a submit: that empty draft would arrive after the loop's load and close the palette the loop had just reopened.
 
 **Generalizable rule.** When two owners react to one key, one decides and tells the other; never let both report the result.
+### Clipboard extraction and asynchronous fixtures need their actual completion signal
+
+**Evidence.** Issue #224's clipboard runner and attachment-service tests. The pinned
+Hermes AppleScript writes the PNG destination itself; its standard output carries a
+status or `fail`. The service performs file checks and encoding on blocking workers.
+
+**Mechanism.** Redirecting AppleScript output into its destination can damage the
+image. A fake must model the script's file write. Likewise, yielding a fixed number
+of times does not establish that a blocking worker finished, especially while Tokio's
+clock is paused. Tests await a bounded readiness condition and retain explicit
+virtual-time advances and negative deadline checks.
+
+**Generalizable rule.** Observe the producer's real completion boundary, and keep
+file output separate from command status output.
+
+### Highlight ranges belong to a particular draft revision
+
+**Evidence.** Composer range replacement and history recall tests in issue #224.
+
+**Mechanism.** Byte ranges from the prior draft may point into unrelated text after
+an edit or history recall. The composer invalidates stale highlights on revision
+changes; the application supplies fresh ranges after reconciling its payloads.
+
+**Generalizable rule.** Recompute ranges after text changes; restore payload identity
+only through an explicit operation that owns that identity.
+
 ### The attachment fixture's scenario name is the file stem
 
 **Evidence.** `fixtures/frames/attachments-mention-image.jsonl`. `crates/hermes-client/tests/fixtures_replay.rs` requires `header.scenario` to equal the file stem.

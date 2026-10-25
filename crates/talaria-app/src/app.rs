@@ -5,7 +5,7 @@
 //! depends on a terminal library. Every gateway call runs in a spawned task and comes back as an
 //! [`AppMessage`]; the loop itself never waits on the network.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::future::Future;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ use hermes_client::replay::{Cursor, ReplayGap};
 use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
-use talaria_core::attachments::CollapseRule;
+use talaria_core::attachments::{Chip, CollapseRule, Expanded, reference_notice};
 use talaria_core::commands::local;
 use talaria_core::commands::{
     CommandOutcome, CommandsEffect, CommandsInput, CommandsState, LocalAction, LocalCommandTable,
@@ -52,7 +52,7 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
-use crate::attachments::AttachmentsState;
+use crate::attachments::{AttachmentEffect, AttachmentEvent, AttachmentsState};
 use crate::commands::{
     AppAction, CommandReply, CommandService, no_session_notice, outcome_actions,
 };
@@ -62,6 +62,13 @@ use talaria_core::appearance::{
 };
 
 use crate::appearance::{self, AppearanceService, AppearanceView, theme_lines};
+
+/// Presentation-only attachment data for the terminal adapter.
+#[derive(Clone, Default)]
+pub struct AttachmentView {
+    pub mention: Option<talaria_core::attachments::MentionView>,
+    pub highlights: Vec<(Range<usize>, crate::attachments::LabelStyle)>,
+}
 use crate::connection::{ConnectionService, OpenConnection, find_git_toplevel};
 use crate::context::{ContextBlock, ContextService, ContextTimeouts};
 use crate::failure::{self, LaunchFailure};
@@ -148,6 +155,27 @@ pub enum UserAction {
     Notice(String),
     /// The draft changed, or a completion-list key was pressed. Issue #223.
     Palette(PaletteInput),
+    /// A composer edit, including an explicit history recall.
+    DraftEdited {
+        text: String,
+        caret: usize,
+        typed: bool,
+        recalled: bool,
+        now: Instant,
+    },
+    /// A key consumed before the composer edits the draft.
+    AttachmentKey {
+        action: crate::attachments::Action,
+        text: String,
+        caret: usize,
+        now: Instant,
+    },
+    /// A bracketed paste after the composer's safe-text rule.
+    Paste {
+        text: String,
+        draft: String,
+        caret: usize,
+    },
 }
 
 /// Everything the screen draws from, borrowed for one draw.
@@ -250,6 +278,24 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn theme_report(&self) -> Option<ThemeReport> {
         None
     }
+    /// Apply one programmatic edit and report its sanitized draft and caret.
+    fn edit_draft(&mut self, _range: Range<usize>, _text: &str) -> Option<(String, usize)> {
+        None
+    }
+    /// Read the draft after a burst was flushed by the composer timer.
+    fn draft_snapshot(&self) -> Option<(String, usize)> {
+        None
+    }
+    /// Commit buffered raw keystrokes before deriving an asynchronous insertion range.
+    fn flush_draft(&mut self) -> Option<(String, usize)> {
+        self.draft_snapshot()
+    }
+    /// Refresh immutable completion rows and chip styling.
+    fn sync_attachments(&mut self, _view: AttachmentView) {}
+    /// The configured paste thresholds.
+    fn attachment_rule(&self) -> CollapseRule {
+        CollapseRule::HERMES_DEFAULT
+    }
 }
 
 pub trait ComposerDeadline {
@@ -332,6 +378,18 @@ pub struct AppState {
     command_service: Option<CommandService>,
     /// Mentions, paste labels and staged images for the open draft.
     pub attachments: AttachmentsState,
+    caret: usize,
+    attachment_epoch: u64,
+    attachment_home: PathBuf,
+    attachment_folder: PathBuf,
+    submitted_attachments: BTreeMap<String, (String, SubmittedAttachments)>,
+    held_attachments: VecDeque<SubmittedAttachments>,
+    failed_attachments: VecDeque<(String, SubmittedAttachments, bool)>,
+}
+
+struct SubmittedAttachments {
+    expanded: Expanded,
+    media: Vec<Chip>,
 }
 
 impl AppState {
@@ -397,6 +455,13 @@ impl AppState {
             pending: None,
             command_service: None,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
+            caret: 0,
+            attachment_epoch: 0,
+            attachment_home: PathBuf::new(),
+            attachment_folder: PathBuf::new(),
+            submitted_attachments: BTreeMap::new(),
+            held_attachments: VecDeque::new(),
+            failed_attachments: VecDeque::new(),
         }
     }
 
@@ -514,6 +579,15 @@ pub enum AppMessage {
     },
     /// A clipboard, drop, or completion result.
     Attachment(crate::attachments::AttachmentEvent),
+    AttachmentResult {
+        epoch: u64,
+        event: AttachmentEvent,
+    },
+    AttachmentTick(Instant),
+    DraftSynced {
+        text: String,
+        caret: usize,
+    },
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -611,6 +685,7 @@ pub enum AppEffect {
     ReportPane(talaria_core::attention::PaneReport),
     /// Emit a configured foreground alert.
     Alert(talaria_core::attention::Alert),
+    Attachment(AttachmentEffect),
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -894,8 +969,10 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
                 effects.extend(reduce(
                     state,
                     Event::Submit {
+                        display: text.clone(),
                         text,
                         submission_id,
+                        attachments: Vec::new(),
                     },
                 ));
             }
@@ -1018,9 +1095,38 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
-        AppMessage::Attachment(event) => {
-            let _ = (event, &state.attachments);
-            Vec::new()
+        AppMessage::Attachment(event) => attachment_event(state, event),
+        AppMessage::AttachmentResult { epoch, event } => {
+            if epoch == state.attachment_epoch {
+                attachment_event(state, event)
+            } else {
+                Vec::new()
+            }
+        }
+        AppMessage::AttachmentTick(now) => {
+            let Some(opened) = &state.opened else {
+                state.attachments.mention.close();
+                return vec![AppEffect::Redraw];
+            };
+            let effects = state
+                .attachments
+                .on_tick(&SessionId::new(&opened.session_id), now);
+            attachment_effects(effects)
+        }
+        AppMessage::DraftSynced { text, caret } => {
+            state.draft = text;
+            state.caret = caret;
+            let mut effects = attachment_effects(state.attachments.sync_draft(&state.draft));
+            if state.palette.draft != state.draft {
+                effects.extend(palette_input(
+                    state,
+                    PaletteInput::DraftChanged {
+                        text: state.draft.clone(),
+                        caret,
+                    },
+                ));
+            }
+            effects
         }
     };
     if model_card_blocked(state) {
@@ -1272,6 +1378,36 @@ fn observe_context(state: &mut AppState, event: &Event) -> Vec<AppEffect> {
         .collect()
 }
 
+fn attachment_effects(effects: Vec<AttachmentEffect>) -> Vec<AppEffect> {
+    effects
+        .into_iter()
+        .map(|effect| match effect {
+            AttachmentEffect::Notice(text) => notice_lines(&text),
+            effect => AppEffect::Attachment(effect),
+        })
+        .collect()
+}
+
+fn attachment_event(state: &mut AppState, event: AttachmentEvent) -> Vec<AppEffect> {
+    let Some(opened) = &state.opened else {
+        return Vec::new();
+    };
+    let effects = state.attachments.on_event(
+        event,
+        &SessionId::new(&opened.session_id),
+        &state.draft,
+        state.caret,
+    );
+    let inserting = effects
+        .iter()
+        .any(|effect| matches!(effect, AttachmentEffect::EditDraft { .. }));
+    let mut effects = attachment_effects(effects);
+    if !inserting {
+        effects.extend(restore_failed_attachments(state));
+    }
+    effects
+}
+
 /// Feed the reducer and turn its effects into executor effects.
 fn reduce(state: &mut AppState, event: Event) -> Vec<AppEffect> {
     let observed = observe_context(state, &event);
@@ -1329,13 +1465,16 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 Vec::new()
             }
         }
-        UserAction::OpenModels => models_input(
-            state,
-            ModelsInput::OpenPicker {
-                session_id: state.opened.as_ref().map(|s| s.session_id.clone()),
-                profile: state.profile.clone(),
-            },
-        ),
+        UserAction::OpenModels => {
+            state.attachments.mention.dismiss();
+            models_input(
+                state,
+                ModelsInput::OpenPicker {
+                    session_id: state.opened.as_ref().map(|s| s.session_id.clone()),
+                    profile: state.profile.clone(),
+                },
+            )
+        }
         UserAction::ModelPicker(key) => models_input(state, ModelsInput::Picker(key)),
         UserAction::ModelConfirm(key) => models_input(state, ModelsInput::Confirm(key)),
         UserAction::Submit(text) => {
@@ -1381,6 +1520,95 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         }
         UserAction::Notice(text) => vec![notice_lines(&text)],
         UserAction::Palette(input) => palette_input(state, input),
+        UserAction::DraftEdited {
+            text,
+            caret,
+            typed,
+            recalled,
+            now,
+        } => {
+            if text.is_empty() && !state.draft.is_empty() {
+                state.attachment_epoch = state.attachment_epoch.wrapping_add(1);
+            }
+            state.draft = text;
+            state.caret = caret;
+            let effects = if recalled {
+                state.attachments.on_recall(&state.draft, caret, now)
+            } else {
+                state.attachments.on_edit(&state.draft, caret, typed, now)
+            };
+            let mut effects = attachment_effects(effects);
+            effects.extend(palette_input(
+                state,
+                PaletteInput::DraftChanged {
+                    text: state.draft.clone(),
+                    caret,
+                },
+            ));
+            effects.extend(restore_failed_attachments(state));
+            effects
+        }
+        UserAction::AttachmentKey {
+            action,
+            text,
+            caret,
+            now,
+        } => {
+            state.draft = text;
+            state.caret = caret;
+            if state.opened.is_none() {
+                return vec![notice_lines("No session is open yet.")];
+            }
+            let ctx = crate::attachments::RouteContext {
+                turn_running: state.view().turn_running(),
+                palette_open: state.palette.open,
+            };
+            match state
+                .attachments
+                .on_key(Some(action), &state.draft, caret, ctx, now)
+            {
+                crate::attachments::KeyRoute::Consumed(mut effects) => {
+                    if action == crate::attachments::Action::CompletionAccept {
+                        let session = SessionId::new(
+                            &state.opened.as_ref().expect("open session").session_id,
+                        );
+                        effects.extend(state.attachments.complete_now(&session, now));
+                    }
+                    attachment_effects(effects)
+                }
+                crate::attachments::KeyRoute::PassToComposer => Vec::new(),
+            }
+        }
+        UserAction::Paste { text, draft, caret } => {
+            state.draft = draft;
+            state.caret = caret;
+            let Some(opened) = &state.opened else {
+                return vec![AppEffect::Attachment(AttachmentEffect::EditDraft {
+                    range: caret..caret,
+                    text,
+                })];
+            };
+            let folder = opened
+                .info
+                .cwd
+                .as_deref()
+                .map(Path::new)
+                .unwrap_or(&state.attachment_folder);
+            let rule = state.attachments.rule();
+            let effects = state
+                .attachments
+                .on_paste(&text, &SessionId::new(&opened.session_id), folder, &rule)
+                .into_iter()
+                .map(|effect| match effect {
+                    AttachmentEffect::EditDraft { text, .. } => AttachmentEffect::EditDraft {
+                        range: caret..caret,
+                        text,
+                    },
+                    effect => effect,
+                })
+                .collect();
+            attachment_effects(effects)
+        }
     }
 }
 
@@ -1686,7 +1914,20 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     }
     if state.opened.is_none() {
         return match hold_prompt(state, &text) {
-            Ok(()) => Vec::new(),
+            Ok(()) => match state.attachments.on_submit(&text) {
+                Ok(expanded) => {
+                    let media = state.attachments.chips.take_draft_payloads(&text);
+                    state
+                        .held_attachments
+                        .push_back(SubmittedAttachments { expanded, media });
+                    clear_submitted_draft(state);
+                    Vec::new()
+                }
+                Err(notice) => {
+                    state.held.pop_back();
+                    vec![notice_lines(&notice), AppEffect::LoadDraft(text)]
+                }
+            },
             Err(notice) => vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
         };
     }
@@ -1714,16 +1955,46 @@ fn side_request(state: &mut AppState, draft: String, event: Event) -> Vec<AppEff
 }
 
 fn send_text(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    let expanded = match state.attachments.on_submit(&text) {
+        Ok(expanded) => expanded,
+        Err(notice) => return vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
+    };
+    let media = state.attachments.chips.take_draft_payloads(&text);
+    send_expanded(state, SubmittedAttachments { expanded, media })
+}
+
+fn clear_submitted_draft(state: &mut AppState) {
+    state.draft.clear();
+    state.caret = 0;
+    state.attachment_epoch = state.attachment_epoch.wrapping_add(1);
+}
+
+fn send_expanded(state: &mut AppState, payload: SubmittedAttachments) -> Vec<AppEffect> {
     let submission_id = state.next_submission_id();
-    reduce(
+    let expanded = payload.expanded.clone();
+    let owner = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+        .unwrap_or_default();
+    state
+        .submitted_attachments
+        .insert(submission_id.clone(), (owner, payload));
+    clear_submitted_draft(state);
+    let mut effects = reduce(
         state,
         Event::Submit {
-            display: text.clone(),
-            text,
+            display: expanded.display,
+            text: expanded.text,
             submission_id,
-            attachments: Vec::new(),
+            attachments: expanded.attachments,
         },
-    )
+    );
+    if let Some(notice) = reference_notice(expanded.reference_count) {
+        effects.push(notice_lines(notice));
+    }
+    effects.extend(restore_failed_attachments(state));
+    effects
 }
 
 /// `/theme` with its argument: the report, or a background override for this session.
@@ -1974,6 +2245,15 @@ fn opened_session(
         cursor: opened.cursor.clone(),
     });
     let session_id = opened.session_id.clone();
+    state
+        .failed_attachments
+        .retain(|(owner, _, _)| owner == &session_id);
+    state.attachment_epoch = state.attachment_epoch.wrapping_add(1);
+    effects.extend(attachment_effects(
+        state
+            .attachments
+            .on_session_change(&SessionId::new(&opened.session_id)),
+    ));
     state.opened = Some(opened);
     state.link_state = LinkView::Connected;
     effects.extend(commands_follow(
@@ -1984,9 +2264,58 @@ fn opened_session(
         effects.push(notice_lines(&notice));
     }
     while let Some(text) = state.held.pop_front() {
-        effects.extend(send_text(state, text));
+        if state
+            .held_attachments
+            .front()
+            .is_some_and(|payload| payload.expanded.display == text)
+        {
+            let payload = state
+                .held_attachments
+                .pop_front()
+                .expect("checked held payload");
+            effects.extend(send_expanded(state, payload));
+        } else {
+            effects.extend(send_text(state, text));
+        }
     }
     effects
+}
+
+fn restore_failed_attachments(state: &mut AppState) -> Vec<AppEffect> {
+    if !state.draft.is_empty() || state.attachments.has_pending_work() {
+        return Vec::new();
+    }
+    while let Some((owner, payload, invalid_images)) = state.failed_attachments.pop_front() {
+        if state
+            .opened
+            .as_ref()
+            .map(|opened| opened.session_id.as_str())
+            != Some(owner.as_str())
+        {
+            continue;
+        }
+        state.attachments.chips.restore_payloads(payload.media);
+        state
+            .attachments
+            .chips
+            .restore_pastes(&payload.expanded.display);
+        let mut effects = Vec::new();
+        if invalid_images && !payload.expanded.attachments.is_empty() {
+            state
+                .attachments
+                .chips
+                .invalidate_images(&payload.expanded.attachments);
+            effects.push(notice_lines(
+                "Hermes no longer has the attached images; attach them again.",
+            ));
+        }
+        state.draft = payload.expanded.display;
+        state.caret = state.draft.len();
+        state.attachment_epoch = state.attachment_epoch.wrapping_add(1);
+        effects.push(AppEffect::LoadDraft(state.draft.clone()));
+        return effects;
+    }
+    Vec::new()
 }
 
 fn submit_done(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec<AppEffect> {
@@ -2010,8 +2339,35 @@ fn submit_done(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec
 }
 
 fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec<AppEffect> {
+    let mut attachment_notices = Vec::new();
+    if let Some((owner, payload)) = state.submitted_attachments.remove(&id) {
+        if state
+            .opened
+            .as_ref()
+            .map(|opened| opened.session_id.as_str())
+            != Some(owner.as_str())
+        {
+            return Vec::new();
+        }
+        state.attachments.forget_submission(&payload.expanded);
+        if matches!(
+            outcome,
+            ExecuteOutcome::Refused { .. } | ExecuteOutcome::OutcomeUnknown
+        ) {
+            let invalid_images = matches!(&outcome, ExecuteOutcome::Refused { reason } if reason == "invalid_params");
+            state
+                .failed_attachments
+                .push_back((owner, payload, invalid_images));
+            if !state.draft.is_empty() || state.attachments.has_pending_work() {
+                attachment_notices.push(notice_lines(
+                    "The earlier prompt is kept until the current draft is sent or cleared.",
+                ));
+            }
+        }
+    }
+    let voice_stopped = matches!(outcome, ExecuteOutcome::VoiceStopped);
     let (reason, notice) = match outcome {
-        ExecuteOutcome::Sent => return Vec::new(),
+        ExecuteOutcome::Sent => return attachment_notices,
         ExecuteOutcome::Refused { reason } => ("refused", failure::prompt_refused_notice(&reason)),
         ExecuteOutcome::OutcomeUnknown => ("connection dropped", failure::prompt_unknown_notice()),
         ExecuteOutcome::VoiceStopped => ("voice stop", failure::voice_stop_notice()),
@@ -2024,6 +2380,11 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
         },
     );
     effects.push(notice_lines(&notice));
+    effects.extend(attachment_notices);
+    effects.extend(restore_failed_attachments(state));
+    if voice_stopped {
+        effects.retain(|effect| !matches!(effect, AppEffect::LoadDraft(_)));
+    }
     effects
 }
 
@@ -2452,6 +2813,425 @@ pub async fn interrupt(state: &mut AppState) -> ExecuteOutcome {
         talaria_core::session::update(&mut opened.state, Event::InterruptFailed);
     }
     outcome
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+    use talaria_core::attachments::Attachment;
+
+    #[derive(Default)]
+    struct Editor {
+        text: String,
+        caret: usize,
+    }
+    impl ComposerDeadline for Editor {
+        fn tick(&mut self, _: Instant) {}
+        fn next_tick(&self) -> Option<Instant> {
+            None
+        }
+    }
+    impl StatusHost for Editor {
+        fn on_tick(&mut self, _: Instant) {}
+        fn next_wake(&self, _: Instant) -> Option<Instant> {
+            None
+        }
+        fn shutdown(&mut self) -> impl Future<Output = ()> + Send {
+            std::future::ready(())
+        }
+    }
+    impl Screen for Editor {
+        type Input = ();
+        fn input(&mut self, _: (), _: &View<'_>, _: Instant) -> Vec<UserAction> {
+            Vec::new()
+        }
+        fn draw(&mut self, _: &View<'_>) {}
+        fn commit_lines(&mut self, _: Vec<String>) {}
+        fn commit_context(&mut self, _block: &ContextBlock) {}
+        fn commit_cells(&mut self, _: &[Cell]) {}
+        fn load_draft(&mut self, text: &str) {
+            self.text = text.into();
+            self.caret = text.len();
+        }
+        fn restore(&mut self) {}
+        fn edit_draft(&mut self, range: Range<usize>, text: &str) -> Option<(String, usize)> {
+            self.caret = range.start + text.len();
+            self.text.replace_range(range, text);
+            self.draft_snapshot()
+        }
+        fn draft_snapshot(&self) -> Option<(String, usize)> {
+            Some((self.text.clone(), self.caret))
+        }
+    }
+
+    fn opened() -> AppState {
+        let mut state = AppState::new("launch");
+        state.opened = Some(OpenedSession {
+            state: SessionState::empty(SessionId::new("session")),
+            session_id: "session".into(),
+            stored_session_id: "session".into(),
+            subscription_id: "subscription".into(),
+            title: None,
+            revision: 0,
+            execution_generation: 0,
+            launch_notices: Vec::new(),
+            effort: None,
+            info: SessionInfoSummary {
+                model: None,
+                provider: None,
+                cwd: None,
+                branch: None,
+            },
+            cursor: Cursor {
+                replay_epoch: "epoch".into(),
+                last_sequence: 0,
+            },
+        });
+        state
+    }
+
+    fn image(state: &mut AppState, path: &str) -> String {
+        let (chip, label) = state
+            .attachments
+            .chips
+            .begin_image("", &SessionId::new("session"))
+            .unwrap();
+        state
+            .attachments
+            .chips
+            .image_ready(chip, path.into(), "image/png".into());
+        label
+    }
+
+    #[test]
+    fn a_receipt_releases_only_its_own_media_after_a_new_draft_begins() {
+        let mut state = opened();
+        let label = image(&mut state, "old-image");
+        let effects = submit(&mut state, label.clone());
+        let id = state.submitted_attachments.keys().next().unwrap().clone();
+        assert!(effects.iter().any(|effect| matches!(effect,
+            AppEffect::Send(Effect::SendPrompt { attachments, .. })
+            if attachments == &vec![Attachment { path:"old-image".into(), mime:"image/png".into() }])));
+        let new_label = image(&mut state, "new-image");
+        assert_eq!(new_label, "[Image #1]");
+        assert_eq!(
+            state
+                .attachments
+                .chips
+                .expand(&new_label)
+                .unwrap()
+                .attachments[0]
+                .path,
+            "new-image"
+        );
+        submit_done(&mut state, id, ExecuteOutcome::Sent);
+        assert_eq!(
+            state
+                .attachments
+                .chips
+                .expand(&new_label)
+                .unwrap()
+                .attachments[0]
+                .path,
+            "new-image"
+        );
+    }
+
+    #[test]
+    fn an_unknown_submit_restores_its_owned_image_and_display() {
+        let mut state = opened();
+        let label = image(&mut state, "original-image");
+        submit(&mut state, label.clone());
+        let id = state.submitted_attachments.keys().next().unwrap().clone();
+        assert!(
+            state
+                .attachments
+                .chips
+                .expand(&label)
+                .unwrap()
+                .attachments
+                .is_empty()
+        );
+        let effects = submit_done(&mut state, id, ExecuteOutcome::OutcomeUnknown);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::LoadDraft(text) if text == &label))
+        );
+        assert_eq!(
+            state.attachments.chips.expand(&label).unwrap().attachments[0].path,
+            "original-image"
+        );
+    }
+
+    #[test]
+    fn a_stale_file_result_cannot_insert_into_a_cleared_draft() {
+        let mut state = opened();
+        state.attachment_epoch = 2;
+        let effects = update(
+            &mut state,
+            AppMessage::AttachmentResult {
+                epoch: 1,
+                event: AttachmentEvent::FileAttached {
+                    session: SessionId::new("session"),
+                    name: "notes.txt".into(),
+                    ref_text: "@file:notes.txt".into(),
+                    uploaded: true,
+                    remainder: String::new(),
+                },
+            },
+        );
+        assert!(
+            effects
+                .iter()
+                .all(|effect| !matches!(effect, AppEffect::Attachment(_)))
+        );
+        assert!(state.draft.is_empty());
+    }
+
+    #[test]
+    fn an_earlier_failure_waits_for_the_new_draft_without_replacing_its_media() {
+        for outcome in [
+            ExecuteOutcome::OutcomeUnknown,
+            ExecuteOutcome::Refused {
+                reason: "busy".into(),
+            },
+        ] {
+            let mut state = opened();
+            let old = image(&mut state, "old-image");
+            submit(&mut state, old.clone());
+            let id = state.submitted_attachments.keys().next().unwrap().clone();
+            let new = image(&mut state, "new-image");
+            assert_eq!(old, new);
+            state.draft = format!("new {new}");
+            let effects = submit_done(&mut state, id, outcome);
+            assert_eq!(state.draft, format!("new {new}"));
+            assert!(
+                effects
+                    .iter()
+                    .all(|effect| !matches!(effect, AppEffect::LoadDraft(_)))
+            );
+            assert_eq!(
+                state.attachments.chips.expand(&new).unwrap().attachments[0].path,
+                "new-image"
+            );
+            let draft = state.draft.clone();
+            let effects = submit(&mut state, draft);
+            assert!(
+                effects
+                    .iter()
+                    .any(|effect| matches!(effect, AppEffect::LoadDraft(text) if text == &old))
+            );
+            assert_eq!(state.draft, old);
+            assert_eq!(
+                state.attachments.chips.expand(&old).unwrap().attachments[0].path,
+                "old-image"
+            );
+        }
+    }
+
+    #[test]
+    fn accepting_a_folder_emits_its_next_request_without_waiting() {
+        let mut state = opened();
+        let now = Instant::now();
+        state.attachments.on_edit("@sr", 3, true, now);
+        let request = state
+            .attachments
+            .mention
+            .tick(now + Duration::from_millis(60))
+            .unwrap();
+        state.attachments.mention.on_items(
+            request.generation,
+            vec![hermes_contract::schemas::CompletionItem {
+                text: "@folder:src/".into(),
+                display: "src".into(),
+                meta: String::new(),
+                kind: None,
+            }],
+        );
+        let effects = update(
+            &mut state,
+            AppMessage::User(UserAction::AttachmentKey {
+                action: crate::attachments::Action::CompletionAccept,
+                text: "@sr".into(),
+                caret: 3,
+                now,
+            }),
+        );
+        assert!(effects.iter().any(|effect| matches!(effect, AppEffect::Attachment(AttachmentEffect::Complete { request, .. }) if request.word == "@src/")));
+    }
+
+    #[test]
+    fn opening_the_model_picker_closes_mentions_without_replacing_the_draft() {
+        let mut state = opened();
+        state.draft = "explain @calc".into();
+        state
+            .attachments
+            .on_edit(&state.draft, state.draft.len(), true, Instant::now());
+        assert!(state.attachments.mention.is_open());
+        user_action(&mut state, UserAction::OpenModels);
+        assert!(!state.attachments.mention.is_open());
+        assert_eq!(state.draft, "explain @calc");
+    }
+
+    #[test]
+    fn a_new_file_drop_keeps_the_destination_until_its_upload_finishes() {
+        let mut state = opened();
+        submit(&mut state, "earlier prompt".into());
+        let id = state.submitted_attachments.keys().next().unwrap().clone();
+        user_action(
+            &mut state,
+            UserAction::Paste {
+                text: "/srv/project/notes.txt".into(),
+                draft: String::new(),
+                caret: 0,
+            },
+        );
+        submit_done(&mut state, id, ExecuteOutcome::OutcomeUnknown);
+        let effects = attachment_event(
+            &mut state,
+            AttachmentEvent::DropFile {
+                session: SessionId::new("session"),
+                path: PathBuf::from("/srv/project/notes.txt"),
+                remainder: String::new(),
+            },
+        );
+        assert!(state.draft.is_empty());
+        assert!(state.attachments.has_pending_work());
+        assert!(
+            effects
+                .iter()
+                .all(|effect| !matches!(effect, AppEffect::LoadDraft(_)))
+        );
+        let effects = attachment_event(
+            &mut state,
+            AttachmentEvent::FileAttached {
+                session: SessionId::new("session"),
+                name: "notes.txt".into(),
+                ref_text: "@file:notes.txt".into(),
+                uploaded: true,
+                remainder: String::new(),
+            },
+        );
+        assert!(!state.attachments.has_pending_work());
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::Attachment(AttachmentEffect::EditDraft { .. })
+        )));
+        assert!(
+            effects
+                .iter()
+                .all(|effect| !matches!(effect, AppEffect::LoadDraft(_)))
+        );
+    }
+
+    #[test]
+    fn a_failed_submission_cannot_restore_media_into_a_different_session() {
+        let mut state = opened();
+        let label = image(&mut state, "old-session-image");
+        submit(&mut state, label.clone());
+        let id = state.submitted_attachments.keys().next().unwrap().clone();
+        state.opened.as_mut().unwrap().session_id = "another-session".into();
+        assert!(submit_done(&mut state, id, ExecuteOutcome::OutcomeUnknown).is_empty());
+        assert!(
+            state
+                .attachments
+                .chips
+                .expand(&label)
+                .unwrap()
+                .attachments
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_admitted_paste_is_restored_by_history_but_not_by_typing_its_label() {
+        let mut state = opened();
+        let text = "one\ntwo\nthree\nfour\nfive";
+        let label = state.attachments.chips.collapse_paste(text);
+        let effects = submit(&mut state, label.clone());
+        assert!(effects.iter().any(|effect| matches!(effect,
+            AppEffect::Send(Effect::SendPrompt { text: sent, .. }) if sent == text)));
+        let id = state.submitted_attachments.keys().next().unwrap().clone();
+        submit_done(&mut state, id, ExecuteOutcome::Sent);
+        let now = Instant::now();
+        state.attachments.on_edit(&label, label.len(), true, now);
+        assert_eq!(state.attachments.chips.expand(&label).unwrap().text, label);
+        state.attachments.on_recall(&label, label.len(), now);
+        assert_eq!(state.attachments.chips.expand(&label).unwrap().text, text);
+    }
+
+    #[tokio::test]
+    async fn completion_keeps_the_caret_before_trailing_text_and_acknowledges_immediately() {
+        let mut state = opened();
+        let now = Instant::now();
+        let text = "see @ca trailing";
+        state.attachments.on_edit(text, 7, true, now);
+        state.attachments.mention.on_items(
+            1,
+            vec![hermes_contract::schemas::CompletionItem {
+                text: "@file:src/calc.py".into(),
+                display: "calc.py".into(),
+                meta: "src".into(),
+                kind: None,
+            }],
+        );
+        let mut editor = Editor {
+            text: text.into(),
+            caret: 7,
+        };
+        let (sender, mut messages) = mpsc::unbounded_channel();
+        let executor = Executor::new(sender);
+        apply(
+            &mut state,
+            AppMessage::User(UserAction::AttachmentKey {
+                action: crate::attachments::Action::CompletionAccept,
+                text: text.into(),
+                caret: 7,
+                now,
+            }),
+            &mut editor,
+            &executor,
+        );
+        assert_eq!(editor.text, "see @file:src/calc.py trailing");
+        assert_eq!(editor.caret, editor.text.find(" trailing").unwrap());
+        assert_eq!(
+            (state.draft.as_str(), state.caret),
+            (editor.text.as_str(), editor.caret)
+        );
+        assert!(messages.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn consecutive_file_results_use_the_last_acknowledged_caret() {
+        let mut state = opened();
+        state.draft = "x ".into();
+        state.caret = 2;
+        let mut editor = Editor {
+            text: "x ".into(),
+            caret: 2,
+        };
+        let (sender, mut messages) = mpsc::unbounded_channel();
+        let executor = Executor::new(sender);
+        for name in ["first.txt", "second.txt"] {
+            apply(
+                &mut state,
+                AppMessage::Attachment(AttachmentEvent::FileAttached {
+                    session: SessionId::new("session"),
+                    name: name.into(),
+                    ref_text: format!("@file:{name}"),
+                    uploaded: false,
+                    remainder: String::new(),
+                }),
+                &mut editor,
+                &executor,
+            );
+        }
+        assert_eq!(editor.text, "x @file:first.txt @file:second.txt ");
+        assert_eq!(state.draft, editor.text);
+        assert_eq!(state.caret, editor.text.len());
+        assert!(messages.try_recv().is_err());
+    }
 }
 
 /// Refuse a `--record` path that exists or whose folder does not, before any drawing.
@@ -2916,6 +3696,31 @@ fn apply<S: Screen>(
     state.attention_at = Instant::now();
     let mut redraw = false;
     state.now_ms = executor.now_ms();
+    if matches!(&message, AppMessage::AttachmentResult { epoch, .. } if *epoch != state.attachment_epoch)
+    {
+        return false;
+    }
+    if matches!(
+        &message,
+        AppMessage::Attachment(_)
+            | AppMessage::AttachmentResult { .. }
+            | AppMessage::SubmitDone { .. }
+    ) && let Some((text, caret)) = screen.flush_draft()
+        && (text != state.draft || caret != state.caret)
+    {
+        redraw |= apply(
+            state,
+            AppMessage::User(UserAction::DraftEdited {
+                text,
+                caret,
+                typed: true,
+                recalled: false,
+                now: Instant::now(),
+            }),
+            screen,
+            executor,
+        );
+    }
     for effect in update(state, message) {
         match effect {
             AppEffect::Rewind { ticket, call } => {
@@ -3003,8 +3808,50 @@ fn apply<S: Screen>(
                 }
             }
             AppEffect::Redraw => redraw = true,
-            AppEffect::LoadDraft(text) => screen.load_draft(&text),
             AppEffect::UnrecordSubmit(text) => screen.unrecord_submit(&text),
+            AppEffect::LoadDraft(text) => {
+                screen.load_draft(&text);
+                if let Some((text, caret)) = screen.draft_snapshot() {
+                    redraw |= apply(
+                        state,
+                        AppMessage::DraftSynced { text, caret },
+                        screen,
+                        executor,
+                    );
+                }
+            }
+            AppEffect::Attachment(effect) => match effect {
+                AttachmentEffect::EditDraft { range, text } => {
+                    if let Some((text, caret)) = screen.edit_draft(range, &text) {
+                        let _ = apply(
+                            state,
+                            AppMessage::DraftSynced { text, caret },
+                            screen,
+                            executor,
+                        );
+                    }
+                    redraw = true;
+                }
+                AttachmentEffect::Highlight(_) => redraw = true,
+                AttachmentEffect::Notice(text) => screen.commit_lines(vec![format!("· {text}")]),
+                effect => {
+                    let sender = executor.sender.clone();
+                    let epoch = state.attachment_epoch;
+                    crate::attachments::AttachmentService::new(
+                        state
+                            .service
+                            .as_ref()
+                            .and_then(SessionService::client)
+                            .cloned(),
+                        Box::new(move |event| {
+                            let _ = sender.send(AppMessage::AttachmentResult { epoch, event });
+                        }),
+                        crate::clipboard::ClipboardImageReader::system(),
+                        state.attachment_home.clone(),
+                    )
+                    .execute(effect);
+                }
+            },
             AppEffect::Send(effect) => {
                 let Some(service) = state.service.clone() else {
                     continue;
@@ -3247,7 +4094,40 @@ fn apply<S: Screen>(
             }
         }
     }
+    sync_attachment_view(state, screen, Instant::now());
     redraw
+}
+
+fn sync_attachment_view<S: Screen>(state: &AppState, screen: &mut S, now: Instant) {
+    let mention = state
+        .attachments
+        .mention
+        .is_open()
+        .then(|| state.attachments.mention.view(now));
+    let highlights = state
+        .attachments
+        .chips
+        .live(&state.draft)
+        .into_iter()
+        .map(|(chip, range)| {
+            let style = if matches!(
+                chip.kind,
+                talaria_core::attachments::ChipKind::Image {
+                    state: talaria_core::attachments::ImageState::Pending { .. },
+                    ..
+                }
+            ) {
+                crate::attachments::LabelStyle::Dimmed
+            } else {
+                crate::attachments::LabelStyle::Accent
+            };
+            (range, style)
+        })
+        .collect();
+    screen.sync_attachments(AttachmentView {
+        mention,
+        highlights,
+    });
 }
 
 /// Take the opened session's handles into the state and start forwarding link events.
@@ -3352,6 +4232,12 @@ pub async fn run<S: Screen>(
     if let Some((colors, polarity)) = screen.startup_appearance() {
         state.appearance = AppearanceService::new(colors, polarity);
     }
+    state.attachments = AttachmentsState::new(screen.attachment_rule(), 16 * 1024 * 1024);
+    state.attachment_home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    state.attachments.set_home(state.attachment_home.clone());
+    state.attachment_folder = launch.folder.clone();
     state.profile = launch.profile.trim().to_lowercase();
     state.list_title = setup.list_title;
     state.model = launch.model.clone();
@@ -3402,6 +4288,7 @@ pub async fn run<S: Screen>(
         } else {
             deadline
         };
+        let deadline = earliest(deadline, state.attachments.next_deadline());
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
@@ -3444,6 +4331,13 @@ pub async fn run<S: Screen>(
                     let now_ms = executor.now_ms();
                     apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
+                if let Some((text, caret)) = screen.draft_snapshot()
+                    && (text != state.draft || caret != state.caret) {
+                        let _ = apply(&mut state, AppMessage::User(UserAction::DraftEdited {
+                            text, caret, typed: true, recalled: false, now,
+                        }), screen, &executor);
+                }
+                let _ = apply(&mut state, AppMessage::AttachmentTick(now), screen, &executor);
                 redraw = true;
             }
             Some(()) = async { match terminate.as_mut() { Some(stream) => stream.recv().await, None => std::future::pending().await } } => {
