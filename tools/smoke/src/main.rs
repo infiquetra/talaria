@@ -11,11 +11,14 @@ use signal_hook::consts::signal::{SIGINT, SIGTERM};
 use signal_hook::flag;
 
 use smoke::clock::SystemClock;
-use smoke::config::{SmokeConfig, launch_line};
+use smoke::config::{Phase2aConfig, SmokeConfig, launch_line, launch_line_env};
 use smoke::report::StepOutcome;
 use smoke::scrub::Scrubber;
 use smoke::steps::run_smoke;
+use smoke::steps2a::{run_smoke_2a, scratch_for};
+use smoke::suite::Suite;
 use smoke::terminal::{HerdrCli, Terminal};
+use smoke::tmux::{Paster, TmuxCli};
 
 /// The longest launch line the command line takes.
 const MAX_LAUNCH_LINE: usize = 600;
@@ -47,15 +50,21 @@ struct Cli {
     /// The provider the model comes from.
     #[arg(long, global = true, default_value = "ollama-cloud")]
     provider: String,
-    /// The whole run, in seconds.
-    #[arg(long, global = true, default_value_t = 300)]
-    deadline_secs: u64,
+    /// The whole run, in seconds [default: 300 for phase1, 1800 for phase2a].
+    #[arg(long, global = true)]
+    deadline_secs: Option<u64>,
     /// The scale of the per-step limits; the deadline and the quiet periods stay.
     #[arg(long, global = true, default_value_t = 1.0)]
     step_scale: f32,
     /// Where the failure report is written.
     #[arg(long, global = true)]
     report_dir: Option<PathBuf>,
+    /// Which suite runs: phase1, or phase2a for the phase 2a features.
+    #[arg(long, global = true, default_value = "phase1")]
+    suite: Suite,
+    /// The tmux command line the phase2a suite pastes through.
+    #[arg(long, global = true, default_value = "tmux")]
+    tmux: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -89,7 +98,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
     if !cli.step_scale.is_finite() || cli.step_scale <= 0.0 {
         return Err("--step-scale must be a finite number above 0.".to_owned());
     }
-    if cli.deadline_secs == 0 {
+    if cli.deadline_secs == Some(0) {
         return Err("--deadline-secs must be above 0.".to_owned());
     }
     if let Some(dir) = &cli.report_dir
@@ -137,6 +146,17 @@ fn run(cli: &Cli) -> Result<u8, String> {
         &temp_root,
     );
 
+    if cli.suite == Suite::Phase2a {
+        preflight_2a(
+            cli,
+            &scrubber,
+            &home,
+            &login,
+            hermes_home.as_deref(),
+            &temp_root,
+        )?;
+    }
+
     let herdr = HerdrCli::new(&cli.herdr, &workspace);
     if let Err(error) = herdr.check() {
         return Err(scrubber.scrub(&format!(
@@ -176,6 +196,40 @@ fn run(cli: &Cli) -> Result<u8, String> {
         ],
     );
     let resume_line = launch_line(&binary, &["--no-ensure", "-c", "--profile", &cli.profile]);
+    // The phase 2a run fixes its seed, so its scratch project, and with it the editor script
+    // every launch line names, is known before it starts.
+    let seed = match cli.suite {
+        Suite::Phase1 => None,
+        Suite::Phase2a => Some(rand::random::<u64>()),
+    };
+    let (start_line, resume_line) = match seed {
+        Some(seed) => {
+            let editor = scratch_for(&temp_root, seed).join("smoke-editor.sh");
+            let editor = editor.to_string_lossy();
+            let env = [("EDITOR", editor.as_ref())];
+            (
+                launch_line_env(
+                    &env,
+                    &binary,
+                    &[
+                        "--no-ensure",
+                        "--profile",
+                        &cli.profile,
+                        "--model",
+                        &cli.model,
+                        "--provider",
+                        &cli.provider,
+                    ],
+                ),
+                launch_line_env(
+                    &env,
+                    &binary,
+                    &["--no-ensure", "-c", "--profile", &cli.profile],
+                ),
+            )
+        }
+        None => (start_line, resume_line),
+    };
     if start_line.chars().count() >= MAX_LAUNCH_LINE
         || resume_line.chars().count() >= MAX_LAUNCH_LINE
     {
@@ -196,12 +250,15 @@ fn run(cli: &Cli) -> Result<u8, String> {
         profile: cli.profile.clone(),
         model: cli.model.clone(),
         provider: cli.provider.clone(),
-        deadline: Duration::from_secs(cli.deadline_secs),
+        deadline: Duration::from_secs(
+            cli.deadline_secs
+                .unwrap_or_else(|| cli.suite.default_deadline_secs()),
+        ),
         step_scale: cli.step_scale,
         report_dir: Some(report_dir.clone()),
         require: std::env::var("TALARIA_LIVE_REQUIRE").as_deref() == Ok("1"),
         temp_root,
-        seed: None,
+        seed,
     };
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -215,7 +272,18 @@ fn run(cli: &Cli) -> Result<u8, String> {
     println!("herdr: {}", scrubber.scrub(&herdr.version()));
 
     let clock = SystemClock::new();
-    let report = run_smoke(&herdr, &clock, &config, &stop);
+    let report = match seed {
+        None => run_smoke(&herdr, &clock, &config, &stop),
+        Some(seed) => {
+            let scratch = scratch_for(&config.temp_root, seed);
+            let tmux = TmuxCli::new(&cli.tmux, &scratch.join("tmux-exit.txt"), &scratch);
+            println!("tmux: {}", scrubber.scrub(&tmux.version()));
+            let cfg2 = Phase2aConfig {
+                tmux: cli.tmux.clone(),
+            };
+            run_smoke_2a(&herdr, &tmux, &clock, &config, &cfg2, &stop)
+        }
+    };
 
     // The scratch project is known now, so the pane text can name it as well.
     let late = Scrubber::new(
@@ -254,8 +322,50 @@ fn run(cli: &Cli) -> Result<u8, String> {
     if let Some(tab) = &report.unclosed_tab {
         println!("cleanup: tab {} was not closed", tab.0);
     }
+    if let Some(session) = &report.unclosed_session {
+        println!("cleanup: tmux session {session} was not closed");
+    }
     println!("{}", report.result_line());
     Ok(u8::try_from(report.exit_code()).unwrap_or(1))
+}
+
+/// The phase 2a checks before anything is created: tmux runs, and the scratch path can be
+/// written into the single-quoted scripts.
+fn preflight_2a(
+    cli: &Cli,
+    scrubber: &Scrubber,
+    home: &str,
+    login: &str,
+    hermes_home: Option<&str>,
+    temp_root: &std::path::Path,
+) -> Result<(), String> {
+    let runs = std::process::Command::new(&cli.tmux)
+        .arg("-V")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !runs {
+        return Err(scrubber.scrub(&format!(
+            "tmux was not found or did not run: {}",
+            cli.tmux.display()
+        )));
+    }
+    let root = temp_root.to_string_lossy();
+    if root.contains(' ') || root.contains('\'') {
+        // The temporary folder is what the sentence names, so only the home folder and the
+        // login name are scrubbed from it.
+        let named = Scrubber::new(
+            home,
+            login,
+            std::path::Path::new(""),
+            hermes_home,
+            std::path::Path::new(""),
+        );
+        return Err(named.scrub(&format!(
+            "The scratch folder would be under {root}, which holds a space or a single quote; set \
+             TMPDIR to a folder without either."
+        )));
+    }
+    Ok(())
 }
 
 /// The step that failed, with its reason.

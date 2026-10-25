@@ -125,3 +125,10 @@ pub const AGENT_WORDS: &[&str] = &["talaria", "idle", "working"];
 
 /// The resumed-history marker (issue #209, resume step).
 pub const RESUMED_LINE: &str = "── Resumed:";
+
+/// The gutter before a system line, such as a command's output or a notice (seen on the live
+/// binary; issue #223 shows `/version` output this way).
+pub const SYSTEM_GUTTER: &str = "·";
+
+/// The history box's line when nothing matches (issue #228, history search scenario).
+pub const HISTORY_NO_MATCH: &str = "No earlier prompt matches";

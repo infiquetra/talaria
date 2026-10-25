@@ -5060,3 +5060,128 @@ stays subscribed. A loop's interval is the gap between runs, not the delay befor
 **Generalizable rule.** Before calling a Hermes verb to read state, check whether accepting it
 also claims a role; read through `session.control.read` and `config.get` instead, and treat a new
 loop as already due.
+
+## 2026-10-25 — Text typed through Herdr arrives as a paste burst in Talaria's composer
+
+**Evidence.** `tools/smoke/src/steps2a.rs`, `typed`; `crates/talaria-tui/src/composer/paste_burst.rs`
+(`BURST_CHAR_INTERVAL` 8 ms, `ENTER_SUPPRESS_WINDOW` 120 ms) and `crates/talaria-cli/src/run.rs`
+(a typed draft edit is reported only while no burst is collecting). On the first live run of the
+phase 2a suite, `herdr pane send-text <pane> /vers` followed at once by `send-keys enter` left
+`/vers` and an empty second line in the composer and printed nothing; a 300 ms pause before Enter
+ran `/version`. `Summarize @calc` sent the same way never opened the `@` list; sending
+`Summarize @cal`, pausing 300 ms and then sending `c` opened it with `calc.py` selected.
+
+**Mechanism.** Herdr writes the text's characters a few milliseconds apart, so Talaria's burst
+detector takes them for an unbracketed paste: an Enter within 120 ms of the burst is a line break,
+and a pasted draft opens no completion. The slash palette still opens, because it follows the
+draft's first character, not the typing.
+
+**Generalizable rule.** When a harness types into a TUI that detects paste bursts, wait past the
+burst window before a submit key, and do not expect typed-only behaviour (completion lists) from
+text the harness sends in one call.
+
+## 2026-10-25 — Recorded screens show what hand-built ones leave out
+
+**Evidence.** `tools/smoke/tests/fixtures/screens/phase2a/` and its README; `herdr pane get` and
+the screens recorded from `main` at `d4deb0ed`. The hand-built screens of the red run differed
+from the real binary in ways the steps depend on: system lines (`/version` output, the `/theme`
+report, usage lines) carry a `· ` gutter; the palette shows an eight-row window (so `/skin` and
+`/theme` fall below the Talaria group's first window) with tags at the right edge, and `/version`
+is tagged `hermes`; the Ctrl+R box is a framed list with a `›` query row and `▸` match rows;
+`herdr pane get` answers JSON with `result.pane.agent` (`talaria`) and `agent_status` (`idle`,
+`working`); a failed shell cell's output row reads `⎿  ls: cannot access '…': No such file or
+directory`; the `@` list's selected row starts with `›`; and a failed side answer (provoked with a
+model the provider does not have) carries Hermes's whole provider error after `The side question
+failed:`.
+
+**Mechanism.** A screen written from an issue's quoted fragments keeps the fragments and invents
+the rest, and the rest is where layout, gutters and windows live. The steps' normalisation now
+drops the gutter like box-drawing characters, and the fixtures are recordings.
+
+**Generalizable rule.** Record a fixture screen from the binary before writing the step that reads
+it; a fragment-built screen proves only that the helper finds the fragment.
+
+## 2026-10-25 — Hermes cuts a long tool subject, so a deep temporary folder hides the file name
+
+**Evidence.** Hermes v0.22.4 `agent/display.py` (`_tail_trunc`, cutting with `...`) and
+`crates/talaria-core/src/session/tool_view.rs` (`subject_of` uses the cell's Hermes context for
+`patch`). A live tool-edit step showed `⏺ Edit <tmp>/talaria-smoke-8a1qfc...  ✓ +1 -1` (`<tmp>` being the macOS temporary folder):
+the model passed the absolute path, and Hermes cut it before `notes.txt`. With `TMPDIR` set to the
+root-level temporary folder the cell read `⏺ Edit ./notes.txt  ✓ +1 -1`.
+
+**Mechanism.** The macOS temporary folder adds about 50 characters before the scratch project,
+and the preview limit falls inside the scratch folder's name. The step now fails with "the edit
+cell does not name notes.txt" in that case rather than claiming the model used no editing tool.
+
+**Generalizable rule.** When a live check reads a path out of a tool cell, keep the working folder
+short and tell "the tool ran" apart from "the cell names the file".
+
+## 2026-10-25 — A new Herdr tab does not inherit the caller's environment
+
+**Evidence.** A probe tab created with `herdr tab create` from a process that had `HERMES_HOME`
+set printed `PROBE-NOT-SET` for `[ -n "$HERMES_HOME" ]`; the phase 1 evidence of #211 records
+the same workaround. The `fixture` profile of the test gateway lives only in a separate Hermes
+home, so a Talaria started in a smoke tab cannot find it on its own.
+
+**Mechanism.** The shell of a new pane starts from the Herdr server's environment. The live runs
+pass `--talaria` a two-line launcher that sets `HERMES_HOME` and runs the binary as a child, so the
+foreground check still finds the launcher's path.
+
+**Generalizable rule.** Anything a pane-driven test needs from the caller's environment must ride
+on the launch line or in a launcher; the tab will not carry it.
+
+## 2026-10-25 — Herdr reports a finished turn as `done`, not `idle`
+
+**Evidence.** `tools/smoke/src/screen2a.rs`, `agent_state`. Two live phase 2a runs skipped
+`pane-state` with "herdr pane get shows no agent state". A probe pane on Herdr 0.9.4 reported
+`agent_status` `idle` after startup, then `working`, `working`, `done` across one prompt, and `done`
+3 s later.
+
+**Mechanism.** Herdr splits the ready state by whether anyone has looked at the pane since the
+turn ended: `idle` when seen, `done` when not. The smoke panes are never focused, so after the
+first turn they stay `done`, and a check that waits for `idle` never sees it.
+
+**Generalizable rule.** Treat Herdr's `done` as ready, the same as `idle`; only `working` and
+`blocked` mean the agent is busy.
+
+## 2026-10-25 — A harness's tmux session draws the user's tmux settings
+
+**Evidence.** `tools/smoke/src/steps2a.rs`, the tmux-pane step's `new-session` line. A live run's
+failure screen of the tmux pane held a `── <host> ──` line although the session's status line was
+off: the user's tmux configuration sets `pane-border-status top` with the pane title, which
+defaults to the host name. In the same run the pane was about 39 columns wide, and Talaria wrapped
+the edited draft `[Pasted text #2 +120 lines] plus-two` onto two composer rows.
+
+**Mechanism.** A new session on the user's tmux server takes the global options of the user's
+configuration. `set-option` without `-g` changes only the new session's window, so the run turns
+both lines off there and leaves the user's own sessions alone. The paste-editor step now joins the
+composer's rows before it looks for the edited draft.
+
+**Generalizable rule.** A harness that opens a multiplexer session must switch off every chrome
+line that can show the host, and must read a draft across the composer's wrapped rows.
+
+## 2026-10-25 — First live runs of the phase 2a smoke suite
+
+**Evidence.** `cargo test -p smoke --test live_smoke2a -- --ignored --nocapture` with `TMPDIR` set
+to the root-level temporary folder and the launcher above, against the pinned gateway, profile
+`fixture`, `minimax-m3.1-flash` on `ollama-cloud`, Herdr 0.9.4, tmux 3.7c, on 2026-10-25. On
+`main` at `d4deb0ed` the runs stopped at `palette`. Two Talaria fixes (the order of the Talaria
+commands, and the paste routing of a line that starts with `/`) went first into a private build,
+where the sixth run passed in 146 s, and then onto `main` with #324; the first run on `main` at
+`f316c6f1` passed in 157 s. The fifth private run printed these step times before the model
+wandered in `paste-editor`: `startup` 5.8 s, `plain-answer` 5.6 s, `tool-shell` 11.3 s,
+`tool-edit` 8.9 s, `palette` 2.8 s, `mention` 6.4 s, `shell` 1.1 s, `btw` 1.4 s, `pager` 1.7 s,
+`history-search` 0.4 s, `editor` 2.8 s, `theme` 0.1 s, `pane-state` 8.9 s, `checklist` 58.5 s,
+`quit` 0.3 s, `resume` 11.0 s, `tmux-pane` 5.5 s, `paste-collapse` 5.3 s, `file-drop` 12.6 s; the
+third private run had `paste-editor` 4.8 s and `tmux-quit` 0.6 s. Two runs failed on the model, not on
+Talaria: once it answered `harbor` for the token `harbor-<n>`, and once it searched the project for
+"the expected reply" past the 60 s limit.
+
+**Mechanism.** The step limits of spec section 9.6 were estimates; apart from `checklist`, whose
+plan includes a sleep, each measured step took a small part of its limit. The tmux steps ask the
+model to copy a token out of a paste or a file, and a fast model sometimes shortens or explores
+instead, so a single run can fail on wording the spec fixes.
+
+**Generalizable rule.** A live suite's first runs are a survey: measure each step, treat every
+stop as a finding for its owner, never as a limit to relax, and tell a model's miss apart from the
+client's screen before calling a run red.

@@ -233,6 +233,16 @@ impl Terminal for HerdrCli {
             .collect())
     }
 
+    /// The agent Herdr recognised in the pane and its state, one per line. The rest of the
+    /// answer names folders and titles, which no step reads.
+    fn pane_get(&self, pane: &PaneId) -> Result<String, TermError> {
+        let answer = self.call(&["pane", "get", &pane.0])?;
+        let agent = Self::text_at(&answer, &["result", "pane", "agent"]).unwrap_or_default();
+        let status =
+            Self::text_at(&answer, &["result", "pane", "agent_status"]).unwrap_or_default();
+        Ok(format!("{agent}\n{status}"))
+    }
+
     fn tab_exists(&self, tab: &TabId) -> Result<bool, TermError> {
         let answer = self.call(&["tab", "list", "--workspace", &self.workspace])?;
         let value: Value = serde_json::from_str(&answer)

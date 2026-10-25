@@ -7,7 +7,7 @@ use crate::terminal::TabId;
 
 /// The screen of one pane when a step failed.
 pub struct PaneCapture {
-    /// `first` or `second`.
+    /// `first`, `second` or `third`.
     pub pane: &'static str,
     pub visible: String,
     pub recent: String,
@@ -38,6 +38,8 @@ pub struct SmokeReport {
     pub fallbacks: u32,
     pub interrupted: bool,
     pub unclosed_tab: Option<TabId>,
+    /// The tmux session the phase 2a run could not end.
+    pub unclosed_session: Option<String>,
     /// The tab the run opened.
     pub tab: Option<TabId>,
     /// The scratch project the run used.
@@ -49,7 +51,7 @@ pub struct SmokeReport {
 impl SmokeReport {
     /// The exit code of the run.
     pub fn exit_code(&self) -> i32 {
-        if self.unclosed_tab.is_some() || self.interrupted {
+        if self.unclosed_tab.is_some() || self.unclosed_session.is_some() || self.interrupted {
             return 1;
         }
         if self.outcomes.iter().any(Self::failed) {
@@ -63,7 +65,7 @@ impl SmokeReport {
 
     /// The one result line of the run.
     pub fn result_line(&self) -> String {
-        if self.unclosed_tab.is_some() {
+        if self.unclosed_tab.is_some() || self.unclosed_session.is_some() {
             return "SMOKE_RESULT: FAILED (cleanup)".to_owned();
         }
         if self.interrupted {

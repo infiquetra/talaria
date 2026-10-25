@@ -1,6 +1,4 @@
 //! Which suite runs: the first suite, or the phase 2a suite of issue #229.
-//!
-//! Stage 0 stub: every public item panics `not implemented`.
 
 use std::str::FromStr;
 
@@ -18,15 +16,20 @@ impl FromStr for Suite {
 
     /// `phase1` or `phase2a`, else `unknown suite '{s}'; use phase1 or phase2a`.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let _ = s;
-        unimplemented!("not implemented")
+        match s {
+            "phase1" => Ok(Suite::Phase1),
+            "phase2a" => Ok(Suite::Phase2a),
+            _ => Err(format!("unknown suite '{s}'; use phase1 or phase2a")),
+        }
     }
 }
 
 impl Suite {
     /// The default `--deadline-secs`: 300 for the first suite, 1800 for phase 2a.
-    /// Stage 0 stub.
     pub fn default_deadline_secs(self) -> u64 {
-        unimplemented!("not implemented")
+        match self {
+            Suite::Phase1 => 300,
+            Suite::Phase2a => 1800,
+        }
     }
 }

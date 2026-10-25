@@ -10,7 +10,7 @@ use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
 use super::clock::Clock;
-use super::config::{SmokeConfig, launch_line};
+use super::config::{SmokeConfig, launch_line_env};
 use super::report::{PaneCapture, SmokeReport, StepOutcome};
 use super::screen::{
     Card, POLL_INTERVAL, Token, approval_card, count_token, counting_values, exit_code,
@@ -37,9 +37,10 @@ const APPROVAL_PROMPT: &str =
 const APPROVAL_RETRY_PROMPT: &str =
     "Use your shell tool now and run exactly this command: rm -rf .pytest_cache";
 /// The prompt that makes the model count.
-const COUNT_PROMPT: &str = "Count from 1 to 2000, one number per line, and do not stop early.";
+pub(crate) const COUNT_PROMPT: &str =
+    "Count from 1 to 2000, one number per line, and do not stop early.";
 /// The text that marks the echo of the counting prompt.
-const COUNT_MARKER: &str = "Count from 1 to 2000";
+pub(crate) const COUNT_MARKER: &str = "Count from 1 to 2000";
 /// The only slash command.
 const QUIT_COMMAND: &str = "/quit";
 
@@ -47,36 +48,36 @@ const QUIT_COMMAND: &str = "/quit";
 const SKIP_REASON: &str = "no approval card appeared and the command ran; the profile fixture must set approvals.mode: manual (the default is smart, in which Hermes may approve by itself; a hosted-room policy can also override the mode)";
 
 /// The per-step limits, in seconds, before the scale is applied.
-const SHELL_LIMIT: u64 = 45;
+pub(crate) const SHELL_LIMIT: u64 = 45;
 const STARTUP_LIMIT: u64 = 30;
 const REPLY_LIMIT: u64 = 60;
 const APPROVAL_LIMIT: u64 = 90;
 const APPROVAL_AFTER_ANSWER: u64 = 60;
 const COUNT_LIMIT: u64 = 60;
-const SETTLE_LIMIT: u64 = 20;
+pub(crate) const SETTLE_LIMIT: u64 = 20;
 const QUIT_LIMIT: u64 = 15;
 const RESUME_LIMIT: u64 = 30;
 
 /// The quiet periods, in seconds; they are never scaled.
 const QUIET_SHELL: u64 = 1;
 const QUIET_STARTUP: u64 = 1;
-const QUIET_REPLY: u64 = 3;
+pub(crate) const QUIET_REPLY: u64 = 3;
 const QUIET_RETRY: u64 = 5;
 const QUIET_RESUME: u64 = 2;
 /// The wait after Esc, so that no stray character follows the key.
-const AFTER_ESC: Duration = Duration::from_millis(400);
+pub(crate) const AFTER_ESC: Duration = Duration::from_millis(400);
 /// The wait after the digit of a card, before the Enter is considered.
 const AFTER_DIGIT: Duration = Duration::from_millis(1500);
 /// The wait after the Enter of a card, before the card is given up on.
 const AFTER_ENTER: Duration = Duration::from_millis(3000);
 /// The window in which a submit fallback may fire.
-const FALLBACK_WINDOW: Duration = Duration::from_secs(8);
+pub(crate) const FALLBACK_WINDOW: Duration = Duration::from_secs(8);
 /// How many lines of the recent text a failure report holds.
-const REPORT_LINES: u32 = 200;
+pub(crate) const REPORT_LINES: u32 = 200;
 /// How many lines the searches read.
-const RECENT_LINES: u32 = 3000;
+pub(crate) const RECENT_LINES: u32 = 3000;
 /// Why a step stopped early.
-enum Abort {
+pub(crate) enum Abort {
     /// A signal arrived.
     Interrupted,
     /// The run deadline passed.
@@ -86,7 +87,7 @@ enum Abort {
 }
 
 /// Turns an abort into the outcome of the step.
-fn finish(abort: Abort) -> Result<Step, Abort> {
+pub(crate) fn finish(abort: Abort) -> Result<Step, Abort> {
     match abort {
         Abort::Failed(reason) => Ok(Step::Fail { reason }),
         other => Err(other),
@@ -94,20 +95,20 @@ fn finish(abort: Abort) -> Result<Step, Abort> {
 }
 
 /// What a step ended with, before the capture is added.
-enum Step {
+pub(crate) enum Step {
     Pass,
     Skip { reason: String },
     Fail { reason: String },
 }
 
 /// The screen of a pane, and when it last changed.
-struct Watch {
+pub(crate) struct Watch {
     previous: Option<String>,
-    changed_at: Duration,
+    pub(crate) changed_at: Duration,
 }
 
 impl Watch {
-    fn new(now: Duration) -> Self {
+    pub(crate) fn new(now: Duration) -> Self {
         Self {
             previous: None,
             changed_at: now,
@@ -238,6 +239,7 @@ pub fn run_smoke(
                 fallbacks: 0,
                 interrupted: false,
                 unclosed_tab: None,
+                unclosed_session: None,
                 tab: None,
                 scratch: scratch.clone(),
                 fallback_steps: Vec::new(),
@@ -326,6 +328,7 @@ pub fn run_smoke(
         fallbacks: run.fallbacks,
         interrupted: run.interrupted,
         unclosed_tab: unclosed,
+        unclosed_session: None,
         tab: Some(tab.tab),
         scratch,
         fallback_steps: run.fallback_steps,
@@ -333,27 +336,27 @@ pub fn run_smoke(
 }
 
 /// The state of one run.
-struct Run<'a> {
-    term: &'a dyn Terminal,
-    clock: &'a dyn Clock,
-    cfg: &'a SmokeConfig,
-    stop: &'a AtomicBool,
-    deadline: Duration,
-    rng: StdRng,
+pub(crate) struct Run<'a> {
+    pub(crate) term: &'a dyn Terminal,
+    pub(crate) clock: &'a dyn Clock,
+    pub(crate) cfg: &'a SmokeConfig,
+    pub(crate) stop: &'a AtomicBool,
+    pub(crate) deadline: Duration,
+    pub(crate) rng: StdRng,
     /// The tokens drawn so far: A, B and C in the order they were used.
-    tokens: Vec<Token>,
+    pub(crate) tokens: Vec<Token>,
     /// The scratch project of this run.
-    scratch: PathBuf,
+    pub(crate) scratch: PathBuf,
     /// When the approval card was answered.
-    answered_at: Option<Duration>,
-    fallbacks: u32,
-    step_fallbacks: u32,
-    fallback_steps: Vec<&'static str>,
-    interrupted: bool,
-    pane: PaneId,
-    second: Option<PaneId>,
+    pub(crate) answered_at: Option<Duration>,
+    pub(crate) fallbacks: u32,
+    pub(crate) step_fallbacks: u32,
+    pub(crate) fallback_steps: Vec<&'static str>,
+    pub(crate) interrupted: bool,
+    pub(crate) pane: PaneId,
+    pub(crate) second: Option<PaneId>,
     /// How often A and B appeared in the first pane.
-    counts: (usize, usize),
+    pub(crate) counts: (usize, usize),
 }
 
 impl Run<'_> {
@@ -369,7 +372,7 @@ impl Run<'_> {
     }
 
     /// A fresh token, never one that was used before.
-    fn token(&mut self) -> Token {
+    pub(crate) fn token(&mut self) -> Token {
         let token = Token::new(&mut self.rng, &self.tokens);
         self.tokens.push(token);
         token
@@ -381,13 +384,13 @@ impl Run<'_> {
     }
 
     /// A per-step limit, scaled.
-    fn limit(&self, base: u64) -> Duration {
+    pub(crate) fn limit(&self, base: u64) -> Duration {
         let seconds = (base as f64 * self.cfg.step_scale as f64).clamp(0.001, 86_400.0);
         Duration::from_secs_f64(seconds)
     }
 
     /// The per-step limit in whole seconds, rounded to the nearest.
-    fn limit_secs(&self, base: u64) -> u64 {
+    pub(crate) fn limit_secs(&self, base: u64) -> u64 {
         let seconds = (base as f64 * self.cfg.step_scale as f64).round();
         (seconds.max(1.0) as u64).min(86_400)
     }
@@ -398,7 +401,7 @@ impl Run<'_> {
     }
 
     /// The signal flag.
-    fn check_stop(&self) -> Result<(), Abort> {
+    pub(crate) fn check_stop(&self) -> Result<(), Abort> {
         if self.stop.load(Ordering::SeqCst) {
             return Err(Abort::Interrupted);
         }
@@ -406,7 +409,11 @@ impl Run<'_> {
     }
 
     /// Reads the visible text and notes when it last changed.
-    fn watch_visible(&mut self, pane: &PaneId, watch: &mut Watch) -> Result<String, Abort> {
+    pub(crate) fn watch_visible(
+        &mut self,
+        pane: &PaneId,
+        watch: &mut Watch,
+    ) -> Result<String, Abort> {
         let visible = self
             .term
             .read(pane, ReadSource::Visible, None)
@@ -447,12 +454,12 @@ impl Run<'_> {
     /// Runs one step by its name.
     fn step(&mut self, name: &'static str) -> Result<Step, Abort> {
         match name {
-            "startup" => self.startup(),
+            "startup" => self.startup(&[]),
             "plain-answer" => self.plain_answer(),
             "approval" => self.approval(),
             "interrupt" => self.interrupt(),
             "quit" => self.quit(),
-            "resume" => self.resume(),
+            "resume" => self.resume(&[], &mut |_, _| Ok(Step::Pass)),
             other => Ok(Step::Fail {
                 reason: format!("there is no step named {other}"),
             }),
@@ -462,11 +469,12 @@ impl Run<'_> {
 
 impl Run<'_> {
     /// The first step: the shell is ready and the binary shows a stable screen.
-    fn startup(&mut self) -> Result<Step, Abort> {
+    pub(crate) fn startup(&mut self, env: &[(&str, &str)]) -> Result<Step, Abort> {
         if let Err(abort) = self.wait_for_shell(&self.pane.clone(), SHELL_LIMIT) {
             return finish(abort);
         }
-        let line = launch_line(
+        let line = launch_line_env(
+            env,
             &self.cfg.talaria,
             &[
                 "--no-ensure",
@@ -494,7 +502,7 @@ impl Run<'_> {
     }
 
     /// The second step: the model joins the two words and the screen settles.
-    fn plain_answer(&mut self) -> Result<Step, Abort> {
+    pub(crate) fn plain_answer(&mut self) -> Result<Step, Abort> {
         let token = self.token();
         self.term
             .run(&self.pane, &token.prompt())
@@ -653,7 +661,7 @@ impl Run<'_> {
     }
 
     /// The fifth step: the session is closed and the transcript is still there.
-    fn quit(&mut self) -> Result<Step, Abort> {
+    pub(crate) fn quit(&mut self) -> Result<Step, Abort> {
         self.term
             .run(&self.pane, QUIT_COMMAND)
             .map_err(|error| Abort::Failed(error.to_string()))?;
@@ -729,8 +737,13 @@ impl Run<'_> {
         }
     }
 
-    /// The sixth step: the session is resumed in a second pane.
-    fn resume(&mut self) -> Result<Step, Abort> {
+    /// The sixth step: the session is resumed in a second pane. `after_restore` runs in the
+    /// resumed pane once the history check passed, before the third prompt.
+    pub(crate) fn resume(
+        &mut self,
+        env: &[(&str, &str)],
+        after_restore: &mut dyn FnMut(&mut Self, &PaneId) -> Result<Step, Abort>,
+    ) -> Result<Step, Abort> {
         let second = self
             .term
             .split_pane(&self.pane, &self.scratch())
@@ -739,7 +752,8 @@ impl Run<'_> {
         if let Err(abort) = self.wait_for_shell(&second, SHELL_LIMIT) {
             return finish(abort);
         }
-        let line = launch_line(
+        let line = launch_line_env(
+            env,
             &self.cfg.talaria,
             &["--no-ensure", "-c", "--profile", &self.cfg.profile],
         );
@@ -780,6 +794,11 @@ impl Run<'_> {
                      the first pane's count"
                 ),
             });
+        }
+
+        match after_restore(self, &second)? {
+            Step::Pass => {}
+            other => return Ok(other),
         }
 
         // A third prompt proves the resumed session works.
@@ -849,7 +868,7 @@ enum Approval {
 
 impl Run<'_> {
     /// Waits for the shell of a pane: one foreground command and a non-blank screen.
-    fn wait_for_shell(&mut self, pane: &PaneId, base: u64) -> Result<(), Abort> {
+    pub(crate) fn wait_for_shell(&mut self, pane: &PaneId, base: u64) -> Result<(), Abort> {
         let limit = self.limit(base);
         let started = self.clock.now();
         let mut ready_since: Option<Duration> = None;
@@ -930,7 +949,7 @@ impl Run<'_> {
     }
 
     /// Waits for a reply that holds the token, and for the screen to settle.
-    fn wait_for_reply(
+    pub(crate) fn wait_for_reply(
         &mut self,
         pane: &PaneId,
         token: &Token,
@@ -1120,7 +1139,7 @@ impl Run<'_> {
 }
 
 /// Whether the screen holds the words of a card.
-fn card_words(visible: &str) -> bool {
+pub(crate) fn card_words(visible: &str) -> bool {
     crate::screen::holds_word(visible, "once") || crate::screen::holds_word(visible, "deny")
 }
 
@@ -1146,7 +1165,7 @@ fn make_scratch(scratch: &Path) {
 }
 
 /// The message of a panic, cut to a length a row can hold.
-fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
+pub(crate) fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
     let message = if let Some(text) = panic.downcast_ref::<&str>() {
         (*text).to_owned()
     } else if let Some(text) = panic.downcast_ref::<String>() {
