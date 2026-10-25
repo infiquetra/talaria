@@ -20,6 +20,7 @@ use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
 use talaria_core::attachments::{Chip, CollapseRule, Expanded, reference_notice};
+use talaria_core::checklist::{ChecklistCommit, ChecklistTracker};
 use talaria_core::commands::local;
 use talaria_core::commands::{
     CommandOutcome, CommandsEffect, CommandsInput, CommandsState, LocalAction, LocalCommandTable,
@@ -178,6 +179,8 @@ pub enum UserAction {
         draft: String,
         caret: usize,
     },
+    /// Flip the task checklist panel. Never reaches the composer.
+    ToggleTasks,
 }
 
 /// Everything the screen draws from, borrowed for one draw.
@@ -395,6 +398,7 @@ pub struct AppState {
     pub pager_typed_len: usize,
     /// Bumped when the session state is replaced.
     pub source_epoch: u64,
+    pub checklist: ChecklistTracker,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
@@ -481,6 +485,7 @@ impl AppState {
             pager_confirmed_before_typing: false,
             pager_typed_len: 0,
             source_epoch: 0,
+            checklist: ChecklistTracker::new(),
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
@@ -703,6 +708,8 @@ pub enum AppEffect {
     },
     /// Write a context block into the scrollback.
     CommitContext(ContextBlock),
+    /// The task checklist, written into the scrollback as a block.
+    CommitChecklist(ChecklistCommit),
     CommitCells(Range<usize>),
     Redraw,
     /// The transcript screen is open, closed, or takes a key.
@@ -1710,6 +1717,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             attachment_effects(effects)
         }
         UserAction::Input(key) => input_key(state, key),
+        UserAction::ToggleTasks => {
+            unimplemented!("#226")
+        }
     }
 }
 
@@ -4097,6 +4107,9 @@ fn apply<S: Screen>(
             } => executor.send_later(context_task(state, action, argument, typed)),
             AppEffect::CompactRequest { request, typed } => {
                 executor.send_later(compact_task(state, request, typed));
+            }
+            AppEffect::CommitChecklist(_) => {
+                unimplemented!("#226")
             }
             AppEffect::CommitCells(range) => {
                 if let Some(opened) = &state.opened {

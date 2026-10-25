@@ -170,10 +170,11 @@ fn scenario_table_matches_the_spec() {
             "rewind-and-rollback",
             "context-compaction",
             "attachments-mention-image",
+            "todo-checklist",
         ]
     );
     assert!(Scenario::named("not-a-scenario").is_none());
-    let table: [(&str, &[&str], &[&str]); 11] = [
+    let table: [(&str, &[&str], &[&str]); 12] = [
         (
             "plain-answer",
             &["Reply with exactly the single word: pong. Do not use any tools."],
@@ -255,6 +256,13 @@ fn scenario_table_matches_the_spec() {
             ],
         ),
         ("attachments-mention-image", &[], &["complete"]),
+        (
+            "todo-checklist",
+            &[
+                "Use your todo_list tool to write a plan with exactly three items: create a.txt, run sleep 30, create b.txt. Before each step mark it in_progress with the todo_list tool, and after it mark it completed. Do the steps in this folder. Then reply with the single word: done.",
+            ],
+            &["complete"],
+        ),
     ];
     for (name, prompts, statuses) in table {
         let scenario = scenario(name);

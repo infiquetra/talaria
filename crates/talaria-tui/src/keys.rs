@@ -179,6 +179,8 @@ pub enum Action {
     PagerDetails,
     /// Close the transcript.
     PagerClose,
+    /// Open or close the task checklist drawer.
+    ToggleTasks,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -210,7 +212,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 45] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -255,6 +257,7 @@ impl Action {
         Self::PagerPrevMatch,
         Self::PagerDetails,
         Self::PagerClose,
+        Self::ToggleTasks,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -305,6 +308,7 @@ impl Action {
             Self::PagerPrevMatch => "pager_prev_match",
             Self::PagerDetails => "pager_details",
             Self::PagerClose => "pager_close",
+            Self::ToggleTasks => "toggle_tasks",
         }
     }
 
@@ -348,7 +352,8 @@ impl Action {
             | Self::OpenEditor
             | Self::HistorySearch
             | Self::Suspend
-            | Self::AttachClipboardImage => KeyContext::Composer,
+            | Self::AttachClipboardImage
+            | Self::ToggleTasks => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
             | Self::PagerPageUp
@@ -421,6 +426,7 @@ impl Action {
             Self::PagerPrevMatch => &["shift+n"],
             Self::PagerDetails => &["t"],
             Self::PagerClose => &["q"],
+            Self::ToggleTasks => &[],
         }
     }
 }
@@ -1091,7 +1097,7 @@ mod tests {
     #[test]
     fn defaults_are_safe_and_unambiguous() {
         // Issue 222 adds sixteen transcript actions to the twenty-four actions main holds.
-        assert_eq!(Action::ALL.len(), 44);
+        assert_eq!(Action::ALL.len(), 45);
         for action in Action::ALL {
             let name = action.config_name();
             assert_eq!(Action::from_config_name(name), Some(action), "{name}");
@@ -1167,6 +1173,7 @@ mod tests {
             (Action::PagerPrevMatch, vec!["Shift+N"]),
             (Action::PagerDetails, vec!["T"]),
             (Action::PagerClose, vec!["Q"]),
+            (Action::ToggleTasks, vec!["Ctrl+T"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1305,7 +1312,7 @@ mod tests {
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
         // The composer actions, plus the four the slash palette brought with it.
-        assert_eq!(Action::ALL.len(), 44);
+        assert_eq!(Action::ALL.len(), 45);
     }
 
     #[test]
