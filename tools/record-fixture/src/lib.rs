@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 /// The scenarios of the fixture set, in the order the script records them.
 /// `slash-palette` is recognized here; its frames come from the slash command steps, not from
 /// a model prompt.
-pub const SCENARIOS: [&str; 9] = [
+pub const SCENARIOS: [&str; 10] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -28,6 +28,7 @@ pub const SCENARIOS: [&str; 9] = [
     "queued-prompt",
     "slash-palette",
     "rewind-and-rollback",
+    "context-compaction",
 ];
 
 /// The shell command the approval scenario asks for. `manual` mode raises an approval for it.
@@ -105,6 +106,32 @@ impl Scenario {
                     "In notes.txt replace alpha with beta using your patch or file tool, not the terminal. Reply with the word done.",
                 ],
                 &["complete", "complete", "complete"],
+            ),
+            "context-compaction" => (
+                &[
+                    "Reply with only the word one.",
+                    "Reply with only the word two.",
+                    "Reply with only the word three.",
+                    "Reply with only the word four.",
+                    "Reply with only the word five.",
+                    "Reply with only the word six.",
+                    "Reply with only the word seven.",
+                    "Reply with only the word eight.",
+                    "Reply with only the word nine.",
+                    "Reply with only the word ten.",
+                    "Reply with only the word eleven.",
+                    "Reply with only the word twelve.",
+                    "Reply with only the word thirteen.",
+                    "Reply with only the word fourteen.",
+                    "Reply with only the word fifteen.",
+                    "Reply with only the word sixteen.",
+                    "Reply with only the word done.",
+                ],
+                &[
+                    "complete", "complete", "complete", "complete", "complete", "complete",
+                    "complete", "complete", "complete", "complete", "complete", "complete",
+                    "complete", "complete", "complete", "complete", "complete",
+                ],
             ),
             _ => return None,
         };
@@ -427,6 +454,20 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
         }
         "slash-palette" => slash_palette_evidence(source)?,
         REWIND_AND_ROLLBACK => rewind_and_rollback_evidence(source, &events)?,
+        "context-compaction" => {
+            let compressed = events.iter().any(|(kind, params)| {
+                kind == "session.updated" && params["payload"]["operation"] == json!("compress")
+            });
+            if !compressed {
+                return Err("no compaction event".to_owned());
+            }
+            let usage = events.iter().any(|(kind, params)| {
+                kind == "session.usage" && params["payload"]["usage"]["context_percent"].is_i64()
+            });
+            if !usage {
+                return Err("no usage reading after the compaction".to_owned());
+            }
+        }
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -485,6 +526,10 @@ struct Session {
     interrupt_sent: bool,
     submitted: usize,
     subagent_complete_seen: bool,
+    /// The session's revision, the fence a mutation is prepared against.
+    revision: i64,
+    /// The compaction of the context scenario has run.
+    compacted: bool,
 }
 
 /// How long the driver keeps listening after the last turn ends for a delegated child that
@@ -789,6 +834,7 @@ async fn drive(
     session.session_id = session_id.to_owned();
     session.subscription_id = snapshot["subscription_id"].clone();
     session.execution_generation = snapshot["execution_generation"].clone();
+    session.revision = snapshot["revision"].as_i64().unwrap_or(0);
     if let Err(reason) = check_info(&snapshot["info"], config) {
         return AttemptResult::Failed(reason);
     }
@@ -1022,6 +1068,122 @@ async fn drive_rewind(
     AttemptResult::Ok
 }
 
+/// How many turns the context scenario runs before it compacts.
+const COMPACT_AFTER: usize = 16;
+
+/// Send one compaction mutation. A stale fence is refreshed once with the revision
+/// the gateway reports, because the revision moves with every turn.
+async fn compress_call(
+    client: &Client,
+    session: &mut Session,
+    payload: Value,
+) -> Result<Value, String> {
+    let mut revision = session.revision;
+    for _ in 0..2 {
+        let params = json!({"session_id": session.session_id,
+               "request_id": submission_id(),
+               "expected_revision": revision,
+               "expected_generation": session.execution_generation,
+               "operation": "compress",
+               "payload": payload});
+        match client
+            .call_raw("session.mutate", params, CallOptions::default())
+            .await
+        {
+            Ok(result) => return Ok(result),
+            Err(error) => {
+                let fresh = match &error {
+                    CallError::Rpc(rpc) => rpc
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.get("revision"))
+                        .and_then(Value::as_i64),
+                    _ => None,
+                };
+                match fresh {
+                    Some(fresh) if fresh != revision => {
+                        revision = fresh;
+                        session.revision = fresh;
+                    }
+                    _ => return Err(error.to_string()),
+                }
+            }
+        }
+    }
+    Err("the compaction fence did not settle".to_owned())
+}
+
+/// The compaction steps of the context scenario: the reads, a preview and the commit.
+async fn compact(client: &Client, session: &mut Session) -> Option<AttemptResult> {
+    let failed = |reason: String| Some(AttemptResult::Failed(reason));
+    let session_id = session.session_id.clone();
+    let stats = match client
+        .call_raw(
+            "session.stats",
+            json!({"session_id": session_id}),
+            CallOptions::default(),
+        )
+        .await
+    {
+        Ok(stats) => stats,
+        Err(error) => return failed(format!("session.stats failed: {error}")),
+    };
+    if stats["api_calls"].as_i64().unwrap_or(0) < COMPACT_AFTER as i64 {
+        return failed("the session has fewer calls than the turns it ran".to_owned());
+    }
+    let breakdown = match client
+        .call_raw(
+            "session.context_breakdown",
+            json!({"session_id": session_id}),
+            CallOptions::default(),
+        )
+        .await
+    {
+        Ok(breakdown) => breakdown,
+        Err(error) => return failed(format!("session.context_breakdown failed: {error}")),
+    };
+    if breakdown["categories"]
+        .as_array()
+        .is_none_or(|categories| categories.is_empty())
+        || breakdown["context_max"].as_i64().unwrap_or(0) <= 0
+    {
+        return failed("the breakdown has no category".to_owned());
+    }
+    let preview = match compress_call(client, session, json!({"focus": "--preview"})).await {
+        Ok(preview) => preview,
+        Err(error) => return failed(format!("the compaction preview failed: {error}")),
+    };
+    if preview["status"].as_str() != Some("preview") {
+        return failed("the compaction did not answer with a preview".to_owned());
+    }
+    let commit = match compress_call(client, session, json!({})).await {
+        Ok(commit) => commit,
+        Err(error) => return failed(format!("the compaction failed: {error}")),
+    };
+    if commit["status"].as_str() == Some("noop") {
+        return failed("the compaction changed nothing".to_owned());
+    }
+    if commit["revision"].as_i64().is_none() {
+        return failed("the compaction was not committed".to_owned());
+    }
+    session.revision = commit["revision"].as_i64().unwrap_or(session.revision);
+    let _ = client
+        .call_raw(
+            "session.stats",
+            json!({"session_id": session_id}),
+            CallOptions::default(),
+        )
+        .await;
+    let _ = client
+        .call_raw(
+            "session.context_breakdown",
+            json!({"session_id": session_id}),
+            CallOptions::default(),
+        )
+        .await;
+    None
+}
+
 async fn submit(client: &Client, session: &mut Session, text: &str) -> Result<(), String> {
     let params = submit_params(&session.session_id, text)?;
     session.submitted += 1;
@@ -1053,6 +1215,16 @@ async fn on_event(
     }
     let payload = &params["payload"];
     match params["type"].as_str().unwrap_or_default() {
+        "session.info" => {
+            // The session's fences move with every turn, so the compaction is
+            // prepared against the revision the gateway last reported.
+            if let Some(revision) = payload["revision"].as_i64() {
+                session.revision = revision;
+            }
+            if let Some(generation) = payload["execution_generation"].as_i64() {
+                session.execution_generation = Value::from(generation);
+            }
+        }
         "subagent.complete" => session.subagent_complete_seen = true,
         "message.start" => session.turn_running = true,
         "message.delta" => {
@@ -1072,7 +1244,10 @@ async fn on_event(
                     )));
                 }
             }
-            if scenario.prompts.len() > session.submitted
+            // The context scenario queues its next prompt when the turn ends, so
+            // the compaction can run between two turns.
+            if scenario.name != "context-compaction"
+                && scenario.prompts.len() > session.submitted
                 && let Err(reason) =
                     submit(client, session, &scenario.prompts[session.submitted]).await
             {
@@ -1084,7 +1259,21 @@ async fn on_event(
                 .statuses
                 .push(payload["status"].as_str().unwrap_or_default().to_owned());
             session.turn_running = session.statuses.len() < session.submitted;
-            if session.submitted < scenario.prompts.len() {
+            if scenario.name == "context-compaction" {
+                if session.statuses.len() == COMPACT_AFTER && !session.compacted {
+                    if let Some(result) = compact(client, session).await {
+                        return Some(result);
+                    }
+                    session.compacted = true;
+                }
+                // The next turn starts now that this one ended.
+                if scenario.prompts.len() > session.submitted
+                    && let Err(reason) =
+                        submit(client, session, &scenario.prompts[session.submitted]).await
+                {
+                    return Some(AttemptResult::Failed(reason));
+                }
+            } else if session.submitted < scenario.prompts.len() {
                 return Some(AttemptResult::Failed(
                     "a turn completed before the next prompt was queued".to_owned(),
                 ));

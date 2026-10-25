@@ -1,0 +1,14 @@
+{
+ "session_id": "local-session-1",
+ "operation": "compress",
+ "status": "noop",
+ "summary": {
+  "noop": true,
+  "aborted": false,
+  "refused_would_grow": false,
+  "fallback_used": false,
+  "headline": "No changes from compression: 6 messages",
+  "token_line": "Approx request size: ~14,900 tokens (unchanged)",
+  "note": null
+ }
+}

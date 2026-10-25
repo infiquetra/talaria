@@ -92,6 +92,44 @@ channel immediately rather than waiting for another state change to drain them.
 **Generalizable rule.** Synchronize tests on the surface that accepts input,
 and make ownership handoffs explicit; bytes written during setup do not prove
 the reader is ready.
+### The context figure and the category counts come from different places
+
+**Evidence.** `crates/talaria-core/src/context/breakdown.rs` and
+`crates/talaria-tui/src/context_view.rs`; the recorded session
+`fixtures/frames/context-compaction.jsonl`; Hermes v0.22.4
+`gateway/session_usage.py` and the `session.context_breakdown` result, whose
+`context_source` names where the figure came from.
+
+**Mechanism.** One reply carries two different measurements. The window's
+percentage and the used and maximum token counts are the provider's own
+accounting, so they move with every call. The category counts — the system
+prompt, the tool definitions, the rules, the skills, the memory and the
+conversation — are the gateway's local estimates of what each part costs,
+because only the gateway can see them. A reply that says
+`context_source: provider_usage` therefore has a provider's percentage beside
+locally estimated parts, and the two can disagree; the block says so on its
+source line rather than presenting the whole reply as one measurement.
+
+**Generalizable rule.** When one reply mixes a provider's accounting with the
+gateway's own estimates, say which is which instead of printing one number.
+
+### A compaction makes the context figure wrong, so it is hidden
+
+**Evidence.** `crates/talaria-core/src/context/tracker.rs` and its tests; the
+`session.updated` event that follows a committed compaction, and the
+`status.update` kinds `compacting` and `compacted`.
+
+**Mechanism.** A compaction replaces the earlier conversation with a summary,
+so the token count that was true before it describes a conversation that no
+longer exists. The number comes back only with the next usage reading. Until
+then the figure is several times too high, which is worse than showing
+nothing: a person who reads it decides the session is nearly full. The
+tracker therefore hides the figure from the status line, the usage block and
+the context block from the moment a compaction is known — its own, another
+client's, or the gateway's automatic one — until a fresh reading arrives.
+
+**Generalizable rule.** After an event that invalidates a cached measurement,
+hide the measurement until it is measured again; do not show a stale one.
 
 ## 2026-10-24
 

@@ -1,0 +1,21 @@
+{
+ "ok": true,
+ "available": true,
+ "status": "healthy",
+ "plan_name": "Plus",
+ "renews_at": "2026-07-01",
+ "renews_display": "Jul 1",
+ "subscription_remaining_display": "$14.00",
+ "topup_remaining_display": null,
+ "total_spendable_display": "$14.00",
+ "has_topup": false,
+ "plan_bar": {
+  "kind": "plan",
+  "remaining_display": "$14.00",
+  "total_display": "$20.00",
+  "spent_display": "$6.00",
+  "pct_used": 30,
+  "fill_fraction": 0.7
+ },
+ "topup_bar": null
+}

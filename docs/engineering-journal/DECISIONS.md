@@ -13,6 +13,33 @@
 **Rejected alternatives.** A `sync_rewind` screen method beside `sync_models` (four more call sites in `app::run`, and the view would have to be copied out of `AppState`). Drawing the overlay from `app.rs` (only the terminal module writes escape sequences).
 
 **Revisit when** a third full-screen overlay arrives; then one overlay slot in the view should replace the per-overlay fields and flags.
+### The context is read, the compaction is Hermes's, and the figure waits for a fresh reading
+
+**Decision.** Three local commands read the gateway: `/context` asks what fills
+the model's window, `/usage` asks for the session's tokens, calls and cost, and
+`/compact` asks Hermes to summarize the earlier conversation. The gateway does
+the summarizing; Talaria sends the request with the focus text as it was
+typed, waits, and prints what came back. The context figure is hidden from the
+status line and from both blocks as soon as a compaction is known — this
+client's, another client's, or the gateway's own automatic one — and comes
+back with the next usage reading. A block that becomes ready while a turn runs
+waits for the turn to end, so the scrollback keeps its order.
+
+**Rationale.** Finished output belongs in the terminal's own scrollback, and a
+block that arrives in the middle of a turn would land in the wrong place. The
+figure after a compaction describes a conversation that no longer exists, and
+showing it would send a person looking for a problem that is not there. The
+cost is only shown when the gateway reports one: an estimate that Talaria
+invents is worse than an honest gap.
+
+**Rejected alternatives.** Estimating the cost locally (a wrong number with
+the authority of a real one); showing the figure until the next reading (it
+is several times too high); compacting the scrollback after a compaction (the
+earlier messages are the record of what happened); polling the gateway for a
+figure (a timer, and frames while the screen is idle).
+
+**Revisit when** the fleet view needs a context figure per session, or a
+background session's compaction becomes visible.
 
 ## 2026-10-24
 

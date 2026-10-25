@@ -2,6 +2,7 @@
 
 pub mod attention;
 pub mod commands;
+pub mod context;
 pub mod diff;
 pub mod models;
 pub mod mutation;

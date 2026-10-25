@@ -26,6 +26,12 @@ pub enum LocalAction {
     Rollback,
     /// Show the session diff. Issue #233.
     Diff,
+    /// Show what fills the context window.
+    Context,
+    /// Compact the conversation to free the window.
+    Compact,
+    /// Show the session's tokens, calls and cost.
+    Usage,
 }
 
 /// One local command.
@@ -43,6 +49,8 @@ pub struct LocalCommand {
     pub takes_argument: bool,
     /// The action to run.
     pub action: LocalAction,
+    /// The tag the palette shows beside the command.
+    pub tag: &'static str,
 }
 
 impl LocalCommand {
@@ -62,6 +70,7 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::Quit,
+        tag: "talaria",
     },
     LocalCommand {
         name: "model",
@@ -70,6 +79,7 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[<model> [--provider <id>] [--effort <level>] [--default]]",
         takes_argument: true,
         action: LocalAction::Model,
+        tag: "talaria",
     },
     LocalCommand {
         name: "effort",
@@ -78,6 +88,34 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[<level>|default] [--default]",
         takes_argument: true,
         action: LocalAction::Effort,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "context",
+        aliases: &[],
+        summary: "Show what fills the model's context window",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Context,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "compact",
+        aliases: &["compress"],
+        summary: "Summarize earlier conversation to free context",
+        args_hint: "[focus] [--preview] [here N]",
+        takes_argument: true,
+        action: LocalAction::Compact,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "usage",
+        aliases: &["cost", "stats"],
+        summary: "Show this session's tokens, calls and cost",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Usage,
+        tag: "talaria",
     },
 ];
 
@@ -90,6 +128,7 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::Rewind,
+        tag: "talaria",
     },
     LocalCommand {
         name: "undo",
@@ -98,6 +137,7 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
         args_hint: "[N]",
         takes_argument: true,
         action: LocalAction::Undo,
+        tag: "talaria",
     },
     LocalCommand {
         name: "retry",
@@ -106,6 +146,7 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::Retry,
+        tag: "talaria",
     },
     LocalCommand {
         name: "rollback",
@@ -114,6 +155,7 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
         args_hint: "[list] | diff <n> | <n> [file] [--all]",
         takes_argument: true,
         action: LocalAction::Rollback,
+        tag: "talaria",
     },
     LocalCommand {
         name: "diff",
@@ -122,6 +164,7 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
         args_hint: "[--stat]",
         takes_argument: true,
         action: LocalAction::Diff,
+        tag: "talaria",
     },
 ];
 
@@ -132,7 +175,7 @@ pub struct LocalCommandTable {
 }
 
 impl LocalCommandTable {
-    /// The built-in table: `/quit`, the model commands, then the rewind commands.
+    /// The built-in table, in the order the palette lists it.
     #[must_use]
     pub fn builtin() -> Self {
         Self {
@@ -153,4 +196,31 @@ impl LocalCommandTable {
     pub fn iter(&self) -> impl Iterator<Item = &LocalCommand> {
         self.commands.iter()
     }
+}
+
+/// Find a local command by name or alias, without the leading slash.
+#[must_use]
+pub fn lookup(name: &str) -> Option<&'static LocalCommand> {
+    let key = name.strip_prefix('/').unwrap_or(name).to_lowercase();
+    BUILTIN.iter().find(|command| command.answers_to(&key))
+}
+
+/// Parse a typed line into its action and argument text.
+///
+/// A command that takes no argument refuses one: the refusal reads
+/// `<command> does not take an argument.`
+pub fn parse(line: &str) -> Result<(LocalAction, String), String> {
+    let trimmed = line.trim();
+    let (name, argument) = match trimmed.split_once(char::is_whitespace) {
+        Some((name, argument)) => (name, argument.trim()),
+        None => (trimmed, ""),
+    };
+    let name = name.strip_prefix('/').unwrap_or(name);
+    let Some(command) = lookup(name) else {
+        return Err(format!("/{name} is not a Talaria command."));
+    };
+    if !command.takes_argument && !argument.is_empty() {
+        return Err(format!("/{} does not take an argument.", command.name));
+    }
+    Ok((command.action, argument.to_owned()))
 }

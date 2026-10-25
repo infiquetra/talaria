@@ -1,0 +1,52 @@
+{
+ "input_tokens": 30210,
+ "output_tokens": 410,
+ "cache_read_tokens": 18000,
+ "cache_write_tokens": 0,
+ "prompt_tokens": 30210,
+ "completion_tokens": 410,
+ "total_tokens": 30620,
+ "reasoning_tokens": 0,
+ "api_calls": 2,
+ "last_prompt_tokens": 15400,
+ "context_tokens": 15400,
+ "context_length": 200000,
+ "config_context_length": null,
+ "context_source": "provider_usage",
+ "compression_count": 0,
+ "avg_latency_s": 1.42,
+ "tokens_per_s": 38.5,
+ "last_turn_tokens": 120,
+ "rate_limit": {
+  "requests_min": {
+   "limit": 60,
+   "remaining": 58,
+   "reset_seconds": 41.0,
+   "captured_at": 1.0
+  },
+  "requests_hour": {
+   "limit": 0,
+   "remaining": 0,
+   "reset_seconds": 0.0,
+   "captured_at": 0.0
+  },
+  "tokens_min": {
+   "limit": 100000,
+   "remaining": 84590,
+   "reset_seconds": 41.0,
+   "captured_at": 1.0
+  },
+  "tokens_hour": {
+   "limit": 0,
+   "remaining": 0,
+   "reset_seconds": 0.0,
+   "captured_at": 0.0
+  },
+  "captured_at": 1.0,
+  "provider": "ollama-cloud"
+ },
+ "active_subagents": 0,
+ "model": "minimax-m3.1-flash",
+ "provider": "ollama-cloud",
+ "fallback_model": null
+}

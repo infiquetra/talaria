@@ -21,6 +21,7 @@ use talaria_app::app::{
 use talaria_app::comforts::{editor, herdr::HerdrReporter, prompt_history::PromptHistory, suspend};
 use talaria_app::config::{self, LoadedConfig};
 use talaria_app::connection::OpenConnection;
+use talaria_app::context::ContextBlock;
 use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
@@ -32,6 +33,10 @@ use talaria_core::session::{
     AssistantCell, Cell, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
 use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome};
+use talaria_tui::context_view::{
+    CompactingSection, ContextStyle, compact_block, context_block, error_block, notice_block,
+    prebuild_block, usage_block,
+};
 use talaria_tui::history::CellLines;
 use talaria_tui::history_search::{HistorySearch, SearchOutcome};
 use talaria_tui::keys::{
@@ -302,6 +307,13 @@ fn preview_text(text: &str, limit: usize) -> Option<String> {
 
 fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
     let open = view.state.map_or(0, |state| state.open_prompts().count());
+    let context_percent = if view.context_hidden {
+        None
+    } else {
+        view.state
+            .and_then(|state| state.usage().context_percent)
+            .map(|percent| percent as i64)
+    };
     let open = u32::try_from(open).unwrap_or(u32::MAX);
     let turn = match view.state.map(|state| state.turn()) {
         Some(SessionTurn::Running) if open > 0 => TurnState::Waiting,
@@ -329,6 +341,7 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         }),
         turn,
         pending_prompts: open,
+        context_percent,
         ..StatusInputs::default()
     }
 }
@@ -835,6 +848,10 @@ impl Screen for TuiScreen {
         };
         let composer_is_empty = self.composer.is_empty();
         let composer = self.composer.section(width, COMPOSER_ROWS);
+        let compacting = CompactingSection {
+            line: view.compacting_line,
+            now_ms: view.now_ms,
+        };
         let mut sections: Vec<&dyn LiveSection> = vec![&tail, &drafting];
         if let Some(prompts) = &prompts {
             sections.push(prompts);
@@ -844,6 +861,9 @@ impl Screen for TuiScreen {
         }
         if self.connecting {
             sections.push(&connecting);
+        }
+        if view.compacting_line.is_some() {
+            sections.push(&compacting);
         }
         let search = self
             .search
@@ -879,6 +899,30 @@ impl Screen for TuiScreen {
         let _ = self
             .terminal
             .commit_lines(lines.into_iter().map(Line::from).collect());
+    }
+
+    fn commit_context(&mut self, block: &ContextBlock) {
+        let width = self.terminal.viewport().width;
+        let style = ContextStyle::standard();
+        let lines = match block {
+            ContextBlock::Breakdown { typed, breakdown } => {
+                context_block(typed, breakdown, width, &style)
+            }
+            ContextBlock::Prebuild { typed, last } => {
+                prebuild_block(typed, last.as_ref(), width, &style)
+            }
+            ContextBlock::Usage { typed, report } => usage_block(typed, report, width, &style),
+            ContextBlock::Compact { typed, result } => compact_block(typed, result, width, &style),
+            ContextBlock::Error {
+                typed,
+                command,
+                method,
+                sid,
+                error,
+            } => error_block(typed, command, method, sid, error, width, &style),
+            ContextBlock::Notice(notice) => notice_block(notice, width, &style),
+        };
+        let _ = self.terminal.commit_lines(lines);
     }
 
     fn commit_cells(&mut self, cells: &[Cell]) {

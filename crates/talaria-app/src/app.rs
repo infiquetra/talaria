@@ -19,16 +19,21 @@ use hermes_client::replay::{Cursor, ReplayGap};
 use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
+use talaria_core::commands::local;
 use talaria_core::commands::{
     CommandOutcome, CommandsEffect, CommandsInput, CommandsState, LocalAction, LocalCommandTable,
     PaletteContext, PaletteEffect, PaletteInput, PaletteState, palette_update, parse_slash_line,
     state_update,
 };
+use talaria_core::context::breakdown::Breakdown;
+use talaria_core::context::compact::{compact_end, compact_payload, interpret, settle_as};
+use talaria_core::context::tracker::{CompactingLine, ContextTracker, HeldBlocks};
+use talaria_core::context::usage::UsageReport;
 use talaria_core::models::{
     ConfirmKey, ModelCommandOrEffort, ModelsEffect, ModelsInput, ModelsState, NoticeLevel,
     PickerKey, PickerView, SavedModels, parse_effort_command, parse_model_command,
 };
-use talaria_core::mutation::Confirmation;
+use talaria_core::mutation::{Confirmation, MutationLedger, MutationOutcome, MutationRequest};
 use talaria_core::rewind::{
     CallFailure, DiffCommand, DiffSource, DoubleEsc, Reply, RewindEffect, RewindInput, RewindKey,
     RewindState, RewindView, RollbackCommand, parse_diff as parse_diff_command, parse_rollback,
@@ -36,6 +41,7 @@ use talaria_core::rewind::{
 };
 use talaria_core::session::{
     Cell, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState, SessionId, SessionState,
+    TurnState,
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
@@ -45,6 +51,7 @@ use crate::commands::{
     AppAction, CommandReply, CommandService, no_session_notice, outcome_actions,
 };
 use crate::connection::{ConnectionService, OpenConnection, find_git_toplevel};
+use crate::context::{ContextBlock, ContextService, ContextTimeouts};
 use crate::failure::{self, LaunchFailure};
 use crate::launch::{
     Belongs, Launch, ListRow, MAX_HELD_PROMPTS, RESUME_HISTORY_CELLS, SessionRequest, StartMode,
@@ -146,6 +153,12 @@ pub struct View<'a> {
     pub palette: &'a PaletteState,
     /// The rewind overlay, while it is open. Issue #233.
     pub rewind: Option<RewindView<'a>>,
+    /// Whether the context figure must stay hidden for this session.
+    pub context_hidden: bool,
+    /// The compacting line, while a compaction runs.
+    pub compacting_line: Option<CompactingLine>,
+    /// The milliseconds since the loop started, for the compacting line.
+    pub now_ms: u64,
 }
 
 impl View<'_> {
@@ -177,6 +190,8 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn draw(&mut self, view: &View<'_>);
     /// Write plain lines into the scrollback, once.
     fn commit_lines(&mut self, lines: Vec<String>);
+    /// Write a context block into the scrollback, once.
+    fn commit_context(&mut self, block: &ContextBlock);
     /// Render cells into the scrollback, once.
     fn commit_cells(&mut self, cells: &[Cell]);
     /// Put text back into the composer.
@@ -268,6 +283,14 @@ pub struct AppState {
     double_esc: DoubleEsc,
     /// The `/retry` submission still waiting for its outcome, with its text.
     retry: Option<(String, String)>,
+    /// What each session's context readings mean.
+    pub context: ContextTracker,
+    /// The mutation requests kept for an exact resend.
+    pub ledger: MutationLedger,
+    /// The context blocks that wait for the turn to end.
+    pub context_blocks: HeldBlocks<ContextBlock>,
+    /// The milliseconds since the loop started, stamped before every message.
+    pub now_ms: u64,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
@@ -281,6 +304,7 @@ impl AppState {
     #[must_use]
     pub fn new(launch_id: impl Into<String>) -> Self {
         let launch_id = launch_id.into();
+        let ledger = MutationLedger::new(&launch_id);
         Self {
             models: ModelsState::new(&launch_id, Ok(SavedModels::empty())),
             model_service: None,
@@ -323,6 +347,10 @@ impl AppState {
             rewind: RewindState::default(),
             double_esc: DoubleEsc::default(),
             retry: None,
+            context: ContextTracker::new(),
+            ledger,
+            context_blocks: HeldBlocks::new(),
+            now_ms: 0,
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
@@ -355,6 +383,15 @@ impl AppState {
             held: self.held.len(),
             palette: &self.palette,
             rewind: self.rewind.is_open().then(|| self.rewind.view(wall_ms())),
+            context_hidden: self
+                .opened
+                .as_ref()
+                .is_some_and(|opened| self.context.context_hidden(&opened.session_id)),
+            compacting_line: self
+                .opened
+                .as_ref()
+                .and_then(|opened| self.context.compacting_line(&opened.session_id)),
+            now_ms: self.now_ms,
         }
     }
 
@@ -410,9 +447,20 @@ pub enum AppMessage {
     },
     /// A rewind call's reply, or another rewind input. Issue #233.
     Rewind(talaria_core::rewind::RewindInput),
+    /// A local command's answer came back.
+    ContextDone {
+        block: ContextBlock,
+    },
+    /// A compaction call's answer came back.
+    CompactDone {
+        request: MutationRequest,
+        outcome: MutationOutcome,
+        typed: String,
+    },
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
+#[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
     Models(ModelsEffect),
     /// Run one rewind call; its reply comes back as [`AppMessage::Rewind`]. Issue #233.
@@ -421,6 +469,19 @@ pub enum AppEffect {
         call: talaria_core::rewind::Call,
     },
     CommitLines(Vec<String>),
+    /// Read the context or the usage of the open session.
+    ContextRead {
+        action: LocalAction,
+        argument: String,
+        typed: String,
+    },
+    /// Send a compaction request.
+    CompactRequest {
+        request: MutationRequest,
+        typed: String,
+    },
+    /// Write a context block into the scrollback.
+    CommitContext(ContextBlock),
     CommitCells(Range<usize>),
     Redraw,
     LoadDraft(String),
@@ -829,6 +890,12 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects
         }
         AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
+        AppMessage::ContextDone { block } => context_done(state, block),
+        AppMessage::CompactDone {
+            request,
+            outcome,
+            typed,
+        } => compact_done(state, request, outcome, typed),
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -883,6 +950,11 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
     }
     effects.extend(commit_ready(state));
+    if !turn_running(state) {
+        for block in state.context_blocks.release() {
+            effects.push(AppEffect::CommitContext(block));
+        }
+    }
     effects.push(AppEffect::Redraw);
     effects
 }
@@ -908,13 +980,180 @@ fn attention_snapshot(state: &AppState) -> crate::comforts::AttentionSnapshot {
     )
 }
 
+/// Whether the open session's turn is running.
+fn turn_running(state: &AppState) -> bool {
+    state
+        .opened
+        .as_ref()
+        .is_some_and(|opened| *opened.state.turn() == TurnState::Running)
+}
+
+/// Offer a context block: it waits for the turn to end, or is committed at once.
+fn commit_context_block(state: &mut AppState, block: ContextBlock) -> Vec<AppEffect> {
+    let running = turn_running(state);
+    state
+        .context_blocks
+        .push(block, running)
+        .into_iter()
+        .map(AppEffect::CommitContext)
+        .collect()
+}
+
+/// A local command's answer came back: the block waits for the turn to end.
+fn context_done(state: &mut AppState, block: ContextBlock) -> Vec<AppEffect> {
+    commit_context_block(state, block)
+}
+
+/// A compaction call's answer came back.
+fn compact_done(
+    state: &mut AppState,
+    request: MutationRequest,
+    outcome: MutationOutcome,
+    typed: String,
+) -> Vec<AppEffect> {
+    let Some(opened) = state.opened.as_ref() else {
+        return Vec::new();
+    };
+    let session_id = opened.session_id.clone();
+    // A fence refusal is retried once with the fresh fences.
+    if let Some(retry) = state.ledger.retry_after_fence(&request, &outcome) {
+        return vec![AppEffect::CompactRequest {
+            request: retry,
+            typed,
+        }];
+    }
+    state.ledger.settle(&request, &settle_as(&outcome));
+    state
+        .context
+        .finish_compact(&session_id, compact_end(&outcome));
+    let result = interpret(&outcome, &session_id);
+    commit_context_block(
+        state,
+        ContextBlock::Compact {
+            typed: typed.clone(),
+            result,
+        },
+    )
+}
+
+/// A local command of the typed line, when it names one.
+fn local_line(text: &str) -> Option<Result<(LocalAction, String), String>> {
+    let trimmed = text.trim();
+    let name = trimmed.strip_prefix('/')?;
+    let name = name.split_whitespace().next().unwrap_or(name);
+    local::lookup(name).map(|_| local::parse(trimmed))
+}
+
+/// The effect a local command asks for.
+fn local_effect(
+    state: &mut AppState,
+    action: LocalAction,
+    argument: String,
+    typed: String,
+) -> Vec<AppEffect> {
+    match action {
+        LocalAction::Quit => {
+            state.quitting = true;
+            return vec![AppEffect::Quit];
+        }
+        LocalAction::Model | LocalAction::Effort => {
+            return model_command(state, action, &argument);
+        }
+        LocalAction::Rewind
+        | LocalAction::Undo
+        | LocalAction::Retry
+        | LocalAction::Rollback
+        | LocalAction::Diff => return rewind_command(state, action, &argument),
+        _ => {}
+    }
+    if action != LocalAction::Compact {
+        return vec![AppEffect::ContextRead {
+            action,
+            argument,
+            typed,
+        }];
+    }
+    let Some(opened) = state.opened.as_ref() else {
+        return vec![notice_lines("No session is open.")];
+    };
+    let session_id = opened.session_id.clone();
+    // The compaction is prepared against the session's own fences.
+    state
+        .ledger
+        .fences_mut(&session_id)
+        .adopt(Some(opened.revision), Some(opened.execution_generation));
+    if state
+        .context
+        .begin_compact(&session_id, state.now_ms)
+        .is_err()
+    {
+        return commit_context_block(
+            state,
+            ContextBlock::Compact {
+                typed,
+                result: talaria_core::context::compact::CompactResult::Refused {
+                    text: talaria_core::context::text::T_C8.to_owned(),
+                },
+            },
+        );
+    }
+    match state
+        .ledger
+        .build(&session_id, "compress", compact_payload(&argument), true)
+    {
+        Ok(request) => vec![AppEffect::CompactRequest { request, typed }],
+        Err(outcome) => {
+            state
+                .context
+                .finish_compact(&session_id, compact_end(&outcome));
+            commit_context_block(
+                state,
+                ContextBlock::Compact {
+                    typed,
+                    result: interpret(&outcome, &session_id),
+                },
+            )
+        }
+    }
+}
+
+/// Feed the tracker one event and collect the notices it raises.
+fn observe_context(state: &mut AppState, event: &Event) -> Vec<AppEffect> {
+    let Event::Session { frame, raw, .. } = event else {
+        return Vec::new();
+    };
+    let Some(opened) = state.opened.as_ref() else {
+        return Vec::new();
+    };
+    let session_id = opened.session_id.clone();
+    let Some(name) = frame.type_name() else {
+        return Vec::new();
+    };
+    // The compaction is prepared against the session's fences, so the ledger follows
+    // the revision and the generation the gateway reports.
+    state
+        .ledger
+        .fences_mut(&session_id)
+        .observe(&session_id, name, &raw["payload"]);
+    let notices = state
+        .context
+        .observe(&session_id, name, &raw["payload"], state.now_ms);
+    notices
+        .into_iter()
+        .flat_map(|notice| commit_context_block(state, ContextBlock::Notice(notice)))
+        .collect()
+}
+
 /// Feed the reducer and turn its effects into executor effects.
 fn reduce(state: &mut AppState, event: Event) -> Vec<AppEffect> {
+    let observed = observe_context(state, &event);
     let Some(opened) = state.opened.as_mut() else {
         return Vec::new();
     };
     let produced = talaria_core::session::update(&mut opened.state, event);
-    route(state, produced, None)
+    let mut effects = route(state, produced, None);
+    effects.extend(observed);
+    effects
 }
 
 fn route(
@@ -1214,9 +1453,9 @@ fn run_command(state: &mut AppState, typed: String) -> Vec<AppEffect> {
     }]
 }
 
-/// A local command this client runs itself: the model picker's own commands, which the
-/// local table names and the loop turns into one model input.
-fn local_command(state: &mut AppState, action: LocalAction, argument: &str) -> Vec<AppEffect> {
+/// The model picker's own commands, which the local table names and the loop turns into
+/// one model input.
+fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> Vec<AppEffect> {
     let command = match action {
         LocalAction::Model => parse_model_command(argument).map(ModelCommandOrEffort::Model),
         LocalAction::Effort => parse_effort_command(argument).map(ModelCommandOrEffort::Effort),
@@ -1241,12 +1480,24 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         return Vec::new();
     }
+    if let Some(command) = local_line(&text) {
+        return match command {
+            Ok((action, argument)) => {
+                let typed = text.trim().to_owned();
+                local_effect(state, action, argument, typed)
+            }
+            Err(reason) => vec![notice_lines(&reason), AppEffect::LoadDraft(text)],
+        };
+    }
     match slash_line(&text) {
         Slash::Quit => {
             state.quitting = true;
             return vec![AppEffect::Quit];
         }
-        Slash::Local(action, argument) => return local_command(state, action, &argument),
+        Slash::Local(action, argument) => {
+            let typed = text.trim().to_owned();
+            return local_effect(state, action, argument, typed);
+        }
         Slash::Notice(notice) => {
             return match state.opened {
                 Some(_) => reduce(
@@ -2228,6 +2479,163 @@ impl Executor {
     }
 }
 
+/// Read the context or the usage of the open session, and answer with a block.
+fn context_task(
+    state: &AppState,
+    action: LocalAction,
+    argument: String,
+    typed: String,
+) -> impl Future<Output = AppMessage> + Send + 'static {
+    let client = state
+        .service
+        .as_ref()
+        .and_then(|service| service.client())
+        .cloned();
+    let opened = state.opened.as_ref();
+    let session_id = opened
+        .map(|opened| opened.session_id.clone())
+        .unwrap_or_default();
+    let stored = opened.map(|opened| opened.state.usage().clone());
+    let hidden = opened.is_some_and(|opened| state.context.context_hidden(&opened.session_id));
+    async move {
+        let Some(client) = client else {
+            return AppMessage::ContextDone {
+                block: ContextBlock::Error {
+                    typed,
+                    command: command_of(action).to_owned(),
+                    method: method_of(action).to_owned(),
+                    sid: session_id,
+                    error: talaria_core::context::text::ReadError::NotConnected,
+                },
+            };
+        };
+        let service = ContextService::new(client, ContextTimeouts::default());
+        let block = match action {
+            LocalAction::Usage => {
+                let (stats, plan) = tokio::join!(service.stats(&session_id), service.plan());
+                let stored = stored.clone().unwrap_or_default();
+                let report = match stats {
+                    Ok(stats) => UsageReport::build(Ok(&stats), &stored, plan.as_ref(), hidden),
+                    Err(error) => UsageReport::build(Err(&error), &stored, plan.as_ref(), hidden),
+                };
+                ContextBlock::Usage { typed, report }
+            }
+            _ => match service.breakdown(&session_id).await {
+                Ok(result) => {
+                    let breakdown = Breakdown::from_result(&result);
+                    if breakdown.is_prebuild() {
+                        ContextBlock::Prebuild {
+                            typed,
+                            last: last_figure(stored.as_ref(), hidden),
+                        }
+                    } else {
+                        ContextBlock::Breakdown { typed, breakdown }
+                    }
+                }
+                Err(error) => ContextBlock::Error {
+                    typed,
+                    command: command_of(action).to_owned(),
+                    method: method_of(action).to_owned(),
+                    sid: session_id,
+                    error,
+                },
+            },
+        };
+        let _ = argument;
+        AppMessage::ContextDone { block }
+    }
+}
+
+/// The context figure of the stored reading, when it is known and not hidden.
+fn last_figure(
+    stored: Option<&talaria_core::session::Usage>,
+    hidden: bool,
+) -> Option<talaria_core::context::usage::ContextFigure> {
+    if hidden {
+        return None;
+    }
+    let stored = stored?;
+    let used = stored.context_used?;
+    let max = stored.context_max?;
+    let percent = stored.context_percent?;
+    if max <= 0 {
+        return None;
+    }
+    Some(talaria_core::context::usage::ContextFigure {
+        used: u64::try_from(used)
+            .unwrap_or(0)
+            .min(u64::try_from(max).unwrap_or(0)),
+        max: u64::try_from(max).unwrap_or(0),
+        percent: percent.round().clamp(0.0, 100.0) as u8,
+        estimated: false,
+    })
+}
+
+/// The command a local action stands for.
+fn command_of(action: LocalAction) -> &'static str {
+    match action {
+        LocalAction::Context => "/context",
+        LocalAction::Compact => "/compact",
+        LocalAction::Usage => "/usage",
+        _ => "",
+    }
+}
+
+/// The gateway method a local action reads.
+fn method_of(action: LocalAction) -> &'static str {
+    match action {
+        LocalAction::Context => "session.context_breakdown",
+        LocalAction::Compact => "session.mutate",
+        LocalAction::Usage => "session.stats",
+        _ => "",
+    }
+}
+
+/// Send a compaction request and answer with its outcome.
+fn compact_task(
+    state: &AppState,
+    request: MutationRequest,
+    typed: String,
+) -> impl Future<Output = AppMessage> + Send + 'static {
+    let client = state
+        .service
+        .as_ref()
+        .and_then(|service| service.client())
+        .cloned();
+    let session_id = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+        .unwrap_or_default();
+    let timeout = ContextTimeouts::default().compact;
+    async move {
+        let Some(client) = client else {
+            return AppMessage::CompactDone {
+                request,
+                outcome: MutationOutcome::NotSent {
+                    reason: "not connected".to_owned(),
+                },
+                typed,
+            };
+        };
+        let mutation = crate::mutation::MutationClient::new(client);
+        let _ = &session_id;
+        let outcome = mutation
+            .send_with(
+                &request,
+                hermes_client::rpc::CallOptions {
+                    timeout: Some(timeout),
+                },
+            )
+            .await;
+        AppMessage::CompactDone {
+            request,
+            outcome,
+            typed,
+        }
+    }
+}
+
 fn notice_texts(notices: Vec<crate::prompts::PromptNotice>) -> Vec<String> {
     notices.into_iter().map(|notice| notice.text).collect()
 }
@@ -2311,6 +2719,15 @@ fn apply<S: Screen>(
                 }
             },
             AppEffect::CommitLines(lines) => screen.commit_lines(lines),
+            AppEffect::CommitContext(block) => screen.commit_context(&block),
+            AppEffect::ContextRead {
+                action,
+                argument,
+                typed,
+            } => executor.send_later(context_task(state, action, argument, typed)),
+            AppEffect::CompactRequest { request, typed } => {
+                executor.send_later(compact_task(state, request, typed));
+            }
             AppEffect::CommitCells(range) => {
                 if let Some(opened) = &state.opened {
                     let cells = opened.state.cells();
@@ -2599,9 +3016,23 @@ pub async fn run<S: Screen>(
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
     let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).ok();
 
+    let origin = Instant::now();
     let ending = loop {
         let now = Instant::now();
+        state.now_ms = u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX);
         let deadline = earliest(screen.next_tick(), screen.next_wake(now));
+        // A compacting line counts its seconds, so the screen wakes once a second
+        // while one is shown.
+        let deadline = if state
+            .opened
+            .as_ref()
+            .is_some_and(|opened| state.context.compacting_line(&opened.session_id).is_some())
+        {
+            let wait = 1_000 - state.now_ms % 1_000;
+            earliest(deadline, Some(now + Duration::from_millis(wait)))
+        } else {
+            deadline
+        };
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
