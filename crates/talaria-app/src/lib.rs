@@ -3,6 +3,7 @@
 pub mod app;
 pub mod appearance;
 pub mod attachments;
+pub mod automation;
 pub mod clipboard;
 pub mod comforts;
 pub mod commands;

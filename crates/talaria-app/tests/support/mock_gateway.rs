@@ -1468,7 +1468,7 @@ pub const SIDE_METHODS: [&str; 2] = ["shell.exec", "prompt.btw"];
 pub const SIDE_TASK_ID: &str = "btw_1a2b3c";
 
 /// The handshake, session, finite-turn, model, rollback and context methods the mock answers.
-pub const SESSION_METHODS: [&str; 21] = [
+pub const SESSION_METHODS: [&str; 22] = [
     "runtime.describe",
     "client.capabilities",
     "session.create",
@@ -1490,6 +1490,7 @@ pub const SESSION_METHODS: [&str; 21] = [
     "session.context_breakdown",
     "session.stats",
     "usage.bars",
+    "session.control.read",
 ];
 
 /// Finite-turn scenarios, enabled only by headless flow tests.
@@ -1653,6 +1654,16 @@ struct SessionSide {
     mutate_receipts: HashMap<String, Value>,
     revs: HashMap<String, i64>,
     config_raw: HashMap<String, VecDeque<Value>>,
+    /// The `session.control.read` snapshot the mock answers with.
+    control_snapshot: Option<Value>,
+    /// The value a `config.get` for `key` answers with. Unset keys answer
+    /// method-missing.
+    config_values: HashMap<String, Value>,
+    /// Hold `session.control.read` and `config.get` replies until one control read
+    /// and two config reads have arrived.
+    hold_automation_reads: bool,
+    /// The held automation reads, answered once the hold is released.
+    held_automation: Vec<HeldAutomation>,
 }
 
 impl SessionSide {
@@ -1723,6 +1734,10 @@ impl SessionSide {
             mutate_receipts: HashMap::new(),
             revs: HashMap::new(),
             config_raw: HashMap::new(),
+            control_snapshot: None,
+            config_values: HashMap::new(),
+            hold_automation_reads: false,
+            held_automation: Vec::new(),
         }
     }
 }
@@ -1973,6 +1988,7 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             vec!["session_id", "hash"],
             vec!["session_id", "hash", "file_path", "all"],
         ),
+        "session.control.read" => (vec!["session_id"], vec!["session_id"]),
         _ => (Vec::new(), Vec::new()),
     }
 }
@@ -2148,6 +2164,34 @@ fn plan_slash(
                 },
             })
             .to_string();
+            outgoing.push((None, text, reply_meta(id, method)));
+            return;
+        }
+        // Hermes: approvals flip `yolo` for this session only (issue #236). The toggle
+        // shares its state with `config.get`, so a read back sees the new value.
+        if name == "yolo" {
+            let on = state.sess.config_values.get("yolo") != Some(&json!("1"));
+            state
+                .sess
+                .config_values
+                .insert("yolo".to_owned(), json!(if on { "1" } else { "0" }));
+            let output = if on {
+                "⚡ YOLO mode **ON** for this session — all commands auto-approved. Use with caution."
+            } else {
+                "⚠️ YOLO mode **OFF** for this session — dangerous commands will require approval."
+            };
+            let result = json!({"type": "exec", "output": output});
+            let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+            outgoing.push((None, text, reply_meta(id, method)));
+            return;
+        }
+        // Hermes: `/fast` outside Priority Processing answers not-supported (issue #236).
+        if name == "fast" {
+            let result = json!({
+                "type": "exec",
+                "output": "⚡ /fast is only available for OpenAI models that support Priority Processing.",
+            });
+            let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
             outgoing.push((None, text, reply_meta(id, method)));
             return;
         }
@@ -2405,6 +2449,24 @@ fn plan_session_method(
         plan_mutate(state, id, params, delay, &behavior, outgoing);
         return;
     }
+    if method == "session.control.read"
+        || (method == "config.get"
+            && is_mode_read(params)
+            && (state.sess.hold_automation_reads
+                || (params["session_id"].as_str() == Some("local-session-1")
+                    && state.sess.created.is_empty()
+                    && state.sess.attaches.is_empty())
+                || params["key"]
+                    .as_str()
+                    .is_some_and(|key| state.sess.config_values.contains_key(key))))
+    {
+        if matches!(behavior, Behavior::DropBeforeReply) {
+            state.kill_after = true;
+            return;
+        }
+        plan_automation_method(state, method, id, params, delay, outgoing);
+        return;
+    }
     let voice = matches!(behavior, Behavior::VoiceStopped);
     let result = match method {
         "runtime.describe" => Ok(describe_result(state)),
@@ -2549,6 +2611,124 @@ pub fn headless_events() -> Vec<Value> {
             frame
         })
         .collect()
+}
+
+/// One automation read held back until its two companions arrive.
+#[derive(Clone, Debug)]
+struct HeldAutomation {
+    id: Value,
+    method: String,
+    params: Value,
+    delay: Option<Duration>,
+}
+
+/// A `-32601` answer for an unscripted standing-state or mode read: an older Hermes.
+fn method_missing_text(id: &Value, method: &str) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32601,
+            "message": format!("unknown method: {method}"),
+            "data": {"reason": "unknown_method"},
+        },
+    })
+    .to_string()
+}
+
+/// Answer a standing-state or mode read: the scripted value, or `-32601` when
+/// nothing is scripted. A null param value is refused, as the owner refuses it.
+/// While the hold is armed, replies wait until one control read and two config
+/// reads have arrived, which proves the three went out together; the hold then
+/// disarms itself.
+/// Whether a `config.get` reads one of the session mode keys the automation owns.
+///
+/// The model picker's effort key shares the method, so the two are told apart by key.
+fn is_mode_read(params: &Value) -> bool {
+    matches!(
+        params.get("key").and_then(Value::as_str),
+        Some("yolo" | "fast")
+    )
+}
+
+fn plan_automation_method(
+    state: &mut State,
+    method: &str,
+    id: &Value,
+    params: &Value,
+    delay: Option<Duration>,
+    outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
+) {
+    if params
+        .as_object()
+        .is_some_and(|object| object.values().any(Value::is_null))
+    {
+        outgoing.push((
+            None,
+            refusal_text(id, "invalid_params", None),
+            reply_meta(id, method),
+        ));
+        return;
+    }
+    if state.sess.hold_automation_reads {
+        state.sess.held_automation.push(HeldAutomation {
+            id: id.clone(),
+            method: method.to_owned(),
+            params: params.clone(),
+            delay,
+        });
+        let mut control = 0;
+        let mut gets = 0;
+        for frame in &state.seen {
+            if frame.kind != FrameKind::Request {
+                continue;
+            }
+            match frame.method.as_deref() {
+                Some("session.control.read") => control += 1,
+                Some("config.get") if is_mode_read(&frame.params) => gets += 1,
+                _ => {}
+            }
+        }
+        if control >= 1 && gets >= 2 {
+            state.sess.hold_automation_reads = false;
+            let held = std::mem::take(&mut state.sess.held_automation);
+            for held in held {
+                plan_automation_method(
+                    state,
+                    &held.method,
+                    &held.id,
+                    &held.params,
+                    held.delay,
+                    outgoing,
+                );
+            }
+        }
+        return;
+    }
+    let text = match method {
+        "session.control.read" => match state.sess.control_snapshot.clone() {
+            Some(snapshot) => {
+                json!({"jsonrpc": "2.0", "id": id, "result": {"control": snapshot}}).to_string()
+            }
+            None => method_missing_text(id, method),
+        },
+        _ => {
+            let key = params
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match state.sess.config_values.get(key).cloned() {
+                Some(value) => json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {"key": key, "value": value, "scope": "session"},
+                })
+                .to_string(),
+                None => method_missing_text(id, method),
+            }
+        }
+    };
+    outgoing.push((delay, text, reply_meta(id, method)));
 }
 
 fn describe_result(state: &State) -> Value {
@@ -3207,6 +3387,28 @@ impl MockGateway {
             .sess
             .defaults
             .insert(method.to_owned(), behavior);
+    }
+
+    /// The `control` value every `session.control.read` answers with. Unset, it
+    /// answers `-32601`, as an older Hermes would.
+    pub fn set_control_snapshot(&self, snapshot: Value) {
+        lock(&self.shared).sess.control_snapshot = Some(snapshot);
+    }
+
+    /// The `value` a `config.get` for `key` answers with. Unset keys answer
+    /// `-32601`, as an older Hermes would.
+    pub fn set_config_value(&self, key: &str, value: Value) {
+        lock(&self.shared)
+            .sess
+            .config_values
+            .insert(key.to_owned(), value);
+    }
+
+    /// Hold `session.control.read` and `config.get` replies until one control read
+    /// and two config reads have arrived, then answer all three. Disarms itself on
+    /// the flush, so arm again before each attach.
+    pub fn set_hold_automation_reads(&self) {
+        lock(&self.shared).sess.hold_automation_reads = true;
     }
 
     /// Answer every request with this method after this long; `None` clears it.

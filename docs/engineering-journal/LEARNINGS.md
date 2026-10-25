@@ -5024,3 +5024,23 @@ its missing `execution_generation`.
 
 **Generalizable rule.** Decode the queue fanout from the raw payload with every field optional, and
 classify a `message.complete` with no envelope `execution_generation` as a settlement, not a turn end.
+## 2026-10-24 — `session.automation` switches the goal judge off, and a new loop fires at once
+
+**Evidence.** Hermes v0.22.4 (the pinned commit): `gateway/session_viewer_automation.py:152`
+records the calling connection in `authority.viewer_automation` on every accepted
+`session.automation` call, and `gateway/run_goals.py:356-357` returns from the post-turn goal
+and loop hooks for such a session ("the classic CLI viewer judges and continues through
+`session.automation`"). `hermes_cli/loops.py:466` stores `next_due_at=now` for a new loop, and
+the gateway's `_loop_wakeup_watcher` (`gateway/run_goals.py:512`) scans every 15 seconds, firing
+a due loop of an idle session unless `goal_blocks_loop_tick` holds it for an active, unparked goal
+(`run_goals.py:467`).
+
+**Mechanism.** `session.automation` is how the classic CLI drives goals from its own process: the
+gateway assumes that caller now judges and continues the goal. A terminal client that only wants
+to show the goal must stay off that verb, or the goal silently stops continuing while the client
+stays subscribed. A loop's interval is the gap between runs, not the delay before the first, so
+`/loop 45m <prompt>` starts a model turn within about 20 seconds of the session going idle.
+
+**Generalizable rule.** Before calling a Hermes verb to read state, check whether accepting it
+also claims a role; read through `session.control.read` and `config.get` instead, and treat a new
+loop as already due.

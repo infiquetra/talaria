@@ -42,6 +42,7 @@ use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
+use talaria_tui::automation::{AutomationSection, AutomationTheme};
 use talaria_tui::checklist::{
     ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS, SHORT_TERMINAL_ROWS, committed_block_lines,
 };
@@ -1617,6 +1618,12 @@ impl Screen for TuiScreen {
                 &self.checklist_style,
             )
         });
+        let automation_theme = AutomationTheme::default();
+        let automation = AutomationSection {
+            state: view.automation,
+            now_ms: view.automation_now_ms,
+            theme: &automation_theme,
+        };
         let mut sections: Vec<&dyn LiveSection> = vec![&tail, &drafting];
         if let Some(prompts) = &prompts {
             sections.push(prompts);
@@ -1652,6 +1659,7 @@ impl Screen for TuiScreen {
         if let Some(side) = &side {
             sections.push(side);
         }
+        sections.push(&automation);
         sections.push(&status);
         let _ = self.terminal.draw_live(&LiveView { sections });
         if !self.compact_started {

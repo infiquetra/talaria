@@ -4063,3 +4063,34 @@ developer did not ask to stop.
 
 **Revisit when.** Hermes adds a reorder verb, or the operator rejects reorder by re-admission (then
 moves and send-now of a non-head row are dropped and edits stay at the back).
+## 2026-10-24 — Hermes runs its session commands; Talaria draws the standing state
+
+**Decision.** For #236, `/plan`, `/goal`, `/loop`, `/yolo`, `/fast` and the other session
+commands stay on Hermes's `slash.exec` path, and Talaria never parses their reply text for state.
+The goal, loop and heartbeat rows come from one `session.control.read` per attach plus every
+`session.control.update`; the YOLO and fast rows come from `config.get` with keys `yolo` and
+`fast`, read at each attach and again after a `/yolo` or `/fast` that ran. Talaria never calls
+`session.automation`, `session.control` or `config.set`. The reducer in
+`crates/talaria-core/src/automation/` is pure: the app passes the wall clock in, and a countdown
+wakes the app only when its text changes.
+
+**Row layout.** The rows copy Hermes's terminal interface (`goalStatus.ts`, `loopStatus.ts`) with
+three deliberate differences. Cadences use Hermes's `format_interval` wording (`every 1h30m`), the
+wording of Hermes's own replies, where the terminal interface writes `every 90m`. A parked goal
+shows time left (`12m left`) instead of a clock time, because the pure core has no time zone. A
+heartbeat row and a modes row are added. Done goals and loops are hidden; their verdicts are in
+the transcript.
+
+**Two views of one YOLO value.** This unit draws the YOLO row from its own `config.get yolo`
+reads. The status-line unit (#237) reads the same key for its approvals segment; the planning
+ruling on #214 gives #237 ownership of that read and has the app feed each of its results to this
+unit's state as well. Both show an unknown state rather than a guess while a read is missing.
+
+**Rejected alternatives.** Calling `session.automation`: an accepted call records the caller as
+the session's automation driver, and the gateway's own goal judge then skips the session (see
+`LEARNINGS.md`, same date). Parsing reply text such as `YOLO mode **ON**`: wording changes with
+Hermes's locale files and says nothing about changes made in another window. Polling the
+snapshot: Hermes pushes an update after every change, as its own clients rely on.
+
+**Revisit when.** Hermes publishes a mode-change event for `yolo` and `fast` (the reads after a
+command could then go), or #237 lands and the app feeds its `config.get yolo` results here.

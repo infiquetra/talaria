@@ -115,6 +115,9 @@ fn expected_first_line(cell: &Cell) -> String {
         Cell::Assistant(assistant) => first_piece(&assistant.text),
         Cell::Reasoning(reasoning) => first_piece(&reasoning.text),
         Cell::Notice(notice) => format!("\u{b7} {}", first_piece(&notice.text)),
+        Cell::HermesCommand(_) => {
+            todo!("#236")
+        }
         Cell::Tool(tool) => {
             let mut line = format!("\u{23FA} {}", tool.name);
             if let Some(summary) = &tool.summary {

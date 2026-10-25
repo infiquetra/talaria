@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::attachments::Attachment;
 
 use super::{NoticeKind, PromptKey, SessionId};
+use crate::automation::HermesCommandCell;
 use crate::queue::{AdmissionId, QueueAction, SubmissionId};
 use crate::side::{RequestId, ShellOutcome};
 use hermes_contract::schemas::{AdmissionStatus, CanonicalCorrectionResult};
@@ -199,5 +200,10 @@ pub enum Event {
         admission_id: Option<AdmissionId>,
         /// Id sent with that call, when one was sent.
         submission_id: Option<SubmissionId>,
+    },
+    /// Append one of Hermes's own command replies. Issue #236.
+    HermesCommand {
+        /// The reply cell.
+        cell: HermesCommandCell,
     },
 }
