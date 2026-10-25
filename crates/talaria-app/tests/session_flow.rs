@@ -309,6 +309,8 @@ impl Screen for Probe {
         locked(&self.log).lines.extend(lines);
     }
 
+    fn commit_context(&mut self, _block: &talaria_app::context::ContextBlock) {}
+
     fn commit_cells(&mut self, cells: &[Cell]) {
         locked(&self.log).cells.extend(cells.iter().map(cell_text));
     }

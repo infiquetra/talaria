@@ -1,0 +1,18 @@
+{
+ "session_id": "local-session-1",
+ "revision": 14,
+ "execution_generation": 6,
+ "operation": "compress",
+ "target_session_id": "local-session-1",
+ "previous_target_session_id": "local-session-1",
+ "message_count": 24,
+ "summary": {
+  "noop": false,
+  "aborted": false,
+  "refused_would_grow": false,
+  "fallback_used": false,
+  "headline": "Compressed: 32 → 24 messages",
+  "token_line": "Approx request size: ~15,400 → ~4,100 tokens",
+  "note": null
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "usage": {
+  "model": "minimax-m3.1-flash",
+  "input": 4100,
+  "output": 30,
+  "reasoning": 0,
+  "prompt": 4100,
+  "completion": 30,
+  "total": 4130,
+  "calls": 1,
+  "context_used": 4100,
+  "context_max": 200000,
+  "context_percent": 2,
+  "context_source": "provider_usage",
+  "context_estimated": false,
+  "compressions": 1
+ }
+}

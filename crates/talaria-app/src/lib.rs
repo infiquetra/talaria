@@ -5,6 +5,7 @@ pub mod comforts;
 pub mod commands;
 pub mod config;
 pub mod connection;
+pub mod context;
 pub mod failure;
 pub mod headless;
 pub mod launch;

@@ -52,6 +52,13 @@ const CLARIFICATION_LOG: &str = include_str!("../../../../fixtures/frames/clarif
 const PLAIN_ANSWER_LOG: &str = include_str!("../../../../fixtures/frames/plain-answer.jsonl");
 const INTERRUPTED_LOG: &str = include_str!("../../../../fixtures/frames/interrupted.jsonl");
 const RESUME_LOG: &str = include_str!("../../../talaria-core/tests/data/resume_snapshot.jsonl");
+const CONTEXT_BREAKDOWN: &str =
+    include_str!("../../../talaria-core/tests/data/context/breakdown.json");
+const CONTEXT_STATS: &str = include_str!("../../../talaria-core/tests/data/context/stats.json");
+const CONTEXT_BARS: &str =
+    include_str!("../../../talaria-core/tests/data/context/bars_healthy.json");
+const CONTEXT_COMMIT: &str =
+    include_str!("../../../talaria-core/tests/data/context/committed.json");
 const OPEN_APPROVAL_SNAPSHOT: &str = include_str!("../data/open_approval.json");
 const RUNNING_TURN_SNAPSHOT: &str = include_str!("../data/running_turn.json");
 
@@ -1413,8 +1420,8 @@ pub const INSTANCE_ID: &str = "0123456789abcdef0123456789abcdef";
 /// The code revision the mock's gateway reports.
 pub const CODE_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
-/// The handshake, session, finite-turn, and model methods the mock answers.
-pub const SESSION_METHODS: [&str; 18] = [
+/// The handshake, session, finite-turn, model, rollback and context methods the mock answers.
+pub const SESSION_METHODS: [&str; 21] = [
     "runtime.describe",
     "client.capabilities",
     "session.create",
@@ -1433,6 +1440,9 @@ pub const SESSION_METHODS: [&str; 18] = [
     "rollback.diff",
     "rollback.restore",
     "rollback.session_diff",
+    "session.context_breakdown",
+    "session.stats",
+    "usage.bars",
 ];
 
 /// Finite-turn scenarios, enabled only by headless flow tests.
@@ -1788,6 +1798,9 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             vec!["key", "value"],
             vec!["session_id", "profile", "key", "value", "scope"],
         ),
+        "session.context_breakdown" => (vec!["session_id"], vec!["session_id", "profile"]),
+        "session.stats" => (vec!["session_id"], vec!["session_id"]),
+        "usage.bars" => (Vec::new(), vec!["profile"]),
         "session.mutate" => (
             vec![
                 "session_id",
@@ -2180,14 +2193,24 @@ fn plan_session_method(
         "session.resume" => handle_resume(state, params),
         "session.list" => handle_list(state, params),
         "session.detach" => Ok(handle_detach(state, params)),
+        "session.context_breakdown" => handle_context_breakdown(params),
+        "session.stats" => handle_session_stats(params),
+        "usage.bars" => handle_usage_bars(params),
+        "session.mutate" => {
+            if params["operation"].as_str() == Some("compress") {
+                handle_context_mutate(params)
+            } else if params["operation"].as_str() == Some("rewind") {
+                handle_rewind_mutate(state, params)
+            } else {
+                handle_session_mutate(state, params)
+            }
+        }
         "prompt.submit" => Ok(handle_submit(state, params, voice)),
         "prompt.receipt" => Ok(headless_receipt(state, params)),
         "prompt.cancel" => Ok(headless_receipt(state, params)),
         "model.options" => handle_model_options(state, params),
         "config.get" => handle_config_get(state, params),
         "config.set" => handle_config_set(state, params),
-        "session.mutate" if params["operation"] == "rewind" => handle_rewind_mutate(state, params),
-        "session.mutate" => handle_session_mutate(state, params),
         "rollback.list" => Ok(handle_rollback_list(state)),
         "rollback.diff" => Ok(handle_rollback_diff(state)),
         "rollback.restore" => handle_rollback_restore(state, params),
@@ -2492,6 +2515,35 @@ fn handle_submit(state: &mut State, params: &Value, voice: bool) -> Value {
             Some(state.sess.gens.get(&session_id).copied().unwrap_or(1))
         },
     })
+}
+
+/// The context breakdown the mock answers with: the hand-built reply of the context unit.
+fn handle_context_breakdown(params: &Value) -> Result<Value, String> {
+    if params["session_id"].as_str().unwrap_or_default().is_empty() {
+        return Err("not_found".to_owned());
+    }
+    Ok(serde_json::from_str(CONTEXT_BREAKDOWN).expect("the breakdown data parses"))
+}
+
+/// The session stats the mock answers with: the hand-built reply of the context unit.
+fn handle_session_stats(params: &Value) -> Result<Value, String> {
+    if params["session_id"].as_str().unwrap_or_default().is_empty() {
+        return Err("not_found".to_owned());
+    }
+    Ok(serde_json::from_str(CONTEXT_STATS).expect("the stats data parses"))
+}
+
+/// The plan the mock answers with: the hand-built reply of the context unit.
+fn handle_usage_bars(_params: &Value) -> Result<Value, String> {
+    Ok(serde_json::from_str(CONTEXT_BARS).expect("the plan data parses"))
+}
+
+/// The compaction receipt the mock answers with: the hand-built reply of the context unit.
+fn handle_context_mutate(params: &Value) -> Result<Value, String> {
+    if params["session_id"].as_str().unwrap_or_default().is_empty() {
+        return Err("not_found".to_owned());
+    }
+    Ok(serde_json::from_str(CONTEXT_COMMIT).expect("the compaction data parses"))
 }
 
 fn handle_interrupt(state: &mut State, params: &Value) -> Result<Value, String> {

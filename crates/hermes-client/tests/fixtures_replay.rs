@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 9] = [
+const NAMES: [&str; 10] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -27,6 +27,7 @@ const NAMES: [&str; 9] = [
     "queued-prompt",
     "slash-palette",
     "rewind-and-rollback",
+    "context-compaction",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -35,6 +36,7 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         "interrupted" => &["interrupted"],
         "queued-prompt" => &["complete", "complete"],
         "rewind-and-rollback" => &["complete", "complete", "complete"],
+        "context-compaction" => &["complete"; 17],
         _ => &["complete"],
     }
 }
@@ -66,8 +68,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn seven_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 10,
-        "expected ten fixtures in fixtures/frames, found {}",
+        files.len() == 11,
+        "expected eleven fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -138,7 +140,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 #[test]
 fn seven_fixtures_exist() {
     let fixtures = seven_fixtures();
-    assert_eq!(fixtures.len(), 9);
+    assert_eq!(fixtures.len(), 10);
 }
 
 #[test]
@@ -467,6 +469,12 @@ fn scenario_evidence_present() {
                 assert!(
                     position(&events, "session.updated", 0).is_some(),
                     "{name}: no session.updated after the rewind"
+                );
+            }
+            "context-compaction" => {
+                assert!(
+                    position(&events, "session.updated", 0).is_some(),
+                    "{name}: no session.updated"
                 );
             }
             other => panic!("unlisted fixture {other}"),

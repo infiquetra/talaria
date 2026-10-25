@@ -1,0 +1,65 @@
+{
+ "categories": [
+  {
+   "color": "var(--context-usage-system)",
+   "id": "system_prompt",
+   "label": "System prompt",
+   "tokens": 3210
+  },
+  {
+   "color": "var(--context-usage-tools)",
+   "id": "tool_definitions",
+   "label": "Tool definitions",
+   "tokens": 11840
+  },
+  {
+   "color": "var(--context-usage-rules)",
+   "id": "rules",
+   "label": "Rules",
+   "tokens": 1200
+  },
+  {
+   "color": "var(--context-usage-skills)",
+   "id": "skills",
+   "label": "Skills",
+   "tokens": 2400
+  },
+  {
+   "color": "var(--context-usage-memory)",
+   "id": "memory",
+   "label": "Memory",
+   "tokens": 320
+  },
+  {
+   "color": "var(--context-usage-conversation)",
+   "id": "conversation",
+   "label": "Conversation",
+   "tokens": 15120
+  }
+ ],
+ "context_max": 200000,
+ "context_percent": 17,
+ "context_used": 34120,
+ "estimated_total": 34090,
+ "context_estimated": false,
+ "context_source": "provider_usage",
+ "model": "minimax-m3.1-flash",
+ "context_files": [
+  {
+   "label": "AGENTS.md",
+   "path": "<cwd>/AGENTS.md",
+   "chars": 4800,
+   "est_tokens": 1200,
+   "loaded": true,
+   "status": "loaded"
+  },
+  {
+   "label": "CLAUDE.md",
+   "path": "<cwd>/CLAUDE.md",
+   "chars": 3200,
+   "est_tokens": 800,
+   "loaded": false,
+   "status": "shadowed"
+  }
+ ]
+}

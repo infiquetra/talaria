@@ -1,0 +1,13 @@
+{
+ "session_id": "local-session-1",
+ "operation": "compress",
+ "status": "preview",
+ "lines": [
+  "Preview — no changes made.",
+  "Would compress 32 of 32 message(s) (~15,400 tokens currently in context).",
+  "Run the command again without --preview to apply."
+ ],
+ "head_count": 32,
+ "tail_count": 0,
+ "message_count": 32
+}

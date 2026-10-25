@@ -168,10 +168,11 @@ fn scenario_table_matches_the_spec() {
             "queued-prompt",
             "slash-palette",
             "rewind-and-rollback",
+            "context-compaction",
         ]
     );
     assert!(Scenario::named("not-a-scenario").is_none());
-    let table: [(&str, &[&str], &[&str]); 9] = [
+    let table: [(&str, &[&str], &[&str]); 10] = [
         (
             "plain-answer",
             &["Reply with exactly the single word: pong. Do not use any tools."],
@@ -224,6 +225,33 @@ fn scenario_table_matches_the_spec() {
                 "In notes.txt replace alpha with beta using your patch or file tool, not the terminal. Reply with the word done.",
             ],
             &["complete", "complete", "complete"],
+        ),
+        (
+            "context-compaction",
+            &[
+                "Reply with only the word one.",
+                "Reply with only the word two.",
+                "Reply with only the word three.",
+                "Reply with only the word four.",
+                "Reply with only the word five.",
+                "Reply with only the word six.",
+                "Reply with only the word seven.",
+                "Reply with only the word eight.",
+                "Reply with only the word nine.",
+                "Reply with only the word ten.",
+                "Reply with only the word eleven.",
+                "Reply with only the word twelve.",
+                "Reply with only the word thirteen.",
+                "Reply with only the word fourteen.",
+                "Reply with only the word fifteen.",
+                "Reply with only the word sixteen.",
+                "Reply with only the word done.",
+            ],
+            &[
+                "complete", "complete", "complete", "complete", "complete", "complete", "complete",
+                "complete", "complete", "complete", "complete", "complete", "complete", "complete",
+                "complete", "complete", "complete",
+            ],
         ),
     ];
     for (name, prompts, statuses) in table {
