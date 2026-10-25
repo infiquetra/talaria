@@ -20,5 +20,9 @@ serde_json.workspace = true
 name = "palette_filter"
 harness = false
 
+[[bench]]
+name = "model_filter"
+harness = false
+
 [lints]
 workspace = true

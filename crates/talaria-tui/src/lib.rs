@@ -7,6 +7,7 @@ pub mod keys;
 pub mod live;
 pub mod markdown;
 pub mod palette;
+pub mod model_picker;
 pub mod prompts;
 pub mod status;
 pub mod terminal;

@@ -1410,8 +1410,8 @@ pub const INSTANCE_ID: &str = "0123456789abcdef0123456789abcdef";
 /// The code revision the mock's gateway reports.
 pub const CODE_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
-/// The methods the session side answers, including finite-turn receipt and cancellation.
-pub const SESSION_METHODS: [&str; 10] = [
+/// The handshake, session, finite-turn, and model methods the mock answers.
+pub const SESSION_METHODS: [&str; 14] = [
     "runtime.describe",
     "client.capabilities",
     "session.create",
@@ -1422,6 +1422,10 @@ pub const SESSION_METHODS: [&str; 10] = [
     "session.interrupt",
     "prompt.receipt",
     "prompt.cancel",
+    "model.options",
+    "config.get",
+    "config.set",
+    "session.mutate",
 ];
 
 /// Finite-turn scenarios, enabled only by headless flow tests.
@@ -1524,6 +1528,28 @@ struct SessionSide {
     replay_always: HashMap<String, Vec<Value>>,
     violations: Vec<Violation>,
     describe_authority_epoch: u64,
+    /// Scripted `model.options` result when the request names a session.
+    options_with_session: Value,
+    /// Scripted `model.options` result when the request has no session.
+    options_profile: Value,
+    /// When set, `model.options` is refused with this reason instead of a catalogue.
+    options_fail: Option<String>,
+    /// `config.get` value for the reasoning key. Null is a value the client can read.
+    reasoning_value: Value,
+    mutate_revision: i64,
+    mutate_generation: i64,
+    /// `normal`, `busy`, `guarded`, `guarded-twice`, `unresolvable`, or `drop`.
+    mutate_mode: String,
+    /// Stored mutate answers, keyed by `request_id`: the fingerprint and the result.
+    receipts: HashMap<String, (Value, Value)>,
+    /// `session.create` reasoning words that are refused.
+    refused_efforts: Vec<String>,
+    /// A `session.create` parameter name to omit from `runtime.describe`.
+    describe_without: Option<String>,
+    /// `normal`, `refuse`, or `drop` for `config.set`.
+    config_set_mode: String,
+    /// The handler did the work and the reply must not be written.
+    suppress_reply: bool,
 }
 
 impl SessionSide {
@@ -1566,6 +1592,18 @@ impl SessionSide {
             replay_always: HashMap::new(),
             violations: Vec::new(),
             describe_authority_epoch: 3,
+            options_with_session: json!({"model": "", "provider": "", "providers": []}),
+            options_profile: json!({"model": "", "provider": "", "providers": []}),
+            options_fail: None,
+            reasoning_value: json!("high"),
+            mutate_revision: 0,
+            mutate_generation: 0,
+            mutate_mode: "normal".to_owned(),
+            receipts: HashMap::new(),
+            refused_efforts: Vec::new(),
+            describe_without: None,
+            config_set_mode: "normal".to_owned(),
+            suppress_reply: false,
         }
     }
 }
@@ -1728,7 +1766,39 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             vec!["command", "profile", "session_id"],
         ),
         "command.dispatch" => (vec!["name"], vec!["arg", "name", "profile", "session_id"]),
-        _ => (Vec::new(), Vec::new()),
+        "model.options" => (
+            Vec::new(),
+            vec![
+                "session_id",
+                "explicit_only",
+                "include_unconfigured",
+                "refresh",
+                "profile",
+            ],
+        ),
+        "config.get" => (vec!["key"], vec!["session_id", "profile", "key", "cwd"]),
+        "config.set" => (
+            vec!["key", "value"],
+            vec!["session_id", "profile", "key", "value", "scope"],
+        ),
+        "session.mutate" => (
+            vec![
+                "session_id",
+                "request_id",
+                "expected_revision",
+                "operation",
+                "payload",
+            ],
+            vec![
+                "session_id",
+                "request_id",
+                "expected_revision",
+                "expected_generation",
+                "operation",
+                "payload",
+            ],
+        ),
+>>        _ => (Vec::new(), Vec::new()),
     }
 }
 
@@ -2100,6 +2170,10 @@ fn plan_session_method(
         "prompt.submit" => Ok(handle_submit(state, params, voice)),
         "prompt.receipt" => Ok(headless_receipt(state, params)),
         "prompt.cancel" => Ok(headless_receipt(state, params)),
+        "model.options" => handle_model_options(state, params),
+        "config.get" => handle_config_get(state, params),
+        "config.set" => handle_config_set(state, params),
+        "session.mutate" => handle_session_mutate(state, params),
         _ => handle_interrupt(state, params),
     };
     if matches!(behavior, Behavior::DropBeforeReply) {
@@ -2109,14 +2183,15 @@ fn plan_session_method(
     let result = match result {
         Ok(result) => result,
         Err(reason) => {
-            outgoing.push((
-                None,
-                refusal_text(id, &reason, None),
-                reply_meta(id, method),
-            ));
+            push_method_error(id, method, &reason, state, outgoing);
             return;
         }
     };
+    if state.sess.suppress_reply {
+        state.sess.suppress_reply = false;
+        state.kill_after = true;
+        return;
+    }
     let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
     outgoing.push((delay, text, reply_meta(id, method)));
     if voice {
@@ -2199,6 +2274,10 @@ pub fn headless_events() -> Vec<Value> {
 }
 
 fn describe_result(state: &State) -> Value {
+    let mut parameters = state.sess.parameters.clone();
+    if let Some(missing) = &state.sess.describe_without {
+        parameters.retain(|name| name != missing);
+    }
     json!({
         "instance_id": INSTANCE_ID,
         "profile_id": state.sess.profile_id,
@@ -2206,7 +2285,7 @@ fn describe_result(state: &State) -> Value {
         "capabilities": ["session-authority-v1", "durable-admission-v1", "event-replay-v1"],
         "session_create": {
             "sources": state.sess.sources,
-            "parameters": state.sess.parameters,
+            "parameters": parameters,
         },
     })
 }
@@ -2254,6 +2333,11 @@ fn attach(state: &mut State, mut snapshot: Value, via: &str) -> Value {
 }
 
 fn handle_create(state: &mut State, params: &Value) -> Result<Value, String> {
+    if let Some(effort) = params.get("reasoning").and_then(Value::as_str)
+        && state.sess.refused_efforts.iter().any(|item| item == effort)
+    {
+        return Err("field:reasoning".to_owned());
+    }
     let request_id = params["request_id"].as_str().unwrap_or_default().to_owned();
     if let Some(session_id) = state.sess.request_ids.get(&request_id).cloned()
         && let Some(snapshot) = state.sess.sessions.get(&session_id).cloned()
@@ -2581,6 +2665,51 @@ impl MockGateway {
             .entry(method.to_owned())
             .or_default()
             .push_back(behavior);
+    }
+
+    /// Script the two `model.options` catalogues. Each must decode as a model catalogue.
+    pub fn set_model_options(&self, with_session: Value, profile_view: Value) {
+        let mut state = lock(&self.shared);
+        state.sess.options_with_session = with_session;
+        state.sess.options_profile = profile_view;
+    }
+
+    /// Refuse `model.options`. `None` answers with the scripted catalogue again.
+    pub fn fail_model_options(&self, reason: Option<&str>) {
+        lock(&self.shared).sess.options_fail = reason.map(str::to_owned);
+    }
+
+    /// The value `config.get` returns for `reasoning`.
+    pub fn set_reasoning_value(&self, value: Value) {
+        lock(&self.shared).sess.reasoning_value = value;
+    }
+
+    /// The revision and execution generation `session.mutate` currently holds.
+    pub fn set_mutate_fences(&self, revision: i64, generation: i64) {
+        let mut state = lock(&self.shared);
+        state.sess.mutate_revision = revision;
+        state.sess.mutate_generation = generation;
+    }
+
+    /// How `session.mutate` answers: normal, busy, guarded, guarded-twice, unresolvable, or drop.
+    pub fn set_mutate_mode(&self, mode: &str) {
+        lock(&self.shared).sess.mutate_mode = mode.to_owned();
+    }
+
+    /// How `config.set` answers: normal, refuse, or drop.
+    pub fn set_config_set_mode(&self, mode: &str) {
+        lock(&self.shared).sess.config_set_mode = mode.to_owned();
+    }
+
+    /// `session.create` requests whose `reasoning` is one of these words are refused.
+    pub fn set_create_refusal_efforts(&self, efforts: &[&str]) {
+        lock(&self.shared).sess.refused_efforts =
+            efforts.iter().map(|effort| (*effort).to_owned()).collect();
+    }
+
+    /// Omit this key from `runtime.describe`'s `session_create.parameters`. `None` lists them all.
+    pub fn set_describe_without(&self, key: Option<&str>) {
+        lock(&self.shared).sess.describe_without = key.map(str::to_owned);
     }
 
     /// Do this for every request with this method once the queue is empty.
@@ -3252,3 +3381,6 @@ impl Deref for MockServer {
         &self.gateway
     }
 }
+
+// Model catalogue, effort and fenced mutate handlers. Issue 230.
+include!("mock_model.rs");
