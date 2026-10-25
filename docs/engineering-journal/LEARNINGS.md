@@ -4734,3 +4734,35 @@ running `!` delays a later interrupt or approval on the same socket while events
 
 **Generalizable rule.** When a list that other state indexes into gains a mid-list insert, shift
 every stored index in the same helper, and test a write that arrives after the insert.
+
+## 2026-10-24 — A colour map typed as strings rejects the null an unquoted skin colour becomes
+
+**Evidence.** For #227, `serde_json::from_value::<hermes_contract::schemas::SkinPayload>` on
+`{"name": "default", "colors": {"ui_accent": null}}` fails with `invalid type: null, expected a
+string`, while the planning record had said such a colour decodes cleanly. The generated
+`SkinPayload` types `colors`, `light_colors` and `dark_colors` as `HashMap<String, String>`, and
+`hermes-client`'s handshake decodes `runtime.describe` into `RuntimeDescribeResult`
+(`crates/hermes-client/src/connect.rs`, `HandshakeError::BadDescribe`), so one such colour fails
+the launch.
+
+**Mechanism.** YAML reads an unquoted `#FFD700` as a comment, so a skin file that writes one sends
+`null`; Hermes only logs the contract violation outside strict mode and puts the `null` on the
+wire. Talaria's own skin code reads the describe `skin` as raw JSON and skips non-string colours
+(`Skin::from_value`), but the typed handshake decode runs first.
+
+**Generalizable rule.** Settle a "this decodes" claim by decoding a sample through the real type,
+not by reading the schema it was generated from.
+
+## 2026-10-24 — A tall first live region scrolls committed lines off a short emulator screen
+
+**Evidence.** `crates/talaria-tui/tests/theme_snapshots.rs` committed three Markdown lines, then
+drew a 4-row live region, on a 12-row `vt100` screen. Created with a first live height of 10, the
+terminal left two history rows, so the heading scrolled out of the partial scroll region and the
+test could not find it; a first height of 4 kept all three lines on screen.
+
+**Mechanism.** `InlineTerminal::new` reserves its first live height before the first draw sizes
+the region, so lines committed before that draw are placed above a region of that height. `vt100`
+keeps no history for rows scrolled out of a partial scroll region.
+
+**Generalizable rule.** In an emulator snapshot, start the live region at the height it will be
+drawn at, or read committed lines through a harness that keeps scrollback.

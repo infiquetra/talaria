@@ -113,9 +113,10 @@ impl<'a> ComposerSection<'a> {
         let width = usize::from(prepared.width.min(area.width));
         let interior = width.saturating_sub(2);
         let dim = Style::default().add_modifier(Modifier::DIM);
-        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let border = self.composer.style.border;
+        let marker = self.composer.style.marker;
 
-        let mut top = border_cells(interior, Self::top_hint(prepared).as_deref(), dim);
+        let mut top = border_cells(interior, Self::top_hint(prepared).as_deref(), dim, border);
         if let Some(title) = &self.composer.title {
             let hint_cells = Self::top_hint(prepared).map_or(0, |hint| hint.chars().count() + 1);
             let room = interior.saturating_sub(1 + hint_cells);
@@ -126,16 +127,16 @@ impl<'a> ComposerSection<'a> {
             }
         }
         let mut lines: Vec<Vec<Cell>> = Vec::new();
-        lines.push(framed('\u{256D}', top, '\u{256E}'));
+        lines.push(framed('\u{256D}', top, '\u{256E}', border));
 
         for offset in 0..prepared.shown {
             let mut line: Vec<Cell> = vec![
-                ("\u{2502}".to_string(), Style::default()),
+                ("\u{2502}".to_string(), border),
                 (" ".to_string(), Style::default()),
             ];
             if offset == 0 {
-                line.push((">".to_string(), bold));
-                line.push((" ".to_string(), bold));
+                line.push((">".to_string(), marker));
+                line.push((" ".to_string(), marker));
             } else {
                 line.push((" ".to_string(), Style::default()));
                 line.push((" ".to_string(), Style::default()));
@@ -145,22 +146,22 @@ impl<'a> ComposerSection<'a> {
             line.extend(text);
             line.push((" ".to_string(), Style::default()));
             line.push((" ".to_string(), Style::default()));
-            line.push(("\u{2502}".to_string(), Style::default()));
+            line.push(("\u{2502}".to_string(), border));
             lines.push(line);
         }
 
-        let bottom = border_cells(interior, self.bottom_hint(prepared).as_deref(), dim);
-        lines.push(framed('\u{2570}', bottom, '\u{256F}'));
+        let bottom = border_cells(interior, self.bottom_hint(prepared).as_deref(), dim, border);
+        lines.push(framed('\u{2570}', bottom, '\u{256F}', border));
         draw_lines(&lines, area, buf);
     }
 
     fn render_borderless(&self, prepared: &Prepared, area: Rect, buf: &mut Buffer) {
-        let bold = Style::default().add_modifier(Modifier::BOLD);
+        let marker = self.composer.style.marker;
         let dim = Style::default().add_modifier(Modifier::DIM);
         let mut lines: Vec<Vec<Cell>> = Vec::new();
         for offset in 0..prepared.shown {
             let mut line: Vec<Cell> = if offset == 0 {
-                vec![(">".to_string(), bold), (" ".to_string(), bold)]
+                vec![(">".to_string(), marker), (" ".to_string(), marker)]
             } else {
                 vec![(" ".to_string(), Style::default()); 2]
             };
@@ -225,8 +226,13 @@ fn pad(cells: &mut Vec<Cell>, width: usize) {
 }
 
 /// A border line of `interior` cells with a hint right-aligned against the corner.
-fn border_cells(interior: usize, hint: Option<&str>, hint_style: Style) -> Vec<Cell> {
-    let mut cells: Vec<Cell> = vec![("\u{2500}".to_string(), Style::default()); interior];
+fn border_cells(
+    interior: usize,
+    hint: Option<&str>,
+    hint_style: Style,
+    border: Style,
+) -> Vec<Cell> {
+    let mut cells: Vec<Cell> = vec![("\u{2500}".to_string(), border); interior];
     if let Some(hint) = hint {
         let hint: Vec<char> = hint.chars().collect();
         let start = interior.saturating_sub(hint.len());
@@ -260,10 +266,10 @@ fn fit_title(title: &str, room: usize) -> Vec<Cell> {
     cells
 }
 
-fn framed(left: char, middle: Vec<Cell>, right: char) -> Vec<Cell> {
-    let mut line = vec![(left.to_string(), Style::default())];
+fn framed(left: char, middle: Vec<Cell>, right: char, border: Style) -> Vec<Cell> {
+    let mut line = vec![(left.to_string(), border)];
     line.extend(middle);
-    line.push((right.to_string(), Style::default()));
+    line.push((right.to_string(), border));
     line
 }
 

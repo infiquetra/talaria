@@ -3843,3 +3843,56 @@ out of scope and left as an operator question.
 
 **Revisit when.** Hermes adds a cancel for either call, makes `shell.exec` run beside its request
 lane, or the slash-command palette merges and takes over `/btw` routing.
+
+## 2026-10-24 — Skin from runtime.describe, not gateway.ready
+
+**Decision.** Talaria takes the Hermes skin from the `skin` of the `runtime.describe` result at
+launch and after every reconnect, and from live `skin.changed` events. A `gateway.ready` skin is
+used only when a handshake has no describe skin, and the app does not keep `gateway.ready` today.
+A replayed `skin.changed` is ignored, because the describe after the reconnect is newer.
+
+**Rationale.** `gateway.ready` is resolved before the connection's profile scope is applied, so
+for a served profile other than the gateway's launch home it can carry the wrong profile's skin;
+`runtime.describe` is resolved for the profile that owns the connection. `{}` means no skin and
+Talaria's own colours, which is the same intent as Hermes's "default theme".
+
+**Rejected alternatives.** The roadmap's `gateway.ready` source (wrong profile). Waiting for
+`skin.changed` after a reconnect (the watcher sends only on change, so a missed change would
+stay). Retrying the reconnect describe until it succeeds (load during an outage); one retry after
+a second, plus `/skin` as a manual refresh, is the bounded middle.
+
+**Revisit when.** Hermes resolves `gateway.ready` per profile, or adds a skin to the session
+snapshot.
+
+## 2026-10-24 — Talaria never repaints the terminal background
+
+**Decision.** Skins colour foregrounds only: no `*_bg` fill, no `background` key, and no OSC 10 or
+11 repaint of the terminal's default colours. Body text keeps the terminal's own foreground, and
+skin colours below Hermes's contrast floor for the real or assumed background are lifted the way
+Hermes's terminal interface lifts them.
+
+**Rationale.** Finished output lives in the terminal's native scrollback. Repainting the
+background changes everything above, including other programs' output, and has to be undone on
+every exit path, crashes included. Without a painted background every skin stays readable.
+
+**Rejected alternatives.** Hermes's own repaint when a skin authors `background` (scrollback and
+crash cost). Mapping `banner_text` onto body text (unreadable on the wrong background).
+
+**Revisit when.** Talaria owns a full-screen surface whose background it already paints.
+
+## 2026-10-24 — Sixteen colours means no skin
+
+**Decision.** On a 16-colour terminal, with `[theme] follow_hermes_skin = false`, or with colour off
+(`NO_COLOR`, `TERM=dumb`, `[theme] colors = "none"`), the skin is not applied and `/theme` says
+why. Colour off also removes the phase 1 named colours from the themed surfaces and keeps bold,
+italic and underline.
+
+**Rationale.** A skin's hex colours cannot be represented faithfully in the user's 16 palette
+entries, which the user may have configured differently; the named defaults already follow that
+palette. 256 colours map each skin colour to the nearest xterm index, and 24-bit uses it exactly.
+
+**Rejected alternatives.** Mapping hex colours onto the 16 named colours (guesses at a palette
+Talaria cannot see).
+
+**Revisit when.** Terminals report their 16-colour palette at start-up as reliably as they answer
+OSC 10 and 11.

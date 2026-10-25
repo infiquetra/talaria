@@ -69,14 +69,15 @@ pub struct TerminalCaps {
 pub struct ProbeReply {
     pub caps: TerminalCaps,
     pub cursor: Option<(u16, u16)>,
-    /// The OSC 10 and 11 colour answers (issue 227; stub: the parser fills them later).
+    /// The OSC 11 background and OSC 10 foreground answers; `None` when unanswered.
     pub colors: crate::theme::TerminalColors,
 }
 
-/// The four queries, written once at start-up: cursor position, keyboard flags, the
-/// synchronized output mode report, and device attributes, which every terminal answers and so
-/// marks the end of the reply.
-pub const PROBE_QUERY: &[u8] = b"\x1b[6n\x1b[?u\x1b[?2026$p\x1b[c";
+/// The six queries, written once at start-up: cursor position, keyboard flags, the
+/// synchronized output mode report, the background and foreground colours (OSC 11 and 10), and
+/// device attributes, which every terminal answers and so marks the end of the reply. A terminal
+/// that does not know a colour query skips it, so the colours cost no extra wait.
+pub const PROBE_QUERY: &[u8] = b"\x1b[6n\x1b[?u\x1b[?2026$p\x1b]11;?\x1b\\\x1b]10;?\x1b\\\x1b[c";
 
 /// One control sequence (`ESC [` …) read from a probe reply.
 struct Sequence {
@@ -135,6 +136,28 @@ fn scan_sequence(rest: &[u8]) -> Scan {
     }
 }
 
+/// How far one OSC reply (`ESC ]` …) runs in a probe reply.
+enum Osc {
+    /// Ended by BEL or `ESC \`; the length includes the terminator.
+    Complete(usize),
+    /// Cut off by another escape sequence; the length stops before it.
+    Broken(usize),
+    /// The bytes end before a terminator.
+    Incomplete,
+}
+
+fn osc_reply(bytes: &[u8]) -> Osc {
+    for (index, &byte) in bytes.iter().enumerate().skip(2) {
+        match byte {
+            0x07 => return Osc::Complete(index + 1),
+            0x1b if bytes.get(index + 1) == Some(&b'\\') => return Osc::Complete(index + 2),
+            0x1b => return Osc::Broken(index),
+            _ => {}
+        }
+    }
+    Osc::Incomplete
+}
+
 fn clamp_u16(value: u32) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
@@ -145,6 +168,25 @@ pub fn parse_probe_reply(bytes: &[u8]) -> (ProbeReply, bool) {
     let mut found = ProbeReply::default();
     let mut at = 0;
     while at + 1 < bytes.len() {
+        if bytes[at] == 0x1b && bytes[at + 1] == b']' {
+            match osc_reply(&bytes[at..]) {
+                Osc::Complete(len) => {
+                    if let Some((index, color)) =
+                        crate::theme::detect::parse_osc_color(&bytes[at..at + len])
+                    {
+                        match index {
+                            10 => found.colors.foreground = Some(color),
+                            11 => found.colors.background = Some(color),
+                            _ => {}
+                        }
+                    }
+                    at += len;
+                }
+                Osc::Broken(len) => at += len,
+                Osc::Incomplete => break,
+            }
+            continue;
+        }
         if bytes[at] != 0x1b || bytes[at + 1] != b'[' {
             at += 1;
             continue;

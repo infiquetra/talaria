@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use talaria_core::attention::AlertKind;
 pub use talaria_core::appearance::{ColorsSetting, ThemeMode};
+use talaria_core::attention::AlertKind;
 use toml::{Table, Value};
 
 /// The shared file for favourites and defaults on this machine.
@@ -95,9 +95,9 @@ pub struct Config {
     pub notifications: NotificationsConfig,
     /// Herdr reporting settings.
     pub herdr: HerdrConfig,
-    /// Theme settings (issue 227; stub: defaults only, not parsed yet).
+    /// Theme settings from `[theme]`.
     pub theme: ThemeConfig,
-    /// Interface settings (issue 227; stub: defaults only, not parsed yet).
+    /// Interface settings from `[ui]`.
     pub ui: UiConfig,
 }
 
@@ -260,6 +260,8 @@ pub fn parse(text: &str) -> LoadedConfig {
         "history",
         "notifications",
         "herdr",
+        "theme",
+        "ui",
     ] {
         let Some(value) = table.get(name) else {
             continue;
@@ -274,13 +276,23 @@ pub fn parse(text: &str) -> LoadedConfig {
             "keys" => config.keys = read_keys(section, &mut notices),
             "status" => config.status = read_status(section, &mut notices),
             "environment" => config.environment = read_environment(section, &mut notices),
+            "theme" => config.theme = read_theme(section, &mut notices),
+            "ui" => config.ui = read_ui(section, &mut notices),
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
     for (name, value) in &table {
         if matches!(
             name.as_str(),
-            "keys" | "status" | "environment" | "editor" | "history" | "notifications" | "herdr"
+            "keys"
+                | "status"
+                | "environment"
+                | "editor"
+                | "history"
+                | "notifications"
+                | "herdr"
+                | "theme"
+                | "ui"
         ) {
             continue;
         }
@@ -399,6 +411,58 @@ fn read_environment(section: &Table, notices: &mut Vec<String>) -> EnvironmentCo
         }
     }
     environment
+}
+
+fn read_theme(section: &Table, notices: &mut Vec<String>) -> ThemeConfig {
+    let mut theme = Config::default().theme;
+    for (name, value) in section {
+        match name.as_str() {
+            "mode" => match value.as_str() {
+                Some("auto") => theme.mode = ThemeMode::Auto,
+                Some("light") => theme.mode = ThemeMode::Light,
+                Some("dark") => theme.mode = ThemeMode::Dark,
+                _ => notices.push("[theme] mode must be auto, light or dark; using auto.".into()),
+            },
+            "follow_hermes_skin" => match value.as_bool() {
+                Some(follow) => theme.follow_hermes_skin = follow,
+                None => notices
+                    .push("[theme] follow_hermes_skin must be true or false; using true.".into()),
+            },
+            "colors" => match value.as_str() {
+                Some("auto") => theme.colors = ColorsSetting::Auto,
+                Some("truecolor") => theme.colors = ColorsSetting::TrueColor,
+                Some("256") => theme.colors = ColorsSetting::Ansi256,
+                Some("16") => theme.colors = ColorsSetting::Ansi16,
+                Some("none") => theme.colors = ColorsSetting::None,
+                _ => notices.push(
+                    "[theme] colors must be auto, truecolor, 256, 16 or none; using auto.".into(),
+                ),
+            },
+            "name" => notices.push(
+                "theme.name is no longer used: Talaria follows the Hermes skin (see /skin and \
+                 /theme)."
+                    .into(),
+            ),
+            _ => notices.push(unknown_setting("theme", name)),
+        }
+    }
+    theme
+}
+
+fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
+    let mut ui = Config::default().ui;
+    for (name, value) in section {
+        match name.as_str() {
+            "reduced_motion" => match value.as_bool() {
+                Some(reduced) => ui.reduced_motion = reduced,
+                None => {
+                    notices.push("[ui] reduced_motion must be true or false; using false.".into());
+                }
+            },
+            _ => notices.push(unknown_setting("ui", name)),
+        }
+    }
+    ui
 }
 
 fn unknown_setting(table: &str, key: &str) -> String {

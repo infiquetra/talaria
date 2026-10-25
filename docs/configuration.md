@@ -1,8 +1,8 @@
 # Configuration
 
 Talaria reads one file, `~/.talaria/config.toml`, once when it starts. Restart Talaria to apply
-a change. This release has no repository-level configuration file and no `TALARIA_*`
-environment overrides. A missing file is fine: every setting has a default.
+a change. This release has no repository-level configuration file; the environment overrides
+are listed under the schema. A missing file is fine: every setting has a default.
 
 ## The default file
 
@@ -55,6 +55,14 @@ interval_seconds = 5
 
 [environment]
 allowlist = []
+
+[theme]
+mode = "auto"
+follow_hermes_skin = true
+colors = "auto"
+
+[ui]
+reduced_motion = false
 ```
 
 ## Schema
@@ -83,6 +91,14 @@ blocked means a prompt is still visible, working means a turn is running, otherw
 | `status.command` | text | none (off) | The status-line command, as one command line. Talaria does not run it through a shell. |
 | `status.interval_seconds` | whole number, 1 to 3600 | 5 | Seconds between runs of the status command. |
 | `environment.allowlist` | list of variable names | empty | Environment variables the status command may see. |
+| `theme.mode` | `auto`, `light` or `dark` | `auto` | Light or dark terminal. `auto` asks the terminal; `/theme` overrides it for one session. |
+| `theme.follow_hermes_skin` | true or false | true | Draw in the Hermes profile's skin colours. `false` keeps Talaria's own colours. |
+| `theme.colors` | `auto`, `truecolor`, `256`, `16` or `none` | `auto` | Colour depth. `auto` reads `NO_COLOR`, `TERM` and `COLORTERM`; `16` and `none` draw no skin. |
+| `ui.reduced_motion` | true or false | false | Reduced motion: nothing changes on a timer except counters, at most once per second. |
+
+Environment overrides, read once at start: `TALARIA_THEME` (`light`, `dark` or `auto`) beats
+`theme.mode`; `TALARIA_REDUCED_MOTION` (`1`, `true`, `yes`, `on`, `0`, `false`, `no` or `off`)
+beats `ui.reduced_motion`; a non-empty `NO_COLOR` turns colour off. See [themes](themes.md).
 
 ## Default keys
 

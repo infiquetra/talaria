@@ -80,6 +80,8 @@ pub struct Composer {
     run: Vec<usize>,
     exit_armed: Option<Instant>,
     title: Option<String>,
+    /// Border and prompt-marker styles; the default is the phase 1 look.
+    style: crate::theme::ComposerStyle,
     keyboard_enhancement: bool,
     /// The wrap width of the last draw; `None` before the first, when each logical line is a row.
     wrap_width: Option<usize>,
@@ -106,6 +108,7 @@ impl Composer {
             run: Vec::new(),
             exit_armed: None,
             title: None,
+            style: crate::theme::ComposerStyle::default(),
             keyboard_enhancement: true,
             wrap_width: None,
             cache: None,
@@ -248,6 +251,11 @@ impl Composer {
     /// Title drawn on the top border. `None` clears it.
     pub fn set_title(&mut self, title: Option<String>) {
         self.title = title;
+    }
+
+    /// Border and prompt-marker styles from the current theme.
+    pub fn set_style(&mut self, style: crate::theme::ComposerStyle) {
+        self.style = style;
     }
 
     /// Whether Shift+Enter can be sent. The default is true.
