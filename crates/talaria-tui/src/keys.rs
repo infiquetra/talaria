@@ -17,6 +17,10 @@ pub enum KeyContext {
     Pager,
     /// A queued row is selected. Issue 232. Queue and steer.
     QueueSelection,
+    /// The session picker overlay list.
+    SessionPicker,
+    /// The picker's export dialog.
+    SessionPickerExport,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -203,6 +207,46 @@ pub enum Action {
     ComposerSendNow,
     /// Steer the draft. Unbound until a person sets a key.
     ComposerSteer,
+    /// Open the session picker from the composer. Unbound until a person sets a key.
+    SessionPickerOpen,
+    /// Move the picker cursor one row up.
+    PickerUp,
+    /// Move the picker cursor one row down.
+    PickerDown,
+    /// Move the picker cursor one page up.
+    PickerPageUp,
+    /// Move the picker cursor one page down.
+    PickerPageDown,
+    /// The first picker row.
+    PickerTop,
+    /// The last picker row.
+    PickerBottom,
+    /// Open the picked session.
+    PickerOpen,
+    /// Rename the picked session.
+    PickerRename,
+    /// Branch the current session.
+    PickerBranch,
+    /// Open the export dialog for the picked session.
+    PickerExport,
+    /// Search the list.
+    PickerSearch,
+    /// The next profile filter.
+    PickerProfileNext,
+    /// The previous profile filter.
+    PickerProfilePrev,
+    /// List the sessions again.
+    PickerRefresh,
+    /// Close the picker.
+    PickerClose,
+    /// Export as Markdown, in the export dialog.
+    PickerFormatMarkdown,
+    /// Export as JSON, in the export dialog.
+    PickerFormatJson,
+    /// Export as HTML, in the export dialog.
+    PickerFormatHtml,
+    /// Switch secret redaction for the export, in the export dialog.
+    PickerToggleRedact,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -234,7 +278,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 55] = [
+    pub const ALL: [Self; 75] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -290,6 +334,26 @@ impl Action {
         Self::QueueLeave,
         Self::ComposerSendNow,
         Self::ComposerSteer,
+        Self::SessionPickerOpen,
+        Self::PickerUp,
+        Self::PickerDown,
+        Self::PickerPageUp,
+        Self::PickerPageDown,
+        Self::PickerTop,
+        Self::PickerBottom,
+        Self::PickerOpen,
+        Self::PickerRename,
+        Self::PickerBranch,
+        Self::PickerExport,
+        Self::PickerSearch,
+        Self::PickerProfileNext,
+        Self::PickerProfilePrev,
+        Self::PickerRefresh,
+        Self::PickerClose,
+        Self::PickerFormatMarkdown,
+        Self::PickerFormatJson,
+        Self::PickerFormatHtml,
+        Self::PickerToggleRedact,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -351,6 +415,26 @@ impl Action {
             Self::QueueLeave => "queue_leave",
             Self::ComposerSendNow => "composer_send_now",
             Self::ComposerSteer => "composer_steer",
+            Self::SessionPickerOpen => "session_picker_open",
+            Self::PickerUp => "picker_up",
+            Self::PickerDown => "picker_down",
+            Self::PickerPageUp => "picker_page_up",
+            Self::PickerPageDown => "picker_page_down",
+            Self::PickerTop => "picker_top",
+            Self::PickerBottom => "picker_bottom",
+            Self::PickerOpen => "picker_open",
+            Self::PickerRename => "picker_rename",
+            Self::PickerBranch => "picker_branch",
+            Self::PickerExport => "picker_export",
+            Self::PickerSearch => "picker_search",
+            Self::PickerProfileNext => "picker_profile_next",
+            Self::PickerProfilePrev => "picker_profile_prev",
+            Self::PickerRefresh => "picker_refresh",
+            Self::PickerClose => "picker_close",
+            Self::PickerFormatMarkdown => "picker_format_markdown",
+            Self::PickerFormatJson => "picker_format_json",
+            Self::PickerFormatHtml => "picker_format_html",
+            Self::PickerToggleRedact => "picker_toggle_redact",
         }
     }
 
@@ -370,6 +454,11 @@ impl Action {
             | Self::CompletionPrev
             | Self::CompletionAccept
             | Self::CompletionClose => KeyContext::Completion,
+            Self::PickerFormatMarkdown
+            | Self::PickerFormatJson
+            | Self::PickerFormatHtml
+            | Self::PickerToggleRedact => KeyContext::SessionPickerExport,
+            Self::SessionPickerOpen => KeyContext::Composer,
             Self::Submit
             | Self::Newline
             | Self::Interrupt
@@ -421,6 +510,21 @@ impl Action {
             | Self::QueueMoveUp
             | Self::QueueMoveDown
             | Self::QueueLeave => KeyContext::QueueSelection,
+            Self::PickerUp
+            | Self::PickerDown
+            | Self::PickerPageUp
+            | Self::PickerPageDown
+            | Self::PickerTop
+            | Self::PickerBottom
+            | Self::PickerOpen
+            | Self::PickerRename
+            | Self::PickerBranch
+            | Self::PickerExport
+            | Self::PickerSearch
+            | Self::PickerProfileNext
+            | Self::PickerProfilePrev
+            | Self::PickerRefresh
+            | Self::PickerClose => KeyContext::SessionPicker,
         }
     }
 
@@ -489,6 +593,26 @@ impl Action {
             Self::QueueLeave => &["esc"],
             Self::ComposerSendNow => &["ctrl+enter"],
             Self::ComposerSteer => &[],
+            Self::SessionPickerOpen => &[],
+            Self::PickerUp => &["up", "k"],
+            Self::PickerDown => &["down", "j"],
+            Self::PickerPageUp => &["pageup"],
+            Self::PickerPageDown => &["pagedown"],
+            Self::PickerTop => &["home", "g"],
+            Self::PickerBottom => &["end", "G"],
+            Self::PickerOpen => &["enter"],
+            Self::PickerRename => &["r"],
+            Self::PickerBranch => &["b"],
+            Self::PickerExport => &["e"],
+            Self::PickerSearch => &["/"],
+            Self::PickerProfileNext => &["tab"],
+            Self::PickerProfilePrev => &["shift+tab"],
+            Self::PickerRefresh => &["ctrl+r"],
+            Self::PickerClose => &["q"],
+            Self::PickerFormatMarkdown => &["m"],
+            Self::PickerFormatJson => &["j"],
+            Self::PickerFormatHtml => &["h"],
+            Self::PickerToggleRedact => &["x"],
         }
     }
 }
@@ -640,6 +764,9 @@ const NAMED_KEYS: [(&str, KeyCode); 16] = [
     ("space", KeyCode::Char(' ')),
 ];
 
+/// The reason `KeyChord::parse` gives when a key is fixed in the picker's contexts.
+const FIXED_KEY_REASON: &str = "esc and ctrl+c are fixed in the session picker";
+
 impl KeyChord {
     /// Parse chord text such as `ctrl+j` or `shift+enter`. The error is the reason.
     pub fn parse(text: &str, context: KeyContext) -> Result<Self, String> {
@@ -677,6 +804,14 @@ impl KeyChord {
         chord.code = parse_key(key, &mut chord.shift)?;
         if context == KeyContext::Pager && Self::is_pager_reserved(&chord) {
             return Err("reserved in the transcript pager".to_string());
+        }
+        // Esc and Ctrl+C close the session picker, so no picker action may take them.
+        if matches!(
+            context,
+            KeyContext::SessionPicker | KeyContext::SessionPickerExport
+        ) && (chord.code == KeyCode::Esc || (chord.code == KeyCode::Char('c') && chord.ctrl))
+        {
+            return Err(FIXED_KEY_REASON.to_string());
         }
         let printable = matches!(chord.code, KeyCode::Char(_));
         if context == KeyContext::Composer
@@ -856,6 +991,7 @@ impl KeyMap {
                 continue;
             };
             let mut parsed: Vec<KeyChord> = Vec::new();
+            let mut fixed = false;
             for text in texts {
                 match KeyChord::parse(text, parse_context(action)) {
                     Ok(chord) => {
@@ -871,20 +1007,29 @@ impl KeyMap {
                             parsed.push(chord);
                         }
                     }
+                    Err(reason) if reason == FIXED_KEY_REASON => {
+                        // The context fixes this key. One notice, and the default stands.
+                        notices.push(format!(
+                            "[keys] {name} in {FILE}: \"{text}\" is unreadable in the session \
+                             picker ({reason}); the default ({}) is kept.",
+                            map.labels_of(action)
+                        ));
+                        fixed = true;
+                        break;
+                    }
                     Err(reason) => notices.push(format!(
                         "[keys] {name} in {FILE}: \"{text}\" is not a key Talaria understands \
                          ({reason}); ignoring it."
                     )),
                 }
             }
+            if fixed {
+                continue;
+            }
             if !texts.is_empty() && parsed.is_empty() {
                 notices.push(format!(
                     "[keys] {name} in {FILE} has no usable key; using the default ({}).",
-                    map.chords[action.index()]
-                        .iter()
-                        .map(KeyChord::label)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    map.labels_of(action)
                 ));
                 continue;
             }
@@ -894,6 +1039,15 @@ impl KeyMap {
 
         notices.extend(map.resolve_conflicts(&explicit));
         (map, notices)
+    }
+
+    /// The labels of one action's chords, for a notice.
+    fn labels_of(&self, action: Binding) -> String {
+        self.chords[action.index()]
+            .iter()
+            .map(KeyChord::label)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Give each chord held by more than one action of a context to one winner.
@@ -1171,7 +1325,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 55);
+        assert_eq!(Action::ALL.len(), 75);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1200,6 +1354,25 @@ mod tests {
                 | Action::QueueMoveUp
                 | Action::QueueMoveDown
                 | Action::QueueLeave => KeyContext::QueueSelection,
+                Action::PickerFormatMarkdown
+                | Action::PickerFormatJson
+                | Action::PickerFormatHtml
+                | Action::PickerToggleRedact => KeyContext::SessionPickerExport,
+                Action::PickerUp
+                | Action::PickerDown
+                | Action::PickerPageUp
+                | Action::PickerPageDown
+                | Action::PickerTop
+                | Action::PickerBottom
+                | Action::PickerOpen
+                | Action::PickerRename
+                | Action::PickerBranch
+                | Action::PickerExport
+                | Action::PickerSearch
+                | Action::PickerProfileNext
+                | Action::PickerProfilePrev
+                | Action::PickerRefresh
+                | Action::PickerClose => KeyContext::SessionPicker,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), wanted);
@@ -1232,6 +1405,25 @@ mod tests {
                 | Action::QueueMoveUp
                 | Action::QueueMoveDown
                 | Action::QueueLeave => KeyContext::QueueSelection,
+                Action::PickerFormatMarkdown
+                | Action::PickerFormatJson
+                | Action::PickerFormatHtml
+                | Action::PickerToggleRedact => KeyContext::SessionPickerExport,
+                Action::PickerUp
+                | Action::PickerDown
+                | Action::PickerPageUp
+                | Action::PickerPageDown
+                | Action::PickerTop
+                | Action::PickerBottom
+                | Action::PickerOpen
+                | Action::PickerRename
+                | Action::PickerBranch
+                | Action::PickerExport
+                | Action::PickerSearch
+                | Action::PickerProfileNext
+                | Action::PickerProfilePrev
+                | Action::PickerRefresh
+                | Action::PickerClose => KeyContext::SessionPicker,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), context, "{name}");
@@ -1300,6 +1492,26 @@ mod tests {
             (Action::QueueLeave, vec!["Esc"]),
             (Action::ComposerSendNow, vec!["Ctrl+Enter"]),
             (Action::ComposerSteer, vec![]),
+            (Action::SessionPickerOpen, vec![]),
+            (Action::PickerUp, vec!["Up", "K"]),
+            (Action::PickerDown, vec!["Down", "J"]),
+            (Action::PickerPageUp, vec!["PageUp"]),
+            (Action::PickerPageDown, vec!["PageDown"]),
+            (Action::PickerTop, vec!["Home", "G"]),
+            (Action::PickerBottom, vec!["End", "Shift+G"]),
+            (Action::PickerOpen, vec!["Enter"]),
+            (Action::PickerRename, vec!["R"]),
+            (Action::PickerBranch, vec!["B"]),
+            (Action::PickerExport, vec!["E"]),
+            (Action::PickerSearch, vec!["/"]),
+            (Action::PickerProfileNext, vec!["Tab"]),
+            (Action::PickerProfilePrev, vec!["Shift+Tab"]),
+            (Action::PickerRefresh, vec!["Ctrl+R"]),
+            (Action::PickerClose, vec!["Q"]),
+            (Action::PickerFormatMarkdown, vec!["M"]),
+            (Action::PickerFormatJson, vec!["J"]),
+            (Action::PickerFormatHtml, vec!["H"]),
+            (Action::PickerToggleRedact, vec!["X"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1419,6 +1631,14 @@ mod tests {
     }
 
     #[test]
+    fn a_fixed_key_keeps_the_default_and_reports_once() {
+        let (map, notices) = KeyMap::from_entries(&entries(&[("picker_close", &["esc"])]));
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].contains("unreadable"), "the notice: {notices:?}");
+        assert_eq!(map, KeyMap::defaults());
+    }
+
+    #[test]
     fn model_bindings_use_their_own_context_and_keep_composer_editing() {
         let map = KeyMap::defaults();
         let left = Key::from(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
@@ -1437,7 +1657,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 55);
+        assert_eq!(Action::ALL.len(), 75);
     }
 
     #[test]

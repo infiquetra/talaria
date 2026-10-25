@@ -66,6 +66,26 @@ queue_move_down = ["J", "shift+down"]
 queue_leave = ["esc"]
 composer_send_now = ["ctrl+enter"]
 composer_steer = []
+session_picker_open = []
+picker_up = ["up", "k"]
+picker_down = ["down", "j"]
+picker_page_up = ["pageup"]
+picker_page_down = ["pagedown"]
+picker_top = ["home", "g"]
+picker_bottom = ["end", "G"]
+picker_open = ["enter"]
+picker_rename = ["r"]
+picker_branch = ["b"]
+picker_export = ["e"]
+picker_search = ["/"]
+picker_profile_next = ["tab"]
+picker_profile_prev = ["shift+tab"]
+picker_refresh = ["ctrl+r"]
+picker_close = ["q"]
+picker_format_markdown = ["m"]
+picker_format_json = ["j"]
+picker_format_html = ["h"]
+picker_toggle_redact = ["x"]
 
 [editor]
 command = ""
@@ -183,6 +203,20 @@ beats `ui.reduced_motion`; a non-empty `NO_COLOR` turns colour off. See [themes]
 | `pager_close` | Q | Close the transcript. |
 | `toggle_tasks` | Ctrl+T | Show the agent's task checklist in one row, or every step of it, above the composer. |
 | `approvals_toggle` | Shift+Tab | Switch this session's approvals off or back on. |
+| `session_picker_open` | none | Open the session picker from the composer. |
+| `picker_up`, `picker_down` | Up or K; Down or J | Move the picker cursor one row. |
+| `picker_page_up`, `picker_page_down` | PageUp; PageDown | Move the picker cursor one page. |
+| `picker_top`, `picker_bottom` | Home or G; End or Shift+G | First or last picker row. |
+| `picker_open` | Enter | Open the picked session. |
+| `picker_rename` | R | Rename the picked session. |
+| `picker_branch` | B | Branch the current session. |
+| `picker_export` | E | Export the picked session. |
+| `picker_search` | / | Search the list. |
+| `picker_profile_next`, `picker_profile_prev` | Tab; Shift+Tab | Next or previous profile filter. |
+| `picker_refresh` | Ctrl+R | List the sessions again. |
+| `picker_close` | Q | Close the picker. |
+| `picker_format_markdown`, `picker_format_json`, `picker_format_html` | M; J; H | Choose the export format in the export dialog. |
+| `picker_toggle_redact` | X | Redact or include secrets in the export dialog. |
 
 Tab accepts the highlighted row of a completion list. A tab inside pasted text is kept.
 Completion keys share chords with composer keys. Each applies only while its list is open.
@@ -228,6 +262,12 @@ one interrupts the agent, and neither one touches your draft.
 transcript key still closes the transcript. The key names the transcript prints on screen, in the
 hints, in the banner and in the "window too small" line, are the built-in defaults and do not
 follow your bindings.
+
+## The session picker
+
+The picker actions belong to the session picker overlay, not the composer: a key may be
+bound in both places at once (`j` moves down in the list and picks JSON in the export
+dialog). Esc and Ctrl+C are fixed in the picker and cannot be rebound there.
 
 ## Writing a key
 

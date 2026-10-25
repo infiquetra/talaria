@@ -397,6 +397,9 @@ struct State {
     session_id: String,
     connection: u64,
     commands: mpsc::UnboundedSender<Cmd>,
+    /// Every socket the standalone port accepted. Hermes serves many connections at once, so
+    /// a side connection never closes the foreground one; events still go to the newest.
+    accepted: Vec<mpsc::UnboundedSender<Cmd>>,
     seen: Vec<Seen>,
     written: Vec<Written>,
     next_srq: u64,
@@ -490,6 +493,7 @@ fn new_shared(
             session_id: session_id.to_owned(),
             connection,
             commands,
+            accepted: Vec::new(),
             seen: Vec::new(),
             written: Vec::new(),
             next_srq: 1,
@@ -1318,6 +1322,15 @@ fn plan_request(
         outgoing.push((delay, text, reply_meta(id, method)));
         return;
     }
+    // A rename, a branch or an export follows the directory rules; the other mutations keep
+    // their own handlers.
+    if (method == "session.mutate"
+        && matches!(params["operation"].as_str(), Some("rename" | "branch")))
+        || method == "session.export"
+    {
+        plan_directory_method(state, method, id, params, outgoing);
+        return;
+    }
     if SESSION_METHODS.contains(&method) || SIDE_METHODS.contains(&method) {
         plan_session_method(state, method, id, params, outgoing);
         return;
@@ -1467,14 +1480,16 @@ pub const SIDE_METHODS: [&str; 2] = ["shell.exec", "prompt.btw"];
 /// The task id the mock gives every accepted side question.
 pub const SIDE_TASK_ID: &str = "btw_1a2b3c";
 
-/// The handshake, session, finite-turn, model, rollback and context methods the mock answers.
-pub const SESSION_METHODS: [&str; 22] = [
+/// The handshake, session, finite-turn, model, rollback, context and export methods the mock answers.
+pub const SESSION_METHODS: [&str; 23] = [
     "runtime.describe",
     "client.capabilities",
     "session.create",
     "session.resume",
     "session.list",
     "session.detach",
+    "session.mutate",
+    "session.export",
     "prompt.submit",
     "session.interrupt",
     "prompt.receipt",
@@ -1482,7 +1497,6 @@ pub const SESSION_METHODS: [&str; 22] = [
     "model.options",
     "config.get",
     "config.set",
-    "session.mutate",
     "rollback.list",
     "rollback.diff",
     "rollback.restore",
@@ -1607,6 +1621,20 @@ struct SessionSide {
     defaults: HashMap<String, Behavior>,
     list_rows: HashMap<String, Vec<Value>>,
     list_errors: HashMap<String, String>,
+    list_profile_rows: HashMap<(String, String), Vec<Value>>,
+    list_profile_errors: HashMap<(String, String), String>,
+    mutate_state: HashMap<String, MutateState>,
+    directory_receipts: HashMap<String, Value>,
+    mutate_titles: HashMap<String, String>,
+    mutate_scripts: HashMap<String, VecDeque<(String, Value)>>,
+    live_revisions: HashSet<String>,
+    export_content: HashMap<String, String>,
+    export_large: HashSet<String>,
+    export_empty: HashSet<String>,
+    export_unsupported: bool,
+    export_malformed: HashSet<String>,
+    child_counter: u64,
+    reuse_subs: HashSet<String>,
     detached_override: Option<bool>,
     detaches: Vec<DetachSeen>,
     submissions: Vec<Submission>,
@@ -1698,6 +1726,20 @@ impl SessionSide {
             defaults: HashMap::new(),
             list_rows: HashMap::new(),
             list_errors: HashMap::new(),
+            list_profile_rows: HashMap::new(),
+            list_profile_errors: HashMap::new(),
+            mutate_state: HashMap::new(),
+            directory_receipts: HashMap::new(),
+            mutate_titles: HashMap::new(),
+            mutate_scripts: HashMap::new(),
+            live_revisions: HashSet::new(),
+            export_content: HashMap::new(),
+            export_large: HashSet::new(),
+            export_empty: HashSet::new(),
+            export_unsupported: false,
+            export_malformed: HashSet::new(),
+            child_counter: 0,
+            reuse_subs: HashSet::new(),
             detached_override: None,
             detaches: Vec::new(),
             submissions: Vec::new(),
@@ -1868,7 +1910,32 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             vec!["latest", "workspace", "display_projection"],
         ),
         "session.resume" => (vec!["session_id"], vec!["session_id", "display_projection"]),
-        "session.list" => (vec!["scope", "limit"], vec!["scope", "limit"]),
+        "session.list" => (vec!["scope", "limit"], vec!["profile", "scope", "limit"]),
+        // Hermes: gateway/session_mutations.py L142-L148. The workspace move always carries a
+        // generation; other operations may omit it. A host-scoped connection also names the
+        // profile, which the gateway accepts and removes before validation.
+        "session.mutate" => (
+            vec![
+                "session_id",
+                "request_id",
+                "expected_revision",
+                "operation",
+                "payload",
+            ],
+            vec![
+                "session_id",
+                "request_id",
+                "expected_revision",
+                "operation",
+                "payload",
+                "expected_generation",
+                "profile",
+            ],
+        ),
+        "session.export" => (
+            vec!["session_id"],
+            vec!["session_id", "profile", "format", "redact"],
+        ),
         "session.detach" => (
             vec!["session_id", "subscription_id"],
             vec!["session_id", "subscription_id", "end_reason"],
@@ -1960,28 +2027,9 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
                 )
             }
         }
-        // Hermes: gateway/session_mutations.py L142-L148. The workspace move always carries a
-        // generation; other operations may omit it.
         "session.context_breakdown" => (vec!["session_id"], vec!["session_id", "profile"]),
         "session.stats" => (vec!["session_id"], vec!["session_id"]),
         "usage.bars" => (Vec::new(), vec!["profile"]),
-        "session.mutate" => (
-            vec![
-                "session_id",
-                "request_id",
-                "expected_revision",
-                "operation",
-                "payload",
-            ],
-            vec![
-                "session_id",
-                "request_id",
-                "expected_revision",
-                "expected_generation",
-                "operation",
-                "payload",
-            ],
-        ),
         "rollback.list" | "rollback.session_diff" => (vec!["session_id"], vec!["session_id"]),
         "rollback.diff" => (vec!["session_id", "hash"], vec!["session_id", "hash"]),
         "rollback.restore" => (
@@ -2007,6 +2055,12 @@ fn check_params(method: &str, params: &Value) -> Vec<String> {
     if let Some(schema) = param_schema(method) {
         if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
             for key in object.keys() {
+                // The gateway removes the profile from the params of the
+                // profile-implicit verbs before it validates them, so the mock
+                // does the same.
+                if method == "session.mutate" && key == "profile" {
+                    continue;
+                }
                 if !properties.contains_key(key) {
                     fields.insert(key.clone());
                 }
@@ -2363,6 +2417,409 @@ fn next_behavior(state: &mut State, method: &str) -> Behavior {
         .and_then(VecDeque::pop_front)
         .or_else(|| state.sess.defaults.get(method).cloned())
         .unwrap_or(Behavior::Normal)
+}
+
+/// One session's mutation state, as the runtime row holds it.
+#[derive(Clone, Debug)]
+struct MutateState {
+    revision: i64,
+    generation: i64,
+    title: String,
+    busy: bool,
+    messages: u64,
+}
+
+impl MutateState {
+    fn fresh(title: &str) -> Self {
+        Self {
+            revision: 1,
+            generation: 1,
+            title: title.to_owned(),
+            busy: false,
+            messages: 4,
+        }
+    }
+}
+
+/// A mutation refusal with its data, or the -32603 crash shape.
+enum MutateErr {
+    Refused { reason: String, data: Value },
+    Internal,
+    UnknownMethod,
+}
+
+fn mutate_error_text(id: &Value, error: &MutateErr) -> String {
+    match error {
+        MutateErr::Refused { reason, data } => {
+            let mut full = data.clone();
+            full["reason"] = json!(reason);
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": REFUSAL_CODE, "message": reason, "data": full},
+            })
+            .to_string()
+        }
+        MutateErr::UnknownMethod => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": "unknown method",
+                "data": {"reason": "unknown_method"},
+            },
+        })
+        .to_string(),
+        // tui_gateway/ws.py lines 436 to 441: a crash answers -32603 with no data.
+        MutateErr::Internal => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {"code": -32603, "message": "internal error"},
+        })
+        .to_string(),
+    }
+}
+
+/// Title cleanup after hermes_state_titles.py lines 49 to 61: remove the control and
+/// invisible sets, collapse each whitespace run to one space, trim. Independent of the
+/// unit's own cleanup so a shared bug cannot hide.
+fn mock_clean_title(raw: &str) -> String {
+    fn removed(c: char) -> bool {
+        let code = c as u32;
+        matches!(code, 0x00..=0x08 | 0x0b | 0x0c | 0x0e..=0x1f | 0x7f)
+            || matches!(code, 0x200b..=0x200f)
+            || matches!(code, 0x2028..=0x202e)
+            || matches!(code, 0x2060..=0x2069)
+            || matches!(code, 0xfeff | 0xfffc | 0xfff9..=0xfffb)
+    }
+    let kept: String = raw.chars().filter(|c| !removed(*c)).collect();
+    kept.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The next title in a lineage after hermes_state_titles.py lines 23 to 35.
+fn next_title_in_lineage(taken: &[String], base: &str) -> String {
+    let bare = match base.rsplit_once(" #") {
+        Some((head, tail)) if tail.parse::<u64>().is_ok() => head,
+        _ => base,
+    };
+    if !taken.iter().any(|title| title == bare) {
+        return bare.to_owned();
+    }
+    let mut highest = 1_u64;
+    for title in taken {
+        if let Some(number) = title
+            .strip_prefix(bare)
+            .and_then(|rest| rest.strip_prefix(" #"))
+            .and_then(|tail| tail.parse::<u64>().ok())
+        {
+            highest = highest.max(number);
+        }
+    }
+    format!("{bare} #{}", highest + 1)
+}
+
+/// Export file-name sanitizing after hermes_cli/session_export.py lines 294 to 297.
+fn mock_export_filename(session_id: &str, format: &str) -> String {
+    let kept: String = session_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    let stem = if kept.is_empty() { "session" } else { &kept };
+    format!("hermes_session_{stem}.{format}")
+}
+
+fn mutate_state_for<'a>(state: &'a mut State, session_id: &str) -> &'a mut MutateState {
+    state
+        .sess
+        .mutate_state
+        .entry(session_id.to_owned())
+        .or_insert_with(|| MutateState::fresh(""))
+}
+
+fn handle_mutate(state: &mut State, params: &Value) -> Result<Value, MutateErr> {
+    // gateway/session_controls.py lines 90 to 94: profile is accepted and removed before
+    // validation for the profile-implicit verbs, session.mutate included.
+    let session_id = params["session_id"].as_str().unwrap_or_default().to_owned();
+    if !state.sess.mutate_state.contains_key(&session_id) {
+        return Err(MutateErr::Refused {
+            reason: "not_found".to_owned(),
+            data: json!({}),
+        });
+    }
+    // hermes_state_runtime.py lines 461 to 469: an exact retry replays the stored receipt.
+    let request_id = params["request_id"].as_str().unwrap_or_default();
+    let digest = json!([
+        params["operation"],
+        params["payload"],
+        params.get("expected_revision"),
+        params.get("expected_generation")
+    ])
+    .to_string();
+    let receipt_key = format!("{session_id}\u{1f}{request_id}\u{1f}{digest}");
+    if let Some(receipt) = state.sess.directory_receipts.get(&receipt_key) {
+        return Ok(receipt.clone());
+    }
+    if let Some((reason, data)) = state
+        .sess
+        .mutate_scripts
+        .get_mut(&session_id)
+        .and_then(VecDeque::pop_front)
+    {
+        return Err(MutateErr::Refused { reason, data });
+    }
+    // gateway/session_authority.py lines 405 to 420: every turn raises the revision. With
+    // churn on, each attempt meets a moved revision, so retries can be driven.
+    if state.sess.live_revisions.contains(&session_id) {
+        mutate_state_for(state, &session_id).revision += 1;
+    }
+    let entry = state
+        .sess
+        .mutate_state
+        .get(&session_id)
+        .cloned()
+        .unwrap_or_else(|| MutateState::fresh(""));
+    let operation = params["operation"].as_str().unwrap_or_default();
+    // hermes_state_runtime.py lines 508 to 551: missing, revision, generation, in order.
+    let expected_revision = params["expected_revision"].as_i64().unwrap_or(-1);
+    if expected_revision != entry.revision {
+        return Err(MutateErr::Refused {
+            reason: "revision_conflict".to_owned(),
+            data: json!({"revision": entry.revision, "execution_generation": entry.generation}),
+        });
+    }
+    let branch_needs_generation = operation == "branch";
+    if branch_needs_generation && params.get("expected_generation").is_none_or(Value::is_null) {
+        return Err(MutateErr::Refused {
+            reason: "invalid_params".to_owned(),
+            data: json!({}),
+        });
+    }
+    if let Some(sent) = params.get("expected_generation").and_then(Value::as_i64)
+        && sent != entry.generation
+    {
+        return Err(MutateErr::Refused {
+            reason: "stale_generation".to_owned(),
+            data: json!({"revision": entry.revision, "execution_generation": entry.generation}),
+        });
+    }
+    if operation == "rename" {
+        let Some(title) = params["payload"]["title"].as_str() else {
+            return Err(MutateErr::Refused {
+                reason: "invalid_params".to_owned(),
+                data: json!({}),
+            });
+        };
+        let cleaned = mock_clean_title(title);
+        // hermes_state_titles.py lines 131 to 163: a title another session holds raises a
+        // plain ValueError, which the dispatcher does not catch, so it arrives as -32603.
+        if let Some(holder) = state.sess.mutate_titles.get(&cleaned)
+            && holder != &session_id
+        {
+            return Err(MutateErr::Internal);
+        }
+        let revision = entry.revision + 1;
+        let receipt = json!({
+            "session_id": session_id,
+            "revision": revision,
+            "execution_generation": entry.generation,
+            "operation": "rename",
+            "title": cleaned,
+        });
+        let stored = mutate_state_for(state, &session_id);
+        stored.revision = revision;
+        stored.title.clone_from(&cleaned);
+        state.sess.mutate_titles.insert(cleaned, session_id.clone());
+        state
+            .sess
+            .directory_receipts
+            .insert(receipt_key, receipt.clone());
+        return Ok(receipt);
+    }
+    if operation == "branch" {
+        if entry.busy {
+            return Err(MutateErr::Refused {
+                reason: "session_busy".to_owned(),
+                data: json!({}),
+            });
+        }
+        let taken: Vec<String> = state.sess.mutate_titles.keys().cloned().collect();
+        let child_title = match params["payload"]["title"].as_str() {
+            Some(title) => {
+                let cleaned = mock_clean_title(title);
+                if cleaned.is_empty() {
+                    next_title_in_lineage(&taken, "branch")
+                } else {
+                    cleaned
+                }
+            }
+            None => {
+                let base = if entry.title.is_empty() {
+                    "branch".to_owned()
+                } else {
+                    entry.title.clone()
+                };
+                next_title_in_lineage(&taken, &base)
+            }
+        };
+        state.sess.child_counter += 1;
+        let child = format!("child-{}", state.sess.child_counter);
+        let revision = entry.revision + 1;
+        let receipt = json!({
+            "session_id": session_id,
+            "revision": revision,
+            "execution_generation": entry.generation,
+            "operation": "branch",
+            "branched_session_id": child,
+            "copied_messages": entry.messages,
+        });
+        // gateway/session_controls.py lines 785 to 790: the handler attaches the calling
+        // connection to the child.
+        let subscription = format!("sub-branch-{}", state.sess.child_counter);
+        state.sess.live_subscriptions.insert(subscription.clone());
+        let mut snapshot = state.sess.resume_snapshot.clone();
+        snapshot["session_id"] = json!(child.clone());
+        snapshot["subscription_id"] = json!(subscription);
+        snapshot["info"]["title"] = json!(child_title.clone());
+        state.sess.sessions.insert(child.clone(), snapshot);
+        state.sess.reuse_subs.insert(child.clone());
+        let child_state = MutateState {
+            revision,
+            generation: entry.generation,
+            title: child_title.clone(),
+            busy: false,
+            messages: entry.messages,
+        };
+        state.sess.mutate_state.insert(child.clone(), child_state);
+        state.sess.mutate_titles.insert(child_title, child);
+        let stored = mutate_state_for(state, &session_id);
+        stored.revision = revision;
+        state
+            .sess
+            .directory_receipts
+            .insert(receipt_key, receipt.clone());
+        return Ok(receipt);
+    }
+    Err(MutateErr::Refused {
+        reason: "invalid_params".to_owned(),
+        data: json!({}),
+    })
+}
+
+fn handle_export(state: &State, params: &Value) -> Result<Value, MutateErr> {
+    // A gateway from before session.export answers -32601 unknown_method.
+    if state.sess.export_unsupported {
+        return Err(MutateErr::UnknownMethod);
+    }
+    // gateway/session_tui_ops.py lines 51 to 55: only these keys, session:read authorized.
+    let session_id = params["session_id"].as_str().unwrap_or_default().to_owned();
+    let format = params["format"].as_str().unwrap_or("json");
+    // hermes_cli/session_export.py lines 262 to 270: json, snapshot, md, markdown, html.
+    let canonical = match format {
+        "json" | "snapshot" => "json",
+        "md" | "markdown" => "md",
+        "html" => "html",
+        _ => {
+            return Err(MutateErr::Refused {
+                reason: "invalid_params".to_owned(),
+                data: json!({}),
+            });
+        }
+    };
+    if state.sess.export_empty.contains(session_id.as_str()) {
+        return Err(MutateErr::Refused {
+            reason: "not_found".to_owned(),
+            data: json!({}),
+        });
+    }
+    // gateway/session_tui_ops.py lines 100 to 116: JSON past the message cap is refused.
+    if canonical == "json" && state.sess.export_large.contains(session_id.as_str()) {
+        return Err(MutateErr::Refused {
+            reason: "export_too_large".to_owned(),
+            data: json!({}),
+        });
+    }
+    if state.sess.export_malformed.contains(&session_id) {
+        return Ok(json!({"format": canonical}));
+    }
+    let content = state
+        .sess
+        .export_content
+        .get(session_id.as_str())
+        .cloned()
+        .unwrap_or_else(|| format!("# {session_id}\n\nhello\n"));
+    Ok(json!({
+        "format": canonical,
+        "filename": mock_export_filename(&session_id, canonical),
+        "content": content,
+    }))
+}
+
+/// Plan the answer to a directory request. It mirrors plan_session_method, but mutation
+/// and export refusals carry data, so they build their own error frames.
+fn plan_directory_method(
+    state: &mut State,
+    method: &str,
+    id: &Value,
+    params: &Value,
+    outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
+) {
+    let fields = check_params(method, params);
+    if !fields.is_empty() {
+        state.sess.violations.push(Violation {
+            method: method.to_owned(),
+            reason: "invalid_params".to_owned(),
+            fields: fields.clone(),
+        });
+    }
+    let behavior = next_behavior(state, method);
+    if state.silent_all
+        || state.silent_methods.contains(method)
+        || matches!(behavior, Behavior::Silent)
+    {
+        return;
+    }
+    if matches!(behavior, Behavior::DropAfterFrame) {
+        state.kill_after = true;
+        return;
+    }
+    if !fields.is_empty() {
+        outgoing.push((
+            None,
+            refusal_text(id, "invalid_params", Some(&fields)),
+            reply_meta(id, method),
+        ));
+        return;
+    }
+    let mut delay = None;
+    match &behavior {
+        Behavior::Delay(wait) => delay = Some(*wait),
+        Behavior::Refuse(reason) => {
+            outgoing.push((None, refusal_text(id, reason, None), reply_meta(id, method)));
+            return;
+        }
+        _ => {}
+    }
+    let answered = match method {
+        "session.mutate" => handle_mutate(state, params)
+            .map_err(mutate_error_text_wrapper(id))
+            .map(|result| json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()),
+        _ => handle_export(state, params)
+            .map_err(mutate_error_text_wrapper(id))
+            .map(|result| json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()),
+    };
+    if matches!(behavior, Behavior::DropBeforeReply) {
+        state.kill_after = true;
+        return;
+    }
+    let text = match answered {
+        Ok(text) => text,
+        Err(text) => text,
+    };
+    outgoing.push((delay, text, reply_meta(id, method)));
+}
+
+fn mutate_error_text_wrapper(id: &Value) -> impl Fn(MutateErr) -> String + '_ {
+    |error| mutate_error_text(id, &error)
 }
 
 /// Plan the answer to one handshake or session request.
@@ -2812,7 +3269,16 @@ fn attach(state: &mut State, mut snapshot: Value, via: &str) -> Value {
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    if !state.sess.attaches.is_empty() {
+    // gateway/session_authority.py lines 333 to 335: resuming a session the same actor
+    // already subscribes to reuses that subscription id. The mock reuses only for sessions
+    // the branch handler attached, so older flows keep their minted ids.
+    if state.sess.reuse_subs.contains(&session_id)
+        && let Some(stored) = state.sess.sessions.get(&session_id)
+        && let Some(held) = stored["subscription_id"].as_str()
+        && state.sess.live_subscriptions.contains(held)
+    {
+        snapshot["subscription_id"] = json!(held);
+    } else if !state.sess.attaches.is_empty() {
         snapshot["subscription_id"] = json!(format!("sub-{}", state.sess.attaches.len() + 1));
     }
     let subscription = snapshot["subscription_id"]
@@ -2820,6 +3286,15 @@ fn attach(state: &mut State, mut snapshot: Value, via: &str) -> Value {
         .unwrap_or_default()
         .to_owned();
     state.sess.live_subscriptions.insert(subscription.clone());
+    // A session the test seeded mutation fences for carries them in its snapshot too, so the
+    // client's first change presents the revision the gateway holds.
+    if let Some(seeded) = state.sess.mutate_state.get(&session_id) {
+        snapshot["revision"] = json!(seeded.revision);
+        snapshot["execution_generation"] = json!(seeded.generation);
+        if !seeded.title.is_empty() {
+            snapshot["info"]["title"] = json!(seeded.title);
+        }
+    }
     let own_generation = snapshot["execution_generation"].as_i64().unwrap_or(1);
     let generation = *state
         .sess
@@ -2903,13 +3378,15 @@ fn handle_create(state: &mut State, params: &Value) -> Result<Value, String> {
 
 fn handle_resume(state: &mut State, params: &Value) -> Result<Value, String> {
     let projection = params.get("display_projection") == Some(&Value::Bool(true));
-    let snapshot = if let Some(queued) = state.sess.resume_queue.pop_front() {
-        queued
-    } else if params.get("latest").is_some() {
+    // A launch that resumes the latest session answers from the seeded snapshot, so a snapshot
+    // queued for a later switch stays queued.
+    let snapshot = if params.get("latest").is_some() {
         if state.sess.latest_missing {
             return Err("not_found".to_owned());
         }
         state.sess.resume_snapshot.clone()
+    } else if let Some(queued) = state.sess.resume_queue.pop_front() {
+        queued
     } else {
         let wanted = params["session_id"].as_str().unwrap_or_default();
         if let Some(stored) = state.sess.sessions.get(wanted) {
@@ -2933,14 +3410,28 @@ fn handle_resume(state: &mut State, params: &Value) -> Result<Value, String> {
 
 fn handle_list(state: &State, params: &Value) -> Result<Value, String> {
     let scope = params["scope"].as_str().unwrap_or("live");
+    // gateway/session_controls.py lines 147 to 168: a request naming another profile is
+    // routed to that profile's authority; the mock answers from per-profile row sets.
+    let profile = params["profile"]
+        .as_str()
+        .unwrap_or(&state.sess.profile_id)
+        .to_owned();
+    if let Some(reason) = state
+        .sess
+        .list_profile_errors
+        .get(&(profile.clone(), scope.to_owned()))
+    {
+        return Err(reason.clone());
+    }
     if let Some(reason) = state.sess.list_errors.get(scope) {
         return Err(reason.clone());
     }
     let limit = params["limit"].as_u64().unwrap_or(200) as usize;
     let rows: Vec<Value> = state
         .sess
-        .list_rows
-        .get(scope)
+        .list_profile_rows
+        .get(&(profile, scope.to_owned()))
+        .or_else(|| state.sess.list_rows.get(scope))
         .map(|rows| rows.iter().take(limit).cloned().collect())
         .unwrap_or_default();
     Ok(json!({"sessions": rows, "scope": scope}))
@@ -3319,6 +3810,132 @@ impl MockGateway {
         };
     }
 
+    /// The rows `session.list` answers for one profile and scope.
+    pub fn set_list_rows_for(&self, profile: &str, scope: &str, rows: Vec<Value>) {
+        lock(&self.shared)
+            .sess
+            .list_profile_rows
+            .insert((profile.to_owned(), scope.to_owned()), rows);
+    }
+
+    /// Make `session.list` for one profile and scope answer a refusal; `None` clears it.
+    pub fn set_list_error_for(&self, profile: &str, scope: &str, reason: Option<&str>) {
+        let mut state = lock(&self.shared);
+        match reason {
+            Some(reason) => state
+                .sess
+                .list_profile_errors
+                .insert((profile.to_owned(), scope.to_owned()), reason.to_owned()),
+            None => state
+                .sess
+                .list_profile_errors
+                .remove(&(profile.to_owned(), scope.to_owned())),
+        };
+    }
+
+    /// Seed one session's mutation fences, title, busyness and message count.
+    pub fn set_mutation_state(
+        &self,
+        session_id: &str,
+        revision: i64,
+        generation: i64,
+        title: &str,
+        busy: bool,
+        messages: u64,
+    ) {
+        let mut state = lock(&self.shared);
+        state.sess.mutate_state.insert(
+            session_id.to_owned(),
+            MutateState {
+                revision,
+                generation,
+                title: title.to_owned(),
+                busy,
+                messages,
+            },
+        );
+        if !title.is_empty() {
+            state
+                .sess
+                .mutate_titles
+                .insert(title.to_owned(), session_id.to_owned());
+        }
+    }
+
+    /// The content `session.export` answers for one session.
+    pub fn set_export_content(&self, session_id: &str, content: &str) {
+        lock(&self.shared)
+            .sess
+            .export_content
+            .insert(session_id.to_owned(), content.to_owned());
+    }
+
+    /// While set, JSON exports of this session answer `export_too_large`.
+    pub fn set_export_too_large(&self, session_id: &str, on: bool) {
+        let mut state = lock(&self.shared);
+        if on {
+            state.sess.export_large.insert(session_id.to_owned());
+        } else {
+            state.sess.export_large.remove(session_id);
+        }
+    }
+
+    /// While set, exports of this session answer `not_found` (no saved messages).
+    pub fn set_export_empty(&self, session_id: &str, on: bool) {
+        let mut state = lock(&self.shared);
+        if on {
+            state.sess.export_empty.insert(session_id.to_owned());
+        } else {
+            state.sess.export_empty.remove(session_id);
+        }
+    }
+
+    /// Queue one scripted mutation refusal for a session, with its data. Scripted
+    /// refusals answer before the runtime rules run.
+    pub fn queue_mutate_refusal(&self, session_id: &str, reason: &str, data: Value) {
+        lock(&self.shared)
+            .sess
+            .mutate_scripts
+            .entry(session_id.to_owned())
+            .or_default()
+            .push_back((reason.to_owned(), data));
+    }
+
+    /// While on, every mutation attempt on this session meets a moved revision,
+    /// as when another viewer commits between attempts.
+    pub fn set_live_revision(&self, session_id: &str, on: bool) {
+        let mut state = lock(&self.shared);
+        if on {
+            state.sess.live_revisions.insert(session_id.to_owned());
+        } else {
+            state.sess.live_revisions.remove(session_id);
+        }
+    }
+
+    /// The title the mock holds for a session, if it tracks the session.
+    pub fn mutate_title(&self, session_id: &str) -> Option<String> {
+        lock(&self.shared)
+            .sess
+            .mutate_state
+            .get(session_id)
+            .map(|entry| entry.title.clone())
+    }
+
+    /// Answer `session.export` with -32601, as a gateway from before exports.
+    pub fn set_export_unsupported(&self, on: bool) {
+        lock(&self.shared).sess.export_unsupported = on;
+    }
+
+    /// Answer `session.export` for this session without `content` or `filename`.
+    pub fn set_export_malformed(&self, session_id: &str, on: bool) {
+        let mut state = lock(&self.shared);
+        if on {
+            state.sess.export_malformed.insert(session_id.to_owned());
+        } else {
+            state.sess.export_malformed.remove(session_id);
+        }
+    }
+
     /// Force the `detached` flag of every `session.detach` answer. `None` (the default) answers
     /// true for a subscription the mock handed out and still holds, false otherwise.
     pub fn set_detached(&self, detached: Option<bool>) {
@@ -3594,7 +4211,20 @@ pub struct ControlSeen {
 struct IssuedTicket {
     value: String,
     profile_id: String,
+    scope: String,
     used: bool,
+    at: Instant,
+}
+
+/// One ticket the control socket minted, as the tests assert it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TicketSeen {
+    /// `host` or `profile`.
+    pub scope: String,
+    /// The profile id the ticket names.
+    pub profile_id: String,
+    /// Monotonic stamp taken when the ticket was minted.
+    pub at: Instant,
 }
 
 struct StandaloneInfo {
@@ -3605,6 +4235,8 @@ struct StandaloneInfo {
     tickets: Mutex<Vec<IssuedTicket>>,
     websockets: Mutex<Vec<Instant>>,
     present: std::sync::atomic::AtomicBool,
+    refuse_host_scope: Mutex<bool>,
+    refuse_tickets: Mutex<bool>,
 }
 
 fn plain<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -3695,6 +4327,8 @@ impl StandaloneGateway {
             tickets: Mutex::new(Vec::new()),
             websockets: Mutex::new(Vec::new()),
             present: std::sync::atomic::AtomicBool::new(false),
+            refuse_host_scope: Mutex::new(false),
+            refuse_tickets: Mutex::new(false),
         });
         lock(&shared).sess.profile_id = info.home.clone();
         let socket = home.join("gateway.sock");
@@ -3781,6 +4415,28 @@ impl StandaloneGateway {
     /// How many tickets the control socket has issued.
     pub fn tickets_issued(&self) -> usize {
         plain(&self.info.tickets).len()
+    }
+
+    /// Refuse host-scoped tickets, so the client falls back to a profile ticket.
+    pub fn set_refuse_host_scope(&self, on: bool) {
+        *plain(&self.info.refuse_host_scope) = on;
+    }
+
+    /// Refuse every ticket, so the client reports the side connection failed.
+    pub fn set_refuse_tickets(&self, on: bool) {
+        *plain(&self.info.refuse_tickets) = on;
+    }
+
+    /// Every ticket minted, in order, with the scope and profile it names.
+    pub fn ticket_records(&self) -> Vec<TicketSeen> {
+        plain(&self.info.tickets)
+            .iter()
+            .map(|issued| TicketSeen {
+                scope: issued.scope.clone(),
+                profile_id: issued.profile_id.clone(),
+                at: issued.at,
+            })
+            .collect()
     }
 
     /// Run a future of the in-process mock's async API (`server_request`, `send_event`,
@@ -3919,13 +4575,27 @@ fn issue_ticket(info: &StandaloneInfo, request: &Value) -> Value {
     {
         return refuse("session-ticket: invalid bootstrap parameters");
     }
+    // gateway/runtime_bootstrap.py lines 37 to 42: host scope needs purpose interactive,
+    // and any served profile id may be named. The mock refuses host scope only when a
+    // test asks, so the profile-only fallback is reachable.
+    if *plain(&info.refuse_tickets) {
+        return refuse("session-ticket: tickets refused");
+    }
+    let scope = params["scope"].as_str().unwrap_or("profile").to_owned();
     let mut tickets = plain(&info.tickets);
     let value = ticket_token(tickets.len() as u64 + 1);
     tickets.push(IssuedTicket {
         value: value.clone(),
         profile_id: profile.to_owned(),
+        scope: scope.clone(),
         used: false,
+        at: Instant::now(),
     });
+    // The refused ticket is recorded before the refusal, so the client can be
+    // seen to have asked for it.
+    if scope == "host" && *plain(&info.refuse_host_scope) {
+        return refuse("session-ticket: host scope refused");
+    }
     json!({
         "ok": true,
         "protocol": 1,
@@ -4011,6 +4681,7 @@ async fn serve_socket(stream: TcpStream, shared: Arc<Shared>, info: Arc<Standalo
         let mut state = lock(&shared);
         state.connection += 1;
         state.commands = commands.clone();
+        state.accepted.push(commands.clone());
         state.sess.profile_id = plain(&profile).clone();
         state.connection
     };

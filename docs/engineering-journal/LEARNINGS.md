@@ -4,6 +4,22 @@
 
 ## 2026-10-25
 
+### Duplicate session titles answer -32603
+
+**Evidence.** Hermes v0.22.4 `gateway/session_controls.py` lines 319 to 330, `tui_gateway/ws.py` lines 431 to 441 and `hermes_state_runtime.py` line 23; `crates/talaria-app/src/directory.rs` (`DirectoryService::rename_result`); `crates/talaria-app/tests/mutate_wire.rs` (`taken_title_is_a_gateway_error`). The live check `live_rename_round_trip` in `crates/talaria-cli/tests/live_session_picker.rs` was not run for this change, so the fact rests on the source.
+
+**Mechanism.** A rename to a title another session holds raises a plain `ValueError` in Hermes's title store. The dispatcher catches only `RuntimeStoreError` and `sqlite3.Error`, so the error reaches the WebSocket loop, which answers `{"code": -32603, "message": "internal error"}` with no `data.reason`. Talaria refuses empty and over-long titles itself before sending, which leaves a duplicate title as the likely cause of a -32603 on a rename.
+
+**Generalizable rule.** When a gateway error carries no reason, map it by elimination: let the client's own checks rule out the other causes, then name the one left.
+
+### Stored scope through a sibling connection
+
+**Evidence.** Hermes v0.22.4 `gateway/session_controls.py` lines 130 to 131 and 154 to 164, `gateway/session_local_migration.py` lines 19 to 27, `gateway/run_api.py` lines 371 to 375, `gateway/session_listing.py` lines 88 to 106; `crates/talaria-app/src/directory.rs` (`start_list`). The live check `live_stored_scope_report` was not run for this change.
+
+**Mechanism.** A host-scoped connection that names another served profile reaches it through a sibling `AuthorityConnection`. The sibling copies the connection's identity with the other profile's id and registers as a native legacy transport, so `session.list` with `scope: "stored"` returns that profile's closed sessions rather than an empty list. A session counts as stored only when its last viewer detached with an `end_reason`; Talaria's detach sends none, so a session Talaria left stays in the live scope, and the picker asks for both.
+
+**Generalizable rule.** Before reading an empty list from a routed call as "nothing there", confirm the route can see that data at all.
+
 ### A rewind's result survives the mutation sender only through the contract override
 
 **Evidence.** `crates/talaria-app/src/rewind.rs` (`failure_from_mutation`) reads `rewound_count` and `target_message` from `MutationOutcome::Committed`; `crates/hermes-contract/src/generated/schemas.rs` (`SessionMutateResult`, the `extra` map added by the model picker's override, issue #230).

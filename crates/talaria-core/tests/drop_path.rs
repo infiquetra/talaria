@@ -58,6 +58,8 @@ fn recognises_and_rejects_drop_shapes() {
     assert!(paths("/help").is_empty());
     assert!(paths("/api").is_empty());
     assert!(paths("/a").is_empty());
+    assert!(paths("/skin ../etc").is_empty());
+    assert!(paths("/cd ../b").is_empty());
     assert_eq!(
         paths("/usr/lib"),
         vec![(PathBuf::from("/usr/lib"), String::new())]

@@ -8,6 +8,7 @@ pub mod checklist;
 pub mod commands;
 pub mod context;
 pub mod diff;
+pub mod directory;
 pub mod models;
 pub mod mutation;
 pub mod permissions;

@@ -4,6 +4,36 @@
 
 ## 2026-10-25
 
+### Side connection for the session picker
+
+**Decision.** The session picker lists every served profile, renames picker rows and exports over a second WebSocket with a host-scoped interactive ticket, no session tracking and no reconnect loop (`crates/talaria-app/src/side_connection.rs`, `crates/talaria-app/src/directory.rs`). It opens when the picker or `/export` first needs it and closes when the picker closes. It refuses every server request with the refusal the foreground gives a kind it does not support. When the host scope is refused it falls back to a profile-scoped ticket, and the picker lists the foreground profile only and says why. This is an exception to decision 2 of architecture decision 0007 (one connection per Talaria process). Issue #231.
+
+**Rationale.** The foreground link is profile scoped, so it cannot list other profiles; a host-scoped foreground link would put a `profile` key on every foreground call and change its tested wire shapes. An export reply over 8 MiB closes the connection that receives it, so it must never be the foreground link, and a slow list of many profiles must never hold up a keystroke or an event in front.
+
+**Rejected alternatives.** A host-scoped foreground link (changes every foreground request). Listing the foreground profile only (the picker exists to cross profiles). Opening the side connection at launch (a second socket for every session, used or not).
+
+**Revisit when** Hermes lets a profile-scoped connection list other profiles, or a second feature wants a connection of its own.
+
+### Adopt-and-retry for session renames
+
+**Decision.** A rename of a picker row Talaria holds no fences for is prepared against revision zero (`seed_untracked`). When Hermes refuses it with `revision_conflict`, Talaria retries once at the revision Hermes named, with a new request id, and stops after a second refusal. The loop builds and settles every rename and branch request with the one `MutationLedger` it holds, so a request id is never used twice in a process; the executor only sends.
+
+**Rationale.** Learning a row's fences would take `session.resume`, which attaches a viewer and refreshes the session's policy. In a terminal picker the operator has just typed the title they want, so the first attempt at a seeded revision is a probe, and Hermes's own source expects one retry without a re-read. A lost race still ends in a plain message.
+
+**Rejected alternatives.** Resuming the row to read its fences (side effects on another session). No retry, as Hermes Desktop does (a seeded rename would fail once every time). Letting the ledger travel with the effect while a stand-in served the loop (the stand-in counted request ids from `m1` again, so a compaction or a rewind during the call could reuse an id).
+
+**Revisit when** `session.list` rows carry their revision.
+
+### Exports are redacted by default
+
+**Decision.** `/export` and the picker's export dialog send `redact: true` unless the operator turns it off with `/export --no-redact` or `x` in the dialog. The default is the one constant `talaria_core::directory::export::REDACT_BY_DEFAULT`. An export never overwrites a file, is written with mode 0600, and a file name from Hermes that cannot be used falls back to `hermes_session_<id>.<extension>` with the id reduced to ASCII letters, digits, `-` and `_`.
+
+**Rationale.** An export leaves Hermes's store and is often shared, and Talaria never records secrets. Hermes's own `/save` exports without redaction unless asked, so this default differs on purpose.
+
+**Rejected alternatives.** Following `/save` (secrets in shared files by default). Asking on every export (an extra key for the common case).
+
+**Revisit when** the operator decides exports should follow `/save`: flip the constant and the tests that assert it.
+
 ### The rewind overlay travels in the view, not through a new screen method
 
 **Decision.** `View` carries `rewind: Option<RewindView>` while the overlay is open. The terminal screen (`crates/talaria-cli/src/run.rs`) opens the alternate-screen overlay when that field appears, closes it when it goes, and routes every key to `key_to_rewind` while it is set. The list height reaches the state as `UserAction::RewindViewport` before a key whenever it changed. Issue #233.

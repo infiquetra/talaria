@@ -582,6 +582,27 @@ impl Composer {
             | Action::QueueLeave
             | Action::ComposerSendNow
             | Action::ComposerSteer => {}
+            // Picker actions never edit the draft; the picker owns them.
+            Action::SessionPickerOpen
+            | Action::PickerUp
+            | Action::PickerDown
+            | Action::PickerPageUp
+            | Action::PickerPageDown
+            | Action::PickerTop
+            | Action::PickerBottom
+            | Action::PickerOpen
+            | Action::PickerRename
+            | Action::PickerBranch
+            | Action::PickerExport
+            | Action::PickerSearch
+            | Action::PickerProfileNext
+            | Action::PickerProfilePrev
+            | Action::PickerRefresh
+            | Action::PickerClose
+            | Action::PickerFormatMarkdown
+            | Action::PickerFormatJson
+            | Action::PickerFormatHtml
+            | Action::PickerToggleRedact => {}
         }
         false
     }

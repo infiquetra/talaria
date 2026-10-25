@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::{self, IsTerminal, Stdout};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
@@ -35,6 +35,7 @@ use talaria_core::attachments::CollapseRule;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
 use talaria_core::checklist::ChecklistCommit;
 use talaria_core::commands::PaletteInput;
+use talaria_core::directory::state::{PickerAction, PickerInput, PickerMode, PickerState};
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
@@ -70,6 +71,7 @@ use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
+use talaria_tui::session_picker::{PickerTheme, SessionPickerView};
 use talaria_tui::side::{SideTasksSection, SideTheme, shell_mode_title};
 use talaria_tui::status::{
     ApprovalsSegment, CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay,
@@ -115,6 +117,18 @@ pub enum ScreenInput {
     Resumed(suspend::SuspendResult),
     Continued,
     ComfortNotice(String),
+}
+
+/// The overlay the terminal shows, if any. The model picker and the session picker share
+/// the one overlay the terminal has, so only one of them is open at a time.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Overlay {
+    /// The live screen, with no overlay.
+    Live,
+    /// The model picker.
+    Models,
+    /// The session picker.
+    Sessions,
 }
 
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
@@ -164,7 +178,7 @@ pub struct TuiScreen {
     /// Terminal rows, for the palette's height cap.
     rows: u16,
     picker: Option<ModelOverlay>,
-    picker_open: bool,
+    overlay: Overlay,
     confirmation: Option<Confirmation>,
     confirmation_focused: Option<Instant>,
     /// The rewind overlay holds the alternate screen. Issue #233.
@@ -311,6 +325,153 @@ fn attachment_key(
         }
     }
     None
+}
+
+/// The picker's action for a key map action, when the two name the same thing.
+///
+/// The picker's own actions carry the `Picker` prefix in the key map; the state machine
+/// names them without it.
+fn picker_action(action: Action) -> Option<PickerAction> {
+    Some(match action {
+        Action::PickerUp => PickerAction::Up,
+        Action::PickerDown => PickerAction::Down,
+        Action::PickerPageUp => PickerAction::PageUp,
+        Action::PickerPageDown => PickerAction::PageDown,
+        Action::PickerTop => PickerAction::Top,
+        Action::PickerBottom => PickerAction::Bottom,
+        Action::PickerOpen => PickerAction::Open,
+        Action::PickerRename => PickerAction::Rename,
+        Action::PickerBranch => PickerAction::Branch,
+        Action::PickerExport => PickerAction::Export,
+        Action::PickerSearch => PickerAction::Search,
+        Action::PickerProfileNext => PickerAction::ProfileNext,
+        Action::PickerProfilePrev => PickerAction::ProfilePrev,
+        Action::PickerRefresh => PickerAction::Refresh,
+        Action::PickerClose => PickerAction::Close,
+        Action::PickerFormatMarkdown => PickerAction::FormatMarkdown,
+        Action::PickerFormatJson => PickerAction::FormatJson,
+        Action::PickerFormatHtml => PickerAction::FormatHtml,
+        Action::PickerToggleRedact => PickerAction::ToggleRedact,
+        _ => return None,
+    })
+}
+
+/// The character a key types, when it types one: a printable key without Ctrl or Alt.
+fn typed_character(key: &Key) -> Option<char> {
+    if key.mods.ctrl || key.mods.alt {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char(character) if !character.is_control() => Some(character),
+        _ => None,
+    }
+}
+
+/// The editing key a key is, when it is one: the keys the search line and the rename
+/// editor keep for themselves.
+fn editing_key(key: &Key) -> Option<PickerInput> {
+    Some(match key.code {
+        KeyCode::Backspace => PickerInput::Backspace,
+        KeyCode::Delete => PickerInput::Delete,
+        KeyCode::Left => PickerInput::Left,
+        KeyCode::Right => PickerInput::Right,
+        KeyCode::Home => PickerInput::Home,
+        KeyCode::End => PickerInput::End,
+        _ => return None,
+    })
+}
+
+/// Whether the key is the escape that closes the overlay.
+fn is_escape(key: &Key) -> bool {
+    key.code == KeyCode::Esc && !key.mods.ctrl && !key.mods.alt
+}
+
+/// Whether the key is the Ctrl+C that closes the overlay.
+fn is_ctrl_c(key: &Key) -> bool {
+    key.mods.ctrl
+        && !key.mods.alt
+        && !key.mods.super_key
+        && !key.mods.other
+        && matches!(key.code, KeyCode::Char('c' | 'C'))
+}
+
+/// The picker's input for one key, in the mode the picker is in.
+///
+/// The mode decides the rules. The list reads the picker's own key context; the export
+/// dialog reads the export context and nothing else; the search line and the rename
+/// editor take a printable key as text and keep their editing keys. Esc and Ctrl+C are
+/// fixed in every mode: they close the overlay and never reach the agent.
+fn picker_input(keymap: &KeyMap, key: Key, mode: &PickerMode) -> Option<PickerInput> {
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    if is_escape(&key) {
+        return Some(PickerInput::Escape);
+    }
+    if is_ctrl_c(&key) {
+        return Some(PickerInput::CtrlC);
+    }
+    match mode {
+        PickerMode::Waiting(_) => None,
+        PickerMode::List => keymap
+            .resolve_in(&key, KeyContext::SessionPicker)
+            .and_then(picker_action)
+            .map(PickerInput::Action)
+            .or_else(|| editing_key(&key)),
+        PickerMode::Search => {
+            if let Some(character) = typed_character(&key) {
+                return Some(PickerInput::Text(character));
+            }
+            // Enter keeps the query and returns to the list, so it never opens a row.
+            if key.code == KeyCode::Enter {
+                return Some(PickerInput::Enter);
+            }
+            keymap
+                .resolve_in(&key, KeyContext::SessionPicker)
+                .and_then(picker_action)
+                .map(PickerInput::Action)
+                .or_else(|| editing_key(&key))
+        }
+        PickerMode::Rename(_) => {
+            if let Some(character) = typed_character(&key) {
+                return Some(PickerInput::Text(character));
+            }
+            if key.code == KeyCode::Enter {
+                return Some(PickerInput::Enter);
+            }
+            editing_key(&key)
+        }
+        PickerMode::Export(_) => {
+            if key.code == KeyCode::Enter {
+                return Some(PickerInput::Enter);
+            }
+            keymap
+                .resolve_in(&key, KeyContext::SessionPickerExport)
+                .and_then(picker_action)
+                .map(PickerInput::Action)
+        }
+    }
+}
+
+/// The picker's input for a paste, in the mode the picker is in.
+///
+/// Only the search line and the rename editor take a paste, and only its first line:
+/// a pasted title is one line.
+fn picker_paste(mode: &PickerMode, text: &str) -> Option<PickerInput> {
+    match mode {
+        PickerMode::Search | PickerMode::Rename(_) => {
+            let first = text.lines().next().unwrap_or_default();
+            Some(PickerInput::Paste(first.to_owned()))
+        }
+        _ => None,
+    }
+}
+
+/// The current time as a Unix timestamp in seconds, for the picker's age column.
+fn unix_now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64())
 }
 
 fn confirmation_key(key: Key, focused: Option<Instant>, now: Instant) -> Option<ConfirmKey> {
@@ -626,7 +787,7 @@ fn approvals_segment(segment: &ApprovalSegmentText) -> ApprovalsSegment {
 
 impl TuiScreen {
     fn confirmation_takes_keys(&self) -> bool {
-        !self.picker_open
+        self.overlay == Overlay::Live
             && self.confirmation.is_some()
             && self.prompts.section().is_none()
             && self.composer.is_empty()
@@ -669,6 +830,47 @@ impl TuiScreen {
                 .terminal
                 .draw_overlay(|area, buf| draw_model_picker(&view, area, buf));
         }
+    }
+
+    /// Show the terminal overlay for one picker, closing the other one.
+    fn open_overlay(&mut self, kind: Overlay) {
+        if self.overlay == kind {
+            return;
+        }
+        if self.overlay != Overlay::Live {
+            let _ = self.terminal.close_overlay();
+        }
+        let _ = self.terminal.open_overlay();
+        self.overlay = kind;
+    }
+
+    /// Close the terminal overlay, when it shows the given picker.
+    fn close_overlay(&mut self, kind: Overlay) {
+        if self.overlay != kind {
+            return;
+        }
+        let _ = self.terminal.close_overlay();
+        self.overlay = Overlay::Live;
+    }
+
+    /// The session picker's overlay: open it and draw it, or close it.
+    fn sync_session_picker(&mut self, picker: Option<&PickerState>) {
+        match picker {
+            Some(state) => {
+                self.open_overlay(Overlay::Sessions);
+                self.draw_session_picker(state);
+            }
+            None => self.close_overlay(Overlay::Sessions),
+        }
+    }
+
+    /// The picker's own frame, over the whole screen.
+    fn draw_session_picker(&mut self, state: &PickerState) {
+        let theme = PickerTheme::default();
+        let now = unix_now();
+        let _ = self
+            .terminal
+            .draw_overlay(|area, buf| SessionPickerView::draw(state, area, buf, now, &theme));
     }
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
@@ -932,6 +1134,17 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                // The session picker's overlay owns every key while it is open: nothing
+                // reaches the composer, the prompt cards or the running turn.
+                if self.overlay == Overlay::Sessions {
+                    let Some(picker) = view.picker else {
+                        return Vec::new();
+                    };
+                    return picker_input(&self.keymap, Key::from(raw), picker.mode())
+                        .map(UserAction::Picker)
+                        .into_iter()
+                        .collect();
+                }
                 let input = input_key(&raw);
                 if view.pager_open {
                     return input
@@ -964,7 +1177,7 @@ impl TuiScreen {
                     return self.rewind_key(&raw, rewind.screen);
                 }
                 let key = Key::from(raw);
-                if self.picker_open {
+                if self.overlay == Overlay::Models {
                     return picker_key(&self.keymap, key)
                         .map(UserAction::ModelPicker)
                         .into_iter()
@@ -1111,6 +1324,15 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                if self.overlay == Overlay::Sessions {
+                    let Some(picker) = view.picker else {
+                        return Vec::new();
+                    };
+                    return picker_paste(picker.mode(), &text)
+                        .map(UserAction::Picker)
+                        .into_iter()
+                        .collect();
+                }
                 if view.pager_typing {
                     let first = text.split('\n').next().unwrap_or("");
                     return first
@@ -1125,7 +1347,7 @@ impl TuiScreen {
                         })
                         .collect();
                 }
-                if view.pager_open || view.rewind.is_some() || self.picker_open {
+                if view.pager_open || view.rewind.is_some() || self.overlay == Overlay::Models {
                     return Vec::new();
                 }
                 if let Some(search) = &mut self.search {
@@ -1409,19 +1631,13 @@ impl Screen for TuiScreen {
     fn sync_models(&mut self, picker: Option<PickerView<'_>>, confirmation: Option<&Confirmation>) {
         match picker {
             Some(view) => {
-                if !self.picker_open {
-                    let _ = self.terminal.open_overlay();
-                    self.picker_open = true;
-                }
+                self.open_overlay(Overlay::Models);
                 self.picker = Some(ModelOverlay::from_view(view));
                 self.draw_picker();
             }
             None => {
                 self.picker = None;
-                if self.picker_open {
-                    let _ = self.terminal.close_overlay();
-                    self.picker_open = false;
-                }
+                self.close_overlay(Overlay::Models);
             }
         }
         if self.confirmation.as_ref().map(|card| &card.token)
@@ -1431,6 +1647,10 @@ impl Screen for TuiScreen {
         }
         self.confirmation = confirmation.cloned();
         self.sync_confirmation_focus(Instant::now());
+    }
+
+    fn sync_picker(&mut self, picker: Option<&PickerState>) {
+        self.sync_session_picker(picker);
     }
 
     fn input(&mut self, input: ScreenInput, view: &View<'_>, now: Instant) -> Vec<UserAction> {
@@ -1516,8 +1736,14 @@ impl Screen for TuiScreen {
             let _ = self.terminal.close_overlay();
             self.rewind_open = false;
         }
-        if self.picker_open && self.transcript.is_none() {
+        if self.overlay == Overlay::Models && self.transcript.is_none() {
             self.draw_picker();
+            return;
+        }
+        if self.overlay == Overlay::Sessions {
+            if let Some(state) = view.picker {
+                self.draw_session_picker(state);
+            }
             return;
         }
         let width = self.terminal.viewport().width;
@@ -2214,7 +2440,7 @@ fn session(
         reported: (String::new(), 0),
         rows: size.1,
         picker: None,
-        picker_open: false,
+        overlay: Overlay::Live,
         confirmation: None,
         confirmation_focused: None,
         rewind_open: false,

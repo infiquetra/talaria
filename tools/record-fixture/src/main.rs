@@ -16,8 +16,8 @@ use hermes_client::{
 };
 use record_fixture::{
     AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, NO_TODO_TOOL, Preflight, PreflightInput,
-    SCENARIOS, Scenario, ScratchDir, build_substitutions, check_evidence, never_ensure, preflight,
-    run_scenario,
+    SCENARIOS, SESSION_PICKER, Scenario, ScratchDir, build_substitutions, check_evidence,
+    never_ensure, preflight, run_scenario,
 };
 
 #[derive(Parser)]
@@ -147,9 +147,12 @@ async fn record(settings: &RecordSettings) -> Outcome {
         match Scenario::named(name) {
             Some(scenario) => scenarios.push(scenario),
             None => {
+                // The picker scenario is recorded by name, so the operator is told of it too.
+                let mut known = SCENARIOS.to_vec();
+                known.push(SESSION_PICKER);
                 eprintln!(
                     "unknown scenario {name}; the scenarios are: {}",
-                    SCENARIOS.join(", ")
+                    known.join(", ")
                 );
                 return Outcome::Precondition;
             }
