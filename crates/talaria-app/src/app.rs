@@ -10,7 +10,7 @@ use std::future::Future;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use hermes_client::liveness::{Link, LinkEvent, LinkState};
@@ -34,6 +34,9 @@ use talaria_core::context::breakdown::Breakdown;
 use talaria_core::context::compact::{compact_end, compact_payload, interpret, settle_as};
 use talaria_core::context::tracker::{CompactingLine, ContextTracker, HeldBlocks};
 use talaria_core::context::usage::UsageReport;
+use talaria_core::directory::export::ExportFormat;
+use talaria_core::directory::rows::RowKey;
+use talaria_core::directory::state::{PickerEffect, PickerInput, PickerState};
 use talaria_core::models::{
     ConfirmKey, ModelCommandOrEffort, ModelsEffect, ModelsInput, ModelsState, NoticeLevel,
     PickerKey, PickerView, SavedModels, parse_effort_command, parse_model_command,
@@ -62,7 +65,7 @@ use talaria_core::side::{
 use talaria_core::workspace::{
     CdContext, CdEffect, CdInput, CdState, FolderCheck, SessionFolder, parse_cd_command,
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, MutexGuard, mpsc};
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
@@ -86,6 +89,7 @@ pub struct AttachmentView {
 }
 use crate::connection::{ConnectionService, OpenConnection, find_git_toplevel};
 use crate::context::{ContextBlock, ContextService, ContextTimeouts};
+use crate::directory::{DirectoryService, ExportResult, ExportTarget};
 use crate::failure::{self, LaunchFailure};
 use crate::launch::{
     Belongs, Launch, ListRow, MAX_HELD_PROMPTS, RESUME_HISTORY_CELLS, SessionRequest, StartMode,
@@ -100,6 +104,8 @@ use crate::sessions::{
     accept_event, submission_id,
 };
 use crate::side::{self, SideService};
+use crate::side_connection::SideScope;
+use crate::switch::{BranchOutcome, SwitchOutcome};
 use crate::workspace::WorkspaceService;
 
 /// How long a quit waits for a create or resume that is still in flight.
@@ -125,6 +131,29 @@ pub const STALE_SUBSCRIPTION: &str =
     "Hermes no longer knew this connection's subscription; the session is unaffected.";
 const LINK_STOPPED_NOTICE: &str = "This prompt was not sent: the connection to Hermes has stopped.";
 const REFRESH_FAILED_NOTICE: &str = "The transcript could not be refreshed after the reconnect.";
+/// The line a prompt gets while a switch or a branch runs.
+pub const SWITCHING_NOTICE: &str = "Switching sessions: your prompt was not sent. It is back in the composer; submit it again when the new session is ready.";
+/// The line a second session action gets while one runs.
+pub const SESSION_ACTION_NOTICE: &str =
+    "Another session action is still running. Try again when it finishes.";
+/// The line when the foreground session already is the target.
+pub const ALREADY_HERE_NOTICE: &str = "You are already in this session.";
+/// How many rows the picker shows at once.
+const PICKER_PAGE: usize = 20;
+/// The line a rename that could not be sent gets.
+const RENAME_FAILED: &str = "Hermes could not rename the session.";
+/// The line a rename the session changed under gets.
+const RENAME_FENCE: &str = "Hermes refused the rename: the session changed while the rename was being prepared. Try again.";
+/// The line a rename to a title another session holds gets.
+const RENAME_TAKEN: &str = "Hermes could not rename the session. Another session may already use that title; titles must be unique.";
+/// The line a branch while a turn runs gets; nothing is sent.
+const BRANCH_TURN_RUNNING: &str =
+    "A turn is running. Wait for it to finish or press Esc to stop it, then branch.";
+/// The line an export to a file Talaria cannot write in any format gets.
+const EXPORT_BAD_EXTENSION: &str = "Use a file name ending in .md, .json or .html.";
+/// The line an export with arguments Talaria does not know gets.
+const EXPORT_USAGE: &str =
+    "Use /export [--no-redact] [file]; the file name ends in .md, .json or .html.";
 
 /// What the link is doing, as the screen shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +292,8 @@ pub struct View<'a> {
     pub approvals: Option<ApprovalSegmentText>,
     /// The foreground session's folder and branch, the status line's only copy (#237).
     pub folder: Option<&'a SessionFolder>,
+    /// The session picker's state, while the overlay is open.
+    pub picker: Option<&'a PickerState>,
 }
 
 impl View<'_> {
@@ -283,6 +314,8 @@ pub trait Screen: ComposerDeadline + StatusHost {
         _confirmation: Option<&Confirmation>,
     ) {
     }
+    /// Open, draw or close the session picker overlay.
+    fn sync_picker(&mut self, _picker: Option<&PickerState>) {}
     fn model_list_height(&self) -> usize {
         10
     }
@@ -431,6 +464,30 @@ pub struct AppState {
     pub commands: CommandsState,
     /// Commands Talaria runs itself.
     pub local: LocalCommandTable,
+    /// The session picker's state, while the overlay is open.
+    pub picker: Option<PickerState>,
+    /// The profiles the side connection serves.
+    pub picker_profiles: Vec<String>,
+    /// The note the side connection's scope carries.
+    pub picker_scope_note: Option<String>,
+    /// The listing generation; one more than the last.
+    pub picker_generation: u64,
+    /// A switch or a branch is in flight.
+    pub switching: bool,
+    /// A rename, an export or a switch runs; one session action at a time.
+    pub session_action: bool,
+    /// The Hermes home, for opening a link for another profile.
+    pub hermes_home: PathBuf,
+    /// The folder the launch runs in; the default export target.
+    pub launch_folder: PathBuf,
+    /// The launch, rebuilt for another profile when the picker opens one.
+    pub launch: Option<Launch>,
+    /// The row a switch is running for.
+    pub pending_switch: Option<RowKey>,
+    /// The gateway's refusal reason of the last failed switch.
+    pub switch_reason: Option<String>,
+    /// The channel the loop reads; a new link forwards its events through it.
+    pub sender: Option<mpsc::UnboundedSender<AppMessage>>,
     /// The rewind overlay and the typed rewind commands. Issue #233.
     rewind: RewindState,
     /// Two quick eligible Esc presses open the rewind overlay.
@@ -486,8 +543,8 @@ pub struct AppState {
     /// The folder check and the move; a new one with every connection (#237).
     workspace_service: Option<Arc<WorkspaceService>>,
     counter: Arc<AtomicU64>,
-    service: Option<SessionService>,
-    link: Option<Link>,
+    pub(crate) service: Option<SessionService>,
+    pub(crate) link: Option<Link>,
     prompts: Option<Arc<Mutex<PromptService>>>,
     pending: Option<JoinHandle<Result<Ready, LaunchFailure>>>,
     command_service: Option<CommandService>,
@@ -556,6 +613,18 @@ impl AppState {
             palette: PaletteState::closed(),
             commands: CommandsState::default(),
             local: LocalCommandTable::builtin(),
+            picker: None,
+            picker_profiles: Vec::new(),
+            picker_scope_note: None,
+            picker_generation: 0,
+            switching: false,
+            session_action: false,
+            hermes_home: PathBuf::new(),
+            launch_folder: PathBuf::new(),
+            launch: None,
+            pending_switch: None,
+            switch_reason: None,
+            sender: None,
             rewind: RewindState::default(),
             double_esc: DoubleEsc::default(),
             retry: None,
@@ -649,6 +718,7 @@ impl AppState {
             folder: opened.map(|_| &self.folder),
             automation: &self.automation,
             automation_now_ms: wall_clock_ms(),
+            picker: self.picker.as_ref(),
         }
     }
 
@@ -662,6 +732,38 @@ impl AppState {
             .on_wake(&self.automation, wall_clock_ms());
         self.automation_deadline = wake.next_in.map(|after| now + after);
         wake.redraw
+    }
+
+    /// A copy of the state a switch or a branch works on. The copy holds the handles the
+    /// work needs and leaves the live state alone, so the loop keeps running while the
+    /// network call is in flight.
+    #[must_use]
+    pub fn working_copy(&self) -> AppState {
+        let mut copy = AppState::new(self.launch_id.clone());
+        copy.service = self.service.clone();
+        copy.opened = self.opened.clone();
+        copy.profile = self.profile.clone();
+        copy.model = self.model.clone();
+        copy.effort = self.effort.clone();
+        copy.hermes_home = self.hermes_home.clone();
+        copy.launch_folder = self.launch_folder.clone();
+        copy.launch = self.launch.clone();
+        copy.sender = self.sender.clone();
+        copy
+    }
+
+    /// What a finished switch or a finished branch leaves behind: the session that is in
+    /// front, the service it was opened on and the new link, when the profile changed.
+    #[must_use]
+    pub fn into_install(mut self) -> Option<SwitchInstall> {
+        let opened = self.opened.take()?;
+        let service = self.service.clone()?;
+        let link = self.link.take();
+        Some(SwitchInstall {
+            opened,
+            service,
+            link,
+        })
     }
 
     fn next_submission_id(&mut self) -> String {
@@ -814,6 +916,57 @@ pub enum AppMessage {
     Cd(CdInput),
     /// One input for the session picker (#231).
     Picker(talaria_core::directory::state::PickerInput),
+    /// A switch finished.
+    Switched {
+        outcome: SwitchOutcome,
+        /// The new foreground session, when the switch opened one.
+        install: Option<SwitchInstall>,
+        /// The gateway's refusal reason, when it refused.
+        reason: Option<String>,
+    },
+    /// A branch request came back; the loop settles it with the one ledger.
+    BranchSent {
+        request: MutationRequest,
+        outcome: MutationOutcome,
+    },
+    /// A branch finished.
+    Branched {
+        outcome: BranchOutcome,
+        /// The new foreground session, when the branch opened the child.
+        install: Option<SwitchInstall>,
+    },
+    /// A mutation over the foreground link finished.
+    Mutated {
+        request: MutationRequest,
+        outcome: MutationOutcome,
+    },
+    /// A rename over the side connection came back; the loop settles it with the one ledger.
+    RowRenamed {
+        key: RowKey,
+        title: String,
+        request: MutationRequest,
+        /// The gateway's outcome, or the failure text when nothing could be sent.
+        outcome: Result<MutationOutcome, String>,
+    },
+    /// An export finished.
+    Exported {
+        result: ExportResult,
+        /// The format the export asked for.
+        format: ExportFormat,
+        /// Whether the export left the secrets in.
+        redact: bool,
+    },
+}
+
+/// What a finished switch or branch brings back: the new session and, when the profile
+/// changed, the new link and its service.
+pub struct SwitchInstall {
+    /// The session that is in front now.
+    pub opened: OpenedSession,
+    /// The service over the link the session was opened on.
+    pub service: SessionService,
+    /// The new link, when the switch crossed to another profile.
+    pub link: Option<Link>,
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -917,6 +1070,44 @@ pub enum AppEffect {
     },
     /// Drop the pending completion request.
     CancelCompletion,
+    /// Open the side connection and list the sessions.
+    ListSessions {
+        generation: u64,
+    },
+    /// Switch the foreground session to this row.
+    Switch {
+        key: RowKey,
+    },
+    /// Send a branch request the loop built with the one ledger.
+    BranchSession {
+        request: MutationRequest,
+    },
+    /// Open the child a committed branch made, then let go of the parent.
+    OpenBranchChild {
+        receipt: Value,
+    },
+    /// Send a rename the loop built with the one ledger, over the side connection.
+    RenameRow {
+        key: RowKey,
+        title: String,
+        request: MutationRequest,
+    },
+    /// Export a row over the side connection.
+    ExportSession {
+        key: RowKey,
+        format: ExportFormat,
+        redact: bool,
+        target: ExportTarget,
+    },
+    /// A mutation is sent over the foreground link.
+    Mutate {
+        request: MutationRequest,
+        session_id: String,
+    },
+    /// Close a link a switch replaced.
+    CloseLink(Link),
+    /// Close the side connection.
+    CloseSide,
     /// Report the foreground pane state.
     ReportPane(talaria_core::attention::PaneReport),
     /// Emit a configured foreground alert.
@@ -1138,6 +1329,10 @@ fn rebuild_after_rewind(
         SessionFolder::from_snapshot(fresh.info.cwd.as_deref(), fresh.info.branch.as_deref());
     state
         .cd_ledger
+        .fences_mut(&fresh.session_id)
+        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
+    state
+        .ledger
         .fences_mut(&fresh.session_id)
         .adopt(Some(fresh.revision), Some(fresh.execution_generation));
     state.opened = Some(fresh);
@@ -1411,8 +1606,26 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Permissions(input) => permissions(state, input),
         AppMessage::Cd(input) => cd_input(state, input),
         AppMessage::Automation(event) => automation_event(state, event),
-        // The picker owns its routing; until it merges, its messages wait here.
-        AppMessage::Picker(_) => Vec::new(),
+        AppMessage::Picker(input) => picker_input(state, input),
+        AppMessage::Switched {
+            outcome,
+            install,
+            reason,
+        } => switched(state, outcome, install, reason),
+        AppMessage::BranchSent { request, outcome } => branch_sent(state, request, outcome),
+        AppMessage::Branched { outcome, install } => branched(state, outcome, install),
+        AppMessage::Mutated { request, outcome } => mutated(state, request, outcome),
+        AppMessage::RowRenamed {
+            key,
+            title,
+            request,
+            outcome,
+        } => row_renamed(state, key, title, request, outcome),
+        AppMessage::Exported {
+            result,
+            format,
+            redact,
+        } => exported(state, result, format, redact),
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -1624,7 +1837,13 @@ fn local_effect(
         | LocalAction::Skin
         | LocalAction::Theme
         | LocalAction::Permissions
-        | LocalAction::Cd => {
+        | LocalAction::Cd
+        | LocalAction::Queue
+        | LocalAction::Steer
+        | LocalAction::Resume
+        | LocalAction::Rename
+        | LocalAction::Branch
+        | LocalAction::Export => {
             return model_command(state, action, &argument);
         }
         LocalAction::Rewind
@@ -2055,8 +2274,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             ToggleContext::Composer => permissions(state, PermissionsInput::ToggleKey),
             ToggleContext::Completion | ToggleContext::Card => Vec::new(),
         },
-        // The picker owns its routing; until it merges, its inputs wait here.
-        UserAction::Picker(_) => Vec::new(),
+        UserAction::Picker(input) => picker_input(state, input),
     }
 }
 
@@ -2411,6 +2629,10 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
         LocalAction::Cd => return cd_input(state, CdInput::Command(parse_cd_command(argument))),
         LocalAction::Queue => return queue_line(state, queue_command(argument)),
         LocalAction::Steer => return queue_line(state, steer_command(argument)),
+        LocalAction::Resume => return resume_command(state, argument),
+        LocalAction::Rename => return rename_command(state, argument),
+        LocalAction::Branch => return branch_command(state, argument),
+        LocalAction::Export => return export_command(state, argument),
         _ => return Vec::new(),
     };
     models_input(
@@ -2421,6 +2643,671 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
             command,
         },
     )
+}
+
+/// The refusal for a session action while another one runs.
+fn session_busy(state: &AppState) -> Option<Vec<AppEffect>> {
+    if state.switching {
+        return Some(vec![AppEffect::CommitLines(vec![
+            SWITCHING_NOTICE.to_owned(),
+        ])]);
+    }
+    if state.session_action {
+        return Some(vec![AppEffect::CommitLines(vec![
+            SESSION_ACTION_NOTICE.to_owned(),
+        ])]);
+    }
+    None
+}
+
+/// Whether the foreground session already is this one.
+fn is_foreground(state: &AppState, session_id: &str) -> bool {
+    state
+        .opened
+        .as_ref()
+        .is_some_and(|opened| opened.session_id == session_id)
+}
+
+/// The foreground session's row.
+fn foreground_row(state: &AppState) -> Option<RowKey> {
+    state.opened.as_ref().map(|opened| RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.session_id.clone(),
+    })
+}
+
+/// `/resume [id]`: the picker without an id, a switch with one.
+fn resume_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    let argument = argument.trim();
+    if argument.is_empty() {
+        return open_picker(state);
+    }
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    if is_foreground(state, argument) {
+        return vec![AppEffect::CommitLines(vec![ALREADY_HERE_NOTICE.to_owned()])];
+    }
+    let key = RowKey {
+        profile: state.profile.clone(),
+        session_id: argument.to_owned(),
+    };
+    begin_switch(state, key)
+}
+
+/// Open the picker overlay and start the listing.
+fn open_picker(state: &mut AppState) -> Vec<AppEffect> {
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    state.picker_generation += 1;
+    let generation = state.picker_generation;
+    let foreground = foreground_row(state);
+    let profiles = state.picker_profiles.clone();
+    let scope_note = state.picker_scope_note.clone();
+    let mut picker = PickerState::new();
+    picker.set_save_folder(talaria_core::workspace::display_path(
+        &state.launch_folder,
+        state.home.as_deref(),
+    ));
+    state.picker = Some(picker);
+    picker_input(
+        state,
+        PickerInput::Opened {
+            profiles,
+            foreground,
+            scope_note,
+            cached: Vec::new(),
+            generation,
+        },
+    )
+}
+
+/// Start a switch: the guards first, then the effect the executor runs.
+fn begin_switch(state: &mut AppState, key: RowKey) -> Vec<AppEffect> {
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    state.switching = true;
+    state.session_action = true;
+    state.pending_switch = Some(key.clone());
+    vec![AppEffect::Switch { key }]
+}
+
+/// `/rename [title]`: the foreground session, over the foreground link.
+fn rename_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    let title = argument.trim();
+    if title.is_empty() {
+        let current = foreground_title(state);
+        return vec![AppEffect::CommitLines(vec![
+            format!("This session is called \"{current}\". Type /rename <new title> to change it."),
+            "Give the session a new title:".to_owned(),
+        ])];
+    }
+    let Some(opened) = state.opened.as_ref() else {
+        return vec![AppEffect::CommitLines(vec![RENAME_FAILED.to_owned()])];
+    };
+    let session_id = opened.session_id.clone();
+    let mut payload = serde_json::Map::new();
+    payload.insert("title".to_owned(), Value::String(title.to_owned()));
+    match state.ledger.build(&session_id, "rename", payload, false) {
+        Ok(request) => {
+            state.session_action = true;
+            vec![AppEffect::Mutate {
+                request,
+                session_id,
+            }]
+        }
+        Err(_) => vec![AppEffect::CommitLines(vec![RENAME_FAILED.to_owned()])],
+    }
+}
+
+/// The foreground session's title, or `untitled session` when it has none.
+fn foreground_title(state: &AppState) -> String {
+    state
+        .opened
+        .as_ref()
+        .and_then(|opened| opened.title.clone())
+        .map(|title| plain(&title))
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| "untitled session".to_owned())
+}
+
+/// `/branch [title]`: the foreground session, over the foreground link.
+fn branch_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    if turn_running(state) {
+        return vec![AppEffect::CommitLines(vec![BRANCH_TURN_RUNNING.to_owned()])];
+    }
+    let title = argument.trim();
+    let title = if title.is_empty() {
+        None
+    } else {
+        Some(title.to_owned())
+    };
+    start_branch(state, title)
+}
+
+/// Build the branch request with the one ledger, so a request id is never used twice, and
+/// hand it to the executor.
+fn start_branch(state: &mut AppState, title: Option<String>) -> Vec<AppEffect> {
+    match crate::switch::branch_request(state, title) {
+        Ok(request) => {
+            state.switching = true;
+            state.session_action = true;
+            vec![AppEffect::BranchSession { request }]
+        }
+        Err(BranchOutcome::Refused { text } | BranchOutcome::Branched { notice: text }) => {
+            vec![AppEffect::CommitLines(vec![text])]
+        }
+    }
+}
+
+/// `/export [--no-redact] [file]`: the foreground session, over the side connection.
+fn export_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    if let Some(refusal) = session_busy(state) {
+        return refusal;
+    }
+    let arguments = match talaria_core::directory::export::parse_export_args(argument) {
+        Ok(arguments) => arguments,
+        Err(talaria_core::directory::export::ExportArgError::BadExtension) => {
+            return vec![AppEffect::CommitLines(vec![
+                EXPORT_BAD_EXTENSION.to_owned(),
+            ])];
+        }
+        Err(_) => {
+            return vec![AppEffect::CommitLines(vec![EXPORT_USAGE.to_owned()])];
+        }
+    };
+    let Some(key) = foreground_row(state) else {
+        return vec![AppEffect::CommitLines(vec![EXPORT_USAGE.to_owned()])];
+    };
+    let format = match arguments.path.as_deref() {
+        Some(path) => std::path::Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(ExportFormat::from_extension)
+            .unwrap_or(ExportFormat::Markdown),
+        None => ExportFormat::Markdown,
+    };
+    let target = match arguments.path.as_deref() {
+        Some(raw_path) => {
+            let path = state.launch_folder.join(raw_path);
+            if path.exists() {
+                // The name as typed, so `./notes.md` reads back as `./notes.md`.
+                return vec![AppEffect::CommitLines(vec![format!(
+                    "{raw_path} already exists. Choose another file name."
+                )])];
+            }
+            let Some(folder) = path.parent() else {
+                return vec![AppEffect::CommitLines(vec![format!(
+                    "The folder for {} does not exist.",
+                    path.display()
+                )])];
+            };
+            if !folder.is_dir() {
+                return vec![AppEffect::CommitLines(vec![format!(
+                    "The folder for {} does not exist.",
+                    path.display()
+                )])];
+            }
+            ExportTarget::Explicit { path }
+        }
+        None => ExportTarget::Auto {
+            folder: state.launch_folder.clone(),
+        },
+    };
+    state.session_action = true;
+    vec![AppEffect::ExportSession {
+        key,
+        format,
+        redact: arguments.redact,
+        target,
+    }]
+}
+
+/// Apply one picker input and turn its effects into executor effects.
+fn picker_input(state: &mut AppState, input: PickerInput) -> Vec<AppEffect> {
+    let Some(mut picker) = state.picker.take() else {
+        return Vec::new();
+    };
+    if let PickerInput::Opened {
+        profiles,
+        scope_note,
+        ..
+    } = &input
+    {
+        // The scope the side connection reported is kept, so the next opening of the
+        // picker knows which profiles it may reach.
+        state.picker_profiles = profiles.clone();
+        state.picker_scope_note = scope_note.clone();
+    }
+    let produced = talaria_core::directory::state::update(&mut picker, input, PICKER_PAGE);
+    let mut effects = Vec::new();
+    let mut closed = false;
+    // Why a switch or branch was refused before anything was sent.
+    let mut refused = None;
+    for effect in produced {
+        match effect {
+            PickerEffect::List { generation } => {
+                effects.push(AppEffect::ListSessions { generation });
+            }
+            PickerEffect::Open(key) => {
+                if let Some(refusal) = session_busy(state) {
+                    refused = last_line(&refusal);
+                    effects.extend(refusal);
+                    continue;
+                }
+                if is_foreground(state, &key.session_id) {
+                    refused = Some(ALREADY_HERE_NOTICE.to_owned());
+                    effects.push(AppEffect::CommitLines(vec![ALREADY_HERE_NOTICE.to_owned()]));
+                    continue;
+                }
+                state.switching = true;
+                state.session_action = true;
+                state.pending_switch = Some(key.clone());
+                effects.push(AppEffect::Switch { key });
+            }
+            PickerEffect::Rename { key, title } => {
+                if let Some(refusal) = session_busy(state) {
+                    effects.extend(refusal);
+                    continue;
+                }
+                // A row the ledger has not seen is prepared against revision zero.
+                talaria_core::directory::fences::seed_untracked(&mut state.ledger, &key.session_id);
+                let mut payload = serde_json::Map::new();
+                payload.insert("title".to_owned(), Value::String(title.clone()));
+                match state
+                    .ledger
+                    .build(&key.session_id, "rename", payload, false)
+                {
+                    Ok(request) => {
+                        state.session_action = true;
+                        effects.push(AppEffect::RenameRow {
+                            key,
+                            title,
+                            request,
+                        });
+                    }
+                    Err(_) => effects.push(AppEffect::CommitLines(vec![RENAME_FAILED.to_owned()])),
+                }
+            }
+            PickerEffect::Branch { title } => {
+                if let Some(refusal) = session_busy(state) {
+                    refused = last_line(&refusal);
+                    effects.extend(refusal);
+                    continue;
+                }
+                let started = start_branch(state, title);
+                if !started
+                    .iter()
+                    .any(|effect| matches!(effect, AppEffect::BranchSession { .. }))
+                {
+                    refused = last_line(&started);
+                }
+                effects.extend(started);
+            }
+            PickerEffect::Export {
+                key,
+                format,
+                redact,
+            } => {
+                if let Some(refusal) = session_busy(state) {
+                    effects.extend(refusal);
+                    continue;
+                }
+                let target = ExportTarget::Auto {
+                    folder: state.launch_folder.clone(),
+                };
+                state.session_action = true;
+                effects.push(AppEffect::ExportSession {
+                    key,
+                    format,
+                    redact,
+                    target,
+                });
+            }
+            PickerEffect::Close => {
+                closed = true;
+                state.picker = None;
+                if let Some(notice) = picker.notice().map(str::to_owned) {
+                    effects.push(AppEffect::CommitLines(vec![notice]));
+                }
+                effects.push(AppEffect::CloseSide);
+            }
+        }
+    }
+    if !closed {
+        // Nothing was sent, so no answer will end the wait.
+        if let Some(text) = refused {
+            picker.end_wait(text);
+        }
+        state.picker = Some(picker);
+    }
+    effects
+}
+
+/// The last line these effects commit.
+fn last_line(effects: &[AppEffect]) -> Option<String> {
+    effects.iter().rev().find_map(|effect| match effect {
+        AppEffect::CommitLines(lines) => lines.last().cloned(),
+        _ => None,
+    })
+}
+
+/// Another session is in front: the picker's work is done, so it closes with its side
+/// connection.
+fn close_picker(state: &mut AppState) -> Vec<AppEffect> {
+    if state.picker.take().is_some() {
+        vec![AppEffect::CloseSide, AppEffect::Redraw]
+    } else {
+        Vec::new()
+    }
+}
+
+/// The switch or branch the picker waited for left the old session in front: back to the
+/// list, with why.
+fn end_picker_wait(state: &mut AppState, text: &str) {
+    if let Some(picker) = state.picker.as_mut() {
+        picker.end_wait(text);
+    }
+}
+
+/// A switch finished: the new session is in front, or the old one stayed.
+fn switched(
+    state: &mut AppState,
+    outcome: SwitchOutcome,
+    install: Option<SwitchInstall>,
+    reason: Option<String>,
+) -> Vec<AppEffect> {
+    state.switching = false;
+    state.session_action = false;
+    let target = state.pending_switch.take();
+    match outcome {
+        SwitchOutcome::AlreadyHere => {
+            end_picker_wait(state, ALREADY_HERE_NOTICE);
+            vec![AppEffect::CommitLines(vec![ALREADY_HERE_NOTICE.to_owned()])]
+        }
+        SwitchOutcome::Failed { text } => {
+            end_picker_wait(state, &text);
+            let mut lines = Vec::new();
+            if reason.as_deref() == Some("not_found")
+                && let Some(target) = target
+            {
+                lines.push(format!(
+                    "No session with the id {} in the profile {}. Type /resume to pick from a list.",
+                    plain(&target.session_id),
+                    plain(&target.profile)
+                ));
+            }
+            lines.push(text);
+            vec![AppEffect::CommitLines(lines)]
+        }
+        SwitchOutcome::Switched { notice } => {
+            let mut effects = vec![AppEffect::CommitLines(vec![notice])];
+            if let Some(install) = install {
+                effects.extend(install_session(state, install));
+            }
+            effects.extend(close_picker(state));
+            effects
+        }
+    }
+}
+
+/// A branch finished: the child is in front, or the parent stayed.
+fn branched(
+    state: &mut AppState,
+    outcome: BranchOutcome,
+    install: Option<SwitchInstall>,
+) -> Vec<AppEffect> {
+    state.switching = false;
+    state.session_action = false;
+    match outcome {
+        BranchOutcome::Branched { notice } => {
+            let mut effects = vec![AppEffect::CommitLines(vec![notice])];
+            if let Some(install) = install {
+                effects.extend(install_session(state, install));
+            }
+            effects.extend(close_picker(state));
+            effects
+        }
+        BranchOutcome::Refused { text } => {
+            end_picker_wait(state, &text);
+            vec![AppEffect::CommitLines(vec![text])]
+        }
+    }
+}
+
+/// A branch request came back: settle it, try once more after a fence refusal when the turn
+/// did not change, open the child after a commit, or say why Hermes refused.
+fn branch_sent(
+    state: &mut AppState,
+    request: MutationRequest,
+    outcome: MutationOutcome,
+) -> Vec<AppEffect> {
+    state.ledger.settle(&request, &outcome);
+    if let MutationOutcome::FenceRefused { .. } = &outcome
+        && talaria_core::directory::fences::branch_may_retry(
+            request.expected_generation.unwrap_or_default(),
+            &outcome,
+        )
+        && let Some(retry) = state.ledger.retry_after_fence(&request, &outcome)
+    {
+        return vec![AppEffect::BranchSession { request: retry }];
+    }
+    match outcome {
+        MutationOutcome::Committed(receipt) => vec![AppEffect::OpenBranchChild { receipt }],
+        outcome => branched(state, crate::switch::branch_refusal(&outcome), None),
+    }
+}
+
+/// Put the new session in front: the link, the service, the fences and the history.
+fn install_session(state: &mut AppState, install: SwitchInstall) -> Vec<AppEffect> {
+    let SwitchInstall {
+        opened,
+        service,
+        link,
+    } = install;
+    let mut effects = Vec::new();
+    state.service = Some(service);
+    if let Some(link) = link {
+        if let Some(old) = state.link.replace(link) {
+            effects.push(AppEffect::CloseLink(old));
+        }
+        let counter = Arc::clone(&state.counter);
+        let launch_id = state.launch_id.clone();
+        state.prompts = Some(Arc::new(Mutex::new(PromptService::new(Box::new(
+            move || submission_id(&launch_id, counter.fetch_add(1, Ordering::SeqCst) + 1),
+        )))));
+    }
+    effects.extend(opened_session(state, opened, None));
+    effects
+}
+
+/// A mutation over the foreground link finished.
+fn mutated(
+    state: &mut AppState,
+    request: MutationRequest,
+    outcome: MutationOutcome,
+) -> Vec<AppEffect> {
+    state.ledger.settle(&request, &outcome);
+    match &outcome {
+        MutationOutcome::Committed(result) => {
+            state.session_action = false;
+            let title = match result.get("title").and_then(Value::as_str) {
+                Some(title) if !title.trim().is_empty() => title.to_owned(),
+                _ => request
+                    .payload
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            };
+            if let Some(opened) = state.opened.as_mut()
+                && opened.session_id == request.session_id
+            {
+                opened.title = Some(title.clone());
+            }
+            vec![AppEffect::CommitLines(vec![format!(
+                "Renamed to \"{title}\"."
+            )])]
+        }
+        MutationOutcome::FenceRefused { .. } => {
+            // The session changed under the rename: one more try at the fences Hermes
+            // named, and no more than that.
+            if let Some(retry) = state.ledger.retry_after_fence(&request, &outcome) {
+                return vec![AppEffect::Mutate {
+                    request: retry,
+                    session_id: request.session_id.clone(),
+                }];
+            }
+            state.session_action = false;
+            vec![AppEffect::CommitLines(vec![RENAME_FENCE.to_owned()])]
+        }
+        MutationOutcome::Refused { rpc_code, .. } if *rpc_code == -32603 => {
+            state.session_action = false;
+            vec![AppEffect::CommitLines(vec![RENAME_TAKEN.to_owned()])]
+        }
+        _ => {
+            state.session_action = false;
+            vec![AppEffect::CommitLines(vec![RENAME_FAILED.to_owned()])]
+        }
+    }
+}
+
+/// A rename over the side connection finished.
+fn row_renamed(
+    state: &mut AppState,
+    key: RowKey,
+    title: String,
+    request: MutationRequest,
+    outcome: Result<MutationOutcome, String>,
+) -> Vec<AppEffect> {
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(text) => {
+            state.session_action = false;
+            return vec![AppEffect::CommitLines(vec![text])];
+        }
+    };
+    state.ledger.settle(&request, &outcome);
+    // The session changed under the rename: one more try at the fences Hermes named.
+    if let MutationOutcome::FenceRefused { .. } = &outcome
+        && let Some(retry) = state.ledger.retry_after_fence(&request, &outcome)
+    {
+        return vec![AppEffect::RenameRow {
+            key,
+            title,
+            request: retry,
+        }];
+    }
+    state.session_action = false;
+    let title = match crate::directory::DirectoryService::rename_result(&outcome, &title) {
+        crate::directory::RenameResult::Renamed { title, .. } => title,
+        crate::directory::RenameResult::Failed { text } => {
+            return vec![AppEffect::CommitLines(vec![text])];
+        }
+    };
+    // Renaming the session in front from the picker renames it everywhere.
+    if key.profile == state.profile
+        && let Some(opened) = state.opened.as_mut()
+        && opened.session_id == key.session_id
+    {
+        opened.title = Some(title.clone());
+    }
+    if let Some(picker) = state.picker.as_mut() {
+        let _ = talaria_core::directory::state::update(
+            picker,
+            PickerInput::Renamed {
+                key,
+                title: title.clone(),
+            },
+            PICKER_PAGE,
+        );
+    }
+    vec![AppEffect::CommitLines(vec![format!(
+        "Renamed to \"{title}\"."
+    )])]
+}
+
+/// An export finished.
+fn exported(
+    state: &mut AppState,
+    result: ExportResult,
+    format: ExportFormat,
+    redact: bool,
+) -> Vec<AppEffect> {
+    state.session_action = false;
+    match result {
+        ExportResult::Written { path, bytes } => {
+            if bytes == 0 {
+                // Hermes answered without any content: the answer was not read, and
+                // nothing is left behind.
+                let _ = std::fs::remove_file(&path);
+                return vec![AppEffect::CommitLines(vec![
+                    "Hermes's export answer could not be read, so nothing was written.".to_owned(),
+                ])];
+            }
+            let title = foreground_title(state);
+            let secrets = if redact {
+                "secrets redacted"
+            } else {
+                "secrets included"
+            };
+            // A file in the launch folder is named from it, as `./<name>`.
+            let shown = match path.strip_prefix(&state.launch_folder) {
+                Ok(relative) => {
+                    let relative = relative.strip_prefix(".").unwrap_or(relative);
+                    format!("./{}", relative.display())
+                }
+                Err(_) => path.display().to_string(),
+            };
+            vec![AppEffect::CommitLines(vec![format!(
+                "Exported \"{title}\" to {shown} ({}, {}, {secrets}).",
+                talaria_core::directory::export::format_size(bytes),
+                format.label()
+            )])]
+        }
+        ExportResult::Failed { text } => {
+            vec![AppEffect::CommitLines(vec![export_failure_text(&text)])]
+        }
+    }
+}
+
+/// The export's failure text, by the reason the side connection reported.
+fn export_failure_text(text: &str) -> String {
+    let reason = text
+        .strip_prefix("Hermes could not export the session: ")
+        .unwrap_or(text)
+        .trim();
+    match reason {
+        "not_found" => {
+            "This session has nothing to export yet: Hermes has no saved messages for it."
+                .to_owned()
+        }
+        "export_too_large" => {
+            "This session is too large to export as JSON. Export it as Markdown instead."
+                .to_owned()
+        }
+        "unknown_method" => {
+            "This Hermes gateway has no session.export. Ask the host to upgrade its Hermes."
+                .to_owned()
+        }
+        "the reply was too large" => {
+            "Hermes's export was too large to hold. Export it as Markdown instead, or in smaller pieces."
+                .to_owned()
+        }
+        "no answer within 10 s" | "connection closed" => {
+            "No answer from Hermes within 60 seconds, or the connection dropped. Run /export again."
+                .to_owned()
+        }
+        other => format!("Hermes could not export this session ({other})."),
+    }
 }
 
 /// One key binding, read from the configuration file.
@@ -2622,6 +3509,13 @@ fn tasks_key(state: &AppState, key: &InputKey) -> bool {
 fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         return Vec::new();
+    }
+    // A switch is running: the prompt stays in the composer and nothing is sent.
+    if state.switching {
+        return vec![
+            AppEffect::CommitLines(vec![SWITCHING_NOTICE.to_owned()]),
+            AppEffect::LoadDraft(text),
+        ];
     }
     if let Some(command) = local_line(&text) {
         return match command {
@@ -3009,6 +3903,12 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     .cd_ledger
                     .fences_mut(&session_id)
                     .observe(&session_id, &type_name, &payload);
+                // So do the fences of a rename or a branch: a finished turn moves the
+                // generation they must present.
+                state
+                    .ledger
+                    .fences_mut(&session_id)
+                    .observe(&session_id, &type_name, &payload);
                 if type_name == "session.info"
                     && let Some(cwd) = payload.get("cwd").and_then(Value::as_str)
                 {
@@ -3086,6 +3986,11 @@ fn opened_session(
 ) -> Vec<AppEffect> {
     state.model = opened.info.model.clone();
     state.effort = opened.effort.clone();
+    // The snapshot's fences are the ones a later mutation must present.
+    state
+        .ledger
+        .fences_mut(&opened.session_id)
+        .adopt(Some(opened.revision), Some(opened.execution_generation));
     let mut effects = models_input(
         state,
         ModelsInput::ForegroundChanged {
@@ -3407,6 +4312,10 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
     ));
     state
         .cd_ledger
+        .fences_mut(&fresh.session_id)
+        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
+    state
+        .ledger
         .fences_mut(&fresh.session_id)
         .adopt(Some(fresh.revision), Some(fresh.execution_generation));
     let mut fresh = fresh;
@@ -4301,6 +5210,14 @@ async fn open_session(
             false,
         ),
         request @ SessionRequest::ById { .. } => (request, true),
+        // Nothing picked a session for us, so the newest one in the folder opens. The
+        // command line resolves its own pick before the loop starts.
+        SessionRequest::Pick => (
+            SessionRequest::Latest {
+                workspace: workspace.clone(),
+            },
+            false,
+        ),
         request => (request, false),
     };
     let opened = service
@@ -4388,6 +5305,9 @@ fn held_text(held: &VecDeque<String>) -> String {
     text
 }
 
+/// A unit of work that waits for the next frame.
+type Deferred = Box<dyn FnOnce() + Send + 'static>;
+
 /// The executor side of the loop: everything it needs to start a call.
 struct Executor {
     sender: mpsc::UnboundedSender<AppMessage>,
@@ -4397,6 +5317,12 @@ struct Executor {
     /// order they were submitted.
     prompts: mpsc::UnboundedSender<(SessionService, Effect)>,
     model_files: mpsc::UnboundedSender<ModelFileJob>,
+    /// The side connection: the listing, the picker renames and the exports.
+    side: Arc<Mutex<DirectoryService>>,
+    /// Whether the side connection is open.
+    side_open: Arc<AtomicBool>,
+    /// Work that waits for the next frame, so the overlay is on screen first.
+    deferred: std::sync::Mutex<Vec<Deferred>>,
 }
 
 enum ModelFileJob {
@@ -4466,6 +5392,9 @@ impl Executor {
             prompts,
             model_files,
             started: Instant::now(),
+            side: Arc::new(Mutex::new(DirectoryService::new())),
+            side_open: Arc::new(AtomicBool::new(false)),
+            deferred: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -4513,6 +5442,29 @@ impl Executor {
         tokio::spawn(async move {
             let _ = sender.send(task.await);
         });
+    }
+
+    /// Run a task whose result the loop does not read.
+    fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) {
+        tokio::spawn(task);
+    }
+
+    /// Hold work until the next frame is on screen.
+    fn defer(&self, work: impl FnOnce() + Send + 'static) {
+        if let Ok(mut deferred) = self.deferred.lock() {
+            deferred.push(Box::new(work));
+        }
+    }
+
+    /// Run the work that waited for the frame.
+    fn run_deferred(&self) {
+        let work = match self.deferred.lock() {
+            Ok(mut deferred) => deferred.drain(..).collect::<Vec<Deferred>>(),
+            Err(_) => Vec::new(),
+        };
+        for work in work {
+            work();
+        }
     }
 
     fn prompt_task<F, Fut>(&self, prompts: &Arc<Mutex<PromptService>>, task: F)
@@ -4703,6 +5655,42 @@ fn side_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
 
 fn notice_texts(notices: Vec<crate::prompts::PromptNotice>) -> Vec<String> {
     notices.into_iter().map(|notice| notice.text).collect()
+}
+
+/// The side connection, opened when none is open yet. The guard is held for the call.
+async fn side_service<'a>(
+    side: &'a Arc<Mutex<DirectoryService>>,
+    side_open: &AtomicBool,
+    home: &Path,
+    profile: &str,
+) -> Result<MutexGuard<'a, DirectoryService>, String> {
+    let mut service = side.lock().await;
+    if !side_open.load(Ordering::SeqCst) {
+        service
+            .open(home, profile)
+            .await
+            .map_err(|error| error.phrase().to_owned())?;
+        side_open.store(true, Ordering::SeqCst);
+    }
+    Ok(service)
+}
+
+/// The profiles the side connection may reach and the note its scope carries.
+fn scope_parts(scope: &SideScope) -> (Vec<String>, Option<String>) {
+    match scope {
+        SideScope::Host { profiles } => (profiles.clone(), None),
+        SideScope::ProfileOnly { profile, why } => (
+            vec![profile.clone()],
+            Some(format!(
+                "Showing only the profile {profile}: Hermes did not allow a connection across profiles ({why})."
+            )),
+        ),
+    }
+}
+
+/// Tell the screen what the picker shows, so it can open or close the overlay.
+fn sync_picker<S: Screen>(state: &AppState, screen: &mut S) {
+    screen.sync_picker(state.picker.as_ref());
 }
 
 /// Apply one message and run its effects. Returns whether the screen needs a draw.
@@ -5065,6 +6053,165 @@ fn apply<S: Screen>(
                     commands.cancel_completion();
                 }
             }
+            AppEffect::ListSessions { generation } => {
+                let side = Arc::clone(&executor.side);
+                let sender = executor.sender.clone();
+                let side_open = Arc::clone(&executor.side_open);
+                let home = state.hermes_home.clone();
+                let profile = state.profile.clone();
+                let foreground = foreground_row(state);
+                // The overlay has to be on screen before the first list frame reaches
+                // the gateway, so the listing waits for the next frame.
+                executor.defer(move || {
+                    tokio::spawn(async move {
+                        let mut service = side.lock().await;
+                        if !side_open.load(Ordering::SeqCst) {
+                            // The first listing opens the side connection; its scope tells the
+                            // picker which profiles it may reach.
+                            match service.open(&home, &profile).await {
+                                Ok(scope) => {
+                                    side_open.store(true, Ordering::SeqCst);
+                                    let (profiles, scope_note) = scope_parts(&scope);
+                                    let _ = sender.send(AppMessage::Picker(PickerInput::Opened {
+                                        profiles,
+                                        foreground,
+                                        scope_note,
+                                        cached: Vec::new(),
+                                        generation,
+                                    }));
+                                }
+                                Err(error) => {
+                                    let _ =
+                                        sender.send(AppMessage::Picker(PickerInput::SideFailed {
+                                            reason: error.phrase().to_owned(),
+                                        }));
+                                }
+                            }
+                            return;
+                        }
+                        // The listing runs in its own tasks, so a slow profile never holds
+                        // the loop.
+                        let (tx, mut rx) = mpsc::channel(64);
+                        let forward = sender.clone();
+                        tokio::spawn(async move {
+                            while let Some(message) = rx.recv().await {
+                                if forward.send(message).is_err() {
+                                    break;
+                                }
+                            }
+                        });
+                        service.start_list(tx);
+                    });
+                });
+            }
+            AppEffect::Switch { key } => {
+                let mut copy = state.working_copy();
+                executor.send_later(async move {
+                    let outcome = crate::switch::switch_foreground(&mut copy, key).await;
+                    let reason = copy.switch_reason.take();
+                    let install = copy.into_install();
+                    AppMessage::Switched {
+                        outcome,
+                        install,
+                        reason,
+                    }
+                });
+            }
+            AppEffect::BranchSession { request } => {
+                let client = state
+                    .service
+                    .as_ref()
+                    .and_then(|service| service.client().cloned());
+                executor.send_later(async move {
+                    match client {
+                        Some(client) => {
+                            let outcome = MutationClient::new(client).send(&request).await;
+                            AppMessage::BranchSent { request, outcome }
+                        }
+                        None => AppMessage::Branched {
+                            outcome: BranchOutcome::Refused {
+                                text: "Talaria is not connected to Hermes.".to_owned(),
+                            },
+                            install: None,
+                        },
+                    }
+                });
+            }
+            AppEffect::OpenBranchChild { receipt } => {
+                let mut copy = state.working_copy();
+                executor.send_later(async move {
+                    let outcome = crate::switch::open_branch_child(&mut copy, &receipt).await;
+                    let install = copy.into_install();
+                    AppMessage::Branched { outcome, install }
+                });
+            }
+            AppEffect::RenameRow {
+                key,
+                title,
+                request,
+            } => {
+                let side = Arc::clone(&executor.side);
+                let side_open = Arc::clone(&executor.side_open);
+                let home = state.hermes_home.clone();
+                let profile = state.profile.clone();
+                executor.send_later(async move {
+                    let outcome = match side_service(&side, &side_open, &home, &profile).await {
+                        Ok(mut service) => service.send_rename(&key, &request).await,
+                        Err(text) => Err(text),
+                    };
+                    AppMessage::RowRenamed {
+                        key,
+                        title,
+                        request,
+                        outcome,
+                    }
+                });
+            }
+            AppEffect::ExportSession {
+                key,
+                format,
+                redact,
+                target,
+            } => {
+                let side = Arc::clone(&executor.side);
+                let side_open = Arc::clone(&executor.side_open);
+                let home = state.hermes_home.clone();
+                let profile = state.profile.clone();
+                executor.send_later(async move {
+                    let result = match side_service(&side, &side_open, &home, &profile).await {
+                        Ok(mut service) => service.export(&key, format, redact, target).await,
+                        Err(text) => ExportResult::Failed { text },
+                    };
+                    AppMessage::Exported {
+                        result,
+                        format,
+                        redact,
+                    }
+                });
+            }
+            AppEffect::Mutate { request, .. } => {
+                let Some(service) = state.service.clone() else {
+                    continue;
+                };
+                let Some(client) = service.client().cloned() else {
+                    continue;
+                };
+                executor.send_later(async move {
+                    let outcome = MutationClient::new(client).send(&request).await;
+                    AppMessage::Mutated { request, outcome }
+                });
+            }
+            AppEffect::CloseLink(link) => {
+                executor.spawn(async move { link.close().await });
+            }
+            AppEffect::CloseSide => {
+                let side = Arc::clone(&executor.side);
+                executor.side_open.store(false, Ordering::SeqCst);
+                executor.spawn(async move {
+                    let mut service = side.lock().await;
+                    service.close().await;
+                });
+            }
             AppEffect::ReportPane(pane) => screen.report_pane(
                 &pane,
                 state
@@ -5411,7 +6558,11 @@ pub async fn run<S: Screen>(
     state.list_title = setup.list_title;
     state.model = launch.model.clone();
     state.effort = launch.effort.clone();
+    state.hermes_home = setup.home.clone();
+    state.launch_folder = launch.folder.clone();
+    state.launch = Some(launch.clone());
     sync_models(&mut state, screen);
+    sync_picker(&state, screen);
     screen.draw(&state.view());
     screen.report_pane(&state.attention.pane(), None);
     if !setup.notices.is_empty() {
@@ -5427,6 +6578,7 @@ pub async fn run<S: Screen>(
 
     let (sender, mut messages) = mpsc::unbounded_channel();
     let executor = Executor::new(sender);
+    state.sender = Some(executor.sender.clone());
     let mut pending = Some(tokio::spawn(connect_and_open(
         launch,
         setup.home,
@@ -5462,6 +6614,7 @@ pub async fn run<S: Screen>(
             input = inputs.recv() => {
                 let Some(input) = input else { break Ending::InputClosed };
                 sync_models(&mut state, screen);
+                sync_picker(&state, screen);
                 let actions = screen.input(input, &state.view(), Instant::now());
                 for action in actions {
                     redraw |= apply(&mut state, AppMessage::ForegroundKey(action), screen, &executor);
@@ -5524,6 +6677,7 @@ pub async fn run<S: Screen>(
             while !state.quitting {
                 let Ok(input) = inputs.try_recv() else { break };
                 sync_models(&mut state, screen);
+                sync_picker(&state, screen);
                 let actions = screen.input(input, &state.view(), Instant::now());
                 for action in actions {
                     redraw |= apply(
@@ -5548,8 +6702,11 @@ pub async fn run<S: Screen>(
         }
         if redraw {
             sync_models(&mut state, screen);
+            sync_picker(&state, screen);
             screen.draw(&state.view());
             screen.on_tick(Instant::now());
+            // The frame is on screen; the work that waited for it may go.
+            executor.run_deferred();
         }
     };
 

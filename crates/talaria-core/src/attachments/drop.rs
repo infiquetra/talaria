@@ -36,7 +36,7 @@ pub fn drop_candidates(text: &str, home: &Path) -> Vec<DropCandidate> {
         || line.starts_with("~/")
         || line.starts_with("./")
         || line.starts_with("../")
-        || (line.starts_with('/') && line[1..].contains(['/', '.'])))
+        || (line.starts_with('/') && first_token(line)[1..].contains(['/', '.'])))
     {
         return Vec::new();
     }
@@ -71,6 +71,22 @@ pub fn drop_candidates(text: &str, home: &Path) -> Vec<DropCandidate> {
         });
     }
     candidates
+}
+
+/// The text before the first whitespace a backslash does not escape. A slash command's
+/// argument may hold `/` or `.` without making the line a path.
+fn first_token(line: &str) -> &str {
+    let mut escaped = false;
+    for (at, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch.is_whitespace() {
+            return &line[..at];
+        }
+    }
+    line
 }
 
 fn expand_home(path: &str, home: &Path) -> PathBuf {

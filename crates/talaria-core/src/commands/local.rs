@@ -48,6 +48,14 @@ pub enum LocalAction {
     Queue,
     /// Steer the running turn with typed text. Issue #232.
     Steer,
+    /// Open the session picker, or switch to one session.
+    Resume,
+    /// Rename the current session.
+    Rename,
+    /// Branch the current session and switch into the child.
+    Branch,
+    /// Export a session to a file.
+    Export,
 }
 
 /// One local command.
@@ -98,6 +106,33 @@ const BUILTIN: &[LocalCommand] = &[
         action: LocalAction::Tasks,
     },
     LocalCommand {
+        name: "btw",
+        aliases: &[],
+        summary: "Ask a side question; it is not added to the conversation",
+        args_hint: "<question>",
+        takes_argument: true,
+        action: LocalAction::Btw,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "skin",
+        aliases: &[],
+        summary: "Show or change the Hermes skin",
+        args_hint: "[name]",
+        takes_argument: true,
+        action: LocalAction::Skin,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "theme",
+        aliases: &[],
+        summary: "Show colours, or set the background to light, dark or auto",
+        args_hint: "[light|dark|auto]",
+        takes_argument: true,
+        action: LocalAction::Theme,
+        tag: "talaria",
+    },
+    LocalCommand {
         name: "model",
         aliases: &[],
         summary: "Choose the model of this session",
@@ -143,33 +178,6 @@ const BUILTIN: &[LocalCommand] = &[
         tag: "talaria",
     },
     LocalCommand {
-        name: "btw",
-        aliases: &[],
-        summary: "Ask a side question; it is not added to the conversation",
-        args_hint: "<question>",
-        takes_argument: true,
-        action: LocalAction::Btw,
-        tag: "talaria",
-    },
-    LocalCommand {
-        name: "skin",
-        aliases: &[],
-        summary: "Show or change the Hermes skin",
-        args_hint: "[name]",
-        takes_argument: true,
-        action: LocalAction::Skin,
-        tag: "talaria",
-    },
-    LocalCommand {
-        name: "theme",
-        aliases: &[],
-        summary: "Show colours, or set the background to light, dark or auto",
-        args_hint: "[light|dark|auto]",
-        takes_argument: true,
-        action: LocalAction::Theme,
-        tag: "talaria",
-    },
-    LocalCommand {
         name: "permissions",
         tag: "talaria",
         aliases: &[],
@@ -203,6 +211,42 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "<text>",
         takes_argument: true,
         action: LocalAction::Steer,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "resume",
+        aliases: &[],
+        summary: "Open the session picker, or switch to one session",
+        args_hint: "[<session id>]",
+        takes_argument: true,
+        action: LocalAction::Resume,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "rename",
+        aliases: &[],
+        summary: "Rename the current session",
+        args_hint: "[<title>]",
+        takes_argument: true,
+        action: LocalAction::Rename,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "branch",
+        aliases: &[],
+        summary: "Branch the current session and switch into the child",
+        args_hint: "[<title>]",
+        takes_argument: true,
+        action: LocalAction::Branch,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "export",
+        aliases: &[],
+        summary: "Export a session to a file",
+        args_hint: "[--no-redact] [file]",
+        takes_argument: true,
+        action: LocalAction::Export,
         tag: "talaria",
     },
 ];

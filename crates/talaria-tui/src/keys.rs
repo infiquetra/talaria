@@ -764,6 +764,9 @@ const NAMED_KEYS: [(&str, KeyCode); 16] = [
     ("space", KeyCode::Char(' ')),
 ];
 
+/// The reason `KeyChord::parse` gives when a key is fixed in the picker's contexts.
+const FIXED_KEY_REASON: &str = "esc and ctrl+c are fixed in the session picker";
+
 impl KeyChord {
     /// Parse chord text such as `ctrl+j` or `shift+enter`. The error is the reason.
     pub fn parse(text: &str, context: KeyContext) -> Result<Self, String> {
@@ -801,6 +804,14 @@ impl KeyChord {
         chord.code = parse_key(key, &mut chord.shift)?;
         if context == KeyContext::Pager && Self::is_pager_reserved(&chord) {
             return Err("reserved in the transcript pager".to_string());
+        }
+        // Esc and Ctrl+C close the session picker, so no picker action may take them.
+        if matches!(
+            context,
+            KeyContext::SessionPicker | KeyContext::SessionPickerExport
+        ) && (chord.code == KeyCode::Esc || (chord.code == KeyCode::Char('c') && chord.ctrl))
+        {
+            return Err(FIXED_KEY_REASON.to_string());
         }
         let printable = matches!(chord.code, KeyCode::Char(_));
         if context == KeyContext::Composer
@@ -980,6 +991,7 @@ impl KeyMap {
                 continue;
             };
             let mut parsed: Vec<KeyChord> = Vec::new();
+            let mut fixed = false;
             for text in texts {
                 match KeyChord::parse(text, parse_context(action)) {
                     Ok(chord) => {
@@ -995,20 +1007,29 @@ impl KeyMap {
                             parsed.push(chord);
                         }
                     }
+                    Err(reason) if reason == FIXED_KEY_REASON => {
+                        // The context fixes this key. One notice, and the default stands.
+                        notices.push(format!(
+                            "[keys] {name} in {FILE}: \"{text}\" is unreadable in the session \
+                             picker ({reason}); the default ({}) is kept.",
+                            map.labels_of(action)
+                        ));
+                        fixed = true;
+                        break;
+                    }
                     Err(reason) => notices.push(format!(
                         "[keys] {name} in {FILE}: \"{text}\" is not a key Talaria understands \
                          ({reason}); ignoring it."
                     )),
                 }
             }
+            if fixed {
+                continue;
+            }
             if !texts.is_empty() && parsed.is_empty() {
                 notices.push(format!(
                     "[keys] {name} in {FILE} has no usable key; using the default ({}).",
-                    map.chords[action.index()]
-                        .iter()
-                        .map(KeyChord::label)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    map.labels_of(action)
                 ));
                 continue;
             }
@@ -1018,6 +1039,15 @@ impl KeyMap {
 
         notices.extend(map.resolve_conflicts(&explicit));
         (map, notices)
+    }
+
+    /// The labels of one action's chords, for a notice.
+    fn labels_of(&self, action: Binding) -> String {
+        self.chords[action.index()]
+            .iter()
+            .map(KeyChord::label)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Give each chord held by more than one action of a context to one winner.
@@ -1598,6 +1628,14 @@ mod tests {
         );
         assert_eq!(labels(&map, Action::Submit), vec!["Esc".to_string()]);
         assert_eq!(labels(&map, Action::Interrupt), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_fixed_key_keeps_the_default_and_reports_once() {
+        let (map, notices) = KeyMap::from_entries(&entries(&[("picker_close", &["esc"])]));
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].contains("unreadable"), "the notice: {notices:?}");
+        assert_eq!(map, KeyMap::defaults());
     }
 
     #[test]

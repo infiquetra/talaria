@@ -19,7 +19,8 @@ use serde_json::{Value, json};
 /// `slash-palette` is recognized here; its frames come from the slash command steps, not from
 /// a model prompt.
 /// `hermes-commands` is recorded by its own command steps, too: it never
-/// submits a prompt.
+/// submits a prompt. The picker scenario is recorded by name (`--scenario session-picker`)
+/// and is not part of this list.
 pub const SCENARIOS: [&str; 13] = [
     "plain-answer",
     "tool-diff",
@@ -38,6 +39,23 @@ pub const SCENARIOS: [&str; 13] = [
 
 /// The shell command the approval scenario asks for. `manual` mode raises an approval for it.
 const DELETE_COMMAND: &str = "rm -rf .pytest_cache";
+
+/// The scenario of Issue #231: the frames of a session picker over one profile. Its steps after
+/// the prompt are not model prompts. It is recorded by name and is not part of [`SCENARIOS`].
+pub const SESSION_PICKER: &str = "session-picker";
+
+/// The profile the picker scenario lists, renames and exports on. The recording names no other
+/// profile.
+const PICKER_PROFILE: &str = "fixture";
+
+/// How many rows one picker list call asks for.
+const PICKER_LIMIT: i64 = 20;
+
+/// The prompt the picker scenario sends. It is short, so the turn ends at once.
+const PICKER_PROMPT: &str = "Reply with exactly the single word: pong. Do not use any tools.";
+
+/// How long the recorder waits for the event that carries the session's revision.
+const REVISION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What the operator must set when the approval scenario ran its command without a card.
 const NO_APPROVAL_CARD: &str =
@@ -152,6 +170,7 @@ impl Scenario {
                 &["complete"],
             ),
             "hermes-commands" => (&[], &[]),
+            SESSION_PICKER => (&[PICKER_PROMPT], &["complete"]),
             _ => return None,
         };
         Some(Scenario {
@@ -518,6 +537,7 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
             }
         }
         "hermes-commands" => hermes_commands_evidence(source)?,
+        SESSION_PICKER => session_picker_evidence(source)?,
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -578,6 +598,10 @@ struct Session {
     subagent_complete_seen: bool,
     /// The session's revision, the fence a mutation is prepared against.
     revision: i64,
+    /// Whether `revision` is the one of the ended turn.
+    revision_is_final: bool,
+    /// The name of the profile the gateway served the session on.
+    profile_name: String,
     /// The compaction of the context scenario has run.
     compacted: bool,
     /// A todo snapshot arrived.
@@ -995,6 +1019,149 @@ fn hermes_commands_evidence(source: &ReplaySource) -> Result<(), String> {
     Ok(())
 }
 
+/// Issue #231. The recording lists both scopes of the `fixture` profile, renames the session the
+/// turn created, lists again, exports the session as Markdown and detaches. No frame names
+/// another profile.
+fn session_picker_evidence(source: &ReplaySource) -> Result<(), String> {
+    for frame in source.outbound().chain(source.inbound()) {
+        let mut named = Vec::new();
+        collect_profiles(&frame.frame, &mut named);
+        for profile in named {
+            if profile != PICKER_PROFILE {
+                return Err(format!("a frame names the profile {profile}"));
+            }
+        }
+    }
+    let calls = picker_calls(source);
+    let lists: Vec<&Value> = calls
+        .iter()
+        .filter(|(method, _, _)| method == "session.list")
+        .map(|(_, params, _)| params)
+        .collect();
+    if lists.len() != 3 {
+        return Err(format!("session.list calls: {}", lists.len()));
+    }
+    let mut scopes = Vec::new();
+    for params in &lists {
+        if params["profile"] != PICKER_PROFILE {
+            return Err("a list call names another profile".to_owned());
+        }
+        if params["limit"] != PICKER_LIMIT {
+            return Err(format!("a list call asks for {}", params["limit"]));
+        }
+        scopes.push(params["scope"].as_str().unwrap_or_default().to_owned());
+    }
+    if scopes != ["live", "stored", "live"] {
+        return Err(format!("the list scopes were {scopes:?}"));
+    }
+    let mutates: Vec<_> = calls
+        .iter()
+        .filter(|(method, _, _)| method == "session.mutate")
+        .collect();
+    let Some((_, params, answer)) = mutates
+        .iter()
+        .find(|(_, _, answer)| answer["result"]["revision"].as_i64().is_some())
+    else {
+        return Err("no committed rename".to_owned());
+    };
+    if params["operation"] != "rename" {
+        return Err("the mutation is not a rename".to_owned());
+    }
+    let title = params["payload"]["title"].as_str().unwrap_or_default();
+    if !title.starts_with("fixture picker ") {
+        return Err(format!("the rename carries the title {title:?}"));
+    }
+    if answer["result"]["title"] != title {
+        return Err(format!(
+            "the rename answered the title {}",
+            answer["result"]["title"]
+        ));
+    }
+    let exports: Vec<_> = calls
+        .iter()
+        .filter(|(method, _, _)| method == "session.export")
+        .collect();
+    let Some((_, params, answer)) = exports.first() else {
+        return Err("no session.export call".to_owned());
+    };
+    if params["format"] != "md" || params["redact"] != true {
+        return Err("the export is not a redacted Markdown export".to_owned());
+    }
+    if params["profile"] != PICKER_PROFILE {
+        return Err("the export names another profile".to_owned());
+    }
+    let filename = answer["result"]["filename"].as_str().unwrap_or_default();
+    if !filename.starts_with("hermes_session_") {
+        return Err(format!("the export names the file {filename:?}"));
+    }
+    if answer["result"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .is_empty()
+    {
+        return Err("the export holds no content".to_owned());
+    }
+    if !calls
+        .iter()
+        .any(|(method, _, _)| method == "session.detach")
+    {
+        return Err("no session.detach call".to_owned());
+    }
+    Ok(())
+}
+
+/// The method, the params and the answer of every answered call of a recording, in the order the
+/// gateway answered. Calls are matched to answers in `seq` order because a later call can reuse
+/// an earlier id.
+fn picker_calls(source: &ReplaySource) -> Vec<(String, Value, Value)> {
+    let mut frames: Vec<_> = source.outbound().chain(source.inbound()).collect();
+    frames.sort_by_key(|frame| frame.seq);
+    let mut call_for: std::collections::HashMap<i64, (String, Value)> =
+        std::collections::HashMap::new();
+    let mut calls = Vec::new();
+    for frame in frames {
+        let body = &frame.frame;
+        let Some(id) = body.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        if let Some(method) = body.get("method").and_then(Value::as_str) {
+            call_for.insert(id, (method.to_owned(), body["params"].clone()));
+            continue;
+        }
+        if body.get("result").is_none() && body.get("error").is_none() {
+            continue;
+        }
+        let Some((method, params)) = call_for.get(&id) else {
+            continue;
+        };
+        calls.push((method.clone(), params.clone(), body.clone()));
+    }
+    calls
+}
+
+/// Every value of a `profile` key of a frame, wherever the key sits.
+fn collect_profiles<'a>(value: &'a Value, found: &mut Vec<&'a str>) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if key == "profile" {
+                    if let Some(name) = value.as_str() {
+                        found.push(name);
+                    }
+                } else {
+                    collect_profiles(value, found);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_profiles(item, found);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Drive one attempt over a connected client and its inbound stream (the events come
 /// only from the stream `Client::start` returned). Never writes the file itself.
 pub async fn run_scenario(
@@ -1143,6 +1310,10 @@ async fn drive(
     session.subscription_id = snapshot["subscription_id"].clone();
     session.execution_generation = snapshot["execution_generation"].clone();
     session.revision = snapshot["revision"].as_i64().unwrap_or(0);
+    session.profile_name = snapshot["info"]["profile_name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     if let Err(reason) = check_info(&snapshot["info"], config) {
         return AttemptResult::Failed(reason);
     }
@@ -1163,6 +1334,9 @@ async fn drive(
     .await
     {
         return result;
+    }
+    if scenario.name == SESSION_PICKER {
+        return drive_session_picker(client, inbound, scenario, session).await;
     }
     if scenario.name == "subagent-batch" {
         let deadline = tokio::time::Instant::now() + SUBAGENT_LINGER;
@@ -1499,6 +1673,163 @@ async fn compact(client: &Client, session: &mut Session) -> Option<AttemptResult
     None
 }
 
+/// Issue #231. The steps of the picker over the `fixture` profile: list both scopes, rename the
+/// session the turn created, list again and export the session as Markdown. The frames after the
+/// prompt are not model prompts.
+async fn drive_session_picker(
+    client: &Client,
+    inbound: &mut InboundStream,
+    scenario: &Scenario,
+    session: &mut Session,
+) -> AttemptResult {
+    let failed = |reason: &str| AttemptResult::Failed(reason.to_owned());
+    if session.profile_name != PICKER_PROFILE {
+        return failed(&format!(
+            "the {SESSION_PICKER} scenario records the profile `{PICKER_PROFILE}` only; \
+             the gateway served the profile `{}`",
+            session.profile_name
+        ));
+    }
+    let session_id = session.session_id.clone();
+    let revision = match wait_for_revision(client, inbound, scenario, session).await {
+        Ok(revision) => revision,
+        Err(result) => return result,
+    };
+    for scope in ["live", "stored"] {
+        if let Err(result) = step(
+            client,
+            "session.list",
+            json!({"profile": PICKER_PROFILE, "scope": scope, "limit": PICKER_LIMIT}),
+        )
+        .await
+        {
+            return result;
+        }
+    }
+    let title = picker_title();
+    if let Err(result) = rename(client, &session_id, &title, revision).await {
+        return result;
+    }
+    // The picker refreshes the list after a rename.
+    if let Err(result) = step(
+        client,
+        "session.list",
+        json!({"profile": PICKER_PROFILE, "scope": "live", "limit": PICKER_LIMIT}),
+    )
+    .await
+    {
+        return result;
+    }
+    if let Err(result) = step(
+        client,
+        "session.export",
+        json!({"session_id": session_id, "profile": PICKER_PROFILE, "format": "md",
+               "redact": true}),
+    )
+    .await
+    {
+        return result;
+    }
+    AttemptResult::Ok
+}
+
+/// The revision the session has after its turn. The `session.info` event that empties the
+/// pending queue carries it; the events of the turn itself carried the revision before it.
+async fn wait_for_revision(
+    client: &Client,
+    inbound: &mut InboundStream,
+    scenario: &Scenario,
+    session: &mut Session,
+) -> Result<i64, AttemptResult> {
+    let deadline = tokio::time::Instant::now() + REVISION_TIMEOUT;
+    while !session.revision_is_final {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            // The event did not arrive; the last revision the session reported is used, and a
+            // refusal names the one the gateway holds.
+            break;
+        }
+        match tokio::time::timeout(left, inbound.next()).await {
+            Ok(Some(Inbound::Event(event))) => {
+                if let Some(result) = on_event(client, scenario, session, &event.raw).await {
+                    return Err(result);
+                }
+            }
+            Ok(Some(Inbound::ServerRequest(request))) => {
+                let _ = request
+                    .responder
+                    .fail(-32601, "the fixture script does not answer this request")
+                    .await;
+            }
+            Ok(Some(Inbound::Malformed(_))) => {}
+            Ok(Some(Inbound::Closed(_)) | None) => {
+                return Err(AttemptResult::Failed(
+                    "the connection closed during the attempt".to_owned(),
+                ));
+            }
+            Err(_) => break,
+        }
+    }
+    Ok(session.revision)
+}
+
+/// The rename of the picker. The first attempt carries the revision the session had; when the
+/// gateway refuses it as a conflict, the refusal names the revision it holds and the rename is
+/// tried once more with it.
+async fn rename(
+    client: &Client,
+    session_id: &str,
+    title: &str,
+    revision: i64,
+) -> Result<Value, AttemptResult> {
+    let mut revision = revision;
+    let mut attempt = 0;
+    loop {
+        let params = json!({
+            "session_id": session_id,
+            "request_id": request_id(),
+            "expected_revision": revision,
+            "operation": "rename",
+            "payload": {"title": title},
+        });
+        match client
+            .call_raw("session.mutate", params, CallOptions::default())
+            .await
+        {
+            Ok(receipt) => return Ok(receipt),
+            Err(CallError::Rpc(refusal))
+                if attempt == 0 && refusal.reason.as_deref() == Some("revision_conflict") =>
+            {
+                let Some(next) = refusal
+                    .data
+                    .as_ref()
+                    .and_then(|data| data["revision"].as_i64())
+                else {
+                    return Err(AttemptResult::Failed(
+                        "the rename was refused as a conflict without a revision".to_owned(),
+                    ));
+                };
+                revision = next;
+                attempt += 1;
+            }
+            Err(error) => {
+                return Err(AttemptResult::Failed(format!(
+                    "session.mutate failed: {error}"
+                )));
+            }
+        }
+    }
+}
+
+/// The title the picker gives the session it renames: `fixture picker <n>`, with a number no
+/// other session of the profile holds.
+fn picker_title() -> String {
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    format!("fixture picker {:05}", started % 100_000)
+}
+
 async fn submit(client: &Client, session: &mut Session, text: &str) -> Result<(), String> {
     let params = submit_params(&session.session_id, text)?;
     session.submitted += 1;
@@ -1535,6 +1866,10 @@ async fn on_event(
             // prepared against the revision the gateway last reported.
             if let Some(revision) = payload["revision"].as_i64() {
                 session.revision = revision;
+                // The event that empties the pending queue carries the revision after the turn;
+                // the events of a running turn carry the one before it.
+                session.revision_is_final =
+                    session.statuses.len() >= scenario.expected_statuses.len();
             }
             if let Some(generation) = payload["execution_generation"].as_i64() {
                 session.execution_generation = Value::from(generation);
