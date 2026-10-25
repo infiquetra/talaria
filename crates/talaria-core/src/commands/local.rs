@@ -132,11 +132,11 @@ pub struct LocalCommandTable {
 }
 
 impl LocalCommandTable {
-    /// The built-in table. This unit's only entry is `/quit`.
+    /// The built-in table: `/quit`, the model commands, then the rewind commands.
     #[must_use]
     pub fn builtin() -> Self {
         Self {
-            commands: BUILTIN.to_vec(),
+            commands: BUILTIN.iter().chain(LOCAL_COMMANDS).copied().collect(),
         }
     }
 

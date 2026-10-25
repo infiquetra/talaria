@@ -2,6 +2,32 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-25
+
+### A rewind's result survives the mutation sender only through the contract override
+
+**Evidence.** `crates/talaria-app/src/rewind.rs` (`failure_from_mutation`) reads `rewound_count` and `target_message` from `MutationOutcome::Committed`; `crates/hermes-contract/src/generated/schemas.rs` (`SessionMutateResult`, the `extra` map added by the model picker's override, issue #230).
+
+**Mechanism.** `MutationClient::send` decodes the reply into the generated `SessionMutateResult` and encodes it again. That type names only `session_id`, `operation` and `revision`; every field of the operation's own projection survives only through the flattened `extra` map. Without it a rewind would look committed but carry no count, no new generation and no target text, and nothing would fail.
+
+**Generalizable rule.** When a typed client decodes and re-encodes a result, check that the generated type keeps every field you read; otherwise a successful call quietly loses data.
+
+### A reducer that returns effects is tested by running its effects
+
+**Evidence.** `crates/talaria-app/tests/rewind_service.rs` (`drive`, and tests `session_updated_is_observed_and_still_reduced`, `dropped_connection_is_unknown_and_never_resent`, `rewound_prompt_loads_only_into_empty_composer`); `crates/talaria-app/src/app.rs` (`update`).
+
+**Mechanism.** `app::update` performs no input or output; it returns `AppEffect::Rewind { ticket, call }` and waits for `AppMessage::Rewind` with the reply. The first versions of three tests called `update` once and then counted requests on the mock, which can never see one. The tests now run each call through `RewindService` against the mock and feed the reply back until none is left.
+
+**Generalizable rule.** To test an effect-returning reducer end to end, drive its effects in a loop; never expect side effects from the reducer call itself.
+
+### `session.updated` still has to reach the session reducer
+
+**Evidence.** `crates/talaria-app/src/app.rs` (`link_event`); `crates/talaria-core/src/session/reducer.rs` (`session.updated` is a known silent type); `crates/talaria-app/tests/rewind_service.rs::session_updated_is_observed_and_still_reduced`.
+
+**Mechanism.** The model picker's change (issue #230) stopped passing `session.updated` frames to the reducer. The reducer does nothing visible with them, but it moves its replay cursor on every frame, so skipping one left the cursor behind the gateway's sequence. The frame now goes to the reducer and, when its operation is `rewind`, also to the rewind state.
+
+**Generalizable rule.** A frame routed somewhere special still goes through the reducer that tracks sequence numbers.
+
 ## 2026-10-24
 
 ### The slash palette fixture keeps the file name as its scenario

@@ -2,6 +2,18 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-25
+
+### The rewind overlay travels in the view, not through a new screen method
+
+**Decision.** `View` carries `rewind: Option<RewindView>` while the overlay is open. The terminal screen (`crates/talaria-cli/src/run.rs`) opens the alternate-screen overlay when that field appears, closes it when it goes, and routes every key to `key_to_rewind` while it is set. The list height reaches the state as `UserAction::RewindViewport` before a key whenever it changed. Issue #233.
+
+**Rationale.** `Screen::input` and `Screen::draw` already receive the view, so the overlay needs no new trait method and no second call site in the loop. The model picker's `sync_models` pattern exists because its view lives outside `AppState`; the rewind view is borrowed straight from it.
+
+**Rejected alternatives.** A `sync_rewind` screen method beside `sync_models` (four more call sites in `app::run`, and the view would have to be copied out of `AppState`). Drawing the overlay from `app.rs` (only the terminal module writes escape sequences).
+
+**Revisit when** a third full-screen overlay arrives; then one overlay slot in the view should replace the per-overlay fields and flags.
+
 ## 2026-10-24
 
 ### Slash palette keys, one-command fallback, and the synthetic frame log (issue #223)

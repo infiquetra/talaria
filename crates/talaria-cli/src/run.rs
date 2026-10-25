@@ -35,6 +35,7 @@ use talaria_tui::markdown::section::MarkdownTailSection;
 use talaria_tui::model_picker::{ModelConfirmSection, draw_model_picker};
 use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
+use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
 use talaria_tui::status::{
     CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay, SessionRef,
     StatusCommandService, StatusDocument, StatusInputs, StatusPalette, StatusSection, TurnState,
@@ -95,6 +96,11 @@ pub struct TuiScreen {
     picker_open: bool,
     confirmation: Option<Confirmation>,
     confirmation_focused: Option<Instant>,
+    /// The rewind overlay holds the alternate screen. Issue #233.
+    rewind_open: bool,
+    /// The list rows last reported to the loop, so paging moves by what is visible.
+    rewind_rows: u16,
+    rewind_theme: RewindTheme,
 }
 
 struct ModelOverlay {
@@ -317,6 +323,28 @@ impl TuiScreen {
         }
     }
 
+    /// A key while the rewind overlay is open: it takes every key. The list height is reported
+    /// first whenever it changed, so paging moves by the rows on screen.
+    fn rewind_key(
+        &mut self,
+        raw: &crossterm::event::KeyEvent,
+        screen: talaria_core::rewind::RewindScreen,
+    ) -> Vec<UserAction> {
+        let mut actions = Vec::new();
+        let width = self.terminal.viewport().width;
+        let rows = visible_rows(ratatui::layout::Rect::new(0, 0, width, self.rows));
+        if rows != self.rewind_rows {
+            self.rewind_rows = rows;
+            actions.push(UserAction::RewindViewport(rows));
+        }
+        if raw.kind != crossterm::event::KeyEventKind::Release
+            && let Some(key) = key_to_rewind(raw, screen)
+        {
+            actions.push(UserAction::Rewind(key));
+        }
+        actions
+    }
+
     fn draw_picker(&mut self) {
         if let Some(picker) = &self.picker {
             let view = picker.view();
@@ -410,8 +438,11 @@ impl TuiScreen {
     ) -> Vec<UserAction> {
         use crossterm::event::Event;
         match event {
-            Event::Key(key) => {
-                let key = Key::from(key);
+            Event::Key(raw) => {
+                if let Some(rewind) = &view.rewind {
+                    return self.rewind_key(&raw, rewind.screen);
+                }
+                let key = Key::from(raw);
                 if self.picker_open {
                     return picker_key(&self.keymap, key)
                         .map(UserAction::ModelPicker)
@@ -454,12 +485,26 @@ impl TuiScreen {
                 let ctx = ComposerContext {
                     turn_running: view.turn_running(),
                 };
-                let mut actions = Self::composer_action(self.composer.handle_key(key, ctx, now));
+                let escape = key.kind != KeyKind::Release && key.code == KeyCode::Esc;
+                let outcome = self.composer.handle_key(key, ctx, now);
+                let eligible = escape
+                    && outcome == ComposerOutcome::Unchanged
+                    && self.composer.is_empty()
+                    && !view.palette.open
+                    && !view.turn_running();
+                let mut actions = Self::composer_action(outcome);
+                if escape {
+                    actions.push(UserAction::Escape { eligible });
+                    // Two quick Esc bytes can arrive as one Esc with Alt held: count it twice.
+                    if eligible && key.mods.alt {
+                        actions.push(UserAction::Escape { eligible });
+                    }
+                }
                 self.report_draft(&mut actions);
                 actions
             }
             Event::Paste(text) => {
-                if self.picker_open {
+                if view.rewind.is_some() || self.picker_open {
                     return Vec::new();
                 }
                 if let Some(actions) = Self::prompt_actions(self.prompts.handle_paste(&text, now)) {
@@ -588,6 +633,21 @@ impl Screen for TuiScreen {
         );
         self.cells.set_clock(&self.clock, now);
         self.sync_confirmation_focus(now);
+        if let Some(rewind) = &view.rewind {
+            if !self.rewind_open {
+                let _ = self.terminal.open_overlay();
+                self.rewind_open = true;
+            }
+            let theme = &self.rewind_theme;
+            let _ = self
+                .terminal
+                .draw_overlay(|area, buf| draw_rewind(rewind, area, buf, theme));
+            return;
+        }
+        if self.rewind_open {
+            let _ = self.terminal.close_overlay();
+            self.rewind_open = false;
+        }
         if self.picker_open {
             self.draw_picker();
             return;
@@ -865,6 +925,9 @@ fn session(
         picker_open: false,
         confirmation: None,
         confirmation_focused: None,
+        rewind_open: false,
+        rewind_rows: 0,
+        rewind_theme: rewind_theme(),
     };
     let input: Option<InputThread> =
         spawn_input(move |event| sender.send(ScreenInput::Terminal(event)).is_ok());
@@ -874,6 +937,26 @@ fn session(
     drop(screen);
     drop(guard);
     Ok(outcome)
+}
+
+/// Rewind overlay colours. Without colour the warning is bold and the accent plain.
+fn rewind_theme() -> RewindTheme {
+    use ratatui::style::{Color, Modifier, Style};
+    let color = std::env::var_os("NO_COLOR").is_none();
+    RewindTheme {
+        selected: Style::default().add_modifier(Modifier::REVERSED),
+        dim: Style::default().add_modifier(Modifier::DIM),
+        warning: if color {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().add_modifier(Modifier::BOLD)
+        },
+        accent: if color {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        },
+    }
 }
 
 #[cfg(test)]

@@ -9,15 +9,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use hermes_client::{
-    CallOptions, Client, ConnectOptions, DiscoverOptions, EnsurePolicy, Inbound, InboundStream,
-    Purpose, ReplaySource, Scope, connect_with, discover_with, handshake, mint_ticket,
+    CallError, CallOptions, Client, ConnectOptions, DiscoverOptions, EnsurePolicy, Inbound,
+    InboundStream, Purpose, ReplaySource, Scope, connect_with, discover_with, handshake,
+    mint_ticket,
 };
 use serde_json::{Value, json};
 
 /// The scenarios of the fixture set, in the order the script records them.
 /// `slash-palette` is recognized here; its frames come from the slash command steps, not from
 /// a model prompt.
-pub const SCENARIOS: [&str; 8] = [
+pub const SCENARIOS: [&str; 9] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -26,6 +27,7 @@ pub const SCENARIOS: [&str; 8] = [
     "subagent-batch",
     "queued-prompt",
     "slash-palette",
+    "rewind-and-rollback",
 ];
 
 /// The shell command the approval scenario asks for. `manual` mode raises an approval for it.
@@ -34,6 +36,13 @@ const DELETE_COMMAND: &str = "rm -rf .pytest_cache";
 /// What the operator must set when the approval scenario ran its command without a card.
 const NO_APPROVAL_CARD: &str =
     "no approval card appeared; the profile `fixture` must set `approvals.mode: manual`";
+
+/// The scenario of Issue #233: two file edits, then the checkpoint calls, a conversation rewind
+/// and a whole-folder restore. Its steps after the two prompts are not model prompts.
+const REWIND_AND_ROLLBACK: &str = "rewind-and-rollback";
+
+/// The file tools whose calls show that a turn of [`REWIND_AND_ROLLBACK`] edited `notes.txt`.
+const FILE_EDIT_TOOLS: [&str; 2] = ["write_file", "patch"];
 
 /// How long each cleanup call may take.
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -90,6 +99,13 @@ impl Scenario {
                 &["complete", "complete"],
             ),
             "slash-palette" => (&[], &["complete"]),
+            REWIND_AND_ROLLBACK => (
+                &[
+                    "Create a file named notes.txt containing exactly the line alpha. Use your file writing tool, not the terminal. Reply with the word done.",
+                    "In notes.txt replace alpha with beta using your patch or file tool, not the terminal. Reply with the word done.",
+                ],
+                &["complete", "complete", "complete"],
+            ),
             _ => return None,
         };
         Some(Scenario {
@@ -410,6 +426,7 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
             }
         }
         "slash-palette" => slash_palette_evidence(source)?,
+        REWIND_AND_ROLLBACK => rewind_and_rollback_evidence(source, &events)?,
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -500,6 +517,96 @@ fn submit_params(session_id: &str, text: &str) -> Result<Value, String> {
         }
     }
     Ok(Value::Object(kept))
+}
+
+/// The method and reply of every answered call, in the order the gateway answered. Calls are
+/// matched to answers in `seq` order because a later call can reuse an earlier id.
+fn answered_calls(source: &ReplaySource) -> Vec<(String, Value)> {
+    let mut frames: Vec<_> = source.outbound().chain(source.inbound()).collect();
+    frames.sort_by_key(|frame| frame.seq);
+    let mut method_for: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    let mut answered = Vec::new();
+    for frame in frames {
+        let body = &frame.frame;
+        let Some(id) = body.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        if let Some(method) = body.get("method").and_then(Value::as_str) {
+            method_for.insert(id, method.to_owned());
+        } else if (body.get("result").is_some() || body.get("error").is_some())
+            && let Some(method) = method_for.get(&id)
+        {
+            answered.push((method.clone(), body.clone()));
+        }
+    }
+    answered
+}
+
+/// Issue #233. The checkpoint list is enabled with two rows, each of the first two turns called
+/// a file tool, no approval was asked, and every step of the scenario was answered in order.
+fn rewind_and_rollback_evidence(
+    source: &ReplaySource,
+    events: &[(String, Value)],
+) -> Result<(), String> {
+    const STEPS: [&str; 10] = [
+        "prompt.submit",
+        "prompt.submit",
+        "rollback.list",
+        "rollback.diff",
+        "rollback.session_diff",
+        "session.resume",
+        "session.mutate",
+        "prompt.submit",
+        "session.resume",
+        "rollback.restore",
+    ];
+    let answered = answered_calls(source);
+    let steps: Vec<&str> = answered
+        .iter()
+        .map(|(method, _)| method.as_str())
+        .filter(|method| STEPS.contains(method))
+        .collect();
+    if steps != STEPS {
+        return Err(format!("the steps were answered as {steps:?}"));
+    }
+    let list = answered
+        .iter()
+        .find(|(method, _)| method == "rollback.list")
+        .map(|(_, body)| &body["result"])
+        .ok_or("rollback.list did not answer")?;
+    let rows = list["checkpoints"].as_array().map_or(0, Vec::len);
+    if list["enabled"] != true || rows < 2 {
+        return Err(format!(
+            "rollback.list answered enabled {} with {rows} rows",
+            list["enabled"]
+        ));
+    }
+    if events.iter().any(|(kind, _)| kind == "approval.request") {
+        return Err("an approval was requested".to_owned());
+    }
+    let mut turn = 0_usize;
+    let mut edited = [false; 2];
+    for (kind, params) in events {
+        match kind.as_str() {
+            "message.complete" => turn += 1,
+            "tool.start" | "tool.complete" => {
+                let tool = params["payload"]["name"].as_str().unwrap_or_default();
+                if let Some(seen) = edited.get_mut(turn)
+                    && FILE_EDIT_TOOLS.contains(&tool)
+                {
+                    *seen = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(index) = edited.iter().position(|seen| !seen) {
+        return Err(format!(
+            "turn {} did not call write_file or patch",
+            index + 1
+        ));
+    }
+    Ok(())
 }
 
 /// Issue #223. Calls are matched to answers in `seq` order because a later call can reuse an
@@ -686,28 +793,22 @@ async fn drive(
         return AttemptResult::Failed(reason);
     }
 
+    if scenario.name == REWIND_AND_ROLLBACK {
+        return drive_rewind(client, inbound, scenario, session).await;
+    }
     if let Err(reason) = submit(client, session, &scenario.prompts[0]).await {
         return AttemptResult::Failed(reason);
     }
-    while session.statuses.len() < scenario.expected_statuses.len() {
-        let Some(item) = inbound.next().await else {
-            return failed("the inbound stream ended");
-        };
-        match item {
-            Inbound::Event(event) => {
-                if let Some(result) = on_event(client, scenario, session, &event.raw).await {
-                    return result;
-                }
-            }
-            Inbound::ServerRequest(request) => {
-                let _ = request
-                    .responder
-                    .fail(-32601, "the fixture script does not answer this request")
-                    .await;
-            }
-            Inbound::Closed(_) => return failed("the connection closed during the attempt"),
-            Inbound::Malformed(_) => {}
-        }
+    if let Err(result) = wait_for_turns(
+        client,
+        inbound,
+        scenario,
+        session,
+        scenario.expected_statuses.len(),
+    )
+    .await
+    {
+        return result;
     }
     if scenario.name == "subagent-batch" {
         let deadline = tokio::time::Instant::now() + SUBAGENT_LINGER;
@@ -737,6 +838,186 @@ async fn drive(
             "the turns ended {:?}, expected {:?}",
             session.statuses, scenario.expected_statuses
         ));
+    }
+    AttemptResult::Ok
+}
+
+/// Read the inbound stream until `target` turns have ended. `Err` ends the attempt.
+async fn wait_for_turns(
+    client: &Client,
+    inbound: &mut InboundStream,
+    scenario: &Scenario,
+    session: &mut Session,
+    target: usize,
+) -> Result<(), AttemptResult> {
+    while session.statuses.len() < target {
+        let Some(item) = inbound.next().await else {
+            return Err(AttemptResult::Failed("the inbound stream ended".to_owned()));
+        };
+        match item {
+            Inbound::Event(event) => {
+                if let Some(result) = on_event(client, scenario, session, &event.raw).await {
+                    return Err(result);
+                }
+            }
+            Inbound::ServerRequest(request) => {
+                let _ = request
+                    .responder
+                    .fail(-32601, "the fixture script does not answer this request")
+                    .await;
+            }
+            Inbound::Closed(_) => {
+                return Err(AttemptResult::Failed(
+                    "the connection closed during the attempt".to_owned(),
+                ));
+            }
+            Inbound::Malformed(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// 32 lower-case hex characters no other request of this process shares.
+fn request_id() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    format!(
+        "{:032x}",
+        (started << 32) | u128::from(NEXT.fetch_add(1, Ordering::SeqCst))
+    )
+}
+
+/// Call `method`; a failure to get an answer, or a refusal, is an attempt failure.
+async fn step(client: &Client, method: &str, params: Value) -> Result<Value, AttemptResult> {
+    client
+        .call_raw(method, params, CallOptions::default())
+        .await
+        .map_err(|error| AttemptResult::Failed(format!("{method} failed: {error}")))
+}
+
+/// Issue #233. Two prompts that edit `notes.txt`, the checkpoint reads, a conversation rewind of
+/// the second prompt, that prompt again, and a whole-folder restore to the oldest checkpoint.
+/// Each step waits for the answer of the one before; a refusal of the rewind or the restore is
+/// recorded as it came.
+async fn drive_rewind(
+    client: &Client,
+    inbound: &mut InboundStream,
+    scenario: &Scenario,
+    session: &mut Session,
+) -> AttemptResult {
+    let failed = |reason: &str| AttemptResult::Failed(reason.to_owned());
+    // The turns are driven here one at a time, so `on_event` must not queue the next prompt.
+    let stepwise = Scenario {
+        prompts: Vec::new(),
+        ..scenario.clone()
+    };
+    let session_id = session.session_id.clone();
+    for (turn, text) in scenario.prompts.iter().enumerate() {
+        if let Err(reason) = submit(client, session, text).await {
+            return AttemptResult::Failed(reason);
+        }
+        if let Err(result) = wait_for_turns(client, inbound, &stepwise, session, turn + 1).await {
+            return result;
+        }
+    }
+
+    let list = match step(client, "rollback.list", json!({"session_id": session_id})).await {
+        Ok(list) => list,
+        Err(result) => return result,
+    };
+    let rows = list["checkpoints"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let (Some(first), Some(last)) = (
+        rows.first().and_then(|row| row["hash"].as_str()),
+        rows.last().and_then(|row| row["hash"].as_str()),
+    ) else {
+        return failed("rollback.list returned no checkpoint");
+    };
+    if list["enabled"] != true || rows.len() < 2 {
+        return failed(
+            "rollback.list did not return two checkpoints; the profile needs checkpoints on",
+        );
+    }
+    let (first, last) = (first.to_owned(), last.to_owned());
+    for (method, params) in [
+        (
+            "rollback.diff",
+            json!({"session_id": session_id, "hash": first}),
+        ),
+        ("rollback.session_diff", json!({"session_id": session_id})),
+    ] {
+        if let Err(result) = step(client, method, params).await {
+            return result;
+        }
+    }
+
+    let read = match step(
+        client,
+        "session.resume",
+        json!({"session_id": session_id, "display_projection": true}),
+    )
+    .await
+    {
+        Ok(read) => read,
+        Err(result) => return result,
+    };
+    let target = read["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .rev()
+        .find(|row| row["role"] == "user" && row["content"] == scenario.prompts[1].as_str())
+        .map(|row| row["row_id"].clone());
+    let Some(target) = target.filter(|row_id| row_id.is_i64() || row_id.is_u64()) else {
+        return failed("the session read has no row for the second prompt");
+    };
+    let rewound = client
+        .call_raw(
+            "session.mutate",
+            json!({"session_id": session_id, "operation": "rewind",
+                   "expected_revision": read["revision"],
+                   "expected_generation": read["execution_generation"],
+                   "request_id": request_id(),
+                   "payload": {"target_message_id": target}}),
+            CallOptions::default(),
+        )
+        .await;
+    if let Err(error) = rewound
+        && !matches!(error, CallError::Rpc(_))
+    {
+        return AttemptResult::Failed(format!("session.mutate failed: {error}"));
+    }
+
+    if let Err(reason) = submit(client, session, &scenario.prompts[1]).await {
+        return AttemptResult::Failed(reason);
+    }
+    if let Err(result) = wait_for_turns(client, inbound, &stepwise, session, 3).await {
+        return result;
+    }
+
+    if let Err(result) = step(
+        client,
+        "session.resume",
+        json!({"session_id": session_id, "display_projection": true}),
+    )
+    .await
+    {
+        return result;
+    }
+    let restored = client
+        .call_raw(
+            "rollback.restore",
+            json!({"session_id": session_id, "hash": last}),
+            CallOptions::default(),
+        )
+        .await;
+    if let Err(error) = restored
+        && !matches!(error, CallError::Rpc(_))
+    {
+        return AttemptResult::Failed(format!("rollback.restore failed: {error}"));
     }
     AttemptResult::Ok
 }

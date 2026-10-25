@@ -167,10 +167,11 @@ fn scenario_table_matches_the_spec() {
             "subagent-batch",
             "queued-prompt",
             "slash-palette",
+            "rewind-and-rollback",
         ]
     );
     assert!(Scenario::named("not-a-scenario").is_none());
-    let table: [(&str, &[&str], &[&str]); 8] = [
+    let table: [(&str, &[&str], &[&str]); 9] = [
         (
             "plain-answer",
             &["Reply with exactly the single word: pong. Do not use any tools."],
@@ -216,6 +217,14 @@ fn scenario_table_matches_the_spec() {
             &["complete", "complete"],
         ),
         ("slash-palette", &[], &["complete"]),
+        (
+            "rewind-and-rollback",
+            &[
+                "Create a file named notes.txt containing exactly the line alpha. Use your file writing tool, not the terminal. Reply with the word done.",
+                "In notes.txt replace alpha with beta using your patch or file tool, not the terminal. Reply with the word done.",
+            ],
+            &["complete", "complete", "complete"],
+        ),
     ];
     for (name, prompts, statuses) in table {
         let scenario = scenario(name);
@@ -298,6 +307,90 @@ fn evidence(name: &str, statuses: &[&str], frames: &[(&'static str, Value)]) -> 
     let dir = tempfile::tempdir().unwrap_or_else(|_| panic!("temp dir failed"));
     let source = recording(dir.path(), "run.jsonl", name, statuses, frames);
     check_evidence(&scenario(name), &source)
+}
+
+/// The frames of a good `rewind-and-rollback` run, one call and its answer at a time.
+fn rewind_frames(
+    enabled: bool,
+    rows: usize,
+    first_tool: &str,
+    approval: bool,
+    skip: Option<&str>,
+) -> Vec<(&'static str, Value)> {
+    let mut frames: Vec<(&'static str, Value)> = Vec::new();
+    let mut id = 0_u64;
+    let mut call = |frames: &mut Vec<(&'static str, Value)>, method: &str, result: Value| {
+        id += 1;
+        if skip != Some(method) {
+            frames.push((
+                "out",
+                json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {}}),
+            ));
+            frames.push(("in", json!({"jsonrpc": "2.0", "id": id, "result": result})));
+        }
+    };
+    for tool in [first_tool, "patch"] {
+        call(&mut frames, "prompt.submit", json!({}));
+        frames.push(start());
+        if approval {
+            frames.push(message("approval.request", approval_request_payload("p-1")));
+        }
+        frames.push(message(
+            "tool.start",
+            json!({"tool_id": "t1", "name": tool}),
+        ));
+        frames.push(complete("complete"));
+    }
+    let checkpoints: Vec<Value> = (0..rows)
+        .map(|row| json!({"hash": format!("{row:040}")}))
+        .collect();
+    call(
+        &mut frames,
+        "rollback.list",
+        json!({"enabled": enabled, "checkpoints": checkpoints}),
+    );
+    call(&mut frames, "rollback.diff", json!({"diff": ""}));
+    call(&mut frames, "rollback.session_diff", json!({"diff": ""}));
+    call(&mut frames, "session.resume", json!({}));
+    call(&mut frames, "session.mutate", json!({}));
+    call(&mut frames, "prompt.submit", json!({}));
+    frames.push(complete("complete"));
+    call(&mut frames, "session.resume", json!({}));
+    call(&mut frames, "rollback.restore", json!({}));
+    frames
+}
+
+#[test]
+fn rewind_and_rollback_evidence_needs_every_step_and_the_file_tools() {
+    let statuses = ["complete", "complete", "complete"];
+    let good = rewind_frames(true, 2, "write_file", false, None);
+    assert_eq!(evidence("rewind-and-rollback", &statuses, &good), Ok(()));
+
+    let cases = [
+        (
+            "checkpoints off",
+            rewind_frames(false, 2, "write_file", false, None),
+        ),
+        ("one row", rewind_frames(true, 1, "write_file", false, None)),
+        (
+            "no file tool",
+            rewind_frames(true, 2, "read_file", false, None),
+        ),
+        (
+            "an approval",
+            rewind_frames(true, 2, "write_file", true, None),
+        ),
+        (
+            "no restore answer",
+            rewind_frames(true, 2, "write_file", false, Some("rollback.restore")),
+        ),
+    ];
+    for (label, frames) in cases {
+        assert!(
+            evidence("rewind-and-rollback", &statuses, &frames).is_err(),
+            "{label} was accepted"
+        );
+    }
 }
 
 #[test]

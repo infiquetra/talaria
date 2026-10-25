@@ -12,7 +12,19 @@ pub struct DoubleEsc {
 impl DoubleEsc {
     /// `true` when this press opens the rewind overlay.
     pub fn press(&mut self, now_ms: u64, eligible: bool) -> bool {
-        let _ = (self.last, now_ms, eligible);
-        todo!("Issue 233. Checkpoint rewind and diff.")
+        if !eligible {
+            self.last = None;
+            return false;
+        }
+        match self.last {
+            Some(previous) if now_ms.saturating_sub(previous) < DOUBLE_ESC_WINDOW_MS => {
+                self.last = None;
+                true
+            }
+            _ => {
+                self.last = Some(now_ms);
+                false
+            }
+        }
     }
 }
