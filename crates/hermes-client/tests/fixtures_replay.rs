@@ -2,7 +2,7 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected thirteen fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected fourteen fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch recording, covered by its own replay tests.
 
@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 13] = [
+const NAMES: [&str; 14] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -31,6 +31,7 @@ const NAMES: [&str; 13] = [
     "context-compaction",
     "shell-and-btw",
     "todo-checklist",
+    "permissions-cd",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -40,6 +41,8 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         "queued-prompt" => &["complete", "complete"],
         "rewind-and-rollback" => &["complete", "complete", "complete"],
         "context-compaction" => &["complete"; 17],
+        // The permissions run holds no turn, so no turn ever completes.
+        "permissions-cd" => &[],
         _ => &["complete"],
     }
 }
@@ -65,14 +68,14 @@ fn jsonl_files() -> Vec<PathBuf> {
     files
 }
 
-/// Asserts the nine fixtures exist, then returns `(name, path)` for each, in the order of
+/// Asserts the listed fixtures exist, then returns `(name, path)` for each, in the order of
 /// `NAMES`. Every test in this file starts here so that none of them can index into a missing
 /// file.
-fn all_fixtures() -> Vec<(&'static str, PathBuf)> {
+fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 14,
-        "expected fourteen fixtures in fixtures/frames, found {}",
+        files.len() == 15,
+        "expected fifteen fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -141,14 +144,14 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 }
 
 #[test]
-fn every_fixture_exists() {
-    let fixtures = all_fixtures();
-    assert_eq!(fixtures.len(), 13);
+fn listed_fixtures_exist() {
+    let fixtures = listed_fixtures();
+    assert_eq!(fixtures.len(), NAMES.len());
 }
 
 #[test]
 fn each_has_v3_header_and_gapless_seq() {
-    for (name, path) in all_fixtures() {
+    for (name, path) in listed_fixtures() {
         let records = records(name, &path);
         let header = &records[0];
         assert_eq!(header["kind"], "header", "{name}: line 1 is not a header");
@@ -209,7 +212,7 @@ fn each_has_v3_header_and_gapless_seq() {
 
 #[test]
 fn each_ends_with_expected_status() {
-    for (name, path) in all_fixtures() {
+    for (name, path) in listed_fixtures() {
         let source = ReplaySource::open(&path)
             .unwrap_or_else(|error| panic!("{name}: could not open the fixture: {error}"));
         assert!(!source.truncated(), "{name}: the recording is cut short");
@@ -242,7 +245,7 @@ fn each_ends_with_expected_status() {
 
 #[tokio::test]
 async fn each_replays_recorded_inbound_sequence() {
-    for (name, path) in all_fixtures() {
+    for (name, path) in listed_fixtures() {
         // What the recorder wrote, read straight from the file.
         let written: Vec<(u64, Value)> = records(name, &path)
             .iter()
@@ -365,7 +368,7 @@ fn slash_palette_evidence(name: &str, records: &[Value], events: &[(String, Valu
 
 #[test]
 fn scenario_evidence_present() {
-    for (name, path) in all_fixtures() {
+    for (name, path) in listed_fixtures() {
         let records = records(name, &path);
         let events = inbound_events(&records);
         assert!(!events.is_empty(), "{name}: no inbound events");
@@ -458,6 +461,33 @@ fn scenario_evidence_present() {
                 );
                 let _ = call("session.resume");
             }
+            "permissions-cd" => {
+                let out: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| record["kind"] == "frame" && record["dir"] == "out")
+                    .collect();
+                let sets = out
+                    .iter()
+                    .filter(|record| record["frame"]["method"] == "config.set")
+                    .count();
+                assert!(
+                    sets >= 2,
+                    "{name}: {sets} outbound config.set frames, want at least 2"
+                );
+                assert!(
+                    out.iter()
+                        .all(|record| record["frame"]["method"] != "session.cwd.set"),
+                    "{name}: a raw session.cwd.set was recorded"
+                );
+                assert!(
+                    position(&events, "session.info", 0).is_some(),
+                    "{name}: no session.info"
+                );
+                assert!(
+                    position(&events, "session.updated", 0).is_some(),
+                    "{name}: no session.updated"
+                );
+            }
             "queued-prompt" => {
                 let first_complete = position(&events, "message.complete", 0);
                 assert!(first_complete.is_some(), "{name}: no message.complete");
@@ -535,7 +565,7 @@ fn scenario_evidence_present() {
 
 #[test]
 fn clarify_answer_is_withheld() {
-    let fixtures = all_fixtures();
+    let fixtures = listed_fixtures();
     let (name, path) = fixtures
         .iter()
         .find(|(name, _)| *name == "clarification")

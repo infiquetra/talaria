@@ -89,6 +89,7 @@ fn expected(action: Action) -> Vec<String> {
         Action::PagerDetails => &["T"],
         Action::PagerClose => &["Q"],
         Action::ToggleTasks => &["Ctrl+T"],
+        Action::ApprovalsToggle => &["Shift+Tab"],
     };
     labels.iter().map(|label| (*label).to_string()).collect()
 }

@@ -181,6 +181,8 @@ pub enum Action {
     PagerClose,
     /// Open or close the task checklist drawer.
     ToggleTasks,
+    /// Switches this session's approvals off or back on (#237).
+    ApprovalsToggle,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -212,7 +214,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 46] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -258,6 +260,7 @@ impl Action {
         Self::PagerDetails,
         Self::PagerClose,
         Self::ToggleTasks,
+        Self::ApprovalsToggle,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -309,6 +312,7 @@ impl Action {
             Self::PagerDetails => "pager_details",
             Self::PagerClose => "pager_close",
             Self::ToggleTasks => "toggle_tasks",
+            Self::ApprovalsToggle => "approvals_toggle",
         }
     }
 
@@ -427,6 +431,7 @@ impl Action {
             Self::PagerDetails => &["t"],
             Self::PagerClose => &["q"],
             Self::ToggleTasks => &["ctrl+t"],
+            Self::ApprovalsToggle => &["shift+tab"],
         }
     }
 }
@@ -1057,7 +1062,10 @@ mod tests {
         assert!(!shift_enter.matches(&hyper));
 
         let back_tab = Key::from(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
-        assert_eq!(map.resolve(&back_tab, KeyContext::Composer), None);
+        assert_eq!(
+            map.resolve(&back_tab, KeyContext::Composer),
+            Some(Action::ApprovalsToggle)
+        );
 
         let release = Key::from(KeyEvent::new_with_kind(
             KeyCode::Enter,
@@ -1097,7 +1105,7 @@ mod tests {
     #[test]
     fn defaults_are_safe_and_unambiguous() {
         // Issue 222 adds sixteen transcript actions to the twenty-four actions main holds.
-        assert_eq!(Action::ALL.len(), 45);
+        assert_eq!(Action::ALL.len(), 46);
         for action in Action::ALL {
             let name = action.config_name();
             assert_eq!(Action::from_config_name(name), Some(action), "{name}");
@@ -1174,6 +1182,7 @@ mod tests {
             (Action::PagerDetails, vec!["T"]),
             (Action::PagerClose, vec!["Q"]),
             (Action::ToggleTasks, vec!["Ctrl+T"]),
+            (Action::ApprovalsToggle, vec!["Shift+Tab"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1312,7 +1321,7 @@ mod tests {
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
         // The composer actions, plus the four the slash palette brought with it.
-        assert_eq!(Action::ALL.len(), 45);
+        assert_eq!(Action::ALL.len(), 46);
     }
 
     #[test]

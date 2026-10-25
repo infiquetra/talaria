@@ -40,6 +40,10 @@ pub enum LocalAction {
     Skin,
     /// Show the colour decisions or override the background for this session.
     Theme,
+    /// Show or change the approval tiers. Issue #237.
+    Permissions,
+    /// Show or move the session's working folder. Issue #237.
+    Cd,
 }
 
 /// One local command.
@@ -160,6 +164,22 @@ const BUILTIN: &[LocalCommand] = &[
         takes_argument: true,
         action: LocalAction::Theme,
         tag: "talaria",
+    },
+    LocalCommand {
+        name: "permissions",
+        aliases: &[],
+        summary: "Show or change the approval tiers",
+        args_hint: "[manual | smart | off | session off | session default]",
+        takes_argument: true,
+        action: LocalAction::Permissions,
+    },
+    LocalCommand {
+        name: "cd",
+        aliases: &[],
+        summary: "Show or move the session's working folder",
+        args_hint: "[<path>]",
+        takes_argument: true,
+        action: LocalAction::Cd,
     },
 ];
 

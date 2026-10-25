@@ -36,6 +36,7 @@ use talaria_core::models::{
     PickerKey, PickerView, SavedModels, parse_effort_command, parse_model_command,
 };
 use talaria_core::mutation::{Confirmation, MutationLedger, MutationOutcome, MutationRequest};
+use talaria_core::permissions::{ApprovalSegmentText, PermissionsInput};
 use talaria_core::rewind::{
     CallFailure, DiffCommand, DiffSource, DoubleEsc, Reply, RewindEffect, RewindInput, RewindKey,
     RewindState, RewindView, RollbackCommand, parse_diff as parse_diff_command, parse_rollback,
@@ -181,6 +182,22 @@ pub enum UserAction {
     },
     /// Flip the task checklist panel. Never reaches the composer.
     ToggleTasks,
+    /// The approvals toggle key, with the context that owned the key (#237).
+    ApprovalsToggle {
+        /// Which screen owned the key.
+        context: ToggleContext,
+    },
+}
+
+/// Which screen owned the approvals toggle key (#237).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToggleContext {
+    /// The draft box.
+    Composer,
+    /// A completion list over the draft box.
+    Completion,
+    /// A focused approval card with an empty draft.
+    Card,
 }
 
 /// Everything the screen draws from, borrowed for one draw.
@@ -216,6 +233,8 @@ pub struct View<'a> {
     pub checklist: Option<&'a Checklist>,
     /// Whether the checklist panel shows every row.
     pub checklist_expanded: bool,
+    /// The approvals segment, when the permissions state shows one (#237).
+    pub approvals: Option<ApprovalSegmentText>,
 }
 
 impl View<'_> {
@@ -546,6 +565,8 @@ impl AppState {
             source_epoch: self.source_epoch,
             checklist: self.checklist.live(),
             checklist_expanded: self.checklist.expanded(),
+            // The permissions wiring lands with the green work (#237).
+            approvals: None,
         }
     }
 
@@ -691,6 +712,8 @@ pub enum AppMessage {
         text: String,
         caret: usize,
     },
+    /// A permissions reducer input (#237).
+    Permissions(PermissionsInput),
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -793,6 +816,15 @@ pub enum AppEffect {
     /// Emit a configured foreground alert.
     Alert(talaria_core::attention::Alert),
     Attachment(AttachmentEffect),
+    /// Write the session bypass (#237).
+    SetSessionOff {
+        /// The session to change.
+        session_id: String,
+        /// The generation of this write.
+        generation: u64,
+        /// Whether the bypass should be on.
+        off: bool,
+    },
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -1258,6 +1290,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
+        // The permissions wiring lands with the green work; until then replies change
+        // nothing (#237).
+        AppMessage::Permissions(_) => Vec::new(),
     };
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
@@ -1781,6 +1816,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 Vec::new()
             }
         }
+        // The permissions wiring lands with the green work; until then the toggle sends
+        // nothing (#237).
+        UserAction::ApprovalsToggle { .. } => Vec::new(),
     }
 }
 
@@ -4485,6 +4523,8 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            // The permissions wiring lands with the green work (#237).
+            AppEffect::SetSessionOff { .. } => {}
         }
     }
     sync_attachment_view(state, screen, Instant::now());
