@@ -62,3 +62,41 @@ pub struct SessionReplayGap {
     pub latest_seq: Option<i64>,
     pub replay_epoch: Option<String>,
 }
+
+/// Queue fanout of `session.info`.
+///
+/// Issue 232. Queue and steer. The generated session-info type lacks the queue
+/// fields and defaults `running` to false, so this frame is decoded from the
+/// raw payload. Every field is optional and has no default: absent means unchanged.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct SessionInfoFrame {
+    /// Rows the gateway currently holds, including the running turn.
+    pub pending: Option<Vec<crate::schemas::CanonicalPendingAdmission>>,
+    /// Whether a turn is running, when the frame says so.
+    pub running: Option<bool>,
+    /// Generation of the running turn, when the frame says so.
+    pub execution_generation: Option<i64>,
+    /// Gateway revision of this fanout.
+    pub revision: Option<i64>,
+    /// Authority epoch of this fanout.
+    pub authority_epoch: Option<i64>,
+    /// Stored session id, when present.
+    pub stored_session_id: Option<String>,
+    /// Wire protocol name. `hermes-gateway-v1` on the pinned gateway.
+    pub desktop_protocol: Option<String>,
+}
+
+impl SessionInfoFrame {
+    /// Decode the event payload object. Unknown keys are ignored.
+    ///
+    /// Issue 232. Queue and steer.
+    pub fn from_payload(
+        payload: &serde_json::Value,
+    ) -> Result<SessionInfoFrame, crate::events::DecodeError> {
+        SessionInfoFrame::deserialize(payload).map_err(|failure| crate::events::DecodeError {
+            event_type: "session.info".to_string(),
+            reason: failure.to_string(),
+            missing_fields: Vec::new(),
+        })
+    }
+}

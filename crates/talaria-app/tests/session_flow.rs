@@ -45,6 +45,7 @@ use talaria_app::sessions::{
     DetachOutcome, ExecuteOutcome, OpenError, OpenedSession, SessionService, accept_event,
     detach_params,
 };
+use talaria_core::queue::SubmissionId;
 use talaria_core::session::{
     Cell, Effect, Event, NoticeKind, PromptKind, SessionId, SessionState, TurnState,
 };
@@ -1620,26 +1621,40 @@ async fn refused_or_unknown_submit_tells_the_reducer_and_is_not_resent() {
         let effects = update(
             &mut app,
             AppMessage::SubmitDone {
-                submission_id: id,
+                submission_id: id.clone(),
                 outcome,
             },
         );
         let lines = committed_lines(&effects);
-        assert!(
-            lines.iter().any(|line| line.contains(expected)),
-            "{kind}: {lines:?}"
-        );
         assert!(sent_prompts(&effects).is_empty(), "{kind}: no resend");
         let cells = app
             .opened
             .as_ref()
             .map(|opened| opened.state.cells().to_vec());
-        assert!(
-            cells.unwrap_or_default().iter().any(
-                |cell| matches!(cell, Cell::Notice(notice) if notice.kind == NoticeKind::Error)
-            ),
-            "{kind}: the reducer was told"
-        );
+        let told = cells
+            .unwrap_or_default()
+            .iter()
+            .any(|cell| matches!(cell, Cell::Notice(notice) if notice.kind == NoticeKind::Error));
+        if kind == "unknown" {
+            // #232: a lost reply is not a failure yet. The submission waits for the next queue
+            // frame or the reconcile wait, then is retried once with the same id.
+            assert!(!told, "{kind}: not a failure yet");
+            let waiting = app.opened.as_ref().is_some_and(|opened| {
+                opened
+                    .state
+                    .queue
+                    .ledger
+                    .get(&SubmissionId(id.clone()))
+                    .is_some_and(|entry| entry.awaiting_reconcile)
+            });
+            assert!(waiting, "{kind}: awaiting reconcile");
+        } else {
+            assert!(
+                lines.iter().any(|line| line.contains(expected)),
+                "{kind}: {lines:?}"
+            );
+            assert!(told, "{kind}: the reducer was told");
+        }
         notices.push(lines.join("\n"));
     }
     assert_ne!(notices[0], notices[1]);

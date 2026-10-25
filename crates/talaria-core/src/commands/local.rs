@@ -44,6 +44,10 @@ pub enum LocalAction {
     Permissions,
     /// Show or move the session's working folder. Issue #237.
     Cd,
+    /// Select, or queue a prompt with, the gateway's queue. Issue #232.
+    Queue,
+    /// Steer the running turn with typed text. Issue #232.
+    Steer,
 }
 
 /// One local command.
@@ -182,6 +186,24 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[<path>]",
         takes_argument: true,
         action: LocalAction::Cd,
+    },
+    LocalCommand {
+        name: "queue",
+        aliases: &["q"],
+        summary: "Select a queued prompt, or queue one while Hermes works",
+        args_hint: "[text]",
+        takes_argument: true,
+        action: LocalAction::Queue,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "steer",
+        aliases: &["s"],
+        summary: "Send a note the running turn reads after its next tool call",
+        args_hint: "<text>",
+        takes_argument: true,
+        action: LocalAction::Steer,
+        tag: "talaria",
     },
 ];
 

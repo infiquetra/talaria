@@ -67,6 +67,11 @@ impl SideService {
                 vec![side_reply_event(request_id, result, now_ms())]
             }
             Effect::SendPrompt { .. }
+            | Effect::CancelQueued { .. }
+            | Effect::ReplaceQueued { .. }
+            | Effect::SteerQueued { .. }
+            | Effect::Steer { .. }
+            | Effect::ResolveUnknown { .. }
             | Effect::Interrupt { .. }
             | Effect::RespondApproval { .. }
             | Effect::RespondClarify { .. }

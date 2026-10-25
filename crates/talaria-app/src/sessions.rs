@@ -9,7 +9,7 @@ use std::time::Duration;
 use hermes_client::Client;
 use hermes_client::replay::{Cursor, ReplayGap};
 use hermes_client::rpc::{CallError, CallOptions};
-use hermes_contract::schemas::CanonicalSnapshot;
+use hermes_contract::schemas::{AdmissionStatus, CanonicalSnapshot};
 use serde_json::{Map, Value, json};
 use talaria_core::attachments::Attachment;
 use talaria_core::session::{Effect, SessionState};
@@ -303,6 +303,16 @@ impl SessionService {
 
     /// Run a send-prompt or interrupt effect. An unknown outcome is never sent again.
     pub async fn execute(&self, effect: Effect) -> ExecuteOutcome {
+        self.execute_with_receipt(effect).await.0
+    }
+
+    /// As [`execute`](Self::execute), also handing back a submit's admission receipt, which the
+    /// queue ledger keeps (#232). Other effects, and replies that are not a receipt, give none.
+    pub async fn execute_with_receipt(
+        &self,
+        effect: Effect,
+    ) -> (ExecuteOutcome, Option<AdmissionStatus>) {
+        let mut receipt = None;
         let result = match effect {
             Effect::SendPrompt {
                 session_id,
@@ -313,9 +323,13 @@ impl SessionService {
                 let params = submit_frame(session_id.as_str(), &text, &submission_id, &attachments);
                 match self.call("prompt.submit", params, None).await {
                     Ok(reply) if reply.get("voice_stopped") == Some(&Value::Bool(true)) => {
-                        return ExecuteOutcome::VoiceStopped;
+                        return (ExecuteOutcome::VoiceStopped, None);
                     }
-                    other => other.map(drop),
+                    Ok(reply) => {
+                        receipt = serde_json::from_value(reply).ok();
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
                 }
             }
             Effect::Interrupt {
@@ -333,12 +347,28 @@ impl SessionService {
             | Effect::RefuseAnswer { .. }
             | Effect::RunShell { .. }
             | Effect::AskSide { .. } => {
-                return ExecuteOutcome::Refused {
-                    reason: "not_a_session_call".to_string(),
-                };
+                return (
+                    ExecuteOutcome::Refused {
+                        reason: "not_a_session_call".to_string(),
+                    },
+                    None,
+                );
+            }
+            // Issue 232. Queue and steer. Queue calls go through the queue service.
+            Effect::CancelQueued { .. }
+            | Effect::ReplaceQueued { .. }
+            | Effect::SteerQueued { .. }
+            | Effect::Steer { .. }
+            | Effect::ResolveUnknown { .. } => {
+                return (
+                    ExecuteOutcome::Refused {
+                        reason: "not_sent".to_string(),
+                    },
+                    None,
+                );
             }
         };
-        match result {
+        let outcome = match result {
             Ok(()) => ExecuteOutcome::Sent,
             Err(error) if error.outcome_unknown() => ExecuteOutcome::OutcomeUnknown,
             Err(CallError::Rpc(error)) => ExecuteOutcome::Refused {
@@ -352,7 +382,8 @@ impl SessionService {
             Err(_) => ExecuteOutcome::Refused {
                 reason: "not_sent".to_string(),
             },
-        }
+        };
+        (outcome, receipt)
     }
 
     /// After a replay gap: resume the session again for a fresh snapshot.

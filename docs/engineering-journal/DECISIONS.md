@@ -4042,3 +4042,24 @@ and still lacks the branch until it answers.
 
 **Revisit when.** Hermes's `session.info` reports the branch, or the session summary gains a folder
 owner of its own.
+## 2026-10-25 — Reorder queued prompts by re-admission
+
+**Decision.** For #232, Talaria moves a queued prompt, restores an edited prompt's place, and puts
+a prompt at the head for "send now" by re-admitting rows in the wanted order with
+`prompt.replace_queued`. A planner keeps the longest prefix of the target order that is already a
+subsequence of the gateway's order and re-admits the rest, one replace per step, each after the
+previous result. Plans act on `queued` rows only, and a row without the `replace` control means
+nothing is sent. The planning ruling on #214 approved this.
+
+**Rationale.** Hermes v0.22.4 has no reorder verb ("one FIFO per session",
+`gateway/session_queued_controls.py:1-4`). `prompt.replace_queued` retires a row and admits its
+text at the FIFO tail in one write, and an exact retry replays the same admission, so each step is
+safe to retry after a lost reply.
+
+**Rejected alternatives.** A client-side queue that holds prompts until the turn ends: it hides
+what Hermes holds and breaks other clients' view. Cancelling and resubmitting: two writes, with a
+window in which the prompt is neither queued nor running. Interrupting on Enter: it stops work the
+developer did not ask to stop.
+
+**Revisit when.** Hermes adds a reorder verb, or the operator rejects reorder by re-admission (then
+moves and send-now of a non-head row are dropped and edits stay at the back).

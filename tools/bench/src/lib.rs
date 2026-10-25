@@ -21,7 +21,7 @@ pub use budgets::{
 };
 pub use error::BenchError;
 pub use frames::{Frame, FrameSplitter, SplitCounts};
-pub use generator::generate;
+pub use generator::{generate, generate_queue};
 pub use measurements::{RunOptions, exit_code, run};
 pub use report::Report;
 pub use responder::{Answers, Query, ResponderState, answer_queries};

@@ -10,6 +10,9 @@ temporary directory. To inspect them separately:
 
     target/release/talaria-bench generate --out generated-scenarios
 
+scenarios/queue.jsonl is regenerated from the repository root with
+`target/release/talaria-bench generate-queue --out tools/bench/scenarios/queue.jsonl`.
+
 The child runs in a 160 by 48 pseudo-terminal with a cleared environment and an empty
 temporary home. Its bytes go only to the terminal emulator and are never printed.
 The responder answers startup queries before counting the first visible synchronized

@@ -40,6 +40,9 @@ use talaria_core::permissions::{
     ApprovalSegmentText, CallFailure as PermissionsFailure, PermissionsEffect, PermissionsInput,
     PermissionsState, hermes_command_finished, parse_permissions_command,
 };
+use talaria_core::queue::{
+    IdSource, QueueAction, QueueIntent, RECONCILE_WAIT, SubmissionId, update_queue,
+};
 use talaria_core::rewind::{
     CallFailure, DiffCommand, DiffSource, DoubleEsc, Reply, RewindEffect, RewindInput, RewindKey,
     RewindState, RewindView, RollbackCommand, parse_diff as parse_diff_command, parse_rollback,
@@ -87,6 +90,7 @@ use crate::launch::{
 use crate::mutation::MutationClient;
 use crate::permissions::PermissionsService;
 use crate::prompts::{MaskedRequestInfo, PromptService, ServerRequestPolicy, policy_for};
+use crate::queue::{QueueCommand, QueueService, queue_command, steer_command};
 use crate::sessions::{
     DetachOutcome, ExecuteOutcome, OpenError, OpenedSession, SessionInfoSummary, SessionService,
     accept_event, submission_id,
@@ -168,6 +172,8 @@ pub enum UserAction {
     },
     /// A line the screen wants shown.
     Notice(String),
+    /// A queue key in selection or edit mode. Issue #232.
+    Queue(QueueIntent),
     /// The draft changed, or a completion-list key was pressed. Issue #223.
     Palette(PaletteInput),
     /// A composer edit, including an explicit history recall.
@@ -291,6 +297,11 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn load_draft(&mut self, text: &str);
     /// Take a draft the composer recorded on Enter back out of Up-arrow recall.
     fn unrecord_submit(&mut self, _text: &str) {}
+    /// Hand back a prompt that left the queue: it goes into the composer only when the composer
+    /// is empty and no edit is open; the transcript already shows it (#232).
+    fn offer_draft(&mut self, text: &str) {
+        let _ = text;
+    }
     /// Give the terminal back. Later draws write nothing.
     fn restore(&mut self);
     /// Emit an attention alert between frames.
@@ -808,6 +819,12 @@ pub enum AppEffect {
     Send(Effect),
     /// `shell.exec` or `prompt.btw`, started at once: never queued behind a prompt or a turn.
     Side(Effect),
+    /// One queue call through the queue service. Issue #232.
+    Queue(Effect),
+    /// A prompt handed back by the queue, for an empty composer. Issue #232.
+    OfferDraft(String),
+    /// Feed this event once the reconcile wait has passed. Issue #232.
+    ReconcileLater(Box<Event>),
     /// Deny open approvals, then `session.interrupt`.
     Interrupt(Effect),
     /// An approval or clarification answer, with the note to attach first.
@@ -1410,6 +1427,15 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects.push(AppEffect::Alert(alert));
         }
     }
+
+    // A prompt the queue handed back goes to an empty composer; the rest stay as notices.
+    if let Some(text) = state
+        .opened
+        .as_mut()
+        .and_then(|opened| opened.state.queue.take_returned().into_iter().next())
+    {
+        effects.push(AppEffect::OfferDraft(text));
+    }
     effects.extend(commit_ready(state));
     if !turn_running(state) {
         for block in state.context_blocks.release() {
@@ -1529,7 +1555,12 @@ fn local_line(text: &str) -> Option<Result<(LocalAction, String), String>> {
     let name = trimmed.strip_prefix('/')?;
     let name = name.split_whitespace().next().unwrap_or(name);
     local::lookup(name)
-        .filter(|command| command.action != LocalAction::Btw)
+        .filter(|command| {
+            !matches!(
+                command.action,
+                LocalAction::Btw | LocalAction::Queue | LocalAction::Steer
+            )
+        })
         .map(|_| local::parse(trimmed))
 }
 
@@ -1711,6 +1742,12 @@ fn route(
             Effect::RunShell { .. } | Effect::AskSide { .. } => {
                 effects.push(AppEffect::Side(effect));
             }
+            // Issue 232. Queue and steer. The queue service will run these calls.
+            Effect::CancelQueued { .. }
+            | Effect::ReplaceQueued { .. }
+            | Effect::SteerQueued { .. }
+            | Effect::Steer { .. }
+            | Effect::ResolveUnknown { .. } => effects.push(AppEffect::Queue(effect)),
         }
     }
     effects
@@ -1872,6 +1909,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             vec![AppEffect::AnswerMasked { request_id, value }]
         }
         UserAction::Notice(text) => vec![notice_lines(&text)],
+        UserAction::Queue(intent) => queue_intent(state, intent),
         UserAction::Palette(input) => palette_input(state, input),
         UserAction::DraftEdited {
             text,
@@ -2209,6 +2247,8 @@ fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> V
         | LocalAction::Diff => return rewind_command(state, action, argument),
         LocalAction::Permissions => return permissions_command(state, argument),
         LocalAction::Cd => return cd_input(state, CdInput::Command(parse_cd_command(argument))),
+        LocalAction::Queue => return queue_line(state, queue_command(argument)),
+        LocalAction::Steer => return queue_line(state, steer_command(argument)),
         _ => return Vec::new(),
     };
     models_input(
@@ -2478,6 +2518,73 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
         Slash::Nothing => return Vec::new(),
         Slash::NotSlash => {}
     }
+    submit_prose(state, text)
+}
+
+/// Run what `/queue` or `/steer` asked for: an intent, a plain submit, or a notice (#232).
+fn queue_line(state: &mut AppState, command: QueueCommand) -> Vec<AppEffect> {
+    match command {
+        QueueCommand::Intent(intent) => queue_intent(state, intent),
+        QueueCommand::Submit(text) => submit_prose(state, text),
+        QueueCommand::Notice(text) => match state.opened {
+            Some(_) => reduce(
+                state,
+                Event::Notice {
+                    kind: NoticeKind::System,
+                    text: text.to_string(),
+                },
+            ),
+            None => vec![notice_lines(text)],
+        },
+    }
+}
+
+/// Apply one queue intent to the open session; its calls go to the queue service (#232).
+fn queue_intent(state: &mut AppState, intent: QueueIntent) -> Vec<AppEffect> {
+    let mut ids = QueueIds {
+        launch_id: state.launch_id.clone(),
+        counter: Arc::clone(&state.counter),
+    };
+    let Some(opened) = state.opened.as_mut() else {
+        return Vec::new();
+    };
+    let produced = update_queue(&mut opened.state, intent, &mut ids);
+    route(state, produced, None)
+}
+
+/// The reconcile event a lost queue reply schedules, if `event` is one.
+fn reconcile_due(event: &Event) -> Option<Event> {
+    match event {
+        Event::QueueCallUnknown {
+            action,
+            admission_id,
+            submission_id,
+        } => Some(Event::QueueReconcileDue {
+            action: *action,
+            admission_id: admission_id.clone(),
+            submission_id: submission_id.clone(),
+        }),
+        _ => None,
+    }
+}
+
+/// Fresh submission ids for queue calls, from the same per-launch counter as prompts.
+struct QueueIds {
+    launch_id: String,
+    counter: Arc<AtomicU64>,
+}
+
+impl IdSource for QueueIds {
+    fn submission_id(&mut self) -> SubmissionId {
+        SubmissionId(submission_id(
+            &self.launch_id,
+            self.counter.fetch_add(1, Ordering::SeqCst) + 1,
+        ))
+    }
+}
+
+/// Text for the model: held before the session exists, refused when the link is gone.
+fn submit_prose(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if state.session_gone || state.link_failed {
         let notice = if state.session_gone {
             SESSION_GONE_NOTICE
@@ -2999,9 +3106,24 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
     let (reason, notice) = match outcome {
         ExecuteOutcome::Sent => return attachment_notices,
         ExecuteOutcome::Refused { reason } => ("refused", failure::prompt_refused_notice(&reason)),
-        ExecuteOutcome::OutcomeUnknown => ("connection dropped", failure::prompt_unknown_notice()),
+        ExecuteOutcome::OutcomeUnknown => {
+            let mut effects = lost_submit(state, id);
+            effects.extend(attachment_notices);
+            effects.extend(restore_failed_attachments(state));
+            return effects;
+        }
         ExecuteOutcome::VoiceStopped => ("voice stop", failure::voice_stop_notice()),
     };
+    // A refused retry of a lost submit hands its text back (#232); the reducer forgets it.
+    let returned = state.opened.as_ref().and_then(|opened| {
+        opened
+            .state
+            .queue
+            .ledger
+            .get(&SubmissionId(id.clone()))
+            .filter(|entry| entry.retried)
+            .map(|entry| entry.text.clone())
+    });
     let mut effects = reduce(
         state,
         Event::SubmitFailed {
@@ -3015,6 +3137,29 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
     if voice_stopped {
         effects.retain(|effect| !matches!(effect, AppEffect::LoadDraft(_)));
     }
+    effects.extend(returned.map(AppEffect::OfferDraft));
+    effects
+}
+
+/// A lost submit reply is not a failure yet: the composer shows `Sending…` until the next queue
+/// frame or the reconcile wait, and the reducer then retries once with the same id (#232).
+fn lost_submit(state: &mut AppState, id: String) -> Vec<AppEffect> {
+    let submission_id = Some(SubmissionId(id));
+    let mut effects = reduce(
+        state,
+        Event::QueueCallUnknown {
+            action: QueueAction::Submit,
+            admission_id: None,
+            submission_id: submission_id.clone(),
+        },
+    );
+    effects.push(AppEffect::ReconcileLater(Box::new(
+        Event::QueueReconcileDue {
+            action: QueueAction::Submit,
+            admission_id: None,
+            submission_id,
+        },
+    )));
     effects
 }
 
@@ -4080,7 +4225,21 @@ impl Executor {
                     continue;
                 };
                 let submission_id = submission_id.clone();
-                let outcome = service.execute(effect).await;
+                let (outcome, receipt) = service.execute_with_receipt(effect).await;
+                // The queue ledger matches this prompt's cell by its admission (#232).
+                if let Some(result) = receipt {
+                    let event = Event::QueueCallResult {
+                        action: QueueAction::Submit,
+                        admission_id: None,
+                        submission_id: Some(SubmissionId(submission_id.clone())),
+                        result,
+                    };
+                    let _ = results.send(AppMessage::PromptDone {
+                        events: vec![event],
+                        notices: Vec::new(),
+                        masked: None,
+                    });
+                }
                 if results
                     .send(AppMessage::SubmitDone {
                         submission_id,
@@ -4135,6 +4294,29 @@ impl Executor {
     /// App-clock milliseconds now.
     fn now_ms(&self) -> u64 {
         clock_ms(self.started)
+    }
+
+    /// One queue call on a task; its events come back as one message. A lost reply also
+    /// arms the reconcile wait, whose end comes back as `QueueReconcileDue` (#232).
+    fn queue_call(&self, client: hermes_client::Client, session_id: SessionId, effect: Effect) {
+        let sender = self.sender.clone();
+        tokio::spawn(async move {
+            let events = QueueService::new(client, session_id).run(effect).await;
+            let lost: Vec<Event> = events.iter().filter_map(reconcile_due).collect();
+            let _ = sender.send(AppMessage::PromptDone {
+                events,
+                notices: Vec::new(),
+                masked: None,
+            });
+            if !lost.is_empty() {
+                tokio::time::sleep(RECONCILE_WAIT).await;
+                let _ = sender.send(AppMessage::PromptDone {
+                    events: lost,
+                    notices: Vec::new(),
+                    masked: None,
+                });
+            }
+        });
     }
 
     fn send_later(&self, task: impl Future<Output = AppMessage> + Send + 'static) {
@@ -4565,6 +4747,28 @@ fn apply<S: Screen>(
                     let executed = prompts.execute(&client, effect).await;
                     (executed.events, notice_texts(executed.notices))
                 });
+            }
+            AppEffect::OfferDraft(text) => screen.offer_draft(&text),
+            AppEffect::ReconcileLater(event) => executor.send_later(async move {
+                tokio::time::sleep(RECONCILE_WAIT).await;
+                AppMessage::PromptDone {
+                    events: vec![*event],
+                    notices: Vec::new(),
+                    masked: None,
+                }
+            }),
+            AppEffect::Queue(effect) => {
+                let (Some(client), Some(opened)) = (
+                    state
+                        .service
+                        .as_ref()
+                        .and_then(SessionService::client)
+                        .cloned(),
+                    &state.opened,
+                ) else {
+                    continue;
+                };
+                executor.queue_call(client, SessionId::new(&opened.session_id), effect);
             }
             AppEffect::AnswerMasked { request_id, value } => {
                 let Some(prompts) = &state.prompts else {

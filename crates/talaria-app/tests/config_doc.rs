@@ -96,6 +96,15 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("pager_close", &["q"][..]),
         ("toggle_tasks", &["ctrl+t"][..]),
         ("approvals_toggle", &["shift+tab"][..]),
+        ("composer_send_now", &["ctrl+enter"][..]),
+        ("composer_steer", &[][..]),
+        ("queue_edit", &["enter", "e"][..]),
+        ("queue_remove", &["d", "delete", "ctrl+x"][..]),
+        ("queue_steer", &["s"][..]),
+        ("queue_send_now", &["n"][..]),
+        ("queue_move_up", &["K", "shift+up"][..]),
+        ("queue_move_down", &["J", "shift+down"][..]),
+        ("queue_leave", &["esc"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

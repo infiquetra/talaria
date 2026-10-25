@@ -15,6 +15,7 @@ pub mod model_picker;
 pub mod pager;
 pub mod palette;
 pub mod prompts;
+pub mod queue;
 pub mod rewind;
 pub mod side;
 pub mod status;
