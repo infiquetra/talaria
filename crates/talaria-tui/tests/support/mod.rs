@@ -295,6 +295,7 @@ pub fn probe(sync: bool, keyboard: bool, cursor: Option<(u16, u16)>) -> ProbeRep
             keyboard_enhancement: keyboard,
         },
         cursor,
+        ..Default::default()
     }
 }
 

@@ -5,6 +5,7 @@
 //! on the normal screen; then the terminal is set up and `talaria_app::app::run` draws the first
 //! frame before anything touches the network.
 
+use std::collections::HashMap;
 use std::io::{self, IsTerminal, Stdout};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -18,6 +19,7 @@ use std::sync::{
 use talaria_app::app::{
     self, ComposerDeadline, LinkView, Outcome, RunSetup, Screen, StatusHost, UserAction, View,
 };
+use talaria_app::appearance::AppearanceView;
 use talaria_app::comforts::{editor, herdr::HerdrReporter, prompt_history::PromptHistory, suspend};
 use talaria_app::config::{self, LoadedConfig};
 use talaria_app::connection::OpenConnection;
@@ -25,12 +27,13 @@ use talaria_app::context::ContextBlock;
 use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
+use talaria_core::appearance::ThemeReport;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
 use talaria_core::commands::PaletteInput;
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::session::{
-    AssistantCell, Cell, PromptCell, ReasoningCell, TurnState as SessionTurn,
+    AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
 use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome};
 use talaria_tui::context_view::{
@@ -59,6 +62,12 @@ use talaria_tui::status::{
 use talaria_tui::terminal::{
     InlineTerminal, InputThread, TerminalError, TerminalGuard, probe_startup, spawn_input,
     terminal_size,
+};
+use talaria_tui::theme::cells::{ThemedCells, themed_cell_id};
+use talaria_tui::theme::detect::{self, EnvView};
+use talaria_tui::theme::{
+    ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors, Theme,
+    ThemeInputs, ThemeMode,
 };
 use talaria_tui::tool_cell::{
     Detail, DraftingLine, ToolCellLines, ToolClock, ToolRenderOptions, ToolTheme,
@@ -116,6 +125,12 @@ pub struct TuiScreen {
     /// When each running tool cell was first seen, for its seconds counter.
     clock: ToolClock,
     tool_theme: ToolTheme,
+    /// The settings and start-up decisions the theme is resolved from.
+    look: Look,
+    /// The theme in force for the composer, the status line and cells that start now.
+    theme: Arc<Theme>,
+    /// The theme each assistant or reasoning cell started under, until it is committed.
+    captured: HashMap<CellId, Arc<Theme>>,
     sender: mpsc::UnboundedSender<ScreenInput>,
     connecting: bool,
     /// The key map, for the composer, the completion list and the model picker.
@@ -231,6 +246,66 @@ fn confirmation_key(key: Key, focused: Option<Instant>, now: Instant) -> Option<
         KeyCode::Enter | KeyCode::Char('y') => Some(ConfirmKey::Accept),
         KeyCode::Esc | KeyCode::Char('n') => Some(ConfirmKey::Decline),
         _ => None,
+    }
+}
+
+/// What the theme is resolved from besides the skin: decided once at start-up.
+#[derive(Clone, Copy, Debug)]
+struct Look {
+    follow_hermes_skin: bool,
+    depth: (ColorDepth, DepthSource),
+    motion: (Motion, MotionSource),
+    /// The start-up probe colours. The re-probe after an editor or a resume does not change them.
+    terminal: TerminalColors,
+    polarity: (Polarity, PolaritySource),
+}
+
+impl Look {
+    fn resolve(&self, view: &AppearanceView<'_>) -> Theme {
+        talaria_tui::theme::resolve(&ThemeInputs {
+            skin: view.skin,
+            skipped: view.skipped,
+            follow_hermes_skin: self.follow_hermes_skin,
+            polarity: view.polarity,
+            depth: self.depth,
+            motion: self.motion,
+            terminal: self.terminal,
+        })
+    }
+}
+
+/// The tool cell renderer for a theme: tool rows in the theme's tool styles, other cells plain.
+fn tool_cells(theme: &Theme) -> ToolCellLines {
+    ToolCellLines::new(
+        Box::new(MarkdownCellLines::new(true, MarkdownTheme::default())),
+        ToolRenderOptions {
+            width: 0,
+            theme: theme.tool.clone(),
+            color: theme.color,
+            detail: Detail::Compact,
+            expand_hint: None,
+            elapsed: None,
+        },
+    )
+}
+
+/// Committed cells drawn with the theme each one started under.
+struct CapturedCells<'a> {
+    current: &'a Theme,
+    captured: &'a HashMap<CellId, Arc<Theme>>,
+    /// Draws tool cells; every other cell goes through the theme.
+    tools: &'a ToolCellLines,
+}
+
+impl CellLines for CapturedCells<'_> {
+    fn lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
+        if matches!(cell, Cell::Tool(_)) {
+            return self.tools.lines(cell, width);
+        }
+        let theme = themed_cell_id(cell)
+            .and_then(|id| self.captured.get(&id))
+            .map_or(self.current, |theme| theme.as_ref());
+        ThemedCells { theme }.lines(cell, width)
     }
 }
 
@@ -392,6 +467,15 @@ impl TuiScreen {
                 .terminal
                 .draw_overlay(|area, buf| draw_model_picker(&view, area, buf));
         }
+    }
+
+    /// Take a newly resolved theme for the composer, the status line and later cells.
+    fn set_theme(&mut self, theme: Theme) {
+        self.composer.set_style(theme.composer);
+        self.palette = theme.status;
+        self.cells = tool_cells(&theme);
+        self.tool_theme = theme.tool.clone();
+        self.theme = Arc::new(theme);
     }
 
     fn sync_prompts(&mut self, view: &View<'_>, now: Instant) {
@@ -822,12 +906,30 @@ impl Screen for TuiScreen {
                 let limit = usize::from(self.terminal.viewport().height)
                     .saturating_mul(2)
                     .max(PREVIEW_MIN_LINES);
+                let current = &self.theme;
+                let captured = &mut self.captured;
+                let tools = &self.cells;
                 state
                     .live_tail()
                     .iter()
-                    .flat_map(|cell| match preview(cell, limit) {
-                        Some(trimmed) => self.cells.lines(&trimmed, width),
-                        None => self.cells.lines(cell, width),
+                    .flat_map(|cell| {
+                        if matches!(cell, Cell::Tool(_)) {
+                            return match preview(cell, limit) {
+                                Some(trimmed) => tools.lines(&trimmed, width),
+                                None => tools.lines(cell, width),
+                            };
+                        }
+                        let theme = match themed_cell_id(cell) {
+                            Some(id) => Arc::clone(
+                                captured.entry(id).or_insert_with(|| Arc::clone(current)),
+                            ),
+                            None => Arc::clone(current),
+                        };
+                        let cells = ThemedCells { theme: &theme };
+                        match preview(cell, limit) {
+                            Some(trimmed) => cells.lines(&trimmed, width),
+                            None => cells.lines(cell, width),
+                        }
                     })
                     .collect()
             })
@@ -946,7 +1048,15 @@ impl Screen for TuiScreen {
     }
 
     fn commit_cells(&mut self, cells: &[Cell]) {
-        let _ = self.terminal.commit(cells, &self.cells);
+        let render = CapturedCells {
+            current: &self.theme,
+            captured: &self.captured,
+            tools: &self.cells,
+        };
+        let _ = self.terminal.commit(cells, &render);
+        for id in cells.iter().filter_map(themed_cell_id) {
+            self.captured.remove(&id);
+        }
     }
 
     fn unrecord_submit(&mut self, text: &str) {
@@ -965,6 +1075,19 @@ impl Screen for TuiScreen {
         if let Some(reporter) = self.reporter.take() {
             reporter.release(Duration::from_millis(500));
         }
+    }
+
+    fn startup_appearance(&self) -> Option<(TerminalColors, (Polarity, PolaritySource))> {
+        Some((self.look.terminal, self.look.polarity))
+    }
+
+    fn appearance_changed(&mut self, view: &AppearanceView<'_>) {
+        let theme = self.look.resolve(view);
+        self.set_theme(theme);
+    }
+
+    fn theme_report(&self) -> Option<ThemeReport> {
+        Some(self.theme.report.clone())
     }
 
     fn attention_config(&self) -> AttentionConfig {
@@ -1192,6 +1315,20 @@ pub fn run(mut launch: Launch) -> ExitCode {
     let (keymap, key_notices) = KeyMap::from_entries(&loaded.config.keys);
     let mut notices = loaded.notices.clone();
     notices.extend(key_notices);
+    // The environment is read once, here.
+    let env = EnvView::from_process();
+    notices.extend(detect::env_notices(&env));
+    let settings = ThemeSettings {
+        mode: loaded.config.theme.mode,
+        look: Look {
+            follow_hermes_skin: loaded.config.theme.follow_hermes_skin,
+            depth: detect::depth(&env, loaded.config.theme.colors),
+            motion: detect::motion(&env, loaded.config.ui.reduced_motion.then_some(true)),
+            terminal: TerminalColors::default(),
+            polarity: (Polarity::Dark, PolaritySource::Default),
+        },
+        env,
+    };
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return fail(&failure::no_terminal());
     }
@@ -1224,7 +1361,15 @@ pub fn run(mut launch: Launch) -> ExitCode {
         }
     }
     let status = status_service(&loaded, &launch.folder, &mut setup.notices);
-    let outcome = match session(&runtime, launch, setup, keymap, status, loaded.config) {
+    let outcome = match session(
+        &runtime,
+        launch,
+        setup,
+        keymap,
+        status,
+        loaded.config,
+        settings,
+    ) {
         Ok(outcome) => outcome,
         Err(TerminalError::NotATerminal) => return fail(&failure::no_terminal()),
         Err(TerminalError::Io(_)) => {
@@ -1236,6 +1381,13 @@ pub fn run(mut launch: Launch) -> ExitCode {
     ExitCode::from(outcome.code)
 }
 
+/// The theme settings read before the terminal is set up.
+struct ThemeSettings {
+    env: EnvView,
+    mode: ThemeMode,
+    look: Look,
+}
+
 /// Acquire the terminal, run the loop, restore. The guard drops before the caller prints.
 fn session(
     runtime: &tokio::runtime::Runtime,
@@ -1244,9 +1396,21 @@ fn session(
     keymap: KeyMap,
     status: Option<StatusCommandService>,
     config: config::Config,
+    settings: ThemeSettings,
 ) -> Result<Outcome, TerminalError> {
     let guard = TerminalGuard::acquire()?;
     let probe = probe_startup(PROBE_DEADLINE)?;
+    // Light or dark is decided once, from the start-up probe; `/theme` overrides it per session.
+    let look = Look {
+        terminal: probe.colors,
+        polarity: detect::polarity(None, &settings.env, settings.mode, &probe.colors),
+        ..settings.look
+    };
+    let theme = look.resolve(&AppearanceView {
+        skin: None,
+        skipped: &[],
+        polarity: look.polarity,
+    });
     let size = terminal_size().map_err(TerminalError::Io)?;
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
@@ -1265,6 +1429,7 @@ fn session(
     setup.notices.extend(history_notice);
     let mut composer = Composer::with_history(keymap.clone(), history.composer_seed());
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
+    composer.set_style(theme.composer);
     let mut screen = TuiScreen {
         guard,
         input: None,
@@ -1301,20 +1466,13 @@ fn session(
             home_dir: std::env::var("HOME").ok(),
             ..StatusInputs::default()
         },
-        palette: StatusPalette::default(),
-        cells: ToolCellLines::new(
-            Box::new(MarkdownCellLines::new(true, MarkdownTheme::default())),
-            ToolRenderOptions {
-                width: 0,
-                theme: ToolTheme::default(),
-                color: std::env::var_os("NO_COLOR").is_none(),
-                detail: Detail::Compact,
-                expand_hint: None,
-                elapsed: None,
-            },
-        ),
+        palette: theme.status,
+        cells: tool_cells(&theme),
         clock: ToolClock::new(),
-        tool_theme: ToolTheme::default(),
+        tool_theme: theme.tool.clone(),
+        look,
+        theme: Arc::new(theme),
+        captured: HashMap::new(),
         sender: sender.clone(),
         connecting: true,
         keymap,

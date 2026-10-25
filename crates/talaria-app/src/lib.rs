@@ -1,6 +1,7 @@
 //! Application services that execute domain effects through the Hermes client.
 
 pub mod app;
+pub mod appearance;
 pub mod comforts;
 pub mod commands;
 pub mod config;

@@ -54,6 +54,12 @@ use zeroize::Zeroizing;
 use crate::commands::{
     AppAction, CommandReply, CommandService, no_session_notice, outcome_actions,
 };
+use talaria_core::appearance::{
+    AppearanceChange, AppearanceInput, AppearanceState, Polarity, PolaritySource, TerminalColors,
+    ThemeReport,
+};
+
+use crate::appearance::{self, AppearanceService, AppearanceView, theme_lines};
 use crate::connection::{ConnectionService, OpenConnection, find_git_toplevel};
 use crate::context::{ContextBlock, ContextService, ContextTimeouts};
 use crate::failure::{self, LaunchFailure};
@@ -230,6 +236,18 @@ pub trait Screen: ComposerDeadline + StatusHost {
             done_after: Duration::from_secs(20),
         }
     }
+
+    /// The start-up probe colours and the polarity decided from them, captured once.
+    fn startup_appearance(&self) -> Option<(TerminalColors, (Polarity, PolaritySource))> {
+        None
+    }
+    /// The skin or the session polarity changed: resolve the theme again for the composer, the
+    /// status line and cells that start from now on. Scrollback is never redrawn.
+    fn appearance_changed(&mut self, _view: &AppearanceView<'_>) {}
+    /// What the resolved theme reports, for `/theme`.
+    fn theme_report(&self) -> Option<ThemeReport> {
+        None
+    }
 }
 
 pub trait ComposerDeadline {
@@ -301,6 +319,8 @@ pub struct AppState {
     /// App-clock milliseconds since the loop started, as of the message being applied. The loop
     /// sets it; [`update`] only reads it, for the start time of a shell command or side question.
     pub now_ms: u64,
+    /// The Hermes skin and the session's light or dark override.
+    pub appearance: AppearanceService,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
@@ -361,6 +381,10 @@ impl AppState {
             ledger,
             context_blocks: HeldBlocks::new(),
             now_ms: 0,
+            appearance: AppearanceService::new(
+                TerminalColors::default(),
+                (Polarity::Dark, PolaritySource::Default),
+            ),
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
@@ -474,6 +498,15 @@ pub enum AppMessage {
     },
     /// What a shell command or side question came back with.
     SideDone(Vec<Event>),
+    /// A `/skin` command or a reconnect describe finished.
+    AppearanceDone {
+        /// The skin state it produced, when it changed one.
+        skin: Option<AppearanceState>,
+        /// Notice lines to show.
+        lines: Vec<String>,
+        /// The connection generation of a reconnect describe.
+        generation: Option<u64>,
+    },
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -538,6 +571,14 @@ pub enum AppEffect {
         cursor: Cursor,
     },
     Recover(ReplayGap),
+    /// The skin or polarity changed: the screen resolves the theme again.
+    Appearance,
+    /// Print the `/theme` report.
+    ThemeReport,
+    /// Run `/skin`, with its name argument if any.
+    Skin(Option<String>),
+    /// Describe again after a reconnect of this generation.
+    Describe(u64),
     Quit,
     /// Run a Hermes slash command (`slash.exec`) in the background.
     RunCommand {
@@ -884,7 +925,19 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let mut effects = match message {
         AppMessage::Models(input) => models_input(state, input),
         AppMessage::User(action) => user_action(state, action),
-        AppMessage::Link(event) => link_event(state, event),
+        AppMessage::Link(event) => {
+            let mut effects = skin_changed(state, &event);
+            if is_session_less_skin(&event) {
+                // A skin equal to the current one draws nothing.
+                if effects.is_empty() {
+                    return effects;
+                }
+                effects.push(AppEffect::Redraw);
+                return effects;
+            }
+            effects.extend(link_event(state, event));
+            effects
+        }
         AppMessage::Opened { opened, notice } => opened_session(state, opened, notice),
         AppMessage::SubmitDone {
             submission_id,
@@ -937,6 +990,24 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             let mut effects = Vec::new();
             for event in events {
                 effects.extend(reduce(state, event));
+            }
+            effects
+        }
+        AppMessage::AppearanceDone {
+            skin,
+            lines,
+            generation,
+        } => {
+            let mut effects = Vec::new();
+            if !lines.is_empty() {
+                effects.push(notice_lines(&lines.join("\n")));
+            }
+            let current =
+                generation.is_none_or(|generation| generation >= state.appearance.generation());
+            if let Some(skin) = skin.filter(|_| current)
+                && state.appearance.adopt(skin) != AppearanceChange::Unchanged
+            {
+                effects.push(AppEffect::Appearance);
             }
             effects
         }
@@ -1102,7 +1173,7 @@ fn local_effect(
             state.quitting = true;
             return vec![AppEffect::Quit];
         }
-        LocalAction::Model | LocalAction::Effort => {
+        LocalAction::Model | LocalAction::Effort | LocalAction::Skin | LocalAction::Theme => {
             return model_command(state, action, &argument);
         }
         LocalAction::Rewind
@@ -1506,6 +1577,11 @@ fn run_command(state: &mut AppState, typed: String) -> Vec<AppEffect> {
 /// one model input.
 fn model_command(state: &mut AppState, action: LocalAction, argument: &str) -> Vec<AppEffect> {
     let command = match action {
+        LocalAction::Skin => {
+            let name = Some(argument.trim().to_owned()).filter(|name| !name.is_empty());
+            return vec![AppEffect::Skin(name)];
+        }
+        LocalAction::Theme => return theme_command(state, argument.trim()),
         LocalAction::Model => parse_model_command(argument).map(ModelCommandOrEffort::Model),
         LocalAction::Effort => parse_effort_command(argument).map(ModelCommandOrEffort::Effort),
         LocalAction::Rewind
@@ -1637,6 +1713,57 @@ fn send_text(state: &mut AppState, text: String) -> Vec<AppEffect> {
     )
 }
 
+/// `/theme` with its argument: the report, or a background override for this session.
+fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    if argument.is_empty() {
+        return vec![AppEffect::ThemeReport];
+    }
+    let (lines, change) = state.appearance.theme_command(argument);
+    let mut effects = vec![notice_lines(&lines.join("\n"))];
+    if change != AppearanceChange::Unchanged {
+        effects.push(AppEffect::Appearance);
+    }
+    effects
+}
+
+/// The `skin.changed` event in this link event, as `(params, replayed)`.
+fn skin_event(event: &LinkEvent) -> Option<(&Value, bool)> {
+    let LinkEvent::Inbound {
+        item: Inbound::Event(inbound),
+        replayed,
+    } = event
+    else {
+        return None;
+    };
+    (inbound.raw.get("type").and_then(Value::as_str) == Some("skin.changed"))
+        .then_some((&inbound.raw, *replayed))
+}
+
+/// The watcher's broadcast carries no session id; it is not a session event.
+fn is_session_less_skin(event: &LinkEvent) -> bool {
+    skin_event(event).is_some_and(|(raw, _)| {
+        raw.get("session_id")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    })
+}
+
+/// Apply a `skin.changed` event; a replayed one is older than the describe after a reconnect.
+fn skin_changed(state: &mut AppState, event: &LinkEvent) -> Vec<AppEffect> {
+    let Some((raw, replayed)) = skin_event(event) else {
+        return Vec::new();
+    };
+    let change = state.appearance.update(AppearanceInput::SkinChanged {
+        payload: raw.get("payload").cloned().unwrap_or(Value::Null),
+        replayed,
+    });
+    if change == AppearanceChange::Unchanged {
+        Vec::new()
+    } else {
+        vec![AppEffect::Appearance]
+    }
+}
+
 fn event_position(raw: &Value) -> (Option<&str>, Option<u64>) {
     (
         raw.get("replay_epoch").and_then(Value::as_str),
@@ -1656,6 +1783,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
         LinkEvent::State(LinkState::Connected { generation }) => {
             state.link_state = LinkView::Connected;
             let mut effects = vec![AppEffect::ConnectionOpened(generation)];
+            // A reconnect describes again: the skin may have changed while the link was down.
+            if generation >= 2 {
+                effects.push(AppEffect::Describe(generation));
+            }
             if let Some(opened) = state.opened.as_mut() {
                 let produced = note_connection(&mut opened.state, generation);
                 effects.extend(route(state, produced, None));
@@ -3036,6 +3167,71 @@ fn apply<S: Screen>(
                     .map(|o| (o.session_id.as_str(), state.profile.as_str())),
             ),
             AppEffect::Alert(alert) => screen.alert(&alert),
+            AppEffect::Appearance => {
+                screen.appearance_changed(&state.appearance.view());
+                redraw = true;
+            }
+            AppEffect::ThemeReport => {
+                if let Some(report) = screen.theme_report()
+                    && let AppEffect::CommitLines(lines) =
+                        notice_lines(&theme_lines(&report).join("\n"))
+                {
+                    screen.commit_lines(lines);
+                }
+            }
+            AppEffect::Skin(name) => {
+                let client = state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned();
+                let session = state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.session_id.clone());
+                let profile = state.profile.clone();
+                let mut service = state.appearance.clone();
+                executor.send_later(async move {
+                    let before = service.skin_state().clone();
+                    let lines = match &client {
+                        Some(client) => {
+                            service
+                                .skin_command(client, name.as_deref(), session.as_deref(), &profile)
+                                .await
+                        }
+                        None => appearance::offline_skin_lines(name.as_deref()),
+                    };
+                    let skin =
+                        (service.skin_state() != &before).then(|| service.skin_state().clone());
+                    AppMessage::AppearanceDone {
+                        skin,
+                        lines,
+                        generation: None,
+                    }
+                });
+            }
+            AppEffect::Describe(generation) => {
+                let Some(client) = state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned()
+                else {
+                    continue;
+                };
+                let mut service = state.appearance.clone();
+                executor.send_later(async move {
+                    let before = service.skin_state().clone();
+                    service.connection_opened(&client, generation).await;
+                    let skin =
+                        (service.skin_state() != &before).then(|| service.skin_state().clone());
+                    AppMessage::AppearanceDone {
+                        skin,
+                        lines: Vec::new(),
+                        generation: Some(generation),
+                    }
+                });
+            }
         }
     }
     redraw
@@ -3053,8 +3249,19 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         link,
         mut inbound,
         profile_name,
+        describe,
         ..
     } = connection;
+    // The launch skin is applied before any history is committed, so committed lines are
+    // drawn with the profile's skin.
+    let skin = describe
+        .skin
+        .as_ref()
+        .and_then(|skin| serde_json::to_value(skin).ok());
+    state.appearance.update(AppearanceInput::Handshake {
+        ready: None,
+        describe: skin,
+    });
     state.profile = profile_name;
     let mut commands = CommandService::new(link.client());
     if let Some(mut replies) = commands.take_replies() {
@@ -3129,6 +3336,9 @@ pub async fn run<S: Screen>(
         setup.notices.push(warning);
     }
     state.attention = talaria_core::attention::AttentionTracker::new(screen.attention_config());
+    if let Some((colors, polarity)) = screen.startup_appearance() {
+        state.appearance = AppearanceService::new(colors, polarity);
+    }
     state.profile = launch.profile.trim().to_lowercase();
     state.list_title = setup.list_title;
     state.model = launch.model.clone();
@@ -3200,6 +3410,7 @@ pub async fn run<S: Screen>(
                 match joined {
                     Ok(Ok(ready)) => {
                         let message = install(&mut state, ready, &executor);
+                        screen.appearance_changed(&state.appearance.view());
                         redraw |= apply(&mut state, message, screen, &executor);
                     }
                     Ok(Err(failure)) => break Ending::Failed(failure),

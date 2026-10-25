@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub use talaria_core::appearance::{ColorsSetting, ThemeMode};
 use talaria_core::attention::AlertKind;
 use toml::{Table, Value};
 
@@ -94,6 +95,10 @@ pub struct Config {
     pub notifications: NotificationsConfig,
     /// Herdr reporting settings.
     pub herdr: HerdrConfig,
+    /// Theme settings from `[theme]`.
+    pub theme: ThemeConfig,
+    /// Interface settings from `[ui]`.
+    pub ui: UiConfig,
 }
 
 /// Status command text and how often it runs.
@@ -144,6 +149,24 @@ pub struct HerdrConfig {
     pub report_state: bool,
 }
 
+/// Theme settings from `[theme]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeConfig {
+    /// Light or dark preference. The default is auto.
+    pub mode: ThemeMode,
+    /// Follow the Hermes skin. The default is true.
+    pub follow_hermes_skin: bool,
+    /// Colour depth preference. The default is auto.
+    pub colors: ColorsSetting,
+}
+
+/// Interface settings from `[ui]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UiConfig {
+    /// Reduced motion. The default is false.
+    pub reduced_motion: bool,
+}
+
 /// A configuration plus the notices produced while reading it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedConfig {
@@ -189,6 +212,14 @@ impl Default for Config {
                 done_after_seconds: DEFAULT_DONE_AFTER_SECONDS,
             },
             herdr: HerdrConfig { report_state: true },
+            theme: ThemeConfig {
+                mode: ThemeMode::Auto,
+                follow_hermes_skin: true,
+                colors: ColorsSetting::Auto,
+            },
+            ui: UiConfig {
+                reduced_motion: false,
+            },
         }
     }
 }
@@ -229,6 +260,8 @@ pub fn parse(text: &str) -> LoadedConfig {
         "history",
         "notifications",
         "herdr",
+        "theme",
+        "ui",
     ] {
         let Some(value) = table.get(name) else {
             continue;
@@ -243,13 +276,23 @@ pub fn parse(text: &str) -> LoadedConfig {
             "keys" => config.keys = read_keys(section, &mut notices),
             "status" => config.status = read_status(section, &mut notices),
             "environment" => config.environment = read_environment(section, &mut notices),
+            "theme" => config.theme = read_theme(section, &mut notices),
+            "ui" => config.ui = read_ui(section, &mut notices),
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
     for (name, value) in &table {
         if matches!(
             name.as_str(),
-            "keys" | "status" | "environment" | "editor" | "history" | "notifications" | "herdr"
+            "keys"
+                | "status"
+                | "environment"
+                | "editor"
+                | "history"
+                | "notifications"
+                | "herdr"
+                | "theme"
+                | "ui"
         ) {
             continue;
         }
@@ -370,6 +413,58 @@ fn read_environment(section: &Table, notices: &mut Vec<String>) -> EnvironmentCo
     environment
 }
 
+fn read_theme(section: &Table, notices: &mut Vec<String>) -> ThemeConfig {
+    let mut theme = Config::default().theme;
+    for (name, value) in section {
+        match name.as_str() {
+            "mode" => match value.as_str() {
+                Some("auto") => theme.mode = ThemeMode::Auto,
+                Some("light") => theme.mode = ThemeMode::Light,
+                Some("dark") => theme.mode = ThemeMode::Dark,
+                _ => notices.push("[theme] mode must be auto, light or dark; using auto.".into()),
+            },
+            "follow_hermes_skin" => match value.as_bool() {
+                Some(follow) => theme.follow_hermes_skin = follow,
+                None => notices
+                    .push("[theme] follow_hermes_skin must be true or false; using true.".into()),
+            },
+            "colors" => match value.as_str() {
+                Some("auto") => theme.colors = ColorsSetting::Auto,
+                Some("truecolor") => theme.colors = ColorsSetting::TrueColor,
+                Some("256") => theme.colors = ColorsSetting::Ansi256,
+                Some("16") => theme.colors = ColorsSetting::Ansi16,
+                Some("none") => theme.colors = ColorsSetting::None,
+                _ => notices.push(
+                    "[theme] colors must be auto, truecolor, 256, 16 or none; using auto.".into(),
+                ),
+            },
+            "name" => notices.push(
+                "theme.name is no longer used: Talaria follows the Hermes skin (see /skin and \
+                 /theme)."
+                    .into(),
+            ),
+            _ => notices.push(unknown_setting("theme", name)),
+        }
+    }
+    theme
+}
+
+fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
+    let mut ui = Config::default().ui;
+    for (name, value) in section {
+        match name.as_str() {
+            "reduced_motion" => match value.as_bool() {
+                Some(reduced) => ui.reduced_motion = reduced,
+                None => {
+                    notices.push("[ui] reduced_motion must be true or false; using false.".into());
+                }
+            },
+            _ => notices.push(unknown_setting("ui", name)),
+        }
+    }
+    ui
+}
+
 fn unknown_setting(table: &str, key: &str) -> String {
     format!("Ignoring {table}.{key} in {FILE}: it is not a known setting.")
 }
@@ -441,8 +536,8 @@ pub fn load_user_config(home: &Path) -> LoadedConfig {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, DEFAULT_STATUS_INTERVAL_SECONDS, load_file, load_user_config, parse,
-        user_config_path,
+        ColorsSetting, Config, DEFAULT_STATUS_INTERVAL_SECONDS, ThemeMode, load_file,
+        load_user_config, parse, user_config_path,
     };
 
     fn line_column(text: &str, byte_offset: usize) -> (usize, usize) {
@@ -558,7 +653,9 @@ mod tests {
 
     #[test]
     fn unknown_names_reported_once() {
-        let loaded = parse("[theme]\n\n[ui]\n\n[status]\ncolour = 1\n\n[environment]\nx = 1\n");
+        // #227: [theme] and [ui] are known tables now, so two typo tables stand in.
+        let loaded =
+            parse("[theme_typo]\n\n[ui_typo]\n\n[status]\ncolour = 1\n\n[environment]\nx = 1\n");
         assert_eq!(
             loaded.notices,
             vec![
@@ -566,9 +663,9 @@ mod tests {
                     .to_string(),
                 "Ignoring environment.x in ~/.talaria/config.toml: it is not a known setting."
                     .to_string(),
-                "Ignoring [theme] in ~/.talaria/config.toml: Talaria does not read it yet."
+                "Ignoring [theme_typo] in ~/.talaria/config.toml: Talaria does not read it yet."
                     .to_string(),
-                "Ignoring [ui] in ~/.talaria/config.toml: Talaria does not read it yet."
+                "Ignoring [ui_typo] in ~/.talaria/config.toml: Talaria does not read it yet."
                     .to_string(),
             ]
         );
@@ -654,6 +751,74 @@ mod tests {
         assert_eq!(
             loaded.config.keys.get("yank").map(Vec::as_slice),
             Some(["ctrl+y".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn theme_and_ui_tables() {
+        let loaded = parse("");
+        assert!(loaded.notices.is_empty());
+        assert_eq!(loaded.config.theme.mode, ThemeMode::Auto);
+        assert!(loaded.config.theme.follow_hermes_skin);
+        assert_eq!(loaded.config.theme.colors, ColorsSetting::Auto);
+        assert!(!loaded.config.ui.reduced_motion);
+
+        let loaded = parse(
+            "[theme]\nmode = \"dark\"\nfollow_hermes_skin = false\ncolors = \"256\"\n\n\
+             [ui]\nreduced_motion = true\n",
+        );
+        assert!(loaded.notices.is_empty());
+        assert_eq!(loaded.config.theme.mode, ThemeMode::Dark);
+        assert!(!loaded.config.theme.follow_hermes_skin);
+        assert_eq!(loaded.config.theme.colors, ColorsSetting::Ansi256);
+        assert!(loaded.config.ui.reduced_motion);
+
+        let loaded = parse("[theme]\nmode = \"purple\"\n");
+        assert_eq!(
+            loaded.notices,
+            vec!["[theme] mode must be auto, light or dark; using auto.".to_string()]
+        );
+        assert_eq!(loaded.config.theme.mode, ThemeMode::Auto);
+
+        let loaded = parse("[theme]\nfollow_hermes_skin = 7\n");
+        assert_eq!(
+            loaded.notices,
+            vec!["[theme] follow_hermes_skin must be true or false; using true.".to_string()]
+        );
+        assert!(loaded.config.theme.follow_hermes_skin);
+
+        let loaded = parse("[theme]\ncolors = \"rainbow\"\n");
+        assert_eq!(
+            loaded.notices,
+            vec![
+                "[theme] colors must be auto, truecolor, 256, 16 or none; using auto.".to_string()
+            ]
+        );
+        assert_eq!(loaded.config.theme.colors, ColorsSetting::Auto);
+
+        let loaded = parse("[ui]\nreduced_motion = \"sometimes\"\n");
+        assert_eq!(
+            loaded.notices,
+            vec!["[ui] reduced_motion must be true or false; using false.".to_string()]
+        );
+        assert!(!loaded.config.ui.reduced_motion);
+
+        let loaded = parse("[theme]\nname = \"ares\"\n");
+        assert_eq!(
+            loaded.notices,
+            vec![
+                "theme.name is no longer used: Talaria follows the Hermes skin (see /skin and /theme)."
+                    .to_string()
+            ]
+        );
+
+        let loaded = parse("[theme]\nunknown_key = 1\n");
+        assert_eq!(
+            loaded.notices,
+            vec![
+                "Ignoring theme.unknown_key in ~/.talaria/config.toml: it is not a known setting."
+                    .to_string()
+            ]
         );
     }
 }

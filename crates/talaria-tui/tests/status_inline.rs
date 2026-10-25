@@ -37,6 +37,7 @@ fn status_row_is_the_bottom_row_of_the_inline_terminal() {
     let probe = ProbeReply {
         caps: TerminalCaps::default(),
         cursor: Some((0, rows - 1)),
+        ..Default::default()
     };
     let mut terminal = InlineTerminal::new(
         sink.clone(),

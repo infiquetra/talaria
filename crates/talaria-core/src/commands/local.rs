@@ -34,6 +34,10 @@ pub enum LocalAction {
     Usage,
     /// Ask a side question with `prompt.btw`. Never reaches `slash.exec`.
     Btw,
+    /// Show or change the Hermes skin.
+    Skin,
+    /// Show the colour decisions or override the background for this session.
+    Theme,
 }
 
 /// One local command.
@@ -126,6 +130,24 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "<question>",
         takes_argument: true,
         action: LocalAction::Btw,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "skin",
+        aliases: &[],
+        summary: "Show or change the Hermes skin",
+        args_hint: "[name]",
+        takes_argument: true,
+        action: LocalAction::Skin,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "theme",
+        aliases: &[],
+        summary: "Show colours, or set the background to light, dark or auto",
+        args_hint: "[light|dark|auto]",
+        takes_argument: true,
+        action: LocalAction::Theme,
         tag: "talaria",
     },
 ];

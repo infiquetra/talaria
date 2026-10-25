@@ -639,6 +639,24 @@ impl MockGateway {
         }
     }
 
+    /// Skin payloads by configured name for `runtime.describe` and `skin.changed`.
+    /// Empty by default, in which case describe carries no `skin` key.
+    pub fn set_skin_catalog(&self, skins: HashMap<String, Value>) {
+        lock(&self.shared).sess.skin_catalog = skins;
+    }
+
+    /// The name `config.get {key: "skin"}` reports.
+    pub fn set_config_skin(&self, name: &str) {
+        let mut state = lock(&self.shared);
+        state.sess.config_skin = name.to_owned();
+        state.sess.config_skin_null = false;
+    }
+
+    /// Make `config.get {key: "skin"}` answer `{value: null}`.
+    pub fn set_config_skin_null(&self) {
+        lock(&self.shared).sess.config_skin_null = true;
+    }
+
     /// The `execution_generation` written on the envelope of built events. The default is 1.
     pub fn set_envelope_generation(&self, generation: i64) {
         lock(&self.shared).envelope_generation = generation;
@@ -1479,6 +1497,18 @@ pub enum Behavior {
     DropBeforeReply,
     /// Answer with a refusal carrying this `data.reason`, without doing the work.
     Refuse(String),
+    /// Answer with a refusal carrying this code and `data.reason`.
+    RefuseCode {
+        /// The error reason.
+        reason: String,
+        /// The error code.
+        code: i64,
+    },
+    /// Answer with an error carrying only a message, without doing the work.
+    RefuseBare {
+        /// The error message.
+        message: String,
+    },
     /// `prompt.submit` only: answer `{"voice_stopped": true}`. The one reply that is not checked
     /// against the contract.
     VoiceStopped,
@@ -1574,6 +1604,9 @@ struct SessionSide {
     config_set_mode: String,
     /// The handler did the work and the reply must not be written.
     suppress_reply: bool,
+    skin_catalog: HashMap<String, Value>,
+    config_skin: String,
+    config_skin_null: bool,
 }
 
 impl SessionSide {
@@ -1628,6 +1661,9 @@ impl SessionSide {
             describe_without: None,
             config_set_mode: "normal".to_owned(),
             suppress_reply: false,
+            skin_catalog: HashMap::new(),
+            config_skin: "default".to_owned(),
+            config_skin_null: false,
         }
     }
 }
@@ -1811,7 +1847,14 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
         "config.get" => (vec!["key"], vec!["session_id", "profile", "key", "cwd"]),
         "config.set" => (
             vec!["key", "value"],
-            vec!["session_id", "profile", "key", "value", "scope"],
+            vec![
+                "session_id",
+                "profile",
+                "key",
+                "value",
+                "scope",
+                "confirm_expensive_model",
+            ],
         ),
         "session.context_breakdown" => (vec!["session_id"], vec!["session_id", "profile"]),
         "session.stats" => (vec!["session_id"], vec!["session_id"]),
@@ -2150,6 +2193,24 @@ fn side_refusal_text(id: &Value, method: &str, reason: &str) -> String {
     .to_string()
 }
 
+fn refusal_code_text(id: &Value, reason: &str, code: i64) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {"code": code, "message": reason, "data": {"reason": reason}},
+    })
+    .to_string()
+}
+
+fn bare_error_text(id: &Value, message: &str) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {"code": REFUSAL_CODE, "message": message},
+    })
+    .to_string()
+}
+
 fn event_meta(type_name: &str) -> Meta {
     Meta {
         kind: WrittenKind::Event,
@@ -2222,11 +2283,27 @@ fn plan_session_method(
             outgoing.push((None, text, reply_meta(id, method)));
             return;
         }
+        Behavior::RefuseCode { reason, code } => {
+            outgoing.push((
+                None,
+                refusal_code_text(id, reason, *code),
+                reply_meta(id, method),
+            ));
+            return;
+        }
+        Behavior::RefuseBare { message } => {
+            outgoing.push((None, bare_error_text(id, message), reply_meta(id, method)));
+            return;
+        }
         _ => {}
     }
     let voice = matches!(behavior, Behavior::VoiceStopped);
     let result = match method {
         "runtime.describe" => Ok(describe_result(state)),
+        "config.get" if params["key"].as_str() == Some("skin") => handle_skin_get(state, params),
+        "config.set" if params["key"].as_str() == Some("skin") => {
+            handle_skin_set(state, params, outgoing)
+        }
         "client.capabilities" => Ok(json!({
             "server_requests": contract_server_request_kinds(),
             "declines_not_shown": true,
@@ -2371,7 +2448,7 @@ fn describe_result(state: &State) -> Value {
     if let Some(missing) = &state.sess.describe_without {
         parameters.retain(|name| name != missing);
     }
-    json!({
+    let mut result = json!({
         "instance_id": INSTANCE_ID,
         "profile_id": state.sess.profile_id,
         "authority_epoch": state.sess.describe_authority_epoch,
@@ -2380,7 +2457,64 @@ fn describe_result(state: &State) -> Value {
             "sources": state.sess.sources,
             "parameters": parameters,
         },
-    })
+    });
+    // A skin only when a test registered one, so earlier tests see no change.
+    if !state.sess.skin_catalog.is_empty() {
+        result["skin"] = state
+            .sess
+            .skin_catalog
+            .get(&state.sess.config_skin)
+            .or_else(|| state.sess.skin_catalog.get("default"))
+            .cloned()
+            .unwrap_or(Value::Null);
+    }
+    result
+}
+
+/// The skin the mock resolves for a configured name: the catalog entry, else default.
+fn resolved_skin(state: &State, name: &str) -> Value {
+    state
+        .sess
+        .skin_catalog
+        .get(name)
+        .or_else(|| state.sess.skin_catalog.get("default"))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+fn handle_skin_get(state: &mut State, params: &Value) -> Result<Value, String> {
+    if params.get("key").and_then(Value::as_str) != Some("skin") {
+        return Err("invalid_params".to_owned());
+    }
+    if state.sess.config_skin_null {
+        return Ok(json!({"value": null}));
+    }
+    Ok(json!({"value": state.sess.config_skin}))
+}
+
+fn handle_skin_set(
+    state: &mut State,
+    params: &Value,
+    outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
+) -> Result<Value, String> {
+    if params.get("key").and_then(Value::as_str) != Some("skin") {
+        return Err("invalid_params".to_owned());
+    }
+    let value = params
+        .get("value")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if value.is_empty() {
+        return Err("invalid_params".to_owned());
+    }
+    state.sess.config_skin = value.clone();
+    // The per-session event goes out before the reply, as Hermes does.
+    let skin = resolved_skin(state, &value);
+    let text = event_text(state, "skin.changed", skin);
+    outgoing.push((None, text, event_meta("skin.changed")));
+    Ok(json!({"key": "skin", "value": value}))
 }
 
 /// Give a snapshot to the client: fresh subscription after the first, generation and sequence

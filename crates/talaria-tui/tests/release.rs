@@ -76,6 +76,7 @@ fn reacquire_probes_after_resets_and_writes_queued_once() {
                 keyboard_enhancement: false,
             },
             cursor: Some((0, 10)),
+            colors: Default::default(),
         })
     };
     term.reacquire(&mut probe_fn).unwrap();
@@ -109,6 +110,7 @@ fn overlay_survives_release() {
                 keyboard_enhancement: false,
             },
             cursor: Some((0, 10)),
+            colors: Default::default(),
         })
     };
     term.reacquire(&mut probe_fn).unwrap();
@@ -139,6 +141,7 @@ fn released_alert_keeps_most_urgent() {
                 keyboard_enhancement: false,
             },
             cursor: Some((0, 10)),
+            colors: Default::default(),
         })
     };
     term.reacquire(&mut probe_fn).unwrap();
