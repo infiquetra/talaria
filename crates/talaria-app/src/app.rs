@@ -176,6 +176,10 @@ pub struct AppState {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub masked: Vec<MaskedRequestInfo>,
+    /// Composer draft. The slash palette reads it. Issue #223.
+    pub draft: String,
+    /// Slash palette. Closed until a slash draft opens it. Issue #223.
+    pub palette: talaria_core::commands::PaletteState,
     open_keys: Vec<PromptKey>,
     counter: Arc<AtomicU64>,
     service: Option<SessionService>,
@@ -203,6 +207,8 @@ impl AppState {
             model: None,
             effort: None,
             masked: Vec::new(),
+            draft: String::new(),
+            palette: talaria_core::commands::PaletteState::closed(),
             open_keys: Vec::new(),
             counter: Arc::new(AtomicU64::new(0)),
             service: None,
@@ -275,6 +281,8 @@ pub enum AppMessage {
         masked: Option<Vec<MaskedRequestInfo>>,
     },
     Recovered(Result<OpenedSession, OpenError>),
+    /// A key while Talaria is in the foreground. Issue #223 routes the open palette here.
+    ForegroundKey(UserAction),
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -342,6 +350,10 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects
         }
         AppMessage::Recovered(result) => recovered(state, result),
+        AppMessage::ForegroundKey(action) => {
+            let _ = (&state.draft, state.palette.open, action);
+            todo!()
+        }
     };
     effects.extend(commit_ready(state));
     effects.push(AppEffect::Redraw);

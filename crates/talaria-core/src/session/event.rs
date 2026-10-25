@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::{PromptKey, SessionId};
+use super::{NoticeKind, PromptKey, SessionId};
 
 /// One reducer input.
 ///
@@ -68,5 +68,23 @@ pub enum Event {
     AnswerAlreadyResolved {
         /// Prompt key.
         key: PromptKey,
+    },
+    /// A slash command sent `text` to the model and shows `display` in the user cell.
+    ///
+    /// Same waiting and placement rules as [`Event::Submit`]. Issue #223.
+    SubmitCommand {
+        /// Model-facing text. `prompt.submit` carries this.
+        text: String,
+        /// Text of the user cell.
+        display: String,
+        /// Client-chosen id. Not de-duplicated here.
+        submission_id: String,
+    },
+    /// Append one final notice cell. Issue #223.
+    Notice {
+        /// System for command output, Error for a refusal.
+        kind: NoticeKind,
+        /// Plain text of the notice.
+        text: String,
     },
 }

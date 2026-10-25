@@ -1,4 +1,4 @@
-//! Record the seven live fixtures, replay one, and scan a directory for secrets.
+//! Record the live fixtures, replay one, and scan a directory for secrets.
 //!
 //! The script never starts a gateway, never runs `hermes`, never calls `config.set`, and never
 //! sends `unattended`. Discovery uses `EnsurePolicy::Never`. A missing precondition is exit 2
@@ -14,8 +14,10 @@ use hermes_client::{
 };
 use serde_json::{Value, json};
 
-/// The seven scenarios of the fixture set, in the order the script records them.
-pub const SCENARIOS: [&str; 7] = [
+/// The scenarios of the fixture set, in the order the script records them.
+/// `slash-palette` is recognized here; its frames come from the slash command steps, not from
+/// a model prompt.
+pub const SCENARIOS: [&str; 8] = [
     "plain-answer",
     "tool-diff",
     "approval",
@@ -23,6 +25,7 @@ pub const SCENARIOS: [&str; 7] = [
     "interrupted",
     "subagent-batch",
     "queued-prompt",
+    "slash-palette",
 ];
 
 /// The shell command the approval scenario asks for. `manual` mode raises an approval for it.
@@ -86,6 +89,7 @@ impl Scenario {
                 ],
                 &["complete", "complete"],
             ),
+            "slash-palette" => (&[], &["complete"]),
             _ => return None,
         };
         Some(Scenario {
@@ -405,6 +409,7 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
                 return Err("the second turn did not start after the first completed".to_owned());
             }
         }
+        "slash-palette" => slash_palette_evidence(source)?,
         other => return Err(format!("unknown scenario {other}")),
     }
     Ok(())
@@ -497,6 +502,57 @@ fn submit_params(session_id: &str, text: &str) -> Result<Value, String> {
     Ok(Value::Object(kept))
 }
 
+/// Issue #223. Calls are matched to answers in `seq` order because a later call can reuse an
+/// earlier id.
+fn slash_palette_evidence(source: &ReplaySource) -> Result<(), String> {
+    let mut frames: Vec<_> = source.outbound().chain(source.inbound()).collect();
+    frames.sort_by_key(|frame| frame.seq);
+    let mut method_for: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    let mut complete = 0_usize;
+    let mut exec = 0_usize;
+    let mut catalog = false;
+    for frame in frames {
+        let body = &frame.frame;
+        let Some(id) = body.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        if let Some(method) = body.get("method").and_then(Value::as_str) {
+            method_for.insert(id, method.to_owned());
+            continue;
+        }
+        let replied = body.get("result").is_some() || body.get("error").is_some();
+        if !replied {
+            continue;
+        }
+        let Some(method) = method_for.get(&id) else {
+            continue;
+        };
+        if method == "commands.catalog"
+            && body["result"]["skills"]
+                .as_object()
+                .is_some_and(|skills| !skills.is_empty())
+        {
+            catalog = true;
+        }
+        if method == "complete.slash" && body["result"]["items"].is_array() {
+            complete += 1;
+        }
+        if method == "slash.exec" {
+            exec += 1;
+        }
+    }
+    if !catalog {
+        return Err("no commands.catalog result with a skill".to_owned());
+    }
+    if complete != 2 {
+        return Err(format!("complete.slash results: {complete}"));
+    }
+    if exec != 5 {
+        return Err(format!("slash.exec replies: {exec}"));
+    }
+    Ok(())
+}
+
 /// Drive one attempt over a connected client and its inbound stream (the events come
 /// only from the stream `Client::start` returned). Never writes the file itself.
 pub async fn run_scenario(
@@ -505,6 +561,11 @@ pub async fn run_scenario(
     scenario: &Scenario,
     config: &DriverConfig,
 ) -> AttemptResult {
+    if scenario.name == "slash-palette" {
+        return AttemptResult::Failed(
+            "slash-palette is recorded by the slash command steps, not by a model prompt".into(),
+        );
+    }
     let mut session = Session::default();
     let outcome = tokio::time::timeout(
         config.attempt_timeout,

@@ -65,8 +65,12 @@ allowlist = []
 | `delete_word_backward` | Ctrl+W, Alt+Backspace | Delete the word before the caret. |
 | `kill_to_line_end`, `kill_to_line_start` | Ctrl+K; Ctrl+U | Delete to the end or start of the line. |
 | `yank` | Ctrl+Y | Insert the text the last delete-word or kill removed. |
+| `completion_next` | Down, Ctrl+N | Next row in an open completion list. |
+| `completion_prev` | Up, Ctrl+P | Previous row in an open completion list. |
+| `completion_accept` | Tab | Accept the selected completion. |
+| `completion_close` | Esc | Close the open completion list. |
 
-Tab is not bound. A tab inside pasted text is kept.
+Tab accepts a row only while a completion list is open. A tab inside pasted text is kept.
 
 ## Writing a key
 

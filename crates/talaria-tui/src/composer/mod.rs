@@ -482,7 +482,14 @@ impl Composer {
             Action::KillToLineEnd => self.draft.kill_to_line_end(),
             Action::KillToLineStart => self.draft.kill_to_line_start(),
             Action::Yank => self.draft.yank(),
-            Action::Submit | Action::Newline | Action::Interrupt | Action::Cancel => {}
+            Action::Submit
+            | Action::Newline
+            | Action::Interrupt
+            | Action::Cancel
+            | Action::CompletionNext
+            | Action::CompletionPrev
+            | Action::CompletionAccept
+            | Action::CompletionClose => {}
         }
         false
     }

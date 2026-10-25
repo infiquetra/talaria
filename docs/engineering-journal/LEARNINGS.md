@@ -4,6 +4,30 @@
 
 ## 2026-10-24
 
+### The slash palette fixture keeps the file name as its scenario
+
+**Evidence.** `fixtures/frames/slash-palette.jsonl` (header field `synthetic`); `crates/hermes-client/tests/fixtures_replay.rs` requires `scenario` to equal the file stem. Issue #223.
+
+**Mechanism.** Replay rejects a header whose scenario is not the file stem. The stand-in file therefore uses scenario `slash-palette` and an extra `synthetic` field set to true. The replay parser ignores fields it does not read, and a scan for the word synthetic still finds it. The operator's recording drops that field when it replaces the file. Requests in the file are matched to replies in sequence order, because a later call can reuse an earlier JSON-RPC id.
+
+**Generalizable rule.** When a fixture checker keys off the file name, put the file name in the required field and carry any extra status in a field the parser ignores.
+
+### Slash completion keys are shared, and a missing slash method falls back once per command
+
+**Evidence.** `crates/talaria-tui/src/keys.rs` (`completion_next`, `completion_prev`, `completion_accept`, `completion_close`); `crates/talaria-app/tests/commands_mock.rs` (`method_not_found_falls_back_to_command_dispatch_once`). Issue #223.
+
+**Mechanism.** Mention completion and the slash palette use the same four key actions, so this unit adds them and the mention unit reuses them. `command.dispatch` is sent only after `slash.exec` returns JSON-RPC -32601, and only for that command. The next command tries `slash.exec` again. A refusal does not fall back.
+
+**Generalizable rule.** A compatibility fallback is a property of one call, not of the connection.
+
+### The slash palette draws in the live region
+
+**Evidence.** `crates/talaria-tui/src/palette/render.rs`; `crates/talaria-tui/tests/palette_render.rs` (`closing_palette_leaves_nothing_in_scrollback`). Issue #223.
+
+**Mechanism.** The palette is a live-region section under the composer. Closing it leaves the scrollback as it was, because nothing was inserted into the terminal history.
+
+**Generalizable rule.** An overlay that must disappear completely belongs in the live region, not in committed history.
+
 ### An empty acceptance record is a filled record with no results, not a skeleton
 
 **Evidence.** `docs/acceptance/v0.7.0/phase-1.md` and `docs/acceptance/v0.7.0/check-record.sh`

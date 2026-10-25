@@ -2,6 +2,18 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-24
+
+### Slash palette keys, one-command fallback, and the synthetic frame log (issue #223)
+
+**Decision.** Issue #223 adds four keymap actions, `completion_next`, `completion_prev`, `completion_accept`, and `completion_close`, in the completion context. The action count is the previous twenty plus these four. `command.dispatch` runs only after `slash.exec` returns method-not-found, once for that command, with no latch across commands. The palette is a live-region section under the composer. The stand-in frame log uses scenario `slash-palette`, the file stem, and sets `synthetic` to true.
+
+**Rationale.** Replay already requires the scenario to equal the file name, so a different stand-in scenario name cannot be replayed. The extra field keeps the file visibly synthetic until the operator's recording replaces it. The four keys are shared with mention completion, which lands later. A latched fallback would skip `slash.exec` for every later command after one old gateway.
+
+**Rejected alternatives.** A scenario name other than the file stem (replay rejects it). Hiding commands the gateway refuses in the bare form (the palette shows them, dimmed). Falling back to `command.dispatch` for every later command after the first method-not-found.
+
+**Revisit when** the operator's recording replaces `fixtures/frames/slash-palette.jsonl` and the header no longer contains `synthetic`.
+
 ## 2026-10-23
 
 ### Prompt-card calls run in spawned tasks behind one async lock

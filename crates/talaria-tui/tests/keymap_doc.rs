@@ -61,6 +61,10 @@ fn expected(action: Action) -> Vec<String> {
         Action::KillToLineEnd => &["Ctrl+K"],
         Action::KillToLineStart => &["Ctrl+U"],
         Action::Yank => &["Ctrl+Y"],
+        Action::CompletionNext => &["Down", "Ctrl+N"],
+        Action::CompletionPrev => &["Up", "Ctrl+P"],
+        Action::CompletionAccept => &["Tab"],
+        Action::CompletionClose => &["Esc"],
     };
     labels.iter().map(|label| (*label).to_string()).collect()
 }

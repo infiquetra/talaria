@@ -165,11 +165,12 @@ fn scenario_table_matches_the_spec() {
             "clarification",
             "interrupted",
             "subagent-batch",
-            "queued-prompt"
+            "queued-prompt",
+            "slash-palette",
         ]
     );
     assert!(Scenario::named("not-a-scenario").is_none());
-    let table: [(&str, &[&str], &[&str]); 7] = [
+    let table: [(&str, &[&str], &[&str]); 8] = [
         (
             "plain-answer",
             &["Reply with exactly the single word: pong. Do not use any tools."],
@@ -214,6 +215,7 @@ fn scenario_table_matches_the_spec() {
             ],
             &["complete", "complete"],
         ),
+        ("slash-palette", &[], &["complete"]),
     ];
     for (name, prompts, statuses) in table {
         let scenario = scenario(name);

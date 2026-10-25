@@ -402,6 +402,12 @@ struct State {
     request_methods: HashMap<String, String>,
     silent_all: bool,
     kill_after: bool,
+    /// `slash.exec` answers -32601. Nothing is remembered for the next command.
+    gateway_without_slash_exec: bool,
+    /// `command.dispatch` answers -32601. Used only when both methods are missing.
+    gateway_without_command_dispatch: bool,
+    /// A turn is running, so `/plan` answers with the busy text.
+    turn_running: bool,
     sess: SessionSide,
 }
 
@@ -485,6 +491,9 @@ fn new_shared(
             request_methods: HashMap::new(),
             silent_all: false,
             kill_after: false,
+            gateway_without_slash_exec: false,
+            gateway_without_command_dispatch: false,
+            turn_running: false,
             sess: SessionSide::new(),
         }),
         changed: Notify::new(),
@@ -717,6 +726,16 @@ impl MockGateway {
         });
         self.send_event_params(params).await;
         seq
+    }
+
+    /// `skills.changed` with an empty session id and no `seq`. Issue #223.
+    pub async fn skills_changed(&self) {
+        self.send_event_params(json!({
+            "type": "skills.changed",
+            "session_id": "",
+            "payload": {},
+        }))
+        .await;
     }
 
     /// Write an event whose whole `params` object the test supplies.
@@ -1255,6 +1274,13 @@ fn plan_request(
     if state.silent_all || state.silent_methods.contains(method) {
         return;
     }
+    if matches!(
+        method,
+        "commands.catalog" | "complete.slash" | "slash.exec" | "command.dispatch"
+    ) {
+        plan_slash(state, method, id, params, outgoing);
+        return;
+    }
     if method == "approval.respond" || method == "clarify.respond" {
         let reply = state
             .respond_script
@@ -1695,6 +1721,13 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             (keys.clone(), keys)
         }
         "client.capabilities" => (Vec::new(), vec!["server_requests"]),
+        "commands.catalog" => (Vec::new(), vec!["profile", "session_id"]),
+        "complete.slash" => (Vec::new(), vec!["profile", "session_id", "text"]),
+        "slash.exec" => (
+            vec!["command", "session_id"],
+            vec!["command", "profile", "session_id"],
+        ),
+        "command.dispatch" => (vec!["name"], vec!["arg", "name", "profile", "session_id"]),
         _ => (Vec::new(), Vec::new()),
     }
 }
@@ -1769,7 +1802,206 @@ fn check_params(method: &str, params: &Value) -> Vec<String> {
     {
         fields.insert("display_projection".to_owned());
     }
+    if matches!(
+        method,
+        "commands.catalog" | "complete.slash" | "slash.exec" | "command.dispatch"
+    ) {
+        for (key, value) in object {
+            if value.is_null() {
+                fields.insert(key.clone());
+            }
+        }
+    }
     fields.into_iter().collect()
+}
+
+/// Catalogue, completion, and slash execution. Issue #223.
+fn unknown_method(id: &Value, method: &str) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32601,
+            "message": format!("unknown method: {method}"),
+            "data": {"reason": "unknown_method"},
+        },
+    })
+    .to_string()
+}
+
+fn plan_slash(
+    state: &mut State,
+    method: &str,
+    id: &Value,
+    params: &Value,
+    outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
+) {
+    if state.silent_all || state.silent_methods.contains(method) {
+        return;
+    }
+    let fields = check_params(method, params);
+    if !fields.is_empty() {
+        state.sess.violations.push(Violation {
+            method: method.to_owned(),
+            reason: "invalid_params".to_owned(),
+            fields: fields.clone(),
+        });
+        outgoing.push((
+            None,
+            refusal_text(id, "invalid_params", Some(&fields)),
+            reply_meta(id, method),
+        ));
+        return;
+    }
+    if matches!(method, "slash.exec" | "command.dispatch") {
+        let session = params["session_id"].as_str();
+        if session.is_some() && session != Some(state.session_id.as_str()) {
+            outgoing.push((
+                None,
+                refusal_text(id, "not_found", None),
+                reply_meta(id, method),
+            ));
+            return;
+        }
+    }
+    if method == "slash.exec" && state.gateway_without_slash_exec {
+        outgoing.push((None, unknown_method(id, method), reply_meta(id, method)));
+        return;
+    }
+    if method == "command.dispatch" && state.gateway_without_command_dispatch {
+        outgoing.push((None, unknown_method(id, method), reply_meta(id, method)));
+        return;
+    }
+    if method == "slash.exec" {
+        let command = params["command"].as_str().unwrap_or("");
+        let name = command.split_whitespace().next().unwrap_or("");
+        if name == "worktree" {
+            let text = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": REFUSAL_CODE,
+                    "message": "unsupported_command",
+                    "data": {
+                        "reason": "unsupported_command",
+                        "detail": "Start in a fresh worktree with hermes -w, or use the classic CLI.",
+                    },
+                },
+            })
+            .to_string();
+            outgoing.push((None, text, reply_meta(id, method)));
+            return;
+        }
+        if name == "nonexistent-talaria-check" {
+            let text = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": REFUSAL_CODE,
+                    "message": "unsupported_command",
+                    "data": {"reason": "unsupported_command"},
+                },
+            })
+            .to_string();
+            outgoing.push((None, text, reply_meta(id, method)));
+            return;
+        }
+    }
+    let result = slash_result(method, params, state.turn_running);
+    let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+    outgoing.push((None, text, reply_meta(id, method)));
+}
+
+fn slash_result(method: &str, params: &Value, turn_running: bool) -> Value {
+    match method {
+        "commands.catalog" => json!({
+            "pairs": [
+                ["/new", "Start a new session (usage: /new [name])"],
+                ["/help", "Show available commands (usage: /help [skills|<filter>])"],
+                ["/version", "Show the Hermes version"],
+                ["/plan", "Plan a task (usage: /plan <task>)"],
+                ["/quit", "Leave (usage: /quit)"],
+                ["/fixture-user-1", "Fixture user command 1"]
+            ],
+            "canon": {"/reset": "/new", "/new": "/new"},
+            "commands": {
+                "/new": {"argument_mode": "text"},
+                "/help": {"argument_mode": "text"},
+                "/plan": {"argument_mode": "text"},
+                "/version": {}
+            },
+            "categories": [
+                {"name": "Session", "pairs": [["/new", "Start a new session (usage: /new [name])"]]},
+                {"name": "Info", "pairs": [
+                    ["/help", "Show available commands (usage: /help [skills|<filter>])"],
+                    ["/version", "Show the Hermes version"],
+                    ["/plan", "Plan a task (usage: /plan <task>)"]
+                ]},
+                {"name": "Exit", "pairs": [["/quit", "Leave (usage: /quit)"]]},
+                {"name": "User commands", "pairs": [["/fixture-user-1", "Fixture user command 1"]]}
+            ],
+            "skills": {"/fixture-skill-1": {"usage": 3, "origin": "local"}},
+            "skill_count": 1,
+            "warning": "fixture warning",
+            "plugin_discovery_error": "fixture warning",
+            "plugin_commands": {}
+        }),
+        "complete.slash" => {
+            let text = params["text"].as_str().unwrap_or("");
+            if text.contains(' ') {
+                json!({
+                    "items": [{
+                        "text": "alice",
+                        "display": "alice",
+                        "meta": "a friendly assistant",
+                        "kind": "command"
+                    }],
+                    "replace_from": 13
+                })
+            } else {
+                json!({
+                    "items": [{
+                        "text": "help",
+                        "display": "/help",
+                        "meta": "Show available commands (usage: /help [skills|<filter>])",
+                        "kind": "command"
+                    }],
+                    "replace_from": 1
+                })
+            }
+        }
+        "command.dispatch" => {
+            json!({"type": "exec", "output": "Hermes Agent v0.22.4\nPython 3.12.0"})
+        }
+        _ => {
+            let command = params["command"].as_str().unwrap_or("");
+            let name = command.split_whitespace().next().unwrap_or("");
+            if name == "plan" && turn_running {
+                json!({
+                    "type": "exec",
+                    "output": "⏳ Agent is running — `/plan` can't run mid-turn. Wait for the current response or `/stop` first."
+                })
+            } else if name == "plan" {
+                json!({
+                    "type": "send",
+                    "message": "[/plan — plan mode]\n\nTask to plan:\nwrite a haiku about rain\n",
+                    "display": "/plan write a haiku about rain",
+                    "notice": "Planning: write a haiku about rain"
+                })
+            } else if name == "fixture-skill-1" {
+                json!({
+                    "type": "skill",
+                    "name": "fixture-skill-1",
+                    "message": "[IMPORTANT: The user has invoked fixture-skill-1]\nFixture skill body.",
+                    "display": "/fixture-skill-1 tidy"
+                })
+            } else if name == "version" {
+                json!({"type": "exec", "output": "Hermes Agent v0.22.4\nPython 3.12.0"})
+            } else {
+                json!({"type": "exec", "output": "(no output)"})
+            }
+        }
+    }
 }
 
 fn refusal_text(id: &Value, reason: &str, fields: Option<&[String]>) -> String {
@@ -2372,6 +2604,21 @@ impl MockGateway {
     /// Read every frame and answer none, including the handshake, while on.
     pub fn set_silent_all(&self, silent: bool) {
         lock(&self.shared).silent_all = silent;
+    }
+
+    /// `slash.exec` answers JSON-RPC -32601. The next command tries `slash.exec` again.
+    pub fn set_gateway_without_slash_exec(&self, on: bool) {
+        lock(&self.shared).gateway_without_slash_exec = on;
+    }
+
+    /// `command.dispatch` answers JSON-RPC -32601 as well.
+    pub fn set_gateway_without_command_dispatch(&self, on: bool) {
+        lock(&self.shared).gateway_without_command_dispatch = on;
+    }
+
+    /// While on, `/plan` is answered with the busy exec text.
+    pub fn set_turn_running(&self, running: bool) {
+        lock(&self.shared).turn_running = running;
     }
 
     /// After every successful answer to this method, write these recorded event frames (as
