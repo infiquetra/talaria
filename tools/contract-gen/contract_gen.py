@@ -443,6 +443,48 @@ def render_events(contract, server=False):
     return text
 
 
+# Hermes gateway/session_local_recovery.py:313-314 at commit 4d04303818b61bf3aa09278af48356315515965b
+# sends archived_truncated on a transcript row, but the published schema leaves it out.
+ARCHIVED_TRUNCATED_EDITS = (
+    (False, r"pub struct TranscriptMessage\s*\{",
+     '#[serde(default, deserialize_with = "crate::overrides::deserialize_archived_truncated", '
+     'skip_serializing_if = "::std::option::Option::is_none")]\n'
+     "pub archived_truncated: ::std::option::Option<bool>,"),
+    (True, r"pub struct TranscriptMessage\s*\{",
+     "archived_truncated: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,"),
+    (True, r"impl\s+::std::default::Default\s+for\s+TranscriptMessage\s*\{\s*fn\s+default\(\)\s*->\s*Self\s*\{\s*Self\s*\{",
+     "archived_truncated: Ok(Default::default()),"),
+    (True, r"impl\s+TranscriptMessage\s*\{",
+     "pub fn archived_truncated<T>(mut self, value: T) -> Self\nwhere\n"
+     "T: ::std::convert::TryInto<::std::option::Option<bool>>,\nT::Error: ::std::fmt::Display,\n{\n"
+     'self.archived_truncated = value.try_into().map_err(|e| format!("error converting supplied value for archived_truncated: {e}"));\n'
+     "self\n}"),
+    (True, r"impl\s+::std::convert::TryFrom<TranscriptMessage>\s+for\s+super::TranscriptMessage\s*\{[^}]*?Ok\(Self\s*\{",
+     "archived_truncated: value.archived_truncated?,"),
+    (True, r"impl\s+::std::convert::From<super::TranscriptMessage>\s+for\s+TranscriptMessage\s*\{\s*fn\s+from\([^)]*\)\s*->\s*Self\s*\{\s*Self\s*\{",
+     "archived_truncated: Ok(value.archived_truncated),"),
+)
+
+
+def postprocess_schemas_rs(schemas):
+    """Add archived_truncated to TranscriptMessage and its builder; output without the struct is left alone."""
+    split = schemas.find("pub mod builder {")
+    if "pub struct TranscriptMessage" not in schemas or split < 0:
+        return schemas
+    parts = [schemas[:split], schemas[split:]]
+    declared = re.search(r"pub struct TranscriptMessage\s*\{[^}]*\}", parts[0])
+    if declared and "archived_truncated" in declared.group(0):
+        raise ContractError("TranscriptMessage already declares archived_truncated; remove the override")
+    for in_builder, pattern, insert in ARCHIVED_TRUNCATED_EDITS:
+        text = parts[in_builder]
+        matches = list(re.finditer(pattern, text))
+        if len(matches) != 1:
+            raise ContractError("expected one TranscriptMessage site for archived_truncated, found {}: {}".format(len(matches), pattern))
+        end = matches[0].end()
+        parts[in_builder] = text[:end] + "\n" + insert + text[end:]
+    return "".join(parts)
+
+
 def generate(contract_path=CONTRACT, out=OUT, hermes_checkout=None, pin=None, owner_file=OWNER_FILE):
     raw = Path(contract_path).read_bytes()
     contract = json.loads(raw.decode("utf-8-sig"))
@@ -461,6 +503,7 @@ def generate(contract_path=CONTRACT, out=OUT, hermes_checkout=None, pin=None, ow
             env["RUSTFMT"] = shutil.which("rustfmt")
         run(["cargo", "typify", temp / "all.json", "-d", "PartialEq", "-o", temp / "schemas.rs"], env=env)
         schemas = (temp / "schemas.rs").read_text()
+        schemas = postprocess_schemas_rs(schemas)
         if len(schemas.splitlines()) > 300000:
             raise ContractError("generated schemas exceed 300000 lines; evaluate --no-builder")
         canonical = {e["name"] for e in contract["x-canonical-methods"]}
