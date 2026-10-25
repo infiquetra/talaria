@@ -4,6 +4,21 @@
 
 ## 2026-10-25
 
+### Features that pass their own tests still break where one feeds the other
+
+**Evidence.** The stage 2 live acceptance of candidate `76de801` (#229, #238), and an audit of its rows against the code, found six defects where two features meet, each feature passing its own tests:
+
+- `crates/talaria-tui/src/theme/cells.rs` (`ThemedCells`), which draws every committed cell on the live screen, had no arm for Hermes command cells, so they fell to the plain renderer: `/yolo` showed `**ON**` and `/loop` showed `\<prompt\>`. The Markdown renderer for them, `hermes_command_lines`, was reached only through `MarkdownCellLines`, which the live screen does not use; its unit tests called it directly.
+- `crates/talaria-cli/src/run.rs` (`tool_cells`) built the scrollback tool renderer with `expand_hint: None`, so a cut preview never named the transcript key. The tool cell renderer had the option and the key map owned the key; nothing joined them.
+- The Ctrl+R history search loaded its entry with `Composer::load` and left the report to the generic draft check, which sends `recalled: false`. A paste placeholder in the entry therefore stayed plain text; only Up-arrow recall set `recalled`.
+- `TuiScreen.reported`, the draft the loop last heard about, changed only on key paths. A paste burst flushed by the composer timer reaches the loop through `draft_snapshot` in `crates/talaria-app/src/app.rs`, so the next Tab found a stale copy and sent a draft edit ahead of the completion key, which closed the `@` list first.
+- Shift+Tab and `/permissions` write and read the session bypass, the same `config.get yolo` value the standing automation row shows, but only a typed `/yolo` read the row's value again. The "⚠ YOLO" row and the `approvals:` segment disagreed until the next `/yolo`.
+- `crates/talaria-app/src/app.rs` (`AppState::new`, `run`) gave the session-action ledger and the model reducer's ledger the same bare launch id, so `/rename` and then `/model` in one session both sent `session.mutate` with request id `<launch>-m1`. Hermes keeps receipts by request id and answered the second with `admission_conflict`. The folder-move ledger already used `<launch>-cd`.
+
+**Mechanism.** Three shapes. In the first two, a feature's output reached the screen through a path its tests never took: the tests called the renderer or the option directly, not the renderer the screen uses. In the next three, a feature kept a copy of state that another feature changes: a recall flag, a reported draft, a mode value. In the last, two ledgers drew request ids from one namespace and fences from separate copies; each ledger's tests used only its own ids. Each feature's tests drove it through its own entry point, where the copy is always fresh; the copy is stale only when the other feature's path runs first.
+
+**Generalizable rule.** Test a feature through the path the screen or the loop actually takes; when a feature keeps a copy of state, refresh it on every path that changes the source; give every issuer of ids a server keeps its own prefix; and test the two features in the order a user meets them.
+
 ### A closed test listener keeps accepting while another thread spawns a process
 
 **Evidence.** `crates/hermes-client/tests/support/mod.rs` (`bind_stale`) binds a socket and drops the listener at once. In the phase 2b acceptance run (#238) both `cargo test --workspace` runs failed `crates/hermes-client/tests/connect.rs` at a stale-socket assertion (line 825, then line 973, one each), while 18 runs of that file alone passed. A standalone probe on the same Mac (Rust 1.98.1, `std::process::Command` running `/usr/bin/true` from 8 threads) connected to a just-dropped listener 5,551 and 5,394 times in 20,000 tries, and 0 times with no spawning thread. With the wait loop now in `bind_stale` it connected 0 times in 40,000.
