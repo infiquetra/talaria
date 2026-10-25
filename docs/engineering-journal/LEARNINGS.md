@@ -34,6 +34,7 @@
 **Mechanism.** Before any project-marker walk, Hermes gives a path to the deepest registered checkpoint root that contains it. Once the temporary root is registered, a later test's own folder below it resolves to that root, so its checkpoints and agent-write ledger land on the shared root. Both tests now work in their own `tempfile::tempdir()`, but the registration already in the store stays until it is removed or the tests run under another `TMPDIR`.
 
 **Generalizable rule.** Give every live session a fresh folder of its own, never a shared parent: Hermes treats a folder it has worked in as the owner of everything below it.
+
 ### A turn's fences arrive on the session's own `session.info`
 
 **Evidence.** Hermes v0.22.4 `gateway/session_authority.py` lines 340 to 356 (`_publish_pending`),
