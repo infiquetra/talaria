@@ -637,6 +637,26 @@ impl Composer {
             | Action::FleetProfilePrev
             | Action::FleetNew
             | Action::FleetNewWorktree => {}
+            // Review actions never edit the draft; the review owns them. Issue #245.
+            Action::ReviewUp
+            | Action::ReviewDown
+            | Action::ReviewTop
+            | Action::ReviewBottom
+            | Action::ReviewShowDiff
+            | Action::ReviewDiffPageUp
+            | Action::ReviewDiffPageDown
+            | Action::ReviewScope
+            | Action::ReviewStage
+            | Action::ReviewStageAll
+            | Action::ReviewUnstageAll
+            | Action::ReviewDiscard
+            | Action::ReviewCommit
+            | Action::ReviewPush
+            | Action::ReviewPullRequest
+            | Action::ReviewOpenPr
+            | Action::ReviewRefresh
+            | Action::CommitSubmit
+            | Action::CommitDraft => {}
         }
         false
     }

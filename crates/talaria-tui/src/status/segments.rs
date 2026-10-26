@@ -123,11 +123,13 @@ pub enum Segment {
     External,
     /// The approvals state (#237).
     Approvals,
+    /// The foreground folder's pull-request label (#245).
+    PullRequest,
 }
 
 impl Segment {
     /// Every segment, from the one dropped last to the one dropped first.
-    pub const ALL: [Segment; 9] = [
+    pub const ALL: [Segment; 10] = [
         Segment::Connection,
         Segment::NeedsYou,
         Segment::Approvals,
@@ -136,10 +138,11 @@ impl Segment {
         Segment::Folder,
         Segment::Working,
         Segment::Cost,
+        Segment::PullRequest,
         Segment::External,
     ];
 
-    /// 1 is dropped last, 9 first.
+    /// 1 is dropped last, 10 first.
     pub fn priority(self) -> u8 {
         match self {
             Segment::Connection => 1,
@@ -150,7 +153,8 @@ impl Segment {
             Segment::Folder => 6,
             Segment::Working => 7,
             Segment::Cost => 8,
-            Segment::External => 9,
+            Segment::PullRequest => 9,
+            Segment::External => 10,
         }
     }
 
@@ -165,7 +169,8 @@ impl Segment {
             Segment::Cost => 6,
             Segment::NeedsYou => 7,
             Segment::Working => 8,
-            Segment::External => 9,
+            Segment::PullRequest => 9,
+            Segment::External => 10,
         }
     }
 }

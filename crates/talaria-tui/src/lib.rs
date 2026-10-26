@@ -20,6 +20,7 @@ pub mod pager;
 pub mod palette;
 pub mod prompts;
 pub mod queue;
+pub mod review_view;
 pub mod rewind;
 pub mod session_picker;
 pub mod side;

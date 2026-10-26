@@ -231,7 +231,8 @@ async fn run_effect(peek: &mut PeekService, effect: FleetViewEffect) -> Vec<Flee
         // Handled on the app state before an effect reaches the worker.
         FleetViewEffect::Acknowledge(_)
         | FleetViewEffect::Open(_)
-        | FleetViewEffect::FocusAnswer => Vec::new(),
+        | FleetViewEffect::FocusAnswer
+        | FleetViewEffect::Review(_) => Vec::new(),
     }
 }
 

@@ -25,6 +25,10 @@ pub enum KeyContext {
     Fleet,
     /// The full-screen subagent panel. Issue #242.
     Agents,
+    /// The review overlay list. Issue #245.
+    Review,
+    /// The commit message editor. Issue #245.
+    CommitMessage,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -317,6 +321,44 @@ pub enum Action {
     FleetNew,
     /// Start a background session in a new worktree from the fleet list.
     FleetNewWorktree,
+    /// Move the review cursor up. Issue #245.
+    ReviewUp,
+    /// Move the review cursor down. Issue #245.
+    ReviewDown,
+    /// First review file. Issue #245.
+    ReviewTop,
+    /// Last review file. Issue #245.
+    ReviewBottom,
+    /// Show the selected diff in place of the list. Issue #245.
+    ReviewShowDiff,
+    /// Scroll the diff panel up. Issue #245.
+    ReviewDiffPageUp,
+    /// Scroll the diff panel down. Issue #245.
+    ReviewDiffPageDown,
+    /// Switch Uncommitted and Branch scopes. Issue #245.
+    ReviewScope,
+    /// Stage or unstage the selected file. Issue #245.
+    ReviewStage,
+    /// Stage everything. Issue #245.
+    ReviewStageAll,
+    /// Unstage everything. Issue #245.
+    ReviewUnstageAll,
+    /// Discard the selected file, after a second press. Issue #245.
+    ReviewDiscard,
+    /// Open the commit editor. Issue #245.
+    ReviewCommit,
+    /// Push the branch. Issue #245.
+    ReviewPush,
+    /// Open a draft pull request. Issue #245.
+    ReviewPullRequest,
+    /// Open the known pull request in the browser. Issue #245.
+    ReviewOpenPr,
+    /// Reload the list and refresh status. Issue #245.
+    ReviewRefresh,
+    /// Commit the editor text. Issue #245.
+    CommitSubmit,
+    /// Draft a message with the session's model. Issue #245.
+    CommitDraft,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -348,7 +390,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 108] = [
+    pub const ALL: [Self; 127] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -457,6 +499,25 @@ impl Action {
         Self::AgentsBottom,
         Self::FleetNew,
         Self::FleetNewWorktree,
+        Self::ReviewUp,
+        Self::ReviewDown,
+        Self::ReviewTop,
+        Self::ReviewBottom,
+        Self::ReviewShowDiff,
+        Self::ReviewDiffPageUp,
+        Self::ReviewDiffPageDown,
+        Self::ReviewScope,
+        Self::ReviewStage,
+        Self::ReviewStageAll,
+        Self::ReviewUnstageAll,
+        Self::ReviewDiscard,
+        Self::ReviewCommit,
+        Self::ReviewPush,
+        Self::ReviewPullRequest,
+        Self::ReviewOpenPr,
+        Self::ReviewRefresh,
+        Self::CommitSubmit,
+        Self::CommitDraft,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -571,6 +632,25 @@ impl Action {
             Self::AgentsBottom => "agents_bottom",
             Self::FleetNew => "fleet_new",
             Self::FleetNewWorktree => "fleet_new_worktree",
+            Self::ReviewUp => "review_up",
+            Self::ReviewDown => "review_down",
+            Self::ReviewTop => "review_top",
+            Self::ReviewBottom => "review_bottom",
+            Self::ReviewShowDiff => "review_show_diff",
+            Self::ReviewDiffPageUp => "review_diff_page_up",
+            Self::ReviewDiffPageDown => "review_diff_page_down",
+            Self::ReviewScope => "review_scope",
+            Self::ReviewStage => "review_stage",
+            Self::ReviewStageAll => "review_stage_all",
+            Self::ReviewUnstageAll => "review_unstage_all",
+            Self::ReviewDiscard => "review_discard",
+            Self::ReviewCommit => "review_commit",
+            Self::ReviewPush => "review_push",
+            Self::ReviewPullRequest => "review_pull_request",
+            Self::ReviewOpenPr => "review_open_pr",
+            Self::ReviewRefresh => "review_refresh",
+            Self::CommitSubmit => "commit_submit",
+            Self::CommitDraft => "commit_draft",
         }
     }
 
@@ -694,6 +774,24 @@ impl Action {
             | Self::AgentsPageDown
             | Self::AgentsTop
             | Self::AgentsBottom => KeyContext::Agents,
+            Self::ReviewUp
+            | Self::ReviewDown
+            | Self::ReviewTop
+            | Self::ReviewBottom
+            | Self::ReviewShowDiff
+            | Self::ReviewDiffPageUp
+            | Self::ReviewDiffPageDown
+            | Self::ReviewScope
+            | Self::ReviewStage
+            | Self::ReviewStageAll
+            | Self::ReviewUnstageAll
+            | Self::ReviewDiscard
+            | Self::ReviewCommit
+            | Self::ReviewPush
+            | Self::ReviewPullRequest
+            | Self::ReviewOpenPr
+            | Self::ReviewRefresh => KeyContext::Review,
+            Self::CommitSubmit | Self::CommitDraft => KeyContext::CommitMessage,
         }
     }
 
@@ -815,6 +913,25 @@ impl Action {
             Self::AgentsBottom => &["shift+g", "end"],
             Self::FleetNew => &["n"],
             Self::FleetNewWorktree => &["w"],
+            Self::ReviewUp => &["up", "k"],
+            Self::ReviewDown => &["down", "j"],
+            Self::ReviewTop => &["home", "g"],
+            Self::ReviewBottom => &["end", "shift+g"],
+            Self::ReviewShowDiff => &["enter"],
+            Self::ReviewDiffPageUp => &["pageup"],
+            Self::ReviewDiffPageDown => &["pagedown"],
+            Self::ReviewScope => &["tab"],
+            Self::ReviewStage => &["space"],
+            Self::ReviewStageAll => &["a"],
+            Self::ReviewUnstageAll => &["shift+a"],
+            Self::ReviewDiscard => &["shift+x"],
+            Self::ReviewCommit => &["c"],
+            Self::ReviewPush => &["p"],
+            Self::ReviewPullRequest => &["shift+p"],
+            Self::ReviewOpenPr => &["o"],
+            Self::ReviewRefresh => &["r"],
+            Self::CommitSubmit => &["ctrl+s"],
+            Self::CommitDraft => &["ctrl+d"],
         }
     }
 }

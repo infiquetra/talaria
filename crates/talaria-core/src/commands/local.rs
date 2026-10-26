@@ -64,6 +64,8 @@ pub enum LocalAction {
     Bg,
     /// Stop the running turn and this session's background processes.
     Stop,
+    /// Review the foreground session's folder. Issue #245.
+    Review,
 }
 
 /// One local command.
@@ -255,6 +257,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[pause|resume]",
         takes_argument: true,
         action: LocalAction::Agents,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "changes",
+        aliases: &[],
+        summary: "Review the foreground session's changed files",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Review,
         tag: "talaria",
     },
 ];

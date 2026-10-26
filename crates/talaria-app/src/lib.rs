@@ -25,6 +25,7 @@ pub mod peek;
 pub mod permissions;
 pub mod prompts;
 pub mod queue;
+pub mod review;
 pub mod rewind;
 pub mod sessions;
 pub mod side;

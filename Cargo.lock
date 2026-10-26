@@ -2602,6 +2602,7 @@ dependencies = [
  "hermes-contract",
  "proptest",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
