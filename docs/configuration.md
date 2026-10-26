@@ -113,6 +113,7 @@ agents_page_up = ["pageup"]
 agents_page_down = ["pagedown"]
 agents_top = ["g", "home"]
 agents_bottom = ["shift+g", "end"]
+attention_next = ["alt+a"]
 [editor]
 command = ""
 [history]
@@ -121,6 +122,8 @@ save = true
 bell = ["needs_you", "failed"]
 desktop = ["needs_you", "done", "failed"]
 done_after_seconds = 20
+fleet_needs_you = "all"
+fleet_finished = "watched"
 [herdr]
 report_state = true
 [composer]
@@ -186,6 +189,19 @@ X stops one running child, and Shift+X twice within 3 seconds stops this session
 children. P asks before pausing new spawns for every session on the gateway; running children
 continue. `/agents pause` opens that confirmation; `/agents resume` resumes immediately.
 
+A background session reaches the operator through the same channels as the foreground one: a
+background request that needs an answer, a finished turn and a failed turn all use the `bell`
+and `desktop` lists, and `done_after_seconds` is the shortest finished turn that alerts.
+`fleet_needs_you` and `fleet_finished` choose which background rows may alert: `all` is every
+background row, `watched` is the rows this Talaria has touched (the session it started, one it
+switched away from, one it peeked or answered), and `off` is never. A finished turn of an
+untouched session stays quiet by default, because scheduled runs and other clients finish all
+day. The first seconds after the fleet link comes up stay quiet while the fleet lists its rows,
+so a request that was already waiting does not ring the bell; the counters show what the quiet
+window skipped. One rate limit covers every alert, foreground and background: two alerts less
+than two seconds apart pass only when the second one is more urgent (needs you, then failed,
+then done), and a dropped alert is not repeated later.
+
 `[panes]` controls O in `/fleet` and `/agents`: `multiplexer` is `auto`, `herdr`, `tmux`,
 or `off`; auto prefers Herdr. `direction` is `auto`, `right`, or `down`; auto splits right
 when the pane is at least 120 columns and twice as wide as it is tall, otherwise down.
@@ -214,7 +230,8 @@ an unavailable saved model is dropped. Hermes's profile default never changes.
 `cancel` clears the draft; on an empty draft it stops the running turn; with nothing running, two
 presses within 2 seconds exit. The `completion_*` keys apply only while a list is open, and a tab
 inside pasted text is kept. `toggle_tasks` shows the task checklist; `attach_clipboard_image`
-attaches the clipboard's image. The model picker keys are not in the block: `model_picker` Alt+P,
+attaches the clipboard's image. `attention_next` (Alt+A) jumps to the oldest background request
+that waits for an answer. The model picker keys are not in the block: `model_picker` Alt+P,
 `effort_down` and `effort_up` Left and Right, `model_scope` Ctrl+G (also new sessions),
 `model_favourite` Ctrl+F, `model_refresh` Ctrl+R. They resolve before composer keys while the picker
 is open; Esc clears the filter, then closes; a confirmation card takes Enter or Y, Esc or N.

@@ -36,6 +36,8 @@ pub enum Route {
     HistorySearch,
     /// The composer takes the raw key.
     Composer,
+    /// Jump to the oldest background request.
+    AttentionNext,
 }
 
 /// Pick the owner for a resolved action under a focus.
@@ -51,6 +53,7 @@ pub fn route(action: Option<Action>, focus: Focus) -> Route {
         Focus::Composer => match action {
             Some(Action::OpenEditor) => Route::OpenEditor,
             Some(Action::HistorySearch) => Route::HistorySearch,
+            Some(Action::AttentionNext) => Route::AttentionNext,
             _ => Route::Composer,
         },
     }

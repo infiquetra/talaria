@@ -38,6 +38,7 @@ use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
 use talaria_core::checklist::ChecklistCommit;
 use talaria_core::commands::PaletteInput;
 use talaria_core::directory::state::{PickerAction, PickerInput, PickerMode, PickerState};
+use talaria_core::fleet_attention::FleetAttentionConfig;
 use talaria_core::fleet_view::{FleetAction, FleetViewInput, FleetViewState, Focus as FleetFocus};
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
@@ -869,8 +870,11 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         working_dir: view.folder.and_then(|folder| folder.cwd.clone()),
         home_dir,
         branch: view.folder.and_then(|folder| folder.branch.clone()),
-        needs_you: open,
-        working: u32::from(turn != TurnState::Idle),
+        needs_you: view.fleet_counts.needs_you,
+        working: view
+            .fleet_counts
+            .working
+            .saturating_add(u32::from(turn != TurnState::Idle)),
         session: view.session_id.map(|id| SessionRef {
             id: id.to_string(),
             title: view.title.map(str::to_string),
@@ -879,6 +883,8 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         pending_prompts: open,
         subagents_active: counts.map_or(view.subagents_usage_active, |counts| counts.live),
         subagents_terminal: counts.map_or(0, |counts| counts.terminal),
+        failed: view.fleet_counts.failed,
+        done: view.fleet_counts.done,
         context_percent,
         approvals: view.approvals.as_ref().map(approvals_segment),
         ..StatusInputs::default()
@@ -1651,6 +1657,13 @@ impl TuiScreen {
                         });
                         return actions;
                     }
+                }
+                if route == talaria_tui::comfort_route::Route::AttentionNext {
+                    // The jump key belongs to the composer: it never edits the draft.
+                    let mut actions = Vec::new();
+                    Self::close_palette(&mut actions);
+                    actions.push(UserAction::AttentionNext);
+                    return actions;
                 }
                 if route == talaria_tui::comfort_route::Route::OpenEditor {
                     let _ = self.composer.handle_key(
@@ -2588,6 +2601,23 @@ impl Screen for TuiScreen {
             desktop: self.config.notifications.desktop.clone(),
             done_after: Duration::from_secs(self.config.notifications.done_after_seconds),
         }
+    }
+
+    fn fleet_attention_config(&self) -> FleetAttentionConfig {
+        FleetAttentionConfig {
+            bell: self.config.notifications.bell.clone(),
+            desktop: self.config.notifications.desktop.clone(),
+            done_after: Duration::from_secs(self.config.notifications.done_after_seconds),
+            needs_you: self.config.notifications.fleet_needs_you,
+            finished: self.config.notifications.fleet_finished,
+        }
+    }
+
+    fn attention_key_label(&self) -> Option<String> {
+        // The start-up notice names the key the way a person presses it.
+        self.keymap
+            .label(Action::AttentionNext)
+            .map(|label| label.to_ascii_lowercase())
     }
 
     fn alert(&mut self, alert: &Alert) {

@@ -317,6 +317,8 @@ pub enum Action {
     AgentsBottom,
     /// Open the selected child's session in another multiplexer pane.
     AgentsOpenInPane,
+    /// Jump to the oldest background request.
+    AttentionNext,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -348,7 +350,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 108] = [
+    pub const ALL: [Self; 109] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -457,6 +459,7 @@ impl Action {
         Self::AgentsTop,
         Self::AgentsBottom,
         Self::AgentsOpenInPane,
+        Self::AttentionNext,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -571,6 +574,7 @@ impl Action {
             Self::AgentsTop => "agents_top",
             Self::AgentsBottom => "agents_bottom",
             Self::AgentsOpenInPane => "agents_open_in_pane",
+            Self::AttentionNext => "attention_next",
         }
     }
 
@@ -625,6 +629,7 @@ impl Action {
             | Self::ComposerSendNow
             | Self::ComposerSteer
             | Self::AgentsPanel => KeyContext::Composer,
+            Self::AttentionNext => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
             | Self::PagerPageUp
@@ -815,6 +820,7 @@ impl Action {
             Self::AgentsTop => &["g", "home"],
             Self::AgentsBottom => &["shift+g", "end"],
             Self::AgentsOpenInPane => &["o"],
+            Self::AttentionNext => &["alt+a"],
         }
     }
 }
@@ -1531,7 +1537,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 108);
+        assert_eq!(Action::ALL.len(), 109);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1941,7 +1947,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 108);
+        assert_eq!(Action::ALL.len(), 109);
     }
 
     #[test]

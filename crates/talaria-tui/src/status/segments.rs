@@ -64,6 +64,10 @@ pub struct StatusInputs {
     pub cost_status: Option<String>,
     /// Prompts waiting for the operator.
     pub needs_you: u32,
+    /// Background rows whose turn failed.
+    pub failed: u32,
+    /// Background rows whose turn is done.
+    pub done: u32,
     /// Sessions working on a turn.
     pub working: u32,
     /// Whether the client is live or replaying.
@@ -123,18 +127,24 @@ pub enum Segment {
     External,
     /// The approvals state (#237).
     Approvals,
+    /// Background rows whose turn failed.
+    Failed,
+    /// Background rows whose turn is done.
+    Done,
 }
 
 impl Segment {
     /// Every segment, from the one dropped last to the one dropped first.
-    pub const ALL: [Segment; 9] = [
+    pub const ALL: [Segment; 11] = [
         Segment::Connection,
         Segment::NeedsYou,
         Segment::Approvals,
+        Segment::Failed,
         Segment::Model,
         Segment::Context,
         Segment::Folder,
         Segment::Working,
+        Segment::Done,
         Segment::Cost,
         Segment::External,
     ];
@@ -145,12 +155,14 @@ impl Segment {
             Segment::Connection => 1,
             Segment::NeedsYou => 2,
             Segment::Approvals => 3,
-            Segment::Model => 4,
-            Segment::Context => 5,
-            Segment::Folder => 6,
-            Segment::Working => 7,
-            Segment::Cost => 8,
-            Segment::External => 9,
+            Segment::Failed => 4,
+            Segment::Model => 5,
+            Segment::Context => 6,
+            Segment::Folder => 7,
+            Segment::Working => 8,
+            Segment::Done => 9,
+            Segment::Cost => 10,
+            Segment::External => 11,
         }
     }
 
@@ -164,8 +176,10 @@ impl Segment {
             Segment::Context => 5,
             Segment::Cost => 6,
             Segment::NeedsYou => 7,
-            Segment::Working => 8,
-            Segment::External => 9,
+            Segment::Failed => 8,
+            Segment::Working => 9,
+            Segment::Done => 10,
+            Segment::External => 11,
         }
     }
 }
@@ -219,7 +233,9 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     add(&mut pieces, Segment::Context, context_segment(inputs));
     add(&mut pieces, Segment::Cost, cost_segment(inputs));
     add(&mut pieces, Segment::NeedsYou, needs_you_segment(inputs));
+    add(&mut pieces, Segment::Failed, failed_segment(inputs));
     add(&mut pieces, Segment::Working, working_segment(inputs));
+    add(&mut pieces, Segment::Done, done_segment(inputs));
     add(&mut pieces, Segment::External, external_segment(external));
 
     // One blank column on the left is reserved, so the line never reaches the last column.
@@ -446,6 +462,22 @@ fn working_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
         return None;
     }
     Some((format!("{} working", inputs.working), Tone::Muted))
+}
+
+/// The failed segment: a background turn failed.
+fn failed_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+    if inputs.failed == 0 {
+        return None;
+    }
+    Some((format!("✗ {} failed", inputs.failed), Tone::Error))
+}
+
+/// The done segment: a background turn is done.
+fn done_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+    if inputs.done == 0 {
+        return None;
+    }
+    Some((format!("✓ {} done", inputs.done), Tone::Success))
 }
 
 /// The external segment: the command's own text.
