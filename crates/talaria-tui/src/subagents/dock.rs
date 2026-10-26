@@ -123,11 +123,11 @@ pub(super) fn dim_suffix(line: &mut Line<'static>, suffix: &str, style: Style) {
     if suffix.is_empty() {
         return;
     }
-    if let Some(last) = line.spans.last_mut() {
-        if let Some(prefix) = last.content.strip_suffix(suffix) {
-            last.content = prefix.to_owned().into();
-            line.spans.push(Span::styled(suffix.to_owned(), style));
-        }
+    if let Some(last) = line.spans.last_mut()
+        && let Some(prefix) = last.content.strip_suffix(suffix)
+    {
+        last.content = prefix.to_owned().into();
+        line.spans.push(Span::styled(suffix.to_owned(), style));
     }
 }
 pub struct SubagentDock<'a> {

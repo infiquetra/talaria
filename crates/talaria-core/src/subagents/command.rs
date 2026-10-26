@@ -33,7 +33,7 @@ impl AgentsArg {
         match self {
             Self::Unknown(arg) => Some(format!(
                 "Unknown /agents option: {}. Use /agents, /agents pause or /agents resume.",
-                super::row::cut(arg, 40)
+                arg.chars().take(40).collect::<String>()
             )),
             _ => None,
         }

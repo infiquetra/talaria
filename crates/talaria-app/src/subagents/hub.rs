@@ -116,6 +116,12 @@ pub enum SubagentMsg {
         id: Option<String>,
         outcome: ControlOutcome,
     },
+    /// A local command's outcome belongs in scrollback, even with the panel closed.
+    CommandControl {
+        key: RowKey,
+        generation: u64,
+        outcome: ControlOutcome,
+    },
     DelegationStatus {
         key: RowKey,
         generation: u64,
@@ -194,11 +200,18 @@ pub struct SubagentHub {
     flash: Option<String>,
     batches: Vec<FinishedBatch>,
     status_inflight: bool,
+    status_owner: Option<(RowKey, u64)>,
+    status_refresh_pending: bool,
     status_disabled: bool,
     status_scheduled: bool,
     control_limit: Arc<tokio::sync::Semaphore>,
     panel_epoch: u64,
     elapsed_scheduled: bool,
+}
+
+enum ControlDelivery {
+    Flash(Option<String>),
+    Command,
 }
 
 impl SubagentHub {
@@ -272,21 +285,23 @@ impl SubagentHub {
             .into_iter()
             .filter(|k| self.tree(k).is_some_and(|t| !t.rows_in_order().is_empty()))
             .collect();
-        if keys.len() < 2 {
+        if keys.is_empty() {
             return;
         }
-        let index = keys
+        let next = keys
             .iter()
             .position(|k| Some(k) == self.panel.as_ref())
-            .unwrap_or(0);
-        self.open_panel(keys[(index + 1) % keys.len()].clone());
+            .map_or(0, |index| (index + 1) % keys.len());
+        if self.panel.as_ref() != Some(&keys[next]) {
+            self.open_panel(keys[next].clone());
+        }
     }
     fn set_flash(&mut self, text: String) -> bool {
         let changed = self.flash.as_ref() != Some(&text);
         self.flash = Some(text);
         changed
     }
-    fn current(&self, key: &RowKey, generation: u64) -> bool {
+    pub(crate) fn current(&self, key: &RowKey, generation: u64) -> bool {
         self.trackers
             .get(key)
             .is_some_and(|t| t.generation == generation)
@@ -336,13 +351,14 @@ impl SubagentHub {
         let mut changed = false;
         if let Some(tracker) = self.trackers.get_mut(key) {
             changed = tracker.tree.expire(now);
-            if tracker.failures >= 3
-                || (tracker.tree.counts().live == 0 && self.panel.as_ref() != Some(key))
-            {
-                return changed;
-            }
         }
         self.collect_batches(key);
+        if self.trackers.get(key).is_none_or(|tracker| {
+            tracker.failures >= 3
+                || (tracker.tree.counts().live == 0 && self.panel.as_ref() != Some(key))
+        }) {
+            return changed;
+        }
         self.list(key);
         changed
     }
@@ -446,6 +462,7 @@ impl SubagentHub {
         };
         self.status_inflight = true;
         let generation = tracker.generation;
+        self.status_owner = Some((key.clone(), generation));
         let client = tracker.client.clone();
         let key = key.clone();
         let tx = self.tx.clone();
@@ -482,7 +499,7 @@ impl SubagentHub {
     fn control<F>(
         &mut self,
         key: &RowKey,
-        id: Option<String>,
+        delivery: ControlDelivery,
         method: &'static str,
         action: &'static str,
         params: Value,
@@ -507,12 +524,20 @@ impl SubagentHub {
                 Ok(outcome) => outcome,
                 Err(error) => error_outcome(method, action, error),
             };
-            let _ = tx.send(crate::app::AppMessage::Subagents(SubagentMsg::Control {
-                key,
-                generation,
-                id,
-                outcome,
-            }));
+            let message = match delivery {
+                ControlDelivery::Flash(id) => SubagentMsg::Control {
+                    key,
+                    generation,
+                    id,
+                    outcome,
+                },
+                ControlDelivery::Command => SubagentMsg::CommandControl {
+                    key,
+                    generation,
+                    outcome,
+                },
+            };
+            let _ = tx.send(crate::app::AppMessage::Subagents(message));
         }));
     }
     fn stop(&mut self, key: &RowKey, id: String) {
@@ -542,7 +567,7 @@ impl SubagentHub {
         }
         self.control(
             key,
-            Some(id.clone()),
+            ControlDelivery::Flash(Some(id.clone())),
             "subagent.interrupt",
             "stop",
             json!({"session_id":key.session_id,"subagent_id":id}),
@@ -557,11 +582,15 @@ impl SubagentHub {
             },
         );
     }
-    fn pause(&mut self, key: &RowKey, paused: bool) {
+    fn pause(&mut self, key: &RowKey, paused: bool, command: bool) {
         self.confirm_pause = false;
         self.control(
             key,
-            None,
+            if command {
+                ControlDelivery::Command
+            } else {
+                ControlDelivery::Flash(None)
+            },
             "delegation.pause",
             if paused { "pause" } else { "resume" },
             json!({"paused":paused}),
@@ -588,6 +617,8 @@ impl SubagentHub {
             flash: None,
             batches: Vec::new(),
             status_inflight: false,
+            status_owner: None,
+            status_refresh_pending: false,
             status_disabled: false,
             status_scheduled: false,
             control_limit: Arc::new(tokio::sync::Semaphore::new(10)),
@@ -625,6 +656,15 @@ impl SubagentHub {
     }
 
     pub fn detach(&mut self, key: &RowKey) {
+        if self
+            .status_owner
+            .as_ref()
+            .is_some_and(|(owner, _)| owner == key)
+        {
+            self.status_inflight = false;
+            self.status_owner = None;
+            self.status_refresh_pending = false;
+        }
         self.trackers.remove(key);
         if self.panel.as_ref() == Some(key) {
             self.close_panel();
@@ -678,6 +718,8 @@ impl SubagentHub {
             tracker.stopping.clear();
         }
         self.status_inflight = false;
+        self.status_owner = None;
+        self.status_refresh_pending = false;
         self.status_disabled = false;
         self.status_scheduled = false;
         self.elapsed_scheduled = false;
@@ -694,6 +736,19 @@ impl SubagentHub {
     /// Feed one of the hub's own messages. True when visible state changed.
     pub fn on_message(&mut self, msg: SubagentMsg, now: Clock) -> bool {
         match msg {
+            SubagentMsg::CommandControl {
+                key,
+                generation,
+                outcome,
+            } => self.on_message(
+                SubagentMsg::Control {
+                    key,
+                    generation,
+                    id: None,
+                    outcome,
+                },
+                now,
+            ),
             SubagentMsg::Listed {
                 key,
                 generation,
@@ -814,7 +869,11 @@ impl SubagentHub {
                     };
                     self.confirm_pause = false;
                     self.status_disabled = false;
-                    self.status(&key);
+                    if self.status_inflight {
+                        self.status_refresh_pending = true;
+                    } else {
+                        self.status(&key);
+                    }
                 }
                 self.set_flash(outcome_text(&outcome)) || changed
             }
@@ -823,10 +882,19 @@ impl SubagentHub {
                 generation,
                 result,
             } => {
-                if !self.current(&key, generation) {
+                if !self.current(&key, generation)
+                    || self.status_owner.as_ref() != Some(&(key.clone(), generation))
+                {
                     return false;
                 }
                 self.status_inflight = false;
+                self.status_owner = None;
+                if self.status_refresh_pending {
+                    self.status_refresh_pending = false;
+                    let target = self.panel.clone().unwrap_or(key);
+                    self.status(&target);
+                    return false;
+                }
                 let before = self.spawning;
                 match result {
                     Ok(result) => {
@@ -852,7 +920,9 @@ impl SubagentHub {
                     }
                     Err(_) => {}
                 }
-                self.schedule_status(&key);
+                if let Some(panel) = self.panel.clone() {
+                    self.schedule_status(&panel);
+                }
                 before != self.spawning
             }
             SubagentMsg::PollTick { key } => self.poll(&key, now),
@@ -941,7 +1011,7 @@ impl SubagentHub {
                 }
                 self.control(
                     key,
-                    None,
+                    ControlDelivery::Flash(None),
                     "subagent.steer",
                     "steer",
                     json!({"session_id":key.session_id,"subagent_id":id,"text":text}),
@@ -1018,8 +1088,8 @@ impl SubagentHub {
                 self.confirm_pause = false;
                 self.clear_flash();
             }
-            SubagentAction::ConfirmPause(true) => self.pause(key, true),
-            SubagentAction::Resume => self.pause(key, false),
+            SubagentAction::ConfirmPause(true) => self.pause(key, true, false),
+            SubagentAction::Resume => self.pause(key, false, false),
             SubagentAction::OpenTail(id) => {
                 if let Some(tracker) = self.trackers.get_mut(key) {
                     tracker.tail_view = tracker.tail_view.wrapping_add(1);
@@ -1088,6 +1158,11 @@ impl SubagentHub {
     #[must_use]
     pub fn spawning(&self) -> Spawning {
         self.spawning
+    }
+
+    /// Resume from a typed command, reporting its outcome independently of the panel.
+    pub fn resume_command(&mut self, key: &RowKey) {
+        self.pause(key, false, true);
     }
 }
 

@@ -95,6 +95,22 @@ fleet_answer = ["a"]
 fleet_filter = ["/"]
 fleet_profile_next = ["tab"]
 fleet_profile_prev = ["shift+tab"]
+agents_panel = ["alt+s"]
+agents_up = ["up", "k"]
+agents_down = ["down", "j"]
+agents_tail = ["enter"]
+agents_detail = ["d", "right"]
+agents_back = ["esc", "left"]
+agents_close = ["q"]
+agents_steer = ["e"]
+agents_stop = ["x"]
+agents_stop_all = ["shift+x"]
+agents_pause = ["p"]
+agents_next_session = ["tab"]
+agents_page_up = ["pageup"]
+agents_page_down = ["pagedown"]
+agents_top = ["g", "home"]
+agents_bottom = ["shift+g", "end"]
 [editor]
 command = ""
 [history]
@@ -124,6 +140,10 @@ enabled = true
 hot_poll_ms = 2000
 cold_poll_ms = 4000
 backstop_s = 30
+[subagents]
+poll_s = 5
+tail_poll_ms = 2000
+dock_rows = 3
 ```
 
 ## Settings
@@ -150,6 +170,15 @@ turns it off. It polls the liveness of profiles with a waiting or working sessio
 evenly), and rediscovers profiles every `backstop_s` (10 to 300); out-of-range values are clamped
 with one notice. `talaria fleet list` uses the same timings and ignores `enabled`; its JSON is
 [`talaria.fleet.v1`](formats/fleet-list-v1.md).
+
+`[subagents]` polls this session's children every `poll_s` seconds (2 to 60) while children
+are live or the agents panel is open. The open transcript polls every `tail_poll_ms`
+milliseconds (1000 to 10000). `dock_rows` (0 to 10) limits rows above the composer; 0 hides
+the dock. Invalid values use the defaults above with one notice. `/agents` and `/tasks`,
+or `agents_panel` (Alt+S), open the panel. Enter reads a transcript, D shows details, E steers,
+X stops one running child, and Shift+X twice within 3 seconds stops this session's running
+children. P asks before pausing new spawns for every session on the gateway; running children
+continue. `/agents pause` opens that confirmation; `/agents resume` resumes immediately.
 
 Talaria never stops for this file: anything it cannot use falls back to its default with one notice
 naming `~/.talaria/config.toml`. A syntax error (with line and column) or an unreadable file gives

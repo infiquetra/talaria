@@ -1820,7 +1820,7 @@ async fn foreground_batches_are_drained_once_and_background_batches_are_not_prin
     assert_eq!(hub.take_finished_batches().len(), 1);
     assert!(hub.take_finished_batches().is_empty());
     let background = RowKey {
-        profile: "other".into(),
+        profile: "fixture".into(),
         session_id: "background".into(),
     };
     gateway.push_result(json!({"subagents":[],"delegations":[]}));
@@ -1926,4 +1926,187 @@ async fn elapsed_ticks_only_while_the_open_panel_has_live_rows() {
     tokio::time::advance(Duration::from_secs(1)).await;
     now_ms += 1000;
     assert_eq!(elapsed(&settle(&mut hub, &mut rx, &mut now_ms).await), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn queued_expiry_releases_a_held_finished_batch_without_another_event() {
+    let (gateway, client, mut hub, mut rx) = rig().await;
+    let key = key();
+    let mut now_ms = 0;
+    hub.set_foreground(Some(key.clone()));
+    hub.attach(key.clone(), client);
+    wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
+    hub.on_notification(
+        &key,
+        &notification(
+            "subagent.start",
+            with(payload("done"), "delegation_id", json!("batch")),
+        ),
+        clock_ms(0),
+    );
+    hub.on_notification(
+        &key,
+        &notification("subagent.spawn_requested", payload("waiting")),
+        clock_ms(0),
+    );
+    hub.on_notification(
+        &key,
+        &notification(
+            "subagent.complete",
+            with(payload("done"), "status", json!("completed")),
+        ),
+        clock_ms(1),
+    );
+    assert!(hub.take_finished_batches().is_empty());
+    hub.on_message(
+        SubagentMsg::PollTick { key: key.clone() },
+        clock_ms(600_000),
+    );
+    let batches = hub.take_finished_batches();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].rows[0].0.id, "done");
+    assert!(hub.tree(&key).unwrap().get("waiting").is_none());
+    assert!(hub.take_finished_batches().is_empty());
+    hub.on_notification(
+        &key,
+        &notification("message.start", json!({})),
+        clock_ms(600_001),
+    );
+    assert!(hub.tree(&key).unwrap().rows_in_order().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn tab_reaches_the_only_populated_background_tree() {
+    let (gateway, client, mut hub, mut rx) = rig().await;
+    let key = key();
+    let other = RowKey {
+        profile: "fixture".into(),
+        session_id: "background".into(),
+    };
+    let mut now_ms = 0;
+    hub.set_foreground(Some(key.clone()));
+    hub.attach(key.clone(), client.clone());
+    hub.attach(other.clone(), client);
+    settle(&mut hub, &mut rx, &mut now_ms).await;
+    live_child(&mut hub, &other, "background-child", clock_ms(now_ms));
+    hub.open_panel(key.clone());
+    hub.next_panel_session();
+    assert_eq!(hub.panel_key(), Some(&other));
+    hub.next_panel_session();
+    assert_eq!(hub.panel_key(), Some(&other));
+    assert!(gateway.requests("subagent.list").len() >= 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn detaching_the_status_owner_does_not_block_the_next_panel() {
+    let (gateway, client, mut hub, mut rx) = rig().await;
+    let key = key();
+    let mut now_ms = 0;
+    hub.attach(key.clone(), client.clone());
+    wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
+    gateway.queue_behavior("delegation.status", Behavior::Silent);
+    hub.open_panel(key.clone());
+    wait_call(
+        &mut hub,
+        &mut rx,
+        &gateway,
+        "delegation.status",
+        &mut now_ms,
+    )
+    .await;
+    hub.detach(&key);
+    hub.attach(key.clone(), client);
+    hub.open_panel(key);
+    wait_call(
+        &mut hub,
+        &mut rx,
+        &gateway,
+        "delegation.status",
+        &mut now_ms,
+    )
+    .await;
+    assert_eq!(gateway.requests("delegation.status").len(), 2);
+    assert!(matches!(
+        hub.spawning(),
+        talaria_core::subagents::Spawning::On(_)
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_status_read_started_before_pause_cannot_undo_the_pause_answer() {
+    let (gateway, client, mut hub, mut rx) = rig().await;
+    let key = key();
+    let mut now_ms = 0;
+    hub.attach(key.clone(), client);
+    let first = wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
+    let generation = first
+        .hub_msgs
+        .iter()
+        .find_map(|msg| match msg {
+            SubagentMsg::Listed { generation, .. } => Some(*generation),
+            _ => None,
+        })
+        .unwrap();
+    gateway.queue_behavior("delegation.status", Behavior::Silent);
+    hub.open_panel(key.clone());
+    wait_call(
+        &mut hub,
+        &mut rx,
+        &gateway,
+        "delegation.status",
+        &mut now_ms,
+    )
+    .await;
+    hub.act(&key, SubagentAction::ConfirmPause(true), clock_ms(now_ms));
+    wait_call(&mut hub, &mut rx, &gateway, "delegation.pause", &mut now_ms).await;
+    settle(&mut hub, &mut rx, &mut now_ms).await;
+    assert!(matches!(
+        hub.spawning(),
+        talaria_core::subagents::Spawning::Paused(_)
+    ));
+    hub.on_message(SubagentMsg::DelegationStatus { key, generation,
+        result: Ok(serde_json::from_value(json!({"active":[],"paused":false,"max_spawn_depth":1,"max_concurrent_children":10})).unwrap()) }, clock_ms(now_ms));
+    assert!(matches!(
+        hub.spawning(),
+        talaria_core::subagents::Spawning::Paused(_)
+    ));
+    wait_call(
+        &mut hub,
+        &mut rx,
+        &gateway,
+        "delegation.status",
+        &mut now_ms,
+    )
+    .await;
+    assert_eq!(gateway.requests("delegation.status").len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn typed_resume_prints_its_result_with_the_panel_closed() {
+    use talaria_app::app::{AppEffect, AppState, update};
+    let (gateway, client, mut hub, mut rx) = rig().await;
+    let key = key();
+    let mut now_ms = 0;
+    hub.attach(key.clone(), client);
+    wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
+    hub.resume_command(&key);
+    let mut state = AppState::new("resume-output");
+    state.subagents = Some(hub);
+    let mut lines = Vec::new();
+    for _ in 0..200 {
+        tokio::task::yield_now().await;
+        while let Ok(message) = rx.try_recv() {
+            for effect in update(&mut state, message) {
+                if let AppEffect::CommitLines(printed) = effect {
+                    lines.extend(printed);
+                }
+            }
+        }
+        if !lines.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(lines, vec!["· New subagents are allowed again."]);
+    assert!(state.subagents.as_ref().unwrap().panel_key().is_none());
+    assert_eq!(gateway.requests("delegation.pause").len(), 1);
 }

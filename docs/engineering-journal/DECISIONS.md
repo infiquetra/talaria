@@ -16,6 +16,20 @@
 
 **Revisit when** the foreground link can route events by session, Hermes honours `omit_messages` on attach, or the operator answers question 1 differently.
 
+### Status line subagent counts come from the session's own tree
+
+**Decision.** After one successful list, or when listing is unavailable, the status line uses
+the foreground session's subagent tree for live and terminal counts. Until then it keeps the
+usage count and shows zero terminal children.
+
+**Rationale.** Hermes v0.22.4 `gateway/session_usage.py` derives `active_subagents` from
+`async_delegation.active_count()`, which counts background delegations across the gateway.
+Keeping that value after hydration would present other sessions' work as this session's work.
+
+**Rejected.** Retaining the gateway-wide count after this session's tree is available.
+
+**Revisit when.** Hermes supplies a per-session count with matching lifecycle semantics.
+
 ### The fleet registry reads instead of attaching
 
 **Decision.** The fleet registry (issue #239) learns about sessions nobody in this Talaria is attached to only through reads with no side effect on a live session: `session.list` (membership and labels), `session.active_list` (liveness), `approval.pending` (what a waiting session asks) and `session.events.since` (how a turn that just ended finished). Sessions this Talaria is attached to (today the foreground session) are reported by their owner as a `SubscribedView` built from its `SessionState`. Two architecture rules are adapted for unattached sessions: a `snapshot_required` reply means the outcome is `Unknown`, never a `session.resume`; replies from a replaced connection are still dropped, by link generation, in the service.

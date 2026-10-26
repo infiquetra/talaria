@@ -281,6 +281,7 @@ pub struct View<'a> {
     pub subagents: Option<&'a crate::subagents::SubagentHub>,
     /// Gateway usage fallback until this session's tree is known.
     pub subagents_usage_active: u32,
+    pub fleet_snapshot: Option<&'a crate::fleet::FleetSnapshot>,
     pub state: Option<&'a SessionState>,
     pub session_id: Option<&'a str>,
     pub title: Option<&'a str>,
@@ -802,6 +803,7 @@ impl AppState {
             peek: self.peek_frame.as_ref(),
             subagents: self.subagents.as_ref(),
             subagents_usage_active: self.subagents_usage_active,
+            fleet_snapshot: self.fleet_snapshot.as_deref(),
         }
     }
 
@@ -1699,11 +1701,29 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Rewind(input) => rewind_input(state, input),
         AppMessage::Subagents(message) => {
             let now = subagent_clock(state);
+            let command_output = match &message {
+                crate::subagents::SubagentMsg::CommandControl {
+                    key,
+                    generation,
+                    outcome,
+                } if state
+                    .subagents
+                    .as_ref()
+                    .is_some_and(|hub| hub.current(key, *generation)) =>
+                {
+                    Some(crate::subagents::outcome_text(outcome))
+                }
+                _ => None,
+            };
             redraw = state
                 .subagents
                 .as_mut()
                 .is_some_and(|hub| hub.on_message(message, now));
-            subagent_batches(state)
+            let mut effects = subagent_batches(state);
+            if let Some(text) = command_output {
+                effects.push(notice_lines(&text));
+            }
+            effects
         }
         AppMessage::ForegroundKey(action) => foreground_key(state, action),
         AppMessage::Commands(CommandReply::Commands(input)) => commands_input(state, input),
@@ -3048,7 +3068,7 @@ fn agents_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
                 hub.act(&key, crate::subagents::SubagentAction::RequestPause, now);
             }
         }
-        AgentsArg::Resume => hub.act(&key, crate::subagents::SubagentAction::Resume, now),
+        AgentsArg::Resume => hub.resume_command(&key),
         AgentsArg::Unknown(_) => {}
     }
     vec![AppEffect::Redraw]

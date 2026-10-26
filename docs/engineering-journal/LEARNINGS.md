@@ -34,6 +34,29 @@
 
 **Generalizable rule.** Keep a link's event receiver alive for as long as the link is used, even when nothing reads its events.
 
+## 2026-10-26 — subagent.list omits queued children
+
+**Evidence.** At the pinned Hermes v0.22.4 revision, `tools/delegate_tool.py` emits
+`subagent.spawn_requested` before `_run_single_child` registers the child in
+`tools/delegate_tool_child_run.py`. The authority's `gateway/session_ancillary.py`
+projects only registry records. The subagent tree tests keep queued rows across empty lists.
+
+**Mechanism.** A queued child can exist in the event stream before it exists in the registry.
+Two absent successful lists retire only running rows as having an unseen result; queued rows
+instead expire after ten minutes without an event.
+
+**Generalizable rule.** A queued child's absence from a registry snapshot does not prove it ended.
+
+## 2026-10-26 — subagent pause is gateway-wide
+
+**Evidence.** At the pinned Hermes v0.22.4 revision, `gateway/session_tui_ops.py`
+`pause_delegation` calls `tools.delegate_tool_registry.set_spawn_paused`, which updates one
+module-level flag. The handler documents that it covers every chat on the shared gateway.
+
+**Mechanism.** `delegation.pause` blocks new `delegate_task` spawns for all sessions and profiles;
+it leaves running children alone. Talaria asks before pausing and names that scope in the panel.
+
+**Generalizable rule.** Confirm a gateway-wide change with gateway-wide wording.
 
 ## 2026-10-26 — Hermes signals session changes, not session liveness
 

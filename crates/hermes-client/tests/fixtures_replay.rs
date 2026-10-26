@@ -454,11 +454,24 @@ fn scenario_evidence_present() {
         match name {
             "subagent-control" => {
                 let source = hermes_client::ReplaySource::open(&path).expect("control recording");
-                let methods: Vec<&str> = source.outbound().filter_map(|row| row.frame["method"].as_str()).collect();
-                for method in ["subagent.list", "subagent.tail", "subagent.steer", "subagent.interrupt"] {
+                let methods: Vec<&str> = source
+                    .outbound()
+                    .filter_map(|row| row.frame["method"].as_str())
+                    .collect();
+                for method in [
+                    "subagent.list",
+                    "subagent.tail",
+                    "subagent.steer",
+                    "subagent.interrupt",
+                ] {
                     assert!(methods.contains(&method), "{name}: missing {method}");
                 }
-                assert!(events.iter().any(|(kind, params)| kind == "subagent.complete" && params["payload"]["status"] == "interrupted"));
+                assert!(
+                    events
+                        .iter()
+                        .any(|(kind, params)| kind == "subagent.complete"
+                            && params["payload"]["status"] == "interrupted")
+                );
             }
             "plain-answer" => {
                 assert!(

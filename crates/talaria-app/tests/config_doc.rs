@@ -140,6 +140,22 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("fleet_filter", &["/"][..]),
         ("fleet_profile_next", &["tab"][..]),
         ("fleet_profile_prev", &["shift+tab"][..]),
+        ("agents_panel", &["alt+s"][..]),
+        ("agents_up", &["up", "k"][..]),
+        ("agents_down", &["down", "j"][..]),
+        ("agents_tail", &["enter"][..]),
+        ("agents_detail", &["d", "right"][..]),
+        ("agents_back", &["esc", "left"][..]),
+        ("agents_close", &["q"][..]),
+        ("agents_steer", &["e"][..]),
+        ("agents_stop", &["x"][..]),
+        ("agents_stop_all", &["shift+x"][..]),
+        ("agents_pause", &["p"][..]),
+        ("agents_next_session", &["tab"][..]),
+        ("agents_page_up", &["pageup"][..]),
+        ("agents_page_down", &["pagedown"][..]),
+        ("agents_top", &["g", "home"][..]),
+        ("agents_bottom", &["shift+g", "end"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

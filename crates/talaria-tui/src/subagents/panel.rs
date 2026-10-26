@@ -132,10 +132,10 @@ impl AgentsPanel {
         self.selected(tree).map(|r| r.id.clone())
     }
     fn selected<'a>(&self, tree: &'a SubagentTree) -> Option<&'a SubagentRow> {
-        if self.mode != PanelMode::List {
-            if let Some(id) = &self.shown_id {
-                return tree.get(id);
-            }
+        if self.mode != PanelMode::List
+            && let Some(id) = &self.shown_id
+        {
+            return tree.get(id);
         }
         let rows = tree.rows_in_order();
         rows.get(self.cursor.min(rows.len().saturating_sub(1)))
@@ -167,6 +167,9 @@ impl AgentsPanel {
     pub fn set_flash(&mut self, text: String) {
         self.flash = Some(literal(&text));
     }
+    pub fn clear_flash(&mut self) {
+        self.flash = None;
+    }
     pub fn handle(&mut self, action: Action, tree: &SubagentTree) -> Option<SubagentAction> {
         self.flash = None;
         if self.mode == PanelMode::ConfirmPause {
@@ -189,6 +192,7 @@ impl AgentsPanel {
                         .clone()
                         .map(|id| SubagentAction::Steer { id, text });
                 }
+                self.flash = Some("Type an instruction first.".to_owned());
             }
             return None;
         }

@@ -31,6 +31,7 @@ use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::peek::CardAnswer;
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
+use talaria_app::subagents::SubagentAction;
 use talaria_core::appearance::ThemeReport;
 use talaria_core::attachments::CollapseRule;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
@@ -45,6 +46,7 @@ use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
+use talaria_core::subagents::{Clock as SubagentClock, FinishedBatch};
 use talaria_tui::automation::{AutomationSection, AutomationTheme};
 use talaria_tui::checklist::{
     ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS, SHORT_TERMINAL_ROWS, committed_block_lines,
@@ -80,6 +82,9 @@ use talaria_tui::status::{
     ApprovalsSegment, CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay,
     SessionRef, StatusCommandService, StatusDocument, StatusInputs, StatusPalette, StatusSection,
     Tone, TurnState, interval_from_config, parse_command,
+};
+use talaria_tui::subagents::{
+    AgentsPanel, PanelHeader, PanelMode, SubagentDock, SubagentStyle, TailView, batch_block_lines,
 };
 use talaria_tui::terminal::{
     InlineTerminal, InputThread, TerminalError, TerminalGuard, probe_startup, spawn_input,
@@ -134,6 +139,8 @@ enum Overlay {
     Sessions,
     /// The fleet overlay.
     Fleet,
+    /// The subagent tree, details and transcript.
+    Agents,
 }
 
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
@@ -186,6 +193,9 @@ pub struct TuiScreen {
     overlay: Overlay,
     /// The card of the peeked background session, while the fleet overlay shows it.
     peek_prompts: PromptStack,
+    agents: Option<AgentsPanel>,
+    agents_flash: Option<String>,
+    agents_pause_pending: bool,
     confirmation: Option<Confirmation>,
     confirmation_focused: Option<Instant>,
     /// The rewind overlay holds the alternate screen. Issue #233.
@@ -820,6 +830,9 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         Some(SessionTurn::Running) => TurnState::Streaming,
         _ => TurnState::Idle,
     };
+    let counts = view
+        .subagents
+        .and_then(|hub| hub.foreground_key().and_then(|key| hub.known_counts(key)));
     StatusInputs {
         connection: match view.link {
             LinkView::Connecting => Connection::Connecting,
@@ -842,6 +855,8 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         }),
         turn,
         pending_prompts: open,
+        subagents_active: counts.map_or(view.subagents_usage_active, |counts| counts.live),
+        subagents_terminal: counts.map_or(0, |counts| counts.terminal),
         context_percent,
         approvals: view.approvals.as_ref().map(approvals_segment),
         ..StatusInputs::default()
@@ -1018,6 +1033,164 @@ impl TuiScreen {
         let _ = self
             .terminal
             .draw_overlay(|area, buf| SessionPickerView::draw(state, area, buf, now, &theme));
+    }
+
+    fn sync_agents(&mut self, view: &View<'_>) {
+        let Some(hub) = view.subagents else {
+            self.agents = None;
+            self.agents_flash = None;
+            self.agents_pause_pending = false;
+            self.close_overlay(Overlay::Agents);
+            return;
+        };
+        let Some(key) = hub.panel_key() else {
+            self.agents = None;
+            self.agents_flash = None;
+            self.agents_pause_pending = false;
+            self.close_overlay(Overlay::Agents);
+            return;
+        };
+        self.open_overlay(Overlay::Agents);
+        let panel = self
+            .agents
+            .get_or_insert_with(|| AgentsPanel::new(key.clone()));
+        if panel.key() != key {
+            panel.set_key(key.clone());
+            self.agents_flash = None;
+            self.agents_pause_pending = false;
+        }
+        panel.set_keymap(&self.keymap);
+        panel.set_style(if self.color {
+            SubagentStyle::default()
+        } else {
+            SubagentStyle::plain()
+        });
+        panel.set_spawning(hub.spawning(), hub.gateway_active());
+        panel.tick(view.now_ms);
+        if hub.pause_confirmation_pending() && !self.agents_pause_pending {
+            panel.confirm_pause();
+        }
+        self.agents_pause_pending = hub.pause_confirmation_pending();
+        if hub.flash() != self.agents_flash.as_deref() {
+            if let Some(flash) = hub.flash() {
+                panel.set_flash(flash.to_owned());
+            }
+            self.agents_flash = hub.flash().map(str::to_owned);
+        }
+    }
+
+    fn draw_agents(&mut self, view: &View<'_>) {
+        let Some(hub) = view.subagents else {
+            return;
+        };
+        let Some(panel) = &self.agents else {
+            return;
+        };
+        let Some(tree) = hub.tree(panel.key()) else {
+            return;
+        };
+        let title = view
+            .fleet_snapshot
+            .and_then(|snapshot| {
+                snapshot
+                    .rows
+                    .iter()
+                    .find(|row| &row.key == panel.key())
+                    .map(|row| row.title.as_str())
+            })
+            .filter(|title| !title.is_empty())
+            .unwrap_or(&panel.key().session_id);
+        let header = PanelHeader {
+            title: title.to_owned(),
+            spawning: hub.spawning(),
+            key_label: None,
+        };
+        let tail = hub.tail(panel.key()).map(|tail| TailView {
+            text: tail.text.clone(),
+            truncated: tail.truncated,
+            ever_failed: tail.ever_failed,
+        });
+        let now = SubagentClock {
+            mono_ms: view.now_ms,
+            wall_s: unix_now(),
+        };
+        let _ = self.terminal.draw_overlay(|area, buf| {
+            for (offset, line) in panel
+                .render(tree, &header, tail.as_ref(), area.width, area.height, now)
+                .iter()
+                .enumerate()
+            {
+                buf.set_line(area.x, area.y + offset as u16, line, area.width);
+            }
+        });
+    }
+
+    fn agents_key(&mut self, key: Key, view: &View<'_>) -> Vec<UserAction> {
+        let Some(hub) = view.subagents else {
+            return Vec::new();
+        };
+        let Some(panel) = &mut self.agents else {
+            return Vec::new();
+        };
+        let Some(tree) = hub.tree(panel.key()) else {
+            return Vec::new();
+        };
+        if key.kind == KeyKind::Release {
+            return Vec::new();
+        }
+        panel.clear_flash();
+        panel.tick(view.now_ms);
+        let before = panel.mode();
+        let mut actions = vec![UserAction::SubagentClearFlash];
+        let mode_action = self.keymap.resolve_in(&key, KeyContext::Agents);
+        if matches!(before, PanelMode::Steer | PanelMode::ConfirmPause) {
+            match key.code {
+                KeyCode::Backspace if before == PanelMode::Steer => panel.backspace(),
+                KeyCode::Char(c) if !key.mods.ctrl && !key.mods.alt => panel.type_char(c),
+                _ => {
+                    if let Some(action) = mode_action
+                        && let Some(control) = panel.handle(action, tree)
+                    {
+                        actions.push(UserAction::Subagent(control));
+                    }
+                }
+            }
+        } else if mode_action == Some(Action::AgentsNextSession) {
+            if before == PanelMode::Tail {
+                actions.push(UserAction::Subagent(SubagentAction::CloseTail));
+            }
+            actions.push(UserAction::SubagentNextSession);
+        } else if let Some(action) = mode_action {
+            if let Some(control) = panel.handle(action, tree) {
+                actions.push(UserAction::Subagent(control));
+            }
+        }
+        let mut answered_pause = false;
+        if let Some(control) = panel.take_pending_action() {
+            answered_pause = matches!(control, SubagentAction::ConfirmPause(_));
+            actions.push(UserAction::Subagent(control));
+        }
+        if before == PanelMode::ConfirmPause && panel.mode() != before && !answered_pause {
+            actions.push(UserAction::Subagent(SubagentAction::ConfirmPause(false)));
+        }
+        if before != PanelMode::Tail
+            && panel.mode() == PanelMode::Tail
+            && let Some(id) = panel.selected_id(tree)
+        {
+            actions.push(UserAction::Subagent(SubagentAction::OpenTail(id)));
+        }
+        if before == PanelMode::Tail
+            && !matches!(
+                panel.mode(),
+                PanelMode::Tail | PanelMode::Steer | PanelMode::ConfirmPause
+            )
+        {
+            actions.push(UserAction::Subagent(SubagentAction::CloseTail));
+        }
+        if panel.take_close_request() {
+            actions.push(UserAction::ToggleAgents);
+        }
+        actions
     }
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
@@ -1286,6 +1459,9 @@ impl TuiScreen {
                 if let Some(fleet) = view.fleet {
                     return self.fleet_key(Key::from(raw), fleet, view, now);
                 }
+                if self.overlay == Overlay::Agents {
+                    return self.agents_key(Key::from(raw), view);
+                }
                 // The session picker's overlay owns every key while it is open: nothing
                 // reaches the composer, the prompt cards or the running turn.
                 if self.overlay == Overlay::Sessions {
@@ -1307,6 +1483,10 @@ impl TuiScreen {
                 let action = self.keymap.resolve(&key, KeyContext::Composer);
                 if action == Some(Action::FleetViewOpen) {
                     return vec![UserAction::FleetOpen];
+                }
+                if action == Some(Action::AgentsPanel) && !view.pager_open && view.rewind.is_none()
+                {
+                    return vec![UserAction::ToggleAgents];
                 }
                 let focus = if self.search.is_some() {
                     talaria_tui::comfort_route::Focus::Search
@@ -1488,6 +1668,16 @@ impl TuiScreen {
                         }
                         _ => Vec::new(),
                     };
+                }
+                if self.overlay == Overlay::Agents {
+                    if let Some(panel) = &mut self.agents
+                        && panel.mode() == PanelMode::Steer
+                    {
+                        for c in text.chars() {
+                            panel.type_char(c);
+                        }
+                    }
+                    return vec![UserAction::SubagentClearFlash];
                 }
                 if self.overlay == Overlay::Sessions {
                     let Some(picker) = view.picker else {
@@ -1791,6 +1981,10 @@ impl StatusHost for TuiScreen {
 impl Screen for TuiScreen {
     type Input = ScreenInput;
 
+    fn subagents_config(&self) -> talaria_app::subagents::SubagentsConfig {
+        self.config.subagents
+    }
+
     fn model_list_height(&self) -> usize {
         terminal_size().map_or(10, |(_, rows)| usize::from(rows.saturating_sub(3)).max(3))
     }
@@ -1867,6 +2061,7 @@ impl Screen for TuiScreen {
     }
 
     fn input(&mut self, input: ScreenInput, view: &View<'_>, now: Instant) -> Vec<UserAction> {
+        self.sync_agents(view);
         self.sync_prompts(view, now);
         self.sync_confirmation_focus(now);
         let mut actions = match input {
@@ -1919,6 +2114,7 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        self.sync_agents(view);
         self.apply_transcript(view);
         let now = Instant::now();
         if let Some(cwd) = view.folder.and_then(|folder| folder.cwd.as_deref()) {
@@ -1948,6 +2144,10 @@ impl Screen for TuiScreen {
         if self.rewind_open {
             let _ = self.terminal.close_overlay();
             self.rewind_open = false;
+        }
+        if self.overlay == Overlay::Agents {
+            self.draw_agents(view);
+            return;
         }
         if self.overlay == Overlay::Models && self.transcript.is_none() {
             self.draw_picker();
@@ -2061,6 +2261,26 @@ impl Screen for TuiScreen {
                 &self.checklist_style,
             )
         });
+        let subagent_style = if self.color {
+            SubagentStyle::default()
+        } else {
+            SubagentStyle::plain()
+        };
+        let subagent_hint = self.keymap.label(Action::AgentsPanel);
+        let subagents = view.subagents.and_then(|hub| {
+            let key = hub.foreground_key()?;
+            let tree = hub.tree(key)?;
+            Some(SubagentDock::new(
+                tree,
+                tree.counts(),
+                None,
+                hub.spawning(),
+                subagent_hint.as_deref(),
+                &subagent_style,
+                hub.cfg().dock_rows,
+                self.rows,
+            ))
+        });
         let automation_theme = AutomationTheme::default();
         let automation = AutomationSection {
             state: view.automation,
@@ -2094,13 +2314,16 @@ impl Screen for TuiScreen {
             if let Some(checklist) = &checklist {
                 sections.push(checklist);
             }
+            if let Some(subagents) = &subagents {
+                sections.push(subagents);
+            }
+            if let Some(side) = &side {
+                sections.push(side);
+            }
             sections.push(&composer);
             if !composer_is_empty || prompts.is_none() {
                 sections.push(&palette);
             }
-        }
-        if let Some(side) = &side {
-            sections.push(side);
         }
         sections.push(&automation);
         sections.push(&status);
@@ -2160,6 +2383,16 @@ impl Screen for TuiScreen {
     fn commit_checklist(&mut self, commit: &ChecklistCommit) {
         let width = self.terminal.viewport().width;
         let lines = committed_block_lines(commit, width, &self.checklist_style);
+        let _ = self.terminal.commit_lines(lines);
+    }
+
+    fn commit_subagent_batch(&mut self, batch: &FinishedBatch) {
+        let style = if self.color {
+            SubagentStyle::default()
+        } else {
+            SubagentStyle::plain()
+        };
+        let lines = batch_block_lines(batch, self.terminal.viewport().width, &style);
         let _ = self.terminal.commit_lines(lines);
     }
 
@@ -2661,6 +2894,9 @@ fn session(
         picker: None,
         overlay: Overlay::Live,
         peek_prompts: PromptStack::new(),
+        agents: None,
+        agents_flash: None,
+        agents_pause_pending: false,
         confirmation: None,
         confirmation_focused: None,
         rewind_open: false,
@@ -2768,7 +3004,7 @@ mod tests {
     use super::{
         CellLines, TuiScreen, attachment_key, composer_key_actions, confirmation_key,
         paste_actions, picker_key, preview_text, recall_draft, reported_snapshot,
-        should_record_submission, sync_reported_draft, tool_cells,
+        should_record_submission, status_inputs, sync_reported_draft, tool_cells,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use serde_json::json;
@@ -2787,6 +3023,15 @@ mod tests {
         ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors,
         ThemeInputs,
     };
+
+    #[test]
+    fn status_keeps_the_usage_count_until_a_session_tree_is_known() {
+        let mut state = AppState::new("subagent-status");
+        state.subagents_usage_active = 9;
+        let inputs = status_inputs(&state.view(), None);
+        assert_eq!(inputs.subagents_active, 9);
+        assert_eq!(inputs.subagents_terminal, 0);
+    }
 
     #[test]
     fn rejected_side_submissions_stay_out_of_persistent_history() {

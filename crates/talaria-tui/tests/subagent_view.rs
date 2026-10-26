@@ -136,7 +136,8 @@ fn sample_tree() -> SubagentTree {
     tree.reconcile(
         &serde_json::from_value(json!({"subagents": [{
             "subagent_id": "child-1", "status": "running", "accepting_steer": true
-        }], "delegations": []})).expect("contract-shaped snapshot"),
+        }], "delegations": []}))
+        .expect("contract-shaped snapshot"),
         clock_ms(1_200),
     );
 
