@@ -59,6 +59,12 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 state.advance_prefix();
                 return effects;
             }
+            if matches!(
+                name,
+                "agent.terminal.output" | "terminal.close" | "background.complete"
+            ) {
+                return background_frame(state, name, &raw["payload"]);
+            }
             session(
                 state,
                 name,
@@ -67,7 +73,11 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 frame.admission_id.as_deref(),
                 matches!(frame.notification, Notification::Unknown(_)),
             );
-            Vec::new()
+            if name == "tool.complete" {
+                background_frame(state, name, &raw["payload"])
+            } else {
+                Vec::new()
+            }
         }
         Event::ConnectionOpened { .. } => {
             state.unknown.clear();
@@ -148,8 +158,56 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
             state.hermes_command(cell.clone());
             Vec::new()
         }
+        Event::Background(event) => {
+            let produced = crate::background::update(state.background_mut(), event.clone());
+            fold_background(state, produced)
+        }
         _ => super::prompts::apply(state, &event),
     };
+    state.advance_prefix();
+    effects
+}
+
+fn background_frame(state: &mut SessionState, name: &str, payload: &Value) -> Vec<Effect> {
+    use crate::background::BackgroundEvent;
+    let now_ms = state.background().now_ms();
+    let event = match name {
+        "agent.terminal.output" => payload["process_id"]
+            .as_str()
+            .zip(payload["chunk"].as_str())
+            .map(|(process_id, chunk)| BackgroundEvent::TerminalOutput {
+                process_id: process_id.to_owned(),
+                chunk: chunk.to_owned(),
+                now_ms,
+            }),
+        "terminal.close" => {
+            payload["process_id"]
+                .as_str()
+                .map(|process_id| BackgroundEvent::TerminalClosed {
+                    process_id: process_id.to_owned(),
+                })
+        }
+        "background.complete" => payload["task_id"]
+            .as_str()
+            .zip(payload["text"].as_str())
+            .map(|(task_id, text)| BackgroundEvent::BgCompleted {
+                task_id: task_id.to_owned(),
+                text: text.to_owned(),
+                now_ms,
+            }),
+        "tool.complete" => payload["name"]
+            .as_str()
+            .map(|name| BackgroundEvent::ToolCompleted {
+                name: name.to_owned(),
+                now_ms,
+            }),
+        _ => None,
+    };
+    let Some(event) = event else {
+        return Vec::new();
+    };
+    let produced = crate::background::update(state.background_mut(), event);
+    let effects = fold_background(state, produced);
     state.advance_prefix();
     effects
 }
@@ -198,6 +256,34 @@ pub(crate) fn submit(
         submission_id: submission_id.to_owned(),
         attachments: attachments.to_vec(),
     }]
+}
+
+/// Apply background follow-ups. Notices and result cells stay in the session. An interrupt uses
+/// the turn path. Everything else is handed to the application.
+fn fold_background(
+    state: &mut SessionState,
+    produced: Vec<crate::background::BackgroundEffect>,
+) -> Vec<Effect> {
+    use crate::background::{BackgroundEffect, NoticeLevel};
+    let mut out = Vec::new();
+    for effect in produced {
+        match effect {
+            BackgroundEffect::InsertNotice { level, text } => {
+                let kind = match level {
+                    NoticeLevel::Info => NoticeKind::System,
+                    NoticeLevel::Warning => NoticeKind::Warning,
+                    NoticeLevel::Error => NoticeKind::Error,
+                };
+                state.notice(kind, text, None);
+            }
+            BackgroundEffect::InsertResult { cell } => {
+                state.insert_final(Cell::Background(cell));
+            }
+            BackgroundEffect::Interrupt => out.extend(interrupt(state)),
+            other => out.push(Effect::Background(other)),
+        }
+    }
+    out
 }
 
 /// Ask Hermes to stop the running turn. Nothing happens unless a turn runs with a known

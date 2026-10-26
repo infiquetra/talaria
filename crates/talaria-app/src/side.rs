@@ -75,7 +75,8 @@ impl SideService {
             | Effect::Interrupt { .. }
             | Effect::RespondApproval { .. }
             | Effect::RespondClarify { .. }
-            | Effect::RefuseAnswer { .. } => Vec::new(),
+            | Effect::RefuseAnswer { .. }
+            | Effect::Background(_) => Vec::new(),
         }
     }
 }

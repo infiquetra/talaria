@@ -23,6 +23,7 @@ use talaria_core::attachments::{Chip, CollapseRule, Expanded, reference_notice};
 use talaria_core::automation::{
     AutomationEffect, AutomationEvent, AutomationState, CommandResult, canonical_name,
 };
+use talaria_core::background::{self, BackgroundEffect, BackgroundEvent, ProcessesIntent};
 use talaria_core::checklist::{Checklist, ChecklistCommit, ChecklistTracker};
 use talaria_core::commands::local;
 use talaria_core::commands::{
@@ -191,6 +192,8 @@ pub enum UserAction {
     SubagentNextSession,
     /// A panel key clears its previous outcome.
     SubagentClearFlash,
+    /// An action from the background-process overlay.
+    Processes(ProcessesIntent),
     /// A key for the open rewind overlay. Issue #233.
     Rewind(RewindKey),
     /// How many list rows the rewind overlay shows.
@@ -282,6 +285,8 @@ pub struct View<'a> {
     /// Gateway usage fallback until this session's tree is known.
     pub subagents_usage_active: u32,
     pub fleet_snapshot: Option<&'a crate::fleet::FleetSnapshot>,
+    /// The foreground session's background-process overlay is open.
+    pub processes_open: bool,
     pub state: Option<&'a SessionState>,
     pub session_id: Option<&'a str>,
     pub title: Option<&'a str>,
@@ -471,6 +476,11 @@ pub struct Ready {
     pub notice: Option<String>,
 }
 
+struct BackgroundBinding {
+    service: Option<Arc<crate::background::BackgroundService>>,
+    generation: u64,
+}
+
 pub struct AppState {
     pub models: ModelsState,
     model_service: Option<Arc<crate::models::ModelService>>,
@@ -479,6 +489,15 @@ pub struct AppState {
     attention: talaria_core::attention::AttentionTracker,
     attention_at: Instant,
     pub opened: Option<OpenedSession>,
+    /// Whether the foreground session's process overlay is open.
+    pub processes_open: bool,
+    retained_sessions: BTreeMap<String, OpenedSession>,
+    connection_generation: u64,
+    background_generation_base: u64,
+    background_stop_bindings: BTreeMap<(String, u64), BackgroundBinding>,
+    wall_s: f64,
+    background_service: Option<Arc<crate::background::BackgroundService>>,
+    background_after_interrupt: Vec<(SessionId, BackgroundEffect)>,
     pub held: VecDeque<String>,
     pub launch_id: String,
     pub prompt_counter: u64,
@@ -662,6 +681,14 @@ impl AppState {
             ),
             attention_at: Instant::now(),
             opened: None,
+            processes_open: false,
+            retained_sessions: BTreeMap::new(),
+            connection_generation: 0,
+            background_generation_base: 0,
+            background_stop_bindings: BTreeMap::new(),
+            wall_s: 0.0,
+            background_service: None,
+            background_after_interrupt: Vec::new(),
             held: VecDeque::new(),
             launch_id,
             prompt_counter: 0,
@@ -760,6 +787,7 @@ impl AppState {
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
+            processes_open: self.processes_open,
             state: opened.map(|opened| &opened.state),
             session_id: opened.map(|opened| opened.session_id.as_str()),
             title: opened
@@ -930,6 +958,17 @@ pub enum TranscriptAction {
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
+    /// A background call's reply, still owned by the session that made it.
+    BackgroundDone {
+        session_id: SessionId,
+        generation: u64,
+        event: BackgroundEvent,
+    },
+    /// A replay-gap snapshot for the session that requested it.
+    BackgroundRecovered {
+        session_id: String,
+        result: Result<OpenedSession, OpenError>,
+    },
     Models(ModelsInput),
     /// A result for the fleet overlay.
     FleetView(talaria_core::fleet_view::FleetViewInput),
@@ -1077,6 +1116,11 @@ pub struct SwitchInstall {
 #[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
     CommitSubagentBatch(talaria_core::subagents::FinishedBatch),
+    /// A background call or log message for one session.
+    Background {
+        session_id: SessionId,
+        effect: BackgroundEffect,
+    },
     Models(ModelsEffect),
     /// One peek effect for the peek worker; its results come back as [`AppMessage::FleetView`].
     FleetPeek(talaria_core::fleet_view::FleetViewEffect),
@@ -1382,7 +1426,8 @@ fn rebuild_after_rewind(
     snapshot: Value,
     notice: Vec<String>,
 ) -> Vec<AppEffect> {
-    let fresh =
+    let now_ms = state.now_ms;
+    let mut fresh =
         match serde_json::from_value::<hermes_contract::schemas::CanonicalSnapshot>(snapshot) {
             Ok(decoded) => crate::sessions::OpenedSession::from_snapshot(decoded),
             Err(_) => {
@@ -1392,6 +1437,10 @@ fn rebuild_after_rewind(
             }
         };
     let mut old = state.opened.take();
+    if let Some(old) = &mut old {
+        carry_over(&mut old.state, &mut fresh.state);
+        fresh.carry_background_from(old);
+    }
     let shown: &[Cell] = old.as_ref().map_or(&[], |old| {
         &old.state.cells()[..state.committed_cells.min(old.state.cells().len())]
     });
@@ -1431,10 +1480,6 @@ fn rebuild_after_rewind(
             execution_generation: Some(fresh.execution_generation),
         },
     ));
-    let mut fresh = fresh;
-    if let Some(old) = &mut old {
-        carry_over(&mut old.state, &mut fresh.state);
-    }
     if fresh.title.is_none() {
         fresh.title = old.and_then(|old| old.title);
     }
@@ -1449,6 +1494,17 @@ fn rebuild_after_rewind(
         .fences_mut(&fresh.session_id)
         .adopt(Some(fresh.revision), Some(fresh.execution_generation));
     state.opened = Some(fresh);
+    if let Some(session_id) = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+    {
+        effects.extend(background_event(
+            state,
+            &session_id,
+            BackgroundEvent::Attached { now_ms },
+        ));
+    }
     state.source_epoch = state.source_epoch.wrapping_add(1);
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
@@ -1569,6 +1625,10 @@ fn return_prompt(state: &mut AppState, text: String, attachments: bool) -> Vec<A
 
 /// Apply one message. No input or output: the effects say what to do.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
+    let background_version = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.state.background().version());
     let mut snapshot = attention_snapshot(state);
     let previous_session = state
         .opened
@@ -1583,8 +1643,10 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             })
         }
         AppMessage::Link(LinkEvent::Inbound { item: Inbound::Event(event), .. }) => {
-            event.frame.type_name() != Some("todo.updated")
+            !event.raw.get("session_id").and_then(Value::as_str).is_some_and(|id| !is_open_session(state, id))
+                && !matches!(event.frame.type_name(), Some("todo.updated" | "agent.terminal.output"))
         }
+        AppMessage::Tick { .. } | AppMessage::BackgroundDone { .. } => false,
         AppMessage::Input(key) if !state.pager_open && tasks_key(state, key) => false,
         // A disabled fleet view only commits its notice; nothing on the live screen changes.
         AppMessage::User(UserAction::Submit(text))
@@ -1595,6 +1657,23 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         _ => true,
     };
     let mut effects = match message {
+        AppMessage::BackgroundRecovered { session_id, result } => {
+            if is_open_session(state, &session_id) {
+                recovered(state, result)
+            } else {
+                recover_retained(state, &session_id, result)
+            }
+        }
+        AppMessage::BackgroundDone {
+            session_id,
+            generation,
+            event,
+        } => {
+            if generation < state.connection_generation {
+                return Vec::new();
+            }
+            background_event(state, session_id.as_str(), event)
+        }
         AppMessage::Models(input) => models_input(state, input),
         // Stored for the fleet view, and fed to the overlay while it is open.
         AppMessage::Fleet(notice) => {
@@ -1680,6 +1759,11 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 ));
             }
             effects.extend(interrupt_done(state, outcome, notices));
+            effects.extend(
+                std::mem::take(&mut state.background_after_interrupt)
+                    .into_iter()
+                    .map(|(session_id, effect)| AppEffect::Background { session_id, effect }),
+            );
             effects
         }
         AppMessage::PromptDone {
@@ -1740,25 +1824,35 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         } => compact_done(state, request, outcome, typed),
         AppMessage::Tick { now_ms } => {
             state.now_ms = now_ms;
+            let mut effects = Vec::new();
             if state.fleet.is_some() && state.fleet_clock > 0.0 {
                 let now = state.fleet_clock + now_ms as f64 / 1000.0;
-                let fleet = fleet_input(
+                effects.extend(fleet_input(
                     state,
                     talaria_core::fleet_view::FleetViewInput::Tick { now },
-                );
-                if !fleet.is_empty() {
-                    return fleet;
-                }
+                ));
             }
+            let wall_s = state.wall_s;
             let pending = state
                 .opened
                 .as_ref()
                 .is_some_and(|opened| !opened.state.side().pending.is_empty());
-            // Idle means zero frames: with nothing pending a wake-up changes nothing.
-            if !pending {
-                return Vec::new();
+            if pending {
+                redraw = true;
+                effects.extend(reduce(state, Event::SideClock { now_ms }));
             }
-            reduce(state, Event::SideClock { now_ms })
+            if let Some(session_id) = state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.clone())
+            {
+                effects.extend(background_event(
+                    state,
+                    &session_id,
+                    BackgroundEvent::Clock { now_ms, wall_s },
+                ));
+            }
+            effects
         }
         AppMessage::SideDone(events) => {
             let mut effects = Vec::new();
@@ -1913,6 +2007,11 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
     }
     effects.extend(checklist_effects(state));
+    redraw |= background_version
+        != state
+            .opened
+            .as_ref()
+            .map(|opened| opened.state.background().version());
     if redraw
         && !effects
             .iter()
@@ -2046,6 +2145,12 @@ fn local_effect(
     }
     if action == LocalAction::Agents {
         return agents_command(state, &argument);
+    }
+    if matches!(
+        action,
+        LocalAction::Processes | LocalAction::Bg | LocalAction::Stop
+    ) {
+        return background_command(state, action, &argument, typed);
     }
     match action {
         LocalAction::Quit => {
@@ -2197,6 +2302,101 @@ fn reduce(state: &mut AppState, event: Event) -> Vec<AppEffect> {
     effects
 }
 
+fn background_effects(
+    session_id: SessionId,
+    produced: Vec<BackgroundEffect>,
+    foreground: bool,
+) -> Vec<AppEffect> {
+    produced
+        .into_iter()
+        .filter_map(|effect| match effect {
+            BackgroundEffect::Redraw => foreground.then_some(AppEffect::Redraw),
+            BackgroundEffect::Signal(_) => None,
+            effect => Some(AppEffect::Background {
+                session_id: session_id.clone(),
+                effect,
+            }),
+        })
+        .collect()
+}
+
+fn background_event(
+    state: &mut AppState,
+    session_id: &str,
+    event: BackgroundEvent,
+) -> Vec<AppEffect> {
+    if is_open_session(state, session_id) {
+        if state.session_gone {
+            return Vec::new();
+        }
+        return reduce(state, Event::Background(event));
+    }
+    let Some(opened) = state.retained_sessions.get_mut(session_id) else {
+        return Vec::new();
+    };
+    let produced = talaria_core::session::update(&mut opened.state, Event::Background(event));
+    let background = produced
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Background(effect) => Some(effect),
+            _ => None,
+        })
+        .collect();
+    background_effects(SessionId::new(session_id), background, false)
+}
+
+fn close_processes(state: &mut AppState) -> Vec<AppEffect> {
+    if !state.processes_open {
+        return Vec::new();
+    }
+    state.processes_open = false;
+    let Some(session_id) = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone())
+    else {
+        return Vec::new();
+    };
+    background_event(state, &session_id, BackgroundEvent::OverlayClosed)
+}
+
+fn background_command(
+    state: &mut AppState,
+    action: LocalAction,
+    argument: &str,
+    typed: String,
+) -> Vec<AppEffect> {
+    let Some(session_id) = state
+        .opened
+        .as_ref()
+        .filter(|_| !state.session_gone)
+        .map(|opened| opened.session_id.clone())
+    else {
+        let name = match action {
+            LocalAction::Processes => "processes",
+            LocalAction::Bg => "bg",
+            _ => "stop",
+        };
+        state.draft = typed.clone();
+        return vec![
+            notice_lines(&format!(
+                "No session is attached, so /{name} cannot run. Start one with talaria, talaria -c or talaria --resume <id>."
+            )),
+            AppEffect::LoadDraft(typed),
+        ];
+    };
+    if action == LocalAction::Processes {
+        state.processes_open = true;
+    }
+    state.draft.clear();
+    let Some(event) =
+        crate::background::command_event(&action, argument, turn_running(state), state.now_ms)
+    else {
+        return Vec::new();
+    };
+    background_event(state, &session_id, event)
+}
+
 fn route(
     state: &mut AppState,
     produced: Vec<Effect>,
@@ -2227,6 +2427,30 @@ fn route(
             | Effect::SteerQueued { .. }
             | Effect::Steer { .. }
             | Effect::ResolveUnknown { .. } => effects.push(AppEffect::Queue(effect)),
+            Effect::Background(effect) => {
+                if let Some(session_id) = state
+                    .opened
+                    .as_ref()
+                    .map(|opened| SessionId::new(&opened.session_id))
+                {
+                    if state.interrupting
+                        && matches!(effect, BackgroundEffect::StopProcesses { .. })
+                    {
+                        if let BackgroundEffect::StopProcesses { request } = &effect {
+                            state.background_stop_bindings.insert(
+                                (session_id.as_str().to_owned(), request.0),
+                                BackgroundBinding {
+                                    service: state.background_service.clone(),
+                                    generation: state.connection_generation,
+                                },
+                            );
+                        }
+                        state.background_after_interrupt.push((session_id, effect));
+                    } else {
+                        effects.extend(background_effects(session_id, vec![effect], true));
+                    }
+                }
+            }
         }
     }
     effects
@@ -2429,6 +2653,21 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             }
             Vec::new()
         }
+        UserAction::Processes(intent) => {
+            if matches!(intent, ProcessesIntent::Close) {
+                state.processes_open = false;
+            }
+            let Some(session_id) = state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.clone())
+            else {
+                return Vec::new();
+            };
+            crate::background::intent_event(&intent, state.now_ms).map_or_else(Vec::new, |event| {
+                background_event(state, &session_id, event)
+            })
+        }
         UserAction::Rewind(key) => rewind_input(state, RewindInput::Key(key)),
         UserAction::RewindViewport(rows) => rewind_input(state, RewindInput::Viewport(rows)),
         UserAction::Escape { eligible } => {
@@ -2459,6 +2698,15 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::FleetOpen => open_fleet_view(state),
         UserAction::FleetAnswer(intent) => vec![AppEffect::FleetAnswer(intent)],
         UserAction::Submit(text) => {
+            if state.opened.is_none()
+                && let Some(Ok((action, argument))) = local_line(&text)
+                && matches!(
+                    action,
+                    LocalAction::Processes | LocalAction::Bg | LocalAction::Stop
+                )
+            {
+                return background_command(state, action, &argument, text);
+            }
             // The composer has taken the draft.
             let mut effects = if state.draft.is_empty() && !state.palette.open {
                 Vec::new()
@@ -2984,7 +3232,7 @@ fn session_busy(state: &AppState) -> Option<Vec<AppEffect>> {
             SWITCHING_NOTICE.to_owned(),
         ])]);
     }
-    if state.session_action {
+    if state.session_action || !state.background_after_interrupt.is_empty() {
         return Some(vec![AppEffect::CommitLines(vec![
             SESSION_ACTION_NOTICE.to_owned(),
         ])]);
@@ -3512,6 +3760,18 @@ fn install_session(state: &mut AppState, install: SwitchInstall) -> Vec<AppEffec
         link,
     } = install;
     let mut effects = Vec::new();
+    if link.is_some() {
+        // A new profile connection starts its own client generation at one.
+        state.background_generation_base = state.connection_generation.saturating_add(1);
+        state.connection_generation = state
+            .background_generation_base
+            .saturating_add(service.client().map_or(0, |client| client.generation().0));
+    }
+    state.background_service = service
+        .client()
+        .cloned()
+        .map(crate::background::BackgroundService::new)
+        .map(Arc::new);
     state.service = Some(service);
     if let Some(link) = link {
         if let Some(old) = state.link.replace(link) {
@@ -4203,8 +4463,12 @@ fn is_open_session(state: &AppState, session_id: &str) -> bool {
 }
 
 fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
+    let now_ms = state.now_ms;
     match event {
         LinkEvent::State(LinkState::Connected { generation }) => {
+            state.connection_generation = state
+                .connection_generation
+                .max(state.background_generation_base.saturating_add(generation));
             state.link_state = LinkView::Connected;
             let mut effects = vec![AppEffect::ConnectionOpened(generation)];
             // A reconnect describes again: the skin may have changed while the link was down.
@@ -4270,12 +4534,47 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         })
                     });
                 let now = subagent_clock(state);
-                if let (Some(hub), Some(key)) = (state.subagents.as_mut(), key) {
-                    hub.on_notification(&key, &inbound.frame.notification, now);
-                }
+                let hub_changed = if let (Some(hub), Some(key)) = (state.subagents.as_mut(), key) {
+                    hub.on_notification(&key, &inbound.frame.notification, now)
+                } else {
+                    false
+                };
                 let mut hub_effects = subagent_batches(state);
+                if hub_changed {
+                    hub_effects.push(AppEffect::Redraw);
+                }
                 let session = inbound.raw.get("session_id").and_then(Value::as_str);
                 let (epoch, seq) = event_position(&inbound.raw);
+                if let Some(session_id) = session
+                    .filter(|id| !is_open_session(state, id))
+                    .map(str::to_owned)
+                {
+                    let Some(opened) = state.retained_sessions.get_mut(&session_id) else {
+                        return hub_effects;
+                    };
+                    if !accept_event(&opened.cursor, epoch, seq) {
+                        return hub_effects;
+                    }
+                    if let Some(sequence) = seq {
+                        opened.cursor.last_sequence = opened.cursor.last_sequence.max(sequence);
+                    }
+                    opened.state.background_mut().observe_time(state.now_ms);
+                    let produced =
+                        apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
+                    let background = produced
+                        .into_iter()
+                        .filter_map(|effect| match effect {
+                            Effect::Background(effect) => Some(effect),
+                            _ => None,
+                        })
+                        .collect();
+                    hub_effects.extend(background_effects(
+                        SessionId::new(session_id),
+                        background,
+                        false,
+                    ));
+                    return hub_effects;
+                }
                 let Some(opened) = state.opened.as_mut() else {
                     return hub_effects;
                 };
@@ -4342,6 +4641,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     revision: payload.get("revision").and_then(Value::as_i64),
                     rewound_count: payload.get("rewound_count").and_then(Value::as_u64),
                 });
+                opened.state.background_mut().observe_time(state.now_ms);
                 let produced =
                     apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
                 effects.extend(route(state, produced, None));
@@ -4392,7 +4692,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             Inbound::Malformed(_) | Inbound::Closed(_) => Vec::new(),
         },
         LinkEvent::Gap(gap) => {
-            if is_open_session(state, &gap.session_id) {
+            if is_open_session(state, &gap.session_id)
+                || state.retained_sessions.contains_key(&gap.session_id)
+            {
                 vec![AppEffect::Recover(gap)]
             } else {
                 Vec::new()
@@ -4408,22 +4710,27 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .filter(|opened| opened.session_id == session_id)
             {
                 opened.subscription_id = subscription_id;
+            } else if let Some(opened) = state.retained_sessions.get_mut(&session_id) {
+                opened.subscription_id = subscription_id;
             }
-            Vec::new()
+            background_event(state, &session_id, BackgroundEvent::Attached { now_ms })
         }
         event @ LinkEvent::SessionGone { .. } => {
             let LinkEvent::SessionGone { session_id } = &event else {
                 return Vec::new();
             };
             if !is_open_session(state, session_id) {
+                state.retained_sessions.remove(session_id);
                 return Vec::new();
             }
+            let mut closing = close_processes(state);
             state.session_gone = true;
             let mut effects = link_notice(&event)
                 .map(|text| vec![notice_lines(&text)])
                 .unwrap_or_default();
             effects.extend(permissions(state, PermissionsInput::SessionClosed));
             effects.extend(automation_event(state, AutomationEvent::Detached));
+            effects.append(&mut closing);
             effects
         }
     }
@@ -4431,10 +4738,35 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
 
 fn opened_session(
     state: &mut AppState,
-    opened: OpenedSession,
+    mut opened: OpenedSession,
     notice: Option<String>,
 ) -> Vec<AppEffect> {
     state.subagents_usage_active = 0;
+    let now_ms = state.now_ms;
+    let mut background = close_processes(state);
+    let same_session = is_open_session(state, &opened.session_id);
+    if !same_session && let Some(old_id) = state.opened.as_ref().map(|old| old.session_id.clone()) {
+        background.extend(background_event(
+            state,
+            &old_id,
+            BackgroundEvent::ForegroundChanged {
+                foreground: false,
+                now_ms,
+            },
+        ));
+    }
+    if let Some(mut old) = state.opened.take() {
+        if old.session_id == opened.session_id {
+            carry_over(&mut old.state, &mut opened.state);
+            opened.carry_background_from(&old);
+        } else {
+            state.retained_sessions.insert(old.session_id.clone(), old);
+        }
+    }
+    if let Some(mut old) = state.retained_sessions.remove(&opened.session_id) {
+        carry_over(&mut old.state, &mut opened.state);
+        opened.carry_background_from(&old);
+    }
     state.model = opened.info.model.clone();
     state.effort = opened.effort.clone();
     // The snapshot's fences are the ones a later mutation must present.
@@ -4496,6 +4828,23 @@ fn opened_session(
         .adopt(Some(opened.revision), Some(opened.execution_generation));
     state.opened = Some(opened);
     attach_subagent_foreground(state);
+    state.session_gone = false;
+    background.extend(background_event(
+        state,
+        &session_id,
+        BackgroundEvent::Attached { now_ms },
+    ));
+    if !same_session {
+        background.extend(background_event(
+            state,
+            &session_id,
+            BackgroundEvent::ForegroundChanged {
+                foreground: true,
+                now_ms,
+            },
+        ));
+    }
+    effects.extend(background);
     state.link_state = LinkView::Connected;
     // An attached session reads the standing state once.
     effects.extend(automation_event(
@@ -4719,11 +5068,13 @@ fn interrupt_done(
 }
 
 fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> Vec<AppEffect> {
-    let fresh = match result {
+    let now_ms = state.now_ms;
+    let mut fresh = match result {
         Ok(fresh) => fresh,
         Err(OpenError::NotFound) => {
+            let mut effects = close_processes(state);
             state.session_gone = true;
-            let mut effects = vec![notice_lines(SESSION_GONE_NOTICE)];
+            effects.push(notice_lines(SESSION_GONE_NOTICE));
             effects.extend(permissions(state, PermissionsInput::SessionClosed));
             effects.extend(automation_event(state, AutomationEvent::Detached));
             return effects;
@@ -4733,6 +5084,8 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
     let Some(mut old) = state.opened.take() else {
         return Vec::new();
     };
+    carry_over(&mut old.state, &mut fresh.state);
+    fresh.carry_background_from(&old);
     let shown = state.committed_cells;
     let mut effects = Vec::new();
     let keeps_prefix = fresh.state.cells().len() >= shown
@@ -4770,9 +5123,6 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         .ledger
         .fences_mut(&fresh.session_id)
         .adopt(Some(fresh.revision), Some(fresh.execution_generation));
-    let mut fresh = fresh;
-    // A snapshot holds no shell or side work; pending rows keep their ids and timeout.
-    carry_over(&mut old.state, &mut fresh.state);
     if fresh.title.is_none() {
         fresh.title = old.title;
     }
@@ -4793,6 +5143,11 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
     ) {
         hub.on_reconnected(&key);
     }
+    effects.extend(background_event(
+        state,
+        &session_id,
+        BackgroundEvent::Attached { now_ms },
+    ));
     state.source_epoch = state.source_epoch.wrapping_add(1);
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
@@ -4805,6 +5160,40 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         },
     ));
     effects.push(notice_lines(REFRESHED_NOTICE));
+    effects
+}
+
+fn recover_retained(
+    state: &mut AppState,
+    session_id: &str,
+    result: Result<OpenedSession, OpenError>,
+) -> Vec<AppEffect> {
+    let now_ms = state.now_ms;
+    let mut fresh = match result {
+        Ok(fresh) => fresh,
+        Err(OpenError::NotFound) => {
+            state.retained_sessions.remove(session_id);
+            return Vec::new();
+        }
+        Err(_) => return Vec::new(),
+    };
+    let Some(mut old) = state.retained_sessions.remove(session_id) else {
+        return Vec::new();
+    };
+    carry_over(&mut old.state, &mut fresh.state);
+    fresh.carry_background_from(&old);
+    let mut effects = vec![AppEffect::Resync {
+        session_id: fresh.session_id.clone(),
+        cursor: fresh.cursor.clone(),
+    }];
+    state
+        .retained_sessions
+        .insert(session_id.to_string(), fresh);
+    effects.extend(background_event(
+        state,
+        session_id,
+        BackgroundEvent::Attached { now_ms },
+    ));
     effects
 }
 
@@ -4895,6 +5284,10 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Shell(shell) => format!("! {}", shell.command),
         Cell::Side(side) => format!("btw \u{b7} {}", side.question),
         Cell::HermesCommand(command) => command.typed.clone(),
+        Cell::Background(cell) => match &cell.prompt {
+            Some(prompt) => format!("bg \u{b7} {prompt}"),
+            None => format!("bg \u{b7} {}", cell.task_id),
+        },
     };
     plain(text.lines().next().unwrap_or_default())
 }
@@ -6109,6 +6502,43 @@ fn clock_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+fn background_not_sent(effect: BackgroundEffect, now_ms: u64) -> Option<BackgroundEvent> {
+    use talaria_core::background::{CallFailure, KillOutcome, StopOutcome};
+    Some(match effect {
+        BackgroundEffect::ListProcesses { request } => BackgroundEvent::ListFailed {
+            request,
+            failure: CallFailure::NotSent,
+            now_ms,
+        },
+        BackgroundEffect::KillProcess { request, id } => BackgroundEvent::KillReplied {
+            request,
+            process_id: id,
+            outcome: KillOutcome::Failed(CallFailure::NotSent),
+            now_ms,
+        },
+        BackgroundEffect::StopProcesses { request } => BackgroundEvent::StopReplied {
+            request,
+            outcome: StopOutcome::Failed(CallFailure::NotSent),
+            now_ms,
+        },
+        BackgroundEffect::StartBackground { request, .. } => BackgroundEvent::BgFailed {
+            request,
+            failure: CallFailure::NotSent,
+            now_ms,
+        },
+        _ => return None,
+    })
+}
+
+fn background_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
+    let opened = state.opened.as_ref()?;
+    if state.session_gone {
+        return None;
+    }
+    let due = background::next_deadline(opened.state.background(), executor.now_ms())?;
+    executor.started.checked_add(Duration::from_millis(due))
+}
+
 /// When the side-tasks section next changes, while anything is pending.
 fn side_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     let opened = state.opened.as_ref()?;
@@ -6167,6 +6597,19 @@ fn apply<S: Screen>(
     state.attention_at = Instant::now();
     let mut redraw = false;
     state.now_ms = executor.now_ms();
+    state.wall_s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    if let Some(client) = state.service.as_ref().and_then(SessionService::client) {
+        state.connection_generation = state
+            .background_generation_base
+            .saturating_add(client.generation().0);
+        if state.background_service.is_none() {
+            state.background_service = Some(Arc::new(crate::background::BackgroundService::new(
+                client.clone(),
+            )));
+        }
+    }
     if matches!(&message, AppMessage::AttachmentResult { epoch, .. } if *epoch != state.attachment_epoch)
     {
         return false;
@@ -6195,6 +6638,72 @@ fn apply<S: Screen>(
     for effect in update(state, message) {
         match effect {
             AppEffect::CommitSubagentBatch(batch) => screen.commit_subagent_batch(&batch),
+            AppEffect::Background {
+                session_id,
+                effect: BackgroundEffect::Log { text },
+            } => {
+                let _ = session_id;
+                if let Some(home) = state.home.clone() {
+                    tokio::task::spawn_blocking(move || {
+                        use std::io::Write;
+                        let folder = home.join(".talaria/logs");
+                        if std::fs::create_dir_all(&folder).is_err() {
+                            return;
+                        }
+                        let text: String = talaria_core::side::clean_output(&text).chars().filter(|ch| !ch.is_control() && !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect();
+                        if let Ok(mut log) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(folder.join("client.log"))
+                        {
+                            let _ = writeln!(log, "{text}");
+                        }
+                    });
+                }
+            }
+            AppEffect::Background { session_id, effect } => {
+                let current_generation = state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .map_or(state.connection_generation, |client| {
+                        state
+                            .background_generation_base
+                            .saturating_add(client.generation().0)
+                    });
+                let binding = match &effect {
+                    BackgroundEffect::StopProcesses { request } => state
+                        .background_stop_bindings
+                        .remove(&(session_id.as_str().to_owned(), request.0)),
+                    _ => None,
+                };
+                let BackgroundBinding {
+                    service,
+                    generation,
+                } = binding.unwrap_or_else(|| BackgroundBinding {
+                    service: state.background_service.clone(),
+                    generation: current_generation,
+                });
+                let sender = executor.sender.clone();
+                let started = executor.started;
+                executor.spawn(async move {
+                    let event = match service.filter(|_| generation >= current_generation) {
+                        Some(service) => {
+                            service
+                                .execute(&session_id, effect, move || clock_ms(started))
+                                .await
+                        }
+                        None => background_not_sent(effect, clock_ms(started)),
+                    };
+                    if let Some(event) = event {
+                        let _ = sender.send(AppMessage::BackgroundDone {
+                            session_id,
+                            generation,
+                            event,
+                        });
+                    }
+                });
+            }
             AppEffect::Rewind { ticket, call } => {
                 let client = state
                     .service
@@ -6480,8 +6989,13 @@ fn apply<S: Screen>(
                 let Some(service) = state.service.clone() else {
                     continue;
                 };
-                executor
-                    .send_later(async move { AppMessage::Recovered(service.recover(gap).await) });
+                executor.send_later(async move {
+                    let session_id = gap.session_id.clone();
+                    AppMessage::BackgroundRecovered {
+                        session_id,
+                        result: service.recover(gap).await,
+                    }
+                });
             }
             AppEffect::Quit => state.quitting = true,
             AppEffect::RunCommand { session_id, typed } => {
@@ -6906,6 +7420,11 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     state.workspace_service = service
         .client()
         .map(|client| Arc::new(WorkspaceService::new(MutationClient::new(client.clone()))));
+    state.background_service = service
+        .client()
+        .cloned()
+        .map(crate::background::BackgroundService::new)
+        .map(Arc::new);
     state.service = Some(service);
     state.model_service = Some(Arc::new(crate::models::ModelService::new(
         state
@@ -7595,7 +8114,13 @@ pub async fn run<S: Screen>(
         let now = Instant::now();
         state.now_ms = executor.now_ms();
         let side_due = side_wake(&state, &executor);
-        let deadline = earliest_of([screen.next_tick(), screen.next_wake(now), side_due]);
+        let background_due = background_wake(&state, &executor);
+        let deadline = earliest_of([
+            screen.next_tick(),
+            screen.next_wake(now),
+            side_due,
+            background_due,
+        ]);
         // A compacting line counts its seconds, so the screen wakes once a second
         // while one is shown.
         let deadline = if state
@@ -7617,6 +8142,7 @@ pub async fn run<S: Screen>(
                 let Some(input) = input else { break Ending::InputClosed };
                 sync_models(&mut state, screen);
                 sync_picker(&state, screen);
+                state.now_ms = executor.now_ms();
                 let actions = screen.input(input, &state.view(), Instant::now());
                 for action in actions {
                     redraw |= apply(&mut state, AppMessage::ForegroundKey(action), screen, &executor);
@@ -7649,9 +8175,9 @@ pub async fn run<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
-                if side_due.is_some_and(|due| due <= now) {
+                if side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
-                    apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
+                    let _ = apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
                 if let Some((text, caret)) = screen.draft_snapshot()
                     && (text != state.draft || caret != state.caret) {
@@ -7680,6 +8206,7 @@ pub async fn run<S: Screen>(
                 let Ok(input) = inputs.try_recv() else { break };
                 sync_models(&mut state, screen);
                 sync_picker(&state, screen);
+                state.now_ms = executor.now_ms();
                 let actions = screen.input(input, &state.view(), Instant::now());
                 for action in actions {
                     redraw |= apply(

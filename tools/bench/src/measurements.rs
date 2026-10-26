@@ -719,15 +719,18 @@ pub fn run(options: &RunOptions) -> Result<Report, BenchError> {
                             .div_ceil(5)
                             .max(1)
                             .min(sample.frame_bytes.len());
-                        let ratio = if fifth == 0 {
-                            f64::NAN
+                        let (bytes_median, ratio) = if fifth == 0 {
+                            (0.0, 0.0)
                         } else {
-                            median(&sample.frame_bytes[sample.frame_bytes.len() - fifth..])
-                                / median(&sample.frame_bytes[..fifth])
+                            (
+                                median(&sample.frame_bytes),
+                                median(&sample.frame_bytes[sample.frame_bytes.len() - fifth..])
+                                    / median(&sample.frame_bytes[..fifth]),
+                            )
                         };
                         report.rows.push(row(
                             &format!("bytes per frame, median (unit choice){label}"),
-                            median(&sample.frame_bytes),
+                            bytes_median,
                             options.budgets.unit_choice.bytes_median,
                             "B",
                             sample.error.as_deref(),

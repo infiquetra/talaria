@@ -8,6 +8,7 @@ use super::{
     Settlement, ToolStatus, UserCell,
 };
 use crate::automation::HermesCommandCell;
+use crate::background::BackgroundWork;
 use crate::side::SideTasks;
 
 /// Whether a turn is idle, running, or finished.
@@ -134,6 +135,7 @@ pub struct SessionState {
     ///
     /// Issue 232. Queue and steer. Empty until a snapshot or fanout is applied.
     pub queue: crate::queue::QueueState,
+    pub(crate) background: BackgroundWork,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -180,6 +182,7 @@ impl SessionState {
             side: SideTasks::default(),
             history_truncated: false,
             queue: crate::queue::QueueState::default(),
+            background: BackgroundWork::default(),
         }
     }
 
@@ -222,6 +225,17 @@ impl SessionState {
     /// Pending shell and side work, to change.
     pub fn side_mut(&mut self) -> &mut SideTasks {
         &mut self.side
+    }
+
+    /// Background processes and detached tasks.
+    #[must_use]
+    pub fn background(&self) -> &BackgroundWork {
+        &self.background
+    }
+
+    /// Background processes and detached tasks, to change.
+    pub fn background_mut(&mut self) -> &mut BackgroundWork {
+        &mut self.background
     }
 
     /// Insert one final cell at [`Self::final_prefix_len`], so it commits at once even while a

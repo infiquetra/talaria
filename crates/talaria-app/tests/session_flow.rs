@@ -139,6 +139,7 @@ fn cell_text(cell: &Cell) -> String {
         Cell::Shell(cell) => format!("shell: {}", cell.command),
         Cell::Side(cell) => format!("side: {}", cell.question),
         Cell::HermesCommand(cell) => format!("hermes-command: {}", cell.typed),
+        Cell::Background(cell) => format!("background: {}", cell.task_id),
     }
 }
 

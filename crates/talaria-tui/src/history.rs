@@ -41,6 +41,11 @@ impl CellLines for PlainCellLines {
                 }
                 lines
             }
+            Cell::Background(cell) => crate::background::background_cell_lines(
+                cell,
+                width,
+                &crate::background::BackgroundTheme::default(),
+            ),
         }
     }
 }

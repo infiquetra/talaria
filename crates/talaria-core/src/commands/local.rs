@@ -58,6 +58,12 @@ pub enum LocalAction {
     Fleet,
     /// Open the subagent panel, or pause and resume spawning. Issue #242.
     Agents,
+    /// Open the background-process view.
+    Processes,
+    /// Run a prompt on a fresh agent in the background.
+    Bg,
+    /// Stop the running turn and this session's background processes.
+    Stop,
 }
 
 /// One local command.
@@ -311,6 +317,37 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
     },
 ];
 
+/// Background-process commands, after the rewind commands.
+const BACKGROUND_COMMANDS: &[LocalCommand] = &[
+    LocalCommand {
+        name: "processes",
+        aliases: &[],
+        summary: "Show this session's background processes, with live output and kill",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Processes,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "bg",
+        aliases: &["background"],
+        summary: "Run a prompt on a fresh agent in the background; the answer appears here",
+        args_hint: "<prompt>",
+        takes_argument: true,
+        action: LocalAction::Bg,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "stop",
+        aliases: &[],
+        summary: "Stop the running turn and this session's background processes",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Stop,
+        tag: "talaria",
+    },
+];
+
 /// The ordered local table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalCommandTable {
@@ -322,7 +359,12 @@ impl LocalCommandTable {
     #[must_use]
     pub fn builtin() -> Self {
         Self {
-            commands: BUILTIN.iter().chain(LOCAL_COMMANDS).copied().collect(),
+            commands: BUILTIN
+                .iter()
+                .chain(LOCAL_COMMANDS)
+                .chain(BACKGROUND_COMMANDS)
+                .copied()
+                .collect(),
         }
     }
 
@@ -345,7 +387,10 @@ impl LocalCommandTable {
 #[must_use]
 pub fn lookup(name: &str) -> Option<&'static LocalCommand> {
     let key = name.strip_prefix('/').unwrap_or(name).to_lowercase();
-    BUILTIN.iter().find(|command| command.answers_to(&key))
+    BUILTIN
+        .iter()
+        .chain(BACKGROUND_COMMANDS)
+        .find(|command| command.answers_to(&key))
 }
 
 /// Parse a typed line into its action and argument text.

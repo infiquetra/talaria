@@ -5356,3 +5356,51 @@ live handler now observes the accepted event alongside its session fences.
 
 **Generalizable rule.** Test state observers through the production ingress path,
 including the view inputs they control.
+
+## 2026-10-26 — process.list on the shared owner is not the legacy projection
+
+**Evidence.** At the pinned Hermes release, `gateway/session_ancillary.py::process_snapshot`
+returns `started_epoch` and `output_tail`, without `uptime_seconds` or `output_preview`.
+**Mechanism.** The shared session owner exposes its registry snapshot rather than the legacy
+terminal projection. Talaria computes elapsed time from the supplied wall clock and merges the tail.
+**Rule.** Read the handler serving the actual connection before consuming a legacy method's fields.
+
+## 2026-10-26 — The process tool is process_manage, not process
+
+**Evidence.** The pinned tool registry names process control `process_manage`; Desktop's older
+refresh trigger watches `process`. **Mechanism.** A correct RPC implementation can still leave a
+stale list if its tool-completion trigger watches the wrong name. **Rule.** Refresh after `terminal`,
+`process_manage`, and the compatible older `process` name.
+
+## 2026-10-26 — Output chunks share the replay ring
+
+**Evidence.** The pinned shared event publisher gives `agent.terminal.output` the session's sequence
+and replay epoch. **Mechanism.** Output occupies the same bounded replay history as conversation
+events, so chatty processes shorten the reconnect window. **Rule.** Bound local output and reconcile
+polled snapshots; never assume every chunk survives a disconnect.
+
+## 2026-10-26 — An open kill reply can carry an undeclared scope warning
+
+**Evidence.** The pinned registry returns a systemd unit string in `scope_stop_failed`, while the
+generated kill result discards that undeclared field. The service regression supplies the real
+string shape and requires the child-process warning. **Mechanism.** This call retains the raw
+reply beside its generated decoding; the typed helper alone cannot recover a discarded field.
+**Rule.** Preserve required open-result evidence before decoding, without changing the generated
+contract or treating the warning string as a boolean field.
+
+## 2026-10-26 — Terminal output chunks reach the attached client
+
+**Evidence.** The live background-process test on pinned Hermes v0.22.4 observed
+`agent.terminal.output` during its ten-second read and printed `TERMINAL_OUTPUT_EVENTS: seen`.
+The recorded background-work scenario also contains five output events before the kill.
+**Mechanism.** The local-viewer process sink publishes chunks on the attached session stream.
+**Rule.** Consume chunks when available, while retaining polled tails for missed or absent events.
+
+## 2026-10-26 — A detached approval can finish with an awaiting-approval answer
+
+**Evidence.** The live dangerous-command probe received `background.complete` saying the recursive
+delete was awaiting approval and had not run; its probe folder survived. No approval request reached
+that test connection before completion. **Mechanism.** A side agent can return a pending-approval
+tool result as its answer instead of exposing an answerable card on the parent stream.
+**Rule.** Report the observed background answer and preserve the normal approval path; never retry
+the command with an approval-bypassing option.

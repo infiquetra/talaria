@@ -33,6 +33,23 @@ fn scenario(name: &str) -> Scenario {
     Scenario::named(name).unwrap_or_else(|| panic!("scenario {name} is not defined"))
 }
 
+#[test]
+fn background_work_uses_the_exact_tick_script_and_prompt() {
+    let scratch = ScratchDir::create_for("background-work").expect("scratch folder");
+    assert_eq!(
+        std::fs::read_to_string(scratch.path().join("tick.sh")).expect("tick script"),
+        "for i in $(seq 1 600); do echo \"tick $i\"; sleep 1; done\n"
+    );
+    let background = scenario("background-work");
+    assert_eq!(
+        background.prompts,
+        [
+            "Run the command sh tick.sh in the background with the terminal tool (background=true, notify=false). Reply with only its process id."
+        ]
+    );
+    assert_eq!(background.expected_statuses, ["complete"]);
+}
+
 fn driver_config(scratch: &Path, attempt_timeout: Duration) -> DriverConfig {
     DriverConfig {
         model: MODEL.to_owned(),
@@ -188,6 +205,7 @@ fn scenario_table_matches_the_spec() {
             "model-switch",
             "permissions-cd",
             "shell-and-btw",
+            "background-work",
         ]
     );
     for name in SCRIPTED_SCENARIOS {

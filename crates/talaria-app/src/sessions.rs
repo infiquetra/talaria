@@ -12,7 +12,7 @@ use hermes_client::rpc::{CallError, CallOptions};
 use hermes_contract::schemas::{AdmissionStatus, CanonicalSnapshot};
 use serde_json::{Map, Value, json};
 use talaria_core::attachments::Attachment;
-use talaria_core::session::{Effect, SessionState};
+use talaria_core::session::{Cell, Effect, SessionState};
 
 use crate::launch::{Belongs, NewSession, SESSION_SOURCE, SessionRequest, belongs};
 
@@ -48,6 +48,19 @@ pub struct OpenedSession {
 }
 
 impl OpenedSession {
+    /// Snapshots omit client background work and its final answer cells.
+    pub(crate) fn carry_background_from(&mut self, old: &Self) {
+        talaria_core::background::carry_over(old.state.background(), self.state.background_mut());
+        for cell in old.state.cells() {
+            let Cell::Background(answer) = cell else {
+                continue;
+            };
+            if !self.state.cells().iter().any(|cell| matches!(cell, Cell::Background(existing) if existing.task_id == answer.task_id)) {
+                self.state.insert_final(cell.clone());
+            }
+        }
+    }
+
     /// Build the session from a create or resume result.
     #[must_use]
     pub fn from_snapshot(snapshot: CanonicalSnapshot) -> Self {
@@ -359,7 +372,8 @@ impl SessionService {
             | Effect::ReplaceQueued { .. }
             | Effect::SteerQueued { .. }
             | Effect::Steer { .. }
-            | Effect::ResolveUnknown { .. } => {
+            | Effect::ResolveUnknown { .. }
+            | Effect::Background(_) => {
                 return (
                     ExecuteOutcome::Refused {
                         reason: "not_sent".to_string(),

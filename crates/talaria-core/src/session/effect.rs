@@ -1,6 +1,7 @@
 //! Effects are data. The application sends them. The reducer does not.
 
 use crate::attachments::Attachment;
+use crate::background::BackgroundEffect;
 
 use super::{AnswerRefusal, PromptKey, SessionId};
 use crate::queue::{AdmissionId, SubmissionId};
@@ -110,4 +111,6 @@ pub enum Effect {
         /// Generation stored on that row.
         execution_generation: i64,
     },
+    /// A background-process or detached-task follow-up.
+    Background(BackgroundEffect),
 }

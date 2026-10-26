@@ -138,6 +138,9 @@ fn expected_first_line(cell: &Cell) -> String {
         Cell::Shell(_) | Cell::Side(_) => {
             panic!("the recorded turn holds a side cell, which this test does not expect")
         }
+        Cell::Background(_) => {
+            panic!("the recorded turn holds a background cell, which this test does not expect")
+        }
     };
     line.trim_end().to_string()
 }

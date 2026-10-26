@@ -3,6 +3,7 @@
 use serde_json::Value;
 
 use crate::attachments::Attachment;
+use crate::background::BackgroundEvent;
 
 use super::{NoticeKind, PromptKey, SessionId};
 use crate::automation::HermesCommandCell;
@@ -206,4 +207,6 @@ pub enum Event {
         /// The reply cell.
         cell: HermesCommandCell,
     },
+    /// A background-process or detached-task input.
+    Background(BackgroundEvent),
 }

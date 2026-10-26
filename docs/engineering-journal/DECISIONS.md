@@ -4174,3 +4174,22 @@ snapshot: Hermes pushes an update after every change, as its own clients rely on
 
 **Revisit when.** Hermes publishes a mode-change event for `yolo` and `fast` (the reads after a
 command could then go), or #237 lands and the app feeds its `config.get yolo` results here.
+
+### /bg keeps Hermes's meaning
+
+**Decision.** `/bg` and `/background` ask Hermes to run a fresh side agent and show its result in
+this window. They do not detach the current session. **Rejected.** Copying Claude Code's different
+meaning would change the established Hermes command. **Revisit when.** The operator changes it.
+
+### Killing a process needs a second key press
+
+**Decision.** The process overlay requires a second `x` or `S` within three seconds, bound to the
+same process or stop action. **Rejected.** Immediate deletion makes an accidental key destructive.
+**Revisit when.** Operators find confirmation too slow for regular use.
+
+### Background answers no Talaria received are not recovered
+
+**Decision.** Answers are shown when received live or replayed; a result that reaches no Talaria
+and is absent from replay is not recovered on the next launch. **Rejected.** Reading the side
+agent's stored session would introduce out-of-order answers and depend on unverified listing
+visibility. **Revisit when.** Hermes provides a result-recovery interface or the operator requests it.
