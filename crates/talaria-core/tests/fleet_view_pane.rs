@@ -216,6 +216,8 @@ fn o_in_filter_reply_and_confirm_stop_is_not_an_open() {
     );
     // Back in the list, `o` opens again.
     update(&mut state, FleetViewInput::Escape, PAGE);
+    // The real card owns Escape and reports the end of its focus to the overlay.
+    update(&mut state, FleetViewInput::AnswerFocusEnded, PAGE);
     let effects = update(
         &mut state,
         FleetViewInput::Action(FleetAction::OpenInPane),
