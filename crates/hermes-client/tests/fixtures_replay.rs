@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 22] = [
+const NAMES: [&str; 23] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -103,8 +103,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 22,
-        "expected twenty-two fixtures in fixtures/frames, found {}",
+        files.len() == 23,
+        "expected twenty-three fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -183,7 +183,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 22);
+    assert_eq!(fixtures.len(), 23);
 }
 
 #[test]
