@@ -4886,10 +4886,20 @@ fn opened_session(
         state.list_title.as_deref(),
         opened.state.cells(),
     );
-    let (header, range) = resume_header(opened.state.cells(), &title);
+    let (mut header, range) = resume_header(opened.state.cells(), &title);
+    if header.is_empty()
+        && matches!(
+            state.launch.as_ref().map(|launch| &launch.mode),
+            Some(StartMode::Resume(Some(_)))
+        )
+    {
+        header.push(format!("── Resumed: {title} ──"));
+    }
     if !header.is_empty() {
         effects.push(AppEffect::CommitLines(header));
-        effects.push(AppEffect::CommitCells(range.clone()));
+        if !range.is_empty() {
+            effects.push(AppEffect::CommitCells(range.clone()));
+        }
     }
     state.committed_cells = range.end;
     effects.push(AppEffect::Track {

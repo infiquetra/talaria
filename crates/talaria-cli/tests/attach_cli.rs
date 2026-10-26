@@ -209,6 +209,30 @@ fn prefix_resolves_then_opens_like_resume() {
     assert_eq!(runs.lines().count(), 1, "ensure ran {runs:?}");
 }
 
+#[test]
+fn empty_attached_session_announces_its_title() {
+    let home = temp_home();
+    let gateway = StandaloneGateway::start(home.path());
+    let id = full_id("ab12cd34");
+    let mut snapshot = mock_gateway::recorded_resume_snapshot();
+    snapshot["session_id"] = json!(id);
+    snapshot["stored_session_id"] = json!(id);
+    snapshot["messages"] = json!([]);
+    snapshot["display_messages"] = json!([]);
+    snapshot["message_count"] = json!(0);
+    snapshot["prompts"] = json!([]);
+    snapshot["running"] = json!(false);
+    snapshot["info"]["title"] = json!("empty attach");
+    gateway.set_resume_snapshot(snapshot);
+    let mut terminal = Launch::new(home.path())
+        .args(&["attach", &id, "--profile", "fixture"])
+        .answer_queries()
+        .spawn();
+    assert!(terminal.wait_for_text("── Resumed: empty attach ──", Duration::from_secs(5)));
+    type_line(&mut terminal, "/quit");
+    assert_eq!(terminal.finish(Duration::from_secs(10)).exit_code, Some(0));
+}
+
 fn run_with_captured_stderr(
     home: &std::path::Path,
     args: &[&str],

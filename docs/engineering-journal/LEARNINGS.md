@@ -2,6 +2,17 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — An empty attached session still needs its resumed heading
+
+**Evidence.** The live attach probe opened successfully but its five-second marker check failed.
+The pure history helper omits a heading when there are no final cells; the new
+`empty_attached_session_announces_its_title` regression reproduced that failure.
+
+**Mechanism.** History presence cannot distinguish a new session from an existing empty one.
+The application now uses the explicit resume launch mode to commit that heading.
+
+**Generalizable rule.** Acknowledge an existing attachment independently of its history size.
+
 ## 2026-10-26 — Herdr's pane split takes no command
 
 **Evidence.** The installed Herdr's `pane split --help` accepts direction, folder and focus
