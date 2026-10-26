@@ -157,15 +157,6 @@ impl FleetAttention {
         self.connected = connected;
     }
 
-    /// The fleet started listing: the quiet window opens, so a request that was already
-    /// waiting does not ring the bell. A window that is still quiet stays as it is.
-    pub fn begin_discovery(&mut self, at: Instant) -> Option<Instant> {
-        if self.window.as_ref().is_some_and(|window| at < window.end) {
-            return None;
-        }
-        self.open_window(at)
-    }
-
     /// The first full listing inside an open window fixes the window end.
     pub fn observe_settled(&mut self, at: Instant) -> Option<Instant> {
         let window = self.window.as_mut()?;

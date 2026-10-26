@@ -526,6 +526,8 @@ pub struct AppState {
     foreground_open: u32,
     /// The instant the hub wants to be woken at, while one is pending.
     fleet_wake_at: Option<Instant>,
+    /// The running wake task, aborted when a newer wake replaces it.
+    fleet_wake_task: Option<JoinHandle<()>>,
     pub opened: Option<OpenedSession>,
     /// Whether the foreground session's process overlay is open.
     pub processes_open: bool,
@@ -739,6 +741,7 @@ impl AppState {
             status_counts: StatusCounts::default(),
             foreground_open: 0,
             fleet_wake_at: None,
+            fleet_wake_task: None,
             opened: None,
             processes_open: false,
             retained_sessions: BTreeMap::new(),
@@ -7505,12 +7508,13 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::WakeAt(at) => {
-                // One task per wake. A wake that finds nothing due does nothing, so a
-                // stale wake is harmless.
+                if let Some(old) = state.fleet_wake_task.take() {
+                    old.abort();
+                }
                 let sender = executor.sender.clone();
-                crate::fleet_attention::wake_task(at, move || {
+                state.fleet_wake_task = Some(crate::fleet_attention::wake_task(at, move || {
                     let _ = sender.send(AppMessage::AttentionWake);
-                });
+                }));
             }
             // The fleet view opens the row the jump key named. The overlay is the
             // fleet view unit's own; this is the path to it from here.

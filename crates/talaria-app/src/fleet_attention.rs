@@ -247,20 +247,24 @@ impl AttentionHub {
     /// One snapshot of the fleet: the quiet window, the watched rows and the turn marks.
     fn observe_fleet(&mut self, snapshot: &FleetSnapshot, at: Instant) {
         let connected = matches!(snapshot.link, FleetLinkState::Connected);
-        let listing = connected
-            && snapshot
-                .profiles
-                .iter()
-                .any(|(_, status)| matches!(status, ProfileStatus::Loading));
-        let listed = !snapshot.profiles.is_empty() && !listing;
-        if !connected {
+        let connecting = matches!(snapshot.link, FleetLinkState::Connecting);
+        let has_loading = snapshot
+            .profiles
+            .iter()
+            .any(|(_, status)| matches!(status, ProfileStatus::Loading));
+        let listing = (connected || connecting) && has_loading;
+        let listed = connected && !snapshot.profiles.is_empty() && !has_loading;
+        if !connected && !connecting {
             self.listing = false;
             self.tracker.observe_link(false, at);
         } else if listing && !self.listing {
             // The fleet started listing: the quiet window opens, so a request that was
             // already waiting does not ring the bell.
             self.listing = true;
-            self.tracker.begin_discovery(at);
+            if self.tracker.window_end().is_none_or(|end| at >= end) {
+                self.tracker.observe_link(false, at);
+                self.tracker.observe_link(true, at);
+            }
         }
         if listed {
             // Every profile has listed: the window ends three seconds after this.
@@ -393,4 +397,136 @@ pub fn wake_task(at: Instant, send: impl FnOnce() + Send + 'static) -> tokio::ta
         tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await;
         send();
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::side_connection::SideScope;
+    use talaria_core::attention::NeedSummary;
+    use talaria_core::fleet::{FleetCounts, FleetRow, NeedDetail, NeedItem, NeedSlot};
+    use talaria_core::fleet_attention::FleetScope;
+
+    #[test]
+    fn gate_startup_sequence_suppresses_bell_and_emits_startup_notice() {
+        let base = Instant::now();
+        let mut hub = AttentionHub::new(
+            FleetAttentionConfig {
+                bell: vec![AlertKind::NeedsYou, AlertKind::Failed],
+                desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+                done_after: Duration::from_secs(20),
+                needs_you: FleetScope::All,
+                finished: FleetScope::Watched,
+            },
+            "fixture".to_owned(),
+            Some("alt+a".to_owned()),
+        );
+        let key = RowKey {
+            profile: "fixture".to_owned(),
+            session_id: "sess-1".to_owned(),
+        };
+        let need_id = NeedId {
+            key: key.clone(),
+            slot: NeedSlot::Prompt("p1".to_owned()),
+        };
+
+        // 1. FleetTask::connected applies FleetInput::Profiles while link is still Connecting.
+        let mut snap = empty_snapshot();
+        snap.version = 1;
+        snap.scope = SideScope::ProfileOnly {
+            profile: "fixture".to_owned(),
+            why: String::new(),
+        };
+        snap.link = FleetLinkState::Connecting;
+        snap.profiles = vec![("fixture".to_owned(), ProfileStatus::Loading)];
+        let out1 = hub.on_notice(
+            &FleetNotice::Changed(std::sync::Arc::new(snap.clone())),
+            &snap,
+            base,
+        );
+        assert_eq!(out1.wake_at, Some(base + Duration::from_secs(15)));
+
+        // 2. Roster, Liveness, and Approvals complete while Gate is still open (link == Connecting).
+        snap.version = 2;
+        snap.profiles = vec![(
+            "fixture".to_owned(),
+            ProfileStatus::Listed { truncated: false },
+        )];
+        snap.rows = vec![FleetRow {
+            key: key.clone(),
+            title: "probe".to_owned(),
+            model: None,
+            source: None,
+            started_at: None,
+            message_count: 1,
+            state: RowState::NeedsYou,
+            state_since: 0.0,
+            outcome: None,
+            foreground: false,
+            subscribed: false,
+            stale: false,
+            gone: false,
+            unlisted: false,
+            activity: None,
+            cost_usd: None,
+        }];
+        snap.queue = vec![NeedItem {
+            id: need_id.clone(),
+            seq: 1,
+            since: 0.0,
+            detail: NeedDetail::Known(NeedSummary::Approval {
+                command: "rm -rf ./talaria-attention-probe".to_owned(),
+                description: String::new(),
+            }),
+            choices: Vec::new(),
+            execution_generation: None,
+            timeout_s: None,
+            exact: false,
+            foreground: false,
+        }];
+        snap.counts = FleetCounts {
+            needs_you: 1,
+            needs_you_items: 1,
+            ..FleetCounts::default()
+        };
+        let t_approvals = base + Duration::from_millis(500);
+        let _ = hub.on_notice(
+            &FleetNotice::Changed(std::sync::Arc::new(snap.clone())),
+            &snap,
+            t_approvals,
+        );
+        let out_att = hub.on_notice(
+            &FleetNotice::Attention {
+                kind: AlertKind::NeedsYou,
+                key: key.clone(),
+                need: Some(need_id),
+                foreground: false,
+            },
+            &snap,
+            t_approvals,
+        );
+        assert!(
+            out_att.alerts.is_empty(),
+            "quiet window suppresses startup approval bell"
+        );
+
+        // 3. open_gate_if_done publishes link == Connected.
+        snap.version = 3;
+        snap.link = FleetLinkState::Connected;
+        let t_connected = base + Duration::from_millis(600);
+        let out_conn = hub.on_notice(
+            &FleetNotice::Changed(std::sync::Arc::new(snap.clone())),
+            &snap,
+            t_connected,
+        );
+        assert_eq!(out_conn.wake_at, Some(base + Duration::from_secs(4)));
+
+        // 4. Wake at the shortened quiet-window end emits the startup notice once.
+        let out_wake = hub.on_wake(base + Duration::from_secs(4), Some(&snap));
+        assert!(out_wake.alerts.is_empty());
+        assert_eq!(
+            out_wake.notice.as_deref(),
+            Some("1 background session needs you; press alt+a to see it.")
+        );
+    }
 }
