@@ -930,11 +930,20 @@ fn batch_block_exact_lines() {
     assert_eq!(
         texts(&batch_block_lines(&batch, 100, &style)),
         vec![
-            "⎇ Subagents · 2 finished · 1 failed · 8s".to_owned(),
+            "⎇ Subagents · 3 finished · 1 failed · 8s".to_owned(),
             "  ✓ list the files in the current directory · 6s · 3 tools · Found 4 files".to_owned(),
             "  ✓ read notes.txt · 5s · 2 tools · Read it twice".to_owned(),
             "  ✗ summarise the findings · 8s · 1 tool · failed: notes.txt not found".to_owned(),
         ]
+    );
+
+    let mut mixed = batch.clone();
+    mixed.rows[0].0.state = talaria_core::subagents::RowState::Interrupted;
+    mixed.rows[1].0.state = talaria_core::subagents::RowState::Gone;
+    assert_eq!(
+        texts(&batch_block_lines(&mixed, 100, &style))[0],
+        "⎇ Subagents · 3 finished · 2 failed · 1 stopped · 8s",
+        "finished counts every terminal child; failed and stopped are subsets"
     );
 
     let mut tree = SubagentTree::new();
