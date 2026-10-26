@@ -424,6 +424,21 @@ struct State {
     rewind: RewindSide,
     /// Opt-in replies. Empty keeps the mock's ordinary answers.
     scripted_results: VecDeque<(Option<Duration>, Value)>,
+    /// One-shot errors, consumed in order when the method and profile match.
+    scripted_errors: Vec<ScriptedError>,
+    /// Profiles whose named methods get no reply.
+    silent_profiles: HashSet<(String, String)>,
+    /// Session ids treated as live for the non-live read counter. Empty counts nothing.
+    live_session_ids: HashSet<String>,
+    /// `approval.pending` or `session.events.since` for an id outside [`Self::live_session_ids`].
+    fleet_non_live_reads: u64,
+}
+
+struct ScriptedError {
+    method: String,
+    profile: Option<String>,
+    code: i64,
+    reason: String,
 }
 
 struct Shared {
@@ -513,6 +528,10 @@ fn new_shared(
             sess: SessionSide::new(),
             rewind: RewindSide::default(),
             scripted_results: VecDeque::new(),
+            scripted_errors: Vec::new(),
+            silent_profiles: HashSet::new(),
+            live_session_ids: HashSet::new(),
+            fleet_non_live_reads: 0,
         }),
         changed: Notify::new(),
     })
@@ -634,6 +653,37 @@ impl MockGateway {
     /// default.
     pub fn publish_cancel_after_response(&self, reason: Option<&str>) {
         lock(&self.shared).cancel_after_response = reason.map(str::to_owned);
+    }
+
+    /// Answer the next matching call with this JSON-RPC error, once.
+    pub fn script_error(&self, method: &str, profile: Option<&str>, code: i64, reason: &str) {
+        lock(&self.shared).scripted_errors.push(ScriptedError {
+            method: method.to_owned(),
+            profile: profile.map(str::to_owned),
+            code,
+            reason: reason.to_owned(),
+        });
+    }
+
+    /// Give this profile's method no reply while on.
+    pub fn set_silent_profile(&self, profile: &str, method: &str, on: bool) {
+        let mut state = lock(&self.shared);
+        let pair = (profile.to_owned(), method.to_owned());
+        if on {
+            state.silent_profiles.insert(pair);
+        } else {
+            state.silent_profiles.remove(&pair);
+        }
+    }
+
+    /// Session ids that are live. A later read of any other id counts as non-live.
+    pub fn set_live_session_ids(&self, ids: impl IntoIterator<Item = impl Into<String>>) {
+        lock(&self.shared).live_session_ids = ids.into_iter().map(Into::into).collect();
+    }
+
+    /// How many approval or event reads named a session outside the live set.
+    pub fn fleet_non_live_reads(&self) -> u64 {
+        lock(&self.shared).fleet_non_live_reads
     }
 
     /// Never reply to this method (`prompt.submit`, `session.interrupt`, ...) while on.
@@ -1317,6 +1367,47 @@ fn plan_request(
     params: &Value,
     outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
 ) {
+    if matches!(method, "approval.pending" | "session.events.since") {
+        let session = params
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !session.is_empty()
+            && !state.live_session_ids.is_empty()
+            && !state.live_session_ids.contains(session)
+        {
+            state.fleet_non_live_reads = state.fleet_non_live_reads.saturating_add(1);
+        }
+    }
+    let profile = params.get("profile").and_then(Value::as_str);
+    if profile.is_some_and(|name| {
+        state
+            .silent_profiles
+            .contains(&(name.to_owned(), method.to_owned()))
+    }) {
+        return;
+    }
+    if let Some(index) = state.scripted_errors.iter().position(|error| {
+        error.method == method
+            && error
+                .profile
+                .as_deref()
+                .is_none_or(|wanted| profile == Some(wanted))
+    }) {
+        let error = state.scripted_errors.remove(index);
+        let text = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": error.code,
+                "message": error.reason,
+                "data": {"reason": error.reason},
+            },
+        })
+        .to_string();
+        outgoing.push((None, text, reply_meta(id, method)));
+        return;
+    }
     if let Some((delay, result)) = state.scripted_results.pop_front() {
         let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
         outgoing.push((delay, text, reply_meta(id, method)));
@@ -4237,6 +4328,8 @@ struct StandaloneInfo {
     present: std::sync::atomic::AtomicBool,
     refuse_host_scope: Mutex<bool>,
     refuse_tickets: Mutex<bool>,
+    fleet_profiles: Mutex<Vec<String>>,
+    parked_profiles: Mutex<Vec<(String, String)>>,
 }
 
 fn plain<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -4329,6 +4422,8 @@ impl StandaloneGateway {
             present: std::sync::atomic::AtomicBool::new(false),
             refuse_host_scope: Mutex::new(false),
             refuse_tickets: Mutex::new(false),
+            fleet_profiles: Mutex::new(Vec::new()),
+            parked_profiles: Mutex::new(Vec::new()),
         });
         lock(&shared).sess.profile_id = info.home.clone();
         let socket = home.join("gateway.sock");
@@ -4427,6 +4522,17 @@ impl StandaloneGateway {
         *plain(&self.info.refuse_tickets) = on;
     }
 
+    /// Extra profile names a host-scoped ticket may name. Nothing is written to disk.
+    /// Identify lists each name beside the home profile and `fixture`.
+    pub fn set_fleet_profiles(&self, names: Vec<String>) {
+        *plain(&self.info.fleet_profiles) = names;
+    }
+
+    /// Mark a profile parked. Identify reports the name and the reason.
+    pub fn set_parked_profile(&self, name: &str, reason: &str) {
+        plain(&self.info.parked_profiles).push((name.to_owned(), reason.to_owned()));
+    }
+
     /// Every ticket minted, in order, with the scope and profile it names.
     pub fn ticket_records(&self) -> Vec<TicketSeen> {
         plain(&self.info.tickets)
@@ -4501,6 +4607,24 @@ async fn serve_control(listener: UnixListener, info: Arc<StandaloneInfo>) {
 }
 
 fn identify_result(info: &StandaloneInfo, epoch: u64) -> Value {
+    let mut served = vec![
+        json!({"profile_id": info.home, "home": info.home}),
+        json!({"profile_id": info.fixture, "home": info.fixture}),
+    ];
+    for name in plain(&info.fleet_profiles).iter() {
+        if name == "fixture" || name == "default" {
+            continue;
+        }
+        let home = Path::new(&info.home).join("profiles").join(name);
+        served.push(json!({
+            "profile_id": name,
+            "home": home.to_string_lossy(),
+        }));
+    }
+    let mut parked = serde_json::Map::new();
+    for (name, reason) in plain(&info.parked_profiles).iter() {
+        parked.insert(name.clone(), Value::String(reason.clone()));
+    }
     json!({
         "protocol": 1,
         "kind": "gateway",
@@ -4517,11 +4641,8 @@ fn identify_result(info: &StandaloneInfo, epoch: u64) -> Value {
         "authority_epoch": epoch,
         "state": "ready",
         "api_origin": info.origin,
-        "served_profiles": [
-            {"profile_id": info.home, "home": info.home},
-            {"profile_id": info.fixture, "home": info.fixture},
-        ],
-        "parked_profiles": {},
+        "served_profiles": served,
+        "parked_profiles": parked,
         "capabilities": ["session-authority-v1", "durable-admission-v1", "event-replay-v1"],
     })
 }
@@ -4565,7 +4686,12 @@ fn issue_ticket(info: &StandaloneInfo, request: &Value) -> Value {
         return refuse("session-ticket: stale runtime instance");
     }
     let profile = params["profile_id"].as_str().unwrap_or_default();
-    if profile != info.home && profile != info.fixture {
+    let known = profile == info.home
+        || profile == info.fixture
+        || plain(&info.fleet_profiles)
+            .iter()
+            .any(|name| name == profile);
+    if !known {
         return refuse("session-ticket: bootstrap binding rejected");
     }
     if !matches!(

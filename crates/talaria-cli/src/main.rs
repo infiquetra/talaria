@@ -20,6 +20,9 @@ fn main() -> ExitCode {
             }
         }
     }
+    if talaria_cli::args::is_fleet_command(&args) {
+        return ExitCode::from(talaria_cli::fleet_cmd::run(&args));
+    }
     match talaria_cli::args::Cli::try_parse() {
         Ok(cli) => {
             if let Err(error) = talaria_cli::args::validate_print_options(&cli) {

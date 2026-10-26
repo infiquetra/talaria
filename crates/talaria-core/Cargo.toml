@@ -15,6 +15,7 @@ serde_json.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 serde_json.workspace = true
+criterion = "0.5"
 
 [[bench]]
 name = "palette_filter"
@@ -22,6 +23,10 @@ harness = false
 
 [[bench]]
 name = "model_filter"
+harness = false
+
+[[bench]]
+name = "fleet_registry"
 harness = false
 
 [lints]

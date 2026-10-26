@@ -12,6 +12,7 @@ pub mod connection;
 pub mod context;
 pub mod directory;
 pub mod failure;
+pub mod fleet;
 pub mod headless;
 pub mod launch;
 pub mod models;

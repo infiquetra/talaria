@@ -9,6 +9,7 @@ pub mod commands;
 pub mod context;
 pub mod diff;
 pub mod directory;
+pub mod fleet;
 pub mod models;
 pub mod mutation;
 pub mod permissions;
