@@ -212,9 +212,10 @@ async fn watch_until(
     mut done: impl FnMut(&Notification, &mut SubagentHub, &[SubagentMsg]) -> Option<bool>,
 ) -> Option<bool> {
     let deadline = Instant::now() + budget;
+    let mut pending = Vec::new();
     loop {
         let now = live_clock(started);
-        let msgs = drain_hub(hub, rx, now);
+        pending.extend(drain_hub(hub, rx, now));
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return None;
@@ -222,10 +223,12 @@ async fn watch_until(
         let Some(n) = next_event(inbound, remaining.min(Duration::from_secs(1))).await else {
             continue;
         };
+        pending.extend(drain_hub(hub, rx, live_clock(started)));
         hub.on_notification(key, &n, live_clock(started));
-        if let Some(stop) = done(&n, hub, &msgs) {
+        if let Some(stop) = done(&n, hub, &pending) {
             return Some(stop);
         }
+        pending.clear();
     }
 }
 
@@ -295,6 +298,7 @@ async fn live_rows_from_events_and_list() {
         Some(true),
         "within 5 s of the first start, either a list contains that id or a complete for it has already arrived"
     );
+    println!("LIVE_SUBAGENT_RESULT: PASSED");
 }
 
 #[tokio::test]
@@ -360,6 +364,7 @@ async fn live_steer_reaches_running_child() {
         println!("STEER_RESULT: {status}");
         detach(&client, &session).await;
         if status == "queued" {
+            println!("LIVE_SUBAGENT_RESULT: PASSED");
             return;
         }
         assert!(
@@ -394,35 +399,43 @@ async fn live_stop_interrupts_child() {
         &key,
         started,
         Duration::from_secs(150),
-        |n, hub, _| match n {
-            Notification::SubagentTool(payload) if stopped_at.is_none() => {
-                if let Some(id) = payload.subagent_id.clone() {
-                    hub.act(&key, SubagentAction::Stop(id), live_clock(started));
-                    stopped_at = Some(Instant::now());
+        |n, hub, msgs| {
+            found |= msgs.iter().any(|msg| {
+                matches!(
+                    msg,
+                    SubagentMsg::Control {
+                        outcome: ControlOutcome::StopRequested { .. },
+                        ..
+                    }
+                )
+            });
+            match n {
+                Notification::SubagentTool(payload) if stopped_at.is_none() => {
+                    if let Some(id) = payload.subagent_id.clone() {
+                        hub.act(&key, SubagentAction::Stop(id), live_clock(started));
+                        stopped_at = Some(Instant::now());
+                    }
                 }
-                None
-            }
-            Notification::SubagentComplete(payload) => {
-                if payload.status.as_ref().is_some_and(|status| {
-                    matches!(
-                        status,
-                        hermes_contract::schemas::SubagentStatus::Interrupted
-                    )
-                }) {
-                    interrupted_at = stopped_at.map(|at| at.elapsed());
-                    return Some(true);
+                Notification::SubagentComplete(payload) => {
+                    if payload.status.as_ref().is_some_and(|status| {
+                        matches!(
+                            status,
+                            hermes_contract::schemas::SubagentStatus::Interrupted
+                        )
+                    }) {
+                        interrupted_at = stopped_at.map(|at| at.elapsed());
+                    }
                 }
-                None
+                Notification::MessageComplete(payload) => {
+                    parent_status = payload
+                        .status
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_default();
+                }
+                _ => {}
             }
-            Notification::MessageComplete(payload) => {
-                parent_status = payload
-                    .status
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default();
-                None
-            }
-            _ => None,
+            (interrupted_at.is_some() && !parent_status.is_empty()).then_some(true)
         },
     )
     .await;
@@ -443,6 +456,11 @@ async fn live_stop_interrupts_child() {
     assert!(secs <= 60, "interrupted arrives within 60 s ({secs} s)");
     println!("STOP_INTERRUPTED_AFTER_S: {secs}");
     println!("PARENT_STATUS: {parent_status}");
+    assert_eq!(
+        parent_status, "complete",
+        "stopping only a child must not interrupt its parent"
+    );
+    println!("LIVE_SUBAGENT_RESULT: PASSED");
 }
 
 #[tokio::test]
