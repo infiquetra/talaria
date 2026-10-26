@@ -1959,6 +1959,10 @@ impl Screen for TuiScreen {
             }
             return;
         }
+        if self.overlay == Overlay::Fleet {
+            self.sync_fleet(view);
+            return;
+        }
         let width = self.terminal.viewport().width;
         let mut tail: Vec<Line<'static>> = view
             .state
