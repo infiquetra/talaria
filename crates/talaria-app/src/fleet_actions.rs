@@ -231,6 +231,7 @@ async fn run_effect(peek: &mut PeekService, effect: FleetViewEffect) -> Vec<Flee
         // Handled on the app state before an effect reaches the worker.
         FleetViewEffect::Acknowledge(_)
         | FleetViewEffect::Open(_)
+        | FleetViewEffect::OpenInPane(_)
         | FleetViewEffect::FocusAnswer
         | FleetViewEffect::Review(_) => Vec::new(),
     }
@@ -315,6 +316,69 @@ pub async fn execute(app: &mut AppState, effect: FleetViewEffect) -> Vec<FleetVi
         }
     }
     inputs
+}
+
+/// Show the opening notice in this app-loop turn and run the pane work on one task.
+pub(crate) fn start_pane(app: &mut AppState, key: RowKey) -> Vec<FleetViewInput> {
+    let title = app
+        .fleet
+        .as_ref()
+        .and_then(|view| view.find_row(&key))
+        .map(talaria_core::fleet_view::title_or_untitled)
+        .unwrap_or_else(|| "(untitled)".to_owned());
+    start_named_pane(app, key, title)
+}
+
+/// The same pane work for a panel that already knows its selected session's title.
+pub(crate) fn start_named_pane(
+    app: &mut AppState,
+    key: RowKey,
+    title: String,
+) -> Vec<FleetViewInput> {
+    use crate::panes::{PaneOutcome, PaneRefusal, PaneRequest, SystemRunner};
+    if app.pending_pane.is_some() {
+        return vec![FleetViewInput::Notice(
+            "Still opening the last pane. Try again in a moment.".to_owned(),
+        )];
+    }
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(_) => {
+            return vec![FleetViewInput::Notice(crate::panes::outcome_text(
+                &title,
+                &PaneOutcome::Refused(PaneRefusal::BinaryGone),
+            ))];
+        }
+    };
+    let request = PaneRequest {
+        key: key.clone(),
+        title: title.clone(),
+        exe,
+        cwd: Some(app.launch_folder.clone()),
+        cols: app.pane_size.0,
+        rows: app.pane_size.1,
+    };
+    let env = app.pane_env.clone();
+    let settings = app.pane_settings.clone();
+    let runner = app
+        .pane_runner
+        .clone()
+        .unwrap_or_else(|| Arc::new(SystemRunner));
+    let sender = app.sender.clone();
+    app.pending_pane = Some((key.clone(), title.clone()));
+    let notice = crate::panes::opening_text(
+        &title,
+        crate::panes::detect(&env, settings.multiplexer)
+            .as_ref()
+            .map(|mux| mux.name()),
+    );
+    tokio::spawn(async move {
+        let outcome = crate::panes::open_in_pane(runner.as_ref(), &env, &settings, &request).await;
+        if let Some(sender) = sender {
+            let _ = sender.send(AppMessage::PaneOpened(key, outcome));
+        }
+    });
+    notice.into_iter().map(FleetViewInput::Notice).collect()
 }
 
 /// Open the overlay exactly as `/fleet` does, then put the cursor on `key` and peek it.

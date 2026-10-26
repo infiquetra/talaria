@@ -44,6 +44,7 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
     #[allow(unreachable_patterns)]
     let labels: &[&str] = match action {
         Action::Submit => &["Enter"],
+        Action::FleetOpenInPane => &["O"],
         Action::Newline => &["Shift+Enter", "Alt+Enter", "Ctrl+J"],
         Action::Interrupt => &["Esc"],
         Action::Cancel => &["Ctrl+C"],
@@ -138,6 +139,7 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
         Action::FleetProfilePrev => &["Shift+Tab"],
         // Issue #242 adds the subagent panel keys.
         Action::AgentsPanel => &["Alt+S"],
+        Action::AgentsOpenInPane => &["O"],
         Action::AgentsUp => &["Up", "K"],
         Action::AgentsDown => &["Down", "J"],
         Action::AgentsTail => &["Enter"],

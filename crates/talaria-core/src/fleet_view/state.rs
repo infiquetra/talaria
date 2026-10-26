@@ -30,6 +30,7 @@ pub enum FleetAction {
     Top,
     Bottom,
     Open,
+    OpenInPane,
     Peek,
     Reply,
     Stop,
@@ -157,6 +158,7 @@ pub enum FleetViewEffect {
     Stop(RowKey),
     Acknowledge(RowKey),
     Open(RowKey),
+    OpenInPane(RowKey),
     FocusAnswer,
     /// Open the review of this row's session folder.
     Review(RowKey),
@@ -847,6 +849,15 @@ fn list_key(
         }
         FleetAction::Peek => return peek_key(state),
         FleetAction::Open => return open_key(state),
+        FleetAction::OpenInPane => {
+            if let Some(key) = state.cursor.clone() {
+                if state.is_foreground(&key) {
+                    state.notice = Some("This session is already open in this pane.".to_owned());
+                } else {
+                    return vec![FleetViewEffect::OpenInPane(key)];
+                }
+            }
+        }
         FleetAction::Reply => return reply_start(state),
         FleetAction::Stop => return stop_start(state),
         FleetAction::Answer => return answer_start(state),

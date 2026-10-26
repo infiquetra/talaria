@@ -277,6 +277,8 @@ pub enum Action {
     FleetBottom,
     /// Open the fleet row as the foreground session.
     FleetOpen,
+    /// Open a fleet session in another multiplexer pane.
+    FleetOpenInPane,
     /// Toggle the peek panel for the fleet row.
     FleetPeek,
     /// Reply to the fleet row's session.
@@ -323,6 +325,8 @@ pub enum Action {
     AgentsTop,
     /// The last row.
     AgentsBottom,
+    /// Open the selected child's session in another multiplexer pane.
+    AgentsOpenInPane,
     /// Start a background session from the fleet list.
     FleetNew,
     /// Start a background session in a new worktree from the fleet list.
@@ -398,7 +402,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 128] = [
+    pub const ALL: [Self; 130] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -482,6 +486,7 @@ impl Action {
         Self::FleetTop,
         Self::FleetBottom,
         Self::FleetOpen,
+        Self::FleetOpenInPane,
         Self::FleetPeek,
         Self::FleetReply,
         Self::FleetStop,
@@ -505,6 +510,7 @@ impl Action {
         Self::AgentsPageDown,
         Self::AgentsTop,
         Self::AgentsBottom,
+        Self::AgentsOpenInPane,
         Self::FleetNew,
         Self::FleetNewWorktree,
         Self::FleetReview,
@@ -616,6 +622,7 @@ impl Action {
             Self::FleetTop => "fleet_top",
             Self::FleetBottom => "fleet_bottom",
             Self::FleetOpen => "fleet_open",
+            Self::FleetOpenInPane => "fleet_open_in_pane",
             Self::FleetPeek => "fleet_peek",
             Self::FleetReply => "fleet_reply",
             Self::FleetStop => "fleet_stop",
@@ -639,6 +646,7 @@ impl Action {
             Self::AgentsPageDown => "agents_page_down",
             Self::AgentsTop => "agents_top",
             Self::AgentsBottom => "agents_bottom",
+            Self::AgentsOpenInPane => "agents_open_in_pane",
             Self::FleetNew => "fleet_new",
             Self::FleetNewWorktree => "fleet_new_worktree",
             Self::FleetReview => "fleet_review",
@@ -760,6 +768,7 @@ impl Action {
             | Self::FleetTop
             | Self::FleetBottom
             | Self::FleetOpen
+            | Self::FleetOpenInPane
             | Self::FleetPeek
             | Self::FleetReply
             | Self::FleetStop
@@ -784,7 +793,8 @@ impl Action {
             | Self::AgentsPageUp
             | Self::AgentsPageDown
             | Self::AgentsTop
-            | Self::AgentsBottom => KeyContext::Agents,
+            | Self::AgentsBottom
+            | Self::AgentsOpenInPane => KeyContext::Agents,
             Self::ReviewUp
             | Self::ReviewDown
             | Self::ReviewTop
@@ -899,6 +909,7 @@ impl Action {
             Self::FleetTop => &["home", "g"],
             Self::FleetBottom => &["end", "shift+g"],
             Self::FleetOpen => &["enter"],
+            Self::FleetOpenInPane => &["o"],
             Self::FleetPeek => &["space"],
             Self::FleetReply => &["r"],
             Self::FleetStop => &["x"],
@@ -922,6 +933,7 @@ impl Action {
             Self::AgentsPageDown => &["pagedown"],
             Self::AgentsTop => &["g", "home"],
             Self::AgentsBottom => &["shift+g", "end"],
+            Self::AgentsOpenInPane => &["o"],
             Self::FleetNew => &["n"],
             Self::FleetNewWorktree => &["w"],
             Self::FleetReview => &["v"],
@@ -1690,7 +1702,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 128);
+        assert_eq!(Action::ALL.len(), 130);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1745,6 +1757,7 @@ mod tests {
                 | Action::FleetTop
                 | Action::FleetBottom
                 | Action::FleetOpen
+                | Action::FleetOpenInPane
                 | Action::FleetPeek
                 | Action::FleetReply
                 | Action::FleetStop
@@ -1787,7 +1800,8 @@ mod tests {
                 | Action::AgentsPageUp
                 | Action::AgentsPageDown
                 | Action::AgentsTop
-                | Action::AgentsBottom => KeyContext::Agents,
+                | Action::AgentsBottom
+                | Action::AgentsOpenInPane => KeyContext::Agents,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), wanted);
@@ -1846,6 +1860,7 @@ mod tests {
                 | Action::FleetTop
                 | Action::FleetBottom
                 | Action::FleetOpen
+                | Action::FleetOpenInPane
                 | Action::FleetPeek
                 | Action::FleetReply
                 | Action::FleetStop
@@ -1888,7 +1903,8 @@ mod tests {
                 | Action::AgentsPageUp
                 | Action::AgentsPageDown
                 | Action::AgentsTop
-                | Action::AgentsBottom => KeyContext::Agents,
+                | Action::AgentsBottom
+                | Action::AgentsOpenInPane => KeyContext::Agents,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), context, "{name}");
@@ -1993,6 +2009,7 @@ mod tests {
             (Action::AgentsPageDown, vec!["PageDown"]),
             (Action::AgentsTop, vec!["G", "Home"]),
             (Action::AgentsBottom, vec!["Shift+G", "End"]),
+            (Action::AgentsOpenInPane, vec!["O"]),
             (Action::FleetNew, vec!["N"]),
             (Action::FleetNewWorktree, vec!["W"]),
             (Action::FleetReview, vec!["V"]),
@@ -2144,7 +2161,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 128);
+        assert_eq!(Action::ALL.len(), 130);
     }
 
     #[test]

@@ -10,6 +10,9 @@ fn main() -> ExitCode {
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
+    if talaria_cli::args::is_attach_command(&args) {
+        return talaria_cli::attach_cmd::run(&args);
+    }
     if args.iter().any(|arg| arg == "--bench-replay") {
         match bench_replay::parse_args(&args) {
             Ok(Some(parsed)) => return bench_replay::run(parsed),

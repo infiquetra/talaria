@@ -28,8 +28,8 @@ use talaria_tui::terminal::{InlineTerminal, RestoreLink};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const NOW: f64 = 1_792_700_000.0;
-const FOOTER: &str = "enter open \u{b7} space peek \u{b7} r reply \u{b7} x stop \u{b7} v review \u{b7} / filter \u{b7} esc close";
-const FOOTER_ANSWER: &str = "enter open \u{b7} space peek \u{b7} r reply \u{b7} x stop \u{b7} a answer \u{b7} v review \u{b7} / filter \u{b7} esc close";
+const FOOTER: &str = "enter open \u{b7} space peek \u{b7} r reply \u{b7} x stop \u{b7} v review \u{b7} / filter \u{b7} esc close \u{b7} o new pane";
+const FOOTER_ANSWER: &str = "enter open \u{b7} space peek \u{b7} r reply \u{b7} x stop \u{b7} a answer \u{b7} v review \u{b7} / filter \u{b7} esc close \u{b7} o new pane";
 
 struct Marks {
     stale: Option<(u16, u16)>,

@@ -7,7 +7,7 @@ use clap::{ColorChoice, CommandFactory, Parser};
 use talaria_app::bg::explicit_slug;
 use talaria_app::launch::{Launch, StartMode, UsageError, new_session_options, parse_effort};
 
-fn required_text(value: &str) -> Result<String, String> {
+pub(crate) fn required_text(value: &str) -> Result<String, String> {
     if value.trim().is_empty() {
         Err("the value is empty".into())
     } else {
@@ -15,7 +15,7 @@ fn required_text(value: &str) -> Result<String, String> {
     }
 }
 
-fn required_path(value: &str) -> Result<PathBuf, String> {
+pub(crate) fn required_path(value: &str) -> Result<PathBuf, String> {
     if value.trim().is_empty() {
         Err("the value is empty".into())
     } else {
@@ -137,6 +137,11 @@ pub fn is_fleet_command(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg == "fleet")
 }
 
+/// True when the first argument is the attach command.
+pub fn is_attach_command(args: &[String]) -> bool {
+    args.first().is_some_and(|arg| arg == "attach")
+}
+
 pub fn write_usage(error: &clap::Error) -> u8 {
     let (text, code) = render_usage(error);
     match code {
@@ -153,7 +158,7 @@ fn is_bidi(character: char) -> bool {
     )
 }
 
-fn neutralise(raw: &str) -> String {
+pub(crate) fn neutralise(raw: &str) -> String {
     let mut line = String::new();
     for character in raw.chars() {
         if character == '\n' || character == '\r' {

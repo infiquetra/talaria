@@ -53,6 +53,7 @@ pub struct PeekPanel<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FleetKeyLabels {
     pub open: Option<String>,
+    pub open_in_pane: Option<String>,
     pub peek: Option<String>,
     pub reply: Option<String>,
     pub stop: Option<String>,
@@ -66,6 +67,7 @@ impl Default for FleetKeyLabels {
         let some = |text: &str| Some(text.to_owned());
         Self {
             open: some("enter"),
+            open_in_pane: some("o"),
             peek: some("space"),
             reply: some("r"),
             stop: some("x"),
@@ -83,6 +85,7 @@ impl FleetKeyLabels {
         let label = |action: Action| map.label(action).map(|text| text.to_lowercase());
         Self {
             open: label(Action::FleetOpen),
+            open_in_pane: label(Action::FleetOpenInPane),
             peek: label(Action::FleetPeek),
             reply: label(Action::FleetReply),
             stop: label(Action::FleetStop),
@@ -447,6 +450,7 @@ fn list_footer(keys: &FleetKeyLabels, has_card: bool) -> String {
     }
     hint(&keys.review, "review");
     hint(&keys.filter, "filter");
-    parts.push("esc close".to_owned());
+    hint(&Some("esc".to_owned()), "close");
+    hint(&keys.open_in_pane, "new pane");
     parts.join(" \u{b7} ")
 }
