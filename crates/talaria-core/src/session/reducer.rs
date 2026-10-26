@@ -148,6 +148,10 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
             state.hermes_command(cell.clone());
             Vec::new()
         }
+        Event::Background(event) => {
+            let produced = crate::background::update(state.background_mut(), event.clone());
+            fold_background(state, produced)
+        }
         _ => super::prompts::apply(state, &event),
     };
     state.advance_prefix();
@@ -198,6 +202,34 @@ pub(crate) fn submit(
         submission_id: submission_id.to_owned(),
         attachments: attachments.to_vec(),
     }]
+}
+
+/// Apply background follow-ups. Notices and result cells stay in the session. An interrupt uses
+/// the turn path. Everything else is handed to the application.
+fn fold_background(
+    state: &mut SessionState,
+    produced: Vec<crate::background::BackgroundEffect>,
+) -> Vec<Effect> {
+    use crate::background::{BackgroundEffect, NoticeLevel};
+    let mut out = Vec::new();
+    for effect in produced {
+        match effect {
+            BackgroundEffect::InsertNotice { level, text } => {
+                let kind = match level {
+                    NoticeLevel::Info => NoticeKind::System,
+                    NoticeLevel::Warning => NoticeKind::Warning,
+                    NoticeLevel::Error => NoticeKind::Error,
+                };
+                state.notice(kind, text, None);
+            }
+            BackgroundEffect::InsertResult { cell } => {
+                state.insert_final(Cell::Background(cell));
+            }
+            BackgroundEffect::Interrupt => out.extend(interrupt(state)),
+            other => out.push(Effect::Background(other)),
+        }
+    }
+    out
 }
 
 /// Ask Hermes to stop the running turn. Nothing happens unless a turn runs with a known

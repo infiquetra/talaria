@@ -438,6 +438,9 @@ struct State {
     fleet: FleetTables,
     /// Replies matched by method and params, each used once, before any handler.
     matched_results: Vec<(String, Value, Value)>,
+    /// Opt-in answers for process and background-task calls. Inactive leaves those methods on
+    /// the ordinary path.
+    background: BackgroundScript,
 }
 
 struct ScriptedError {
@@ -542,6 +545,7 @@ fn new_shared(
             fleet_non_live_reads: 0,
             fleet: FleetTables::default(),
             matched_results: Vec::new(),
+            background: BackgroundScript::default(),
         }),
         changed: Notify::new(),
     })
@@ -1532,6 +1536,9 @@ fn plan_request(
             Err(reason) => refusal_text(id, &reason, None),
         };
         outgoing.push((None, text, reply_meta(id, method)));
+        return;
+    }
+    if plan_background(state, method, id, params, outgoing) {
         return;
     }
     // A rename, a branch or an export follows the directory rules; the other mutations keep
@@ -5213,6 +5220,7 @@ impl Deref for MockServer {
 // Model catalogue, effort and fenced mutate handlers. Issue 230.
 include!("mock_model.rs");
 include!("mock_rewind.rs");
+<<<<<<< HEAD
 
 // ---------------------------------------------------------------------------------------------
 // The fleet reads: per-profile session tables
@@ -5407,3 +5415,5 @@ fn fleet_events_since(state: &State, params: &Value) -> Result<Value, String> {
         "snapshot_required": gap,
     }))
 }
+
+include!("mock_background.rs");

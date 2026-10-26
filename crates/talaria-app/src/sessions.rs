@@ -359,7 +359,8 @@ impl SessionService {
             | Effect::ReplaceQueued { .. }
             | Effect::SteerQueued { .. }
             | Effect::Steer { .. }
-            | Effect::ResolveUnknown { .. } => {
+            | Effect::ResolveUnknown { .. }
+            | Effect::Background(_) => {
                 return (
                     ExecuteOutcome::Refused {
                         reason: "not_sent".to_string(),

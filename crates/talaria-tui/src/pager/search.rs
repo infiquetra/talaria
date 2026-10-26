@@ -98,7 +98,7 @@ fn cell_id(cell: &Cell) -> Option<CellId> {
         Cell::Tool(inner) => Some(inner.id),
         Cell::Notice(inner) => Some(inner.id),
         Cell::Prompt(inner) => Some(inner.id),
-        Cell::Shell(_) | Cell::Side(_) | Cell::HermesCommand(_) => None,
+        Cell::Shell(_) | Cell::Side(_) | Cell::HermesCommand(_) | Cell::Background(_) => None,
     }
 }
 

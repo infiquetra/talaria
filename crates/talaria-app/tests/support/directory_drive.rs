@@ -72,6 +72,7 @@ pub fn cell_text(cell: &Cell) -> String {
         Cell::Shell(cell) => format!("shell: {}", cell.command),
         Cell::Side(cell) => format!("side: {}", cell.question),
         Cell::HermesCommand(cell) => format!("command: {}", cell.name),
+        Cell::Background(cell) => format!("background: {}", cell.task_id),
     }
 }
 

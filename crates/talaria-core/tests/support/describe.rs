@@ -135,6 +135,7 @@ pub fn effect_line(effect: &Effect) -> String {
             session_id.as_str(),
             admission_id.0
         ),
+        Effect::Background(effect) => format!(" Background {effect:?}"),
     }
 }
 
@@ -158,6 +159,7 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Shell(cell) => shell_line(cell),
         Cell::Side(cell) => side_line(cell),
         Cell::HermesCommand(cell) => format!("hermes-command {}", quote(&cell.typed)),
+        Cell::Background(cell) => format!("background {}", quote(&cell.task_id)),
     }
 }
 

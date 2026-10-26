@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use super::{CellId, PromptKey};
 use crate::automation::HermesCommandCell;
+use crate::background::BackgroundCell;
 use crate::side::{ShellCell, SideCell};
 
 /// One transcript row, in arrival order.
@@ -27,6 +28,8 @@ pub enum Cell {
     Side(SideCell),
     /// One of Hermes's own command replies, final when created. Issue #236.
     HermesCommand(HermesCommandCell),
+    /// One finished background task. Final when created.
+    Background(BackgroundCell),
 }
 
 impl Cell {
@@ -41,6 +44,7 @@ impl Cell {
             Self::Prompt(cell) => cell.sealed,
             Self::Shell(_) | Self::Side(_) => true,
             Self::HermesCommand(_) => true,
+            Self::Background(_) => true,
         }
     }
 }

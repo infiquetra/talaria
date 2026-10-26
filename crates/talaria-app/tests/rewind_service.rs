@@ -61,6 +61,7 @@ fn cell_text(cell: &Cell) -> String {
         Cell::Side(cell) => cell.question.clone(),
         // A command reply is not part of a rewind's history. Issue #236.
         Cell::HermesCommand(cell) => cell.typed.clone(),
+        Cell::Background(cell) => cell.task_id.clone(),
     }
 }
 

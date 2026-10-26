@@ -2227,6 +2227,7 @@ fn route(
             | Effect::SteerQueued { .. }
             | Effect::Steer { .. }
             | Effect::ResolveUnknown { .. } => effects.push(AppEffect::Queue(effect)),
+            Effect::Background(_) => {}
         }
     }
     effects
@@ -4895,6 +4896,10 @@ fn cell_line(cell: &Cell) -> String {
         Cell::Shell(shell) => format!("! {}", shell.command),
         Cell::Side(side) => format!("btw \u{b7} {}", side.question),
         Cell::HermesCommand(command) => command.typed.clone(),
+        Cell::Background(cell) => match &cell.prompt {
+            Some(prompt) => format!("bg \u{b7} {prompt}"),
+            None => format!("bg \u{b7} {}", cell.task_id),
+        },
     };
     plain(text.lines().next().unwrap_or_default())
 }

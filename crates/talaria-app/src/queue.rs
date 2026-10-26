@@ -128,7 +128,8 @@ impl QueueService {
             | Effect::Interrupt { .. }
             | Effect::RespondApproval { .. }
             | Effect::RespondClarify { .. }
-            | Effect::RefuseAnswer { .. } => {
+            | Effect::RefuseAnswer { .. }
+            | Effect::Background(_) => {
                 return vec![Event::QueueCallRefused {
                     action: QueueAction::Submit,
                     admission_id: None,
