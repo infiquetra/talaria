@@ -139,6 +139,7 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
         Action::FleetProfilePrev => &["Shift+Tab"],
         // Issue #242 adds the subagent panel keys.
         Action::AgentsPanel => &["Alt+S"],
+        Action::AgentsOpenInPane => &["O"],
         Action::AgentsUp => &["Up", "K"],
         Action::AgentsDown => &["Down", "J"],
         Action::AgentsTail => &["Enter"],

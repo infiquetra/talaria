@@ -1993,14 +1993,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 }
             }
             let text = crate::panes::outcome_text(&title, &outcome);
-            if state.fleet.is_some() {
-                fleet_input(
-                    state,
-                    talaria_core::fleet_view::FleetViewInput::Notice(text),
-                )
-            } else {
-                vec![notice_lines(&text)]
-            }
+            pane_notice(state, text)
         }
     };
     if let Some(session_id) = settled {
@@ -2201,6 +2194,22 @@ fn local_line(text: &str) -> Option<Result<(LocalAction, String), String>> {
 }
 
 /// The effect a local command asks for.
+fn pane_notice(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    if state.fleet.is_some() {
+        fleet_input(
+            state,
+            talaria_core::fleet_view::FleetViewInput::Notice(text),
+        )
+    } else if let Some(hub) = state.subagents.as_mut()
+        && hub.panel_key().is_some()
+    {
+        hub.set_flash(text);
+        vec![AppEffect::Redraw]
+    } else {
+        vec![notice_lines(&text)]
+    }
+}
+
 fn local_effect(
     state: &mut AppState,
     action: LocalAction,
@@ -2767,10 +2776,8 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             let inputs = crate::fleet_actions::start_named_pane(state, key, title);
             let mut effects = Vec::new();
             for input in inputs {
-                if state.fleet.is_some() {
-                    effects.extend(fleet_input(state, input));
-                } else if let talaria_core::fleet_view::FleetViewInput::Notice(text) = input {
-                    effects.push(notice_lines(&text));
+                if let talaria_core::fleet_view::FleetViewInput::Notice(text) = input {
+                    effects.extend(pane_notice(state, text));
                 }
             }
             effects

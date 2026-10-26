@@ -296,7 +296,7 @@ impl SubagentHub {
             self.open_panel(keys[next].clone());
         }
     }
-    fn set_flash(&mut self, text: String) -> bool {
+    pub(crate) fn set_flash(&mut self, text: String) -> bool {
         let changed = self.flash.as_ref() != Some(&text);
         self.flash = Some(text);
         changed

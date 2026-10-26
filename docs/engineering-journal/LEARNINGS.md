@@ -2,6 +2,27 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — Herdr's pane split takes no command
+
+**Evidence.** The installed Herdr's `pane split --help` accepts direction, folder and focus
+options, with no command argument. `pane run --help` accepts the new pane id and command text.
+
+**Mechanism.** Splitting returns the new pane id in JSON; a second call types the quoted attach
+command and Enter. Successful typing acknowledges admission, rather than proving startup.
+
+**Generalizable rule.** Split, read the pane id from JSON, then run; verify startup separately.
+
+## 2026-10-26 — Hermes resolves `local-` plus 16 hex itself
+
+**Evidence.** Hermes v0.22.4, `gateway/session_controls.py` lines 570 to 577 at the pinned
+commit, resolves that short form before session authorization, leaving ambiguous or absent
+prefixes to the usual not-found handling.
+
+**Mechanism.** A unique short id can open an older session absent from a bounded listing,
+but it carries no profile identity.
+
+**Generalizable rule.** Pass a short id through only when one profile is in scope.
+
 ## 2026-10-26 — Only attached viewers can reply or answer
 
 **Evidence.** Hermes v0.22.4 `gateway/session_controls.py` lines 747 to 767: `prompt.submit` refuses `permission_denied` when the session is not attached on the calling connection; `approval.respond` and `clarify.respond` refuse callers that are not subscribers (`gateway/session_authority.py` lines 986 to 998). `session.interrupt` needs no attachment but needs the current `execution_generation`, which only the resume snapshot and the session's events carry (lines 861 to 888). The fleet view's peek (issue #240, `crates/talaria-app/src/peek.rs`) therefore attaches with `session.resume` before any reply, answer or stop; live tests 44 to 46 replied, denied an approval and stopped a turn this way on the pinned gateway.

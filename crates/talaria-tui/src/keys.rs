@@ -315,6 +315,8 @@ pub enum Action {
     AgentsTop,
     /// The last row.
     AgentsBottom,
+    /// Open the selected child's session in another multiplexer pane.
+    AgentsOpenInPane,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -346,7 +348,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 107] = [
+    pub const ALL: [Self; 108] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -454,6 +456,7 @@ impl Action {
         Self::AgentsPageDown,
         Self::AgentsTop,
         Self::AgentsBottom,
+        Self::AgentsOpenInPane,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -567,6 +570,7 @@ impl Action {
             Self::AgentsPageDown => "agents_page_down",
             Self::AgentsTop => "agents_top",
             Self::AgentsBottom => "agents_bottom",
+            Self::AgentsOpenInPane => "agents_open_in_pane",
         }
     }
 
@@ -688,7 +692,8 @@ impl Action {
             | Self::AgentsPageUp
             | Self::AgentsPageDown
             | Self::AgentsTop
-            | Self::AgentsBottom => KeyContext::Agents,
+            | Self::AgentsBottom
+            | Self::AgentsOpenInPane => KeyContext::Agents,
         }
     }
 
@@ -809,6 +814,7 @@ impl Action {
             Self::AgentsPageDown => &["pagedown"],
             Self::AgentsTop => &["g", "home"],
             Self::AgentsBottom => &["shift+g", "end"],
+            Self::AgentsOpenInPane => &["o"],
         }
     }
 }
@@ -1525,7 +1531,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 106);
+        assert_eq!(Action::ALL.len(), 108);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1580,6 +1586,7 @@ mod tests {
                 | Action::FleetTop
                 | Action::FleetBottom
                 | Action::FleetOpen
+                | Action::FleetOpenInPane
                 | Action::FleetPeek
                 | Action::FleetReply
                 | Action::FleetStop
@@ -1601,7 +1608,8 @@ mod tests {
                 | Action::AgentsPageUp
                 | Action::AgentsPageDown
                 | Action::AgentsTop
-                | Action::AgentsBottom => KeyContext::Agents,
+                | Action::AgentsBottom
+                | Action::AgentsOpenInPane => KeyContext::Agents,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), wanted);
@@ -1660,6 +1668,7 @@ mod tests {
                 | Action::FleetTop
                 | Action::FleetBottom
                 | Action::FleetOpen
+                | Action::FleetOpenInPane
                 | Action::FleetPeek
                 | Action::FleetReply
                 | Action::FleetStop
@@ -1681,7 +1690,8 @@ mod tests {
                 | Action::AgentsPageUp
                 | Action::AgentsPageDown
                 | Action::AgentsTop
-                | Action::AgentsBottom => KeyContext::Agents,
+                | Action::AgentsBottom
+                | Action::AgentsOpenInPane => KeyContext::Agents,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), context, "{name}");
@@ -1931,7 +1941,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 106);
+        assert_eq!(Action::ALL.len(), 108);
     }
 
     #[test]

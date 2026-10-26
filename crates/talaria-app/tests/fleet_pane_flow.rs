@@ -541,3 +541,43 @@ async fn slow_split_never_blocks_the_loop() {
         "migrate"
     );
 }
+
+#[tokio::test]
+async fn agents_panel_receives_pane_notices_without_writing_under_the_overlay() {
+    use talaria_app::app::UserAction;
+    use talaria_app::subagents::{SubagentHub, SubagentsConfig};
+    let dir = tempfile::tempdir().expect("a folder");
+    let mut app = AppState::new("panel");
+    app.pane_env = herdr_test_env(&dir);
+    app.pane_runner = Some(Arc::new(FakeRunner::new(vec![
+        ok("{\"result\":{\"pane\":{\"pane_id\":\"w1:p7\"}}}"),
+        ok(""),
+    ])));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    app.sender = Some(tx.clone());
+    let mut hub = SubagentHub::new(SubagentsConfig::default(), tx);
+    hub.open_panel(key("fixture", "owner"));
+    app.subagents = Some(hub);
+    let effects = app::update(
+        &mut app,
+        AppMessage::User(UserAction::OpenInPane {
+            key: key("fixture", "local-child"),
+            title: "child task".to_owned(),
+        }),
+    );
+    assert!(committed(&effects).is_empty());
+    assert_eq!(
+        app.subagents.as_ref().expect("panel").flash(),
+        Some("Opening \"child task\" in a new Herdr pane…")
+    );
+    let completion = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("completion deadline")
+        .expect("completion");
+    let effects = app::update(&mut app, completion);
+    assert!(committed(&effects).is_empty());
+    assert_eq!(
+        app.subagents.as_ref().expect("panel").flash(),
+        Some("Opened \"child task\" in a new Herdr pane.")
+    );
+}

@@ -185,6 +185,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("fleet_profile_next", &["tab"][..]),
         ("fleet_profile_prev", &["shift+tab"][..]),
         ("agents_panel", &["alt+s"][..]),
+        ("agents_open_in_pane", &["o"][..]),
         ("agents_up", &["up", "k"][..]),
         ("agents_down", &["down", "j"][..]),
         ("agents_tail", &["enter"][..]),

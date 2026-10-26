@@ -131,6 +131,24 @@ impl AgentsPanel {
     pub fn selected_id(&self, tree: &SubagentTree) -> Option<String> {
         self.selected(tree).map(|r| r.id.clone())
     }
+    /// The child session selected in a viewing mode. A queued child may have no session yet.
+    pub fn pane_target(&self, tree: &SubagentTree) -> Option<(RowKey, String)> {
+        if !matches!(
+            self.mode,
+            PanelMode::List | PanelMode::Detail | PanelMode::Tail
+        ) {
+            return None;
+        }
+        let row = self.selected(tree)?;
+        let session_id = row.child_session_id.as_ref().filter(|id| !id.is_empty())?;
+        Some((
+            RowKey {
+                profile: self.key.profile.clone(),
+                session_id: session_id.clone(),
+            },
+            row.goal.clone(),
+        ))
+    }
     fn selected<'a>(&self, tree: &'a SubagentTree) -> Option<&'a SubagentRow> {
         if self.mode != PanelMode::List
             && let Some(id) = &self.shown_id
@@ -340,6 +358,7 @@ impl AgentsPanel {
         [
             (Action::AgentsTail, "tail"),
             (Action::AgentsDetail, "detail"),
+            (Action::AgentsOpenInPane, "new pane"),
             (Action::AgentsSteer, "steer"),
             (Action::AgentsStop, "stop"),
             (Action::AgentsStopAll, stop_all),
@@ -853,6 +872,42 @@ mod tests {
             profile: "fixture".into(),
             session_id: "session".into(),
         })
+    }
+
+    #[test]
+    fn pane_target_uses_the_selected_child_session_and_its_owners_profile() {
+        use talaria_core::subagents::{SubagentEvent, SubagentEventKind};
+        let mut tree = SubagentTree::new();
+        let mut event = SubagentEvent {
+            kind: SubagentEventKind::Start,
+            payload: serde_json::from_value(serde_json::json!({
+                "subagent_id": "child", "goal": "child task", "task_index": 0, "task_count": 1
+            }))
+            .expect("contract payload"),
+        };
+        let now = Clock {
+            mono_ms: 1,
+            wall_s: 1.0,
+        };
+        tree.apply(&event, now);
+        let mut panel = panel();
+        assert_eq!(panel.pane_target(&tree), None);
+        event.payload.child_session_id = Some("local-child".to_owned());
+        tree.apply(&event, now);
+        let target = Some((
+            RowKey {
+                profile: "fixture".to_owned(),
+                session_id: "local-child".to_owned(),
+            },
+            "child task".to_owned(),
+        ));
+        assert_eq!(panel.pane_target(&tree), target);
+        panel.handle(Action::AgentsDetail, &tree);
+        assert_eq!(panel.pane_target(&tree), target);
+        panel.handle(Action::AgentsTail, &tree);
+        assert_eq!(panel.pane_target(&tree), target);
+        panel.handle(Action::AgentsPause, &tree);
+        assert_eq!(panel.pane_target(&tree), None);
     }
 
     #[test]
