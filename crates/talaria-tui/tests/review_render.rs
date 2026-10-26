@@ -160,7 +160,7 @@ fn list_and_diff_120x40() {
         text.contains("── src/main.rs ──"),
         "the diff panel names the file: {text}"
     );
-    assert!(text.contains("+added"), "the diff shows: {text}");
+    assert!(text.contains("+ added"), "the diff shows: {text}");
 
     // The cursor follows its path across a reload.
     let _ = state.update(ReviewInput::Key(ReviewKey::Down));
@@ -205,7 +205,7 @@ fn list_and_diff_120x40() {
     let text = contents(&render(&state.view(), 120, 40));
     assert!(
         text.contains(
-            "Discard changes to src/main.rs? Press X again to discard; any other key cancels."
+            "Discard changes to notes.txt? Press X again to discard; any other key cancels."
         ),
         "the discard question names the path: {text}"
     );
@@ -339,7 +339,7 @@ fn sanitized_names_short_and_70x20() {
     let _ = state.update(ReviewInput::Key(ReviewKey::ShowDiff));
     let text = contents(&render(&state.view(), 70, 20));
     assert!(
-        text.contains("+new") && !text.contains("notes.txt"),
+        text.contains("+ new") && !text.contains("notes.txt"),
         "the diff replaces the list: {text}"
     );
     let _ = state.update(ReviewInput::Key(ReviewKey::Esc));

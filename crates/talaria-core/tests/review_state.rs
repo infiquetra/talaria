@@ -151,6 +151,11 @@ fn discard_needs_second_key() {
         .filter(|effect| matches!(effect, ReviewEffect::Run(GitAction::Discard(_))))
         .count();
     assert_eq!(runs, 1, "two presses run one discard: {effects:?}");
+    // One mutation at a time: the discard finishes before the next key acts.
+    let _ = state.update(ReviewInput::ActionDone {
+        action: GitAction::Discard(file("a.txt")),
+        result: Ok("Discarded changes to a.txt.".to_owned()),
+    });
 
     // Staging still refuses a conflicted row and unstages a half-staged one.
     let mut conflicted = file("clash.txt");
@@ -171,6 +176,10 @@ fn discard_needs_second_key() {
         )),
         "space unstages a half-staged row: {effects:?}"
     );
+    let _ = state.update(ReviewInput::ActionDone {
+        action: GitAction::Unstage(vec!["half.txt".to_owned()]),
+        result: Ok("Unstaged half.txt.".to_owned()),
+    });
     let _ = state.update(ReviewInput::Key(ReviewKey::Down));
     for key in [ReviewKey::StageToggle, ReviewKey::Discard] {
         let effects = state.update(ReviewInput::Key(key));

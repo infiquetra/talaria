@@ -155,6 +155,7 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
         Action::AgentsBottom => &["Shift+G", "End"],
         Action::FleetNew => &["N"],
         Action::FleetNewWorktree => &["W"],
+        Action::FleetReview => &["V"],
         // Issue #245 adds the review keys. The document gains them with the green code.
         Action::ReviewUp => &["Up", "K"],
         Action::ReviewDown => &["Down", "J"],

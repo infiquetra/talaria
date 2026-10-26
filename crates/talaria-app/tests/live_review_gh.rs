@@ -99,6 +99,7 @@ struct Redact {
 impl Redact {
     fn apply(&self, text: &str) -> String {
         text.replace(&self.pair, "fixture-owner/fixture-repo")
+            .replace(&format!("account {}", self.login), "account fixture-user")
             .replace(&self.owner, "fixture-owner")
             .replace(&self.login, "fixture-user")
             .replace(&self.tmp, "<tmp>")
@@ -243,7 +244,7 @@ fn draft_pr_round_trip() {
     // request is closed afterwards whatever happens in here.
     let outcome = (|| -> Result<(), String> {
         let query = format!(
-            "query {{ repository(owner: \"{pair_owner}\", name: \"{name}\") {{ b0: pullRequests(headRefName: \"{branch}\", first: 5, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ number state isDraft isCrossRepository url headRefName reviewDecision commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} }} }} }}",
+            "query {{ repository(owner: \"{pair_owner}\", name: \"{name}\") {{ b0: pullRequests(headRefName: \"{branch}\", first: 5, orderBy: {{field: CREATED_AT, direction: DESC}}) {{ nodes {{ number state isDraft isCrossRepository url headRefName reviewDecision commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} }} }} }} }}",
             pair_owner = pair.split('/').next().unwrap_or_default(),
         );
         let queried = gh(

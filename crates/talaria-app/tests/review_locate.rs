@@ -97,9 +97,23 @@ fn recorded_info(dir: &std::path::Path) -> Value {
     let Ok(text) = std::fs::read_to_string(&path) else {
         panic!("BLOCKED: fixtures/frames/review-session-info.jsonl not recorded");
     };
-    let line = text.lines().next().expect("one frame per line");
-    let frame: Value = serde_json::from_str(line).expect("frame json");
-    let mut info = frame["result"].clone();
+    // The recording is a whole session: a header, then one frame per line. The reply
+    // is the received frame with the id of the sent `session.info` request.
+    let frames: Vec<Value> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["kind"] == "frame")
+        .collect();
+    let request = frames
+        .iter()
+        .find(|line| line["dir"] == "out" && line["frame"]["method"] == "session.info")
+        .expect("a session.info request frame");
+    let id = request["frame"]["id"].clone();
+    let reply = frames
+        .iter()
+        .find(|line| line["dir"] == "in" && line["frame"]["id"] == id)
+        .expect("a session.info reply frame");
+    let mut info = reply["frame"]["result"].clone();
     if info["cwd"] == json!("<tmp>") {
         info["cwd"] = json!(dir.to_string_lossy());
     }
@@ -290,6 +304,99 @@ async fn missing_folder_texts() {
         Located::NotFound(format!(
             "{} is not inside a git repository.",
             plain.path().to_string_lossy()
+        ))
+    );
+}
+
+/// A source that must not be asked: the record answers first.
+struct NeverAsked;
+
+impl SessionInfoSource for NeverAsked {
+    fn info<'a>(
+        &'a self,
+        _row: &'a RowKey,
+    ) -> Pin<Box<dyn Future<Output = Result<SessionInfoReply, SessionInfoError>> + Send + 'a>> {
+        Box::pin(async { Err(SessionInfoError::Other("asked".to_owned())) })
+    }
+}
+
+/// A recorded tree answers before any call; a tree gone from disk says so.
+#[tokio::test]
+async fn recorded_tree_answers_first_and_a_missing_one_says_so() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let repo = git.repo.clone();
+    git.ok(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "--no-track",
+            "-b",
+            "talaria/rec",
+            ".worktrees/talaria-rec",
+            "main",
+        ],
+    );
+    let base = git.ok(&repo, &["rev-parse", "main"]);
+    for (key, value) in [
+        ("path", ".worktrees/talaria-rec"),
+        ("base", "origin/main"),
+        ("base-commit", base.as_str()),
+        ("profile", "fixture"),
+        ("session", "local-rec"),
+    ] {
+        git.ok(
+            &repo,
+            &[
+                "config",
+                "--local",
+                &format!("branch.talaria/rec.talaria-{key}"),
+                value,
+            ],
+        );
+    }
+
+    let runner = GitRunner::from_env();
+    let mut repos = KnownRepos::new();
+    repos.insert(repo.clone());
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &NeverAsked,
+    };
+    let found = locate(&row("fixture", "local-rec"), &ctx).await;
+    let Located::Found(target) = found else {
+        panic!("the record answers: {found:?}");
+    };
+    assert_eq!(target.folder, repo.join(".worktrees/talaria-rec"));
+    assert_eq!(target.main_root, repo);
+    let record = target.record.expect("the record rides along");
+    assert_eq!(record.branch, "talaria/rec");
+    assert_eq!(record.base_commit, base);
+
+    // The same session id in another profile is another session.
+    let other = locate(&row("default", "local-rec"), &ctx).await;
+    assert_eq!(
+        other,
+        Located::NotFound("Talaria cannot find this session's folder.".to_owned())
+    );
+
+    // The tree is gone from disk.
+    git.ok(
+        &repo,
+        &["worktree", "remove", "--force", ".worktrees/talaria-rec"],
+    );
+    let gone = locate(&row("fixture", "local-rec"), &ctx).await;
+    assert_eq!(
+        gone,
+        Located::NotFound(format!(
+            "The worktree {} is gone. Hermes may have archived it: run hermes worktree restore talaria-rec in {}, then press r.",
+            repo.join(".worktrees/talaria-rec").to_string_lossy(),
+            repo.to_string_lossy()
         ))
     );
 }

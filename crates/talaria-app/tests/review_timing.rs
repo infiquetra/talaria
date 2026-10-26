@@ -62,7 +62,7 @@ async fn open_to_first_list_frame_200_files() {
         title: "repo".to_owned(),
     };
     let started = Instant::now();
-    let effects = service.open(target, 1.0);
+    let effects = service.open(target.clone(), 1.0);
     assert!(
         effects.iter().any(|effect| matches!(
             effect,
@@ -70,7 +70,33 @@ async fn open_to_first_list_frame_200_files() {
         )),
         "opening reads the listing: {effects:?}"
     );
+    // The listing the effect asks for, with real git, then the first frame that draws it.
+    let listing = talaria_app::review::list(&GitRunner::from_env(), &target, Scope::Uncommitted)
+        .await
+        .expect("the listing");
+    assert_eq!(listing.total, 200, "all 200 files are listed");
+    let _ = service.update(talaria_core::review::ReviewInput::Listed {
+        scope: Scope::Uncommitted,
+        result: Ok(listing),
+    });
+    let theme = talaria_tui::tool_cell::ToolTheme::default();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).expect("terminal");
+    let view = service.view().expect("the review is open");
+    terminal
+        .draw(|frame| {
+            talaria_tui::review_view::draw_review(&view, &theme, frame.area(), frame.buffer_mut());
+        })
+        .expect("draw");
     let elapsed = started.elapsed();
+    let drawn: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect();
+    assert!(drawn.contains("file-000.txt"), "the list is drawn");
     println!("open to first list frame: {} ms", elapsed.as_millis());
     assert!(
         elapsed <= Duration::from_millis(300),

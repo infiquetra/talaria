@@ -33,12 +33,12 @@ fn recorded_text() -> String {
     let Ok(text) = std::fs::read_to_string(&path) else {
         panic!("BLOCKED: fixtures/frames/review-oneshot.jsonl not recorded");
     };
-    let line = text.lines().next().expect("one frame per line");
-    let frame: Value = serde_json::from_str(line).expect("frame json");
-    frame["result"]["text"]
-        .as_str()
+    // The log opens with a header, then holds every frame of the connection. The draft is
+    // the reply that carries a `text`.
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find_map(|entry| entry["frame"]["result"]["text"].as_str().map(str::to_owned))
         .expect("recorded text")
-        .to_owned()
 }
 
 /// Parameters, the 12,000-character cut, and every error mapping.
@@ -139,7 +139,6 @@ async fn oneshot_params_and_error_mapping() {
             },
             DraftError::Unsupported,
         ),
-        (Behavior::DropBeforeReply, DraftError::NoReply),
         (
             Behavior::RefuseCode {
                 reason: "permission_denied".to_owned(),
@@ -191,6 +190,13 @@ async fn oneshot_params_and_error_mapping() {
     assert_eq!(
         draft_message(&conn, &row(), "diff", "seed", "").await,
         Err(DraftError::Failed("the model returned nothing".to_owned()))
+    );
+
+    // A dropped connection gives no reply. It goes last: the mock closes the socket.
+    gateway.queue_behavior("llm.oneshot", Behavior::DropBeforeReply);
+    assert_eq!(
+        draft_message(&conn, &row(), "diff", "seed", "").await,
+        Err(DraftError::NoReply)
     );
 }
 

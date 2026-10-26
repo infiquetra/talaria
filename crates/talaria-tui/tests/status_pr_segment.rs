@@ -1,5 +1,6 @@
 //! Status-line pull-request segment red test. Issue #245.
 
+use talaria_core::review::{LabelTone, PrLabel};
 use talaria_tui::status::{ExternalSegment, Segment, StatusInputs, Tone, plan};
 
 /// The segment drops right after `External` and before every other segment,
@@ -32,6 +33,10 @@ fn pr_segment_priority() {
     // Once inputs name a pull request, the plan carries its piece.
     let inputs = StatusInputs {
         branch: Some("talaria/work".to_owned()),
+        pull_request: Some(PrLabel {
+            text: "#12 open ✓".to_owned(),
+            tone: LabelTone::Success,
+        }),
         ..StatusInputs::default()
     };
     let external = ExternalSegment {

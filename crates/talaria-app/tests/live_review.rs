@@ -89,7 +89,7 @@ async fn draft_message_from_session_model() {
     let git = GitRepo::new();
     let link_a = LaunchLink::open(&home(), "fixture").await.expect("link A");
     let conn_a = LaunchConn::Link(link_a);
-    let session_id = create_in(&conn_a, &git.repo, "review-live-39").await;
+    let session_id = create_in(&conn_a, &git.repo, &talaria_app::launch::new_request_id()).await;
 
     std::fs::write(git.repo.join("draft.txt"), "draft me\n").expect("change file");
     let diff = git.ok(&git.repo, &["diff", "HEAD", "--", "draft.txt"]);
@@ -147,7 +147,7 @@ async fn session_info_reports_folder() {
     let git = GitRepo::new();
     let link = LaunchLink::open(&home(), "fixture").await.expect("link");
     let conn = LaunchConn::Link(link);
-    let session_id = create_in(&conn, &git.repo, "review-live-40").await;
+    let session_id = create_in(&conn, &git.repo, &talaria_app::launch::new_request_id()).await;
     conn.close().await;
 
     // A host-scoped link opened for `default`, asking for a `fixture` session.

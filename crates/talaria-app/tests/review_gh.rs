@@ -168,10 +168,12 @@ async fn create_draft_argv_and_url() {
         "the failure carries gh's line"
     );
 
-    // A refused push stops the action before any `gh pr create` runs.
+    // A refused push stops the action before any `gh pr create` runs: the clone is on its
+    // default branch, so the push is refused before it starts. A fresh folder keeps the
+    // stub's log to this case alone.
     let git = GitRepo::new();
-    std::fs::write(git.repo.join(".git").join("index.lock"), "").expect("lock file");
-    let stub = write_reply_stub(dir.path(), &[require("pr-create.json")]);
+    let fresh = tempfile::tempdir().expect("temp folder");
+    let stub = write_reply_stub(fresh.path(), &[require("pr-create.json")]);
     let gh = GhRunner::with_binary(stub.program.clone());
     let pr = Arc::new(PrStatusService::new(
         gh,
@@ -179,19 +181,40 @@ async fn create_draft_argv_and_url() {
         Arc::new(Instant::now),
         |_: PrStatusNotice| {},
     ));
-    let service = ReviewService::new(
+    let mut service = ReviewService::new(
         GitRunner::from_env(),
         GhRunner::with_binary(stub.program.clone()),
         pr,
     );
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let _ = service.open(
+        talaria_core::review::ReviewTarget {
+            folder: git.repo.clone(),
+            main_root: git.repo.clone(),
+            session: None,
+            record: None,
+            title: "repo".to_owned(),
+        },
+        1.0,
+    );
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     service.execute(
         ReviewEffect::Run(GitAction::CreatePr {
             base: "main".to_owned(),
-            branch: "talaria/work".to_owned(),
+            branch: "main".to_owned(),
         }),
         tx,
     );
+    let done = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+        .await
+        .expect("the action finishes");
+    let Some(talaria_app::app::AppMessage::Review(talaria_core::review::ReviewInput::ActionDone {
+        result,
+        ..
+    })) = done
+    else {
+        panic!("the action reports its result");
+    };
+    assert!(result.is_err(), "the push is refused: {result:?}");
     let calls = read_log(&stub.log);
     assert!(
         calls.is_empty(),
@@ -287,6 +310,100 @@ async fn pr_status_polling_is_bounded() {
     );
 }
 
+/// The recorded status reply, read through the runner: one `gh api graphql`, the branch
+/// the caller asked about, and a failed request that drops only its own branches.
+#[tokio::test]
+async fn pr_statuses_reads_the_recorded_reply() {
+    let status = require("api-graphql-status.json");
+    let dir = tempfile::tempdir().expect("temp folder");
+    let stub = write_reply_stub(dir.path(), &[status]);
+    let gh = GhRunner::with_binary(stub.program.clone());
+    let branches = vec!["talaria/live-5e7812af".to_owned()];
+    let statuses = gh
+        .pr_statuses(dir.path(), "fixture-owner/fixture-repo", &branches)
+        .await
+        .expect("the recorded reply parses");
+    assert_eq!(statuses.len(), 1, "{statuses:?}");
+    assert_eq!(statuses[0].branch, "talaria/live-5e7812af");
+    assert_eq!(statuses[0].number, 2);
+    let calls = read_log(&stub.log);
+    assert_eq!(calls.len(), 1, "one request: {calls:?}");
+    assert_eq!(&calls[0][..3], ["api", "graphql", "-f"], "{calls:?}");
+    assert!(calls[0][3].starts_with("query=query { repository(owner: \"fixture-owner\""));
+
+    // No reply at all fails the call with gh's line.
+    let stub = write_reply_stub(dir.path(), &[]);
+    let gh = GhRunner::with_binary(stub.program.clone());
+    let failure = gh
+        .pr_statuses(dir.path(), "fixture-owner/fixture-repo", &branches)
+        .await;
+    assert!(failure.is_err(), "{failure:?}");
+}
+
+/// A refresh reads readiness, asks for the noted branch and keeps the label, which turns
+/// stale after five minutes.
+#[tokio::test]
+async fn refresh_keeps_labels_and_marks_them_stale() {
+    let replies = [
+        require("auth-status-signed-in.json"),
+        require("repo-view-github.json"),
+        require("api-graphql-status.json"),
+    ];
+    let now = Arc::new(Mutex::new(Instant::now()));
+    let tick = now.clone();
+    let clock: Arc<dyn Fn() -> Instant + Send + Sync> =
+        Arc::new(move || *tick.lock().expect("clock"));
+    let dir = tempfile::tempdir().expect("temp folder");
+    let stub = write_reply_stub(dir.path(), &replies);
+    let seen = Arc::new(Mutex::new(0_u32));
+    let count = seen.clone();
+    let pr = PrStatusService::new(
+        GhRunner::with_binary(stub.program.clone()),
+        GitRunner::from_env(),
+        clock,
+        move |_| *count.lock().expect("count") += 1,
+    );
+
+    let git = GitRepo::new();
+    let branch = "talaria/live-5e7812af";
+    pr.note_branch(&git.repo, branch, None);
+    pr.want(PrDemand::Review(git.repo.clone(), true));
+    pr.tick();
+
+    let (status, stale) = pr.for_branch(&git.repo, branch).expect("a label");
+    assert_eq!(status.number, 2);
+    assert!(status.draft);
+    assert!(!stale, "a fresh label is not stale");
+    assert_eq!(*seen.lock().expect("count"), 1, "one notice for new labels");
+    let verbs: Vec<String> = read_log(&stub.log)
+        .iter()
+        .map(|call| call[..2].join(" "))
+        .collect();
+    assert_eq!(verbs, ["auth status", "repo view", "api graphql"]);
+
+    // A later refresh within ten minutes reuses readiness; the label is unchanged.
+    *now.lock().expect("clock") += Duration::from_secs(61);
+    pr.tick();
+    let verbs: Vec<String> = read_log(&stub.log)
+        .iter()
+        .map(|call| call[..2].join(" "))
+        .collect();
+    assert_eq!(verbs.len(), 4, "readiness is reused: {verbs:?}");
+    assert_eq!(
+        *seen.lock().expect("count"),
+        1,
+        "no notice when nothing changed"
+    );
+
+    // With the review closed nothing refreshes, and the label turns stale.
+    pr.want(PrDemand::Review(git.repo.clone(), false));
+    *now.lock().expect("clock") += Duration::from_secs(301);
+    pr.tick();
+    assert_eq!(read_log(&stub.log).len(), 4);
+    let (_, stale) = pr.for_branch(&git.repo, branch).expect("a label");
+    assert!(stale, "older than five minutes");
+}
+
 /// Every recording is public-safe by allowlist.
 #[test]
 fn recordings_are_public_safe() {
@@ -350,9 +467,35 @@ fn check_public_safe(path: &Path, text: &str) {
     for cwd in find_cwds(text) {
         assert_eq!(cwd, "<tmp>", "{}", path.display());
     }
-    for token in find_path_tokens(text) {
+    // Paths are looked for in the decoded strings: in a raw JSON line a newline is the two
+    // characters backslash and n, which would run a path into the text after it.
+    for token in find_path_tokens(&decoded_strings(text)) {
         assert_eq!(token, "/dev/null", "{}: {token}", path.display());
     }
+}
+
+/// Every string value in a JSON document, one per line. Text that is not JSON is returned
+/// as it is.
+fn decoded_strings(text: &str) -> String {
+    fn collect(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(text) => out.push(text.clone()),
+            serde_json::Value::Array(items) => items.iter().for_each(|item| collect(item, out)),
+            // Hermes's own branding (the handshake's `skin`, whose welcome line names `/help`)
+            // holds slash commands, not paths; every other field is scanned.
+            serde_json::Value::Object(map) => map
+                .iter()
+                .filter(|(key, _)| key.as_str() != "skin")
+                .for_each(|(_, item)| collect(item, out)),
+            _ => {}
+        }
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return text.to_owned();
+    };
+    let mut strings = Vec::new();
+    collect(&value, &mut strings);
+    strings.join("\n")
 }
 
 fn find_urls(text: &str) -> Vec<String> {

@@ -35,58 +35,63 @@ fn status_v2_rows_from_real_git() {
 
     // Unstaged modification.
     write(&repo, "a.txt", "one\ntwo\n");
-    // Staged modification: committed, edited, added.
+    // Commit the base files first, so the staged rows below stay staged.
     write(&repo, "b.txt", "b\n");
-    git.ok(&repo, &["add", "b.txt"]);
-    git.commit(&repo, "add b");
-    write(&repo, "b.txt", "b changed\n");
-    git.ok(&repo, &["add", "b.txt"]);
-    // Unstaged modification of a second file.
     write(&repo, "c.txt", "c\n");
-    git.ok(&repo, &["add", "c.txt"]);
-    git.commit(&repo, "add c");
-    write(&repo, "c.txt", "c changed\n");
-    // Added.
-    write(&repo, "new.txt", "new\n");
-    git.ok(&repo, &["add", "new.txt"]);
-    // Deleted.
     write(&repo, "gone.txt", "gone\n");
-    git.ok(&repo, &["add", "gone.txt"]);
-    git.commit(&repo, "add gone");
-    std::fs::remove_file(repo.join("gone.txt")).expect("remove file");
-    // Renamed.
     write(&repo, "old.txt", "old\n");
-    git.ok(&repo, &["add", "old.txt"]);
-    git.commit(&repo, "add old");
-    git.ok(&repo, &["mv", "old.txt", "new-name.txt"]);
-    // Copied: the original is unchanged and the copy is added. Copies are only
-    // detected with the copies flag, which this parser test passes so the `C`
-    // row exists to parse.
     write(&repo, "orig.txt", "same\n");
-    git.ok(&repo, &["add", "orig.txt"]);
-    git.commit(&repo, "add orig");
-    std::fs::copy(repo.join("orig.txt"), repo.join("copy.txt")).expect("copy file");
-    git.ok(&repo, &["add", "copy.txt"]);
-    // Type change: a file becomes a symlink.
     write(&repo, "link.txt", "target\n");
-    git.ok(&repo, &["add", "link.txt"]);
-    git.commit(&repo, "add link");
-    std::fs::remove_file(repo.join("link.txt")).expect("remove link target");
-    std::os::unix::fs::symlink("a.txt", repo.join("link.txt")).expect("symlink");
-    // Conflicted: two branches change one file.
     write(&repo, "clash.txt", "base\n");
-    git.ok(&repo, &["add", "clash.txt"]);
-    git.commit(&repo, "add clash");
+    git.ok(
+        &repo,
+        &[
+            "add",
+            "b.txt",
+            "c.txt",
+            "gone.txt",
+            "old.txt",
+            "orig.txt",
+            "link.txt",
+            "clash.txt",
+        ],
+    );
+    git.commit(&repo, "add base files");
+    // Conflicted: two branches change one file.
     git.ok(&repo, &["checkout", "-q", "-b", "side"]);
     write(&repo, "clash.txt", "side\n");
     git.ok(&repo, &["add", "clash.txt"]);
     git.commit(&repo, "side change");
     git.ok(&repo, &["checkout", "-q", "main"]);
+    // Everything so far is on origin; the next commit is the one that is ahead.
+    git.ok(&repo, &["push", "-q", "origin", "main"]);
     write(&repo, "clash.txt", "main\n");
     git.ok(&repo, &["add", "clash.txt"]);
     git.commit(&repo, "main change");
     let merge = git.run(&repo, &["merge", "side"]);
     assert!(!merge.status.success(), "the merge should conflict");
+    // Staged modification.
+    write(&repo, "b.txt", "b changed\n");
+    git.ok(&repo, &["add", "b.txt"]);
+    // Unstaged modification of a second file.
+    write(&repo, "c.txt", "c changed\n");
+    // Added.
+    write(&repo, "new.txt", "new\n");
+    git.ok(&repo, &["add", "new.txt"]);
+    // Deleted.
+    std::fs::remove_file(repo.join("gone.txt")).expect("remove file");
+    // Renamed.
+    git.ok(&repo, &["mv", "old.txt", "new-name.txt"]);
+    // Copied: the copy is added and the original changes in the same step, because
+    // git only offers a modified file as the source of a copy. Copies are only
+    // detected with the copies flag, which this parser test passes so the `C`
+    // row exists to parse.
+    std::fs::copy(repo.join("orig.txt"), repo.join("copy.txt")).expect("copy file");
+    write(&repo, "orig.txt", "same\nand more\n");
+    git.ok(&repo, &["add", "copy.txt", "orig.txt"]);
+    // Type change: a file becomes a symlink.
+    std::fs::remove_file(repo.join("link.txt")).expect("remove link target");
+    std::os::unix::fs::symlink("a.txt", repo.join("link.txt")).expect("symlink");
     // Untracked.
     write(&repo, "untracked.txt", "untracked\n");
     // Ahead one, behind one.
@@ -149,20 +154,24 @@ fn numstat_z_renames_and_binary() {
     let git = GitBytes::new();
     let repo = git.repo.clone();
 
-    // A staged rename with an edit, so both counts are non-zero.
-    write(&repo, "before.txt", "one\ntwo\nthree\n");
-    git.ok(&repo, &["add", "before.txt"]);
-    git.commit(&repo, "add before");
-    git.ok(&repo, &["mv", "before.txt", "after.txt"]);
-    write(&repo, "after.txt", "one\nTWO\nthree\nfour\n");
-    git.ok(&repo, &["add", "after.txt"]);
-    // A binary file: NUL bytes, staged and unstaged.
+    // A binary file and a plain file, committed first so that the changes below
+    // stay staged or unstaged.
     std::fs::write(repo.join("blob.bin"), [0x89, b'P', b'N', b'G', 0, 1, 2, 3])
         .expect("binary file");
     git.ok(&repo, &["add", "blob.bin"]);
     write(&repo, "plain.txt", "a\nb\n");
     git.ok(&repo, &["add", "plain.txt"]);
-    git.commit(&repo, "add binary and plain");
+    write(&repo, "before.txt", "one\ntwo\nthree\n");
+    git.ok(&repo, &["add", "before.txt"]);
+    git.commit(&repo, "add binary, plain and before");
+    // A staged rename with an edit, so both counts are non-zero.
+    git.ok(&repo, &["mv", "before.txt", "after.txt"]);
+    write(&repo, "after.txt", "one\nTWO\nthree\nfour\n");
+    git.ok(&repo, &["add", "after.txt"]);
+    // The binary file changes twice: once staged, once more unstaged.
+    std::fs::write(repo.join("blob.bin"), [0x89, b'P', b'N', b'G', 0, 4, 5, 6])
+        .expect("stage a binary change");
+    git.ok(&repo, &["add", "blob.bin"]);
     std::fs::write(repo.join("blob.bin"), [0x89, b'P', b'N', b'G', 0, 9, 9, 9])
         .expect("change binary");
 
@@ -345,12 +354,14 @@ fn push_porcelain_flags() {
         report.refs
     );
 
-    // Forced: rewrite, then push over the origin in the temporary folder.
+    // Forced: publish a commit, rewrite it, then push over the origin in the
+    // temporary folder.
     git.ok(&repo, &["fetch", "-q", "origin"]);
     git.ok(&repo, &["reset", "-q", "--hard", "origin/main"]);
     write(&repo, "forced.txt", "forced\n");
     git.ok(&repo, &["add", "forced.txt"]);
     git.commit(&repo, "forced change");
+    git.ok(&repo, &["push", "-q", "origin", "main"]);
     git.ok(&repo, &["reset", "-q", "--soft", "HEAD~1"]);
     write(&repo, "forced.txt", "rewritten\n");
     git.ok(&repo, &["add", "forced.txt"]);
@@ -360,8 +371,8 @@ fn push_porcelain_flags() {
     let report = parse_push_porcelain(&String::from_utf8_lossy(&forced.stdout));
     assert!(!report.rejected);
     assert!(
-        report.refs.iter().any(|(flag, _)| *flag == '*'),
-        "a forced update carries `*`: {:?}",
+        report.refs.iter().any(|(flag, _)| *flag == '+'),
+        "a forced update carries `+`: {:?}",
         report.refs
     );
 }

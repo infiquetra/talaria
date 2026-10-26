@@ -68,6 +68,8 @@ async fn fleet_v_opens_review_and_esc_returns() {
 
     let key = row("local-fleet");
     let mut fleet = FleetViewState::new(Some(key.clone()), 1.0);
+    // The cursor sits on a listed row; a fleet view with no rows has nothing to review.
+    let _ = talaria_core::fleet_view::update(&mut fleet, snapshot(&key), 10);
     let effects = talaria_core::fleet_view::update(
         &mut fleet,
         FleetViewInput::Action(FleetAction::Review),
@@ -96,8 +98,8 @@ async fn fleet_v_opens_review_and_esc_returns() {
         pr,
     );
     let target = ReviewTarget {
-        folder: PathBuf::from("repo"),
-        main_root: PathBuf::from("repo"),
+        folder: git.repo.clone(),
+        main_root: git.repo.clone(),
         session: Some(key.clone()),
         record: None,
         title: "repo".to_owned(),
@@ -110,8 +112,47 @@ async fn fleet_v_opens_review_and_esc_returns() {
         )),
         "opening reads the listing: {effects:?}"
     );
+    let closed = service.update(ReviewInput::Key(ReviewKey::Esc));
+    assert!(
+        closed.contains(&ReviewEffect::Close),
+        "Esc closes the review: {closed:?}"
+    );
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     service.execute(ReviewEffect::Close, tx);
+    assert_eq!(fleet.cursor(), Some(&key), "the fleet cursor is unchanged");
+}
+
+/// A fleet snapshot listing one working row.
+fn snapshot(key: &RowKey) -> FleetViewInput {
+    let row = talaria_core::fleet::FleetRow {
+        key: key.clone(),
+        title: "work".to_owned(),
+        model: None,
+        source: Some("tui".to_owned()),
+        started_at: Some(0.5),
+        message_count: 2,
+        state: talaria_core::fleet::RowState::Working,
+        state_since: 0.5,
+        outcome: None,
+        foreground: false,
+        subscribed: false,
+        stale: false,
+        gone: false,
+        unlisted: false,
+        activity: None,
+        cost_usd: None,
+    };
+    FleetViewInput::Snapshot {
+        version: 1,
+        rows: vec![row],
+        queue: Vec::new(),
+        profiles: vec![(
+            "fixture".to_owned(),
+            talaria_core::fleet::ProfileStatus::Listed { truncated: false },
+        )],
+        scope_note: None,
+        link_note: None,
+    }
 }
 
 /// `/changes` opens the foreground folder; usage and no-folder texts hold.
@@ -261,8 +302,17 @@ async fn review_keys_through_key_map() {
     );
     let _ = service.open(target.clone(), 1.0);
 
-    // Shift+x twice discards the row; Esc unwinds.
+    // Shift+x twice discards the row; Esc unwinds. The review lists one untracked file first.
+    std::fs::write(git.repo.join("scratch.txt"), "scratch\n").expect("untracked file");
+    let listing =
+        talaria_app::review::list(&runner, &target, talaria_core::review::Scope::Uncommitted)
+            .await
+            .expect("the listing");
     let (mut state, _) = ReviewState::open(target, 1.0);
+    let _ = state.update(ReviewInput::Listed {
+        scope: talaria_core::review::Scope::Uncommitted,
+        result: Ok(listing),
+    });
     let first = state.update(ReviewInput::Key(ReviewKey::Discard));
     assert!(
         !first

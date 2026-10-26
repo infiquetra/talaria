@@ -71,7 +71,7 @@ pub fn write_reply_stub(dir: &Path, replies: &[Reply]) -> GhStub {
         let err = dir.join(format!("reply-{index}.err"));
         std::fs::write(&out, &reply.stdout).expect("reply stdout");
         std::fs::write(&err, &reply.stderr).expect("reply stderr");
-        let prefix = shell_pattern(&reply.args_prefix.join(" "));
+        let prefix = shell_quote(&reply.args_prefix.join(" "));
         script.push_str(&format!(
             "case \"$*\" in\n{prefix}*)\n  cat {}\n  cat {} >&2\n  exit {}\n  ;;\nesac\n",
             shell_quote(&out.to_string_lossy()),
@@ -100,7 +100,7 @@ pub fn write_counting_stub(dir: &Path, replies: &[Reply], sleep_secs: u64) -> Gh
         let err = dir.join(format!("reply-{index}.err"));
         std::fs::write(&out, &reply.stdout).expect("reply stdout");
         std::fs::write(&err, &reply.stderr).expect("reply stderr");
-        let prefix = shell_pattern(&reply.args_prefix.join(" "));
+        let prefix = shell_quote(&reply.args_prefix.join(" "));
         script.push_str(&format!(
             "case \"$*\" in\n{prefix}*)\n  cat {}\n  cat {} >&2\n  exit {}\n  ;;\nesac\n",
             shell_quote(&out.to_string_lossy()),
@@ -145,16 +145,4 @@ fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
 
 fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
-}
-
-/// Escape a `case` pattern so only the trailing `*` stays magic.
-fn shell_pattern(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if matches!(ch, '*' | '?' | '[' | ']' | '\\') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
 }

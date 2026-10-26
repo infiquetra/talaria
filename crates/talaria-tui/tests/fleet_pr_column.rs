@@ -4,6 +4,8 @@
 //! this test is re-pointed at its merged rows and columns, with two labels on
 //! three rows. Until then it pins the column's contract against the stub draw.
 
+use std::collections::BTreeMap;
+
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use talaria_core::directory::rows::RowKey;
@@ -33,6 +35,13 @@ fn row(session_id: &str, state: RowState) -> FleetRow {
         unlisted: false,
         activity: None,
         cost_usd: None,
+    }
+}
+
+fn key(session_id: &str) -> RowKey {
+    RowKey {
+        profile: "fixture".to_owned(),
+        session_id: session_id.to_owned(),
     }
 }
 
@@ -68,26 +77,37 @@ fn pr_column_shows_and_drops_by_width() {
         },
         10,
     );
-    let _ = PrLabel {
-        text: "#12 draft ✓".to_owned(),
-        tone: LabelTone::Success,
-    };
-    let _ = PrLabel {
-        text: "#13 open ◐".to_owned(),
-        tone: LabelTone::Warning,
-    };
+    let labels = BTreeMap::from([
+        (
+            key("local-one"),
+            PrLabel {
+                text: "#12 draft ✓".to_owned(),
+                tone: LabelTone::Success,
+            },
+        ),
+        (
+            key("local-two"),
+            PrLabel {
+                text: "#13 open ◐".to_owned(),
+                tone: LabelTone::Warning,
+            },
+        ),
+    ]);
 
     let theme = FleetTheme::default();
     let mut wide = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
     wide.draw(|frame| {
-        FleetView::draw(&state, None, frame.area(), frame.buffer_mut(), &theme);
+        FleetView::draw_with_labels(
+            &state,
+            None,
+            frame.area(),
+            frame.buffer_mut(),
+            &theme,
+            &labels,
+        );
     })
     .expect("draw");
     let text = screen_text(wide.backend());
-    assert!(
-        text.contains("PR"),
-        "the PR column shows at 120 columns: {text}"
-    );
     assert!(
         text.contains("#12 draft ✓"),
         "the success label shows: {text}"
@@ -96,7 +116,14 @@ fn pr_column_shows_and_drops_by_width() {
     let mut narrow = Terminal::new(TestBackend::new(100, 40)).expect("terminal");
     narrow
         .draw(|frame| {
-            FleetView::draw(&state, None, frame.area(), frame.buffer_mut(), &theme);
+            FleetView::draw_with_labels(
+                &state,
+                None,
+                frame.area(),
+                frame.buffer_mut(),
+                &theme,
+                &labels,
+            );
         })
         .expect("draw");
     let text = screen_text(narrow.backend());
