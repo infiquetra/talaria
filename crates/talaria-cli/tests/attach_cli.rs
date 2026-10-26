@@ -14,7 +14,14 @@ use support::Launch;
 const NOW: f64 = 1_792_700_000.0;
 
 fn temp_home() -> tempfile::TempDir {
-    tempfile::tempdir().expect("home")
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir(home.path().join(".talaria")).expect("config folder");
+    std::fs::write(
+        home.path().join(".talaria/config.toml"),
+        "[fleet]\nenabled = false\n",
+    )
+    .expect("disable unrelated fleet polling");
+    home
 }
 
 fn full_id(hex8: &str) -> String {
@@ -23,6 +30,10 @@ fn full_id(hex8: &str) -> String {
 
 fn type_line(terminal: &mut support::Terminal, text: &str) {
     terminal.type_keys(text);
+    assert!(
+        terminal.wait_for_text(text, Duration::from_secs(10)),
+        "draft was not drawn"
+    );
     std::thread::sleep(Duration::from_millis(250));
     terminal.type_keys("\r");
 }
