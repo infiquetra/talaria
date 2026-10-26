@@ -581,7 +581,9 @@ impl Composer {
             | Action::QueueMoveDown
             | Action::QueueLeave
             | Action::ComposerSendNow
-            | Action::ComposerSteer => {}
+            | Action::ComposerSteer
+            // The jump key never edits the draft; it opens the fleet view.
+            | Action::AttentionNext => {}
             // Panel actions never edit the draft; the panel owns them. Issue #242.
             Action::AgentsPanel
             | Action::AgentsUp
@@ -599,8 +601,6 @@ impl Composer {
             | Action::AgentsPageDown
             | Action::AgentsTop
             | Action::AgentsBottom => {}
-            | Action::ComposerSteer
-            | Action::AttentionNext => {}
             // Picker actions never edit the draft; the picker owns them.
             Action::SessionPickerOpen
             | Action::PickerUp

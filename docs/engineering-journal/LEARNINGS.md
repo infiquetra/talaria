@@ -5404,3 +5404,23 @@ that test connection before completion. **Mechanism.** A side agent can return a
 tool result as its answer instead of exposing an answerable card on the parent stream.
 **Rule.** Report the observed background answer and preserve the normal approval path; never retry
 the command with an approval-bypassing option.
+
+## 2026-10-26 — Background completions need a scope, not a switch
+
+**Evidence.** At Hermes v0.22.4 a scheduled run is a session with `source='cron'`, and the live
+listing skips only the internal sources (`kanban`, `tool`, `oneshot`), so scheduled runs and other
+clients' sessions appear in the fleet and finish all day. Hermes Desktop's own notification
+settings say the same in a comment: the completion kinds fire only for the active session, "so a
+busy gateway (messaging, kanban, cron) can't spam a toast per background session". Talaria's
+default follows: `[notifications] fleet_finished` is `watched`, so a background turn that finishes
+alerts only when this Talaria has touched that session
+(`crates/talaria-core/src/fleet_attention.rs`, the `finished` scope and the watched set).
+
+**Mechanism.** A switch cannot be right for both kinds of session: the one the operator
+dispatched and the one a cron job started. The scope separates them by what the operator did,
+not by what the session is, and it needs no new state from the fleet, because the tracker
+already knows which rows it has seen foreground or subscribed.
+
+**Generalizable rule.** Alert on a background event by default only for the sessions the user
+touched, make anything wider an explicit opt-in, and keep the counter that shows what the
+narrower rule skipped.

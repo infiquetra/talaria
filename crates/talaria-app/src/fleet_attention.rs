@@ -1,15 +1,25 @@
 //! Decide fleet notices: hold them until the snapshot, then emit effects.
 
-#![allow(dead_code, unused_variables)]
-
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use talaria_core::alert_gate::AlertGate;
-use talaria_core::attention::Alert;
-use talaria_core::fleet::RowKey;
+use talaria_core::attention::{Alert, AlertKind};
+use talaria_core::fleet::{NeedId, ProfileStatus, RowKey, RowState};
 use talaria_core::fleet_attention::{FleetAttention, FleetAttentionConfig};
 
-use crate::fleet::{FleetNotice, FleetSnapshot};
+use crate::fleet::{FleetLinkState, FleetNotice, FleetSnapshot};
+
+/// The window in which one alert passes. Every alert, foreground and background, shares it.
+const GATE_WINDOW: Duration = Duration::from_secs(2);
+
+/// The sentence the jump key gives when the fleet view is off.
+const FLEET_OFF: &str =
+    "The fleet view is off: [fleet] enabled = false in Talaria's configuration.";
+/// The sentence the jump key gives while the fleet is still listing.
+const FLEET_LOADING: &str = "The fleet is still loading; try again in a moment.";
+/// The sentence the jump key gives when nothing waits.
+const NOTHING_WAITING: &str = "Nothing in the background needs you.";
 
 /// Status-line counters. `needs_you` counts requests; the others count background rows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -26,8 +36,25 @@ pub struct StatusCounts {
 
 /// Counters for the status line. Without a snapshot, only `foreground_open` is kept.
 pub fn status_counts(foreground_open: u32, snapshot: Option<&FleetSnapshot>) -> StatusCounts {
-    let _ = (foreground_open, snapshot);
-    todo!("status counts")
+    let (items, working, failed, done) = snapshot.map_or((0, 0, 0, 0), |snapshot| {
+        (
+            snapshot.counts.needs_you_items,
+            snapshot.counts.working,
+            snapshot.counts.failed,
+            snapshot.counts.done,
+        )
+    });
+    StatusCounts {
+        needs_you: foreground_open.saturating_add(count(items)),
+        working: count(working),
+        failed: count(failed),
+        done: count(done),
+    }
+}
+
+/// A background count, saturated into the status line's own width.
+fn count(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 /// Where the jump key goes.
@@ -41,8 +68,40 @@ pub enum NextNeed {
 
 /// The oldest background request, or the sentence that says why there is none.
 pub fn next_need(snapshot: Option<&FleetSnapshot>, fleet_enabled: bool) -> NextNeed {
-    let _ = (snapshot, fleet_enabled);
-    todo!("next need")
+    if !fleet_enabled {
+        return NextNeed::Notice(FLEET_OFF.to_owned());
+    }
+    let Some(snapshot) = snapshot else {
+        return NextNeed::Notice(FLEET_LOADING.to_owned());
+    };
+    // A request that is already listed is always reachable, even while the link is down.
+    if let Some(item) = snapshot
+        .queue
+        .iter()
+        .filter(|item| !item.foreground)
+        .min_by_key(|item| item.seq)
+    {
+        return NextNeed::Peek(item.id.key.clone());
+    }
+    match &snapshot.link {
+        FleetLinkState::Failed { reason } => {
+            NextNeed::Notice(format!("The fleet is not available: {reason}."))
+        }
+        FleetLinkState::Connecting | FleetLinkState::Reconnecting { .. } => {
+            NextNeed::Notice(FLEET_LOADING.to_owned())
+        }
+        FleetLinkState::Connected => {
+            if snapshot
+                .profiles
+                .iter()
+                .any(|(_, status)| matches!(status, ProfileStatus::Loading))
+            {
+                NextNeed::Notice(FLEET_LOADING.to_owned())
+            } else {
+                NextNeed::Notice(NOTHING_WAITING.to_owned())
+            }
+        }
+    }
 }
 
 /// What one notice or wake asks the application to do.
@@ -61,8 +120,28 @@ pub const HOLD_LIMIT: Duration = Duration::from_secs(1);
 /// The most notices held at once. The oldest is decided when another arrives.
 pub const HOLD_MAX: usize = 64;
 
+/// One notice waiting for the snapshot that describes it.
+#[derive(Clone)]
+struct Held {
+    /// Which alert.
+    kind: AlertKind,
+    /// The row it belongs to.
+    key: RowKey,
+    /// The queue item, when the alert is a need opening.
+    need: Option<NeedId>,
+    /// When the notice has to be decided.
+    deadline: Instant,
+}
+
 /// The fleet tracker, the shared gate, and notices waiting for a snapshot.
-pub struct AttentionHub;
+pub struct AttentionHub {
+    tracker: FleetAttention,
+    gate: AlertGate,
+    held: VecDeque<Held>,
+    key_label: Option<String>,
+    /// Whether the fleet was listing when the last snapshot came.
+    listing: bool,
+}
 
 impl AttentionHub {
     /// A hub with an empty hold queue.
@@ -71,8 +150,13 @@ impl AttentionHub {
         foreground_profile: String,
         key_label: Option<String>,
     ) -> AttentionHub {
-        let _ = (cfg, foreground_profile, key_label);
-        todo!("attention hub")
+        AttentionHub {
+            tracker: FleetAttention::new(cfg, foreground_profile),
+            gate: AlertGate::new(GATE_WINDOW),
+            held: VecDeque::new(),
+            key_label,
+            listing: false,
+        }
     }
 
     /// One fleet notice, decided now or held until the snapshot agrees.
@@ -82,43 +166,231 @@ impl AttentionHub {
         latest: &FleetSnapshot,
         at: Instant,
     ) -> HubOutput {
-        let _ = (notice, latest, at);
-        todo!("attention hub")
+        let mut out = HubOutput::default();
+        match notice {
+            FleetNotice::Changed(snapshot) => {
+                self.observe_fleet(snapshot, at);
+                self.decide_ready(latest, at, &mut out);
+            }
+            FleetNotice::Attention {
+                kind,
+                key,
+                need,
+                foreground,
+            } => {
+                // The foreground session has its own tracker; its notices never wait here.
+                if *foreground {
+                    out.wake_at = self.next_wake();
+                    return out;
+                }
+                if self.needs_hold(*kind, key, need.as_ref(), latest) {
+                    self.hold(
+                        Held {
+                            kind: *kind,
+                            key: key.clone(),
+                            need: need.clone(),
+                            deadline: at + HOLD_LIMIT,
+                        },
+                        latest,
+                        at,
+                        &mut out,
+                    );
+                } else {
+                    self.decide(*kind, key, need.as_ref(), latest, at, &mut out);
+                }
+            }
+        }
+        out.wake_at = self.next_wake();
+        out
     }
 
     /// A foreground alert passes the same gate as fleet alerts.
     pub fn on_foreground_alert(&mut self, alert: Alert, at: Instant) -> Option<Alert> {
-        let _ = (alert, at);
-        todo!("attention hub")
+        self.gate.admit(alert, at)
     }
 
     /// A wake: decide held notices whose deadline has passed, then the start-up notice.
     pub fn on_wake(&mut self, at: Instant, latest: Option<&FleetSnapshot>) -> HubOutput {
-        let _ = (at, latest);
-        todo!("attention hub")
+        let mut out = HubOutput::default();
+        let expired: Vec<Held> = self
+            .held
+            .iter()
+            .filter(|held| held.deadline <= at)
+            .cloned()
+            .collect();
+        for held in expired {
+            self.forget(&held);
+            let empty = empty_snapshot();
+            let snapshot = latest.unwrap_or(&empty);
+            self.decide(
+                held.kind,
+                &held.key,
+                held.need.as_ref(),
+                snapshot,
+                at,
+                &mut out,
+            );
+        }
+        let sessions = latest.map_or(0, |snapshot| snapshot.counts.needs_you);
+        out.notice = self
+            .tracker
+            .on_wake(at, sessions, self.key_label.as_deref());
+        out.wake_at = self.next_wake();
+        out
     }
 
     /// The profile whose rows are not prefixed in a label.
     pub fn set_foreground_profile(&mut self, profile: String) {
-        let _ = profile;
-        todo!("attention hub")
+        self.tracker.set_foreground_profile(profile);
+    }
+
+    /// One snapshot of the fleet: the quiet window, the watched rows and the turn marks.
+    fn observe_fleet(&mut self, snapshot: &FleetSnapshot, at: Instant) {
+        let connected = matches!(snapshot.link, FleetLinkState::Connected);
+        let listing = connected
+            && snapshot
+                .profiles
+                .iter()
+                .any(|(_, status)| matches!(status, ProfileStatus::Loading));
+        let listed = !snapshot.profiles.is_empty() && !listing;
+        if !connected {
+            self.listing = false;
+            self.tracker.observe_link(false, at);
+        } else if listing && !self.listing {
+            // The fleet started listing: the quiet window opens, so a request that was
+            // already waiting does not ring the bell.
+            self.listing = true;
+            self.tracker.begin_discovery(at);
+        }
+        if listed {
+            // Every profile has listed: the window ends three seconds after this.
+            self.listing = false;
+            self.tracker.observe_settled(at);
+        }
+        self.tracker.set_link_connected(connected);
+        self.tracker.observe_rows(&snapshot.rows, at);
+    }
+
+    /// Whether a notice has to wait for a snapshot that describes it.
+    fn needs_hold(
+        &self,
+        kind: AlertKind,
+        key: &RowKey,
+        need: Option<&NeedId>,
+        latest: &FleetSnapshot,
+    ) -> bool {
+        let Some(row) = latest.rows.iter().find(|row| &row.key == key) else {
+            return true;
+        };
+        match kind {
+            AlertKind::NeedsYou => {
+                need.is_some_and(|id| !latest.queue.iter().any(|item| &item.id == id))
+            }
+            AlertKind::Done | AlertKind::Failed => {
+                !matches!(row.state, RowState::Done | RowState::Failed)
+            }
+        }
+    }
+
+    /// Keep a notice until its snapshot arrives.
+    fn hold(&mut self, held: Held, latest: &FleetSnapshot, at: Instant, out: &mut HubOutput) {
+        self.held.push_back(held);
+        while self.held.len() > HOLD_MAX {
+            let Some(oldest) = self.held.pop_front() else {
+                break;
+            };
+            self.decide(
+                oldest.kind,
+                &oldest.key,
+                oldest.need.as_ref(),
+                latest,
+                at,
+                out,
+            );
+        }
+    }
+
+    /// Forget a held notice.
+    fn forget(&mut self, held: &Held) {
+        self.held.retain(|waiting| {
+            !(waiting.key == held.key && waiting.need == held.need && waiting.kind == held.kind)
+        });
+    }
+
+    /// Decide every held notice the latest snapshot now describes.
+    fn decide_ready(&mut self, latest: &FleetSnapshot, at: Instant, out: &mut HubOutput) {
+        let ready: Vec<Held> = self
+            .held
+            .iter()
+            .filter(|held| !self.needs_hold(held.kind, &held.key, held.need.as_ref(), latest))
+            .cloned()
+            .collect();
+        for held in ready {
+            self.forget(&held);
+            self.decide(held.kind, &held.key, held.need.as_ref(), latest, at, out);
+        }
+    }
+
+    /// Decide one notice and pass its alert through the shared gate.
+    fn decide(
+        &mut self,
+        kind: AlertKind,
+        key: &RowKey,
+        need: Option<&NeedId>,
+        latest: &FleetSnapshot,
+        at: Instant,
+        out: &mut HubOutput,
+    ) {
+        let row = latest.rows.iter().find(|row| &row.key == key);
+        let detail = need
+            .and_then(|id| latest.queue.iter().find(|item| &item.id == id))
+            .map(|item| &item.detail);
+        let Some(alert) = self
+            .tracker
+            .on_attention(kind, key, need, detail, false, row, at)
+        else {
+            return;
+        };
+        if let Some(alert) = self.gate.admit(alert, at) {
+            out.alerts.push(alert);
+        }
+    }
+
+    /// The next instant the hub wants to be woken at.
+    fn next_wake(&self) -> Option<Instant> {
+        let window = self.tracker.window_end();
+        let held = self.held.iter().map(|held| held.deadline).min();
+        match (window, held) {
+            (Some(window), Some(held)) => Some(window.min(held)),
+            (Some(window), None) => Some(window),
+            (None, Some(held)) => Some(held),
+            (None, None) => None,
+        }
+    }
+}
+
+/// The snapshot a wake falls back on when no snapshot has arrived.
+pub fn empty_snapshot() -> FleetSnapshot {
+    FleetSnapshot {
+        version: 0,
+        scope: crate::side_connection::SideScope::ProfileOnly {
+            profile: String::new(),
+            why: String::new(),
+        },
+        link: FleetLinkState::Connecting,
+        profiles: Vec::new(),
+        rows: Vec::new(),
+        queue: Vec::new(),
+        counts: talaria_core::fleet::FleetCounts::default(),
+        diagnostics: Vec::new(),
+        as_of: 0.0,
     }
 }
 
 /// Wait until `at`, then call `send` once.
 pub fn wake_task(at: Instant, send: impl FnOnce() + Send + 'static) -> tokio::task::JoinHandle<()> {
-    let _ = (at, send);
-    todo!("wake task")
-}
-
-/// Keep the gate type in this module's public surface for the application wiring.
-#[allow(dead_code)]
-fn _gate(gate: AlertGate) -> AlertGate {
-    gate
-}
-
-/// Keep the tracker type referenced until the hub stores one.
-#[allow(dead_code)]
-fn _tracker(tracker: FleetAttention) -> FleetAttention {
-    tracker
+    tokio::spawn(async move {
+        tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await;
+        send();
+    })
 }

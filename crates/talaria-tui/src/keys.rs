@@ -621,7 +621,7 @@ impl Action {
             | Self::ComposerSendNow
             | Self::ComposerSteer
             | Self::AgentsPanel => KeyContext::Composer,
-            | Self::AttentionNext => KeyContext::Composer,
+            Self::AttentionNext => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
             | Self::PagerPageUp
@@ -808,7 +808,7 @@ impl Action {
             Self::AgentsPageDown => &["pagedown"],
             Self::AgentsTop => &["g", "home"],
             Self::AgentsBottom => &["shift+g", "end"],
-            Self::AttentionNext => &[],
+            Self::AttentionNext => &["alt+a"],
         }
     }
 }

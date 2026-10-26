@@ -683,7 +683,25 @@ fn read_comforts(table: &str, section: &Table, config: &mut Config, notices: &mu
                 if key=="bell" { config.notifications.bell=kinds; } else { config.notifications.desktop=kinds; }
             }
             ("notifications", "fleet_needs_you" | "fleet_finished") => {
-                let _ = value;
+                let scope = match value.as_str() {
+                    Some("all") => Some(FleetScope::All),
+                    Some("watched") => Some(FleetScope::Watched),
+                    Some("off") => Some(FleetScope::Off),
+                    _ => None,
+                };
+                match (key.as_str(), scope) {
+                    ("fleet_needs_you", Some(scope)) => config.notifications.fleet_needs_you = scope,
+                    ("fleet_needs_you", None) => notices.push(
+                        "[notifications] fleet_needs_you must be \"all\", \"watched\" or \"off\"; using \"all\"."
+                            .into(),
+                    ),
+                    ("fleet_finished", Some(scope)) => config.notifications.fleet_finished = scope,
+                    ("fleet_finished", None) => notices.push(
+                        "[notifications] fleet_finished must be \"all\", \"watched\" or \"off\"; using \"watched\"."
+                            .into(),
+                    ),
+                    _ => {}
+                }
             }
             _ => notices.push(unknown_setting(table,key)),
         }

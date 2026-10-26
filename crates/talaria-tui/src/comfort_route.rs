@@ -53,6 +53,7 @@ pub fn route(action: Option<Action>, focus: Focus) -> Route {
         Focus::Composer => match action {
             Some(Action::OpenEditor) => Route::OpenEditor,
             Some(Action::HistorySearch) => Route::HistorySearch,
+            Some(Action::AttentionNext) => Route::AttentionNext,
             _ => Route::Composer,
         },
     }
