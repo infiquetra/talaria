@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 21] = [
+const NAMES: [&str; 22] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -39,6 +39,7 @@ const NAMES: [&str; 21] = [
     "queue-steer",
     "queue-move-send-now",
     "fleet-registry",
+    "fleet-peek",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -68,6 +69,8 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         ],
         // The finished turn, then the probe turn after its approval was denied.
         "fleet-registry" => &["complete", "complete"],
+        // The shell command, the queued reply, and the denied command, across two sessions.
+        "fleet-peek" => &["complete", "complete", "complete"],
         _ => &["complete"],
     }
 }
@@ -99,8 +102,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 21,
-        "expected twenty-one fixtures in fixtures/frames, found {}",
+        files.len() == 22,
+        "expected twenty-two fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -179,7 +182,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 21);
+    assert_eq!(fixtures.len(), 22);
 }
 
 #[test]
@@ -671,6 +674,20 @@ fn scenario_evidence_present() {
                 assert!(
                     position(&events, "approval.request", 0).is_some(),
                     "{name}: no approval.request"
+                );
+            }
+            "fleet-peek" => {
+                let text = serde_json::to_string(&events).unwrap_or_default();
+                assert!(text.contains("peek-ok"), "{name}: no peek-ok cell");
+                assert!(
+                    position(&events, "approval.settled", 0).is_some(),
+                    "{name}: no approval.settled"
+                );
+                assert!(
+                    !records.iter().any(|record| {
+                        record["dir"] == "out" && record["frame"]["method"] == "session.interrupt"
+                    }),
+                    "{name}: a session.interrupt was sent"
                 );
             }
             "queue-edit-remove" | "queue-steer" | "queue-move-send-now" => {

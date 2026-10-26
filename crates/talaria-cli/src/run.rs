@@ -29,6 +29,7 @@ use talaria_app::connection::OpenConnection;
 use talaria_app::context::ContextBlock;
 use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
+use talaria_app::peek::CardAnswer;
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
 use talaria_core::appearance::ThemeReport;
 use talaria_core::attachments::CollapseRule;
@@ -36,6 +37,7 @@ use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
 use talaria_core::checklist::ChecklistCommit;
 use talaria_core::commands::PaletteInput;
 use talaria_core::directory::state::{PickerAction, PickerInput, PickerMode, PickerState};
+use talaria_core::fleet_view::{FleetAction, FleetViewInput, FleetViewState, Focus as FleetFocus};
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
@@ -52,6 +54,7 @@ use talaria_tui::context_view::{
     CompactingSection, ContextStyle, compact_block, context_block, error_block, notice_block,
     prebuild_block, usage_block,
 };
+use talaria_tui::fleet_view::{FleetTheme, FleetView, PeekPanel};
 use talaria_tui::history::{CellLines, PlainCellLines};
 use talaria_tui::history_search::{HistorySearch, SearchOutcome};
 use talaria_tui::keys::{
@@ -129,6 +132,8 @@ enum Overlay {
     Models,
     /// The session picker.
     Sessions,
+    /// The fleet overlay.
+    Fleet,
 }
 
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
@@ -179,6 +184,8 @@ pub struct TuiScreen {
     rows: u16,
     picker: Option<ModelOverlay>,
     overlay: Overlay,
+    /// The card of the peeked background session, while the fleet overlay shows it.
+    peek_prompts: PromptStack,
     confirmation: Option<Confirmation>,
     confirmation_focused: Option<Instant>,
     /// The rewind overlay holds the alternate screen. Issue #233.
@@ -393,6 +400,39 @@ fn is_ctrl_c(key: &Key) -> bool {
         && !key.mods.super_key
         && !key.mods.other
         && matches!(key.code, KeyCode::Char('c' | 'C'))
+}
+
+/// The fleet overlay's action for a key map action.
+fn fleet_action(action: Action) -> Option<FleetAction> {
+    Some(match action {
+        Action::FleetUp => FleetAction::Up,
+        Action::FleetDown => FleetAction::Down,
+        Action::FleetPageUp => FleetAction::PageUp,
+        Action::FleetPageDown => FleetAction::PageDown,
+        Action::FleetTop => FleetAction::Top,
+        Action::FleetBottom => FleetAction::Bottom,
+        Action::FleetOpen => FleetAction::Open,
+        Action::FleetPeek => FleetAction::Peek,
+        Action::FleetReply => FleetAction::Reply,
+        Action::FleetStop => FleetAction::Stop,
+        Action::FleetAnswer => FleetAction::Answer,
+        Action::FleetFilter => FleetAction::Filter,
+        Action::FleetProfileNext => FleetAction::ProfileNext,
+        Action::FleetProfilePrev => FleetAction::ProfilePrev,
+        _ => return None,
+    })
+}
+
+/// A card intent in the peek's terms.
+fn card_answer(intent: PromptIntent) -> CardAnswer {
+    match intent {
+        PromptIntent::Approve { key, choice, note } => CardAnswer::Approve { key, choice, note },
+        PromptIntent::Clarify { key, answer } => CardAnswer::Clarify { key, answer },
+        PromptIntent::Masked { request_id, value } => CardAnswer::Masked {
+            request_id,
+            value: value.into_inner().to_string(),
+        },
+    }
 }
 
 /// The picker's input for one key, in the mode the picker is in.
@@ -857,6 +897,79 @@ impl TuiScreen {
         actions
     }
 
+    /// One key for the fleet overlay, by its focus.
+    fn fleet_key(
+        &mut self,
+        key: Key,
+        fleet: &FleetViewState,
+        view: &View<'_>,
+        now: Instant,
+    ) -> Vec<UserAction> {
+        if key.kind == KeyKind::Release {
+            return Vec::new();
+        }
+        let input = |input: FleetViewInput| vec![UserAction::Fleet(input)];
+        match fleet.focus() {
+            FleetFocus::Answer => {
+                // Ctrl+C goes back to the list; every other key, Esc included, is the card's.
+                if is_ctrl_c(&key) {
+                    return input(FleetViewInput::CtrlC);
+                }
+                let foreground = fleet
+                    .peek()
+                    .is_some_and(|(peeked, _)| Some(peeked.session_id.as_str()) == view.session_id);
+                let outcome = if foreground {
+                    self.prompts.handle_key(key, now)
+                } else {
+                    self.peek_prompts.handle_key(key, now)
+                };
+                match outcome {
+                    KeyOutcome::Consumed {
+                        intent: Some(intent),
+                        ..
+                    } => vec![UserAction::FleetAnswer(card_answer(intent))],
+                    _ => Vec::new(),
+                }
+            }
+            FleetFocus::Reply | FleetFocus::Filter => {
+                if is_escape(&key) {
+                    return input(FleetViewInput::Escape);
+                }
+                if is_ctrl_c(&key) {
+                    return input(FleetViewInput::CtrlC);
+                }
+                if let Some(character) = typed_character(&key) {
+                    return input(FleetViewInput::Text(character));
+                }
+                match key.code {
+                    KeyCode::Enter => input(FleetViewInput::Enter),
+                    KeyCode::Backspace => input(FleetViewInput::Backspace),
+                    KeyCode::Left => input(FleetViewInput::Left),
+                    KeyCode::Right => input(FleetViewInput::Right),
+                    KeyCode::Home => input(FleetViewInput::Home),
+                    KeyCode::End => input(FleetViewInput::End),
+                    _ => Vec::new(),
+                }
+            }
+            FleetFocus::List | FleetFocus::ConfirmStop => {
+                if is_escape(&key) {
+                    return input(FleetViewInput::Escape);
+                }
+                if is_ctrl_c(&key) {
+                    return input(FleetViewInput::CtrlC);
+                }
+                match self
+                    .keymap
+                    .resolve_in(&key, KeyContext::Fleet)
+                    .and_then(fleet_action)
+                {
+                    Some(action) => input(FleetViewInput::Action(action)),
+                    None => input(FleetViewInput::AnyOtherKey),
+                }
+            }
+        }
+    }
+
     fn draw_picker(&mut self) {
         if let Some(picker) = &self.picker {
             let view = picker.view();
@@ -1168,6 +1281,11 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                // The fleet overlay owns every key while it is open; in its answer focus the
+                // peeked session's card takes them.
+                if let Some(fleet) = view.fleet {
+                    return self.fleet_key(Key::from(raw), fleet, view, now);
+                }
                 // The session picker's overlay owns every key while it is open: nothing
                 // reaches the composer, the prompt cards or the running turn.
                 if self.overlay == Overlay::Sessions {
@@ -1187,6 +1305,9 @@ impl TuiScreen {
                 }
                 let key = Key::from(raw);
                 let action = self.keymap.resolve(&key, KeyContext::Composer);
+                if action == Some(Action::FleetViewOpen) {
+                    return vec![UserAction::FleetOpen];
+                }
                 let focus = if self.search.is_some() {
                     talaria_tui::comfort_route::Focus::Search
                 } else if self.composer.is_empty() && self.prompts.section().is_some() {
@@ -1359,6 +1480,14 @@ impl TuiScreen {
             Event::Paste(text) => {
                 if self.terminal.is_released() {
                     return Vec::new();
+                }
+                if let Some(fleet) = view.fleet {
+                    return match fleet.focus() {
+                        FleetFocus::Reply | FleetFocus::Filter => {
+                            vec![UserAction::Fleet(FleetViewInput::Paste(text))]
+                        }
+                        _ => Vec::new(),
+                    };
                 }
                 if self.overlay == Overlay::Sessions {
                     let Some(picker) = view.picker else {
@@ -1691,6 +1820,52 @@ impl Screen for TuiScreen {
         self.sync_session_picker(picker);
     }
 
+    fn sync_fleet(&mut self, view: &View<'_>) {
+        let Some(fleet) = view.fleet else {
+            self.close_overlay(Overlay::Fleet);
+            return;
+        };
+        self.open_overlay(Overlay::Fleet);
+        let now = Instant::now();
+        let peeked = fleet.peek().map(|(key, _)| key.clone());
+        if let Some(frame) = view
+            .peek
+            .filter(|frame| peeked.as_ref() == Some(&frame.key))
+        {
+            let open: Vec<&PromptCell> = frame.state.open_prompts().collect();
+            self.peek_prompts.sync(
+                Some(frame.key.session_id.as_str()),
+                &open,
+                &masked_views(&frame.masked),
+                true,
+                now,
+            );
+        }
+        let foreground = peeked
+            .as_ref()
+            .is_some_and(|key| Some(key.session_id.as_str()) == view.session_id);
+        let clock = unix_now();
+        let panel = if foreground {
+            view.state.map(|session| PeekPanel {
+                session,
+                stack: Some(&self.prompts),
+                now: clock,
+            })
+        } else {
+            view.peek
+                .filter(|frame| peeked.as_ref() == Some(&frame.key))
+                .map(|frame| PeekPanel {
+                    session: &frame.state,
+                    stack: Some(&self.peek_prompts),
+                    now: clock,
+                })
+        };
+        let theme = FleetTheme::with_key_map(&self.keymap);
+        let _ = self
+            .terminal
+            .draw_overlay(|area, buf| FleetView::draw(fleet, panel, area, buf, &theme));
+    }
+
     fn input(&mut self, input: ScreenInput, view: &View<'_>, now: Instant) -> Vec<UserAction> {
         self.sync_prompts(view, now);
         self.sync_confirmation_focus(now);
@@ -1782,6 +1957,10 @@ impl Screen for TuiScreen {
             if let Some(state) = view.picker {
                 self.draw_session_picker(state);
             }
+            return;
+        }
+        if self.overlay == Overlay::Fleet {
+            self.sync_fleet(view);
             return;
         }
         let width = self.terminal.viewport().width;
@@ -2481,6 +2660,7 @@ fn session(
         rows: size.1,
         picker: None,
         overlay: Overlay::Live,
+        peek_prompts: PromptStack::new(),
         confirmation: None,
         confirmation_focused: None,
         rewind_open: false,

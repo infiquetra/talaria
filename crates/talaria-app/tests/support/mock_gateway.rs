@@ -1811,6 +1811,8 @@ struct SessionSide {
     resume_queue: VecDeque<Value>,
     latest_missing: bool,
     sessions: HashMap<String, Value>,
+    /// Admission statuses the next `prompt.submit` replies carry, in order.
+    submit_statuses: VecDeque<String>,
     request_ids: HashMap<String, String>,
     created: Vec<String>,
     attaches: Vec<AttachSeen>,
@@ -1916,6 +1918,7 @@ impl SessionSide {
             resume_queue: VecDeque::new(),
             latest_missing: false,
             sessions: HashMap::new(),
+            submit_statuses: VecDeque::new(),
             request_ids: HashMap::new(),
             created: Vec::new(),
             attaches: Vec::new(),
@@ -3772,6 +3775,9 @@ fn handle_submit(state: &mut State, params: &Value, voice: bool) -> Value {
     if voice {
         return json!({"voice_stopped": true});
     }
+    // hermes_state_runtime.py L121, L146-L162 and the contract's AdmissionStatus: a submission
+    // behind a running turn is queued; a test scripts the status it wants.
+    let scripted = state.sess.submit_statuses.pop_front();
     let session_id = params["session_id"].as_str().unwrap_or_default().to_owned();
     let text = params["text"].as_str().unwrap_or_default().to_owned();
     state.sess.admitted += 1;
@@ -3799,7 +3805,7 @@ fn handle_submit(state: &mut State, params: &Value, voice: bool) -> Value {
         "admission_id": format!("adm-{number}"),
         "ref": {"profile_id": state.sess.profile_id, "session_id": session_id},
         "sequence": number,
-        "status": if matches!(state.sess.headless, Some(HeadlessScenario::QueuedStop | HeadlessScenario::ServerRequest)) { "queued" } else { "started" },
+        "status": scripted.as_deref().unwrap_or(if matches!(state.sess.headless, Some(HeadlessScenario::QueuedStop | HeadlessScenario::ServerRequest)) { "queued" } else { "started" }),
         "outcome": null,
         "authority_epoch": 1,
         "execution_generation": if matches!(state.sess.headless, Some(HeadlessScenario::QueuedStop | HeadlessScenario::ServerRequest)) {
@@ -3986,6 +3992,24 @@ impl MockGateway {
 
     /// Answer the next `session.resume` (of any kind) with this snapshot, once. Queued
     /// snapshots are used in order before the configured one.
+    /// A session `session.resume` by id answers with this snapshot, beside the seeded one.
+    pub fn add_session_snapshot(&self, snapshot: Value) {
+        let mut state = lock(&self.shared);
+        if let Some(id) = snapshot["session_id"].as_str() {
+            let id = id.to_owned();
+            state.sess.sessions.insert(id, snapshot);
+        }
+    }
+
+    /// The `status` the next `prompt.submit` admission carries: `started`, `queued`,
+    /// `terminal` or `unknown`.
+    pub fn queue_submit_status(&self, status: &str) {
+        lock(&self.shared)
+            .sess
+            .submit_statuses
+            .push_back(status.to_owned());
+    }
+
     pub fn queue_resume_snapshot(&self, snapshot: Value) {
         lock(&self.shared).sess.resume_queue.push_back(snapshot);
     }

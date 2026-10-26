@@ -56,6 +56,8 @@ pub enum LocalAction {
     Branch,
     /// Export a session to a file.
     Export,
+    /// Open the fleet overlay.
+    Fleet,
 }
 
 /// One local command.
@@ -296,6 +298,15 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
         args_hint: "[--stat]",
         takes_argument: true,
         action: LocalAction::Diff,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "fleet",
+        aliases: &[],
+        summary: "Show every live session and peek, reply, stop or open one",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Fleet,
         tag: "talaria",
     },
 ];

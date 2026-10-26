@@ -80,6 +80,21 @@ picker_format_markdown = ["m"]
 picker_format_json = ["j"]
 picker_format_html = ["h"]
 picker_toggle_redact = ["x"]
+fleet_view_open = []
+fleet_up = ["up", "k"]
+fleet_down = ["down", "j"]
+fleet_page_up = ["pageup"]
+fleet_page_down = ["pagedown"]
+fleet_top = ["home", "g"]
+fleet_bottom = ["end", "shift+g"]
+fleet_open = ["enter"]
+fleet_peek = ["space"]
+fleet_reply = ["r"]
+fleet_stop = ["x"]
+fleet_answer = ["a"]
+fleet_filter = ["/"]
+fleet_profile_next = ["tab"]
+fleet_profile_prev = ["shift+tab"]
 [editor]
 command = ""
 [history]
@@ -163,6 +178,12 @@ the key names that screen prints are the built-in defaults, not your bindings. E
 fixed there: Esc cancels, then clears a search, then closes; Ctrl+C closes; neither interrupts the
 agent. The session picker context is separate from the composer too (`j` moves down there and picks
 JSON in its export dialog); `session_picker_open` has no default; Esc and Ctrl+C are fixed.
+
+The fleet overlay (`/fleet`, or `fleet_view_open`, which has no default) has its own context:
+`fleet_peek` attaches and shows a session (moving the cursor never does), `fleet_reply` queues a
+prompt behind its running turn, `fleet_stop` asks first and stops on a second press,
+`fleet_answer` hands keys to the peeked card, and `fleet_open` makes the row the foreground
+session. Esc and Ctrl+C are fixed there and never stop anything; in the card, Esc is the card's.
 
 A key is modifiers (`ctrl`, `alt`, `shift`, `super`, each once) and one key joined by `+`, in any
 case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrows, `home`, `end`,

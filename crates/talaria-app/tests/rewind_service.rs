@@ -637,7 +637,10 @@ async fn local_commands_registered_and_shadow_hermes() {
     }
     assert!(mock.requests("slash.exec").is_empty(), "no such request");
     let names: Vec<&str> = LOCAL_COMMANDS.iter().map(|command| command.name).collect();
-    assert_eq!(names, ["rewind", "undo", "retry", "rollback", "diff"]);
+    assert_eq!(
+        names,
+        ["rewind", "undo", "retry", "rollback", "diff", "fleet"]
+    );
 }
 
 #[tokio::test]

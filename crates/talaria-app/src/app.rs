@@ -37,6 +37,7 @@ use talaria_core::context::usage::UsageReport;
 use talaria_core::directory::export::ExportFormat;
 use talaria_core::directory::rows::RowKey;
 use talaria_core::directory::state::{PickerEffect, PickerInput, PickerState};
+use talaria_core::fleet_view::FleetViewState;
 use talaria_core::models::{
     ConfirmKey, ModelCommandOrEffort, ModelsEffect, ModelsInput, ModelsState, NoticeLevel,
     PickerKey, PickerView, SavedModels, parse_effort_command, parse_model_command,
@@ -138,6 +139,13 @@ pub const SESSION_ACTION_NOTICE: &str =
     "Another session action is still running. Try again when it finishes.";
 /// The line when the foreground session already is the target.
 pub const ALREADY_HERE_NOTICE: &str = "You are already in this session.";
+/// `/fleet` with `[fleet] enabled = false`.
+pub const FLEET_DISABLED: &str =
+    "The fleet view is off: [fleet] enabled = false in Talaria's configuration.";
+/// `/fleet` with an argument.
+pub const FLEET_ARGUMENT: &str = "/fleet takes no arguments.";
+/// How many rows Page Up and Page Down move in the fleet overlay.
+const FLEET_PAGE: usize = 10;
 /// How many rows the picker shows at once.
 const PICKER_PAGE: usize = 20;
 /// The line a rename that could not be sent gets.
@@ -167,6 +175,12 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// A key for the open fleet overlay.
+    Fleet(talaria_core::fleet_view::FleetViewInput),
+    /// The composer's key for the fleet overlay: open it as `/fleet` does.
+    FleetOpen,
+    /// The peek's card was answered.
+    FleetAnswer(crate::peek::CardAnswer),
     /// A key for the open rewind overlay. Issue #233.
     Rewind(RewindKey),
     /// How many list rows the rewind overlay shows.
@@ -294,6 +308,10 @@ pub struct View<'a> {
     pub folder: Option<&'a SessionFolder>,
     /// The session picker's state, while the overlay is open.
     pub picker: Option<&'a PickerState>,
+    /// The fleet overlay, while it is open.
+    pub fleet: Option<&'a FleetViewState>,
+    /// The peeked session the overlay's panel draws.
+    pub peek: Option<&'a crate::fleet_actions::PeekFrame>,
 }
 
 impl View<'_> {
@@ -316,6 +334,9 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     /// Open, draw or close the session picker overlay.
     fn sync_picker(&mut self, _picker: Option<&PickerState>) {}
+    /// Open, draw or close the fleet overlay: `view.fleet` is its state and `view.peek` the
+    /// peeked background session.
+    fn sync_fleet(&mut self, _view: &View<'_>) {}
     fn model_list_height(&self) -> usize {
         10
     }
@@ -448,6 +469,10 @@ pub struct AppState {
     pub session_gone: bool,
     /// The profile the resume hint names.
     pub profile: String,
+    /// When false, `/fleet` shows a notice and opens nothing.
+    pub fleet_enabled: bool,
+    /// The fleet overlay, while `/fleet` has it open. The stub leaves this empty.
+    pub fleet: Option<FleetViewState>,
     pub link_state: LinkView,
     /// An interrupt sequence is in flight; further presses send nothing.
     pub interrupting: bool,
@@ -562,11 +587,23 @@ pub struct AppState {
     held_attachments: VecDeque<SubmittedAttachments>,
     failed_attachments: VecDeque<(String, SubmittedAttachments, bool)>,
     /// The fleet service of an interactive launch, once the first frame is drawn.
-    fleet: Option<crate::fleet::FleetHandle>,
+    fleet_service: Option<crate::fleet::FleetHandle>,
     /// The latest fleet snapshot.
     pub fleet_snapshot: Option<Arc<crate::fleet::FleetSnapshot>>,
     /// The foreground row and view last reported to the fleet service.
     fleet_reported: Option<(RowKey, talaria_core::fleet::SubscribedView)>,
+    /// The worker that owns the peek, once the overlay first needed it.
+    peek_worker: Option<crate::fleet_actions::PeekWorker>,
+    /// How long the peek waits for each call.
+    pub peek_timeouts: crate::peek::PeekTimeouts,
+    /// The peeked session, as the worker last reported it.
+    pub peek_frame: Option<crate::fleet_actions::PeekFrame>,
+    /// The foreground reply the overlay sent: its submission id and row.
+    fleet_fg_reply: Option<(String, RowKey)>,
+    /// The foreground row whose stop the overlay sent.
+    fleet_fg_stop: Option<RowKey>,
+    /// Seconds since 1970 at app-clock zero, from the latest fleet snapshot.
+    fleet_clock: f64,
 }
 
 struct SubmittedAttachments {
@@ -611,6 +648,8 @@ impl AppState {
             link_failed: false,
             session_gone: false,
             profile: "default".to_string(),
+            fleet_enabled: true,
+            fleet: None,
             link_state: LinkView::Connecting,
             interrupting: false,
             list_title: None,
@@ -674,9 +713,15 @@ impl AppState {
             attachment_epoch: 0,
             attachment_home: PathBuf::new(),
             attachment_folder: PathBuf::new(),
-            fleet: None,
+            fleet_service: None,
             fleet_snapshot: None,
             fleet_reported: None,
+            peek_worker: None,
+            peek_timeouts: crate::peek::PeekTimeouts::default(),
+            peek_frame: None,
+            fleet_fg_reply: None,
+            fleet_fg_stop: None,
+            fleet_clock: 0.0,
             submitted_attachments: BTreeMap::new(),
             held_attachments: VecDeque::new(),
             failed_attachments: VecDeque::new(),
@@ -730,6 +775,8 @@ impl AppState {
             automation: &self.automation,
             automation_now_ms: wall_clock_ms(),
             picker: self.picker.as_ref(),
+            fleet: self.fleet.as_ref(),
+            peek: self.peek_frame.as_ref(),
         }
     }
 
@@ -754,6 +801,7 @@ impl AppState {
         copy.service = self.service.clone();
         copy.opened = self.opened.clone();
         copy.profile = self.profile.clone();
+        copy.fleet_enabled = self.fleet_enabled;
         copy.model = self.model.clone();
         copy.effort = self.effort.clone();
         copy.hermes_home = self.hermes_home.clone();
@@ -775,6 +823,14 @@ impl AppState {
             service,
             link,
         })
+    }
+
+    /// Install the foreground session's service and link without the start-up task: for
+    /// callers that open the session themselves, such as tests of the fleet overlay.
+    #[doc(hidden)]
+    pub fn set_session_service(&mut self, service: SessionService, link: Link) {
+        self.service = Some(service);
+        self.link = Some(link);
     }
 
     fn next_submission_id(&mut self) -> String {
@@ -848,6 +904,12 @@ pub enum TranscriptAction {
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
     Models(ModelsInput),
+    /// A result for the fleet overlay.
+    FleetView(talaria_core::fleet_view::FleetViewInput),
+    /// What the peek worker reports between results.
+    Peek(crate::fleet_actions::PeekReport),
+    /// A registry call the peek worker made, applied to the fleet service here.
+    Registry(RegistryCall),
     /// A fleet snapshot or attention. Stored; nothing is drawn for it.
     Fleet(crate::fleet::FleetNotice),
     User(UserAction),
@@ -986,6 +1048,14 @@ pub struct SwitchInstall {
 #[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
     Models(ModelsEffect),
+    /// One peek effect for the peek worker; its results come back as [`AppMessage::FleetView`].
+    FleetPeek(talaria_core::fleet_view::FleetViewEffect),
+    /// The foreground row's reply or stop, through the foreground's own paths.
+    FleetForeground(ForegroundJob),
+    /// An input for the overlay, known without a call.
+    FleetInput(talaria_core::fleet_view::FleetViewInput),
+    /// Answer the peek's card.
+    FleetAnswer(crate::peek::CardAnswer),
     /// Run one rewind call; its reply comes back as [`AppMessage::Rewind`]. Issue #233.
     Rewind {
         ticket: u64,
@@ -1486,11 +1556,17 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             event.frame.type_name() != Some("todo.updated")
         }
         AppMessage::Input(key) if !state.pager_open && tasks_key(state, key) => false,
+        // A disabled fleet view only commits its notice; nothing on the live screen changes.
+        AppMessage::User(UserAction::Submit(text))
+            if !state.fleet_enabled && text.trim() == "/fleet" =>
+        {
+            false
+        }
         _ => true,
     };
     let mut effects = match message {
         AppMessage::Models(input) => models_input(state, input),
-        // Stored for the fleet view; this unit draws nothing for it.
+        // Stored for the fleet view, and fed to the overlay while it is open.
         AppMessage::Fleet(notice) => {
             redraw = false;
             // Notices from the handle and the fleet task can cross; keep the newest snapshot.
@@ -1500,7 +1576,30 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     .as_ref()
                     .is_none_or(|held| snapshot.version > held.version)
             {
-                state.fleet_snapshot = Some(snapshot);
+                state.fleet_clock = snapshot.as_of - state.now_ms as f64 / 1000.0;
+                state.fleet_snapshot = Some(Arc::clone(&snapshot));
+                if state.fleet.is_some() {
+                    return fleet_input(state, fleet_snapshot_input(&snapshot));
+                }
+            }
+            Vec::new()
+        }
+        AppMessage::FleetView(input) => {
+            redraw = false;
+            fleet_input(state, input)
+        }
+        AppMessage::Peek(report) => {
+            redraw = false;
+            peek_report(state, report)
+        }
+        AppMessage::Registry(call) => {
+            redraw = false;
+            if let Some(fleet) = &state.fleet_service {
+                match call {
+                    RegistryCall::Subscribed(key, view) => fleet.observe_subscribed(key, view),
+                    RegistryCall::Unsubscribed(key) => fleet.observe_unsubscribed(key),
+                    RegistryCall::Acknowledge(key) => fleet.acknowledge(key),
+                }
             }
             Vec::new()
         }
@@ -1529,8 +1628,30 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::SubmitDone {
             submission_id,
             outcome,
-        } => submit_done(state, submission_id, outcome),
-        AppMessage::InterruptDone { outcome, notices } => interrupt_done(state, outcome, notices),
+        } => {
+            let mut effects = Vec::new();
+            if let Some((_, key)) = state.fleet_fg_reply.take_if(|(id, _)| *id == submission_id) {
+                let outcome = crate::fleet_actions::reply_outcome(&outcome, None);
+                effects.extend(fleet_input(
+                    state,
+                    talaria_core::fleet_view::FleetViewInput::ReplyDone { key, outcome },
+                ));
+            }
+            effects.extend(submit_done(state, submission_id, outcome));
+            effects
+        }
+        AppMessage::InterruptDone { outcome, notices } => {
+            let mut effects = Vec::new();
+            if let Some(key) = state.fleet_fg_stop.take() {
+                let outcome = crate::fleet_actions::stop_outcome(&outcome);
+                effects.extend(fleet_input(
+                    state,
+                    talaria_core::fleet_view::FleetViewInput::StopDone { key, outcome },
+                ));
+            }
+            effects.extend(interrupt_done(state, outcome, notices));
+            effects
+        }
         AppMessage::PromptDone {
             events,
             notices,
@@ -1563,6 +1684,16 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         } => compact_done(state, request, outcome, typed),
         AppMessage::Tick { now_ms } => {
             state.now_ms = now_ms;
+            if state.fleet.is_some() && state.fleet_clock > 0.0 {
+                let now = state.fleet_clock + now_ms as f64 / 1000.0;
+                let fleet = fleet_input(
+                    state,
+                    talaria_core::fleet_view::FleetViewInput::Tick { now },
+                );
+                if !fleet.is_empty() {
+                    return fleet;
+                }
+            }
             let pending = state
                 .opened
                 .as_ref()
@@ -1854,6 +1985,9 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Fleet {
+        return open_fleet_view(state);
+    }
     if action == LocalAction::Tasks {
         return crate::commands::local_action(action)
             .map_or_else(Vec::new, |action| user_action(state, action));
@@ -2225,6 +2359,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         }
         UserAction::ModelPicker(key) => models_input(state, ModelsInput::Picker(key)),
         UserAction::ModelConfirm(key) => models_input(state, ModelsInput::Confirm(key)),
+        UserAction::Fleet(input) => fleet_input(state, input),
+        UserAction::FleetOpen => open_fleet_view(state),
+        UserAction::FleetAnswer(intent) => vec![AppEffect::FleetAnswer(intent)],
         UserAction::Submit(text) => {
             // The composer has taken the draft.
             let mut effects = if state.draft.is_empty() && !state.palette.open {
@@ -3615,6 +3752,11 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
             AppEffect::CommitLines(vec![SWITCHING_NOTICE.to_owned()]),
             AppEffect::LoadDraft(text),
         ];
+    }
+    if let Some(rest) = text.trim().strip_prefix("/fleet ")
+        && !rest.trim().is_empty()
+    {
+        return vec![notice_lines(FLEET_ARGUMENT), AppEffect::LoadDraft(text)];
     }
     if let Some(command) = local_line(&text) {
         return match command {
@@ -5795,6 +5937,7 @@ fn scope_parts(scope: &SideScope) -> (Vec<String>, Option<String>) {
 /// Tell the screen what the picker shows, so it can open or close the overlay.
 fn sync_picker<S: Screen>(state: &AppState, screen: &mut S) {
     screen.sync_picker(state.picker.as_ref());
+    screen.sync_fleet(&state.view());
 }
 
 /// Apply one message and run its effects. Returns whether the screen needs a draw.
@@ -6308,6 +6451,48 @@ fn apply<S: Screen>(
             AppEffect::CloseLink(link) => {
                 executor.spawn(async move { link.close().await });
             }
+            AppEffect::FleetPeek(effect) => {
+                use talaria_core::fleet_view::FleetViewEffect;
+                let closing = matches!(effect, FleetViewEffect::Close);
+                if matches!(effect, FleetViewEffect::Close | FleetViewEffect::ClosePeek)
+                    && state.peek_worker.is_none()
+                {
+                    continue;
+                }
+                let result = peek_worker(state).run(effect);
+                let sender = executor.sender.clone();
+                executor.spawn(async move {
+                    if let Ok(inputs) = result.await {
+                        for input in inputs {
+                            let _ = sender.send(AppMessage::FleetView(input));
+                        }
+                    }
+                });
+                if closing {
+                    drop_peek_worker(state);
+                }
+            }
+            AppEffect::FleetAnswer(intent) => {
+                let Some(worker) = &state.peek_worker else {
+                    continue;
+                };
+                let result = worker.answer(intent);
+                let sender = executor.sender.clone();
+                executor.spawn(async move {
+                    if let Ok(notices) = result.await
+                        && !notices.is_empty()
+                    {
+                        let _ = sender.send(AppMessage::Peek(
+                            crate::fleet_actions::PeekReport::Notices(notices),
+                        ));
+                    }
+                });
+            }
+            AppEffect::FleetInput(input) => {
+                let _ = executor.sender.send(AppMessage::FleetView(input));
+            }
+            // The overlay's input path turns these into ordinary effects before they get here.
+            AppEffect::FleetForeground(_) => {}
             AppEffect::CloseSide => {
                 let side = Arc::clone(&executor.side);
                 executor.side_open.store(false, Ordering::SeqCst);
@@ -6616,7 +6801,7 @@ fn run_cd(state: &AppState, executor: &Executor, effect: CdEffect) {
 /// Report the foreground session to the fleet service: the row on a switch, and the view only
 /// when it changed since the last report.
 fn sync_fleet(state: &mut AppState) {
-    let Some(fleet) = &state.fleet else {
+    let Some(fleet) = &state.fleet_service else {
         return;
     };
     let current = state.opened.as_ref().map(|opened| {
@@ -6656,6 +6841,435 @@ fn masked_summary(kind: crate::prompts::MaskedKind) -> talaria_core::attention::
         MaskedKind::Secret => NeedSummary::Secret,
         MaskedKind::VaultCode => NeedSummary::VaultCode,
         MaskedKind::VaultUnlockPrompt => NeedSummary::VaultUnlock,
+    }
+}
+
+/// The foreground row's reply or stop, run through the foreground's own paths.
+pub enum ForegroundJob {
+    Reply { key: RowKey, text: String },
+    Stop { key: RowKey },
+}
+
+/// One registry call of the peek, carried to the loop that owns the fleet service.
+pub enum RegistryCall {
+    Subscribed(RowKey, talaria_core::fleet::SubscribedView),
+    Unsubscribed(RowKey),
+    Acknowledge(RowKey),
+}
+
+/// Forwards the peek's registry calls to the loop.
+struct LoopSink(mpsc::UnboundedSender<AppMessage>);
+
+impl crate::peek::FleetSink for LoopSink {
+    fn observe_subscribed(&self, key: RowKey, view: talaria_core::fleet::SubscribedView) {
+        let _ = self
+            .0
+            .send(AppMessage::Registry(RegistryCall::Subscribed(key, view)));
+    }
+
+    fn observe_unsubscribed(&self, key: RowKey) {
+        let _ = self
+            .0
+            .send(AppMessage::Registry(RegistryCall::Unsubscribed(key)));
+    }
+
+    fn acknowledge(&self, key: RowKey) {
+        let _ = self
+            .0
+            .send(AppMessage::Registry(RegistryCall::Acknowledge(key)));
+    }
+}
+
+/// The foreground session's row.
+fn fleet_foreground_key(state: &AppState) -> Option<RowKey> {
+    state.opened.as_ref().map(|opened| RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.session_id.clone(),
+    })
+}
+
+/// The panel status of the foreground row.
+fn foreground_status(state: &AppState) -> talaria_core::fleet_view::PeekStatus {
+    match state.opened.as_ref() {
+        Some(opened) => {
+            crate::fleet_actions::foreground_status(&opened.state, !state.masked.is_empty())
+        }
+        None => talaria_core::fleet_view::PeekStatus::Failed {
+            text: "Could not open this session: no session is open.".to_owned(),
+        },
+    }
+}
+
+/// A registry snapshot as an overlay input.
+fn fleet_snapshot_input(
+    snapshot: &crate::fleet::FleetSnapshot,
+) -> talaria_core::fleet_view::FleetViewInput {
+    use crate::fleet::FleetLinkState;
+    let scope_note = match &snapshot.scope {
+        crate::side_connection::SideScope::ProfileOnly { profile, why } => {
+            Some(format!("Showing profile {profile} only: {why}."))
+        }
+        crate::side_connection::SideScope::Host { .. } => None,
+    };
+    let link_note = match &snapshot.link {
+        FleetLinkState::Connecting => Some("connecting\u{2026}".to_owned()),
+        FleetLinkState::Connected => None,
+        FleetLinkState::Reconnecting { reason } => Some(format!("reconnecting: {reason}")),
+        FleetLinkState::Failed { reason } => Some(format!("fleet connection failed: {reason}")),
+    };
+    talaria_core::fleet_view::FleetViewInput::Snapshot {
+        version: snapshot.version,
+        rows: snapshot.rows.clone(),
+        queue: snapshot.queue.clone(),
+        profiles: snapshot.profiles.clone(),
+        scope_note,
+        link_note,
+    }
+}
+
+/// `/fleet`: open the overlay on the latest snapshot, before any call.
+pub(crate) fn open_fleet_view(state: &mut AppState) -> Vec<AppEffect> {
+    if !state.fleet_enabled {
+        return vec![notice_lines(FLEET_DISABLED)];
+    }
+    if state.fleet.is_none() {
+        let now = state
+            .fleet_snapshot
+            .as_ref()
+            .map_or(0.0, |snapshot| snapshot.as_of);
+        state.fleet = Some(FleetViewState::new(fleet_foreground_key(state), now));
+    }
+    let mut effects = match state.fleet_snapshot.clone() {
+        Some(snapshot) => fleet_input(state, fleet_snapshot_input(&snapshot)),
+        None => Vec::new(),
+    };
+    if let Some(view) = state.fleet.as_mut() {
+        view.take_frame();
+    }
+    effects.push(AppEffect::Redraw);
+    effects
+}
+
+/// Apply one overlay input and turn its effects into executor effects.
+pub(crate) fn fleet_input(
+    state: &mut AppState,
+    input: talaria_core::fleet_view::FleetViewInput,
+) -> Vec<AppEffect> {
+    let Some(view) = state.fleet.as_mut() else {
+        return Vec::new();
+    };
+    let produced = talaria_core::fleet_view::update(view, input, FLEET_PAGE);
+    let mut effects = Vec::new();
+    for effect in produced {
+        for out in fleet_effect(state, effect) {
+            match out {
+                AppEffect::FleetInput(input) => effects.extend(fleet_input(state, input)),
+                AppEffect::FleetForeground(job) => effects.extend(foreground_job(state, job)),
+                other => effects.push(other),
+            }
+        }
+    }
+    if let Some(view) = state.fleet.as_mut()
+        && view.needs_redraw()
+    {
+        view.take_frame();
+        effects.push(AppEffect::Redraw);
+    }
+    effects
+}
+
+/// One overlay effect: the overlay's own work here, peek work for the worker.
+pub(crate) fn fleet_effect(
+    state: &mut AppState,
+    effect: talaria_core::fleet_view::FleetViewEffect,
+) -> Vec<AppEffect> {
+    use talaria_core::fleet_view::{FleetViewEffect, FleetViewInput, ReplyOutcome};
+    let foreground = fleet_foreground_key(state);
+    let is_foreground = |key: &RowKey| foreground.as_ref() == Some(key);
+    let peeking_foreground = state
+        .fleet
+        .as_ref()
+        .and_then(|view| view.peek())
+        .is_some_and(|(key, _)| is_foreground(key));
+    match effect {
+        FleetViewEffect::OpenPeek(key) if is_foreground(&key) => {
+            let status = foreground_status(state);
+            vec![AppEffect::FleetInput(FleetViewInput::Peek { key, status })]
+        }
+        FleetViewEffect::ClosePeek if peeking_foreground || state.peek_worker.is_none() => {
+            vec![AppEffect::FleetInput(FleetViewInput::PeekClosed)]
+        }
+        FleetViewEffect::SendReply { key, text } if is_foreground(&key) => {
+            vec![AppEffect::FleetForeground(ForegroundJob::Reply {
+                key,
+                text,
+            })]
+        }
+        FleetViewEffect::Stop(key) if is_foreground(&key) => {
+            vec![AppEffect::FleetForeground(ForegroundJob::Stop { key })]
+        }
+        FleetViewEffect::ResendReply(key) if is_foreground(&key) => {
+            vec![AppEffect::FleetInput(FleetViewInput::ReplyDone {
+                key,
+                outcome: ReplyOutcome::Refused {
+                    reason: "check the session itself before sending it again".to_owned(),
+                },
+            })]
+        }
+        FleetViewEffect::Acknowledge(key) => {
+            if let Some(fleet) = &state.fleet_service {
+                fleet.acknowledge(key);
+            }
+            Vec::new()
+        }
+        FleetViewEffect::Open(key) => {
+            let mut effects = close_overlay(state);
+            effects.push(AppEffect::FleetPeek(FleetViewEffect::Close));
+            effects.push(AppEffect::FleetInput(FleetViewInput::PeekClosed));
+            if is_foreground(&key) {
+                effects.push(AppEffect::CommitLines(vec![ALREADY_HERE_NOTICE.to_owned()]));
+            } else if let Some(refusal) = session_busy(state) {
+                effects.extend(refusal);
+            } else {
+                state.switching = true;
+                state.session_action = true;
+                state.pending_switch = Some(key.clone());
+                effects.push(AppEffect::Switch { key });
+            }
+            effects
+        }
+        FleetViewEffect::Close => {
+            let mut effects = close_overlay(state);
+            effects.push(AppEffect::FleetPeek(FleetViewEffect::Close));
+            effects.push(AppEffect::FleetInput(FleetViewInput::PeekClosed));
+            effects
+        }
+        FleetViewEffect::FocusAnswer => Vec::new(),
+        other => vec![AppEffect::FleetPeek(other)],
+    }
+}
+
+/// Close the overlay; each reply still unsettled leaves one scrollback notice.
+fn close_overlay(state: &mut AppState) -> Vec<AppEffect> {
+    let Some(view) = state.fleet.take() else {
+        return Vec::new();
+    };
+    state.peek_frame = None;
+    let mut effects: Vec<AppEffect> = crate::fleet_actions::unsettled_notices(&view)
+        .iter()
+        .map(|text| notice_lines(text))
+        .collect();
+    effects.push(AppEffect::Redraw);
+    effects
+}
+
+/// The foreground row's reply or stop, through the loop's own executor.
+fn foreground_job(state: &mut AppState, job: ForegroundJob) -> Vec<AppEffect> {
+    use talaria_core::fleet_view::{FleetViewInput, ReplyOutcome, StopOutcome};
+    match job {
+        ForegroundJob::Reply { key, text } => {
+            let effects = submit_prose(state, text);
+            let sent = effects.iter().find_map(|effect| match effect {
+                AppEffect::Send(Effect::SendPrompt { submission_id, .. }) => {
+                    Some(submission_id.clone())
+                }
+                _ => None,
+            });
+            let mut effects = effects;
+            match sent {
+                Some(id) => state.fleet_fg_reply = Some((id, key)),
+                None => effects.extend(fleet_input(
+                    state,
+                    FleetViewInput::ReplyDone {
+                        key,
+                        outcome: ReplyOutcome::NotAttached {
+                            reason: "the session is not ready".to_owned(),
+                        },
+                    },
+                )),
+            }
+            effects
+        }
+        ForegroundJob::Stop { key } => {
+            if state.interrupting {
+                return fleet_input(
+                    state,
+                    FleetViewInput::StopDone {
+                        key,
+                        outcome: StopOutcome::Stopping,
+                    },
+                );
+            }
+            let mut effects = reduce(state, Event::Interrupt);
+            if effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Interrupt(_)))
+            {
+                state.fleet_fg_stop = Some(key);
+            } else {
+                effects.extend(fleet_input(
+                    state,
+                    FleetViewInput::StopDone {
+                        key,
+                        outcome: StopOutcome::NothingRunning,
+                    },
+                ));
+            }
+            effects
+        }
+    }
+}
+
+/// The foreground row's reply or stop, waited for. Callers outside the loop use this.
+pub(crate) async fn run_foreground(
+    state: &mut AppState,
+    job: ForegroundJob,
+) -> Vec<talaria_core::fleet_view::FleetViewInput> {
+    use talaria_core::fleet_view::{FleetViewInput, ReplyOutcome};
+    match job {
+        ForegroundJob::Reply { key, text } => {
+            let submission_id = state.next_submission_id();
+            let service = state.service.clone();
+            let Some(opened) = state.opened.as_mut() else {
+                return vec![FleetViewInput::ReplyDone {
+                    key,
+                    outcome: ReplyOutcome::NotAttached {
+                        reason: "no session is open".to_owned(),
+                    },
+                }];
+            };
+            let effect = talaria_core::session::update(
+                &mut opened.state,
+                Event::Submit {
+                    display: text.clone(),
+                    text,
+                    submission_id,
+                    attachments: Vec::new(),
+                },
+            )
+            .into_iter()
+            .find(|effect| matches!(effect, Effect::SendPrompt { .. }));
+            let (Some(effect), Some(service)) = (effect, service) else {
+                return vec![FleetViewInput::ReplyDone {
+                    key,
+                    outcome: ReplyOutcome::NotAttached {
+                        reason: "the session is not ready".to_owned(),
+                    },
+                }];
+            };
+            let (outcome, receipt) = service.execute_with_receipt(effect).await;
+            let status = receipt.and_then(|receipt| {
+                serde_json::to_value(receipt.status)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+            });
+            vec![FleetViewInput::ReplyDone {
+                key,
+                outcome: crate::fleet_actions::reply_outcome(&outcome, status.as_deref()),
+            }]
+        }
+        ForegroundJob::Stop { key } => {
+            let outcome = interrupt(state).await;
+            vec![FleetViewInput::StopDone {
+                key,
+                outcome: crate::fleet_actions::stop_outcome(&outcome),
+            }]
+        }
+    }
+}
+
+/// The peek worker, started the first time the overlay needs it.
+pub(crate) fn peek_worker(state: &mut AppState) -> &crate::fleet_actions::PeekWorker {
+    if state.peek_worker.is_none() {
+        let launch = state.launch.clone().unwrap_or_else(|| Launch {
+            mode: crate::launch::StartMode::New,
+            model: None,
+            provider: None,
+            effort: None,
+            profile: state.profile.clone(),
+            folder: state.launch_folder.clone(),
+            record: None,
+            bench_replay: None,
+            no_ensure: true,
+        });
+        let launch_id = state.launch_id.clone();
+        let counter = Arc::clone(&state.counter);
+        let (fleet, reports): (
+            Arc<dyn crate::peek::FleetSink>,
+            Option<mpsc::UnboundedSender<crate::fleet_actions::PeekReport>>,
+        ) = match &state.sender {
+            Some(sender) => {
+                let (reports, mut received) = mpsc::unbounded_channel();
+                let forward = sender.clone();
+                tokio::spawn(async move {
+                    while let Some(report) = received.recv().await {
+                        if forward.send(AppMessage::Peek(report)).is_err() {
+                            break;
+                        }
+                    }
+                });
+                (Arc::new(LoopSink(sender.clone())), Some(reports))
+            }
+            None => (Arc::new(crate::peek::NoFleet), None),
+        };
+        state.peek_worker = Some(crate::fleet_actions::PeekWorker::start(
+            crate::fleet_actions::PeekSetup {
+                launch,
+                home: state.hermes_home.clone(),
+                fleet,
+                next_submission_id: Box::new(move || {
+                    submission_id(&launch_id, counter.fetch_add(1, Ordering::SeqCst) + 1)
+                }),
+                timeouts: state.peek_timeouts,
+                reports,
+            },
+        ));
+    }
+    match &state.peek_worker {
+        Some(worker) => worker,
+        None => unreachable!("the worker was just started"),
+    }
+}
+
+/// Close the peek worker: its queued work runs, then it closes the peek and ends.
+pub(crate) fn drop_peek_worker(state: &mut AppState) {
+    state.peek_worker = None;
+}
+
+/// What the peek worker reported between results.
+fn peek_report(state: &mut AppState, report: crate::fleet_actions::PeekReport) -> Vec<AppEffect> {
+    use crate::fleet_actions::PeekReport;
+    use talaria_core::fleet_view::{FleetViewInput, Focus};
+    match report {
+        PeekReport::Frame(frame) => {
+            if state.fleet.is_none() {
+                return Vec::new();
+            }
+            let card = frame.state.open_prompts().next().is_some() || !frame.masked.is_empty();
+            state.peek_frame = Some(*frame);
+            let mut effects = vec![AppEffect::Redraw];
+            if !card
+                && state
+                    .fleet
+                    .as_ref()
+                    .is_some_and(|view| *view.focus() == Focus::Answer)
+            {
+                effects.extend(fleet_input(state, FleetViewInput::AnswerFocusEnded));
+            }
+            effects
+        }
+        PeekReport::Gone => {
+            state.peek_frame = None;
+            vec![AppEffect::Redraw]
+        }
+        PeekReport::Input(input) => fleet_input(state, input),
+        PeekReport::Notices(notices) => {
+            let mut effects = Vec::new();
+            for notice in notices {
+                effects.extend(fleet_input(state, FleetViewInput::Notice(notice.text)));
+            }
+            effects
+        }
     }
 }
 
@@ -6733,9 +7347,10 @@ pub async fn run<S: Screen>(
     let executor = Executor::new(sender);
     state.sender = Some(executor.sender.clone());
     // The first frame is drawn; the fleet link starts in the background.
+    state.fleet_enabled = setup.fleet.is_some();
     if let Some(cfg) = setup.fleet.take() {
         let fleet_sender = executor.sender.clone();
-        state.fleet = Some(crate::fleet::FleetService::start(
+        state.fleet_service = Some(crate::fleet::FleetService::start(
             setup.home.clone(),
             state.profile.clone(),
             cfg,
@@ -6908,7 +7523,7 @@ pub async fn run<S: Screen>(
             outcome.stderr.push_str(&failure.render());
         }
     }
-    if let Some(fleet) = state.fleet.take() {
+    if let Some(fleet) = state.fleet_service.take() {
         fleet.close().await;
     }
     if executor.flush_model_files().await {

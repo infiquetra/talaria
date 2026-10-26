@@ -32,6 +32,8 @@ jobs:
         run: cargo bench -p talaria-tui --bench pager
       - name: Session picker budgets
         run: cargo bench -p talaria-tui --bench session_picker
+      - name: Fleet view budgets
+        run: cargo bench -p talaria-tui --bench fleet_view
       - name: Fleet registry budget
         run: |
           cargo bench -p talaria-core --bench fleet_registry

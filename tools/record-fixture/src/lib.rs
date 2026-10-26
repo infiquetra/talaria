@@ -48,6 +48,10 @@ const DELETE_COMMAND: &str = "rm -rf .pytest_cache";
 /// the prompt are not model prompts. It is recorded by name and is not part of [`SCENARIOS`].
 pub const SESSION_PICKER: &str = "session-picker";
 
+/// A running shell command, a queued reply, and a denied approval, on the fixture profile.
+/// Recorded by name. Not part of [`SCENARIOS`].
+pub const FLEET_PEEK: &str = "fleet-peek";
+
 /// The profile the picker scenario lists, renames and exports on. The recording names no other
 /// profile.
 const PICKER_PROFILE: &str = "fixture";
@@ -193,6 +197,14 @@ impl Scenario {
             SESSION_PICKER => (&[PICKER_PROMPT], &["complete"]),
             // The denied probe turn also ends complete: the agent reports the refusal.
             FLEET_REGISTRY => (&[FLEET_READY_PROMPT], &["complete", "complete"]),
+            FLEET_PEEK => (
+                &[
+                    "Run this exact shell command: sleep 5 && echo peek-ok",
+                    "Now reply with the single word: queued-ok",
+                    "Run this exact shell command: rm -rf ./talaria-peek-probe",
+                ],
+                &["complete", "complete", "complete"],
+            ),
             _ => return None,
         };
         Some(Scenario {
@@ -260,6 +272,8 @@ pub struct DriverConfig {
     pub scratch: PathBuf,
     /// A second project folder, for the scenarios that move the session between two.
     pub second: Option<PathBuf>,
+    /// Hermes home for the unrecorded setup connection a scenario may open.
+    pub home: PathBuf,
     pub attempt_timeout: std::time::Duration,
 }
 
@@ -602,6 +616,7 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
         }
         "hermes-commands" => hermes_commands_evidence(source)?,
         SESSION_PICKER => session_picker_evidence(source)?,
+        FLEET_PEEK => fleet_peek_evidence(source, &events)?,
         other if scripted::handles(other) => scripted::check_evidence(scenario, source)?,
         other => return Err(format!("unknown scenario {other}")),
     }
@@ -1427,6 +1442,330 @@ fn collect_profiles<'a>(value: &'a Value, found: &mut Vec<&'a str>) {
     }
 }
 
+fn fleet_peek_evidence(source: &ReplaySource, events: &[(String, Value)]) -> Result<(), String> {
+    let text = serde_json::to_string(events).unwrap_or_default();
+    if !text.contains("peek-ok") {
+        return Err("no peek-ok cell".to_owned());
+    }
+    if !events.iter().any(|(kind, _)| kind == "approval.settled") {
+        return Err("no approval.settled".to_owned());
+    }
+    if source
+        .outbound()
+        .any(|frame| frame.frame["method"] == "session.interrupt")
+    {
+        return Err("session.interrupt was sent".to_owned());
+    }
+    Ok(())
+}
+
+/// The shell command, the queued reply, and the approval command of [`FLEET_PEEK`].
+const PEEK_SHELL: &str = "Run this exact shell command: sleep 5 && echo peek-ok";
+const PEEK_REPLY: &str = "Now reply with the single word: queued-ok";
+const PEEK_DELETE: &str = "Run this exact shell command: rm -rf ./talaria-peek-probe";
+
+async fn open_unrecorded(home: &Path) -> Result<(Client, InboundStream), String> {
+    let endpoint = discover_with(home, &never_ensure())
+        .await
+        .map_err(|_| "the gateway could not be reached".to_owned())?;
+    let profile = endpoint
+        .resolve_profile("fixture")
+        .map_err(|_| "the fixture profile is not served".to_owned())?;
+    let ticket = mint_ticket(
+        home,
+        &endpoint,
+        &profile,
+        Purpose::Interactive,
+        Scope::profile(),
+    )
+    .await
+    .map_err(|_| "a profile ticket could not be minted".to_owned())?;
+    let mut connection = connect_with(&endpoint, ticket, &ConnectOptions::default())
+        .await
+        .map_err(|_| "the profile connection could not be opened".to_owned())?;
+    handshake(&mut connection)
+        .await
+        .map_err(|_| "the profile handshake failed".to_owned())?;
+    Ok(Client::start(connection.into_parts()))
+}
+
+async fn create_submitted(
+    client: &Client,
+    config: &DriverConfig,
+    text: &str,
+) -> Result<Session, String> {
+    let created = client
+        .call_raw(
+            "session.create",
+            json!({
+                "source": "cli",
+                "cwd": config.scratch.to_string_lossy(),
+                "model": config.model,
+                "provider": config.provider,
+            }),
+            CallOptions::default(),
+        )
+        .await
+        .map_err(|_| "session.create failed".to_owned())?;
+    let mut session = Session {
+        session_id: created["session_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        ..Session::default()
+    };
+    if session.session_id.is_empty() {
+        return Err("the session snapshot has no session_id".to_owned());
+    }
+    session.subscription_id = created["subscription_id"].clone();
+    session.execution_generation = created["execution_generation"].clone();
+    submit(client, &mut session, text)
+        .await
+        .map_err(|_| "prompt.submit failed".to_owned())?;
+    Ok(session)
+}
+
+async fn detach_quiet(client: &Client, session: &Session) {
+    let _ = client
+        .call_raw(
+            "session.detach",
+            json!({
+                "session_id": session.session_id,
+                "subscription_id": session.subscription_id,
+            }),
+            call_options(CLEANUP_TIMEOUT),
+        )
+        .await;
+}
+
+async fn next_params(
+    inbound: &mut InboundStream,
+    deadline: tokio::time::Instant,
+) -> Result<Value, String> {
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err("the attempt ran out of time".to_owned());
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, inbound.next()).await {
+            Ok(Some(Inbound::Event(event))) => return Ok(event.raw),
+            Ok(Some(Inbound::ServerRequest(request))) => request.responder.ignore(),
+            Ok(Some(Inbound::Malformed(_))) => {}
+            Ok(Some(Inbound::Closed(_)) | None) | Err(_) => {
+                return Err("the event stream ended".to_owned());
+            }
+        }
+    }
+}
+
+async fn wait_type(
+    inbound: &mut InboundStream,
+    deadline: tokio::time::Instant,
+    kind: &str,
+) -> Result<(), String> {
+    loop {
+        let params = next_params(inbound, deadline).await?;
+        if params["type"].as_str() == Some(kind) {
+            return Ok(());
+        }
+    }
+}
+
+fn open_approval(snapshot: &Value) -> Option<(Value, Value)> {
+    let prompts = snapshot.get("prompts")?.as_array()?;
+    for prompt in prompts {
+        let kind = prompt
+            .get("kind")
+            .or_else(|| prompt.get("type"))
+            .and_then(Value::as_str);
+        let command = prompt.get("command").and_then(Value::as_str).unwrap_or("");
+        if kind != Some("approval") && command.is_empty() {
+            continue;
+        }
+        let id = prompt.get("prompt_id")?.clone();
+        if id.is_null() {
+            continue;
+        }
+        let generation = prompt
+            .get("execution_generation")
+            .cloned()
+            .unwrap_or(Value::Null);
+        return Some((id, generation));
+    }
+    None
+}
+
+async fn wait_approval(
+    inbound: &mut InboundStream,
+    deadline: tokio::time::Instant,
+) -> Result<(Value, Value), String> {
+    loop {
+        let params = next_params(inbound, deadline).await?;
+        if params["type"].as_str() != Some("approval.request") {
+            continue;
+        }
+        let id = params["payload"]["prompt_id"].clone();
+        let generation = params["payload"]["execution_generation"].clone();
+        if !id.is_null() {
+            return Ok((id, generation));
+        }
+    }
+}
+
+async fn drive_fleet_peek(
+    client: &Client,
+    inbound: &mut InboundStream,
+    config: &DriverConfig,
+) -> AttemptResult {
+    match tokio::time::timeout(
+        config.attempt_timeout,
+        drive_fleet_peek_body(client, inbound, config),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => AttemptResult::Failed(format!(
+            "the attempt ran longer than {} s",
+            config.attempt_timeout.as_secs()
+        )),
+    }
+}
+
+async fn drive_fleet_peek_body(
+    client: &Client,
+    inbound: &mut InboundStream,
+    config: &DriverConfig,
+) -> AttemptResult {
+    let probe = config.scratch.join("talaria-peek-probe");
+    if std::fs::create_dir(&probe).is_err() && !probe.is_dir() {
+        return AttemptResult::Failed("the probe folder could not be created".to_owned());
+    }
+    let (setup, setup_in) = match open_unrecorded(&config.home).await {
+        Ok(open) => open,
+        Err(reason) => return AttemptResult::PreconditionAbsent(reason),
+    };
+    tokio::spawn(drain_ignored(setup_in));
+    let result = recorded_peek(&setup, client, inbound, config).await;
+    setup.close().await;
+    result
+}
+
+async fn drain_ignored(mut inbound: InboundStream) {
+    while let Some(item) = inbound.next().await {
+        if let Inbound::ServerRequest(request) = item {
+            request.responder.ignore();
+        }
+    }
+}
+
+async fn recorded_peek(
+    setup: &Client,
+    client: &Client,
+    inbound: &mut InboundStream,
+    config: &DriverConfig,
+) -> AttemptResult {
+    let failed = |reason: String| AttemptResult::Failed(reason);
+    let mut session_b = match create_submitted(setup, config, PEEK_DELETE).await {
+        Ok(session) => session,
+        Err(reason) => return failed(reason),
+    };
+    detach_quiet(setup, &session_b).await;
+    let mut session_a = match create_submitted(setup, config, PEEK_SHELL).await {
+        Ok(session) => session,
+        Err(reason) => return failed(reason),
+    };
+    detach_quiet(setup, &session_a).await;
+
+    let deadline = tokio::time::Instant::now() + config.attempt_timeout;
+    let snapshot_a = match client
+        .call_raw(
+            "session.resume",
+            json!({
+                "session_id": session_a.session_id,
+                "display_projection": true,
+            }),
+            CallOptions::default(),
+        )
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(_) => return failed("session.resume failed".to_owned()),
+    };
+    session_a.subscription_id = snapshot_a["subscription_id"].clone();
+    if let Err(reason) = wait_type(inbound, deadline, "message.complete").await {
+        return failed(reason);
+    }
+    let params = match submit_params(&session_a.session_id, PEEK_REPLY) {
+        Ok(params) => params,
+        Err(reason) => return failed(reason),
+    };
+    if client
+        .call_raw("prompt.submit", params, CallOptions::default())
+        .await
+        .is_err()
+    {
+        return failed("prompt.submit failed".to_owned());
+    }
+    if let Err(reason) = wait_type(inbound, deadline, "message.complete").await {
+        return failed(reason);
+    }
+    detach_quiet(client, &session_a).await;
+
+    let snapshot_b = match client
+        .call_raw(
+            "session.resume",
+            json!({
+                "session_id": session_b.session_id,
+                "display_projection": true,
+            }),
+            CallOptions::default(),
+        )
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(_) => return failed("session.resume failed".to_owned()),
+    };
+    session_b.subscription_id = snapshot_b["subscription_id"].clone();
+    let (prompt_id, generation) = match open_approval(&snapshot_b) {
+        Some(found) => found,
+        None => match wait_approval(inbound, deadline).await {
+            Ok(found) => found,
+            Err(reason) => return failed(reason),
+        },
+    };
+    if client
+        .call_raw(
+            "approval.respond",
+            json!({
+                "session_id": session_b.session_id,
+                "execution_generation": generation,
+                "prompt_id": prompt_id,
+                "choice": "deny",
+            }),
+            CallOptions::default(),
+        )
+        .await
+        .is_err()
+    {
+        return failed("approval.respond failed".to_owned());
+    }
+    let mut settled = false;
+    let mut complete = false;
+    while !settled || !complete {
+        let params = match next_params(inbound, deadline).await {
+            Ok(params) => params,
+            Err(reason) => return failed(reason),
+        };
+        match params["type"].as_str() {
+            Some("approval.settled") => settled = true,
+            Some("message.complete") => complete = true,
+            _ => {}
+        }
+    }
+    detach_quiet(client, &session_b).await;
+    AttemptResult::Ok
+}
+
 /// Drive one attempt over a connected client and its inbound stream (the events come
 /// only from the stream `Client::start` returned). Never writes the file itself.
 pub async fn run_scenario(
@@ -1435,6 +1774,9 @@ pub async fn run_scenario(
     scenario: &Scenario,
     config: &DriverConfig,
 ) -> AttemptResult {
+    if scenario.name == FLEET_PEEK {
+        return drive_fleet_peek(client, inbound, config).await;
+    }
     if scripted::handles(&scenario.name) {
         return scripted::run(client, inbound, scenario, config).await;
     }
