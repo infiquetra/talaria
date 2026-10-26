@@ -39,6 +39,10 @@ pub enum FleetAction {
     ProfileNext,
     ProfilePrev,
     Close,
+    /// Start a background session (the app opens the launch dialog).
+    New,
+    /// Start a background session in a new worktree.
+    NewInWorktree,
 }
 
 /// How far a peek has got.
@@ -850,6 +854,8 @@ fn list_key(
         FleetAction::Reply => return reply_start(state),
         FleetAction::Stop => return stop_start(state),
         FleetAction::Answer => return answer_start(state),
+        // The app opens the launch dialog; the overlay itself does nothing.
+        FleetAction::New | FleetAction::NewInWorktree => {}
     }
     Vec::new()
 }

@@ -17,7 +17,7 @@ use tokio::time::Instant;
 use crate::{AttemptResult, DriverConfig, Scenario, call_options, check_info, submit_params};
 
 /// The scenarios of this module, in the order they are recorded.
-pub const SCRIPTED_SCENARIOS: [&str; 7] = [
+pub const SCRIPTED_SCENARIOS: [&str; 8] = [
     "queue-edit-remove",
     "queue-steer",
     "queue-move-send-now",
@@ -25,6 +25,7 @@ pub const SCRIPTED_SCENARIOS: [&str; 7] = [
     "permissions-cd",
     "shell-and-btw",
     "background-work",
+    "bg-launch",
 ];
 
 /// Whether `name` is one of [`SCRIPTED_SCENARIOS`].
@@ -76,6 +77,8 @@ pub(crate) fn scenario(name: &str) -> Option<Scenario> {
         "model-switch" | "permissions-cd" => (Vec::new(), Vec::new()),
         "shell-and-btw" => (owned(&[SHELL_PROMPT]), owned(&["complete"])),
         "background-work" => (owned(&[BACKGROUND_PROMPT]), owned(&["complete"])),
+        // Detach without waiting, so a recording is not required to contain a completed turn.
+        "bg-launch" => (Vec::new(), Vec::new()),
         _ => return None,
     };
     Some(Scenario {
@@ -642,6 +645,9 @@ async fn drive(run: &mut Run<'_>, scenario: &Scenario, config: &DriverConfig) ->
     if scenario.name == "model-switch" {
         return model_switch(run, config).await;
     }
+    if scenario.name == "bg-launch" {
+        return bg_launch(run, config).await;
+    }
     run.create(config).await?;
     match scenario.name.as_str() {
         "hermes-commands" => hermes_commands(run).await,
@@ -656,6 +662,38 @@ async fn drive(run: &mut Run<'_>, scenario: &Scenario, config: &DriverConfig) ->
         "background-work" => background_work(run).await,
         other => Err(Stop::Fail(format!("unknown scripted scenario {other}"))),
     }
+}
+
+/// Handshake is already done. Create with source `tui` and a request id, submit, then detach
+/// without waiting for the turn. The session id is cleared so cleanup does not detach twice.
+async fn bg_launch(run: &mut Run<'_>, config: &DriverConfig) -> Step {
+    let snapshot = run
+        .call(
+            "session.create",
+            json!({
+                "request_id": crate::request_id(),
+                "source": "tui",
+                "cwd": config.scratch.to_string_lossy(),
+                "model": config.model,
+                "provider": config.provider,
+            }),
+        )
+        .await?;
+    run.adopt_snapshot(&snapshot)?;
+    let params = submit_params(&run.session_id, "Reply with the single word: ready")?;
+    run.call("prompt.submit", params).await?;
+    let session_id = run.session_id.clone();
+    let subscription_id = run.subscription_id.clone();
+    run.call(
+        "session.detach",
+        json!({
+            "session_id": session_id,
+            "subscription_id": subscription_id,
+        }),
+    )
+    .await?;
+    run.session_id.clear();
+    Ok(())
 }
 
 fn text_of(result: &Value) -> String {
@@ -1773,6 +1811,35 @@ pub(crate) fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Resu
             }
             if sent("session.mutate") == 0 {
                 return Err("no session.mutate request".to_owned());
+            }
+        }
+        "bg-launch" => {
+            let creates = source
+                .outbound()
+                .filter(|frame| frame.frame["method"] == "session.create")
+                .collect::<Vec<_>>();
+            if creates.len() != 1 {
+                return Err("bg-launch did not send one session.create".to_owned());
+            }
+            let params = &creates[0].frame["params"];
+            if params["source"] != "tui" {
+                return Err("bg-launch create source is not tui".to_owned());
+            }
+            if params["request_id"].as_str().unwrap_or("").is_empty() {
+                return Err("bg-launch create has no request_id".to_owned());
+            }
+            let submits = source
+                .outbound()
+                .filter(|frame| frame.frame["method"] == "prompt.submit")
+                .collect::<Vec<_>>();
+            if submits.len() != 1 {
+                return Err("bg-launch did not send one prompt.submit".to_owned());
+            }
+            if submits[0].frame["params"]["text"] != "Reply with the single word: ready" {
+                return Err("bg-launch submit text does not match".to_owned());
+            }
+            if sent("session.detach") != 1 {
+                return Err("bg-launch did not detach once".to_owned());
             }
         }
         "shell-and-btw" => {

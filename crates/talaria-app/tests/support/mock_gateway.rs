@@ -415,6 +415,10 @@ struct State {
     auto_settle: bool,
     cancel_after_response: Option<String>,
     silent_methods: HashSet<String>,
+    /// Methods whose reply waits until [`MockGateway::release`]. The frame is recorded first.
+    held: HashSet<String>,
+    /// Forbidden parameter names that arrived. A test asserts this stays empty.
+    forbidden: Vec<String>,
     request_methods: HashMap<String, String>,
     silent_all: bool,
     kill_after: bool,
@@ -533,6 +537,8 @@ fn new_shared(
             auto_settle: false,
             cancel_after_response: None,
             silent_methods: HashSet::new(),
+            held: HashSet::new(),
+            forbidden: Vec::new(),
             request_methods: HashMap::new(),
             silent_all: false,
             kill_after: false,
@@ -778,6 +784,25 @@ impl MockGateway {
     /// How many approval or event reads named a session outside the live set.
     pub fn fleet_non_live_reads(&self) -> u64 {
         lock(&self.shared).fleet_non_live_reads
+    }
+
+    /// Record requests for `method` and answer them only after [`Self::release`].
+    ///
+    /// A held frame stays visible to [`Self::requests`] and [`StandaloneGateway::wait_for_method`].
+    /// Releasing answers it with the ordinary plan. This is not silence: a silenced frame is never answered.
+    pub fn hold(&self, method: &str) {
+        lock(&self.shared).held.insert(method.to_owned());
+    }
+
+    /// Answer every held request for `method`, and stop holding new ones.
+    pub fn release(&self, method: &str) {
+        lock(&self.shared).held.remove(method);
+        self.shared.changed.notify_waiters();
+    }
+
+    /// Forbidden parameter names seen so far, in arrival order.
+    pub fn forbidden_keys(&self) -> Vec<String> {
+        lock(&self.shared).forbidden.clone()
     }
 
     /// Never reply to this method (`prompt.submit`, `session.interrupt`, ...) while on.
@@ -1297,13 +1322,13 @@ async fn run_socket(
                     Some(Ok(Message::Text(text))) => {
                         let at = Instant::now();
                         let Some(shared) = shared.upgrade() else { break };
-                        handle_frame(&shared, &own, connection, &text, at);
+                        handle_frame(&shared, &own, connection, &text, at).await;
                     }
                     Some(Ok(Message::Binary(bytes))) => {
                         let at = Instant::now();
                         let Some(shared) = shared.upgrade() else { break };
                         if let Ok(text) = std::str::from_utf8(&bytes) {
-                            handle_frame(&shared, &own, connection, text, at);
+                            handle_frame(&shared, &own, connection, text, at).await;
                         }
                     }
                     // Issue #246: the client ended the socket cleanly.
@@ -1328,8 +1353,40 @@ async fn run_socket(
     }
 }
 
+/// Parameter names a background launch must never send. The frame is still recorded.
+fn note_forbidden(state: &mut State, method: Option<&str>, params: &Value) {
+    let banned: &[&str] = match method {
+        Some("session.create") => &["title", "hidden", "cwd_explicit"],
+        Some("prompt.submit") => &["finite", "unattended"],
+        _ => return,
+    };
+    let Some(object) = params.as_object() else {
+        return;
+    };
+    for key in banned {
+        if object.contains_key(*key) {
+            state.forbidden.push((*key).to_owned());
+        }
+    }
+}
+
+/// Wait until `method` is no longer held. The waiter is registered before the flag is read.
+async fn wait_until_released(shared: &Shared, method: &str) {
+    loop {
+        let notified = shared.changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !lock(shared).held.contains(method) {
+            break;
+        }
+        notified.await;
+    }
+}
+
 /// Record one frame the client wrote and queue whatever the mock writes back.
-fn handle_frame(
+///
+/// A held method is recorded, then answered only after [`MockGateway::release`].
+async fn handle_frame(
     shared: &Arc<Shared>,
     own: &mpsc::WeakUnboundedSender<Cmd>,
     connection: u64,
@@ -1358,8 +1415,6 @@ fn handle_frame(
         _ => return,
     };
     let id = id.unwrap_or(Value::Null);
-    let mut outgoing: Vec<(Option<Duration>, String, Meta)> = Vec::new();
-    let kill;
     {
         let mut state = lock(shared);
         let index = state.seen.len();
@@ -1373,6 +1428,18 @@ fn handle_frame(
             at,
             connection,
         });
+        note_forbidden(&mut state, method.as_deref(), &params);
+    }
+    shared.changed.notify_waiters();
+    if let Some(name) = method.clone()
+        && lock(shared).held.contains(&name)
+    {
+        wait_until_released(shared, &name).await;
+    }
+    let mut outgoing: Vec<(Option<Duration>, String, Meta)> = Vec::new();
+    let kill;
+    {
+        let mut state = lock(shared);
         match (kind, method.as_deref()) {
             (FrameKind::Request, Some(name)) => {
                 plan_request(&mut state, name, &id, &params, &mut outgoing);
@@ -2273,6 +2340,9 @@ fn param_schema(method: &str) -> Option<&'static Value> {
 /// closed set.
 fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'static str>) {
     match method {
+        // A host-scoped connection routes a request naming another served profile to that
+        // profile, which drops `profile` before its own key check (Hermes v0.22.4
+        // `gateway/session_controls.py:147-168`, `:258-271`), so the key is allowed here.
         "session.create" => (
             vec!["request_id", "source", "cwd"],
             vec![
@@ -2282,6 +2352,7 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
                 "model",
                 "provider",
                 "reasoning",
+                "profile",
             ],
         ),
         "session.resume" if params.get("latest").is_some() => (
@@ -2317,7 +2388,7 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
         ),
         "session.detach" => (
             vec!["session_id", "subscription_id"],
-            vec!["session_id", "subscription_id", "end_reason"],
+            vec!["session_id", "subscription_id", "end_reason", "profile"],
         ),
         "prompt.submit" => {
             let mut keys = vec!["session_id", "text", "submission_id"];
@@ -2326,6 +2397,8 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             }
             (keys.clone(), {
                 keys.push("attachments");
+                // Routed by profile, as `session.create` above.
+                keys.push("profile");
                 keys
             })
         }
@@ -4957,6 +5030,14 @@ impl StandaloneGateway {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Poll until the first request with this method has been read and return it.
+    ///
+    /// Two seconds is enough for a launch that sends at once. A held method still counts:
+    /// the frame is recorded before its reply is released.
+    pub fn wait_for_method(&self, method: &str) -> Option<Seen> {
+        self.wait_request(method, 0, Duration::from_secs(2))
     }
 
     /// Poll until the nth (from 0) request with this method has been read and return it.

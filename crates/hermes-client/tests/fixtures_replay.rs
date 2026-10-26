@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 24] = [
+const NAMES: [&str; 25] = [
     "background-work",
     "attachments-mention-image",
     "plain-answer",
@@ -42,6 +42,7 @@ const NAMES: [&str; 24] = [
     "queue-move-send-now",
     "fleet-registry",
     "fleet-peek",
+    "bg-launch",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -73,6 +74,8 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         "fleet-registry" => &["complete", "complete"],
         // The shell command, the queued reply, and the denied command, across two sessions.
         "fleet-peek" => &["complete", "complete", "complete"],
+        // The launch detaches as soon as the prompt is admitted, before any turn ends.
+        "bg-launch" => &[],
         _ => &["complete"],
     }
 }
@@ -104,8 +107,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 24,
-        "expected twenty-four fixtures in fixtures/frames, found {}",
+        files.len() == 25,
+        "expected twenty-five fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -184,7 +187,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 24);
+    assert_eq!(fixtures.len(), 25);
 }
 
 #[test]
@@ -717,6 +720,34 @@ fn scenario_evidence_present() {
                 assert!(
                     position(&events, "approval.request", 0).is_some(),
                     "{name}: no approval.request"
+                );
+            }
+            "bg-launch" => {
+                let sent: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| record["dir"] == "out")
+                    .map(|record| &record["frame"])
+                    .collect();
+                let create = sent
+                    .iter()
+                    .find(|frame| frame["method"] == "session.create")
+                    .expect("bg-launch: no session.create");
+                assert_eq!(create["params"]["source"], "tui", "{name}: create source");
+                assert!(
+                    create["params"]["request_id"].is_string(),
+                    "{name}: create has no request_id"
+                );
+                assert!(
+                    sent.iter().any(|frame| frame["method"] == "prompt.submit"),
+                    "{name}: no prompt.submit"
+                );
+                let detach = sent
+                    .iter()
+                    .find(|frame| frame["method"] == "session.detach")
+                    .expect("bg-launch: no session.detach");
+                assert!(
+                    detach["params"].get("end_reason").is_none(),
+                    "{name}: the detach carried an end reason"
                 );
             }
             "fleet-peek" => {

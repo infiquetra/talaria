@@ -205,6 +205,8 @@ pub enum UserAction {
     SubagentClearFlash,
     /// An action from the background-process overlay.
     Processes(ProcessesIntent),
+    /// The fleet view's launch dialog, which the terminal owns, changed.
+    LaunchDialog(crate::bg::dialog::DialogEvent),
     /// A key for the open rewind overlay. Issue #233.
     Rewind(RewindKey),
     /// How many list rows the rewind overlay shows.
@@ -344,6 +346,10 @@ pub struct View<'a> {
     pub fleet: Option<&'a FleetViewState>,
     /// The peeked session the overlay's panel draws.
     pub peek: Option<&'a crate::fleet_actions::PeekFrame>,
+    /// What the launch dialog should show, with a version that rises on each change.
+    pub launch_status: Option<(u64, &'a crate::bg::dialog::DialogStatus)>,
+    /// The folder Talaria was started in: the launch dialog's folder with no session open.
+    pub launch_folder: &'a Path,
     /// The background counters the status line shows.
     pub fleet_counts: StatusCounts,
 }
@@ -711,6 +717,8 @@ pub struct AppState {
     fleet_fg_reply: Option<(String, RowKey)>,
     /// The foreground row whose stop the overlay sent.
     fleet_fg_stop: Option<RowKey>,
+    /// The fleet view's launch dialog and the launches it started.
+    pub launch_ui: crate::bg::dialog::LaunchUi,
     /// Seconds since 1970 at app-clock zero, from the latest fleet snapshot.
     fleet_clock: f64,
 }
@@ -868,6 +876,7 @@ impl AppState {
             peek_frame: None,
             fleet_fg_reply: None,
             fleet_fg_stop: None,
+            launch_ui: crate::bg::dialog::LaunchUi::default(),
             fleet_clock: 0.0,
             submitted_attachments: BTreeMap::new(),
             held_attachments: VecDeque::new(),
@@ -928,6 +937,8 @@ impl AppState {
             subagents: self.subagents.as_ref(),
             subagents_usage_active: self.subagents_usage_active,
             fleet_snapshot: self.fleet_snapshot.as_deref(),
+            launch_status: self.launch_ui.status(),
+            launch_folder: &self.launch_folder,
             fleet_counts: self.status_counts,
         }
     }
@@ -1075,6 +1086,10 @@ pub enum AppMessage {
     Peek(crate::fleet_actions::PeekReport),
     /// A registry call the peek worker made, applied to the fleet service here.
     Registry(RegistryCall),
+    /// A background launch's progress or result.
+    Launch(crate::bg::LaunchNotice),
+    /// One second passed for the launch the dialog shows.
+    LaunchTick(u64),
     /// A fleet snapshot or attention. Stored; nothing is drawn for it.
     Fleet(crate::fleet::FleetNotice),
     User(UserAction),
@@ -1826,9 +1841,23 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     RegistryCall::Subscribed(key, view) => fleet.observe_subscribed(key, view),
                     RegistryCall::Unsubscribed(key) => fleet.observe_unsubscribed(key),
                     RegistryCall::Acknowledge(key) => fleet.acknowledge(key),
+                    RegistryCall::Refresh => fleet.refresh_now(),
                 }
             }
             Vec::new()
+        }
+        AppMessage::Launch(notice) => {
+            redraw = false;
+            let out = state.launch_ui.notice(notice);
+            launch_effects(state, out)
+        }
+        AppMessage::LaunchTick(launch) => {
+            redraw = false;
+            if state.launch_ui.tick(launch) {
+                vec![AppEffect::Redraw]
+            } else {
+                Vec::new()
+            }
         }
         // The toggle asks for its own redraw: one when a panel is there, none otherwise.
         AppMessage::User(UserAction::ToggleTasks)
@@ -2956,6 +2985,21 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             effects
         }
         UserAction::FleetAnswer(intent) => vec![AppEffect::FleetAnswer(intent)],
+        UserAction::LaunchDialog(event) => {
+            use crate::bg::dialog::DialogEvent;
+            match event {
+                DialogEvent::Opened | DialogEvent::Edited => vec![AppEffect::Redraw],
+                DialogEvent::Closed => {
+                    state.launch_ui.closed();
+                    vec![AppEffect::Redraw]
+                }
+                DialogEvent::Submit(submit) => {
+                    let context = launch_context(state);
+                    let out = state.launch_ui.submit(submit, &context);
+                    launch_effects(state, out)
+                }
+            }
+        }
         UserAction::Submit(text) => {
             if state.opened.is_none()
                 && let Some(Ok((action, argument))) = local_line(&text)
@@ -7876,6 +7920,7 @@ pub enum RegistryCall {
     Subscribed(RowKey, talaria_core::fleet::SubscribedView),
     Unsubscribed(RowKey),
     Acknowledge(RowKey),
+    Refresh,
 }
 
 /// Forwards the peek's registry calls to the loop.
@@ -7899,6 +7944,53 @@ impl crate::peek::FleetSink for LoopSink {
             .0
             .send(AppMessage::Registry(RegistryCall::Acknowledge(key)));
     }
+}
+
+impl crate::bg::LaunchFleet for LoopSink {
+    fn observe_subscribed(&self, key: RowKey, view: talaria_core::fleet::SubscribedView) {
+        crate::peek::FleetSink::observe_subscribed(self, key, view);
+    }
+
+    fn observe_unsubscribed(&self, key: RowKey) {
+        crate::peek::FleetSink::observe_unsubscribed(self, key);
+    }
+
+    fn refresh_now(&self) {
+        let _ = self.0.send(AppMessage::Registry(RegistryCall::Refresh));
+    }
+}
+
+/// What a fleet launch needs from the app's state.
+fn launch_context(state: &AppState) -> crate::bg::dialog::LaunchContext {
+    let fleet = match (&state.sender, state.fleet_enabled) {
+        (Some(sender), true) => {
+            Some(Arc::new(LoopSink(sender.clone())) as Arc<dyn crate::bg::LaunchFleet>)
+        }
+        _ => None,
+    };
+    crate::bg::dialog::LaunchContext {
+        home: state.hermes_home.clone(),
+        foreground_profile: state.profile.clone(),
+        fleet,
+        sender: state.sender.clone(),
+        home_dir: std::env::var_os("HOME").map(PathBuf::from),
+    }
+}
+
+/// The dialog's redraw and notices as effects.
+fn launch_effects(state: &mut AppState, out: crate::bg::dialog::LaunchUiOut) -> Vec<AppEffect> {
+    let mut effects = Vec::new();
+    for (kind, text) in out.notices {
+        if state.opened.is_some() {
+            effects.extend(reduce(state, Event::Notice { kind, text }));
+        } else {
+            effects.push(notice_lines(&text));
+        }
+    }
+    if out.redraw {
+        effects.push(AppEffect::Redraw);
+    }
+    effects
 }
 
 /// The foreground session's row.
@@ -8599,6 +8691,7 @@ pub async fn run<S: Screen>(
             outcome.stderr.push_str(&failure.render());
         }
     }
+    let unfinished = state.launch_ui.shutdown().await;
     if let Some(fleet) = state.fleet_service.take() {
         fleet.close().await;
     }
@@ -8610,6 +8703,10 @@ pub async fn run<S: Screen>(
     drive_status(screen, hermes_client::is_suspicious_key).await;
     screen.restore();
     outcome.stderr.push_str(&held_text(&state.held));
+    for line in unfinished {
+        outcome.stderr.push_str(line);
+        outcome.stderr.push('\n');
+    }
     outcome
 }
 

@@ -155,6 +155,8 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
         Action::AgentsPageDown => &["PageDown"],
         Action::AgentsTop => &["G", "Home"],
         Action::AgentsBottom => &["Shift+G", "End"],
+        Action::FleetNew => &["N"],
+        Action::FleetNewWorktree => &["W"],
         _ => return labels(defaults, action),
     };
     labels.iter().map(|label| (*label).to_string()).collect()

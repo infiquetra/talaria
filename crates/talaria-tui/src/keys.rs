@@ -317,6 +317,10 @@ pub enum Action {
     AgentsBottom,
     /// Open the selected child's session in another multiplexer pane.
     AgentsOpenInPane,
+    /// Start a background session from the fleet list.
+    FleetNew,
+    /// Start a background session in a new worktree from the fleet list.
+    FleetNewWorktree,
     /// Jump to the oldest background request.
     AttentionNext,
 }
@@ -350,7 +354,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 109] = [
+    pub const ALL: [Self; 111] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -459,6 +463,8 @@ impl Action {
         Self::AgentsTop,
         Self::AgentsBottom,
         Self::AgentsOpenInPane,
+        Self::FleetNew,
+        Self::FleetNewWorktree,
         Self::AttentionNext,
     ];
 
@@ -574,6 +580,8 @@ impl Action {
             Self::AgentsTop => "agents_top",
             Self::AgentsBottom => "agents_bottom",
             Self::AgentsOpenInPane => "agents_open_in_pane",
+            Self::FleetNew => "fleet_new",
+            Self::FleetNewWorktree => "fleet_new_worktree",
             Self::AttentionNext => "attention_next",
         }
     }
@@ -682,7 +690,9 @@ impl Action {
             | Self::FleetAnswer
             | Self::FleetFilter
             | Self::FleetProfileNext
-            | Self::FleetProfilePrev => KeyContext::Fleet,
+            | Self::FleetProfilePrev
+            | Self::FleetNew
+            | Self::FleetNewWorktree => KeyContext::Fleet,
             Self::AgentsUp
             | Self::AgentsDown
             | Self::AgentsTail
@@ -820,6 +830,8 @@ impl Action {
             Self::AgentsTop => &["g", "home"],
             Self::AgentsBottom => &["shift+g", "end"],
             Self::AgentsOpenInPane => &["o"],
+            Self::FleetNew => &["n"],
+            Self::FleetNewWorktree => &["w"],
             Self::AttentionNext => &["alt+a"],
         }
     }
@@ -1035,6 +1047,32 @@ impl KeyChord {
     /// Control-C closes the screen; neither may be bound to an action.
     fn is_pager_reserved(chord: &Self) -> bool {
         chord.code == KeyCode::Esc || (chord.ctrl && chord.code == KeyCode::Char('c'))
+    }
+
+    /// The key a press of this chord produces, for code that drives an editor with a chord.
+    #[must_use]
+    pub fn to_key(&self) -> Key {
+        let code = match self.code {
+            KeyCode::Char(c) if self.shift => {
+                let mut upper = c.to_uppercase();
+                match (upper.next(), upper.next()) {
+                    (Some(single), None) => KeyCode::Char(single),
+                    _ => KeyCode::Char(c),
+                }
+            }
+            other => other,
+        };
+        Key {
+            code,
+            mods: Mods {
+                ctrl: self.ctrl,
+                alt: self.alt,
+                shift: self.shift,
+                super_key: self.super_key,
+                other: false,
+            },
+            kind: KeyKind::Press,
+        }
     }
 
     /// Whether this chord matches a key. Releases and hyper or meta never match.
@@ -1537,7 +1575,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 109);
+        assert_eq!(Action::ALL.len(), 111);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1599,7 +1637,9 @@ mod tests {
                 | Action::FleetAnswer
                 | Action::FleetFilter
                 | Action::FleetProfileNext
-                | Action::FleetProfilePrev => KeyContext::Fleet,
+                | Action::FleetProfilePrev
+                | Action::FleetNew
+                | Action::FleetNewWorktree => KeyContext::Fleet,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -1681,7 +1721,9 @@ mod tests {
                 | Action::FleetAnswer
                 | Action::FleetFilter
                 | Action::FleetProfileNext
-                | Action::FleetProfilePrev => KeyContext::Fleet,
+                | Action::FleetProfilePrev
+                | Action::FleetNew
+                | Action::FleetNewWorktree => KeyContext::Fleet,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -1802,6 +1844,9 @@ mod tests {
             (Action::AgentsPageDown, vec!["PageDown"]),
             (Action::AgentsTop, vec!["G", "Home"]),
             (Action::AgentsBottom, vec!["Shift+G", "End"]),
+            (Action::AgentsOpenInPane, vec!["O"]),
+            (Action::FleetNew, vec!["N"]),
+            (Action::FleetNewWorktree, vec!["W"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1947,7 +1992,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 109);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
