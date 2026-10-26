@@ -813,9 +813,8 @@ impl Action {
             Self::AgentsPageDown => &["pagedown"],
             Self::AgentsTop => &["g", "home"],
             Self::AgentsBottom => &["shift+g", "end"],
-            // Left unbound until the fleet list owns the keys. A plain letter bound here
-            // would be the default the fleet list looks up.
-            Self::FleetNew | Self::FleetNewWorktree => &[],
+            Self::FleetNew => &["n"],
+            Self::FleetNewWorktree => &["w"],
         }
     }
 }
@@ -1030,6 +1029,32 @@ impl KeyChord {
     /// Control-C closes the screen; neither may be bound to an action.
     fn is_pager_reserved(chord: &Self) -> bool {
         chord.code == KeyCode::Esc || (chord.ctrl && chord.code == KeyCode::Char('c'))
+    }
+
+    /// The key a press of this chord produces, for code that drives an editor with a chord.
+    #[must_use]
+    pub fn to_key(&self) -> Key {
+        let code = match self.code {
+            KeyCode::Char(c) if self.shift => {
+                let mut upper = c.to_uppercase();
+                match (upper.next(), upper.next()) {
+                    (Some(single), None) => KeyCode::Char(single),
+                    _ => KeyCode::Char(c),
+                }
+            }
+            other => other,
+        };
+        Key {
+            code,
+            mods: Mods {
+                ctrl: self.ctrl,
+                alt: self.alt,
+                shift: self.shift,
+                super_key: self.super_key,
+                other: false,
+            },
+            kind: KeyKind::Press,
+        }
     }
 
     /// Whether this chord matches a key. Releases and hyper or meta never match.
@@ -1797,8 +1822,8 @@ mod tests {
             (Action::AgentsPageDown, vec!["PageDown"]),
             (Action::AgentsTop, vec!["G", "Home"]),
             (Action::AgentsBottom, vec!["Shift+G", "End"]),
-            (Action::FleetNew, vec![]),
-            (Action::FleetNewWorktree, vec![]),
+            (Action::FleetNew, vec!["N"]),
+            (Action::FleetNewWorktree, vec!["W"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());

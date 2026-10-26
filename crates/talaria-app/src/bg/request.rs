@@ -59,18 +59,46 @@ pub enum NameError {
     Empty,
 }
 
+/// Longest slug, in characters.
+const SLUG_LIMIT: usize = 40;
+
 /// Lower-case, collapse runs outside `a-z0-9` to one `-`, trim, keep 40 characters.
 /// An empty result is `work`.
 #[must_use]
 pub fn slugify(text: &str) -> String {
-    let _ = text;
-    todo!("slugify")
+    let slug = clean(text);
+    if slug.is_empty() {
+        "work".to_owned()
+    } else {
+        slug
+    }
 }
 
 /// The same cleaning rule as [`slugify`], except an empty result is [`NameError::Empty`].
 pub fn explicit_slug(name: &str) -> Result<String, NameError> {
-    let _ = name;
-    todo!("explicit slug")
+    let slug = clean(name);
+    if slug.is_empty() {
+        Err(NameError::Empty)
+    } else {
+        Ok(slug)
+    }
+}
+
+/// The cleaning rule shared by both slug functions. Only ASCII letters and digits survive.
+fn clean(text: &str) -> String {
+    let mut slug = String::with_capacity(text.len().min(SLUG_LIMIT * 2));
+    for character in text.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let mut slug = slug.trim_matches('-').to_owned();
+    // Every character is ASCII now, so a byte cut is a character cut. The cut can land on a `-`.
+    slug.truncate(SLUG_LIMIT);
+    slug.truncate(slug.trim_end_matches('-').len());
+    slug
 }
 
 /// The first free `talaria-<slug>` / `talaria/<slug>` pair, then `-2` through `-99`.
@@ -82,6 +110,15 @@ pub fn pick_names(
     taken_dirs: &BTreeSet<String>,
     taken_branches: &BTreeSet<String>,
 ) -> Option<WorktreeNames> {
-    let _ = (slug, taken_dirs, taken_branches);
-    todo!("pick names")
+    (1..=99).find_map(|number| {
+        let suffix = if number == 1 {
+            String::new()
+        } else {
+            format!("-{number}")
+        };
+        let dir_name = format!("talaria-{slug}{suffix}");
+        let branch = format!("talaria/{slug}{suffix}");
+        (!taken_dirs.contains(&dir_name) && !taken_branches.contains(&branch))
+            .then_some(WorktreeNames { dir_name, branch })
+    })
 }

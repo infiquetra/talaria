@@ -1,7 +1,5 @@
 //! Git worktrees created for a background session.
 
-#![allow(dead_code)]
-
 pub mod git;
 pub mod include;
 pub mod prepare;

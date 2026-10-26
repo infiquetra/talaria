@@ -111,6 +111,8 @@ agents_page_up = ["pageup"]
 agents_page_down = ["pagedown"]
 agents_top = ["g", "home"]
 agents_bottom = ["shift+g", "end"]
+fleet_new = ["n"]
+fleet_new_worktree = ["w"]
 [editor]
 command = ""
 [history]
@@ -213,6 +215,11 @@ The fleet overlay (`/fleet`, or `fleet_view_open`, which has no default) has its
 prompt behind its running turn, `fleet_stop` asks first and stops on a second press,
 `fleet_answer` hands keys to the peeked card, and `fleet_open` makes the row the foreground
 session. Esc and Ctrl+C are fixed there and never stop anything; in the card, Esc is the card's.
+`fleet_new` opens a dialog that starts a background session (`talaria --bg` from a shell does the
+same), and `fleet_new_worktree` starts it in a new git worktree at `.worktrees/talaria-<name>` on
+the branch `talaria/<name>`, cut from freshly fetched `origin`. Files listed in `.worktreeinclude`
+are copied into the tree, but folders listed there are links to the main checkout's, so edits in
+them are shared; uncommitted changes in the main checkout are not carried into the tree.
 
 A key is modifiers (`ctrl`, `alt`, `shift`, `super`, each once) and one key joined by `+`, in any
 case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrows, `home`, `end`,

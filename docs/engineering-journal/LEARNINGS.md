@@ -2,6 +2,30 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — session.create with a title resumes an existing session
+
+**Evidence.** Issue #241's specification (fact 3): at Hermes v0.22.4, `gateway/session_controls.py:419-430` first resolves a create-time `title` as an existing session id or title (`resolve_titled_session(..., missing_ok=True)`) and resumes that session when it finds one; titles are also unique, so a clash is refused `admission_conflict` (`:444`, `:479-480`). The background launch's parameter builder (`crates/talaria-app/src/bg/wire.rs`) never names the key, and the launch wire test asserts it is absent from every frame.
+
+**Mechanism.** The create handler treats the title as a lookup key before it treats it as a label, so a launch named after an old task would quietly append its prompt to the old session instead of starting a new one.
+
+**Generalizable rule.** Never send `title` on `session.create`; rename the session after it exists.
+
+## 2026-10-26 — Hermes sweeps .worktrees/ and archives idle trees
+
+**Evidence.** Issue #241's specification (fact 20): `hermes_cli/worktree_sweep.py:246-306` and `hermes_cli/worktree_ops.py:957-1264` sweep `<repo>/.worktrees/` when `hermes -w` starts there and every 6 hours from cron for registered repositories. Trees named `hermes-*` may go after 24 idle hours, others (Talaria's `talaria-*`) after 72; an idle tree with changes is archived to `refs/hermes/archive/<tree>` first. A background approval nobody answers fails closed after `approvals.timeout`, 300 s by default (fact 16).
+
+**Mechanism.** Talaria puts its trees where Hermes's own `-w` and Desktop do, so Hermes's tooling sees them; it does not lock them, because a lock whose reason does not start with `hermes ` counts as dead.
+
+**Generalizable rule.** Keep Talaria's trees under `.worktrees/talaria-*`; an archived one comes back with `hermes worktree restore talaria-<name>`.
+
+## 2026-10-26 — info.cwd and symlinked folders
+
+**Evidence.** Issue #241's specification (fact 25): `gateway/session_policy.py:432-434` keeps the create-time `cwd` string unresolved and `gateway/session_local.py:415` copies it into the snapshot's `info.cwd`. On macOS a temporary folder under `/var` is a link to `/private/var`, so a string comparison of the folder sent and the folder reported can fail for the same directory. `compare_cwd` in `crates/talaria-app/src/bg/service.rs` canonicalises both sides. Live test 52 (`live_bg_worktree_isolates_edits`, 2026-10-26, Hermes v0.22.4) printed `<tmp>/repo/.worktrees/talaria-live-probe` for both the folder sent and `info.cwd`, under macOS's `/private/var/folders/...` form: the launch canonicalises its folder before sending it, so Hermes echoes the canonical string.
+
+**Mechanism.** The folder check fails closed (a mismatch abandons the launch before the prompt is sent), so it must not mistake one directory reached two ways for two directories. Separately, a create whose reply is lost twice may still have made a session Talaria never learned the id of; closing the connection detaches it without an end reason, and it stays listed as an empty idle session.
+
+**Generalizable rule.** Compare folders after `canonicalize` on both sides, never as strings.
+
 ## 2026-10-26 — Only attached viewers can reply or answer
 
 **Evidence.** Hermes v0.22.4 `gateway/session_controls.py` lines 747 to 767: `prompt.submit` refuses `permission_denied` when the session is not attached on the calling connection; `approval.respond` and `clarify.respond` refuse callers that are not subscribers (`gateway/session_authority.py` lines 986 to 998). `session.interrupt` needs no attachment but needs the current `execution_generation`, which only the resume snapshot and the session's events carry (lines 861 to 888). The fleet view's peek (issue #240, `crates/talaria-app/src/peek.rs`) therefore attaches with `session.resume` before any reply, answer or stop; live tests 44 to 46 replied, denied an approval and stopped a turn this way on the pinned gateway.

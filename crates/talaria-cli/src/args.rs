@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::{ColorChoice, CommandFactory, Parser};
 
+use talaria_app::bg::explicit_slug;
 use talaria_app::launch::{Launch, StartMode, UsageError, new_session_options, parse_effort};
 
 fn required_text(value: &str) -> Result<String, String> {
@@ -33,7 +34,7 @@ fn reject_bench(value: &str) -> Result<String, String> {
     version,
     about = "Talk to a Hermes session from the terminal.",
     color = ColorChoice::Never,
-    after_long_help = "Print mode runs one finite prompt without a screen. -p takes a prompt, not a profile name.\nPass < /dev/null when standard input is an open pipe you do not mean to send.\nWithout --timeout, talaria -p waits as long as the turn runs; set --timeout in automated jobs.\nPrint exits: 0 completed, 1 failed or unknown, 2 usage, 3 input required, 4 not started,\n124 timed out, 129 hangup, 130 interrupted, 143 terminated.\nJSON format: docs/formats/print-result-v1.md"
+    after_long_help = "Print mode runs one finite prompt without a screen. -p takes a prompt, not a profile name.\nPass < /dev/null when standard input is an open pipe you do not mean to send.\nWithout --timeout, talaria -p waits as long as the turn runs; set --timeout in automated jobs.\nPrint exits: 0 completed, 1 failed or unknown, 2 usage, 3 input required, 4 not started,\n124 timed out, 129 hangup, 130 interrupted, 143 terminated.\nJSON format: docs/formats/print-result-v1.md\n\n--bg starts a new session in the background and returns once Hermes has accepted the prompt.\nGive the prompt as an argument or on standard input, as for -p.\n--worktree (-w) first creates a git worktree for the session: a second checkout on a new\nbranch talaria/<name>, under .worktrees/ in the main checkout, cut from a freshly fetched\norigin. Folders listed in .worktreeinclude are shared with the main checkout by a link, so\nedits inside them reach the main checkout. Uncommitted changes in the main checkout are not\ncarried into the tree. --name sets the worktree's name and needs --worktree.\nBackground exits: 0 launched, 1 unknown (the prompt may have started), 2 usage, 4 not started,\n130 interrupted before the prompt was sent.\nJSON format: docs/formats/bg-result-v1.md"
 )]
 pub struct Cli {
     #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
@@ -207,10 +208,35 @@ pub struct PrintUsageError {
     pub next_step: String,
 }
 
-/// Check the print options by hand after clap, with or without `-p`.
+/// Check the print and background options by hand after clap, with or without `-p`.
 pub fn validate_print_options(cli: &Cli) -> Result<(), PrintUsageError> {
     let error = |what: String, next_step: String| PrintUsageError { what, next_step };
-    if !cli.print {
+    let help = |what: &str| error(what.into(), "Run talaria --help.".into());
+    if cli.bg && cli.print {
+        return Err(help("talaria --bg cannot be combined with -p."));
+    }
+    if cli.bg && (cli.continue_session || cli.resume.is_some()) {
+        return Err(help(
+            "talaria --bg starts a new session; it cannot be combined with -c or --resume.",
+        ));
+    }
+    if cli.worktree && !cli.bg {
+        return Err(help("talaria --worktree needs --bg."));
+    }
+    if let Some(name) = &cli.name {
+        if !cli.worktree {
+            return Err(help("talaria --name needs --worktree."));
+        }
+        if explicit_slug(name).is_err() {
+            return Err(help(
+                "talaria --name needs at least one ASCII letter or digit.",
+            ));
+        }
+    }
+    if cli.bg && cli.timeout.is_some() {
+        return Err(help("--timeout only works with -p."));
+    }
+    if !cli.print && !cli.bg {
         let option = if cli.prompt.is_some() {
             Some("a prompt on the command line")
         } else if cli.output_format.is_some() {

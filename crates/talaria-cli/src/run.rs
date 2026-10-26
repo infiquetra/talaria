@@ -23,6 +23,7 @@ use talaria_app::app::{
 };
 use talaria_app::appearance::AppearanceView;
 use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
+use talaria_app::bg::dialog::{DialogEvent, DialogStatus, LaunchSubmit};
 use talaria_app::comforts::{editor, herdr::HerdrReporter, prompt_history::PromptHistory, suspend};
 use talaria_app::config::{self, LoadedConfig};
 use talaria_app::connection::OpenConnection;
@@ -38,6 +39,7 @@ use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
 use talaria_core::checklist::ChecklistCommit;
 use talaria_core::commands::PaletteInput;
 use talaria_core::directory::state::{PickerAction, PickerInput, PickerMode, PickerState};
+use talaria_core::fleet::ProfileStatus;
 use talaria_core::fleet_view::{FleetAction, FleetViewInput, FleetViewState, Focus as FleetFocus};
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
@@ -63,6 +65,7 @@ use talaria_tui::history_search::{HistorySearch, SearchOutcome};
 use talaria_tui::keys::{
     Action, CompletionAction, Key, KeyCode, KeyContext, KeyKind, KeyMap, ModelAction,
 };
+use talaria_tui::launch_dialog::{DialogAction, DialogDefaults, DialogMode, LaunchDialog};
 use talaria_tui::live::{LiveSection, LiveView, PlainTextSection};
 use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
@@ -210,6 +213,12 @@ pub struct TuiScreen {
     agents_flash: Option<String>,
     agents_pause_pending: bool,
     processes: ProcessesView,
+    /// The launch dialog over the fleet overlay; it owns every key while it is open.
+    launch_dialog: Option<LaunchDialog>,
+    /// The prompt kept from the last launch dialog closed with Esc.
+    launch_draft: Option<String>,
+    /// The version of the app's dialog status already shown.
+    launch_seen: u64,
     confirmation: Option<Confirmation>,
     confirmation_focused: Option<Instant>,
     /// The rewind overlay holds the alternate screen. Issue #233.
@@ -443,6 +452,8 @@ fn fleet_action(action: Action) -> Option<FleetAction> {
         Action::FleetFilter => FleetAction::Filter,
         Action::FleetProfileNext => FleetAction::ProfileNext,
         Action::FleetProfilePrev => FleetAction::ProfilePrev,
+        Action::FleetNew => FleetAction::New,
+        Action::FleetNewWorktree => FleetAction::NewInWorktree,
         _ => return None,
     })
 }
@@ -999,9 +1010,117 @@ impl TuiScreen {
                     .resolve_in(&key, KeyContext::Fleet)
                     .and_then(fleet_action)
                 {
+                    // The dialog opens over the list; the overlay itself does nothing.
+                    Some(FleetAction::New) if fleet.focus() == &FleetFocus::List => {
+                        self.open_launch_dialog(fleet, view, DialogMode::Plain)
+                    }
+                    Some(FleetAction::NewInWorktree) if fleet.focus() == &FleetFocus::List => {
+                        self.open_launch_dialog(fleet, view, DialogMode::Worktree)
+                    }
                     Some(action) => input(FleetViewInput::Action(action)),
                     None => input(FleetViewInput::AnyOtherKey),
                 }
+            }
+        }
+    }
+
+    /// `n` or `w` in the fleet list: the dialog starts from the foreground session's profile
+    /// and folder, the profiles the fleet lists, and the draft kept from the last Esc.
+    fn open_launch_dialog(
+        &mut self,
+        fleet: &FleetViewState,
+        view: &View<'_>,
+        mode: DialogMode,
+    ) -> Vec<UserAction> {
+        let profile_only = fleet.scope_note().is_some();
+        let mut profiles: Vec<String> = if profile_only {
+            Vec::new()
+        } else {
+            fleet
+                .profiles()
+                .iter()
+                .filter(|(_, status)| {
+                    !matches!(
+                        status,
+                        ProfileStatus::Parked { .. } | ProfileStatus::OutOfScope
+                    )
+                })
+                .map(|(name, _)| name.clone())
+                .collect()
+        };
+        if !profiles.iter().any(|name| name == view.profile) {
+            profiles.insert(0, view.profile.to_owned());
+        }
+        let folder = view
+            .folder
+            .and_then(|folder| folder.cwd.as_deref())
+            .map_or_else(|| view.launch_folder.to_path_buf(), PathBuf::from);
+        let defaults = DialogDefaults {
+            profiles,
+            profile: view.profile.to_owned(),
+            profile_note: profile_only
+                .then(|| "only this profile: the gateway refused a host-scoped ticket".to_owned()),
+            folder,
+            draft: self.launch_draft.clone(),
+            model_placeholder: "profile default".to_owned(),
+            slug: talaria_app::bg::slugify,
+        };
+        self.launch_dialog = Some(LaunchDialog::open(mode, defaults));
+        // A status left from an earlier launch is not this dialog's.
+        self.launch_seen = view.launch_status.map_or(0, |(version, _)| version);
+        vec![UserAction::LaunchDialog(DialogEvent::Opened)]
+    }
+
+    /// One key for the open launch dialog.
+    fn launch_key(&mut self, key: Key) -> Vec<UserAction> {
+        let Some(dialog) = self.launch_dialog.as_mut() else {
+            return Vec::new();
+        };
+        match dialog.handle_pressed(key) {
+            DialogAction::None => vec![UserAction::LaunchDialog(DialogEvent::Edited)],
+            DialogAction::Close { draft } => {
+                self.launch_draft = (!draft.is_empty()).then_some(draft);
+                self.launch_dialog = None;
+                vec![UserAction::LaunchDialog(DialogEvent::Closed)]
+            }
+            DialogAction::Launch(submit) => {
+                vec![UserAction::LaunchDialog(DialogEvent::Submit(
+                    LaunchSubmit {
+                        prompt: submit.prompt,
+                        profile: submit.profile,
+                        folder: submit.folder,
+                        model: submit.model,
+                        worktree: submit.worktree,
+                        worktree_name: submit.worktree_name,
+                    },
+                ))]
+            }
+        }
+    }
+
+    /// Show the app's latest status for the dialog's launch.
+    fn sync_launch_dialog(&mut self, view: &View<'_>) {
+        if view.fleet.is_none() {
+            self.launch_dialog = None;
+            return;
+        }
+        let Some((version, status)) = view.launch_status else {
+            return;
+        };
+        if version <= self.launch_seen {
+            return;
+        }
+        self.launch_seen = version;
+        let Some(dialog) = self.launch_dialog.as_mut() else {
+            return;
+        };
+        match status {
+            DialogStatus::Invalid(text) => dialog.show_invalid(text),
+            DialogStatus::Progress(text) => dialog.show_progress(text),
+            DialogStatus::Failed { what, next_step } => dialog.show_error(what, next_step),
+            DialogStatus::Close => {
+                self.launch_dialog = None;
+                self.launch_draft = None;
             }
         }
     }
@@ -1487,8 +1606,11 @@ impl TuiScreen {
                         ))]
                     });
                 }
-                // The fleet overlay owns every key while it is open; in its answer focus the
-                // peeked session's card takes them.
+                // The launch dialog owns every key while it is open, then the fleet overlay;
+                // in the overlay's answer focus the peeked session's card takes them.
+                if view.fleet.is_some() && self.launch_dialog.is_some() {
+                    return self.launch_key(Key::from(raw));
+                }
                 if let Some(fleet) = view.fleet {
                     return self.fleet_key(Key::from(raw), fleet, view, now);
                 }
@@ -1696,6 +1818,12 @@ impl TuiScreen {
                 }
                 if self.terminal.is_released() {
                     return Vec::new();
+                }
+                if view.fleet.is_some()
+                    && let Some(dialog) = self.launch_dialog.as_mut()
+                {
+                    dialog.handle_paste(&text);
+                    return vec![UserAction::LaunchDialog(DialogEvent::Edited)];
                 }
                 if let Some(fleet) = view.fleet {
                     return match fleet.focus() {
@@ -1966,6 +2094,9 @@ impl TuiScreen {
 
 impl ComposerDeadline for TuiScreen {
     fn tick(&mut self, now: Instant) {
+        if let Some(dialog) = self.launch_dialog.as_mut() {
+            dialog.tick(now);
+        }
         let _ = self.composer.tick(now);
         // The loop reads the draft a flushed burst left right after this tick.
         let _ = reported_snapshot(&self.composer, &mut self.reported);
@@ -1973,7 +2104,14 @@ impl ComposerDeadline for TuiScreen {
     }
 
     fn next_tick(&self) -> Option<Instant> {
-        self.composer.next_tick()
+        let dialog = self
+            .launch_dialog
+            .as_ref()
+            .and_then(LaunchDialog::next_tick);
+        match (self.composer.next_tick(), dialog) {
+            (Some(composer), Some(dialog)) => Some(composer.min(dialog)),
+            (composer, dialog) => composer.or(dialog),
+        }
     }
 }
 
@@ -2055,10 +2193,12 @@ impl Screen for TuiScreen {
             return;
         }
         let Some(fleet) = view.fleet else {
+            self.launch_dialog = None;
             self.close_overlay(Overlay::Fleet);
             return;
         };
         self.open_overlay(Overlay::Fleet);
+        self.sync_launch_dialog(view);
         let now = Instant::now();
         let peeked = fleet.peek().map(|(key, _)| key.clone());
         if let Some(frame) = view
@@ -2094,9 +2234,13 @@ impl Screen for TuiScreen {
                 })
         };
         let theme = FleetTheme::with_key_map(&self.keymap);
-        let _ = self
-            .terminal
-            .draw_overlay(|area, buf| FleetView::draw(fleet, panel, area, buf, &theme));
+        let dialog = self.launch_dialog.as_ref();
+        let _ = self.terminal.draw_overlay(|area, buf| {
+            FleetView::draw(fleet, panel, area, buf, &theme);
+            if let Some(dialog) = dialog {
+                dialog.draw(dialog.area(area), buf);
+            }
+        });
     }
 
     fn input(&mut self, input: ScreenInput, view: &View<'_>, now: Instant) -> Vec<UserAction> {
@@ -2976,6 +3120,9 @@ fn session(
         agents_flash: None,
         agents_pause_pending: false,
         processes: ProcessesView::new(),
+        launch_dialog: None,
+        launch_draft: None,
+        launch_seen: 0,
         confirmation: None,
         confirmation_focused: None,
         rewind_open: false,

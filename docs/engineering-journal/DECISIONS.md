@@ -4,6 +4,26 @@
 
 ## 2026-10-26
 
+### Background launch submits an ordinary turn
+
+**Decision.** `talaria --bg` and the fleet view's `n` and `w` (issue #241) submit the prompt with exactly `session_id`, `text` and `submission_id` (plus `profile` when routed): never `finite` and never `unattended`, so an approval in the background turn waits in the fleet view's needs-you queue.
+
+**Rationale.** A finite turn resolves dangerous commands at once (deny by default) and answers clarifications as undelivered, so a background agent could never ask the operator anything; `unattended` would approve everything. Unanswered approvals still fail closed after Hermes's `approvals.timeout`.
+
+**Rejected alternatives.** A finite turn, which silently denies; an unattended turn, which silently approves; a per-launch approval flag, which Hermes does not offer.
+
+**Revisit when.** Hermes offers an approval policy per session.
+
+### Worktrees live in .worktrees/talaria-* and are recorded in git config
+
+**Decision.** A worktree launch creates `<main root>/.worktrees/talaria-<slug>` on the branch `talaria/<slug>` (`-2` to `-99` on a clash), from the freshly fetched `origin/<default branch>` commit, with `--no-track`, ignored through `info/exclude` rather than `.gitignore`. Its record (path, base, base commit, whether the base was fetched, profile, creation time, then the session id) is written under `branch.talaria/<slug>.talaria-*` in the repository's own git config. Folders listed in `.worktreeinclude` are linked to the main checkout's, files copied. These follow settled decisions of the issue; the operator's answers to its questions 1 (location, prefix, linked folders) and 2 (living with Hermes's sweep rather than copying its lock format) are recorded on #215 and were open when this was written.
+
+**Rationale.** The same folder as Hermes's own `-w` and Desktop lets `hermes worktree list`, `prune` and `restore` see Talaria's trees; the `talaria` prefixes keep Hermes's 24-hour tier and orphan-branch pruner away from them. A record in git config travels with the repository, survives a restart and disappears with `git branch -D`; no Talaria state file is needed. Linking large ignored dependency folders costs no disk or time.
+
+**Rejected alternatives.** `.claude/worktrees/`, which Hermes's tooling does not see; a folder outside the repository; a Talaria state file; copying `.worktreeinclude` folders.
+
+**Revisit when.** Hermes's sweep removes a tree a session is still working in, or Hermes offers a worktree method on the gateway.
+
 ### The fleet view peeks on its own connection
 
 **Decision.** The fleet overlay (issue #240) peeks one session at a time on a profile-scoped link of its own, opened with the launch's connection service for the row's profile and never starting a gateway; it is reused for rows of the same profile, replaced for another profile, and closed with the overlay. Space attaches with `session.resume {session_id, display_projection: true}`; moving the cursor never does; a move or a close detaches with exactly `{session_id, subscription_id}`, never `end_reason`. A reply is a queued `prompt.submit`; a stop is `x` twice, then `session.interrupt` with the attached generation after open approvals are denied. On this link, server requests of the masked kinds become the peek's card; every other kind is ignored, never refused. The foreground row is never attached a second time: it uses the foreground's own paths. All peek work runs on one worker task that owns the peek, so effects keep their order and the app loop never waits.
