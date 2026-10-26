@@ -756,11 +756,7 @@ pub fn batch_block_lines(
     if width == 0 {
         return vec![];
     }
-    let completed = batch
-        .rows
-        .iter()
-        .filter(|(r, _)| r.state == RowState::Completed)
-        .count();
+    let finished = batch.rows.len();
     let failed = batch
         .rows
         .iter()
@@ -771,7 +767,7 @@ pub fn batch_block_lines(
         .iter()
         .filter(|(r, _)| r.state == RowState::Interrupted)
         .count();
-    let mut header = format!("⎇ Subagents · {completed} finished");
+    let mut header = format!("⎇ Subagents · {finished} finished");
     if failed > 0 {
         header.push_str(&format!(" · {failed} failed"));
     }
