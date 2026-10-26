@@ -1,0 +1,2 @@
+No background processes in this session.
+When the agent runs a command with the terminal tool and background=true, it appears here with its output.

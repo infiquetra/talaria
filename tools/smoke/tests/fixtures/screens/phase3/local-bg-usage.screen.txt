@@ -1,0 +1,1 @@
+Usage: /bg <prompt> — runs the prompt on a fresh agent in the background; the answer appears here when it finishes.

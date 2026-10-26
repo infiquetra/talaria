@@ -1,0 +1,5 @@
+Launched session local-f678901234567890 in profile fixture.
+Folder: folder
+Worktree: branch talaria/smoke-abcd1234 from origin/main at abcdef123456
+Follow it: talaria fleet list --profile fixture
+Open it: talaria --resume local-f678901234567890 --profile fixture

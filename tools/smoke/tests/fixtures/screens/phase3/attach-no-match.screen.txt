@@ -1,0 +1,2 @@
+talaria: no session matches "zz-none-abcd1234" in the profile fixture.
+Next step: run "talaria fleet list" or "talaria --resume" to see sessions, or pass the full id with --profile fixture.

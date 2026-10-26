@@ -1,0 +1,1 @@
+Not inside Herdr or tmux. To watch "<title>" side by side, run this in another terminal: talaria attach local-a1b2c3d4 --profile fixture

@@ -1,0 +1,1 @@
+{"format":"talaria.fleet.v1","kind":"snapshot","rows":[{"profile":"fixture","session_id":"local-a1b2c3d4e5f67890","title":"<title>","model":"minimax-m3.1-flash","state":"done","outcome":"completed"},{"profile":"fixture","session_id":"local-b2c3d4e5f6789012","title":"<title>","model":"minimax-m3.1-flash","state":"idle","outcome":null}],"needs_you":[]}

@@ -37,10 +37,14 @@ pub use paster2a::{FakePaster, PasterCall, PasterRecorded};
 
 #[path = "scratch2b.rs"]
 pub mod scratch2b;
+#[path = "scratch3.rs"]
+pub mod scratch3;
 #[path = "scripts2a.rs"]
 pub mod scripts2a;
 #[path = "scripts2b.rs"]
 pub mod scripts2b;
+#[path = "scripts3.rs"]
+pub mod scripts3;
 
 #[path = "tmux_fake.rs"]
 pub mod tmux_fake;
@@ -120,6 +124,16 @@ impl StageBuilder {
     /// Writes the file under the pane's working folder (`{path, text}`).
     pub fn write_in_cwd(self, path: &str, text: &str) -> Self {
         self.set("write_in_cwd", json!({"path": path, "text": text}))
+    }
+
+    /// Writes the file under the scratch root (`{path, text}`).
+    pub fn write_in_scratch(self, path: &str, text: &str) -> Self {
+        self.set("write_in_scratch", json!({"path": path, "text": text}))
+    }
+
+    /// Deletes the path under the scratch root.
+    pub fn remove_in_scratch(self, path: &str) -> Self {
+        self.set("remove_in_scratch", json!(path))
     }
 
     /// Writes the file under the pane's working folder and sets its mode (`{path, text, mode}`).
@@ -237,6 +251,16 @@ impl RuleBuilder {
 
     pub fn write_in_cwd(mut self, path: &str, text: &str) -> Self {
         self.stage = self.stage.write_in_cwd(path, text);
+        self
+    }
+
+    pub fn write_in_scratch(mut self, path: &str, text: &str) -> Self {
+        self.stage = self.stage.write_in_scratch(path, text);
+        self
+    }
+
+    pub fn remove_in_scratch(mut self, path: &str) -> Self {
+        self.stage = self.stage.remove_in_scratch(path);
         self
     }
 

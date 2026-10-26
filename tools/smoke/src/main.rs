@@ -214,7 +214,9 @@ fn run(cli: &Cli) -> Result<u8, String> {
     // The phase 2a run fixes its seed, so its scratch project, and with it the editor script
     // every launch line names, is known before it starts.
     let seed = match cli.suite {
-        Suite::Phase1 => None,
+        // Phase 3 is not parsed yet. The arm keeps the match exhaustive and uses the
+        // first suite's seed rule.
+        Suite::Phase1 | Suite::Phase3 => None,
         Suite::Phase2a | Suite::Phase2b => Some(rand::random::<u64>()),
     };
     let (start_line, resume_line) = match (cli.suite, seed) {
@@ -288,7 +290,8 @@ fn run(cli: &Cli) -> Result<u8, String> {
 
     let clock = SystemClock::new();
     let report = match suite {
-        Suite::Phase1 => run_smoke(&herdr, &clock, &config, &stop),
+        // Phase 3 is not parsed yet, so this arm is not reached from the command line.
+        Suite::Phase1 | Suite::Phase3 => run_smoke(&herdr, &clock, &config, &stop),
         Suite::Phase2a => {
             let seed = seed.unwrap_or(0);
             let scratch = scratch_for(&config.temp_root, seed);
