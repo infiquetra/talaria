@@ -16,7 +16,8 @@ use std::time::Duration;
 use hermes_client::{InboundStream, ReplaySource};
 use record_fixture::{
     AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, Preflight, PreflightInput, SCENARIOS,
-    Scenario, ScratchDir, build_substitutions, check_evidence, preflight, run_scenario,
+    SCRIPTED_SCENARIOS, Scenario, ScratchDir, build_substitutions, check_evidence, preflight,
+    run_scenario,
 };
 use serde_json::{Value, json};
 use support::{
@@ -37,6 +38,7 @@ fn driver_config(scratch: &Path, attempt_timeout: Duration) -> DriverConfig {
         model: MODEL.to_owned(),
         provider: PROVIDER.to_owned(),
         scratch: scratch.to_path_buf(),
+        second: None,
         attempt_timeout,
     }
 }
@@ -175,6 +177,24 @@ fn scenario_table_matches_the_spec() {
         ]
     );
     assert!(Scenario::named("not-a-scenario").is_none());
+    // The scripted scenarios are the ones the recorder cannot drive with a plain prompt.
+    assert_eq!(
+        SCRIPTED_SCENARIOS,
+        [
+            "queue-edit-remove",
+            "queue-steer",
+            "queue-move-send-now",
+            "model-switch",
+            "permissions-cd",
+            "shell-and-btw",
+        ]
+    );
+    for name in SCRIPTED_SCENARIOS {
+        assert!(
+            !SCENARIOS.contains(&name),
+            "{name} is both a plain and a scripted scenario"
+        );
+    }
     let table: [(&str, &[&str], &[&str]); 13] = [
         (
             "plain-answer",
