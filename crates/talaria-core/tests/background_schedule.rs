@@ -447,7 +447,7 @@ fn local_commands_include_the_background_alias() {
         "Stop the running turn and this session's background processes"
     );
     assert_eq!(stop.action, LocalAction::Stop);
-    assert!(table.find("tasks").unwrap().action == LocalAction::Tasks);
+    assert!(table.find("tasks").unwrap().action == LocalAction::Agents);
     let mut work = BackgroundWork::default();
     let effects = update(
         &mut work,

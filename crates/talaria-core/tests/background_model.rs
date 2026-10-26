@@ -276,7 +276,7 @@ fn list_reply_adds_and_updates_in_place() {
                 None,
                 Some(1.0),
                 None,
-                Some("tail-a\n"),
+                Some("chunk-a\ntail-a\n"),
             ),
             listed("proc-b", "running", None, None, Some(2.0), None, None),
         ],
@@ -309,6 +309,19 @@ fn list_reply_adds_and_updates_in_place() {
     );
     assert!(stale.is_empty());
     assert_eq!(ids(&work), ["proc-a", "proc-b"]);
+    for effect in &effects {
+        if let BackgroundEffect::ListProcesses { request } = effect {
+            apply_list(
+                &mut work,
+                *request,
+                vec![
+                    listed("proc-a", "running", None, None, Some(1.0), None, None),
+                    listed("proc-b", "running", None, None, Some(2.0), None, None),
+                ],
+                4,
+            );
+        }
+    }
     let refresh = update(&mut work, BackgroundEvent::RefreshRequested { now_ms: 5 });
     let request = list_request(&refresh);
     let before = work.version();

@@ -53,6 +53,49 @@ fn start(work: &mut BackgroundWork, text: &str, now_ms: u64) -> RequestId {
 }
 
 #[test]
+fn a_reply_after_early_result_eviction_does_not_leave_a_running_task() {
+    let mut work = BackgroundWork::default();
+    let request = start(&mut work, "first", 1);
+    let mut shown = Vec::new();
+    for index in 0..=talaria_core::background::MAX_EARLY_RESULTS {
+        shown.extend(effects_of(
+            &mut work,
+            BackgroundEvent::BgCompleted {
+                task_id: format!("bg_early_{index}"),
+                text: "answer".into(),
+                now_ms: 2 + index as u64,
+            },
+        ));
+    }
+    assert_eq!(results(&shown).len(), 1);
+    assert_eq!(results(&shown)[0].task_id, "bg_early_0");
+    let accepted = effects_of(
+        &mut work,
+        BackgroundEvent::BgAccepted {
+            request,
+            task_id: "bg_early_0".into(),
+            now_ms: 100,
+        },
+    );
+    assert!(work.bg_tasks().is_empty());
+    assert!(
+        results(&accepted)
+            .iter()
+            .all(|cell| cell.task_id != "bg_early_0"),
+        "an already shown answer must not be printed twice"
+    );
+    let duplicate = effects_of(
+        &mut work,
+        BackgroundEvent::BgCompleted {
+            task_id: "bg_early_0".into(),
+            text: "answer".into(),
+            now_ms: 101,
+        },
+    );
+    assert!(duplicate.is_empty());
+}
+
+#[test]
 fn elapsed_text_uses_whole_seconds() {
     assert_eq!(format_elapsed(0), "0s");
     assert_eq!(format_elapsed(59), "59s");
@@ -62,7 +105,7 @@ fn elapsed_text_uses_whole_seconds() {
     assert_eq!(format_elapsed(3_600), "1h00m");
     assert_eq!(format_elapsed(3_720), "1h02m");
     assert_eq!(format_elapsed(27 * 3_600), "27h00m");
-    let skewed = (10_i64 - 25).max(0) as u64;
+    let skewed = 0_u64;
     assert_eq!(format_elapsed(skewed), "0s");
 }
 
@@ -590,6 +633,21 @@ fn carry_over_keeps_work_and_attach_resets_inflight() {
         reset
             .iter()
             .any(|effect| matches!(effect, BackgroundEffect::ListProcesses { .. }))
+    );
+    let request = reset
+        .iter()
+        .find_map(|effect| match effect {
+            BackgroundEffect::ListProcesses { request } => Some(*request),
+            _ => None,
+        })
+        .expect("attach lists");
+    let _ = effects_of(
+        &mut work,
+        BackgroundEvent::Listed {
+            request,
+            processes: vec![],
+            now_ms: 9,
+        },
     );
     let again = effects_of(&mut work, BackgroundEvent::RefreshRequested { now_ms: 10 });
     assert!(

@@ -89,6 +89,29 @@ fn lists_for(gateway: &MockGateway, session: &str) -> usize {
         .count()
 }
 
+async fn execute_background(
+    app: &mut AppState,
+    service: &BackgroundService,
+    effects: Vec<AppEffect>,
+    now_ms: u64,
+) {
+    let mut pending = std::collections::VecDeque::from(effects);
+    while let Some(effect) = pending.pop_front() {
+        if let AppEffect::Background { session_id, effect } = effect
+            && let Some(event) = service.execute(&session_id, effect, || now_ms).await
+        {
+            pending.extend(app_update(
+                app,
+                AppMessage::BackgroundDone {
+                    session_id,
+                    generation: 0,
+                    event,
+                },
+            ));
+        }
+    }
+}
+
 #[tokio::test]
 async fn calls_send_only_the_method_keys() {
     let (gateway, client, _inbound) = MockGateway::start().await;
@@ -281,7 +304,45 @@ fn call_failures_map_onto_the_notes() {
         CallFailure::MethodMissing,
     ));
     assert_eq!(level, talaria_core::background::NoticeLevel::Error);
-    assert_eq!(text, "This Hermes does not offer process.stop.");
+    assert_eq!(
+        text,
+        "Could not stop background processes: This Hermes does not offer process.stop."
+    );
+}
+
+#[tokio::test]
+async fn an_open_kill_reply_retains_a_scope_stop_warning() {
+    let (gateway, client, _inbound) = MockGateway::start().await;
+    let session_id = gateway.session_id();
+    gateway.set_background_processes(
+        &session_id,
+        vec![json!({
+            "session_id": "proc_1", "command": "sh tick.sh", "status": "exited",
+        })],
+    );
+    gateway.set_kill_result("already_exited", None);
+    gateway.set_kill_scope_stop_failed("hermes-process-test.scope");
+    let event = BackgroundService::new(client)
+        .execute(
+            &SessionId::new(session_id),
+            BackgroundEffect::KillProcess {
+                request: RequestId(7),
+                id: ProcessId("proc_1".into()),
+            },
+            || 100,
+        )
+        .await;
+    assert_eq!(
+        event,
+        Some(BackgroundEvent::KillReplied {
+            request: RequestId(7),
+            process_id: ProcessId("proc_1".into()),
+            outcome: KillOutcome::AlreadyExited {
+                scope_stop_failed: true
+            },
+            now_ms: 100,
+        })
+    );
 }
 
 #[tokio::test]
@@ -407,25 +468,28 @@ async fn only_the_foreground_session_is_listed() {
     assert_eq!(primary.version(), version);
     assert!(primary.rows().all(|row| row.id.0 != "stale-gen"));
 
-    let (gateway, _client, _inbound) = MockGateway::start().await;
+    let (gateway, client, _inbound) = MockGateway::start().await;
     gateway.enable_background();
+    let service = BackgroundService::new(client);
     let mut app = AppState::new("launch-bg");
     app.profile = "fixture".to_string();
-    let _ = app_update(
+    let effects = app_update(
         &mut app,
         AppMessage::Opened {
             opened: opened("session-a"),
             notice: None,
         },
     );
+    execute_background(&mut app, &service, effects, 0).await;
     assert_eq!(lists_for(&gateway, "session-a"), 1, "launch lists once");
-    let _ = app_update(
+    let effects = app_update(
         &mut app,
         AppMessage::Opened {
             opened: opened("session-b"),
             notice: None,
         },
     );
+    execute_background(&mut app, &service, effects, 0).await;
     assert_eq!(
         lists_for(&gateway, "session-b"),
         1,
@@ -436,13 +500,14 @@ async fn only_the_foreground_session_is_listed() {
         1,
         "a switch does not list the old session again"
     );
-    let _ = app_update(
+    let effects = app_update(
         &mut app,
         AppMessage::Opened {
             opened: opened("session-a"),
             notice: None,
         },
     );
+    execute_background(&mut app, &service, effects, 0).await;
     assert_eq!(
         lists_for(&gateway, "session-a"),
         2,
@@ -527,29 +592,61 @@ async fn idle_work_schedules_nothing() {
         listed |= effects
             .iter()
             .any(|effect| matches!(effect, BackgroundEffect::ListProcesses { .. }));
+        for effect in effects {
+            if let BackgroundEffect::ListProcesses { request } = effect {
+                let processes = work
+                    .rows()
+                    .map(|row| ListedProcess {
+                        id: row.id.clone(),
+                        command: row.command.clone(),
+                        status_raw: "running".into(),
+                        exit_code: row.exit_code,
+                        started_epoch_s: row.started_epoch_s,
+                        exited_at_s: row.exited_at_s,
+                        completion_reason: None,
+                        output_tail: None,
+                    })
+                    .collect();
+                let _ = update(
+                    &mut work,
+                    BackgroundEvent::Listed {
+                        request,
+                        processes,
+                        now_ms: now,
+                    },
+                );
+            }
+        }
     }
     assert!(
         listed,
         "six seconds with a running process list at least once"
     );
 
-    let (gateway, _client, _inbound) = MockGateway::start().await;
+    let (gateway, client, _inbound) = MockGateway::start().await;
     gateway.enable_background();
+    let service = BackgroundService::new(client);
     let mut app = AppState::new("launch-bg");
     app.profile = "fixture".to_string();
-    let _ = app_update(
+    let effects = app_update(
         &mut app,
         AppMessage::Opened {
             opened: opened(&gateway.session_id()),
             notice: None,
         },
     );
+    execute_background(&mut app, &service, effects, 0).await;
+    *app.opened
+        .as_mut()
+        .expect("the app has a session")
+        .state
+        .background_mut() = work.clone();
     let mut drew = 0_u32;
     for step in 1..=6 {
         let effects = app_update(
             &mut app,
             AppMessage::Tick {
-                now_ms: step * 1_000,
+                now_ms: now + step * 1_000,
             },
         );
         if effects
@@ -558,9 +655,10 @@ async fn idle_work_schedules_nothing() {
         {
             drew += 1;
         }
+        execute_background(&mut app, &service, effects, now + step * 1_000).await;
     }
     assert!(
-        gateway.requests("process.list").len() >= 1,
+        !gateway.requests("process.list").is_empty(),
         "the app listed the foreground session during the six seconds"
     );
     assert!(drew >= 1, "the running row wakes the screen");
@@ -609,6 +707,11 @@ async fn idle_work_schedules_nothing() {
         },
     );
     assert_eq!(next_deadline(&work, idle_at), None);
+    *app.opened
+        .as_mut()
+        .expect("the app has a session")
+        .state
+        .background_mut() = work.clone();
     let seen_before = gateway.seen().len();
     let drew_before = drew;
     let mut stats = FrameStats {

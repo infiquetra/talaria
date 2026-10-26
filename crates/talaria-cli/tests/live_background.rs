@@ -14,6 +14,7 @@ use hermes_contract::schemas::{
 use serde_json::{Value, json};
 use talaria_app::launch::{NewSession, SessionRequest};
 use talaria_app::sessions::SessionService;
+use talaria_core::background::{ListedProcess, ProcessStatus, status_of};
 use talaria_core::session::{Effect, SessionId};
 
 const BG_OK: &str = "Reply with exactly: bg-ok";
@@ -133,7 +134,7 @@ fn event_session(item: &Inbound) -> Option<&str> {
     }
 }
 
-fn payload<'a>(item: &'a Inbound) -> Option<&'a Value> {
+fn payload(item: &Inbound) -> Option<&Value> {
     match item {
         Inbound::Event(event) => event.raw.get("payload"),
         _ => None,
@@ -330,10 +331,10 @@ async fn live_process_streams_and_is_killed() {
         )
         .await
         .unwrap_or_else(|error| panic!("process.list failed: {error}"));
-    let killed = listed
-        .processes
-        .iter()
-        .any(|row| row.session_id == process_id && row.status == "killed");
+    let killed = listed.processes.iter().any(|row| {
+        row.session_id == process_id
+            && status_of(&ListedProcess::from_entry(row)) == ProcessStatus::Killed
+    });
     assert!(killed, "the row did not end killed");
     passed();
 }
@@ -380,7 +381,7 @@ async fn live_stop_all_reports_count() {
     let ended = listed
         .processes
         .iter()
-        .filter(|row| row.status == "killed")
+        .filter(|row| status_of(&ListedProcess::from_entry(row)) == ProcessStatus::Killed)
         .count();
     assert!(ended >= 2, "killed rows {ended}");
     passed();
@@ -438,6 +439,10 @@ async fn live_bg_approval_report() {
     } else {
         println!("BG_APPROVAL: {what} folder_exists={exists}");
     }
+    assert!(
+        exists,
+        "the background command removed the approval probe without permission; stop the live run"
+    );
 }
 
 async fn submit(link: &LiveLink, text: &str) {

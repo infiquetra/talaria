@@ -133,11 +133,115 @@ fn section_height(work: &BackgroundWork, width: u16) -> u16 {
 }
 
 fn draw_overlay(view: &ProcessesView, work: &BackgroundWork, width: u16, height: u16) -> Buffer {
+    draw_overlay_at(view, work, width, height, 42_000)
+}
+
+fn draw_overlay_at(
+    view: &ProcessesView,
+    work: &BackgroundWork,
+    width: u16,
+    height: u16,
+    now_ms: u64,
+) -> Buffer {
     let theme = BackgroundTheme::default();
     let area = Rect::new(0, 0, width, height);
     let mut buf = Buffer::empty(area);
-    view.render(work, 42_000, 185.0, area, &mut buf, &theme);
+    view.render(work, now_ms, 185.0, area, &mut buf, &theme);
     buf
+}
+
+#[test]
+fn reopening_keeps_the_displayed_and_protected_process_together() {
+    use talaria_core::background::MAX_TRACKED_OUTPUTS;
+
+    let mut work = BackgroundWork::default();
+    let request = foreground(&mut work);
+    list(
+        &mut work,
+        request,
+        (0..=MAX_TRACKED_OUTPUTS)
+            .map(|index| {
+                listed(
+                    &format!("p{index}"),
+                    &format!("command{index}"),
+                    "running",
+                    Some(index as f64),
+                )
+            })
+            .collect(),
+    );
+    let _ = apply(&mut work, BackgroundEvent::OverlayOpened { now_ms: 2 });
+    let mut view = ProcessesView::new();
+    view.reopen(&work);
+    let ProcessesIntent::Select(selected) = view.handle_key(press(KeyCode::Down), &work, 3) else {
+        panic!("Down selects the second process");
+    };
+    assert_eq!(selected, pid("p1"));
+    let _ = apply(&mut work, BackgroundEvent::Selected { id: selected });
+    let _ = apply(
+        &mut work,
+        BackgroundEvent::TerminalOutput {
+            process_id: "p1".to_owned(),
+            chunk: "kept output\n".to_owned(),
+            now_ms: 4,
+        },
+    );
+    assert_eq!(
+        view.handle_key(press(KeyCode::Char('x')), &work, 5),
+        ProcessesIntent::None
+    );
+    let _ = apply(&mut work, BackgroundEvent::OverlayClosed);
+    let _ = apply(&mut work, BackgroundEvent::OverlayOpened { now_ms: 6 });
+
+    // The native screen calls the same reopen method when taking the overlay again.
+    view.reopen(&work);
+    let drawn = draw_overlay_at(&view, &work, 120, 30, 6);
+    assert!(
+        rows_of(&drawn)
+            .iter()
+            .any(|row| row.starts_with('\u{25b8}') && row.ends_with("command1"))
+    );
+    assert_eq!(work.selected_process(), Some(&pid("p1")));
+    assert_eq!(
+        view.handle_key(press(KeyCode::Char('x')), &work, 7),
+        ProcessesIntent::None,
+        "reopening clears the previous kill confirmation"
+    );
+    let version = work.version();
+    let _ = apply(
+        &mut work,
+        BackgroundEvent::TerminalOutput {
+            process_id: "p1".to_owned(),
+            chunk: "new output\n".to_owned(),
+            now_ms: 8,
+        },
+    );
+    assert!(
+        work.version() > version,
+        "the visible output requests a redraw"
+    );
+
+    for index in (0..=MAX_TRACKED_OUTPUTS).filter(|index| *index != 1) {
+        let _ = apply(
+            &mut work,
+            BackgroundEvent::TerminalOutput {
+                process_id: format!("p{index}"),
+                chunk: "other output\n".to_owned(),
+                now_ms: 100 + index as u64,
+            },
+        );
+    }
+    assert_eq!(
+        work.rows()
+            .filter(|row| work.output(&row.id).is_some())
+            .count(),
+        MAX_TRACKED_OUTPUTS
+    );
+    assert_eq!(
+        work.output(&pid("p1")).map(|output| output.raw()),
+        Some("kept output\nnew output\n"),
+        "the displayed process survives when older output must be evicted"
+    );
 }
 
 fn lines_text(lines: &[Line<'_>]) -> String {
@@ -278,7 +382,11 @@ fn an_empty_section_has_no_height() {
         );
     }
     let view = ProcessesView::new();
-    let drawn = rows_of(&draw_overlay(&view, &stopped, 80, 12)).join("\n");
+    let drawn = rows_of(&draw_overlay(&view, &stopped, 80, 12))
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(drawn.contains(
         "This session is no longer live in Hermes, so its processes cannot be listed. Resume it to see them."
     ));
@@ -531,7 +639,12 @@ fn the_overlay_matches_the_worked_layout() {
     assert!(screen.contains("$ sh tick.sh"), "{screen}");
     assert!(screen.contains("tick 185"), "{screen}");
     let footer = "↑↓ select · PgUp PgDn scroll · End follow · x kill · S stop all · d dismiss · r refresh · esc close";
-    assert!(rows.iter().any(|row| row.contains(footer)), "{rows:?}");
+    assert_eq!(
+        rows.last().map(String::as_str),
+        Some("↑↓ select · PgUp PgDn scroll · End follow · x kill · S stop all · d… · esc close")
+    );
+    let wide = rows_of(&draw_overlay(&view, &work, 160, 48));
+    assert!(wide.iter().any(|row| row.contains(footer)), "{wide:?}");
     assert!(screen.contains("esc close"), "{screen}");
 }
 
@@ -569,6 +682,12 @@ fn overlay_keys_select_refresh_dismiss_and_close() {
         view.handle_key(press(KeyCode::Char('G')), &work, 1),
         ProcessesIntent::None
     );
+    assert_eq!(
+        view.handle_key(press(KeyCode::Char('d')), &work, 1),
+        ProcessesIntent::None
+    );
+    let _ = view.handle_key(press(KeyCode::Down), &work, 1);
+    let _ = view.handle_key(press(KeyCode::Down), &work, 1);
     assert!(matches!(
         view.handle_key(press(KeyCode::Char('d')), &work, 1),
         ProcessesIntent::Dismiss(_)
@@ -594,7 +713,11 @@ fn a_small_terminal_shows_the_widen_note() {
     let work = overlay_example();
     let view = ProcessesView::new();
     for (width, height) in [(39, 20), (80, 9)] {
-        let screen = rows_of(&draw_overlay(&view, &work, width, height)).join("\n");
+        let screen = rows_of(&draw_overlay(&view, &work, width, height))
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(
             screen.contains(
                 "Widen the terminal to at least 40 columns and 10 rows to see background processes. Esc closes."
@@ -633,7 +756,7 @@ fn buffer_bytes(buf: &Buffer) -> Vec<u8> {
 #[test]
 fn hostile_output_cannot_change_the_terminal() {
     let hostile =
-        "KEEPME\n\u{1b}]0;pwned\u{7}\u{1b}]52;c;aGk=\u{7}\u{1b}[2J\u{202e}progress\rline\n";
+        "KEEPME\n\u{1b}]0;pwned\u{7}\u{1b}]52;c;aGk=\u{7}\u{1b}[2Jprogress\r\u{202e}line\n";
     let mut work = BackgroundWork::default();
     let request = foreground(&mut work);
     let _ = apply(
@@ -716,12 +839,40 @@ fn hostile_output_cannot_change_the_terminal() {
 #[test]
 fn kill_and_stop_need_a_second_press() {
     let work = overlay_example();
+    let mut expired = ProcessesView::new();
+    assert_eq!(
+        expired.handle_key(press(KeyCode::Char('x')), &work, 1_000),
+        ProcessesIntent::None
+    );
+    let after_expiry = rows_of(&draw_overlay_at(&expired, &work, 80, 20, 4_001)).join("\n");
+    assert!(!after_expiry.contains("Press x again"));
+    assert_eq!(
+        expired.handle_key(press(KeyCode::Char('x')), &work, 4_001),
+        ProcessesIntent::None
+    );
+    assert_eq!(
+        expired.handle_key(press(KeyCode::Char('x')), &work, 7_001),
+        ProcessesIntent::Kill(pid("tick"))
+    );
+    let mut expired_stop = ProcessesView::new();
+    assert_eq!(
+        expired_stop.handle_key(shift('S'), &work, 1_000),
+        ProcessesIntent::None
+    );
+    assert_eq!(
+        expired_stop.handle_key(shift('S'), &work, 4_001),
+        ProcessesIntent::None
+    );
+    assert_eq!(
+        expired_stop.handle_key(shift('S'), &work, 7_001),
+        ProcessesIntent::StopAll
+    );
     let mut view = ProcessesView::new();
     assert_eq!(
         view.handle_key(press(KeyCode::Char('x')), &work, 1_000),
         ProcessesIntent::None
     );
-    let asked = rows_of(&draw_overlay(&view, &work, 80, 20)).join("\n");
+    let asked = rows_of(&draw_overlay_at(&view, &work, 80, 20, 1_000)).join("\n");
     assert!(
         asked.contains("Press x again within 3 s to kill: sh tick.sh"),
         "{asked}"
@@ -734,7 +885,7 @@ fn kill_and_stop_need_a_second_press() {
         view.handle_key(press(KeyCode::Char('x')), &work, 4_001),
         ProcessesIntent::None
     );
-    let again = rows_of(&draw_overlay(&view, &work, 80, 20)).join("\n");
+    let again = rows_of(&draw_overlay_at(&view, &work, 80, 20, 4_001)).join("\n");
     assert!(
         again.contains("Press x again within 3 s to kill:"),
         "{again}"
@@ -745,7 +896,18 @@ fn kill_and_stop_need_a_second_press() {
         stop.handle_key(shift('S'), &work, 1_000),
         ProcessesIntent::None
     );
-    let note = rows_of(&draw_overlay(&stop, &work, 100, 20)).join("\n");
+    let narrow = rows_of(&draw_overlay_at(&stop, &work, 100, 20, 1_000));
+    assert!(
+        narrow
+            .iter()
+            .all(|row| Line::from(row.as_str()).width() <= 100)
+    );
+    assert!(
+        narrow
+            .iter()
+            .any(|row| row.contains("Press S again within 3 s"))
+    );
+    let note = rows_of(&draw_overlay_at(&stop, &work, 160, 20, 1_000)).join("\n");
     assert!(
         note.contains(
             "Press S again within 3 s to stop all 2 running processes of this session (also interrupts its background delegations)."
@@ -766,7 +928,7 @@ fn kill_and_stop_need_a_second_press() {
     );
     let mut view = ProcessesView::new();
     let _ = view.handle_key(shift('S'), &one, 1);
-    let singular = rows_of(&draw_overlay(&view, &one, 120, 16)).join("\n");
+    let singular = rows_of(&draw_overlay_at(&view, &one, 120, 16, 1)).join("\n");
     assert!(
         singular.contains(
             "Press S again within 3 s to stop the 1 running process of this session (also interrupts its background delegations)."

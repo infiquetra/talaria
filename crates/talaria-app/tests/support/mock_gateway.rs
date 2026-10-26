@@ -438,8 +438,7 @@ struct State {
     fleet: FleetTables,
     /// Replies matched by method and params, each used once, before any handler.
     matched_results: Vec<(String, Value, Value)>,
-    /// Opt-in answers for process and background-task calls. Inactive leaves those methods on
-    /// the ordinary path.
+    /// Process reads default to empty; process mutations and background tasks are opt-in.
     background: BackgroundScript,
 }
 
@@ -5220,7 +5219,6 @@ impl Deref for MockServer {
 // Model catalogue, effort and fenced mutate handlers. Issue 230.
 include!("mock_model.rs");
 include!("mock_rewind.rs");
-<<<<<<< HEAD
 
 // ---------------------------------------------------------------------------------------------
 // The fleet reads: per-profile session tables

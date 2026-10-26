@@ -56,9 +56,9 @@ fn refresh(work: &mut BackgroundWork, now_ms: u64) -> RequestId {
 #[test]
 fn output_keeps_the_last_quarter_million_characters() {
     let mut output = ProcessOutput::default();
-    let mut body = "é".repeat(OUTPUT_CAP_CHARS);
+    let mut body = "é".repeat(200);
     body.push('\n');
-    body.push_str(&"你".repeat(100));
+    body.push_str(&"你".repeat(OUTPUT_CAP_CHARS - 100));
     output.push_chunk(&body, 1);
     let raw = output.raw();
     assert!(raw.is_char_boundary(0));
@@ -71,6 +71,16 @@ fn output_keeps_the_last_quarter_million_characters() {
     let fence = output.raw().to_string();
     output.merge_snapshot(&fence, 2);
     assert_eq!(output.raw(), fence);
+
+    let mut no_early_break = ProcessOutput::default();
+    let body = format!("{}\n{}", "é".repeat(OUTPUT_CAP_CHARS), "你".repeat(100));
+    no_early_break.push_chunk(&body, 1);
+    let expected: String = body
+        .chars()
+        .skip(body.chars().count() - OUTPUT_CAP_CHARS)
+        .collect();
+    assert_eq!(no_early_break.raw(), expected);
+    assert!(no_early_break.trimmed_front());
 }
 
 #[test]
@@ -113,7 +123,33 @@ fn snapshot_merge_follows_the_tail_rules() {
 #[test]
 fn chunks_for_an_unknown_id_wait() {
     let mut work = BackgroundWork::default();
-    let _ = foreground(&mut work);
+    let launch = foreground(&mut work);
+    let blocked = update(&mut work, BackgroundEvent::RefreshRequested { now_ms: 0 });
+    assert!(
+        blocked
+            .iter()
+            .all(|effect| !matches!(effect, BackgroundEffect::ListProcesses { .. }))
+    );
+    let follow = update(
+        &mut work,
+        BackgroundEvent::Listed {
+            request: launch,
+            processes: vec![],
+            now_ms: 0,
+        },
+    );
+    for effect in follow {
+        if let BackgroundEffect::ListProcesses { request } = effect {
+            let _ = update(
+                &mut work,
+                BackgroundEvent::Listed {
+                    request,
+                    processes: vec![],
+                    now_ms: 0,
+                },
+            );
+        }
+    }
     let mut lists = 0;
     for index in 0..MAX_PENDING_UNKNOWN + 1 {
         let effects = update(
@@ -128,6 +164,18 @@ fn chunks_for_an_unknown_id_wait() {
             .iter()
             .filter(|effect| matches!(effect, BackgroundEffect::ListProcesses { .. }))
             .count();
+        for effect in effects {
+            if let BackgroundEffect::ListProcesses { request } = effect {
+                let _ = update(
+                    &mut work,
+                    BackgroundEvent::Listed {
+                        request,
+                        processes: vec![],
+                        now_ms: index as u64 * UNKNOWN_CHUNK_LIST_MS,
+                    },
+                );
+            }
+        }
     }
     assert!(lists >= 1);
     let request = refresh(&mut work, 20_000);
@@ -171,7 +219,7 @@ fn output_memory_drops_the_least_recent() {
             &mut work,
             BackgroundEvent::TerminalOutput {
                 process_id: format!("p{index}"),
-                chunk: "x".repeat(OUTPUT_TOTAL_CHARS / 8),
+                chunk: "x".repeat(1_000),
                 now_ms: 10 + index as u64,
             },
         );
@@ -187,6 +235,46 @@ fn output_memory_drops_the_least_recent() {
         .filter(|id| work.output(id).is_some())
         .count();
     assert_eq!(kept, MAX_TRACKED_OUTPUTS);
+    assert!(
+        work.output(&pid("p1")).is_none(),
+        "the least recently written unprotected buffer is dropped"
+    );
+}
+
+#[test]
+fn the_total_output_cap_keeps_the_selected_buffer() {
+    let mut work = BackgroundWork::default();
+    let request = foreground(&mut work);
+    let _ = update(
+        &mut work,
+        BackgroundEvent::Listed {
+            request,
+            processes: (0..10)
+                .map(|i| row(&format!("p{i}"), "running", Some(i as f64)))
+                .collect(),
+            now_ms: 1,
+        },
+    );
+    let _ = update(&mut work, BackgroundEvent::Selected { id: pid("p0") });
+    for i in 0..10 {
+        let _ = update(
+            &mut work,
+            BackgroundEvent::TerminalOutput {
+                process_id: format!("p{i}"),
+                chunk: "é".repeat(250_000),
+                now_ms: 10 + i,
+            },
+        );
+    }
+    let total: usize = work
+        .rows()
+        .filter_map(|r| work.output(&r.id))
+        .map(|o| o.raw().chars().count())
+        .sum();
+    assert_eq!(total, OUTPUT_TOTAL_CHARS);
+    assert!(work.output(&pid("p0")).is_some());
+    assert!(work.output(&pid("p1")).is_none());
+    assert!(work.output(&pid("p2")).is_none());
 }
 
 #[test]

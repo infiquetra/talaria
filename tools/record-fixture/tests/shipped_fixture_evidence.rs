@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 /// The scenarios whose recording is driven by the scripted driver rather than by
 /// a plain model prompt. Their evidence rules live in `scripted.rs`.
-const SCRIPTED: [&str; 7] = [
+const SCRIPTED: [&str; 8] = [
     "queue-edit-remove",
     "queue-steer",
     "queue-move-send-now",
@@ -19,6 +19,7 @@ const SCRIPTED: [&str; 7] = [
     "permissions-cd",
     "shell-and-btw",
     "subagent-control",
+    "background-work",
 ];
 
 fn fixtures_dir() -> PathBuf {

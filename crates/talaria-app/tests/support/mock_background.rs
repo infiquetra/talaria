@@ -1,6 +1,5 @@
-// Opt-in answers for process list, kill, stop, and detached prompt tasks.
-// Included by the mock gateway. Inactive by default, so a test that never enables this
-// script keeps the mock's ordinary unknown-method reply.
+// Process listing is an ordinary empty read until rows are configured. Kill, stop, and
+// detached prompt tasks require the opt-in script. Included by the mock gateway.
 
 const LIST_KEYS: &[&str] = &["session_id", "profile"];
 const KILL_KEYS: &[&str] = &["session_id", "process_id", "profile"];
@@ -52,6 +51,7 @@ struct BackgroundScript {
     delegations: i64,
     kill_status: String,
     kill_error: Option<String>,
+    kill_scope_stop_failed: Option<String>,
     subscribed: bool,
     bg_counter: u64,
     completion: BgCompletion,
@@ -69,6 +69,7 @@ impl Default for BackgroundScript {
             delegations: 0,
             kill_status: "killed".to_string(),
             kill_error: None,
+            kill_scope_stop_failed: None,
             subscribed: true,
             bg_counter: 0,
             completion: BgCompletion::Quiet,
@@ -163,6 +164,11 @@ impl MockGateway {
         state.background.kill_error = error.map(str::to_owned);
     }
 
+    /// Preserve the registry's open scope-stop warning field on a kill reply.
+    pub fn set_kill_scope_stop_failed(&self, scope: &str) {
+        lock(&self.shared).background.kill_scope_stop_failed = Some(scope.to_owned());
+    }
+
     /// What `prompt.background` publishes, and when. `when_text` is `before`, `after`, `empty`,
     /// or `quiet`.
     pub fn set_bg_completion(&self, when_text: &str, text: &str, delay: Option<Duration>) {
@@ -221,7 +227,7 @@ fn plan_background(
     params: &Value,
     outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
 ) -> bool {
-    if !state.background.enabled {
+    if !state.background.enabled && method != "process.list" {
         return false;
     }
     if !matches!(
@@ -318,17 +324,16 @@ fn plan_process_kill(
     }
     let status = state.background.kill_status.clone();
     let error = state.background.kill_error.clone();
-    if status == "killed" {
-        if let Some(row) = state
+    if status == "killed"
+        && let Some(row) = state
             .background
             .processes
             .iter_mut()
             .find(|row| row.id == process_id)
-        {
-            row.status = "exited".to_string();
-            row.exit_code = Some(-15);
-            row.completion_reason = Some("killed".to_string());
-        }
+    {
+        row.status = "exited".to_string();
+        row.exit_code = Some(-15);
+        row.completion_reason = Some("killed".to_string());
     }
     let mut result = json!({
         "status": status,
@@ -338,6 +343,9 @@ fn plan_process_kill(
     });
     if let Some(error) = error {
         result["error"] = Value::String(error);
+    }
+    if let Some(scope) = &state.background.kill_scope_stop_failed {
+        result["scope_stop_failed"] = Value::String(scope.clone());
     }
     let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
     outgoing.push((None, text, reply_meta(id, "process.kill")));

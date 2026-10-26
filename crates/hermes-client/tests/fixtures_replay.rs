@@ -17,7 +17,8 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 23] = [
+const NAMES: [&str; 24] = [
+    "background-work",
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -103,8 +104,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 23,
-        "expected twenty-three fixtures in fixtures/frames, found {}",
+        files.len() == 24,
+        "expected twenty-four fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -183,7 +184,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 23);
+    assert_eq!(fixtures.len(), 24);
 }
 
 #[test]
@@ -639,6 +640,26 @@ fn scenario_evidence_present() {
                     position(&events, "session.updated", 0).is_some(),
                     "{name}: no session.updated"
                 );
+            }
+            "background-work" => {
+                assert!(
+                    position(&events, "background.complete", 0).is_some(),
+                    "{name}: no background.complete"
+                );
+                for method in [
+                    "process.list",
+                    "process.kill",
+                    "prompt.background",
+                    "process.stop",
+                ] {
+                    assert!(
+                        records
+                            .iter()
+                            .any(|record| record["dir"] == "out"
+                                && record["frame"]["method"] == method),
+                        "{name}: no {method}"
+                    );
+                }
             }
             "shell-and-btw" => {
                 assert!(
