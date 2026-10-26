@@ -1099,6 +1099,12 @@ pub enum AppMessage {
     },
     /// One of the subagent hub's own messages. Issue #242.
     Subagents(crate::subagents::SubagentMsg),
+    /// A fleet snapshot or a background attention notice.
+    Fleet(crate::fleet::FleetNotice),
+    /// A quiet-window or hold deadline has arrived.
+    AttentionWake,
+    /// Jump to the oldest background request.
+    AttentionNext,
 }
 
 /// What a finished switch or branch brings back: the new session and, when the profile
@@ -1285,6 +1291,10 @@ pub enum AppEffect {
     Cd(CdEffect),
     /// One automation reducer effect. Issue #236.
     Automation(AutomationEffect),
+    /// Wake the attention hub at this instant.
+    WakeAt(Instant),
+    /// Open the fleet view on this row.
+    OpenFleetViewAt(RowKey),
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -1935,6 +1945,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             format,
             redact,
         } => exported(state, result, format, redact),
+        AppMessage::Fleet(_) | AppMessage::AttentionWake | AppMessage::AttentionNext => Vec::new(),
     };
     if let Some(session_id) = settled {
         share_fences(state, &session_id);
@@ -7333,6 +7344,7 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::WakeAt(_) | AppEffect::OpenFleetViewAt(_) => {}
         }
     }
     sync_attachment_view(state, screen, Instant::now());

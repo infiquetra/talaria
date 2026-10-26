@@ -313,6 +313,8 @@ pub enum Action {
     AgentsTop,
     /// The last row.
     AgentsBottom,
+    /// Jump to the oldest background request.
+    AttentionNext,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -344,7 +346,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 106] = [
+    pub const ALL: [Self; 107] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -451,6 +453,7 @@ impl Action {
         Self::AgentsPageDown,
         Self::AgentsTop,
         Self::AgentsBottom,
+        Self::AttentionNext,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -563,6 +566,7 @@ impl Action {
             Self::AgentsPageDown => "agents_page_down",
             Self::AgentsTop => "agents_top",
             Self::AgentsBottom => "agents_bottom",
+            Self::AttentionNext => "attention_next",
         }
     }
 
@@ -617,6 +621,7 @@ impl Action {
             | Self::ComposerSendNow
             | Self::ComposerSteer
             | Self::AgentsPanel => KeyContext::Composer,
+            | Self::AttentionNext => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
             | Self::PagerPageUp
@@ -803,6 +808,7 @@ impl Action {
             Self::AgentsPageDown => &["pagedown"],
             Self::AgentsTop => &["g", "home"],
             Self::AgentsBottom => &["shift+g", "end"],
+            Self::AttentionNext => &[],
         }
     }
 }
@@ -1519,7 +1525,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 106);
+        assert_eq!(Action::ALL.len(), 107);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1925,7 +1931,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 106);
+        assert_eq!(Action::ALL.len(), 107);
     }
 
     #[test]

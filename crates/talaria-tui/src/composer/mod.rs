@@ -599,6 +599,8 @@ impl Composer {
             | Action::AgentsPageDown
             | Action::AgentsTop
             | Action::AgentsBottom => {}
+            | Action::ComposerSteer
+            | Action::AttentionNext => {}
             // Picker actions never edit the draft; the picker owns them.
             Action::SessionPickerOpen
             | Action::PickerUp

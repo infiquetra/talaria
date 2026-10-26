@@ -64,6 +64,10 @@ pub struct StatusInputs {
     pub cost_status: Option<String>,
     /// Prompts waiting for the operator.
     pub needs_you: u32,
+    /// Background rows whose turn failed.
+    pub failed: u32,
+    /// Background rows whose turn is done.
+    pub done: u32,
     /// Sessions working on a turn.
     pub working: u32,
     /// Whether the client is live or replaying.
@@ -123,11 +127,15 @@ pub enum Segment {
     External,
     /// The approvals state (#237).
     Approvals,
+    /// Background rows whose turn failed.
+    Failed,
+    /// Background rows whose turn is done.
+    Done,
 }
 
 impl Segment {
     /// Every segment, from the one dropped last to the one dropped first.
-    pub const ALL: [Segment; 9] = [
+    pub const ALL: [Segment; 11] = [
         Segment::Connection,
         Segment::NeedsYou,
         Segment::Approvals,
@@ -137,6 +145,8 @@ impl Segment {
         Segment::Working,
         Segment::Cost,
         Segment::External,
+        Segment::Failed,
+        Segment::Done,
     ];
 
     /// 1 is dropped last, 9 first.
@@ -151,6 +161,8 @@ impl Segment {
             Segment::Working => 7,
             Segment::Cost => 8,
             Segment::External => 9,
+            Segment::Failed => 3,
+            Segment::Done => 8,
         }
     }
 
@@ -166,6 +178,8 @@ impl Segment {
             Segment::NeedsYou => 7,
             Segment::Working => 8,
             Segment::External => 9,
+            Segment::Failed => 7,
+            Segment::Done => 9,
         }
     }
 }

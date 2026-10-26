@@ -36,6 +36,8 @@ pub enum Route {
     HistorySearch,
     /// The composer takes the raw key.
     Composer,
+    /// Jump to the oldest background request.
+    AttentionNext,
 }
 
 /// Pick the owner for a resolved action under a focus.
