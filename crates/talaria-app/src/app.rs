@@ -98,6 +98,8 @@ use crate::launch::{
     belongs, merge_rows, new_request_id, plain, plan, workspace_key,
 };
 use crate::mutation::MutationClient;
+use crate::panes::{CommandRunner, PaneEnv, PaneOutcome, PaneSettings};
+use crate::peek::FleetSink;
 use crate::permissions::PermissionsService;
 use crate::prompts::{MaskedRequestInfo, PromptService, ServerRequestPolicy, policy_for};
 use crate::queue::{QueueCommand, QueueService, queue_command, steer_command};
@@ -180,6 +182,11 @@ pub enum UserAction {
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
     FleetOpen,
+    /// Open a selected session from a panel in another multiplexer pane.
+    OpenInPane {
+        key: RowKey,
+        title: String,
+    },
     /// The peek's card was answered.
     FleetAnswer(crate::peek::CardAnswer),
     /// Open or close the foreground subagents panel.
@@ -344,6 +351,14 @@ impl View<'_> {
 
 /// The terminal side of the loop.
 pub trait Screen: ComposerDeadline + StatusHost {
+    /// Multiplexer pane settings from the screen's startup configuration.
+    fn pane_settings(&self) -> PaneSettings {
+        PaneSettings::default()
+    }
+    /// This terminal's current columns and rows.
+    fn pane_size(&self) -> (u16, u16) {
+        (80, 24)
+    }
     fn subagents_config(&self) -> crate::subagents::SubagentsConfig {
         crate::subagents::SubagentsConfig::default()
     }
@@ -509,7 +524,7 @@ pub struct AppState {
     pub profile: String,
     /// When false, `/fleet` shows a notice and opens nothing.
     pub fleet_enabled: bool,
-    /// The fleet overlay, while `/fleet` has it open. The stub leaves this empty.
+    /// The fleet overlay, while `/fleet` has it open.
     pub fleet: Option<FleetViewState>,
     pub link_state: LinkView,
     /// An interrupt sequence is in flight; further presses send nothing.
@@ -535,6 +550,19 @@ pub struct AppState {
     pub picker_scope_note: Option<String>,
     /// The listing generation; one more than the last.
     pub picker_generation: u64,
+    /// Takes the pane-open acknowledgement in tests. Issue #246.
+    pub pane_sink: Option<Arc<dyn FleetSink>>,
+    /// The environment pane detection reads. The process environment at
+    /// startup; tests point it at fakes. Issue #246.
+    pub pane_env: PaneEnv,
+    /// Settings used when opening a fleet session beside this terminal.
+    pub pane_settings: PaneSettings,
+    /// This terminal's current columns and rows, supplied by the screen.
+    pub pane_size: (u16, u16),
+    /// Optional runner for application-loop tests; production uses `SystemRunner`.
+    pub pane_runner: Option<Arc<dyn CommandRunner>>,
+    /// The one pane opening still in flight, retaining its title if the overlay closes.
+    pub(crate) pending_pane: Option<(RowKey, String)>,
     /// A switch or a branch is in flight.
     pub switching: bool,
     /// A rename, an export or a switch runs; one session action at a time.
@@ -713,6 +741,12 @@ impl AppState {
             picker_profiles: Vec::new(),
             picker_scope_note: None,
             picker_generation: 0,
+            pane_sink: None,
+            pane_env: PaneEnv::from_process(),
+            pane_settings: PaneSettings::default(),
+            pane_size: (80, 24),
+            pane_runner: None,
+            pending_pane: None,
             switching: false,
             session_action: false,
             hermes_home: PathBuf::new(),
@@ -1099,6 +1133,8 @@ pub enum AppMessage {
     },
     /// One of the subagent hub's own messages. Issue #242.
     Subagents(crate::subagents::SubagentMsg),
+    /// A fleet-row pane open finished. Issue #246.
+    PaneOpened(RowKey, PaneOutcome),
 }
 
 /// What a finished switch or branch brings back: the new session and, when the profile
@@ -1935,6 +1971,30 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             format,
             redact,
         } => exported(state, result, format, redact),
+        AppMessage::PaneOpened(key, outcome) => {
+            let title = state
+                .pending_pane
+                .take()
+                .filter(|(pending, _)| pending == &key)
+                .map(|(_, title)| title)
+                .or_else(|| {
+                    state
+                        .fleet
+                        .as_ref()
+                        .and_then(|view| view.find_row(&key))
+                        .map(talaria_core::fleet_view::title_or_untitled)
+                })
+                .unwrap_or_else(|| "(untitled)".to_owned());
+            if matches!(outcome, PaneOutcome::Opened { .. }) {
+                if let Some(sink) = &state.pane_sink {
+                    sink.acknowledge(key);
+                } else if let Some(fleet) = &state.fleet_service {
+                    fleet.acknowledge(key);
+                }
+            }
+            let text = crate::panes::outcome_text(&title, &outcome);
+            pane_notice(state, text)
+        }
     };
     if let Some(session_id) = settled {
         share_fences(state, &session_id);
@@ -2134,6 +2194,22 @@ fn local_line(text: &str) -> Option<Result<(LocalAction, String), String>> {
 }
 
 /// The effect a local command asks for.
+fn pane_notice(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    if state.fleet.is_some() {
+        fleet_input(
+            state,
+            talaria_core::fleet_view::FleetViewInput::Notice(text),
+        )
+    } else if let Some(hub) = state.subagents.as_mut()
+        && hub.panel_key().is_some()
+    {
+        hub.set_flash(text);
+        vec![AppEffect::Redraw]
+    } else {
+        vec![notice_lines(&text)]
+    }
+}
+
 fn local_effect(
     state: &mut AppState,
     action: LocalAction,
@@ -2696,6 +2772,16 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::ModelConfirm(key) => models_input(state, ModelsInput::Confirm(key)),
         UserAction::Fleet(input) => fleet_input(state, input),
         UserAction::FleetOpen => open_fleet_view(state),
+        UserAction::OpenInPane { key, title } => {
+            let inputs = crate::fleet_actions::start_named_pane(state, key, title);
+            let mut effects = Vec::new();
+            for input in inputs {
+                if let talaria_core::fleet_view::FleetViewInput::Notice(text) = input {
+                    effects.extend(pane_notice(state, text));
+                }
+            }
+            effects
+        }
         UserAction::FleetAnswer(intent) => vec![AppEffect::FleetAnswer(intent)],
         UserAction::Submit(text) => {
             if state.opened.is_none()
@@ -4800,10 +4886,20 @@ fn opened_session(
         state.list_title.as_deref(),
         opened.state.cells(),
     );
-    let (header, range) = resume_header(opened.state.cells(), &title);
+    let (mut header, range) = resume_header(opened.state.cells(), &title);
+    if header.is_empty()
+        && matches!(
+            state.launch.as_ref().map(|launch| &launch.mode),
+            Some(StartMode::Resume(Some(_)))
+        )
+    {
+        header.push(format!("── Resumed: {title} ──"));
+    }
     if !header.is_empty() {
         effects.push(AppEffect::CommitLines(header));
-        effects.push(AppEffect::CommitCells(range.clone()));
+        if !range.is_empty() {
+            effects.push(AppEffect::CommitCells(range.clone()));
+        }
     }
     state.committed_cells = range.end;
     effects.push(AppEffect::Track {
@@ -7729,6 +7825,10 @@ pub(crate) fn fleet_effect(
         .and_then(|view| view.peek())
         .is_some_and(|(key, _)| is_foreground(key));
     match effect {
+        FleetViewEffect::OpenInPane(key) => crate::fleet_actions::start_pane(state, key)
+            .into_iter()
+            .map(AppEffect::FleetInput)
+            .collect(),
         FleetViewEffect::OpenPeek(key) if is_foreground(&key) => {
             let status = foreground_status(state);
             vec![AppEffect::FleetInput(FleetViewInput::Peek { key, status })]
@@ -8065,6 +8165,8 @@ pub async fn run<S: Screen>(
     state.hermes_home = setup.home.clone();
     state.launch_folder = launch.folder.clone();
     state.launch = Some(launch.clone());
+    state.pane_settings = screen.pane_settings();
+    state.pane_size = screen.pane_size();
     sync_models(&mut state, screen);
     sync_picker(&state, screen);
     screen.draw(&state.view());
@@ -8144,6 +8246,7 @@ pub async fn run<S: Screen>(
                 sync_picker(&state, screen);
                 state.now_ms = executor.now_ms();
                 let actions = screen.input(input, &state.view(), Instant::now());
+                state.pane_size = screen.pane_size();
                 for action in actions {
                     redraw |= apply(&mut state, AppMessage::ForegroundKey(action), screen, &executor);
                 }
@@ -8208,6 +8311,7 @@ pub async fn run<S: Screen>(
                 sync_picker(&state, screen);
                 state.now_ms = executor.now_ms();
                 let actions = screen.input(input, &state.view(), Instant::now());
+                state.pane_size = screen.pane_size();
                 for action in actions {
                     redraw |= apply(
                         &mut state,
