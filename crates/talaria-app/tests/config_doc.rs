@@ -156,6 +156,8 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("agents_page_down", &["pagedown"][..]),
         ("agents_top", &["g", "home"][..]),
         ("agents_bottom", &["shift+g", "end"][..]),
+        ("fleet_new", &["n"][..]),
+        ("fleet_new_worktree", &["w"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

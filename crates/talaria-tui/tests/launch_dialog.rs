@@ -63,7 +63,7 @@ fn defaults() -> DialogDefaults {
 }
 
 fn chord(text: &str) -> KeyChord {
-    KeyChord::parse(text, KeyContext::Fleet).unwrap_or_else(|_| panic!("chord {text}"))
+    KeyChord::parse(text, KeyContext::Composer).unwrap_or_else(|_| panic!("chord {text}"))
 }
 
 fn frame_text(buffer: &Buffer, area: Rect) -> String {
@@ -180,9 +180,10 @@ fn invalid_busy_launching_failed_states() {
     dialog.show_invalid(
         "Three launches from this Talaria are still starting; wait for one to finish.",
     );
+    // The text is 76 columns; the 80-column box has 73 for it, so check the 120-column box.
     assert_frame_contains(
         &dialog,
-        screen,
+        Rect::new(0, 0, 160, 48),
         "Three launches from this Talaria are still starting; wait for one to finish.",
     );
     dialog.show_error("the gateway refused.", "Check the options you passed.");

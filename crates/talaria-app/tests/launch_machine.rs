@@ -73,7 +73,12 @@ fn admitted() -> SubmitReply {
     }
 }
 
-fn launched(cwd: PathBuf, tree: Option<WorktreeRecord>, warnings: Vec<String>) -> LaunchOutcome {
+fn launched(
+    prompt: &str,
+    cwd: PathBuf,
+    tree: Option<WorktreeRecord>,
+    warnings: Vec<String>,
+) -> LaunchOutcome {
     LaunchOutcome::Launched(talaria_app::bg::Launched {
         session_id: "sess-1".to_owned(),
         stored_session_id: "stored-1".to_owned(),
@@ -84,6 +89,7 @@ fn launched(cwd: PathBuf, tree: Option<WorktreeRecord>, warnings: Vec<String>) -
         cwd,
         worktree: tree,
         warnings,
+        prompt: prompt.to_owned(),
     })
 }
 
@@ -158,7 +164,12 @@ fn plain_launch_sequence() {
         LaunchEffect::FleetReleased {
             session_id: "sess-1".to_owned(),
         },
-        LaunchEffect::Finish(launched(folder, None, Vec::new())),
+        LaunchEffect::Finish(launched(
+            "Reply with the single word: ready",
+            folder,
+            None,
+            Vec::new(),
+        )),
     ];
     assert_eq!(effects, expected, "expected effect sequence is empty");
     assert!(machine.submit_sent());
@@ -220,7 +231,12 @@ fn worktree_launch_sequence() {
         LaunchEffect::FleetReleased {
             session_id: "sess-1".to_owned(),
         },
-        LaunchEffect::Finish(launched(tree.path.clone(), Some(tree), vec![warning])),
+        LaunchEffect::Finish(launched(
+            prompt,
+            tree.path.clone(),
+            Some(tree),
+            vec![warning],
+        )),
     ];
     assert_eq!(effects, expected, "expected effect sequence is empty");
     assert!(machine.submit_sent());
@@ -608,7 +624,21 @@ proptest::proptest! {
     #[test]
     fn machine_invariants(choices in proptest::collection::vec(0u8..12u8, 0..12usize)) {
         let inputs: Vec<LaunchInput> = choices.into_iter().map(choice_input).collect();
-        let (_, effects) = drive(request("hello", true), &inputs);
+        let (mut machine, mut effects) = drive(request("hello", true), &inputs);
+        // The generated inputs may stop before the machine finishes; answer what it is still
+        // waiting for, as the service would, so every run is taken to its finish.
+        for _ in 0..16 {
+            if effects
+                .iter()
+                .any(|effect| matches!(effect, LaunchEffect::Finish(_)))
+            {
+                break;
+            }
+            let Some(answer) = effects.iter().rev().find_map(answer_for) else {
+                break;
+            };
+            effects.extend(machine.step(answer));
+        }
         let finishes = effects
             .iter()
             .filter(|effect| matches!(effect, LaunchEffect::Finish(_)))
@@ -620,6 +650,23 @@ proptest::proptest! {
             .count();
         proptest::prop_assert!(submits <= 1);
     }
+}
+
+/// The result a service would feed back for an effect that waits for one.
+fn answer_for(effect: &LaunchEffect) -> Option<LaunchInput> {
+    Some(match effect {
+        LaunchEffect::Describe => described_ok(),
+        LaunchEffect::PrepareWorktree { .. } => LaunchInput::WorktreeReady(record()),
+        LaunchEffect::Create { new } => LaunchInput::Created(created(&new.cwd.to_string_lossy())),
+        LaunchEffect::CheckCwd { .. } => LaunchInput::CwdChecked(CwdCheck::Matches),
+        LaunchEffect::RecordSession { .. } => LaunchInput::SessionRecorded { warning: None },
+        LaunchEffect::Submit { .. } => LaunchInput::Submitted(admitted()),
+        LaunchEffect::Detach { .. } => LaunchInput::Detached,
+        LaunchEffect::Rollback(_) => LaunchInput::RolledBack { kept: None },
+        LaunchEffect::FleetRunning { .. }
+        | LaunchEffect::FleetReleased { .. }
+        | LaunchEffect::Finish(_) => return None,
+    })
 }
 
 fn choice_input(choice: u8) -> LaunchInput {

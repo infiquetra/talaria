@@ -34,6 +34,7 @@ fn launched() -> LaunchOutcome {
         warnings: vec![
             "talaria: warning: could not fetch origin/main (network); branched from the copy fetched earlier at 0123456789ab.".to_owned(),
         ],
+        prompt: "fix the flaky test".to_owned(),
     })
 }
 

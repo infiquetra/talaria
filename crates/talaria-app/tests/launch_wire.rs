@@ -18,13 +18,20 @@ fn request(profile: &str, worktree: bool) -> LaunchRequest {
     LaunchRequest {
         prompt: "Reply with the single word: ready".to_owned(),
         profile: profile.to_owned(),
-        folder: PathBuf::from("repo"),
+        // The folder check canonicalises the folder sent, so it must exist here.
+        folder: launch_folder(),
         model: Some("fixture-model".to_owned()),
         provider: Some("fixture-provider".to_owned()),
         effort: Some("low".to_owned()),
         worktree: worktree.then_some(WorktreeWanted { name: None }),
         origin: LaunchOrigin::CommandLine,
     }
+}
+
+fn launch_folder() -> PathBuf {
+    std::env::temp_dir()
+        .canonicalize()
+        .expect("the temporary folder exists")
 }
 
 fn ids() -> LaunchIds {
@@ -148,27 +155,66 @@ async fn profile_only_link_cannot_launch_elsewhere() {
 async fn create_retry_reuses_request_id() {
     let home = tempfile::tempdir().expect("home");
     let gateway = StandaloneGateway::start(home.path());
-    gateway.set_behavior("session.create", mock_gateway::Behavior::DropBeforeReply);
+    // Error 5001 leaves the create's outcome unknown on a connection that is still open.
+    gateway.set_behavior(
+        "session.create",
+        mock_gateway::Behavior::FailCode {
+            code: 5001,
+            message: "storage_unavailable".to_owned(),
+            reason: Some("storage_unavailable".to_owned()),
+        },
+    );
     launch_in(home.path(), "fixture", "fixture").await;
     let creates = gateway.requests("session.create");
     assert_eq!(creates.len(), 2, "no session.create frame");
+    assert_eq!(creates[0].params, creates[1].params);
+
+    // A dropped connection is never retried.
+    let home = tempfile::tempdir().expect("home");
+    let gateway = StandaloneGateway::start(home.path());
+    gateway.set_behavior("session.create", mock_gateway::Behavior::DropBeforeReply);
+    launch_in(home.path(), "fixture", "fixture").await;
     assert_eq!(
-        creates[0].params["request_id"],
-        creates[1].params["request_id"]
+        gateway.requests("session.create").len(),
+        1,
+        "a dropped create was resent"
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn server_requests_are_left_alone() {
     let home = tempfile::tempdir().expect("home");
     let gateway = StandaloneGateway::start(home.path());
-    launch_in(home.path(), "fixture", "fixture").await;
+    // Delay the submit's reply so a server request reaches the subscribed launch connection
+    // before the launch lets go. (A held frame would stop the mock writing anything at all.)
+    gateway.set_delay("prompt.submit", Some(std::time::Duration::from_millis(600)));
+    let path = home.path().to_path_buf();
+    let launch = tokio::spawn(async move { launch_in(&path, "fixture", "fixture").await });
+    assert!(
+        gateway.wait_for_method("prompt.submit").is_some(),
+        "no prompt.submit frame"
+    );
     assert_eq!(
         gateway.requests("session.create").len(),
         1,
         "no session.create frame"
     );
-    assert!(!gateway.server_request_kinds().is_empty());
+    let kinds = gateway.server_request_kinds();
+    let kind = kinds
+        .iter()
+        .find(|kind| kind.as_str() == "sudo")
+        .or_else(|| kinds.first())
+        .expect("a server request kind")
+        .clone();
+    // The mock writes server requests on its own runtime.
+    let _id = std::thread::scope(|scope| {
+        scope
+            .spawn(|| gateway.block_on(gateway.server_request(&kind)))
+            .join()
+            .expect("the server request was written")
+    });
+    launch.await.expect("the launch task");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(
         gateway.answers().is_empty(),
         "a server request was answered"

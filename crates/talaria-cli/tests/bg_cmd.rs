@@ -359,6 +359,8 @@ fn exit_codes_and_messages_against_mock() {
         ),
     ];
     for (code, method, exit, text) in cases {
+        gateway.set_behavior("session.create", Behavior::Normal);
+        gateway.set_behavior("prompt.submit", Behavior::Normal);
         gateway.set_behavior(
             method,
             Behavior::FailCode {
@@ -397,6 +399,7 @@ fn exit_codes_and_messages_against_mock() {
 #[test]
 fn prompt_from_standard_input() {
     let home = tempfile::tempdir().expect("home");
+    let _gateway = mock_gateway_start(home.path());
     let output = invoke(
         home.path(),
         &["--bg", "--output-format", "json"],
@@ -425,25 +428,22 @@ fn signal_before_submit_rolls_back() {
     gateway.hold("session.create");
     let mut command = talaria(&["--bg", "--profile", "fixture", "hello"], home.path());
     let mut child = command.spawn().expect("spawn");
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().expect("try_wait") {
-            break status;
-        }
-        if started.elapsed() > Duration::from_millis(200) {
-            let _ = Command::new("kill")
-                .args(["-INT", &child.id().to_string()])
-                .status();
-            break child.wait().expect("wait");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    assert!(
+        gateway.wait_for_method("session.create").is_some(),
+        "the create never reached the gateway"
+    );
+    let _ = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status();
+    // Give the signal time to reach the command before the held reply is let go.
+    std::thread::sleep(Duration::from_millis(100));
+    gateway.release("session.create");
+    let status = child.wait().expect("wait");
     assert_eq!(
         status.code(),
         Some(130),
         "expected exit 130, got {status:?}"
     );
-    gateway.release("session.create");
     let detaches = gateway.requests("session.detach");
     let abandoned = detaches
         .iter()

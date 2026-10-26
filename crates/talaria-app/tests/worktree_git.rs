@@ -305,8 +305,12 @@ fn worktreeinclude_copies_links_and_skips_escapes() {
         && warnings.iter().any(|warning| warning.contains("linked"));
     assert!(skipped, "missing skip warnings");
     let git = GitRunner::from_env();
+    // The list is still read in full, so the same two entries are skipped again, and the
+    // copy and the link that already exist are left alone.
     let extra = block(apply_include(&git, &record.main_root, &record.path));
-    assert!(extra.is_empty());
+    assert_eq!(extra, warnings);
+    let copied = std::fs::read_to_string(record.path.join("kept.txt")).unwrap_or_default();
+    assert_eq!(copied, "kept");
 }
 
 #[test]

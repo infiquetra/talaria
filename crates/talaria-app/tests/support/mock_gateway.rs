@@ -2306,6 +2306,9 @@ fn param_schema(method: &str) -> Option<&'static Value> {
 /// closed set.
 fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'static str>) {
     match method {
+        // A host-scoped connection routes a request naming another served profile to that
+        // profile, which drops `profile` before its own key check (Hermes v0.22.4
+        // `gateway/session_controls.py:147-168`, `:258-271`), so the key is allowed here.
         "session.create" => (
             vec!["request_id", "source", "cwd"],
             vec![
@@ -2315,6 +2318,7 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
                 "model",
                 "provider",
                 "reasoning",
+                "profile",
             ],
         ),
         "session.resume" if params.get("latest").is_some() => (
@@ -2350,7 +2354,7 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
         ),
         "session.detach" => (
             vec!["session_id", "subscription_id"],
-            vec!["session_id", "subscription_id", "end_reason"],
+            vec!["session_id", "subscription_id", "end_reason", "profile"],
         ),
         "prompt.submit" => {
             let mut keys = vec!["session_id", "text", "submission_id"];
@@ -2359,6 +2363,8 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             }
             (keys.clone(), {
                 keys.push("attachments");
+                // Routed by profile, as `session.create` above.
+                keys.push("profile");
                 keys
             })
         }

@@ -14,10 +14,12 @@ use mock_gateway::StandaloneGateway;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use talaria_app::bg::{
-    LaunchNotice, LaunchOrigin, LaunchRequest, LaunchService, Stage, WorktreeWanted,
+    LaunchFleet, LaunchNotice, LaunchOrigin, LaunchRequest, LaunchService, Stage, WorktreeWanted,
 };
-use talaria_app::fleet::FleetHandle;
+use talaria_app::fleet::{FleetConfig, FleetHandle, FleetService};
 use talaria_app::worktree::GitRunner;
+use talaria_core::directory::rows::RowKey;
+use talaria_core::fleet::SubscribedView;
 use talaria_core::fleet_view::{
     FleetAction, FleetViewEffect, FleetViewInput, FleetViewState, update,
 };
@@ -32,11 +34,44 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
+/// The fleet registry, with the calls a launch made on it.
+struct Recorded {
+    fleet: FleetHandle,
+    calls: Mutex<Vec<&'static str>>,
+}
+
+impl Recorded {
+    fn calls(&self) -> Vec<&'static str> {
+        lock(&self.calls).clone()
+    }
+}
+
+impl LaunchFleet for Recorded {
+    fn observe_subscribed(&self, key: RowKey, view: SubscribedView) {
+        lock(&self.calls).push("observe_subscribed");
+        self.fleet.observe_subscribed(key, view);
+    }
+
+    fn observe_unsubscribed(&self, key: RowKey) {
+        lock(&self.calls).push("observe_unsubscribed");
+        self.fleet.observe_unsubscribed(key);
+    }
+
+    fn refresh_now(&self) {
+        lock(&self.calls).push("refresh_now");
+        self.fleet.refresh_now();
+    }
+}
+
 fn request(worktree: bool) -> LaunchRequest {
+    request_in(PathBuf::from("repo"), worktree)
+}
+
+fn request_in(folder: PathBuf, worktree: bool) -> LaunchRequest {
     LaunchRequest {
         prompt: PROMPT.to_owned(),
         profile: "fixture".to_owned(),
-        folder: PathBuf::from("repo"),
+        folder,
         model: None,
         provider: None,
         effort: None,
@@ -54,11 +89,20 @@ fn service(
     LaunchService::new(home, git, move |notice| lock(&slot).push(notice))
 }
 
-fn wait_notices(notices: &Mutex<Vec<LaunchNotice>>, limit: Duration) -> Vec<LaunchNotice> {
+/// Wait until `count` launches have finished, or `limit` passes.
+fn wait_finished(
+    notices: &Mutex<Vec<LaunchNotice>>,
+    count: usize,
+    limit: Duration,
+) -> Vec<LaunchNotice> {
     let deadline = Instant::now() + limit;
     loop {
         let current = lock(notices).clone();
-        if !current.is_empty() || Instant::now() >= deadline {
+        let finished = current
+            .iter()
+            .filter(|notice| matches!(notice, LaunchNotice::Finished { .. }))
+            .count();
+        if finished >= count || Instant::now() >= deadline {
             break current;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -77,30 +121,59 @@ fn defaults() -> DialogDefaults {
     }
 }
 
-#[test]
-fn fleet_is_told_and_row_appears() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fleet_is_told_and_row_appears() {
     let home = tempfile::tempdir().expect("home");
+    let _gateway = StandaloneGateway::start(home.path());
+    let repo = git_fixture::GitRepo::new();
+    let folder = repo.repo.canonicalize().expect("repo");
     let notices = Arc::new(Mutex::new(Vec::new()));
-    let fleet = FleetHandle::new();
-    let untouched = FleetHandle::new();
+    let fleet = Arc::new(Recorded {
+        fleet: FleetService::start(
+            home.path().to_path_buf(),
+            "fixture".into(),
+            FleetConfig::scaled_for_tests(),
+            |_| {},
+        ),
+        calls: Mutex::new(Vec::new()),
+    });
     let service = service(home.path().to_path_buf(), GitRunner::from_env(), &notices);
+    let started = Instant::now();
     service
-        .launch(request(false), "fixture".to_owned(), Some(fleet.clone()))
+        .launch(
+            request_in(folder.clone(), false),
+            "fixture".to_owned(),
+            Some(Arc::clone(&fleet) as Arc<dyn LaunchFleet>),
+        )
         .expect("accepted");
-    let got = wait_notices(&notices, Duration::from_millis(400));
-    assert!(!got.is_empty(), "no notice within 400ms");
+    let got = wait_finished(&notices, 1, Duration::from_secs(5));
     let text = got.iter().find_map(|notice| match notice {
         LaunchNotice::Finished { outcome, .. } => Some(talaria_app::bg::notice_text(outcome)),
         LaunchNotice::Progress { .. } => None,
     });
     assert_eq!(text.as_deref(), Some(NOTICE));
+    let deadline = started + Duration::from_secs(1);
+    let mut rows = fleet.fleet.snapshot().rows.clone();
+    while rows.is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+        rows = fleet.fleet.snapshot().rows.clone();
+    }
+    assert!(!rows.is_empty(), "no row within 1s");
+    assert_eq!(
+        fleet.calls(),
+        ["observe_subscribed", "observe_unsubscribed", "refresh_now"]
+    );
 
     service
-        .launch(request(true), "fixture".to_owned(), Some(fleet.clone()))
+        .launch(
+            request_in(folder, true),
+            "fixture".to_owned(),
+            Some(Arc::clone(&fleet) as Arc<dyn LaunchFleet>),
+        )
         .expect("accepted");
     let worktree_notice =
         format!("{NOTICE} (worktree talaria/line-one-is-here-and-line-two-continues)");
-    let got = wait_notices(&notices, Duration::from_millis(400));
+    let got = wait_finished(&notices, 2, Duration::from_secs(10));
     let found = got.iter().any(|notice| match notice {
         LaunchNotice::Finished { outcome, .. } => {
             talaria_app::bg::notice_text(outcome) == worktree_notice
@@ -109,20 +182,18 @@ fn fleet_is_told_and_row_appears() {
     });
     assert!(found, "missing worktree notice");
 
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let mut rows = fleet.snapshot().rows;
-    while rows.is_empty() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-        rows = fleet.snapshot().rows;
-    }
-    assert!(!rows.is_empty(), "no row within 1s");
-    assert!(fleet.calls().contains(&"observe_subscribed"));
-
+    let before = fleet.calls().len();
     service
-        .launch(request(false), "fixture".to_owned(), None)
+        .launch(
+            request_in(std::env::temp_dir().canonicalize().expect("temp"), false),
+            "fixture".to_owned(),
+            None,
+        )
         .expect("accepted");
-    assert!(
-        untouched.calls().is_empty(),
+    let _ = wait_finished(&notices, 3, Duration::from_secs(5));
+    assert_eq!(
+        fleet.calls().len(),
+        before,
         "a launch with no fleet handle called the registry"
     );
 }
@@ -130,6 +201,8 @@ fn fleet_is_told_and_row_appears() {
 #[test]
 fn launch_runs_off_the_ui_task() {
     let home = tempfile::tempdir().expect("home");
+    let _gateway = StandaloneGateway::start(home.path());
+    let repo = git_fixture::GitRepo::new();
     let program = git_fixture::slow_fetch_git(home.path(), 5);
     let notices = Arc::new(Mutex::new(Vec::new()));
     let service = service(
@@ -138,9 +211,27 @@ fn launch_runs_off_the_ui_task() {
         &notices,
     );
     service
-        .launch(request(true), "fixture".to_owned(), None)
+        .launch(
+            request_in(repo.repo.canonicalize().expect("repo"), true),
+            "fixture".to_owned(),
+            None,
+        )
         .expect("accepted");
-    let got = wait_notices(&notices, Duration::from_millis(400));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut got = lock(&notices).clone();
+    while !got.iter().any(|notice| {
+        matches!(
+            notice,
+            LaunchNotice::Progress {
+                stage: Stage::Fetching,
+                ..
+            }
+        )
+    }) && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(20));
+        got = lock(&notices).clone();
+    }
     let progress = got.iter().any(|notice| {
         matches!(
             notice,
@@ -192,7 +283,7 @@ async fn three_launches_at_most() {
         "shutdown exceeded 5s"
     );
     gateway.release("session.create");
-    let got = wait_notices(&notices, Duration::from_millis(400));
+    let got = wait_finished(&notices, 3, Duration::from_secs(5));
     let interrupted = got.iter().filter(|notice| match notice {
         LaunchNotice::Finished { outcome, .. } => {
             matches!(outcome, talaria_app::bg::LaunchOutcome::Interrupted { .. })
@@ -235,7 +326,8 @@ fn n_and_w_open_the_dialog_from_the_fleet_view() {
         "dialog was not drawn"
     );
 
-    let esc = talaria_tui::keys::KeyChord::parse("esc", KeyContext::Fleet).expect("esc");
+    // Esc is a fixed key of the fleet context, so it is only written as a chord elsewhere.
+    let esc = talaria_tui::keys::KeyChord::parse("esc", KeyContext::Composer).expect("esc");
     let action = plain.handle_key(esc);
     assert!(matches!(
         action,

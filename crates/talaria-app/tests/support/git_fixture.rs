@@ -18,6 +18,7 @@ use std::os::unix::fs::PermissionsExt;
 /// that owns both.
 pub struct GitRepo {
     tmp: tempfile::TempDir,
+    root: PathBuf,
     pub origin: PathBuf,
     pub repo: PathBuf,
     pub local_main: String,
@@ -29,13 +30,15 @@ impl GitRepo {
     pub fn new() -> Self {
         require_git();
         let tmp = tempfile::tempdir().expect("temp folder");
+        // Git reports real paths, and macOS temporary folders sit behind a symbolic link.
+        let root = std::fs::canonicalize(tmp.path()).expect("canonical temp folder");
         let home = tmp.path().join("home");
         let global = tmp.path().join("gitconfig");
         std::fs::create_dir_all(&home).expect("home");
         std::fs::write(&global, "").expect("gitconfig");
-        let origin = tmp.path().join("origin.git");
-        let repo = tmp.path().join("repo");
-        let other = tmp.path().join("other");
+        let origin = root.join("origin.git");
+        let repo = root.join("repo");
+        let other = root.join("other");
         run_ok(
             tmp.path(),
             tmp.path(),
@@ -53,6 +56,7 @@ impl GitRepo {
         assert_ne!(local_main, origin_main, "local main should lag origin/main");
         Self {
             tmp,
+            root,
             origin,
             repo,
             local_main,
@@ -61,7 +65,7 @@ impl GitRepo {
     }
 
     pub fn path(&self) -> &Path {
-        self.tmp.path()
+        &self.root
     }
 
     /// Run git in `cwd`. The caller inspects the status.
@@ -111,7 +115,8 @@ pub fn slow_fetch_git(dir: &Path, secs: u64) -> PathBuf {
     write_script(dir, "slow-fetch-git", &body)
 }
 
-/// A wrapper that, on the first `worktree add`, creates the destination folder, then runs git.
+/// A wrapper that, on the first `worktree add`, creates the destination folder with a file in it,
+/// then runs git. Git accepts an empty existing folder, so the file is what makes it refuse.
 pub fn race_git(dir: &Path) -> PathBuf {
     let body = r#"#!/bin/sh
 mark="$0.once"
@@ -133,6 +138,7 @@ if [ ! -e "$mark" ]; then
     done
     if [ -n "$prev" ]; then
       mkdir -p -- "$prev"
+      : > "$prev/.claimed"
     fi
     : > "$mark"
   fi
