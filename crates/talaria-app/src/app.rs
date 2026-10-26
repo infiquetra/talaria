@@ -7783,6 +7783,30 @@ mod comfort_event_tests {
     }
 
     #[test]
+    fn subagent_usage_fallback_reads_the_nested_value_and_resets_on_switch() {
+        let mut state = state();
+        let usage = inbound(
+            &state,
+            "session.usage",
+            json!({
+                "active_subagents": 99, "usage": {"active_subagents": 7}
+            }),
+        );
+        update(&mut state, usage);
+        assert_eq!(state.view().subagents_usage_active, 7);
+        let snapshot =
+            serde_json::from_str(include_str!("../tests/data/open_approval.json")).unwrap();
+        update(
+            &mut state,
+            AppMessage::Opened {
+                opened: OpenedSession::from_snapshot(snapshot),
+                notice: None,
+            },
+        );
+        assert_eq!(state.view().subagents_usage_active, 0);
+    }
+
+    #[test]
     fn accepted_title_updates_attention_label() {
         let mut state = state();
         let id = state.opened.as_ref().unwrap().session_id.clone();

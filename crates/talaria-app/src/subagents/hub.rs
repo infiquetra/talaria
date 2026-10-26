@@ -1,6 +1,7 @@
 //! The subagent hub and its messages. Issue #242.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use hermes_client::{CallError, CallOptions, Client};
@@ -140,8 +141,8 @@ pub enum SubagentMsg {
 pub enum TimerKind {
     Poll,
     Tail { id: String, view: u64 },
-    Status,
-    Elapsed,
+    Status { panel_epoch: u64 },
+    Elapsed { panel_epoch: u64 },
 }
 
 /// Transcript data; terminal escaping is the presentation layer's job.
@@ -195,6 +196,9 @@ pub struct SubagentHub {
     status_inflight: bool,
     status_disabled: bool,
     status_scheduled: bool,
+    control_limit: Arc<tokio::sync::Semaphore>,
+    panel_epoch: u64,
+    elapsed_scheduled: bool,
 }
 
 impl SubagentHub {
@@ -302,9 +306,10 @@ impl SubagentHub {
         let generation = tracker.generation;
         let key = key.clone();
         let tx = self.tx.clone();
+        let deadline = tokio::time::Instant::now() + delay;
         tracker.jobs.retain(|job| !job.is_finished());
         tracker.jobs.push(tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
+            tokio::time::sleep_until(deadline).await;
             let _ = tx.send(crate::app::AppMessage::Subagents(SubagentMsg::Scheduled {
                 key,
                 generation,
@@ -408,7 +413,28 @@ impl SubagentHub {
     fn schedule_status(&mut self, key: &RowKey) {
         if self.panel.as_ref() == Some(key) && !self.status_disabled && !self.status_scheduled {
             self.status_scheduled = true;
-            self.schedule(key, TimerKind::Status, Duration::from_secs(5));
+            self.schedule(
+                key,
+                TimerKind::Status {
+                    panel_epoch: self.panel_epoch,
+                },
+                Duration::from_secs(5),
+            );
+        }
+    }
+    fn schedule_elapsed(&mut self, key: &RowKey) {
+        if self.panel.as_ref() == Some(key)
+            && !self.elapsed_scheduled
+            && self.tree(key).is_some_and(|tree| tree.counts().live > 0)
+        {
+            self.elapsed_scheduled = true;
+            self.schedule(
+                key,
+                TimerKind::Elapsed {
+                    panel_epoch: self.panel_epoch,
+                },
+                Duration::from_secs(1),
+            );
         }
     }
     fn status(&mut self, key: &RowKey) {
@@ -469,10 +495,14 @@ impl SubagentHub {
             return;
         };
         let client = tracker.client.clone();
+        let control_limit = Arc::clone(&self.control_limit);
         let generation = tracker.generation;
         let key = key.clone();
         let tx = self.tx.clone();
         tracker.jobs.push(tokio::spawn(async move {
+            let Ok(_permit) = control_limit.acquire_owned().await else {
+                return;
+            };
             let outcome = match call(&client, method, params, 10).await.and_then(interpret) {
                 Ok(outcome) => outcome,
                 Err(error) => error_outcome(method, action, error),
@@ -560,6 +590,9 @@ impl SubagentHub {
             status_inflight: false,
             status_disabled: false,
             status_scheduled: false,
+            control_limit: Arc::new(tokio::sync::Semaphore::new(10)),
+            panel_epoch: 0,
+            elapsed_scheduled: false,
         }
     }
 
@@ -624,6 +657,7 @@ impl SubagentHub {
         let changed = before != tracker.tree.version();
         self.collect_batches(key);
         self.schedule_poll(key);
+        self.schedule_elapsed(key);
         changed
     }
 
@@ -646,9 +680,11 @@ impl SubagentHub {
         self.status_inflight = false;
         self.status_disabled = false;
         self.status_scheduled = false;
+        self.elapsed_scheduled = false;
         self.list(key);
         if self.panel.as_ref() == Some(key) {
             self.status(key);
+            self.schedule_elapsed(key);
         }
         if let Some(id) = self.trackers.get(key).and_then(|t| t.tail_id.clone()) {
             self.fetch_tail(key, id);
@@ -700,6 +736,7 @@ impl SubagentHub {
                     || previous_flash != self.flash;
                 self.collect_batches(&key);
                 self.schedule_poll(&key);
+                self.schedule_elapsed(&key);
                 changed
             }
             SubagentMsg::Tail {
@@ -849,19 +886,24 @@ impl SubagentHub {
                         }
                         false
                     }
-                    TimerKind::Status => {
+                    TimerKind::Status { panel_epoch } => {
+                        if panel_epoch != self.panel_epoch {
+                            return false;
+                        }
                         self.status_scheduled = false;
                         if self.panel.as_ref() == Some(&key) {
                             self.status(&key);
                         }
                         false
                     }
-                    TimerKind::Elapsed => {
+                    TimerKind::Elapsed { panel_epoch } => {
+                        if panel_epoch != self.panel_epoch {
+                            return false;
+                        }
+                        self.elapsed_scheduled = false;
                         let live = self.panel.as_ref() == Some(&key)
                             && self.trackers[&key].tree.counts().live > 0;
-                        if self.panel.as_ref() == Some(&key) {
-                            self.schedule(&key, TimerKind::Elapsed, Duration::from_secs(1));
-                        }
+                        self.schedule_elapsed(&key);
                         live
                     }
                 }
@@ -879,6 +921,16 @@ impl SubagentHub {
                     return;
                 }
                 let goal = self.goal(key, &id);
+                if let Some(row) = self.tree(key).and_then(|tree| tree.get(&id)) {
+                    if row.state == RowState::Queued {
+                        self.emit(key, None, ControlOutcome::NotStarted { goal });
+                        return;
+                    }
+                    if row.state.is_terminal() {
+                        self.emit(key, None, ControlOutcome::AlreadyFinished { goal });
+                        return;
+                    }
+                }
                 if self
                     .tree(key)
                     .and_then(|tree| tree.get(&id))
@@ -1012,10 +1064,13 @@ impl SubagentHub {
         }
         self.list(&key);
         self.status(&key);
-        self.schedule(&key, TimerKind::Elapsed, Duration::from_secs(1));
+        self.schedule_elapsed(&key);
     }
 
     pub fn close_panel(&mut self) {
+        self.panel_epoch = self.panel_epoch.wrapping_add(1);
+        self.elapsed_scheduled = false;
+        self.status_scheduled = false;
         if let Some(key) = self.panel.take() {
             self.act(
                 &key,
@@ -1103,11 +1158,20 @@ fn literal(text: &str) -> String {
     let mut out = String::new();
     for c in text.chars() {
         match c {
-            '\u{1b}' => out.push('␛'),
-            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}'..='\u{200f}' => {
-                out.push_str(&format!("‹U+{:04X}›", c as u32))
+            '\t' => out.push_str("    "),
+            '\u{00}'..='\u{1f}' => {
+                if let Some(picture) = char::from_u32(0x2400 + u32::from(c)) {
+                    out.push(picture);
+                }
             }
-            c if c.is_control() => out.push(' '),
+            '\u{7f}' => out.push('␡'),
+            '\u{80}'..='\u{9f}'
+            | '\u{061c}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{200e}'..='\u{200f}'
+            | '\u{2028}'..='\u{2029}'
+            | '\u{e0000}'..='\u{e007f}' => out.push_str(&format!("‹U+{:04X}›", c as u32)),
             c => out.push(c),
         }
     }
@@ -1157,5 +1221,31 @@ fn error_outcome(method: &'static str, action: &'static str, error: CallError) -
                 error.reason.unwrap_or_else(|| "unknown refusal".into())
             },
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outcomes_render_controls_and_direction_marks_visibly() {
+        let text = outcome_text(&ControlOutcome::StopRequested {
+            goal: "bell\u{7}\u{1b}\u{202e}".into(),
+        });
+        assert_eq!(text, "Stop requested for \"bell␇␛‹U+202E›\".");
+        assert!(!text.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn unreadable_answers_do_not_claim_the_connection_dropped() {
+        let outcome = error_outcome(
+            "subagent.interrupt",
+            "stop",
+            bad_result("subagent.interrupt"),
+        );
+        assert!(matches!(outcome, ControlOutcome::Refused { .. }));
+        assert!(outcome_text(&outcome).contains("outcome is unknown"));
+        assert!(!outcome_text(&outcome).contains("dropped"));
     }
 }
