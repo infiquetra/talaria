@@ -48,6 +48,37 @@ fn methods(gateway: &StandaloneGateway) -> Vec<String> {
         .collect()
 }
 
+/// Poll the snapshot until `check` holds or `budget` passes.
+async fn wait_for(
+    handle: &FleetHandle,
+    budget: Duration,
+    check: impl Fn(&FleetSnapshot) -> bool,
+) -> Arc<FleetSnapshot> {
+    let started = Instant::now();
+    loop {
+        let snapshot = handle.snapshot();
+        if check(&snapshot) || started.elapsed() >= budget {
+            return snapshot;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// One session row for the mock's fleet tables.
+fn session(id: &str, status: &str, count: u64) -> serde_json::Value {
+    json!({
+        "id": id, "title": "", "source": "tui", "status": status,
+        "message_count": count, "model": "minimax-m3.1-flash", "started_at": 1_792_690_000.0
+    })
+}
+
+fn approval(id: &str) -> serde_json::Value {
+    json!({
+        "request_id": id, "command": "rm -rf ./talaria-fleet-probe",
+        "description": "recursive delete", "choices": ["once", "deny"], "allow_permanent": true
+    })
+}
+
 fn params_keys(seen: &Seen) -> BTreeSet<String> {
     seen.params
         .as_object()
@@ -124,7 +155,7 @@ async fn host_scope_refused_falls_back_to_one_profile() {
         }
     }
     gateway.set_refuse_host_scope(false);
-    let _ = handle.refresh_now();
+    handle.refresh_now();
     let again = wait_connected(&handle, Duration::from_secs(2)).await;
     assert!(
         matches!(again.scope, SideScope::Host { .. }),
@@ -142,33 +173,45 @@ async fn host_scope_refused_falls_back_to_one_profile() {
 #[tokio::test]
 async fn sessions_changed_coalesces_and_respects_gaps() {
     let home = home();
-    let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
-    let _ = wait_connected(&handle, Duration::from_secs(2)).await;
+    // Polls slowed so the only reads after the connect round are the ones the events cause.
+    let mut cfg = FleetConfig::scaled_for_tests();
+    cfg.hot_poll = Duration::from_secs(30);
+    cfg.cold_poll = Duration::from_secs(30);
+    cfg.backstop = Duration::from_secs(30);
+    let (gateway, handle) = start(home.path(), cfg);
+    let snapshot = wait_connected(&handle, Duration::from_secs(2)).await;
+    let per_round = snapshot.profiles.len();
+    assert!(
+        per_round >= 1,
+        "the connect round listed the served profiles"
+    );
+    let live_before = gateway.requests("session.active_list").len();
+    let list_before = gateway.requests("session.list").len();
     let mock = MockGateway::clone(&gateway);
     for _ in 0..5 {
         mock.send_event("sessions.changed", json!({})).await;
     }
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        gateway.requests("session.active_list").len(),
-        1,
+        gateway.requests("session.active_list").len() - live_before,
+        per_round,
         "one liveness round"
     );
     assert_eq!(
-        gateway.requests("session.list").len(),
-        1,
+        gateway.requests("session.list").len() - list_before,
+        per_round,
         "one roster round"
     );
     mock.send_event("sessions.changed", json!({})).await;
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        gateway.requests("session.active_list").len(),
-        2,
+        gateway.requests("session.active_list").len() - live_before,
+        2 * per_round,
         "one more liveness round"
     );
     assert_eq!(
-        gateway.requests("session.list").len(),
-        2,
+        gateway.requests("session.list").len() - list_before,
+        2 * per_round,
         "one trailing roster"
     );
     let _ = handle;
@@ -178,36 +221,85 @@ async fn sessions_changed_coalesces_and_respects_gaps() {
 async fn hot_and_cold_polls_follow_their_intervals() {
     let home = home();
     let cfg = FleetConfig::scaled_for_tests();
-    let (gateway, handle) = start(home.path(), cfg.clone());
+    let gateway = StandaloneGateway::start(home.path());
+    let (sender, mut notices) = tokio::sync::mpsc::unbounded_channel();
+    let handle = FleetService::start(
+        home.path().to_path_buf(),
+        "fixture".into(),
+        cfg.clone(),
+        move |notice| {
+            let _ = sender.send(notice);
+        },
+    );
     gateway.set_fleet_profiles(vec![
         "fixture".into(),
         "fixture-1".into(),
         "fixture-2".into(),
     ]);
-    gateway.push_result(json!({"sessions": [{
-        "session_id": "hot-1", "id": "hot-1", "title": "", "source": "tui",
-        "status": "waiting", "message_count": 1, "model": "minimax-m3.1-flash", "preview": ""
-    }]}));
+    gateway.set_fleet_session("fixture", session("hot-1", "waiting", 1));
+    gateway.set_fleet_approvals("fixture", "hot-1", vec![approval("a1b2")]);
+    gateway.set_fleet_profile_empty("fixture-1");
     let snapshot = wait_connected(&handle, Duration::from_secs(2)).await;
     assert!(
         snapshot
             .queue
             .iter()
             .any(|item| item.id.key.session_id == "hot-1"),
-        "a cold profile's approval is in the snapshot"
+        "a waiting session's approval is in the first snapshot"
     );
+    tokio::time::sleep(cfg.hot_poll * 4).await;
     let hot = gateway
         .requests("session.active_list")
         .into_iter()
         .filter(|seen| seen.params["profile"] == "fixture")
         .collect::<Vec<_>>();
-    assert!(hot.len() >= 2, "the hot profile is polled on its interval");
-    if hot.len() >= 2 {
-        let gap = hot[1].at.saturating_duration_since(hot[0].at);
+    assert!(hot.len() >= 3, "the hot profile is polled on its interval");
+    for pair in hot[1..].windows(2) {
+        let gap = pair[1].at.saturating_duration_since(pair[0].at);
         let low = cfg.hot_poll / 2;
         let high = cfg.hot_poll + cfg.hot_poll / 2;
-        assert!(gap >= low && gap <= high, "hot interval drifted");
+        assert!(gap >= low && gap <= high, "hot interval drifted: {gap:?}");
     }
+    let cold = gateway
+        .requests("session.active_list")
+        .into_iter()
+        .filter(|seen| seen.params["profile"] == "fixture-1")
+        .collect::<Vec<_>>();
+    assert!(cold.len() >= 2, "a cold profile is polled");
+    let gap = cold[cold.len() - 1]
+        .at
+        .saturating_duration_since(cold[cold.len() - 2].at);
+    assert!(
+        gap >= cfg.cold_poll / 2 && gap <= cfg.cold_poll + cfg.cold_poll / 2,
+        "cold interval drifted: {gap:?}"
+    );
+    while notices.try_recv().is_ok() {}
+    tokio::time::sleep(cfg.cold_poll * 2).await;
+    assert!(
+        notices.try_recv().is_err(),
+        "an unchanged poll sends no changed notice"
+    );
+    let opened = Instant::now();
+    gateway.set_fleet_session("fixture-1", session("cold-1", "waiting", 1));
+    gateway.set_fleet_approvals("fixture-1", "cold-1", vec![approval("c1")]);
+    let seen = wait_for(&handle, Duration::from_secs(2), |snapshot| {
+        snapshot
+            .queue
+            .iter()
+            .any(|item| item.id.key.session_id == "cold-1")
+    })
+    .await;
+    assert!(
+        seen.queue
+            .iter()
+            .any(|item| item.id.key.session_id == "cold-1"),
+        "a cold profile's approval is queued"
+    );
+    assert!(
+        opened.elapsed() <= cfg.cold_poll + cfg.cold_poll / 2 + Duration::from_millis(100),
+        "within the cold interval plus two calls: {:?}",
+        opened.elapsed()
+    );
 }
 
 #[tokio::test]
@@ -232,10 +324,8 @@ async fn waiting_session_reads_pending_approvals() {
     let home = home();
     let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
     gateway.set_live_session_ids(["local-3f2a"]);
-    gateway.push_result(json!({"sessions": [{
-        "id": "local-3f2a", "session_id": "local-3f2a", "title": "", "status": "waiting",
-        "message_count": 4, "preview": "", "source": "tui"
-    }]}));
+    gateway.set_fleet_session("fixture", session("local-3f2a", "waiting", 4));
+    gateway.set_fleet_approvals("fixture", "local-3f2a", vec![approval("a1b2")]);
     let snapshot = wait_connected(&handle, Duration::from_secs(2)).await;
     let reads = gateway.requests("approval.pending");
     assert!(
@@ -256,6 +346,16 @@ async fn waiting_session_reads_pending_approvals() {
             .any(|item| item.id.key.session_id == "local-3f2a"),
         "the approval is queued"
     );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let reads = gateway.requests("approval.pending");
+    assert!(reads.len() >= 2, "the waiting session is read again");
+    let gap = FleetConfig::scaled_for_tests().approvals_gap;
+    for pair in reads.windows(2) {
+        assert!(
+            pair[1].at.saturating_duration_since(pair[0].at) >= gap / 2,
+            "approval reads keep their gap"
+        );
+    }
 }
 
 #[tokio::test]
@@ -263,7 +363,17 @@ async fn never_reads_a_session_that_is_not_live() {
     let home = home();
     let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
     gateway.set_live_session_ids(["local-live"]);
+    gateway.set_fleet_session("fixture", session("local-live", "waiting", 1));
+    gateway.set_fleet_approvals("fixture", "local-live", vec![approval("a1b2")]);
     let _ = wait_connected(&handle, Duration::from_secs(2)).await;
+    gateway.set_fleet_approvals("fixture", "local-live", Vec::new());
+    gateway.set_fleet_session("fixture", session("local-live", "idle", 3));
+    let started = Instant::now();
+    while gateway.requests("session.events.since").is_empty()
+        && started.elapsed() < Duration::from_secs(2)
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let approvals = gateway.requests("approval.pending");
     let events = gateway.requests("session.events.since");
     assert!(
@@ -278,6 +388,9 @@ async fn never_reads_a_session_that_is_not_live() {
             .any(|seen| seen.params["session_id"] == "local-live"),
         "session.events.since was sent for a live id"
     );
+    gateway.set_fleet_session("fixture", session("local-live", "working", 4));
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    gateway.remove_fleet_session("fixture", "local-live");
     gateway.set_live_session_ids(["local-other"]);
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
@@ -288,17 +401,40 @@ async fn never_reads_a_session_that_is_not_live() {
     let _ = handle;
 }
 
+fn completion(seq: u64, status: &str) -> serde_json::Value {
+    json!({"type": "message.complete", "session_id": "local-3f2a", "seq": seq,
+           "replay_epoch": "e1", "payload": {"text": "done", "status": status}})
+}
+
+fn delta(seq: u64) -> serde_json::Value {
+    json!({"type": "message.delta", "session_id": "local-3f2a", "seq": seq,
+           "replay_epoch": "e1", "payload": {"text": "x"}})
+}
+
 #[tokio::test]
 async fn outcome_probe_uses_epoch_and_tail() {
     let home = home();
     let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
-    gateway.push_result(json!({"sessions": [{
-        "id": "local-3f2a", "status": "idle", "message_count": 6, "title": "", "preview": ""
-    }]}));
-    gateway.script_error("session.events.since", Some("fixture"), 4001, "not_found");
-    let snapshot = wait_connected(&handle, Duration::from_secs(2)).await;
+    gateway.set_live_session_ids(["local-3f2a"]);
+    gateway.set_fleet_session("fixture", session("local-3f2a", "working", 4));
+    let mut ring: Vec<serde_json::Value> = (50..=120).map(delta).collect();
+    ring[118 - 50] = completion(118, "error");
+    gateway.set_fleet_ring("fixture", "local-3f2a", "e1", ring, 50);
+    let _ = wait_connected(&handle, Duration::from_secs(2)).await;
+    gateway.set_fleet_session("fixture", session("local-3f2a", "idle", 6));
+    let snapshot = wait_for(&handle, Duration::from_secs(2), |snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.key.session_id == "local-3f2a" && row.state == RowState::Failed)
+    })
+    .await;
     let probes = gateway.requests("session.events.since");
     assert!(probes.len() >= 2, "the probe makes two calls");
+    assert_eq!(probes[0].params["last_sequence"], 0);
+    assert!(probes[0].params.get("replay_epoch").is_none());
+    assert_eq!(probes[1].params["last_sequence"], 56);
+    assert_eq!(probes[1].params["replay_epoch"], "e1");
     assert!(
         snapshot
             .rows
@@ -312,17 +448,72 @@ async fn outcome_probe_uses_epoch_and_tail() {
 async fn outcome_probe_unknown_cases() {
     let home = home();
     let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
-    for reason in ["not_found", "storage_unavailable"] {
-        gateway.script_error("session.events.since", Some("fixture"), 4001, reason);
-    }
-    let snapshot = wait_connected(&handle, Duration::from_secs(2)).await;
-    assert!(
-        snapshot
-            .rows
-            .iter()
-            .any(|row| row.outcome == Some(talaria_core::fleet::Outcome::Unknown)),
-        "a probe that cannot see the completion stays unknown"
+    gateway.set_fleet_profiles(vec![
+        "fixture".into(),
+        "fixture-1".into(),
+        "fixture-2".into(),
+    ]);
+    // Evicted: the tail starts below the oldest frame held.
+    gateway.set_fleet_session("fixture", session("s-evicted", "working", 1));
+    let ring: Vec<serde_json::Value> = (110..=120).map(delta).collect();
+    gateway.set_fleet_ring("fixture", "s-evicted", "e1", ring, 110);
+    // No events at all: the latest sequence is 0.
+    gateway.set_fleet_session("fixture", session("s-empty", "working", 1));
+    // Events but no completion.
+    gateway.set_fleet_session("fixture", session("s-open", "working", 1));
+    gateway.set_fleet_ring("fixture", "s-open", "e1", (1..=5).map(delta).collect(), 1);
+    // A refused read.
+    gateway.set_fleet_session("fixture-1", session("s-refused", "working", 1));
+    gateway.set_fleet_ring(
+        "fixture-1",
+        "s-refused",
+        "e1",
+        vec![completion(1, "complete")],
+        1,
     );
+    for reason in ["not_found", "storage_unavailable"] {
+        gateway.script_error("session.events.since", Some("fixture-1"), 4001, reason);
+    }
+    // No reply before the probe deadline.
+    gateway.set_fleet_session("fixture-2", session("s-silent", "working", 1));
+    gateway.set_fleet_ring(
+        "fixture-2",
+        "s-silent",
+        "e1",
+        vec![completion(1, "complete")],
+        1,
+    );
+    gateway.set_silent_profile("fixture-2", "session.events.since", true);
+    let _ = wait_connected(&handle, Duration::from_secs(2)).await;
+    for (profile, id) in [
+        ("fixture", "s-evicted"),
+        ("fixture", "s-empty"),
+        ("fixture", "s-open"),
+        ("fixture-1", "s-refused"),
+        ("fixture-2", "s-silent"),
+    ] {
+        gateway.set_fleet_session(profile, session(id, "idle", 1));
+    }
+    let ids = ["s-evicted", "s-empty", "s-open", "s-refused", "s-silent"];
+    let snapshot = wait_for(&handle, Duration::from_secs(3), |snapshot| {
+        ids.iter().all(|id| {
+            snapshot
+                .rows
+                .iter()
+                .any(|row| row.key.session_id == *id && row.outcome.is_some())
+        })
+    })
+    .await;
+    for id in ids {
+        assert!(
+            snapshot.rows.iter().any(|row| {
+                row.key.session_id == id
+                    && row.state == RowState::Done
+                    && row.outcome == Some(talaria_core::fleet::Outcome::Unknown)
+            }),
+            "a probe that cannot see the completion stays unknown: {id}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -375,27 +566,48 @@ async fn one_failing_profile_keeps_the_others() {
         .filter(|seen| seen.params["profile"] == "fixture")
         .count();
     assert!(healthy >= 1, "the healthy profile still gets liveness");
+    let cold = FleetConfig::scaled_for_tests().cold_poll;
+    tokio::time::sleep(cold * 5).await;
+    let later = gateway
+        .requests("session.active_list")
+        .into_iter()
+        .filter(|seen| seen.params["profile"] == "fixture")
+        .count();
+    assert!(
+        later >= healthy + 3,
+        "profiles that never answer do not starve the healthy one: {healthy} then {later}"
+    );
 }
 
 #[tokio::test]
 async fn reconnect_marks_stale_then_refreshes() {
     let home = home();
     let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
+    gateway.set_fleet_session("fixture", session("local-3f2a", "idle", 1));
     let snapshot = wait_connected(&handle, Duration::from_secs(2)).await;
     assert!(
         matches!(snapshot.link, FleetLinkState::Connected),
         "the link connected before the drop"
     );
-    gateway.push_result_after(Duration::from_secs(5), json!({"sessions": []}));
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let refreshed = handle.snapshot();
+    assert!(!snapshot.rows.is_empty(), "a row is listed");
+    let mock = MockGateway::clone(&gateway);
+    mock.kill_connection().await;
+    let dropped = wait_for(&handle, Duration::from_secs(2), |snapshot| {
+        matches!(snapshot.link, FleetLinkState::Reconnecting { .. })
+    })
+    .await;
     assert!(
-        refreshed.rows.iter().all(|row| !row.stale),
-        "the new generation's roster clears stale"
+        dropped.rows.iter().all(|row| row.stale),
+        "a dropped link marks every row stale"
     );
+    let refreshed = wait_connected(&handle, Duration::from_secs(5)).await;
     assert!(
         matches!(refreshed.link, FleetLinkState::Connected),
         "the link is connected again"
+    );
+    assert!(
+        refreshed.rows.iter().all(|row| !row.stale),
+        "the new generation's roster clears stale"
     );
 }
 
@@ -468,10 +680,16 @@ async fn fleet_link_sends_only_allowed_methods() {
     ];
     let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
     gateway.set_live_session_ids(["local-3f2a"]);
-    gateway.push_result(json!({"sessions": [{
-        "id": "local-3f2a", "status": "waiting", "title": "", "preview": "", "message_count": 1
-    }]}));
+    gateway.set_fleet_session("fixture", session("local-3f2a", "waiting", 1));
+    gateway.set_fleet_approvals("fixture", "local-3f2a", vec![approval("a1b2")]);
     let _ = wait_connected(&handle, Duration::from_secs(2)).await;
+    gateway.set_fleet_session("fixture", session("local-3f2a", "idle", 2));
+    let started = Instant::now();
+    while gateway.requests("session.events.since").is_empty()
+        && started.elapsed() < Duration::from_secs(2)
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let seen = methods(&gateway);
     for method in [
         "session.list",

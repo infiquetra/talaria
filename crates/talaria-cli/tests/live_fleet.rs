@@ -36,11 +36,6 @@ fn finish(result: Result<(), String>) {
     }
 }
 
-struct Opened {
-    client: Client,
-    session_id: String,
-}
-
 async fn open_fixture() -> Result<(PathBuf, Client), String> {
     let (home, client, _inbound) = attach_fixture().await?;
     Ok((home, client))
@@ -88,7 +83,8 @@ async fn create_session(client: &Client, folder: &Path, nonce: &str) -> Result<S
         .call_raw(
             "session.create",
             json!({
-                "request_id": format!("fleet-{nonce}"),
+                // Hermes keeps a receipt per request id, so every run needs its own.
+                "request_id": format!("fleet-{nonce}-{}", run_nonce()),
                 "source": "tui",
                 "cwd": folder.display().to_string(),
                 "profile": "fixture",
@@ -105,8 +101,14 @@ async fn create_session(client: &Client, folder: &Path, nonce: &str) -> Result<S
         .ok_or_else(|| "session.create returned no session id".to_string())
 }
 
+fn run_nonce() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos())
+}
+
 fn run_fleet(home: &Path, args: &[&str], limit: Duration) -> Result<std::process::Output, String> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_talaria"))
+    let child = Command::new(env!("CARGO_BIN_EXE_talaria"))
         .args(args)
         .env("HERMES_HOME", home)
         .stdin(Stdio::null())
@@ -383,6 +385,20 @@ async fn live_finished_turn_outcome() {
         let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
         let session_id = create_session(&client, folder.path(), "done").await?;
         let (mut child, lines) = spawn_watch(&home, "180")?;
+        // The watch has seen the session before the turn starts: a turn shorter than the
+        // watch's start-up would otherwise end before its first read.
+        let opened = Instant::now();
+        let mut watching = false;
+        while opened.elapsed() < Duration::from_secs(20) && !watching {
+            match poll_json(&lines) {
+                Some(value) => watching = value["kind"] == "snapshot",
+                None => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+        if !watching {
+            stop_watch(&mut child);
+            return Err("the watch printed no first snapshot".into());
+        }
         client
             .call_raw(
                 "prompt.submit",
@@ -427,12 +443,26 @@ async fn live_finished_turn_outcome() {
             stop_watch(&mut child);
             return Err("the finished turn was not reported done".into());
         }
+        // The first turn's events still wait on this connection; drop them so the delta read
+        // below belongs to the second turn.
+        let mut first_generation = 0_i64;
+        while let Ok(Some(item)) =
+            tokio::time::timeout(Duration::from_millis(300), inbound.next()).await
+        {
+            if let hermes_client::Inbound::Event(event) = item
+                && let Some(value) = event.raw["execution_generation"].as_i64()
+            {
+                first_generation = first_generation.max(value);
+            }
+        }
         client
             .call_raw(
                 "prompt.submit",
                 json!({
                     "session_id": session_id,
-                    "text": "Count slowly from one to fifty, one number per line",
+                    // A fast model finishes fifty numbers before the interrupt lands; the
+                    // recorder's interrupted scenario uses this longer turn.
+                    "text": "Count from 1 to 500, one number per line, and do not stop early.",
                     "submission_id": "fleet-count",
                 }),
                 CallOptions {
@@ -443,17 +473,29 @@ async fn live_finished_turn_outcome() {
             .map_err(|error| format!("prompt.submit failed: {error}"))?;
         let mut generation = 1_i64;
         let mut saw_delta = false;
+        // Deltas of the first turn may still wait on this connection: only a delta after the
+        // second turn's message.start belongs to the turn to interrupt.
+        let mut started_second = false;
         let delta_started = Instant::now();
         while delta_started.elapsed() < Duration::from_secs(45) {
             let next = tokio::time::timeout(Duration::from_millis(200), inbound.next()).await;
-            if let Ok(Some(hermes_client::Inbound::Event(event))) = next
-                && event.raw["type"] == "message.delta"
-            {
-                saw_delta = true;
-                if let Some(value) = event.raw["execution_generation"].as_i64() {
-                    generation = value;
+            if let Ok(Some(hermes_client::Inbound::Event(event))) = next {
+                if event.raw["type"] == "message.start"
+                    && event.raw["execution_generation"]
+                        .as_i64()
+                        .is_none_or(|value| value > first_generation)
+                {
+                    started_second = true;
+                    if let Some(value) = event.raw["execution_generation"].as_i64() {
+                        generation = value;
+                    }
+                } else if event.raw["type"] == "message.delta" && started_second {
+                    saw_delta = true;
+                    if let Some(value) = event.raw["execution_generation"].as_i64() {
+                        generation = value;
+                    }
+                    break;
                 }
-                break;
             }
         }
         if !saw_delta {

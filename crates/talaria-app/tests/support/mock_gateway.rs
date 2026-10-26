@@ -432,6 +432,10 @@ struct State {
     live_session_ids: HashSet<String>,
     /// `approval.pending` or `session.events.since` for an id outside [`Self::live_session_ids`].
     fleet_non_live_reads: u64,
+    /// Per-profile session tables behind the fleet reads.
+    fleet: FleetTables,
+    /// Replies matched by method and params, each used once, before any handler.
+    matched_results: Vec<(String, Value, Value)>,
 }
 
 struct ScriptedError {
@@ -532,6 +536,8 @@ fn new_shared(
             silent_profiles: HashSet::new(),
             live_session_ids: HashSet::new(),
             fleet_non_live_reads: 0,
+            fleet: FleetTables::default(),
+            matched_results: Vec::new(),
         }),
         changed: Notify::new(),
     })
@@ -663,6 +669,83 @@ impl MockGateway {
             code,
             reason: reason.to_owned(),
         });
+    }
+
+    /// Add or replace one session in a profile's table. `session` holds the live-list fields
+    /// (`id`, `title`, `source`, `started_at`, `message_count`, `model`) plus `status` (any
+    /// string, as the liveness list sends it) and `hidden`. A session in the table is live.
+    pub fn set_fleet_session(&self, profile: &str, session: Value) {
+        let mut state = lock(&self.shared);
+        let table = state.fleet.profiles.entry(profile.to_owned()).or_default();
+        let id = session["id"].as_str().unwrap_or_default().to_owned();
+        match table.iter_mut().find(|held| held.id == id) {
+            Some(held) => held.fields = session,
+            None => table.push(FleetSession {
+                id,
+                fields: session,
+                approvals: Vec::new(),
+                ring: None,
+            }),
+        }
+    }
+
+    /// Make a profile known to the fleet reads with no sessions.
+    pub fn set_fleet_profile_empty(&self, profile: &str) {
+        lock(&self.shared)
+            .fleet
+            .profiles
+            .entry(profile.to_owned())
+            .or_default();
+    }
+
+    /// Remove a session: it leaves both live lists.
+    pub fn remove_fleet_session(&self, profile: &str, id: &str) {
+        if let Some(table) = lock(&self.shared).fleet.profiles.get_mut(profile) {
+            table.retain(|held| held.id != id);
+        }
+    }
+
+    /// The approvals `approval.pending` reports for a session.
+    pub fn set_fleet_approvals(&self, profile: &str, id: &str, approvals: Vec<Value>) {
+        if let Some(held) = fleet_session(&mut lock(&self.shared), profile, id) {
+            held.approvals = approvals;
+        }
+    }
+
+    /// A session's replay ring: its epoch, its events (each with `seq`), and the lowest
+    /// sequence still held. Reads after an evicted frame are truncated.
+    pub fn set_fleet_ring(
+        &self,
+        profile: &str,
+        id: &str,
+        epoch: &str,
+        events: Vec<Value>,
+        first: u64,
+    ) {
+        if let Some(held) = fleet_session(&mut lock(&self.shared), profile, id) {
+            held.ring = Some(FleetRing {
+                epoch: epoch.to_owned(),
+                events,
+                first,
+            });
+        }
+    }
+
+    /// Add a raw item to a profile's liveness reply, such as a malformed one.
+    pub fn push_fleet_live_item(&self, profile: &str, item: Value) {
+        lock(&self.shared)
+            .fleet
+            .extra_items
+            .entry(profile.to_owned())
+            .or_default()
+            .push(item);
+    }
+
+    /// Answer the next call whose method and params equal these with `result`, once.
+    pub fn push_matched_result(&self, method: &str, params: Value, result: Value) {
+        lock(&self.shared)
+            .matched_results
+            .push((method.to_owned(), params, result));
     }
 
     /// Give this profile's method no reply while on.
@@ -1408,9 +1491,35 @@ fn plan_request(
         outgoing.push((None, text, reply_meta(id, method)));
         return;
     }
+    if let Some(index) = state
+        .matched_results
+        .iter()
+        .position(|(wanted, params_wanted, _)| wanted == method && params_wanted == params)
+    {
+        let (_, _, result) = state.matched_results.remove(index);
+        let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+        outgoing.push((None, text, reply_meta(id, method)));
+        return;
+    }
     if let Some((delay, result)) = state.scripted_results.pop_front() {
         let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
         outgoing.push((delay, text, reply_meta(id, method)));
+        return;
+    }
+    if matches!(
+        method,
+        "session.active_list" | "approval.pending" | "session.events.since"
+    ) {
+        let reply = match method {
+            "session.active_list" => fleet_active_list(state, params),
+            "approval.pending" => fleet_approvals(state, params),
+            _ => fleet_events_since(state, params),
+        };
+        let text = match reply {
+            Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string(),
+            Err(reason) => refusal_text(id, &reason, None),
+        };
+        outgoing.push((None, text, reply_meta(id, method)));
         return;
     }
     // A rename, a branch or an export follows the directory rules; the other mutations keep
@@ -3518,6 +3627,11 @@ fn handle_list(state: &State, params: &Value) -> Result<Value, String> {
         return Err(reason.clone());
     }
     let limit = params["limit"].as_u64().unwrap_or(200) as usize;
+    if scope == "live"
+        && let Some(table) = state.fleet.profiles.get(&profile)
+    {
+        return Ok(json!({"sessions": fleet_live_rows(table, limit), "scope": scope}));
+    }
     let rows: Vec<Value> = state
         .sess
         .list_profile_rows
@@ -4939,3 +5053,197 @@ impl Deref for MockServer {
 // Model catalogue, effort and fenced mutate handlers. Issue 230.
 include!("mock_model.rs");
 include!("mock_rewind.rs");
+
+// ---------------------------------------------------------------------------------------------
+// The fleet reads: per-profile session tables
+// ---------------------------------------------------------------------------------------------
+
+/// Per-profile sessions the fleet reads answer from. A profile with no table answers empty.
+#[derive(Default)]
+struct FleetTables {
+    profiles: HashMap<String, Vec<FleetSession>>,
+    extra_items: HashMap<String, Vec<Value>>,
+}
+
+struct FleetSession {
+    id: String,
+    fields: Value,
+    approvals: Vec<Value>,
+    ring: Option<FleetRing>,
+}
+
+struct FleetRing {
+    epoch: String,
+    events: Vec<Value>,
+    first: u64,
+}
+
+fn fleet_session<'a>(
+    state: &'a mut State,
+    profile: &str,
+    id: &str,
+) -> Option<&'a mut FleetSession> {
+    state
+        .fleet
+        .profiles
+        .get_mut(profile)?
+        .iter_mut()
+        .find(|held| held.id == id)
+}
+
+fn fleet_profile(state: &State, params: &Value) -> String {
+    params["profile"]
+        .as_str()
+        .unwrap_or(&state.sess.profile_id)
+        .to_owned()
+}
+
+/// Every key outside `allowed` is `invalid_params`.
+fn fleet_keys(params: &Value, allowed: &[&str]) -> Result<(), String> {
+    match params.as_object() {
+        Some(object) if object.keys().all(|key| allowed.contains(&key.as_str())) => Ok(()),
+        _ => Err("invalid_params".to_owned()),
+    }
+}
+
+// Hermes: gateway/session_controls.py L541-L557. Live rows are
+// {session_id, id, title, source, started_at, message_count, model, running}; `running` is a
+// running execution state; hidden rows are skipped; newest `started_at` first; cut to `limit`.
+fn fleet_live_rows(table: &[FleetSession], limit: usize) -> Vec<Value> {
+    let mut rows: Vec<&FleetSession> = table
+        .iter()
+        .filter(|held| !held.fields["hidden"].as_bool().unwrap_or(false))
+        .collect();
+    rows.sort_by(|left, right| {
+        let started = |held: &FleetSession| held.fields["started_at"].as_f64().unwrap_or(0.0);
+        started(right).total_cmp(&started(left))
+    });
+    rows.into_iter()
+        .take(limit)
+        .map(|held| {
+            let status = held.fields["status"].as_str().unwrap_or("idle");
+            json!({
+                "session_id": held.id,
+                "id": held.id,
+                "title": held.fields["title"].as_str().unwrap_or(""),
+                "source": held.fields["source"].as_str().unwrap_or("tui"),
+                "started_at": held.fields["started_at"].as_f64().unwrap_or(1_792_690_000.0),
+                "message_count": held.fields["message_count"].as_u64().unwrap_or(0),
+                "model": held.fields["model"].as_str().unwrap_or(""),
+                "running": status != "idle",
+            })
+        })
+        .collect()
+}
+
+// Hermes: gateway/session_active_list.py L23-L46. Keys `profile` and `current_session_id`
+// only; hidden chats included; no limit; `preview` is always ""; `status` is the session's
+// scripted word, so a test can send `streaming` or an unknown value.
+fn fleet_active_list(state: &State, params: &Value) -> Result<Value, String> {
+    fleet_keys(params, &["profile", "current_session_id"])?;
+    let profile = fleet_profile(state, params);
+    let mut sessions: Vec<Value> = state
+        .fleet
+        .profiles
+        .get(&profile)
+        .map(|table| {
+            table
+                .iter()
+                .map(|held| {
+                    let started = held.fields["started_at"]
+                        .as_f64()
+                        .unwrap_or(1_792_690_000.0);
+                    json!({
+                        "current": false,
+                        "id": held.id,
+                        "session_key": held.id,
+                        "last_active": started,
+                        "started_at": started,
+                        "message_count": held.fields["message_count"].as_u64().unwrap_or(0),
+                        "model": held.fields["model"].as_str().unwrap_or(""),
+                        "preview": "",
+                        "title": held.fields["title"].as_str().unwrap_or(""),
+                        "source": held.fields["source"].as_str().unwrap_or("tui"),
+                        "status": held.fields["status"].as_str().unwrap_or("idle"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(extra) = state.fleet.extra_items.get(&profile) {
+        sessions.extend(extra.iter().cloned());
+    }
+    Ok(json!({"sessions": sessions}))
+}
+
+// Hermes: gateway/session_ancillary.py L168-L190. Keys `session_id` and `profile`; an id not in
+// the profile's live set is `not_found` before anything else; approvals only.
+fn fleet_approvals(state: &State, params: &Value) -> Result<Value, String> {
+    fleet_keys(params, &["session_id", "profile"])?;
+    let profile = fleet_profile(state, params);
+    let id = params["session_id"].as_str().unwrap_or_default();
+    let held = state
+        .fleet
+        .profiles
+        .get(&profile)
+        .and_then(|table| table.iter().find(|held| held.id == id))
+        .ok_or_else(|| "not_found".to_owned())?;
+    Ok(json!({"approvals": held.approvals}))
+}
+
+// Hermes: gateway/session_controls.py L679-L685 for the params, gateway/session_events.py
+// L77-L89 for `since`: a missing or other epoch, a sequence past the latest, or an evicted
+// frame after the sequence give no events with `truncated` and `snapshot_required`.
+fn fleet_events_since(state: &State, params: &Value) -> Result<Value, String> {
+    fleet_keys(
+        params,
+        &[
+            "session_id",
+            "profile",
+            "last_sequence",
+            "last_seen",
+            "replay_epoch",
+        ],
+    )?;
+    let profile = fleet_profile(state, params);
+    let id = params["session_id"].as_str().unwrap_or_default();
+    let held = state
+        .fleet
+        .profiles
+        .get(&profile)
+        .and_then(|table| table.iter().find(|held| held.id == id))
+        .ok_or_else(|| "not_found".to_owned())?;
+    let sequence = params["last_sequence"]
+        .as_u64()
+        .ok_or_else(|| "invalid_params".to_owned())?;
+    let (epoch, events, first) = match &held.ring {
+        Some(ring) => (ring.epoch.clone(), ring.events.clone(), ring.first),
+        None => ("mock-epoch".to_owned(), Vec::new(), 1),
+    };
+    let latest = events
+        .iter()
+        .filter_map(|event| event["seq"].as_u64())
+        .max()
+        .unwrap_or(0);
+    let same_epoch = params["replay_epoch"].as_str() == Some(epoch.as_str());
+    let evicted = sequence + 1 < first;
+    let gap = !same_epoch || sequence > latest || evicted;
+    let returned: Vec<Value> = if gap {
+        Vec::new()
+    } else {
+        events
+            .into_iter()
+            .filter(|event| event["seq"].as_u64().is_some_and(|seq| seq > sequence))
+            .collect()
+    };
+    Ok(json!({
+        "count": returned.len(),
+        "events": returned,
+        "latest_seq": latest,
+        "last_sequence": latest,
+        "epoch": epoch,
+        "replay_epoch": epoch,
+        "truncated": gap,
+        "snapshot_required": gap,
+    }))
+}

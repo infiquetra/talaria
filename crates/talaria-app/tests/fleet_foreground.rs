@@ -54,6 +54,8 @@ async fn foreground_prompt_reaches_queue() {
     );
     let (key, open) = view("local-session-1");
     let started = Instant::now();
+    // The application names its foreground session before it reports the session's view.
+    handle.set_foreground(Some(key.clone()));
     handle.observe_subscribed(key.clone(), open);
     let budget = Duration::from_millis(50);
     while started.elapsed() < budget {
