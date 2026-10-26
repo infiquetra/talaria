@@ -131,8 +131,14 @@ fn sample_tree() -> SubagentTree {
         "summary",
         json!("Found 4 files in the working directory and stopped there"),
     );
-    rich = with(rich, "accepting_steer", json!(true));
     apply(&mut tree, "subagent.progress", rich, 1_200);
+    // Steering acceptance is a list field, not an event payload field.
+    tree.reconcile(
+        &serde_json::from_value(json!({"subagents": [{
+            "subagent_id": "child-1", "status": "running", "accepting_steer": true
+        }], "delegations": []})).expect("contract-shaped snapshot"),
+        clock_ms(1_200),
+    );
 
     start(&mut tree, "child-2", "read notes.txt", 5_000);
     let tool = with(
@@ -403,6 +409,7 @@ fn dock_shows_then_clears() {
         RestoreLink::detached(),
     )
     .expect("new terminal");
+    let setup_bytes = sink.take();
     let view = LiveView {
         sections: vec![&dock as &dyn LiveSection],
     };
@@ -411,6 +418,7 @@ fn dock_shows_then_clears() {
     let bytes = sink.take();
     assert_eq!(first.bytes, bytes.len());
     let mut vt = Vt::new(80, 24);
+    vt.feed(&setup_bytes);
     vt.feed(&bytes);
     assert!(
         vt.rows().iter().any(|row| row.contains("Subagents")),
@@ -505,7 +513,7 @@ fn panel_list_snapshot_160x48() {
             format!("▸ ◐ list the files in the current directory  {:>7}", "12s"),
             format!("  ◐ read notes.txt  {:>7}", "8s"),
             format!("  ✓ summarise the findings  {:>7}", "20s"),
-            "Steer queued for \"list the files in the current directory\". It reaches the subagent at its next step.".to_owned(),
+            "Steer queued for \"list the files in the current directory\". It reaches the subagent at its next st…".to_owned(),
             "enter tail · d detail · e steer · x stop · X stop all · p pause spawns · tab session · esc close".to_owned(),
         ]
     );
