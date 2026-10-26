@@ -2,6 +2,40 @@
 
 > Future work with priority, rough effort, and worth-it-when triggers.
 
+## 2026-10-25
+
+### Open `@` path completion inside `/` slash-command argument drafts (`#213` C-5)
+
+**Priority.** P2.
+
+**Evidence.** Parent issue 213 (`Settled C-5`), issue 223 (`REQ-15`), and issue 224 (`REQ-6`). In Phase 2a, the `/` slash-command palette and `@` path-completion overlay stay mutually exclusive so a draft starting with `/` never opens the `@` file list mid-command.
+
+**Worth it when.** A slash command frequently takes workspace file paths as arguments and users want inline `@` path completion after the command token is selected.
+
+### Map active skin tokens into `PagerTheme`, `SideTheme`, and `ChecklistStyle` (`#213` C-6)
+
+**Priority.** P2.
+
+**Evidence.** Parent issue 213 (`Settled C-6`) and issue 227 (`REQ-4`). Phase 2a skin switching themes five primary chrome surfaces (`TranscriptTheme`, `ComposerTheme`, `StatusTheme`, `PromptTheme`, and `ToolTheme`) while `PagerTheme`, `SideTheme`, and `ChecklistStyle` retain their built-in light/dark defaults.
+
+**Worth it when.** Custom skins need distinct accent tokens for the full-screen transcript pager, `/btw` and `!` side cells, or the live task checklist drawer.
+
+### Add a local Talaria `/clear` session-reset shortcut alongside Hermes `slash.exec` (`#213` C-7)
+
+**Priority.** P2.
+
+**Evidence.** Parent issue 213 (`Settled C-7`) and issue 223. In Phase 2a, typing `/clear` routes through Hermes `slash.exec` (`hermes_cli/commands.py`), which prints Hermes's command response rather than detaching and creating a fresh session locally inside Talaria.
+
+**Worth it when.** Operators want `/clear` to perform a client-side `session.detach` + `session.create` in the current folder in addition to or instead of the gateway's `/clear` slash command.
+
+### Add Zellij pane-attention reporting alongside Herdr (`#213` / `#228`)
+
+**Priority.** P3.
+
+**Evidence.** Parent issue 213 (`AC-13`) and issue 228 (`crates/talaria-app/src/attention.rs`). Phase 2a implements multiplexer pane-attention reporting (`working`, `blocked`, `done`, `idle`) for Herdr (`herdr pane report-agent`) plus standard terminal `BEL` and `OSC 9` notifications, leaving Zellij plugin/pipe state reporting for a future multiplexer adapter.
+
+**Worth it when.** Operators run Talaria sessions inside Zellij panes and want tab/pane status badges driven by the same `AttentionEvent` transitions.
+
 ## 2026-10-24
 
 ### Include the status section in `--bench-replay` (`#193` C-2)
