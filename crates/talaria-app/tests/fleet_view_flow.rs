@@ -64,12 +64,61 @@ fn committed(effects: &[AppEffect]) -> String {
         .join("\n")
 }
 
+/// An app whose foreground session `s-front` (running) is open on a link to the mock, and the
+/// link's events, which must stay open while the link is used.
+async fn app_with_foreground(
+    gateway: &StandaloneGateway,
+    home: &std::path::Path,
+) -> (
+    AppState,
+    tokio::sync::mpsc::Receiver<hermes_client::liveness::LinkEvent>,
+) {
+    let mut snapshot = mock_gateway::data_snapshot("running_turn.json");
+    snapshot["session_id"] = serde_json::json!("s-front");
+    snapshot["stored_session_id"] = serde_json::json!("s-front");
+    gateway.add_session_snapshot(snapshot);
+    let launch = talaria_app::launch::Launch {
+        mode: talaria_app::launch::StartMode::New,
+        model: None,
+        provider: None,
+        effort: None,
+        profile: "fixture".to_owned(),
+        folder: std::path::PathBuf::from("."),
+        record: None,
+        bench_replay: None,
+        no_ensure: true,
+    };
+    let connection = talaria_app::connection::ConnectionService::open(&launch, home, None)
+        .await
+        .unwrap_or_else(|_| panic!("the foreground link did not open"));
+    let service =
+        talaria_app::sessions::SessionService::with_client("launch", connection.link.client());
+    let opened = service
+        .open(talaria_app::launch::SessionRequest::ById {
+            session_id: "s-front".to_owned(),
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the foreground session did not open"));
+    let mut app = AppState::new("launch");
+    app.profile = "fixture".to_owned();
+    let _ = app::update(
+        &mut app,
+        AppMessage::Opened {
+            opened,
+            notice: None,
+        },
+    );
+    app.set_session_service(service, connection.link);
+    (app, connection.inbound)
+}
+
 #[tokio::test]
 async fn foreground_row_uses_foreground_paths() {
     let home = tempfile::tempdir().expect("home");
     let gateway = StandaloneGateway::start(home.path());
-    let mut app = AppState::new("launch");
+    let (mut app, _events) = app_with_foreground(&gateway, home.path()).await;
     let row = foreground_row();
+    let resumes_before = gateway.requests("session.resume").len();
     let inputs = fleet_actions::execute(
         &mut app,
         FleetViewEffect::SendReply {
@@ -88,13 +137,31 @@ async fn foreground_row_uses_foreground_paths() {
         )),
         "the foreground reply was not sent on the foreground path: {inputs:?}"
     );
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 1, "the foreground reply was sent once");
+    assert_eq!(
+        submits[0].connection,
+        gateway.requests("session.resume")[0].connection,
+        "the reply went out on the foreground link"
+    );
     assert_eq!(
         gateway.requests("session.resume").len(),
-        0,
+        resumes_before,
         "the foreground row resumed a second time"
     );
+    let peeked = fleet_actions::execute(&mut app, FleetViewEffect::OpenPeek(row.key.clone())).await;
+    assert!(
+        matches!(peeked.as_slice(), [FleetViewInput::Peek { .. }]),
+        "the foreground peek reads the foreground state: {peeked:?}"
+    );
+    assert_eq!(gateway.requests("session.resume").len(), resumes_before);
     let stopped = fleet_actions::execute(&mut app, FleetViewEffect::Stop(row.key.clone())).await;
     assert!(!stopped.is_empty(), "the foreground stop sent nothing");
+    assert_eq!(
+        gateway.requests("session.interrupt").len(),
+        1,
+        "the foreground stop went out on the foreground link"
+    );
     let answer = fleet_actions::execute(&mut app, FleetViewEffect::Close).await;
     assert!(
         answer
@@ -194,7 +261,8 @@ async fn remapped_fleet_key_works_and_footer_shows_it() {
                 None,
                 frame.area(),
                 frame.buffer_mut(),
-                &FleetTheme::default(),
+                // The footer names the keys the operator bound.
+                &FleetTheme::with_key_map(&map),
             );
         })
         .expect("draw");

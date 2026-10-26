@@ -183,7 +183,7 @@ fn short_model(model: &Option<String>) -> String {
     }
 }
 
-fn ordered<'a>(rows: &'a [FleetRow]) -> Vec<&'a FleetRow> {
+fn ordered(rows: &[FleetRow]) -> Vec<&FleetRow> {
     let mut out = Vec::new();
     for state in [
         RowState::NeedsYou,
@@ -250,7 +250,13 @@ fn expect_screen(spec: Expect<'_>) -> (Vec<String>, Marks) {
     };
     if spec.width < 40 || spec.height < 10 {
         let mut lines = vec![String::new(); spec.height];
-        lines[0] = "Window too small for the fleet view. Esc closes.".to_owned();
+        // The text is 48 columns; a narrower screen shows it on two rows.
+        if spec.width < 48 {
+            lines[0] = "Window too small for the fleet view.".to_owned();
+            lines[1] = "Esc closes.".to_owned();
+        } else {
+            lines[0] = "Window too small for the fleet view. Esc closes.".to_owned();
+        }
         return (lines, marks);
     }
     let mut body = Vec::new();
@@ -318,7 +324,8 @@ fn expect_screen(spec: Expect<'_>) -> (Vec<String>, Marks) {
         lines[index] = line.trim_end().to_owned();
     }
     let footer = if spec.answer { FOOTER_ANSWER } else { FOOTER };
-    lines[spec.height - 1] = footer.to_owned();
+    // A footer wider than the screen is cut with an ellipsis, like every other value.
+    lines[spec.height - 1] = fit(footer, spec.width).trim_end().to_owned();
     (lines, marks)
 }
 
@@ -615,7 +622,7 @@ fn peek_panel_tail_card_and_outcome() {
     ];
     let state = hold(vec![completed.clone()], profiles.clone(), None, None);
     let (expected, _) = expect_screen(Expect {
-        rows: &[completed.clone()],
+        rows: std::slice::from_ref(&completed),
         queue: &[],
         profiles: &profiles,
         scope_note: None,
@@ -650,7 +657,7 @@ fn peek_panel_tail_card_and_outcome() {
     ];
     let stack = approval_stack();
     let (expected, _) = expect_screen(Expect {
-        rows: &[completed.clone()],
+        rows: std::slice::from_ref(&completed),
         queue: &[],
         profiles: &profiles,
         scope_note: None,

@@ -71,7 +71,39 @@ async fn recorded_peek_fixture_replays() {
     let home = tempfile::tempdir().expect("home");
     let mut peek = service(home.path());
     let mut phase = 0u8;
+    // The recorded resume replies seed the peek, as a resume on the peek link does; the
+    // events after each one update it.
+    let resumes: std::collections::HashSet<i64> = source
+        .outbound()
+        .filter(|frame| frame.frame["method"] == "session.resume")
+        .filter_map(|frame| frame.frame["id"].as_i64())
+        .collect();
     for frame in source.inbound() {
+        if let Some(id) = frame.frame["id"].as_i64()
+            && resumes.contains(&id)
+            && let Some(result) = frame.frame.get("result")
+        {
+            let session = result["session_id"].as_str().unwrap_or_default().to_owned();
+            // The recorder withholds some `info` objects as the text `[redacted]`, which is
+            // not the shape the contract gives them; those keys are left out, as the mock
+            // gateway does with recorded snapshots.
+            let mut result = result.clone();
+            if let Some(info) = result["info"].as_object_mut() {
+                info.retain(|_, value| value != "[redacted]");
+            }
+            peek.replay_snapshot(
+                talaria_core::directory::rows::RowKey {
+                    profile: "fixture".to_owned(),
+                    session_id: session,
+                },
+                result,
+            )
+            .expect("a recorded resume reply decodes");
+            if let Some((_, session)) = peek.state() {
+                phase = advance(phase, session);
+            }
+            continue;
+        }
         if frame.frame["method"] != "event" {
             continue;
         }

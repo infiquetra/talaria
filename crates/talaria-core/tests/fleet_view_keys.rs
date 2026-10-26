@@ -97,15 +97,16 @@ fn space_peeks_and_moving_never_does() {
 
     let mut done = row("fixture", "s-done", "ship", RowState::Done);
     done.outcome = Some(Outcome::Completed);
-    let mut failed = row("default", "s-fail", "migrate", RowState::Failed);
+    let failed = row("default", "s-fail", "migrate", RowState::Failed);
     let mut state = FleetViewState::new(None, NOW);
-    update(&mut state, snap(vec![done.clone(), failed.clone()]), 4);
+    // Groups come in registry order: FAILED before DONE.
+    update(&mut state, snap(vec![failed.clone(), done.clone()]), 4);
+    let peek_failed = effects_of(&mut state, FleetViewInput::Action(FleetAction::Peek));
+    assert!(peek_failed.contains(&FleetViewEffect::Acknowledge(failed.key)));
+    effects_of(&mut state, FleetViewInput::Action(FleetAction::Down));
     let peek_done = effects_of(&mut state, FleetViewInput::Action(FleetAction::Peek));
     assert!(peek_done.contains(&FleetViewEffect::OpenPeek(done.key.clone())));
     assert!(peek_done.contains(&FleetViewEffect::Acknowledge(done.key.clone())));
-    effects_of(&mut state, FleetViewInput::Action(FleetAction::Down));
-    let peek_failed = effects_of(&mut state, FleetViewInput::Action(FleetAction::Peek));
-    assert!(peek_failed.contains(&FleetViewEffect::Acknowledge(failed.key)));
 }
 
 #[test]
@@ -202,7 +203,7 @@ fn reply_editor_rules() {
 
 #[test]
 fn stop_asks_and_refuses_idle_rows() {
-    let (mut state, background, idle) = opened();
+    let (mut state, background, _) = opened();
     let ask = effects_of(&mut state, FleetViewInput::Action(FleetAction::Stop));
     assert!(ask.is_empty());
     assert_eq!(
@@ -253,7 +254,9 @@ fn enter_acknowledges_then_opens() {
     done.outcome = Some(Outcome::Completed);
     let working = row("fixture", "s-work", "compile", RowState::Working);
     let mut state = FleetViewState::new(None, NOW);
-    update(&mut state, snap(vec![done.clone(), working.clone()]), 4);
+    // Groups come in registry order: WORKING before DONE.
+    update(&mut state, snap(vec![working.clone(), done.clone()]), 4);
+    effects_of(&mut state, FleetViewInput::Action(FleetAction::Down));
     let opened = effects_of(&mut state, FleetViewInput::Enter);
     assert_eq!(
         opened,
@@ -262,14 +265,14 @@ fn enter_acknowledges_then_opens() {
             FleetViewEffect::Open(done.key),
         ]
     );
-    effects_of(&mut state, FleetViewInput::Action(FleetAction::Down));
+    effects_of(&mut state, FleetViewInput::Action(FleetAction::Up));
     let plain = effects_of(&mut state, FleetViewInput::Enter);
     assert_eq!(plain, vec![FleetViewEffect::Open(working.key)]);
 }
 
 #[test]
 fn esc_unwinds_and_ctrl_c_never_stops() {
-    let (mut state, background, _) = opened();
+    let (mut state, _, _) = opened();
     effects_of(&mut state, FleetViewInput::Action(FleetAction::Filter));
     effects_of(&mut state, FleetViewInput::Text('c'));
     effects_of(&mut state, FleetViewInput::Enter);
@@ -681,6 +684,21 @@ proptest! {
         let mut confirm_for: Option<RowKey> = None;
         for input in inputs {
             let entered_confirm = matches!(input, FleetViewInput::Action(FleetAction::Stop));
+            let is_key = matches!(
+                input,
+                FleetViewInput::Action(_)
+                    | FleetViewInput::Text(_)
+                    | FleetViewInput::Paste(_)
+                    | FleetViewInput::Backspace
+                    | FleetViewInput::Left
+                    | FleetViewInput::Right
+                    | FleetViewInput::Home
+                    | FleetViewInput::End
+                    | FleetViewInput::Enter
+                    | FleetViewInput::Escape
+                    | FleetViewInput::CtrlC
+                    | FleetViewInput::AnyOtherKey
+            );
             let effects = update(&mut state, input, 4);
             let cursor = state.cursor().cloned();
             let visible: Vec<RowKey> = state
@@ -702,7 +720,13 @@ proptest! {
             let closes = effects.iter().any(|effect| matches!(effect, FleetViewEffect::Close));
             let sends = effects.iter().any(|effect| matches!(effect, FleetViewEffect::SendReply { .. }));
             prop_assert!(!(closes && sends));
-            confirm_for = if entered_confirm { state.cursor().cloned() } else { None };
+            // A snapshot or a result between the two presses keeps the confirmation (edge case
+            // E7: the second x re-checks the row); any other key ends it.
+            if entered_confirm {
+                confirm_for = state.cursor().cloned();
+            } else if is_key {
+                confirm_for = None;
+            }
         }
     }
 }

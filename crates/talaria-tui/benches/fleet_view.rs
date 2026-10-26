@@ -22,7 +22,12 @@ const WORST_US: u128 = 33_000;
 fn row(index: usize) -> FleetRow {
     FleetRow {
         key: RowKey {
-            profile: if index % 2 == 0 { "default" } else { "fixture" }.to_owned(),
+            profile: if index.is_multiple_of(2) {
+                "default"
+            } else {
+                "fixture"
+            }
+            .to_owned(),
             session_id: format!("s-{index:04}"),
         },
         title: format!("fixture row {index}"),

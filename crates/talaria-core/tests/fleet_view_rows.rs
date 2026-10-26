@@ -221,6 +221,8 @@ fn filter_and_profile_cycle() {
     update(&mut state, FleetViewInput::Action(FleetAction::Filter), 8);
     update(&mut state, FleetViewInput::Text('d'), 8);
     update(&mut state, FleetViewInput::Text('e'), 8);
+    // "de" also matches the profile "default"; "dep" names only the deploy row.
+    update(&mut state, FleetViewInput::Text('p'), 8);
     assert_eq!(
         state.visible().iter().flat_map(|group| &group.rows).count(),
         1

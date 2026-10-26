@@ -25,7 +25,7 @@ fn doc_keys_equal_defaults() {
         );
         assert_eq!(
             labels(&map, action),
-            expected(action),
+            expected(action, &defaults),
             "{}",
             action.config_name()
         );
@@ -39,7 +39,9 @@ fn labels(map: &KeyMap, action: Action) -> Vec<String> {
         .collect()
 }
 
-fn expected(action: Action) -> Vec<String> {
+fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
+    // The last arm keeps a later action checked against the defaults until it is listed above.
+    #[allow(unreachable_patterns)]
     let labels: &[&str] = match action {
         Action::Submit => &["Enter"],
         Action::Newline => &["Shift+Enter", "Alt+Enter", "Ctrl+J"],
@@ -134,6 +136,7 @@ fn expected(action: Action) -> Vec<String> {
         Action::FleetFilter => &["/"],
         Action::FleetProfileNext => &["Tab"],
         Action::FleetProfilePrev => &["Shift+Tab"],
+        _ => return labels(defaults, action),
     };
     labels.iter().map(|label| (*label).to_string()).collect()
 }

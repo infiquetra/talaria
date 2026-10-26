@@ -254,8 +254,27 @@ fn open_reason(error: &PeekError) -> String {
     }
 }
 
+/// The peek link's events, as the app's worker feeds them to the service.
+type Events = Option<tokio::sync::mpsc::Receiver<hermes_client::liveness::LinkEvent>>;
+
+/// Feed the peek link's events to the service for `wait`. A new link's events are taken first.
+async fn pump_for(peek: &mut PeekService, events: &mut Events, wait: Duration) {
+    if let Some(fresh) = peek.take_events() {
+        *events = Some(fresh);
+    }
+    let Some(receiver) = events.as_mut() else {
+        tokio::time::sleep(wait).await;
+        return;
+    };
+    let deadline = tokio::time::Instant::now() + wait;
+    while let Ok(Some(event)) = tokio::time::timeout_at(deadline, receiver.recv()).await {
+        let _ = peek.on_link_event(event);
+    }
+}
+
 async fn until_state(
-    peek: &PeekService,
+    peek: &mut PeekService,
+    events: &mut Events,
     budget: Duration,
     mut ready: impl FnMut(&SessionState) -> bool,
 ) -> bool {
@@ -269,7 +288,7 @@ async fn until_state(
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        pump_for(peek, events, Duration::from_millis(50)).await;
     }
 }
 
@@ -299,71 +318,14 @@ fn output_has(state: &SessionState, needle: &str) -> bool {
     })
 }
 
-fn any_text(state: &SessionState, needle: &str) -> bool {
+/// The word in a tool's output, not in the command that was asked for.
+fn command_output_has(state: &SessionState, needle: &str) -> bool {
     state.cells().iter().any(|cell| match cell {
-        Cell::User(cell) => cell.text.contains(needle),
-        Cell::Assistant(cell) => cell.text.contains(needle),
-        Cell::Reasoning(cell) => cell.text.contains(needle),
-        Cell::Notice(cell) => cell.text.contains(needle),
-        Cell::Tool(tool) => {
-            tool.context
-                .as_deref()
-                .is_some_and(|context| context.contains(needle))
-                || tool
-                    .result
-                    .as_deref()
-                    .is_some_and(|result| result.contains(needle))
-                || tool
-                    .summary
-                    .as_deref()
-                    .is_some_and(|summary| summary.contains(needle))
-        }
-        Cell::Shell(shell) => {
-            shell.command.contains(needle)
-                || match &shell.outcome {
-                    talaria_core::side::ShellOutcome::Ok { stdout, stderr, .. } => {
-                        stdout.contains(needle) || stderr.contains(needle)
-                    }
-                    talaria_core::side::ShellOutcome::Refused { reason, detail, .. } => {
-                        reason.contains(needle)
-                            || detail
-                                .as_deref()
-                                .is_some_and(|detail| detail.contains(needle))
-                    }
-                    _ => false,
-                }
-        }
-        Cell::Side(side) => {
-            side.question.contains(needle)
-                || match &side.outcome {
-                    talaria_core::side::SideOutcome::Answered { text }
-                    | talaria_core::side::SideOutcome::Failed { text } => text.contains(needle),
-                    talaria_core::side::SideOutcome::Refused { reason, detail } => {
-                        reason.contains(needle)
-                            || detail
-                                .as_deref()
-                                .is_some_and(|detail| detail.contains(needle))
-                    }
-                    _ => false,
-                }
-        }
-        Cell::HermesCommand(command) => {
-            command.typed.contains(needle) || command.body.contains(needle)
-        }
-        Cell::Prompt(prompt) => {
-            prompt
-                .command
-                .as_deref()
-                .is_some_and(|command| command.contains(needle))
-                || prompt
-                    .description
-                    .as_deref()
-                    .is_some_and(|description| description.contains(needle))
-                || prompt
-                    .question
-                    .as_deref()
-                    .is_some_and(|question| question.contains(needle))
-        }
+        Cell::Tool(tool) => tool
+            .result
+            .as_deref()
+            .is_some_and(|result| result.contains(needle)),
+        _ => false,
     })
 }
 
@@ -396,6 +358,7 @@ async fn live_peek_shows_latest_output() {
 
     let key = row_key(&created.session_id);
     let mut peek = peek_for(created.folder.path());
+    let mut events: Events = None;
     let mut samples = vec![timed_open(NAME_PEEK, &mut peek, &key).await];
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut saw_tool = false;
@@ -417,7 +380,7 @@ async fn live_peek_shows_latest_output() {
                 "assistant or tool output did not contain peek-ok",
             );
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        pump_for(&mut peek, &mut events, Duration::from_millis(50)).await;
     }
     for _ in 0..4 {
         peek.close().await;
@@ -454,8 +417,9 @@ async fn live_reply_queues_behind_running_turn() {
 
     let key = row_key(&created.session_id);
     let mut peek = peek_for(created.folder.path());
+    let mut events: Events = None;
     timed_open(NAME_REPLY, &mut peek, &key).await;
-    let running = until_state(&peek, Duration::from_secs(30), |state| {
+    let running = until_state(&mut peek, &mut events, Duration::from_secs(30), |state| {
         matches!(state.turn(), TurnState::Running)
     })
     .await;
@@ -486,7 +450,9 @@ async fn live_reply_queues_behind_running_turn() {
                 TurnState::Finished(TurnOutcome::Completed) => saw_complete = true,
                 TurnState::Idle | TurnState::Running => {}
             }
-            if saw_complete && any_text(state, "queued-ok") {
+            // The reply's own text is in a user cell at once; the agent's answer shows the
+            // queued turn ran.
+            if saw_complete && output_has(state, "queued-ok") {
                 break;
             }
         }
@@ -496,7 +462,7 @@ async fn live_reply_queues_behind_running_turn() {
             }
             fail(NAME_REPLY, "the queued reply did not start");
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        pump_for(&mut peek, &mut events, Duration::from_millis(50)).await;
     }
     pass(NAME_REPLY);
 }
@@ -529,6 +495,7 @@ async fn live_answer_approval_from_peek() {
 
     let key = row_key(&created.session_id);
     let mut peek = peek_for(created.folder.path());
+    let mut events: Events = None;
     timed_open(NAME_ANSWER, &mut peek, &key).await;
 
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -546,7 +513,7 @@ async fn live_answer_approval_from_peek() {
                 "no approval appeared; check that fixture's approval mode is manual",
             );
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        pump_for(&mut peek, &mut events, Duration::from_millis(50)).await;
     };
     let intent = PromptIntent::Approve {
         key: prompt_key,
@@ -566,7 +533,13 @@ async fn live_answer_approval_from_peek() {
             "answering the approval returned a failure notice",
         );
     }
-    let settled = until_state(&peek, Duration::from_secs(5), approval_settled).await;
+    let settled = until_state(
+        &mut peek,
+        &mut events,
+        Duration::from_secs(5),
+        approval_settled,
+    )
+    .await;
     if !settled {
         fail(NAME_ANSWER, "approval.settled did not arrive");
     }
@@ -614,6 +587,7 @@ async fn live_stop_from_fleet() {
 
     let key = row_key(&created.session_id);
     let mut peek = peek_for(created.folder.path());
+    let mut events: Events = None;
     timed_open(NAME_STOP, &mut peek, &key).await;
     let queued = peek
         .reply("Reply with the single word: after-stop".to_owned())
@@ -638,7 +612,8 @@ async fn live_stop_from_fleet() {
     loop {
         let now = Instant::now();
         if let Some((_, state)) = peek.state() {
-            if any_text(state, "too-late") {
+            // The prompt names the word itself; only the command's output means it ran.
+            if command_output_has(state, "too-late") {
                 fail(NAME_STOP, "too-late appeared in a cell");
             }
             let interrupted = matches!(state.turn(), TurnState::Finished(TurnOutcome::Interrupted))
@@ -652,7 +627,7 @@ async fn live_stop_from_fleet() {
             if interrupted && interrupt_at.is_none() {
                 interrupt_at = Some(now);
             }
-            if interrupt_at.is_some() && any_text(state, "after-stop") {
+            if interrupt_at.is_some() && output_has(state, "after-stop") {
                 started = true;
             }
         }
@@ -681,6 +656,6 @@ async fn live_stop_from_fleet() {
                 "queued prompt did not start after a stop: stop condition 4",
             );
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        pump_for(&mut peek, &mut events, Duration::from_millis(50)).await;
     }
 }
