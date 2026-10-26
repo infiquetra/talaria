@@ -717,14 +717,20 @@ impl SubagentHub {
             tracker.tail_inflight = false;
             tracker.stopping.clear();
         }
-        self.status_inflight = false;
-        self.status_owner = None;
-        self.status_refresh_pending = false;
-        self.status_disabled = false;
-        self.status_scheduled = false;
-        self.elapsed_scheduled = false;
+        if self
+            .status_owner
+            .as_ref()
+            .is_some_and(|(owner, _)| owner == key)
+        {
+            self.status_inflight = false;
+            self.status_owner = None;
+            self.status_refresh_pending = false;
+        }
         self.list(key);
         if self.panel.as_ref() == Some(key) {
+            self.status_disabled = false;
+            self.status_scheduled = false;
+            self.elapsed_scheduled = false;
             self.status(key);
             self.schedule_elapsed(key);
         }

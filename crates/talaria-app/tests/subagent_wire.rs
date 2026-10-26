@@ -2110,3 +2110,45 @@ async fn typed_resume_prints_its_result_with_the_panel_closed() {
     assert!(state.subagents.as_ref().unwrap().panel_key().is_none());
     assert_eq!(gateway.requests("delegation.pause").len(), 1);
 }
+
+#[tokio::test(start_paused = true)]
+async fn another_attachments_reconnect_keeps_a_valid_status_answer() {
+    let (gateway, client, mut hub, mut rx) = rig().await;
+    let foreground = key();
+    let other = RowKey {
+        profile: "fixture".into(),
+        session_id: "background".into(),
+    };
+    let mut now_ms = 0;
+    hub.attach(foreground.clone(), client.clone());
+    wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
+    hub.attach(other.clone(), client);
+    let listed = wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
+    let generation = listed
+        .hub_msgs
+        .iter()
+        .find_map(|msg| match msg {
+            SubagentMsg::Listed {
+                key, generation, ..
+            } if key == &other => Some(*generation),
+            _ => None,
+        })
+        .unwrap();
+    gateway.queue_behavior("delegation.status", Behavior::Silent);
+    hub.open_panel(other.clone());
+    wait_call(
+        &mut hub,
+        &mut rx,
+        &gateway,
+        "delegation.status",
+        &mut now_ms,
+    )
+    .await;
+    hub.on_reconnected(&foreground);
+    assert!(hub.on_message(SubagentMsg::DelegationStatus { key: other, generation,
+        result: Ok(serde_json::from_value(json!({"active":[],"paused":true,"max_spawn_depth":1,"max_concurrent_children":10})).unwrap()) }, clock_ms(now_ms)));
+    assert!(matches!(
+        hub.spawning(),
+        talaria_core::subagents::Spawning::Paused(_)
+    ));
+}

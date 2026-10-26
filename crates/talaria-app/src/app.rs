@@ -4210,10 +4210,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             // A reconnect describes again: the skin may have changed while the link was down.
             if generation >= 2 {
                 effects.push(AppEffect::Describe(generation));
-                if let Some(hub) = state.subagents.as_mut() {
-                    for key in hub.attached_keys() {
-                        hub.on_reconnected(&key);
-                    }
+                let foreground = foreground_row(state);
+                if let (Some(hub), Some(key)) = (state.subagents.as_mut(), foreground) {
+                    hub.on_reconnected(&key);
                 }
             }
             if let Some(opened) = state.opened.as_mut() {
