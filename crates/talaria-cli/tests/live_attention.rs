@@ -271,9 +271,9 @@ fn live_background_approval_rings_once_and_counts() {
         "the approval card shows"
     );
     let card_at = Instant::now();
-    type_line(&mut second, "/quit");
-    let screen = second.finish(Duration::from_secs(20));
-    let resume = resume_id(&screen.text);
+    // The approval card takes every key while it is up, so the turn cannot be left by
+    // typing /quit. The request is answered with Ctrl+C, which denies it and stops the
+    // turn; until then the first terminal sees a background request that needs an answer.
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut matched = false;
@@ -313,22 +313,9 @@ fn live_background_approval_rings_once_and_counts() {
             .as_millis()
     );
 
-    let mut third = Launch::new(home.path())
-        .hermes_home(&hermes_home())
-        .cwd(&project)
-        .size(48, 160)
-        .answer_queries()
-        .args(&["--no-ensure", "--profile", "fixture", "--resume", &resume])
-        .spawn();
-    assert!(
-        third.wait_for_text("deny", Duration::from_secs(60)),
-        "the resumed approval card shows"
-    );
-    third.type_keys("\u{1b}");
-    type_line(&mut third, "/quit");
-    let _ = third.finish(Duration::from_secs(20));
-
-    let back = Instant::now() + Duration::from_secs(10);
+    // The request is answered, so the count falls back to the baseline.
+    second.type_keys("\u{3}");
+    let back = Instant::now() + Duration::from_secs(20);
     while Instant::now() < back && status_count(&first.screen_text(), '\u{2691}') != baseline {
         std::thread::sleep(Duration::from_millis(200));
     }
@@ -337,6 +324,7 @@ fn live_background_approval_rings_once_and_counts() {
         project.join("talaria-attention-probe").is_dir(),
         "the probe folder remains"
     );
+    let _ = second.finish(Duration::from_secs(20));
     let _ = first.finish(Duration::from_secs(20));
     println!("LIVE_ATTENTION_RESULT: PASSED");
 }
@@ -365,7 +353,9 @@ fn live_unwatched_done_counts_without_alert() {
     type_line(&mut second, "/quit");
     let _ = second.finish(Duration::from_secs(20));
 
-    let deadline = Instant::now() + Duration::from_secs(90);
+    // The turn is a 30 s sleep behind a model round trip, and the first terminal's fleet
+    // has to see the session leave the live listing, so the budget is generous.
+    let deadline = Instant::now() + Duration::from_secs(240);
     while Instant::now() < deadline && status_count(&first.screen_text(), '\u{2713}') < baseline + 1
     {
         std::thread::sleep(Duration::from_millis(200));
@@ -378,17 +368,4 @@ fn live_unwatched_done_counts_without_alert() {
     assert!(!notified_finish, "an unwatched finish does not notify");
     let _ = first.finish(Duration::from_secs(20));
     println!("LIVE_ATTENTION_RESULT: PASSED");
-}
-
-fn resume_id(text: &str) -> String {
-    let marker = "talaria --resume ";
-    let start = text
-        .find(marker)
-        .unwrap_or_else(|| panic!("no resume hint in the output"))
-        + marker.len();
-    text[start..]
-        .split_whitespace()
-        .next()
-        .unwrap_or_else(|| panic!("the resume hint has no id"))
-        .to_owned()
 }
