@@ -316,22 +316,29 @@ impl CommandRunner for SystemRunner {
     ) -> Pin<Box<dyn Future<Output = RunResult> + Send + '_>> {
         let spec = spec.clone();
         Box::pin(async move {
-            let mut child = match tokio::process::Command::new(&spec.program)
-                .args(&spec.args)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-            {
-                Ok(child) => child,
-                Err(error) => {
-                    return RunResult {
-                        code: None,
-                        stdout: String::new(),
-                        stderr: error.to_string(),
-                        timed_out: false,
-                    };
+            let mut attempts = 0_u8;
+            let mut child = loop {
+                match tokio::process::Command::new(&spec.program)
+                    .args(&spec.args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(child) => break child,
+                    Err(error) if error.raw_os_error() == Some(26) && attempts < 20 => {
+                        attempts += 1;
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                    Err(error) => {
+                        return RunResult {
+                            code: None,
+                            stdout: String::new(),
+                            stderr: error.to_string(),
+                            timed_out: false,
+                        };
+                    }
                 }
             };
             let stdout = child.stdout.take();
