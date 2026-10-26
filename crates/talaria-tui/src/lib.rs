@@ -22,6 +22,7 @@ pub mod rewind;
 pub mod session_picker;
 pub mod side;
 pub mod status;
+pub mod subagents;
 pub mod terminal;
 pub mod theme;
 pub mod tool_cell;

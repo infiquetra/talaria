@@ -136,6 +136,23 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
         Action::FleetFilter => &["/"],
         Action::FleetProfileNext => &["Tab"],
         Action::FleetProfilePrev => &["Shift+Tab"],
+        // Issue #242 adds the subagent panel keys.
+        Action::AgentsPanel => &["Alt+S"],
+        Action::AgentsUp => &["Up", "K"],
+        Action::AgentsDown => &["Down", "J"],
+        Action::AgentsTail => &["Enter"],
+        Action::AgentsDetail => &["D", "Right"],
+        Action::AgentsBack => &["Esc", "Left"],
+        Action::AgentsClose => &["Q"],
+        Action::AgentsSteer => &["E"],
+        Action::AgentsStop => &["X"],
+        Action::AgentsStopAll => &["Shift+X"],
+        Action::AgentsPause => &["P"],
+        Action::AgentsNextSession => &["Tab"],
+        Action::AgentsPageUp => &["PageUp"],
+        Action::AgentsPageDown => &["PageDown"],
+        Action::AgentsTop => &["G", "Home"],
+        Action::AgentsBottom => &["Shift+G", "End"],
         _ => return labels(defaults, action),
     };
     labels.iter().map(|label| (*label).to_string()).collect()

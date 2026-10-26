@@ -181,6 +181,16 @@ pub enum UserAction {
     FleetOpen,
     /// The peek's card was answered.
     FleetAnswer(crate::peek::CardAnswer),
+    /// Open or close the foreground subagents panel.
+    ToggleAgents,
+    /// A control from the subagents overlay.
+    Subagent(crate::subagents::SubagentAction),
+    /// Open the panel for another attached owner.
+    SubagentPanel(RowKey),
+    /// Visit the next attached session with subagent rows.
+    SubagentNextSession,
+    /// A panel key clears its previous outcome.
+    SubagentClearFlash,
     /// A key for the open rewind overlay. Issue #233.
     Rewind(RewindKey),
     /// How many list rows the rewind overlay shows.
@@ -268,6 +278,10 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub subagents: Option<&'a crate::subagents::SubagentHub>,
+    /// Gateway usage fallback until this session's tree is known.
+    pub subagents_usage_active: u32,
+    pub fleet_snapshot: Option<&'a crate::fleet::FleetSnapshot>,
     pub state: Option<&'a SessionState>,
     pub session_id: Option<&'a str>,
     pub title: Option<&'a str>,
@@ -325,6 +339,11 @@ impl View<'_> {
 
 /// The terminal side of the loop.
 pub trait Screen: ComposerDeadline + StatusHost {
+    fn subagents_config(&self) -> crate::subagents::SubagentsConfig {
+        crate::subagents::SubagentsConfig::default()
+    }
+    /// Commit one finished batch using the terminal's native scrollback.
+    fn commit_subagent_batch(&mut self, _batch: &talaria_core::subagents::FinishedBatch) {}
     /// Synchronize model overlays and cards without passing terminal state into the app.
     fn sync_models(
         &mut self,
@@ -573,6 +592,9 @@ pub struct AppState {
     prompts: Option<Arc<Mutex<PromptService>>>,
     pending: Option<JoinHandle<Result<Ready, LaunchFailure>>>,
     command_service: Option<CommandService>,
+    /// The subagent hub, once a sender exists to build it with. Issue #242.
+    pub subagents: Option<crate::subagents::SubagentHub>,
+    pub subagents_usage_active: u32,
     /// Standing automation state.
     pub automation: AutomationState,
     automation_ticker: AutomationTicker,
@@ -708,6 +730,8 @@ impl AppState {
             prompts: None,
             pending: None,
             command_service: None,
+            subagents: None,
+            subagents_usage_active: 0,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
             caret: 0,
             attachment_epoch: 0,
@@ -777,6 +801,9 @@ impl AppState {
             picker: self.picker.as_ref(),
             fleet: self.fleet.as_ref(),
             peek: self.peek_frame.as_ref(),
+            subagents: self.subagents.as_ref(),
+            subagents_usage_active: self.subagents_usage_active,
+            fleet_snapshot: self.fleet_snapshot.as_deref(),
         }
     }
 
@@ -1031,6 +1058,8 @@ pub enum AppMessage {
         /// Whether the export left the secrets in.
         redact: bool,
     },
+    /// One of the subagent hub's own messages. Issue #242.
+    Subagents(crate::subagents::SubagentMsg),
 }
 
 /// What a finished switch or branch brings back: the new session and, when the profile
@@ -1047,6 +1076,7 @@ pub struct SwitchInstall {
 /// What the executor does after one update. Ranges index the open session's cells.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
+    CommitSubagentBatch(talaria_core::subagents::FinishedBatch),
     Models(ModelsEffect),
     /// One peek effect for the peek worker; its results come back as [`AppMessage::FleetView`].
     FleetPeek(talaria_core::fleet_view::FleetViewEffect),
@@ -1669,6 +1699,32 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::Recovered(result) => recovered(state, result),
         AppMessage::Rewind(input) => rewind_input(state, input),
+        AppMessage::Subagents(message) => {
+            let now = subagent_clock(state);
+            let command_output = match &message {
+                crate::subagents::SubagentMsg::CommandControl {
+                    key,
+                    generation,
+                    outcome,
+                } if state
+                    .subagents
+                    .as_ref()
+                    .is_some_and(|hub| hub.current(key, *generation)) =>
+                {
+                    Some(crate::subagents::outcome_text(outcome))
+                }
+                _ => None,
+            };
+            redraw = state
+                .subagents
+                .as_mut()
+                .is_some_and(|hub| hub.on_message(message, now));
+            let mut effects = subagent_batches(state);
+            if let Some(text) = command_output {
+                effects.push(notice_lines(&text));
+            }
+            effects
+        }
         AppMessage::ForegroundKey(action) => foreground_key(state, action),
         AppMessage::Commands(CommandReply::Commands(input)) => commands_input(state, input),
         AppMessage::Commands(CommandReply::Palette(input)) => {
@@ -1988,9 +2044,8 @@ fn local_effect(
     if action == LocalAction::Fleet {
         return open_fleet_view(state);
     }
-    if action == LocalAction::Tasks {
-        return crate::commands::local_action(action)
-            .map_or_else(Vec::new, |action| user_action(state, action));
+    if action == LocalAction::Agents {
+        return agents_command(state, &argument);
     }
     match action {
         LocalAction::Quit => {
@@ -2333,6 +2388,47 @@ fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
+        UserAction::ToggleAgents => {
+            let key = foreground_row(state);
+            if let Some(hub) = state.subagents.as_mut() {
+                if hub.panel_key().is_some() {
+                    hub.close_panel();
+                } else if let Some(key) = key {
+                    hub.open_panel(key);
+                }
+            }
+            vec![AppEffect::Redraw]
+        }
+        UserAction::Subagent(action) => {
+            let now = subagent_clock(state);
+            let key = state
+                .subagents
+                .as_ref()
+                .and_then(|hub| hub.panel_key().cloned())
+                .or_else(|| foreground_row(state));
+            if let (Some(hub), Some(key)) = (state.subagents.as_mut(), key) {
+                hub.act(&key, action, now);
+            }
+            vec![AppEffect::Redraw]
+        }
+        UserAction::SubagentPanel(key) => {
+            if let Some(hub) = state.subagents.as_mut() {
+                hub.open_panel(key);
+            }
+            vec![AppEffect::Redraw]
+        }
+        UserAction::SubagentNextSession => {
+            if let Some(hub) = state.subagents.as_mut() {
+                hub.next_panel_session();
+            }
+            vec![AppEffect::Redraw]
+        }
+        UserAction::SubagentClearFlash => {
+            if let Some(hub) = state.subagents.as_mut() {
+                hub.clear_flash();
+            }
+            Vec::new()
+        }
         UserAction::Rewind(key) => rewind_input(state, RewindInput::Key(key)),
         UserAction::RewindViewport(rows) => rewind_input(state, RewindInput::Viewport(rows)),
         UserAction::Escape { eligible } => {
@@ -2910,6 +3006,72 @@ fn foreground_row(state: &AppState) -> Option<RowKey> {
         profile: state.profile.clone(),
         session_id: opened.session_id.clone(),
     })
+}
+
+fn subagent_clock(state: &AppState) -> talaria_core::subagents::Clock {
+    talaria_core::subagents::Clock {
+        mono_ms: state.now_ms,
+        wall_s: wall_ms() as f64 / 1000.0,
+    }
+}
+
+fn subagent_batches(state: &mut AppState) -> Vec<AppEffect> {
+    state.subagents.as_mut().map_or_else(Vec::new, |hub| {
+        hub.take_finished_batches()
+            .into_iter()
+            .map(AppEffect::CommitSubagentBatch)
+            .collect()
+    })
+}
+
+fn attach_subagent_foreground(state: &mut AppState) {
+    let key = foreground_row(state);
+    let client = state
+        .service
+        .as_ref()
+        .and_then(SessionService::client)
+        .cloned();
+    if let Some(hub) = state.subagents.as_mut() {
+        hub.set_foreground(key.clone());
+        if let (Some(key), Some(client)) = (key, client) {
+            hub.attach(key, client);
+        }
+    }
+}
+
+fn agents_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    use talaria_core::subagents::{AgentsArg, parse_agents_arg};
+    let argument = parse_agents_arg(argument);
+    if let Some(text) = argument.unknown_text() {
+        return vec![notice_lines(&text)];
+    }
+    let Some(key) = foreground_row(state) else {
+        return vec![notice_lines("No session is open.")];
+    };
+    let now = subagent_clock(state);
+    let Some(hub) = state.subagents.as_mut() else {
+        return vec![notice_lines("Not connected to the gateway.")];
+    };
+    match argument {
+        AgentsArg::Open => hub.open_panel(key),
+        AgentsArg::Pause => {
+            hub.open_panel(key.clone());
+            if matches!(hub.spawning(), talaria_core::subagents::Spawning::Paused(_)) {
+                hub.act(
+                    &key,
+                    crate::subagents::SubagentAction::ConfirmPause(false),
+                    now,
+                );
+                // An already-paused command must not accidentally resume spawning.
+                hub.show_paused();
+            } else {
+                hub.act(&key, crate::subagents::SubagentAction::RequestPause, now);
+            }
+        }
+        AgentsArg::Resume => hub.resume_command(&key),
+        AgentsArg::Unknown(_) => {}
+    }
+    vec![AppEffect::Redraw]
 }
 
 /// `/resume [id]`: the picker without an id, a switch with one.
@@ -4048,6 +4210,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             // A reconnect describes again: the skin may have changed while the link was down.
             if generation >= 2 {
                 effects.push(AppEffect::Describe(generation));
+                let foreground = foreground_row(state);
+                if let (Some(hub), Some(key)) = (state.subagents.as_mut(), foreground) {
+                    hub.on_reconnected(&key);
+                }
             }
             if let Some(opened) = state.opened.as_mut() {
                 let produced = note_connection(&mut opened.state, generation);
@@ -4080,18 +4246,58 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 commands_follow(state, CommandsInput::SkillsChanged)
             }
             Inbound::Event(inbound) => {
+                if let Some(opened) = state.opened.as_ref()
+                    && inbound.raw.get("session_id").and_then(Value::as_str)
+                        == Some(opened.session_id.as_str())
+                    && !accept_event(
+                        &opened.cursor,
+                        inbound.raw.get("replay_epoch").and_then(Value::as_str),
+                        inbound.raw.get("seq").and_then(Value::as_u64),
+                    )
+                {
+                    return Vec::new();
+                }
+                // Child events remain independent of the parent's interrupt latch.
+                let key = inbound
+                    .raw
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .and_then(|session_id| {
+                        state.subagents.as_ref().and_then(|hub| {
+                            hub.attached_keys()
+                                .into_iter()
+                                .find(|key| key.session_id == session_id)
+                        })
+                    });
+                let now = subagent_clock(state);
+                if let (Some(hub), Some(key)) = (state.subagents.as_mut(), key) {
+                    hub.on_notification(&key, &inbound.frame.notification, now);
+                }
+                let mut hub_effects = subagent_batches(state);
                 let session = inbound.raw.get("session_id").and_then(Value::as_str);
                 let (epoch, seq) = event_position(&inbound.raw);
                 let Some(opened) = state.opened.as_mut() else {
-                    return Vec::new();
+                    return hub_effects;
                 };
                 if session != Some(opened.session_id.as_str())
                     || !accept_event(&opened.cursor, epoch, seq)
                 {
-                    return Vec::new();
+                    return hub_effects;
+                }
+                if let hermes_contract::events::Notification::SessionUsage(payload) =
+                    &inbound.frame.notification
+                {
+                    state.subagents_usage_active = payload
+                        .usage
+                        .as_ref()
+                        .and_then(|usage| usage.active_subagents)
+                        .or(payload.active_subagents)
+                        .and_then(|n| u32::try_from(n).ok())
+                        .unwrap_or(0);
                 }
                 let session_id = opened.session_id.clone();
                 let mut effects = Vec::new();
+                effects.append(&mut hub_effects);
                 match &inbound.frame.notification {
                     hermes_contract::events::Notification::RequestCancel(payload) => {
                         effects.push(AppEffect::CancelRequest {
@@ -4228,6 +4434,7 @@ fn opened_session(
     opened: OpenedSession,
     notice: Option<String>,
 ) -> Vec<AppEffect> {
+    state.subagents_usage_active = 0;
     state.model = opened.info.model.clone();
     state.effort = opened.effort.clone();
     // The snapshot's fences are the ones a later mutation must present.
@@ -4288,6 +4495,7 @@ fn opened_session(
         .fences_mut(&session_id)
         .adopt(Some(opened.revision), Some(opened.execution_generation));
     state.opened = Some(opened);
+    attach_subagent_foreground(state);
     state.link_state = LinkView::Connected;
     // An attached session reads the standing state once.
     effects.extend(automation_event(
@@ -4576,6 +4784,15 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         .fences_mut(&fresh.session_id)
         .adopt(Some(fresh.revision), Some(fresh.execution_generation));
     state.opened = Some(fresh);
+    if let (Some(hub), Some(key)) = (
+        state.subagents.as_mut(),
+        Some(RowKey {
+            profile: state.profile.clone(),
+            session_id: session_id.clone(),
+        }),
+    ) {
+        hub.on_reconnected(&key);
+    }
     state.source_epoch = state.source_epoch.wrapping_add(1);
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
@@ -5977,6 +6194,7 @@ fn apply<S: Screen>(
     }
     for effect in update(state, message) {
         match effect {
+            AppEffect::CommitSubagentBatch(batch) => screen.commit_subagent_batch(&batch),
             AppEffect::Rewind { ticket, call } => {
                 let client = state
                     .service
@@ -7346,6 +7564,10 @@ pub async fn run<S: Screen>(
     let (sender, mut messages) = mpsc::unbounded_channel();
     let executor = Executor::new(sender);
     state.sender = Some(executor.sender.clone());
+    state.subagents = Some(crate::subagents::SubagentHub::new(
+        screen.subagents_config(),
+        executor.sender.clone(),
+    ));
     // The first frame is drawn; the fleet link starts in the background.
     state.fleet_enabled = setup.fleet.is_some();
     if let Some(cfg) = setup.fleet.take() {
@@ -7580,6 +7802,30 @@ mod comfort_event_tests {
     }
 
     #[test]
+    fn subagent_usage_fallback_reads_the_nested_value_and_resets_on_switch() {
+        let mut state = state();
+        let usage = inbound(
+            &state,
+            "session.usage",
+            json!({
+                "active_subagents": 99, "usage": {"active_subagents": 7}
+            }),
+        );
+        update(&mut state, usage);
+        assert_eq!(state.view().subagents_usage_active, 7);
+        let snapshot =
+            serde_json::from_str(include_str!("../tests/data/open_approval.json")).unwrap();
+        update(
+            &mut state,
+            AppMessage::Opened {
+                opened: OpenedSession::from_snapshot(snapshot),
+                notice: None,
+            },
+        );
+        assert_eq!(state.view().subagents_usage_active, 0);
+    }
+
+    #[test]
     fn accepted_title_updates_attention_label() {
         let mut state = state();
         let id = state.opened.as_ref().unwrap().session_id.clone();
@@ -7617,17 +7863,20 @@ mod checklist_command_tests {
     use talaria_core::session::TodoState;
 
     #[test]
-    fn tasks_command_uses_the_local_table_and_toggles_without_a_gateway_call() {
+    fn tasks_alias_opens_agents_and_the_checklist_key_still_toggles() {
         let command = LocalCommandTable::builtin()
             .find("tasks")
             .copied()
             .expect("local tasks");
-        assert_eq!(command.action, LocalAction::Tasks);
+        assert_eq!(command.action, LocalAction::Agents);
         assert_eq!(
             slash_line("/tasks"),
-            Slash::Local(LocalAction::Tasks, String::new())
+            Slash::Local(LocalAction::Agents, String::new())
         );
-        assert!(matches!(slash_line("/tasks extra"), Slash::Notice(_)));
+        assert_eq!(
+            slash_line("/tasks pause"),
+            Slash::Local(LocalAction::Agents, "pause".into())
+        );
         let mut state = AppState::new("0123456789abcdef");
         state.checklist.attach(
             Some(&TodoState {
@@ -7637,10 +7886,7 @@ mod checklist_command_tests {
             true,
         );
         let expanded = state.checklist.expanded();
-        let effects = update(
-            &mut state,
-            AppMessage::User(UserAction::Submit("/tasks".into())),
-        );
+        let effects = update(&mut state, AppMessage::User(UserAction::ToggleTasks));
         assert_eq!(state.checklist.expanded(), !expanded);
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], AppEffect::Redraw));

@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 22] = [
+const NAMES: [&str; 23] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -25,6 +25,7 @@ const NAMES: [&str; 22] = [
     "clarification",
     "interrupted",
     "subagent-batch",
+    "subagent-control",
     "queued-prompt",
     "slash-palette",
     "rewind-and-rollback",
@@ -102,8 +103,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 22,
-        "expected twenty-two fixtures in fixtures/frames, found {}",
+        files.len() == 23,
+        "expected twenty-three fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -182,7 +183,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 22);
+    assert_eq!(fixtures.len(), 23);
 }
 
 #[test]
@@ -451,6 +452,27 @@ fn scenario_evidence_present() {
         let events = inbound_events(&records);
         assert!(!events.is_empty(), "{name}: no inbound events");
         match name {
+            "subagent-control" => {
+                let source = hermes_client::ReplaySource::open(&path).expect("control recording");
+                let methods: Vec<&str> = source
+                    .outbound()
+                    .filter_map(|row| row.frame["method"].as_str())
+                    .collect();
+                for method in [
+                    "subagent.list",
+                    "subagent.tail",
+                    "subagent.steer",
+                    "subagent.interrupt",
+                ] {
+                    assert!(methods.contains(&method), "{name}: missing {method}");
+                }
+                assert!(
+                    events
+                        .iter()
+                        .any(|(kind, params)| kind == "subagent.complete"
+                            && params["payload"]["status"] == "interrupted")
+                );
+            }
             "plain-answer" => {
                 assert!(
                     position(&events, "message.delta", 0).is_some(),

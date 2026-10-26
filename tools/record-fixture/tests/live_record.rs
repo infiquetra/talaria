@@ -142,7 +142,7 @@ async fn live_plain_answer_records_and_replays() {
     let host = gethostname::gethostname().to_string_lossy().into_owned();
     let home = default_home();
 
-    // Preconditions (REQ-17): the same check the script makes, with discovery that never starts
+    // Preconditions: the same check the script makes, with discovery that never starts
     // a gateway. A missing precondition is a skip, not a failure.
     let input = PreflightInput {
         hermes_home: home.clone(),

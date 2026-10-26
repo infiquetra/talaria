@@ -27,5 +27,6 @@ pub mod rewind;
 pub mod sessions;
 pub mod side;
 pub mod side_connection;
+pub mod subagents;
 pub mod switch;
 pub mod workspace;

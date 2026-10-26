@@ -12,8 +12,6 @@
 pub enum LocalAction {
     /// Leave Talaria. The Hermes session keeps running.
     Quit,
-    /// Collapse or expand the agent's task checklist.
-    Tasks,
     /// Choose the model of the foreground session.
     Model,
     /// Choose the reasoning level of the foreground session.
@@ -58,6 +56,8 @@ pub enum LocalAction {
     Export,
     /// Open the fleet overlay.
     Fleet,
+    /// Open the subagent panel, or pause and resume spawning. Issue #242.
+    Agents,
 }
 
 /// One local command.
@@ -97,15 +97,6 @@ const BUILTIN: &[LocalCommand] = &[
         takes_argument: false,
         action: LocalAction::Quit,
         tag: "talaria",
-    },
-    LocalCommand {
-        name: "tasks",
-        tag: "talaria",
-        aliases: &[],
-        summary: "Collapse or expand the agent's task checklist",
-        args_hint: "",
-        takes_argument: false,
-        action: LocalAction::Tasks,
     },
     LocalCommand {
         name: "btw",
@@ -249,6 +240,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[--no-redact] [file]",
         takes_argument: true,
         action: LocalAction::Export,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "agents",
+        aliases: &["tasks"],
+        summary: "Show the session's subagents; `pause` and `resume` switch spawning",
+        args_hint: "[pause|resume]",
+        takes_argument: true,
+        action: LocalAction::Agents,
         tag: "talaria",
     },
 ];

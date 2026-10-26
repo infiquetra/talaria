@@ -31,7 +31,7 @@ use crate::sessions::{submission_id, submit_params};
 pub fn local_action(action: LocalAction) -> Option<UserAction> {
     match action {
         LocalAction::Quit => Some(UserAction::Quit),
-        LocalAction::Tasks => Some(UserAction::ToggleTasks),
+        LocalAction::Agents => Some(UserAction::ToggleAgents),
         _ => None,
     }
 }
