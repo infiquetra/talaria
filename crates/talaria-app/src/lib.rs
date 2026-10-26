@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod appearance;
+pub mod attach;
 pub mod attachments;
 pub mod automation;
 pub mod background;
@@ -21,6 +22,7 @@ pub mod launch;
 pub mod models;
 pub mod models_file;
 pub mod mutation;
+pub mod panes;
 pub mod peek;
 pub mod permissions;
 pub mod prompts;

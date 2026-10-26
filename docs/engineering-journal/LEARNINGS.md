@@ -26,6 +26,50 @@
 
 **Generalizable rule.** Compare folders after `canonicalize` on both sides, never as strings.
 
+## 2026-10-26 — An advertised child id is not proof of resumability
+
+**Evidence.** In the isolated gateway's attach acceptance run, the agents panel supplied a
+`child_session_id`, but resuming it on its owner's profile returned `not_found` during execution
+and after completion. Read-only cross-profile lookup also found no session. The fleet pane
+acceptance scenarios passed independently on ordinary sessions.
+
+**Mechanism.** Subagent identity, canonical session authority and pane admission are separate
+contracts. An `Opened` pane outcome acknowledges the typed command, not successful startup.
+
+**Generalizable rule.** Verify canonical resumability separately from a subagent id or pane admission.
+
+## 2026-10-26 — An empty attached session still needs its resumed heading
+
+**Evidence.** The live attach probe opened successfully but its five-second marker check failed.
+The pure history helper omits a heading when there are no final cells; the new
+`empty_attached_session_announces_its_title` regression reproduced that failure.
+
+**Mechanism.** History presence cannot distinguish a new session from an existing empty one.
+The application now uses the explicit resume launch mode to commit that heading.
+
+**Generalizable rule.** Acknowledge an existing attachment independently of its history size.
+
+## 2026-10-26 — Herdr's pane split takes no command
+
+**Evidence.** The installed Herdr's `pane split --help` accepts direction, folder and focus
+options, with no command argument. `pane run --help` accepts the new pane id and command text.
+
+**Mechanism.** Splitting returns the new pane id in JSON; a second call types the quoted attach
+command and Enter. Successful typing acknowledges admission, rather than proving startup.
+
+**Generalizable rule.** Split, read the pane id from JSON, then run; verify startup separately.
+
+## 2026-10-26 — Hermes resolves `local-` plus 16 hex itself
+
+**Evidence.** Hermes v0.22.4, `gateway/session_controls.py` lines 570 to 577 at the pinned
+commit, resolves that short form before session authorization, leaving ambiguous or absent
+prefixes to the usual not-found handling.
+
+**Mechanism.** A unique short id can open an older session absent from a bounded listing,
+but it carries no profile identity.
+
+**Generalizable rule.** Pass a short id through only when one profile is in scope.
+
 ## 2026-10-26 — Only attached viewers can reply or answer
 
 **Evidence.** Hermes v0.22.4 `gateway/session_controls.py` lines 747 to 767: `prompt.submit` refuses `permission_denied` when the session is not attached on the calling connection; `approval.respond` and `clarify.respond` refuse callers that are not subscribers (`gateway/session_authority.py` lines 986 to 998). `session.interrupt` needs no attachment but needs the current `execution_generation`, which only the resume snapshot and the session's events carry (lines 861 to 888). The fleet view's peek (issue #240, `crates/talaria-app/src/peek.rs`) therefore attaches with `session.resume` before any reply, answer or stop; live tests 44 to 46 replied, denied an approval and stopped a turn this way on the pinned gateway.

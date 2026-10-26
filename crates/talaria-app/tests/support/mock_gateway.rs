@@ -404,6 +404,9 @@ struct State {
     accepted: Vec<mpsc::UnboundedSender<Cmd>>,
     seen: Vec<Seen>,
     written: Vec<Written>,
+    /// Sockets the client ended, by connection. A clean close frame and a dropped
+    /// stream both count. Issue #246.
+    client_closed: HashSet<u64>,
     next_srq: u64,
     next_seq: u64,
     envelope_generation: i64,
@@ -525,6 +528,7 @@ fn new_shared(
             accepted: Vec::new(),
             seen: Vec::new(),
             written: Vec::new(),
+            client_closed: HashSet::new(),
             next_srq: 1,
             next_seq: 1,
             envelope_generation: 1,
@@ -1327,11 +1331,22 @@ async fn run_socket(
                             handle_frame(&shared, &own, connection, text, at).await;
                         }
                     }
+                    // Issue #246: the client ended the socket cleanly.
+                    Some(Ok(Message::Close(_))) => {
+                        let Some(shared) = shared.upgrade() else { break };
+                        lock(&shared).client_closed.insert(connection);
+                    }
                     Some(Ok(Message::Ping(payload))) => {
                         let _ = socket.send(Message::Pong(payload)).await;
                     }
                     Some(Ok(_)) => {}
-                    Some(Err(_)) | None => reading = false,
+                    // Issue #246: the client's stream ended without a close frame.
+                    Some(Err(_)) | None => {
+                        if let Some(shared) = shared.upgrade() {
+                            lock(&shared).client_closed.insert(connection);
+                        }
+                        reading = false;
+                    }
                 }
             }
         }
@@ -1581,6 +1596,17 @@ fn plan_request(
         let (_, _, result) = state.matched_results.remove(index);
         let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
         outgoing.push((None, text, reply_meta(id, method)));
+        return;
+    }
+    // Issue #246: while the hold is on, `session.list` replies wait for the
+    // test's release, so the test can see every list request before any reply.
+    // The request itself is already recorded in `seen`; only the reply waits.
+    // Harness-only: timing, never content. Other methods always answer.
+    if method == "session.list" && state.sess.hold_lists {
+        state.sess.held_lists.push(HeldList {
+            id: id.clone(),
+            params: params.clone(),
+        });
         return;
     }
     if let Some((delay, result)) = state.scripted_results.pop_front() {
@@ -2103,6 +2129,12 @@ struct SessionSide {
     hold_automation_reads: bool,
     /// The held automation reads, answered once the hold is released.
     held_automation: Vec<HeldAutomation>,
+    /// Hold `session.list` replies until the test releases them. Other methods are
+    /// never held: the handshake's `client.capabilities` reply must flow, or the
+    /// side connection stalls. Issue #246.
+    hold_lists: bool,
+    /// The held list requests, answered once the hold is released.
+    held_lists: Vec<HeldList>,
 }
 
 impl SessionSide {
@@ -2192,6 +2224,8 @@ impl SessionSide {
             config_values: HashMap::new(),
             hold_automation_reads: false,
             held_automation: Vec::new(),
+            hold_lists: false,
+            held_lists: Vec::new(),
         }
     }
 }
@@ -3497,6 +3531,12 @@ struct HeldAutomation {
     delay: Option<Duration>,
 }
 
+/// One `session.list` request whose reply waits for the test. Issue #246.
+struct HeldList {
+    id: Value,
+    params: Value,
+}
+
 /// A `-32601` answer for an unscripted standing-state or mode read: an older Hermes.
 fn method_missing_text(id: &Value, method: &str) -> String {
     json!({
@@ -3794,6 +3834,15 @@ fn handle_create(state: &mut State, params: &Value) -> Result<Value, String> {
     Ok(attach(state, snapshot, "session.create"))
 }
 
+/// `local-` plus exactly 16 lower-case hex. Issue #246.
+fn is_short_session_id(wanted: &str) -> bool {
+    wanted.len() == 22
+        && wanted.starts_with("local-")
+        && wanted[6..]
+            .chars()
+            .all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+}
+
 fn handle_resume(state: &mut State, params: &Value) -> Result<Value, String> {
     let projection = params.get("display_projection") == Some(&Value::Bool(true));
     // A launch that resumes the latest session answers from the seeded snapshot, so a snapshot
@@ -3811,6 +3860,30 @@ fn handle_resume(state: &mut State, params: &Value) -> Result<Value, String> {
             stored.clone()
         } else if state.sess.resume_snapshot["session_id"] == wanted {
             state.sess.resume_snapshot.clone()
+        } else if is_short_session_id(wanted) {
+            // gateway/session_controls.py lines 570 to 577: `local-` plus exactly
+            // 16 lower-case hex resolves to the full id when the prefix is unique.
+            // hermes_state_sessions.py lines 875 to 884: exact id, else the single
+            // prefix match, else nothing. With zero or several matches the
+            // reference is left unchanged and the resume answers `not_found`
+            // (gateway/session_controls.py lines 574 to 577 and 607,
+            // gateway/session_authority.py lines 190 to 193), sent as code 4001
+            // with `data.reason` (gateway/session_controls.py lines 319 to 323).
+            // Issue #246.
+            let mut hits = state
+                .sess
+                .sessions
+                .keys()
+                .filter(|id| id.starts_with(wanted));
+            match (hits.next(), hits.next()) {
+                (Some(only), None) => state
+                    .sess
+                    .sessions
+                    .get(only)
+                    .cloned()
+                    .unwrap_or_else(|| state.sess.resume_snapshot.clone()),
+                _ => return Err("not_found".to_owned()),
+            }
         } else {
             return Err("not_found".to_owned());
         }
@@ -4470,6 +4543,43 @@ impl MockGateway {
     /// the flush, so arm again before each attach.
     pub fn set_hold_automation_reads(&self) {
         lock(&self.shared).sess.hold_automation_reads = true;
+    }
+
+    /// Hold `session.list` replies until [`MockGateway::release_held_lists`].
+    /// Issue #246.
+    pub fn set_hold_lists(&self, on: bool) {
+        lock(&self.shared).sess.hold_lists = on;
+    }
+
+    /// How many list replies are waiting for release. Issue #246.
+    pub fn held_list_count(&self) -> usize {
+        lock(&self.shared).sess.held_lists.len()
+    }
+
+    /// Answer every held `session.list` request from the rows and errors
+    /// seeded now. The hold stays as it was. Issue #246.
+    pub fn release_held_lists(&self) {
+        let held = std::mem::take(&mut lock(&self.shared).sess.held_lists);
+        for held in held {
+            let text = match handle_list(&lock(&self.shared), &held.params) {
+                Ok(result) => {
+                    json!({"jsonrpc": "2.0", "id": held.id, "result": result}).to_string()
+                }
+                Err(reason) => refusal_text(&held.id, &reason, None),
+            };
+            self.command(Cmd::Send {
+                text,
+                meta: reply_meta(&held.id, "session.list"),
+                done: None,
+            });
+        }
+    }
+
+    /// The connections the client ended, in order. Issue #246.
+    pub fn client_closed(&self) -> Vec<u64> {
+        let mut closed: Vec<u64> = lock(&self.shared).client_closed.iter().copied().collect();
+        closed.sort_unstable();
+        closed
     }
 
     /// Answer every request with this method after this long; `None` clears it.
