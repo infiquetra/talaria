@@ -25,6 +25,7 @@ const NAMES: [&str; 22] = [
     "clarification",
     "interrupted",
     "subagent-batch",
+    "subagent-control",
     "queued-prompt",
     "slash-palette",
     "rewind-and-rollback",
@@ -451,6 +452,14 @@ fn scenario_evidence_present() {
         let events = inbound_events(&records);
         assert!(!events.is_empty(), "{name}: no inbound events");
         match name {
+            "subagent-control" => {
+                let source = hermes_client::ReplaySource::open(&path).expect("control recording");
+                let methods: Vec<&str> = source.outbound().filter_map(|row| row.frame["method"].as_str()).collect();
+                for method in ["subagent.list", "subagent.tail", "subagent.steer", "subagent.interrupt"] {
+                    assert!(methods.contains(&method), "{name}: missing {method}");
+                }
+                assert!(events.iter().any(|(kind, params)| kind == "subagent.complete" && params["payload"]["status"] == "interrupted"));
+            }
             "plain-answer" => {
                 assert!(
                     position(&events, "message.delta", 0).is_some(),

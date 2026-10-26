@@ -16,6 +16,7 @@ use hermes_client::{
 use serde_json::{Value, json};
 
 mod scripted;
+mod subagent_control;
 
 pub use scripted::SCRIPTED_SCENARIOS;
 
@@ -59,6 +60,9 @@ const PICKER_PROFILE: &str = "fixture";
 /// The scenario of the fleet registry: two `fixture` sessions, one waiting on an approval and
 /// one finished, then the reads `talaria fleet list --profile fixture` makes. Recorded by name.
 pub const FLEET_REGISTRY: &str = "fleet-registry";
+
+/// The explicit live subagent control scenario, recorded only when selected.
+pub const SUBAGENT_CONTROL: &str = "subagent-control";
 
 /// The fleet scenario's finished session answers this.
 const FLEET_READY_PROMPT: &str = "Reply with the single word: ready";
@@ -144,6 +148,12 @@ impl Scenario {
                     "Use the delegate_task tool to run two subagents in parallel: one lists the files in the current directory, the other reads notes.txt. Then summarise both results in one sentence.",
                 ],
                 &["complete"],
+            ),
+            SUBAGENT_CONTROL => (
+                &[
+                    "Use the delegate_task tool to start exactly one subagent. Its goal: run the shell command sleep 3 ten times, one command at a time, then reply with the single word finished. Wait for it, then reply with the single word done.",
+                ],
+                &[],
             ),
             "queued-prompt" => (
                 &[
@@ -500,6 +510,9 @@ fn position(events: &[(String, Value)], kind: &str, from: usize) -> Option<usize
 
 /// The required evidence and final statuses of section 8.4 over a recorded file.
 pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), String> {
+    if scenario.name == SUBAGENT_CONTROL {
+        return subagent_control::check_evidence(source);
+    }
     if scenario.name == FLEET_REGISTRY {
         return fleet_registry_evidence(source);
     }
@@ -695,6 +708,9 @@ pub fn build_scenario_substitutions(
 /// Value-level scrubbing a scenario asks for, applied to the recorded lines. Substitution
 /// cannot do it: the values differ from run to run and must become fixed placeholders.
 pub fn scrub_recording(scenario: &str, text: &str) -> String {
+    if scenario == SUBAGENT_CONTROL {
+        return subagent_control::record_statuses(text);
+    }
     if scenario == FLEET_REGISTRY {
         return scrub_fleet_rows(text);
     }
@@ -1933,6 +1949,9 @@ async fn drive(
     }
     if let Err(reason) = submit(client, session, &scenario.prompts[0]).await {
         return AttemptResult::Failed(reason);
+    }
+    if scenario.name == SUBAGENT_CONTROL {
+        return subagent_control::drive(client, inbound, scenario, session).await;
     }
     // The fleet scenario's second turn runs on a second session, driven below.
     let turns = if scenario.name == FLEET_REGISTRY {
