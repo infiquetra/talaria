@@ -9,12 +9,14 @@ use drive::{
     committed_text, locked, resume_snapshot, settle_short, snapshot_of, sorted_keys,
     state_with_opened,
 };
+use hermes_client::liveness::LinkEvent;
+use hermes_client::{Decoded, Generation, Inbound, decode_frame};
 use serde_json::json;
-use talaria_app::app::AppState;
+use talaria_app::app::{AppMessage, AppState, update};
 use talaria_app::directory::DirectoryService;
 use talaria_app::launch::StartMode;
 use talaria_app::sessions::OpenedSession;
-use talaria_app::switch::{BranchOutcome, branch_foreground};
+use talaria_app::switch::{BranchOutcome, branch_foreground, branch_request};
 use talaria_core::directory::rows::RowKey;
 use talaria_core::mutation::MutationLedger;
 
@@ -481,4 +483,76 @@ async fn branch_refuses_a_running_turn() {
             text: "Hermes cannot branch while the agent is working. Wait for the reply to finish, or press Esc to stop it, then run /branch again.".to_owned(),
         }
     );
+}
+
+/// A turn raises the session's revision and generation, and the gateway
+/// reports the new fences on the session's own `session.info`. The next
+/// mutation must present them, or the gateway refuses it as a fence
+/// conflict: the branch after a finished turn is refused otherwise.
+#[tokio::test]
+async fn a_turns_new_fences_reach_the_next_mutation() {
+    // The session as it opens: idle, at revision 1 and generation 1.
+    let mut snapshot = mock_gateway::data_snapshot("running_turn.json");
+    snapshot["running"] = json!(false);
+    snapshot["revision"] = json!(1);
+    snapshot["execution_generation"] = json!(1);
+    let opened = OpenedSession::from_snapshot(snapshot_of(&snapshot));
+    let mut app = AppState::new("launch-1");
+    state_with_opened(&mut app, opened);
+    let session_id = app
+        .opened
+        .as_ref()
+        .expect("the session is open")
+        .session_id
+        .clone();
+
+    // The session's revision and generation as the session opened with them.
+    let before = branch_request(&mut app, None).expect("the branch is prepared");
+    assert_eq!(before.expected_revision, 1);
+    assert_eq!(before.expected_generation, Some(1));
+
+    // The turn finished, and the gateway reported the fences it left behind.
+    update(
+        &mut app,
+        AppMessage::Link(session_info_event(
+            &session_id,
+            json!({"revision": 2, "execution_generation": 2}),
+        )),
+    );
+
+    let after = branch_request(&mut app, None).expect("the branch is prepared");
+    assert_eq!(
+        after.expected_revision, 2,
+        "the branch presents the revision the turn left behind"
+    );
+    assert_eq!(
+        after.expected_generation,
+        Some(2),
+        "the branch presents the generation the turn left behind"
+    );
+}
+
+/// A `session.info` event as the link delivers it.
+fn session_info_event(session_id: &str, payload: serde_json::Value) -> LinkEvent {
+    let frame = json!({
+        "jsonrpc": "2.0",
+        "method": "event",
+        "params": {
+            "type": "session.info",
+            "session_id": session_id,
+            "replay_epoch": "id-0002",
+            "seq": 9,
+            "payload": payload,
+        }
+    });
+    let bytes = serde_json::to_vec(&frame).expect("event frame");
+    let decoded = decode_frame(Generation(1), &bytes, &mut |_id| unreachable!("event"));
+    let Decoded::Inbound(item) = decoded else {
+        panic!("session.info decodes as an event");
+    };
+    assert!(matches!(item, Inbound::Event(_)));
+    LinkEvent::Inbound {
+        item,
+        replayed: false,
+    }
 }

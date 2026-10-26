@@ -35,6 +35,26 @@
 
 **Generalizable rule.** Give every live session a fresh folder of its own, never a shared parent: Hermes treats a folder it has worked in as the owner of everything below it.
 
+### A turn's fences arrive on the session's own `session.info`
+
+**Evidence.** Hermes v0.22.4 `gateway/session_authority.py` lines 340 to 356 (`_publish_pending`),
+`hermes_state_runtime.py` line 256; `crates/talaria-app/src/app.rs` (the link-event fence
+observation); `crates/talaria-app/tests/mutate_wire.rs`
+(`a_turns_new_fences_reach_the_next_mutation`). The live check
+`live_picker_branch_and_switch_back` in `crates/talaria-cli/tests/live_session_picker.rs` was
+refused with `revision_conflict` before the observation, and passed after it.
+
+**Mechanism.** A turn raises the session's `runtime_revision` and `runtime_generation` without
+any mutation receipt, and the gateway reports the new pair on the session's own `session.info`.
+The foreground mutation ledger presents those fences to the next `session.mutate`, so it has to
+observe that event. Without the observation the ledger keeps the revision the session opened
+with, and the next branch or rename is refused as a fence conflict. The `cd_ledger` observed
+the same event for the `/cd` move, which is why the omission was invisible.
+
+**Generalizable rule.** A fix that reads a value from a later event needs a test that feeds that
+event; removing the read must turn the test red. The `/cd` move's use of the same value was not
+coverage of the branch path, and no test failed when the branch path lost it.
+
 ### Duplicate session titles answer -32603
 
 **Evidence.** Hermes v0.22.4 `gateway/session_controls.py` lines 319 to 330, `tui_gateway/ws.py` lines 431 to 441 and `hermes_state_runtime.py` line 23; `crates/talaria-app/src/directory.rs` (`DirectoryService::rename_result`); `crates/talaria-app/tests/mutate_wire.rs` (`taken_title_is_a_gateway_error`). The live check `live_rename_round_trip` in `crates/talaria-cli/tests/live_session_picker.rs` was not run for this change, so the fact rests on the source.
