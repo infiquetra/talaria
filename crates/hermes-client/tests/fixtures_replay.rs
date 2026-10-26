@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 20] = [
+const NAMES: [&str; 21] = [
     "attachments-mention-image",
     "plain-answer",
     "tool-diff",
@@ -38,6 +38,7 @@ const NAMES: [&str; 20] = [
     "queue-edit-remove",
     "queue-steer",
     "queue-move-send-now",
+    "fleet-registry",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -65,6 +66,8 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
             "complete",
             "complete",
         ],
+        // The finished turn, then the probe turn after its approval was denied.
+        "fleet-registry" => &["complete", "complete"],
         _ => &["complete"],
     }
 }
@@ -96,8 +99,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 20,
-        "expected twenty fixtures in fixtures/frames, found {}",
+        files.len() == 21,
+        "expected twenty-one fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -176,7 +179,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 20);
+    assert_eq!(fixtures.len(), 21);
 }
 
 #[test]
@@ -651,6 +654,23 @@ fn scenario_evidence_present() {
                 assert!(
                     mutations >= 3,
                     "{name}: {mutations} outbound session.mutate frames, want at least 3"
+                );
+            }
+            "fleet-registry" => {
+                let sent: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| record["dir"] == "out")
+                    .map(|record| &record["frame"])
+                    .collect();
+                for method in ["session.list", "session.active_list", "approval.pending"] {
+                    assert!(
+                        sent.iter().any(|frame| frame["method"] == method),
+                        "{name}: no outbound {method}"
+                    );
+                }
+                assert!(
+                    position(&events, "approval.request", 0).is_some(),
+                    "{name}: no approval.request"
                 );
             }
             "queue-edit-remove" | "queue-steer" | "queue-move-send-now" => {

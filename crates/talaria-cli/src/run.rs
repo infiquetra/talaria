@@ -2336,6 +2336,8 @@ pub fn run(mut launch: Launch) -> ExitCode {
         list_title: None,
         notices,
         keys: loaded.config.keys.clone(),
+        fleet: talaria_app::fleet::attaches_after_first_frame(false, loaded.config.fleet.enabled)
+            .then(|| loaded.config.fleet.clone()),
     };
     if launch.mode == StartMode::Resume(None) {
         match pick_session(&runtime, &launch, &home, &launch_id) {

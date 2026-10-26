@@ -15,8 +15,8 @@ use hermes_client::{
     mint_ticket, scan_for_secrets, scan_literals, ws_url,
 };
 use record_fixture::{
-    AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, NO_TODO_TOOL, Preflight, PreflightInput,
-    SCENARIOS, SCRIPTED_SCENARIOS, SESSION_PICKER, Scenario, ScratchDir,
+    AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, FLEET_REGISTRY, NO_TODO_TOOL, Preflight,
+    PreflightInput, SCENARIOS, SCRIPTED_SCENARIOS, SESSION_PICKER, Scenario, ScratchDir,
     build_scenario_substitutions, check_evidence, never_ensure, preflight, run_scenario,
     scrub_recording, turn_status,
 };
@@ -151,6 +151,7 @@ async fn record(settings: &RecordSettings) -> Outcome {
                 // The picker scenario is recorded by name, so the operator is told of it too.
                 let mut known = SCENARIOS.to_vec();
                 known.push(SESSION_PICKER);
+                known.push(FLEET_REGISTRY);
                 known.extend_from_slice(&SCRIPTED_SCENARIOS);
                 eprintln!(
                     "unknown scenario {name}; the scenarios are: {}",

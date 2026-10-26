@@ -1,6 +1,7 @@
 //! What an attached session's owner reports.
 
 use super::{NeedSlot, NeedSummary, Outcome};
+use crate::session::{PromptKind, TurnOutcome, TurnState};
 
 /// One need taken from attached session state.
 #[derive(Clone, Debug, PartialEq)]
@@ -55,7 +56,47 @@ impl SubscribedView {
         state: &crate::session::SessionState,
         masked: &[(String, NeedSummary)],
     ) -> SubscribedView {
-        let _ = (state, masked);
-        todo!()
+        let turn = match state.turn() {
+            TurnState::Idle => SubscribedTurn::Idle,
+            TurnState::Running => SubscribedTurn::Running { started_at: None },
+            TurnState::Finished(outcome) => SubscribedTurn::Finished(match outcome {
+                TurnOutcome::Completed => Outcome::Completed,
+                TurnOutcome::Failed => Outcome::Failed,
+                TurnOutcome::Interrupted => Outcome::Interrupted,
+            }),
+        };
+        let mut needs: Vec<SubscribedNeed> = state
+            .open_prompts()
+            .map(|prompt| SubscribedNeed {
+                slot: NeedSlot::Prompt(prompt.key.prompt_id.clone()),
+                summary: match prompt.kind {
+                    PromptKind::Approval => NeedSummary::Approval {
+                        command: prompt.command.clone().unwrap_or_default(),
+                        description: prompt.description.clone().unwrap_or_default(),
+                    },
+                    PromptKind::Clarify => {
+                        NeedSummary::Question(prompt.question.clone().unwrap_or_default())
+                    }
+                },
+                choices: prompt.choices.clone(),
+                execution_generation: Some(prompt.key.execution_generation),
+                timeout_s: prompt.timeout_s,
+            })
+            .collect();
+        needs.extend(masked.iter().map(|(request_id, summary)| SubscribedNeed {
+            slot: NeedSlot::Masked(request_id.clone()),
+            summary: summary.clone(),
+            choices: Vec::new(),
+            execution_generation: None,
+            timeout_s: None,
+        }));
+        SubscribedView {
+            turn,
+            needs,
+            activity: state.activity().map(str::to_string),
+            cost_usd: state.usage().cost_usd,
+            model: state.usage().model.clone(),
+            title: None,
+        }
     }
 }

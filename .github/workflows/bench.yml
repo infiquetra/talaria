@@ -32,6 +32,10 @@ jobs:
         run: cargo bench -p talaria-tui --bench pager
       - name: Session picker budgets
         run: cargo bench -p talaria-tui --bench session_picker
+      - name: Fleet registry budget
+        run: |
+          cargo bench -p talaria-core --bench fleet_registry
+          jq -e '.median.point_estimate < 1000000' target/criterion/fleet_update_200/new/estimates.json
       - name: Keep the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

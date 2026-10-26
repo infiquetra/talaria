@@ -2587,8 +2587,10 @@ dependencies = [
  "talaria-core",
  "talaria-tui",
  "tempfile",
+ "time",
  "tokio",
  "tokio-tungstenite",
+ "unicode-width",
  "vt100",
 ]
 
