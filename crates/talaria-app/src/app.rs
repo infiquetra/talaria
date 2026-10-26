@@ -537,10 +537,6 @@ pub struct AppState {
     pub picker_scope_note: Option<String>,
     /// The listing generation; one more than the last.
     pub picker_generation: u64,
-    /// When false, `/fleet` shows a notice and opens nothing.
-    pub fleet_enabled: bool,
-    /// The fleet overlay, while `/fleet` has it open. The stub leaves this empty.
-    pub fleet: Option<FleetViewState>,
     /// Takes the pane-open acknowledgement in tests. Issue #246.
     pub pane_sink: Option<Arc<dyn FleetSink>>,
     /// The environment pane detection reads. The process environment at
@@ -724,8 +720,6 @@ impl AppState {
             picker_profiles: Vec::new(),
             picker_scope_note: None,
             picker_generation: 0,
-            fleet_enabled: true,
-            fleet: None,
             pane_sink: None,
             pane_env: PaneEnv::from_process(),
             switching: false,
