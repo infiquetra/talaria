@@ -1507,11 +1507,13 @@ async fn create_submitted(
         )
         .await
         .map_err(|_| "session.create failed".to_owned())?;
-    let mut session = Session::default();
-    session.session_id = created["session_id"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
+    let mut session = Session {
+        session_id: created["session_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        ..Session::default()
+    };
     if session.session_id.is_empty() {
         return Err("the session snapshot has no session_id".to_owned());
     }

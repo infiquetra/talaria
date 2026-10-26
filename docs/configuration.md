@@ -179,6 +179,12 @@ fixed there: Esc cancels, then clears a search, then closes; Ctrl+C closes; neit
 agent. The session picker context is separate from the composer too (`j` moves down there and picks
 JSON in its export dialog); `session_picker_open` has no default; Esc and Ctrl+C are fixed.
 
+The fleet overlay (`/fleet`, or `fleet_view_open`, which has no default) has its own context:
+`fleet_peek` attaches and shows a session (moving the cursor never does), `fleet_reply` queues a
+prompt behind its running turn, `fleet_stop` asks first and stops on a second press,
+`fleet_answer` hands keys to the peeked card, and `fleet_open` makes the row the foreground
+session. Esc and Ctrl+C are fixed there and never stop anything; in the card, Esc is the card's.
+
 A key is modifiers (`ctrl`, `alt`, `shift`, `super`, each once) and one key joined by `+`, in any
 case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrows, `home`, `end`,
 `pageup`, `pagedown`, `space`, `plus` or `f1` to `f24`. A printable key needs `ctrl`, `alt` or

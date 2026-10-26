@@ -4,6 +4,18 @@
 
 ## 2026-10-26
 
+### The fleet view peeks on its own connection
+
+**Decision.** The fleet overlay (issue #240) peeks one session at a time on a profile-scoped link of its own, opened with the launch's connection service for the row's profile and never starting a gateway; it is reused for rows of the same profile, replaced for another profile, and closed with the overlay. Space attaches with `session.resume {session_id, display_projection: true}`; moving the cursor never does; a move or a close detaches with exactly `{session_id, subscription_id}`, never `end_reason`. A reply is a queued `prompt.submit`; a stop is `x` twice, then `session.interrupt` with the attached generation after open approvals are denied. On this link, server requests of the masked kinds become the peek's card; every other kind is ignored, never refused. The foreground row is never attached a second time: it uses the foreground's own paths. All peek work runs on one worker task that owns the peek, so effects keep their order and the app loop never waits.
+
+**Rationale.** Replying, answering and stopping need an attachment (`Only attached viewers can reply or answer` in `LEARNINGS.md`); the foreground link must keep only the foreground's events, and the fleet link must stay free of attachments. An error answer on a secondary viewer would skip a request for every window (`Never refuse a server request on a secondary connection`). This makes two exceptions to draft decision 0007: point 2 (a third connection while the overlay has a peek open) and point 3 (ignoring, not refusing, the requests the peek cannot show).
+
+**Rejected alternatives.** Tracking a same-profile peek on the foreground link (needs the app loop to route events by session). Attaching through the fleet link (it would then receive the session's events and requests and break its read-only rule). Declaring `server_requests: false` on the peek link (the canonical gateway writes requests to every attached transport regardless).
+
+**Operator decisions.** Issue #240's question 1 asks the operator to accept this third connection and the ignore rule; it is open as of this entry, and the design above is the specification's, not an operator's choice.
+
+**Revisit when** the foreground link can route events by session, Hermes honours `omit_messages` on attach, or the operator answers question 1 differently.
+
 ### The fleet registry reads instead of attaching
 
 **Decision.** The fleet registry (issue #239) learns about sessions nobody in this Talaria is attached to only through reads with no side effect on a live session: `session.list` (membership and labels), `session.active_list` (liveness), `approval.pending` (what a waiting session asks) and `session.events.since` (how a turn that just ended finished). Sessions this Talaria is attached to (today the foreground session) are reported by their owner as a `SubscribedView` built from its `SessionState`. Two architecture rules are adapted for unattached sessions: a `snapshot_required` reply means the outcome is `Unknown`, never a `session.resume`; replies from a replaced connection are still dropped, by link generation, in the service.

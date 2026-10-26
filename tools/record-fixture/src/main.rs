@@ -16,10 +16,9 @@ use hermes_client::{
 };
 use record_fixture::{
     AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, FLEET_PEEK, FLEET_REGISTRY,
-    NO_TODO_TOOL, Preflight,
-    PreflightInput, SCENARIOS, SCRIPTED_SCENARIOS, SESSION_PICKER, Scenario, ScratchDir,
-    build_scenario_substitutions, check_evidence, never_ensure, preflight, run_scenario,
-    scrub_recording, turn_status,
+    NO_TODO_TOOL, Preflight, PreflightInput, SCENARIOS, SCRIPTED_SCENARIOS, SESSION_PICKER,
+    Scenario, ScratchDir, build_scenario_substitutions, check_evidence, never_ensure, preflight,
+    run_scenario, scrub_recording, turn_status,
 };
 
 #[derive(Parser)]

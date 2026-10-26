@@ -2,6 +2,39 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — Only attached viewers can reply or answer
+
+**Evidence.** Hermes v0.22.4 `gateway/session_controls.py` lines 747 to 767: `prompt.submit` refuses `permission_denied` when the session is not attached on the calling connection; `approval.respond` and `clarify.respond` refuse callers that are not subscribers (`gateway/session_authority.py` lines 986 to 998). `session.interrupt` needs no attachment but needs the current `execution_generation`, which only the resume snapshot and the session's events carry (lines 861 to 888). The fleet view's peek (issue #240, `crates/talaria-app/src/peek.rs`) therefore attaches with `session.resume` before any reply, answer or stop; live tests 44 to 46 replied, denied an approval and stopped a turn this way on the pinned gateway.
+
+**Mechanism.** Hermes ties writing to a session to being one of its viewers. The fleet registry stays read-only (it never attaches), so acting on a session is a separate, explicit attach that costs the whole history.
+
+**Generalizable rule.** Attach with `session.resume` before replying, answering or stopping a background session; never attach from a list or a cursor move.
+
+## 2026-10-26 — Never refuse a server request on a secondary connection
+
+**Evidence.** Hermes v0.22.4 `gateway/session_server_requests.py` lines 1 to 10, 67 to 93 and 134 to 175: a server request is written to every transport attached to the session, the first answer settles it for every viewer, and an `error` answer settles it as an empty value the agent reads as a skip. The canonical owner writes requests whatever a connection declared in `client.capabilities` (the capability check exists only in the legacy `tui_gateway`). The peek link ignores every kind it cannot show (`Responder::ignore`, which writes nothing) and shows only the masked kinds; `crates/talaria-app/tests/peek_wire.rs::peek_link_never_refuses_server_requests` sends `theme.pick`, a batch `clarify` and `approval` and sees no answer frame.
+
+**Mechanism.** On a connection that is not the session's main viewer, a refusal is not a local "not supported": it is an answer, and it wins for everyone. A request that nobody answers waits for its own timeout (120 s for `sudo` and `secret`).
+
+**Generalizable rule.** On any connection that is not the session's main viewer, ignore server requests you cannot show; an error answer skips them for everyone, and declaring no server requests does not stop them arriving.
+
+## 2026-10-26 — Queued prompts after a stop
+
+**Evidence.** Hermes v0.22.4 `gateway/session_authority.py` lines 861 to 888 (interrupt), 1178 to 1215 (the drain loop) and 1103 to 1125 (claim): `session.interrupt` checks the generation, hard-cancels the running agent and ends its delegations, and the drain loop then claims the next queued admission. Live test 46 (`crates/talaria-app/tests/live_fleet_view.rs::live_stop_from_fleet`) queued `Reply with the single word: after-stop` behind `sleep 60 && echo too-late`, stopped the turn, saw it end `interrupted` and printed `QUEUED_AFTER_STOP: started`.
+
+**Mechanism.** The admission queue is the session's, not the turn's; only the messaging `/stop` path cancels queued rows.
+
+**Generalizable rule.** `session.interrupt` stops one turn, not the queue: say so wherever a stop is confirmed.
+
+## 2026-10-26 — Dropping a link's event receiver ends the link
+
+**Evidence.** The first fleet view wire runs failed with replies reported as `connection dropped`. The peek worker took the peek link's event receiver once per job, and the second take swapped in an empty channel and dropped the real receiver; `fleet_view_flow.rs` failed the same way when a test helper returned the link but not its receiver. Taking the receiver once per link (`PeekService::take_events`) and keeping it alive fixed both.
+
+**Mechanism.** `hermes_client::liveness::Link` emits every event to its channel; when the receiver is gone the link task stops and the client's calls end as unknown outcomes.
+
+**Generalizable rule.** Keep a link's event receiver alive for as long as the link is used, even when nothing reads its events.
+
+
 ## 2026-10-26 — Hermes signals session changes, not session liveness
 
 **Evidence.** Hermes v0.22.4 `tui_gateway/change_watcher.py` lines 189 to 197 and 378 to 428: `sessions.changed` is a digest of the session table, checked every 0.5 s and broadcast at most once per 2 s, and it leaves out activity heartbeats ("Liveness comes from session.active_list"). An approval opening changes no session row, so it never moves the digest. Hermes Desktop polls `session.active_list` every 1.5 s without change events and every 30 s with them (`apps/desktop/src/app/contrib/hooks/use-background-sync.ts` lines 683 to 698). The fleet registry (issue #239, `crates/talaria-app/src/fleet/service.rs`) polls liveness every 2 s for profiles with a waiting or working session and every 4 s, spread, for the others; live test 50 measured needs-you latencies of 525 ms, 720 ms and 659 ms (95th percentile 720 ms) against the 5 s budget.
