@@ -3983,6 +3983,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     .ledger
                     .fences_mut(&session_id)
                     .observe(&session_id, &type_name, &payload);
+                state
+                    .context
+                    .observe(&session_id, &type_name, &payload, state.now_ms);
                 if type_name == "session.info"
                     && let Some(cwd) = payload.get("cwd").and_then(Value::as_str)
                 {

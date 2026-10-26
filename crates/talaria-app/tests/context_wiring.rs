@@ -18,6 +18,70 @@ use talaria_core::context::usage::UsageReport;
 use talaria_core::mutation::{MutationLedger, MutationOutcome, MutationRequest};
 use talaria_core::session::Usage;
 
+#[test]
+fn live_usage_restores_context_reading_after_compaction() {
+    use hermes_client::channel::Generation;
+    use hermes_client::liveness::LinkEvent;
+    use hermes_client::{Inbound, InboundEvent};
+    use hermes_contract::events::EventFrame;
+    use talaria_app::app::{AppMessage, AppState, update};
+    use talaria_app::sessions::OpenedSession;
+    use talaria_core::context::compact::CompactEnd;
+
+    for kind in ["session.usage", "message.complete"] {
+        let snapshot = serde_json::from_value(mock_gateway::recorded_resume_snapshot())
+            .expect("a contract-shaped snapshot");
+        let mut state = AppState::new("context-test");
+        update(
+            &mut state,
+            AppMessage::Opened {
+                opened: OpenedSession::from_snapshot(snapshot),
+                notice: None,
+            },
+        );
+        let opened = state.opened.as_ref().expect("session opened");
+        let session_id = opened.session_id.clone();
+        let raw = json!({
+            "session_id": session_id,
+            "replay_epoch": opened.cursor.replay_epoch,
+            "seq": opened.cursor.last_sequence + 1,
+            "type": kind,
+            "payload": {"usage": {"context_percent": 23}},
+        });
+        state.context.begin_compact(&session_id, 100).unwrap();
+        state
+            .context
+            .finish_compact(&session_id, CompactEnd::Committed { revision: 14 });
+        assert!(state.context.context_hidden(&session_id));
+        assert!(state.view().context_hidden);
+
+        update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(InboundEvent {
+                    generation: Generation(1),
+                    frame: EventFrame::from_params(&raw).expect("a contract-shaped event"),
+                    raw,
+                }),
+                replayed: false,
+            }),
+        );
+
+        assert!(!state.context.context_hidden(&session_id), "{kind}");
+        let view = state.view();
+        assert!(
+            !view.context_hidden,
+            "the status bar can show context again"
+        );
+        assert_eq!(
+            view.state
+                .and_then(|session| session.usage().context_percent),
+            Some(23.0),
+            "the status bar receives the fresh reading for {kind}",
+        );
+    }
+}
+
 fn short_timeouts() -> ContextTimeouts {
     ContextTimeouts {
         breakdown: Duration::from_millis(200),

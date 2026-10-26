@@ -5236,3 +5236,18 @@ instead, so a single run can fail on wording the spec fixes.
 **Generalizable rule.** A live suite's first runs are a survey: measure each step, treat every
 stop as a finding for its owner, never as a limit to relax, and tell a model's miss apart from the
 client's screen before calling a run red.
+
+## 2026-10-26 — Live inbound events must refresh context visibility
+
+**Evidence.** The `context_wiring` regression sends both `session.usage` and
+`message.complete` through the application's live inbound handler after committed
+compaction. Each event clears the hidden-context flag and supplies a fresh context
+percentage to the status view.
+
+**Mechanism.** The live handler applies inbound frames directly rather than using
+the local event reducer. Observing context only in that reducer left the tracker
+stale after compaction, even when the session reducer received fresh usage. The
+live handler now observes the accepted event alongside its session fences.
+
+**Generalizable rule.** Test state observers through the production ingress path,
+including the view inputs they control.
