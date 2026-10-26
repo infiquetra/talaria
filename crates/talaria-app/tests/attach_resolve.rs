@@ -370,12 +370,12 @@ fn candidate_lines_layout() {
     assert_eq!(lines.len(), 11, "ten rows and the overflow line: {text:?}");
     assert_eq!(
         lines[0],
-        "  fixture  local-1a2b3c4…  \"attach probe\"  live  running  1m"
+        "  fixture  local-1a2b3c4d…  \"attach probe\"  live  running  1m"
     );
     assert_eq!(lines[1], "  default  local-abcdef12…  (untitled)  live  1h");
     assert_eq!(
         lines[2],
-        "  fixture  20250101_1200…  \"0123456789012345678901234567890123456789…\"  earlier  —"
+        "  fixture  20250101_12000…  \"0123456789012345678901234567890123456789…\"  earlier  —"
     );
     assert_eq!(lines[10], "  …and 2 more");
 }
