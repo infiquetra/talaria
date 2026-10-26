@@ -15,7 +15,8 @@ use hermes_client::{
     mint_ticket, scan_for_secrets, scan_literals, ws_url,
 };
 use record_fixture::{
-    AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, FLEET_REGISTRY, NO_TODO_TOOL, Preflight,
+    AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, FLEET_PEEK, FLEET_REGISTRY,
+    NO_TODO_TOOL, Preflight,
     PreflightInput, SCENARIOS, SCRIPTED_SCENARIOS, SESSION_PICKER, Scenario, ScratchDir,
     build_scenario_substitutions, check_evidence, never_ensure, preflight, run_scenario,
     scrub_recording, turn_status,
@@ -152,6 +153,7 @@ async fn record(settings: &RecordSettings) -> Outcome {
                 let mut known = SCENARIOS.to_vec();
                 known.push(SESSION_PICKER);
                 known.push(FLEET_REGISTRY);
+                known.push(FLEET_PEEK);
                 known.extend_from_slice(&SCRIPTED_SCENARIOS);
                 eprintln!(
                     "unknown scenario {name}; the scenarios are: {}",
@@ -403,6 +405,7 @@ impl Attempt<'_> {
             provider: self.settings.provider.clone(),
             scratch: self.scratch.path().to_path_buf(),
             second: self.scratch.second().map(Path::to_path_buf),
+            home: self.settings.home.clone(),
             attempt_timeout: self.settings.attempt_timeout,
         };
         let result = run_scenario(&client, &mut inbound, self.scenario, &config).await;

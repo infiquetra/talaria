@@ -37,6 +37,7 @@ use talaria_core::context::usage::UsageReport;
 use talaria_core::directory::export::ExportFormat;
 use talaria_core::directory::rows::RowKey;
 use talaria_core::directory::state::{PickerEffect, PickerInput, PickerState};
+use talaria_core::fleet_view::FleetViewState;
 use talaria_core::models::{
     ConfirmKey, ModelCommandOrEffort, ModelsEffect, ModelsInput, ModelsState, NoticeLevel,
     PickerKey, PickerView, SavedModels, parse_effort_command, parse_model_command,
@@ -294,6 +295,8 @@ pub struct View<'a> {
     pub folder: Option<&'a SessionFolder>,
     /// The session picker's state, while the overlay is open.
     pub picker: Option<&'a PickerState>,
+    /// The fleet overlay, while it is open.
+    pub fleet: Option<&'a FleetViewState>,
 }
 
 impl View<'_> {
@@ -448,6 +451,10 @@ pub struct AppState {
     pub session_gone: bool,
     /// The profile the resume hint names.
     pub profile: String,
+    /// When false, `/fleet` shows a notice and opens nothing.
+    pub fleet_enabled: bool,
+    /// The fleet overlay, while `/fleet` has it open. The stub leaves this empty.
+    pub fleet: Option<FleetViewState>,
     pub link_state: LinkView,
     /// An interrupt sequence is in flight; further presses send nothing.
     pub interrupting: bool,
@@ -611,6 +618,8 @@ impl AppState {
             link_failed: false,
             session_gone: false,
             profile: "default".to_string(),
+            fleet_enabled: true,
+            fleet: None,
             link_state: LinkView::Connecting,
             interrupting: false,
             list_title: None,
@@ -730,6 +739,7 @@ impl AppState {
             automation: &self.automation,
             automation_now_ms: wall_clock_ms(),
             picker: self.picker.as_ref(),
+            fleet: self.fleet.as_ref(),
         }
     }
 
@@ -754,6 +764,7 @@ impl AppState {
         copy.service = self.service.clone();
         copy.opened = self.opened.clone();
         copy.profile = self.profile.clone();
+        copy.fleet_enabled = self.fleet_enabled;
         copy.model = self.model.clone();
         copy.effort = self.effort.clone();
         copy.hermes_home = self.hermes_home.clone();
@@ -1854,6 +1865,9 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Fleet {
+        return Vec::new();
+    }
     if action == LocalAction::Tasks {
         return crate::commands::local_action(action)
             .map_or_else(Vec::new, |action| user_action(state, action));

@@ -21,6 +21,8 @@ pub enum KeyContext {
     SessionPicker,
     /// The picker's export dialog.
     SessionPickerExport,
+    /// The fleet overlay list.
+    Fleet,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -247,6 +249,36 @@ pub enum Action {
     PickerFormatHtml,
     /// Switch secret redaction for the export, in the export dialog.
     PickerToggleRedact,
+    /// Open the fleet overlay from the composer. Unbound until the operator binds it.
+    FleetViewOpen,
+    /// Move the fleet cursor up.
+    FleetUp,
+    /// Move the fleet cursor down.
+    FleetDown,
+    /// Move the fleet cursor up by a page.
+    FleetPageUp,
+    /// Move the fleet cursor down by a page.
+    FleetPageDown,
+    /// Move the fleet cursor to the first row.
+    FleetTop,
+    /// Move the fleet cursor to the last row.
+    FleetBottom,
+    /// Open the fleet row as the foreground session.
+    FleetOpen,
+    /// Toggle the peek panel for the fleet row.
+    FleetPeek,
+    /// Reply to the fleet row's session.
+    FleetReply,
+    /// Stop the fleet row's running turn, after a confirmation.
+    FleetStop,
+    /// Answer the open card in the peek.
+    FleetAnswer,
+    /// Edit the fleet text filter.
+    FleetFilter,
+    /// The next fleet profile filter.
+    FleetProfileNext,
+    /// The previous fleet profile filter.
+    FleetProfilePrev,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -278,7 +310,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 75] = [
+    pub const ALL: [Self; 90] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -354,6 +386,21 @@ impl Action {
         Self::PickerFormatJson,
         Self::PickerFormatHtml,
         Self::PickerToggleRedact,
+        Self::FleetViewOpen,
+        Self::FleetUp,
+        Self::FleetDown,
+        Self::FleetPageUp,
+        Self::FleetPageDown,
+        Self::FleetTop,
+        Self::FleetBottom,
+        Self::FleetOpen,
+        Self::FleetPeek,
+        Self::FleetReply,
+        Self::FleetStop,
+        Self::FleetAnswer,
+        Self::FleetFilter,
+        Self::FleetProfileNext,
+        Self::FleetProfilePrev,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -435,6 +482,21 @@ impl Action {
             Self::PickerFormatJson => "picker_format_json",
             Self::PickerFormatHtml => "picker_format_html",
             Self::PickerToggleRedact => "picker_toggle_redact",
+            Self::FleetViewOpen => "fleet_view_open",
+            Self::FleetUp => "fleet_up",
+            Self::FleetDown => "fleet_down",
+            Self::FleetPageUp => "fleet_page_up",
+            Self::FleetPageDown => "fleet_page_down",
+            Self::FleetTop => "fleet_top",
+            Self::FleetBottom => "fleet_bottom",
+            Self::FleetOpen => "fleet_open",
+            Self::FleetPeek => "fleet_peek",
+            Self::FleetReply => "fleet_reply",
+            Self::FleetStop => "fleet_stop",
+            Self::FleetAnswer => "fleet_answer",
+            Self::FleetFilter => "fleet_filter",
+            Self::FleetProfileNext => "fleet_profile_next",
+            Self::FleetProfilePrev => "fleet_profile_prev",
         }
     }
 
@@ -525,6 +587,21 @@ impl Action {
             | Self::PickerProfilePrev
             | Self::PickerRefresh
             | Self::PickerClose => KeyContext::SessionPicker,
+            Self::FleetViewOpen => KeyContext::Composer,
+            Self::FleetUp
+            | Self::FleetDown
+            | Self::FleetPageUp
+            | Self::FleetPageDown
+            | Self::FleetTop
+            | Self::FleetBottom
+            | Self::FleetOpen
+            | Self::FleetPeek
+            | Self::FleetReply
+            | Self::FleetStop
+            | Self::FleetAnswer
+            | Self::FleetFilter
+            | Self::FleetProfileNext
+            | Self::FleetProfilePrev => KeyContext::Fleet,
         }
     }
 
@@ -613,6 +690,21 @@ impl Action {
             Self::PickerFormatJson => &["j"],
             Self::PickerFormatHtml => &["h"],
             Self::PickerToggleRedact => &["x"],
+            Self::FleetViewOpen => &[],
+            Self::FleetUp => &["up", "k"],
+            Self::FleetDown => &["down", "j"],
+            Self::FleetPageUp => &["pageup"],
+            Self::FleetPageDown => &["pagedown"],
+            Self::FleetTop => &["home", "g"],
+            Self::FleetBottom => &["end", "shift+g"],
+            Self::FleetOpen => &["enter"],
+            Self::FleetPeek => &["space"],
+            Self::FleetReply => &["r"],
+            Self::FleetStop => &["x"],
+            Self::FleetAnswer => &["a"],
+            Self::FleetFilter => &["/"],
+            Self::FleetProfileNext => &["tab"],
+            Self::FleetProfilePrev => &["shift+tab"],
         }
     }
 }
@@ -808,7 +900,7 @@ impl KeyChord {
         // Esc and Ctrl+C close the session picker, so no picker action may take them.
         if matches!(
             context,
-            KeyContext::SessionPicker | KeyContext::SessionPickerExport
+            KeyContext::SessionPicker | KeyContext::SessionPickerExport | KeyContext::Fleet
         ) && (chord.code == KeyCode::Esc || (chord.code == KeyCode::Char('c') && chord.ctrl))
         {
             return Err(FIXED_KEY_REASON.to_string());
@@ -1325,7 +1417,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 75);
+        assert_eq!(Action::ALL.len(), 90);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1373,6 +1465,20 @@ mod tests {
                 | Action::PickerProfilePrev
                 | Action::PickerRefresh
                 | Action::PickerClose => KeyContext::SessionPicker,
+                Action::FleetUp
+                | Action::FleetDown
+                | Action::FleetPageUp
+                | Action::FleetPageDown
+                | Action::FleetTop
+                | Action::FleetBottom
+                | Action::FleetOpen
+                | Action::FleetPeek
+                | Action::FleetReply
+                | Action::FleetStop
+                | Action::FleetAnswer
+                | Action::FleetFilter
+                | Action::FleetProfileNext
+                | Action::FleetProfilePrev => KeyContext::Fleet,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), wanted);
@@ -1424,6 +1530,20 @@ mod tests {
                 | Action::PickerProfilePrev
                 | Action::PickerRefresh
                 | Action::PickerClose => KeyContext::SessionPicker,
+                Action::FleetUp
+                | Action::FleetDown
+                | Action::FleetPageUp
+                | Action::FleetPageDown
+                | Action::FleetTop
+                | Action::FleetBottom
+                | Action::FleetOpen
+                | Action::FleetPeek
+                | Action::FleetReply
+                | Action::FleetStop
+                | Action::FleetAnswer
+                | Action::FleetFilter
+                | Action::FleetProfileNext
+                | Action::FleetProfilePrev => KeyContext::Fleet,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), context, "{name}");
@@ -1657,7 +1777,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 75);
+        assert_eq!(Action::ALL.len(), 90);
     }
 
     #[test]

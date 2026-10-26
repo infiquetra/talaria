@@ -39,6 +39,7 @@ fn driver_config(scratch: &Path, attempt_timeout: Duration) -> DriverConfig {
         provider: PROVIDER.to_owned(),
         scratch: scratch.to_path_buf(),
         second: None,
+        home: scratch.to_path_buf(),
         attempt_timeout,
     }
 }

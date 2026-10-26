@@ -6,6 +6,7 @@ pub mod comfort_route;
 pub mod composer;
 pub mod context_view;
 pub mod diff_view;
+pub mod fleet_view;
 pub mod history;
 pub mod history_search;
 pub mod keys;

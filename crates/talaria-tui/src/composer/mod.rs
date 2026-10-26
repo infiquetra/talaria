@@ -602,7 +602,22 @@ impl Composer {
             | Action::PickerFormatMarkdown
             | Action::PickerFormatJson
             | Action::PickerFormatHtml
-            | Action::PickerToggleRedact => {}
+            | Action::PickerToggleRedact
+            | Action::FleetViewOpen
+            | Action::FleetUp
+            | Action::FleetDown
+            | Action::FleetPageUp
+            | Action::FleetPageDown
+            | Action::FleetTop
+            | Action::FleetBottom
+            | Action::FleetOpen
+            | Action::FleetPeek
+            | Action::FleetReply
+            | Action::FleetStop
+            | Action::FleetAnswer
+            | Action::FleetFilter
+            | Action::FleetProfileNext
+            | Action::FleetProfilePrev => {}
         }
         false
     }

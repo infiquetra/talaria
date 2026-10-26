@@ -54,5 +54,9 @@ harness = false
 name = "session_picker"
 harness = false
 
+[[bench]]
+name = "fleet_view"
+harness = false
+
 [lints]
 workspace = true

@@ -119,6 +119,21 @@ fn expected(action: Action) -> Vec<String> {
         Action::PickerFormatJson => &["J"],
         Action::PickerFormatHtml => &["H"],
         Action::PickerToggleRedact => &["X"],
+        Action::FleetViewOpen => &[],
+        Action::FleetUp => &["Up", "K"],
+        Action::FleetDown => &["Down", "J"],
+        Action::FleetPageUp => &["PageUp"],
+        Action::FleetPageDown => &["PageDown"],
+        Action::FleetTop => &["Home", "G"],
+        Action::FleetBottom => &["End", "Shift+G"],
+        Action::FleetOpen => &["Enter"],
+        Action::FleetPeek => &["Space"],
+        Action::FleetReply => &["R"],
+        Action::FleetStop => &["X"],
+        Action::FleetAnswer => &["A"],
+        Action::FleetFilter => &["/"],
+        Action::FleetProfileNext => &["Tab"],
+        Action::FleetProfilePrev => &["Shift+Tab"],
     };
     labels.iter().map(|label| (*label).to_string()).collect()
 }
