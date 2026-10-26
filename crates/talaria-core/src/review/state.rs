@@ -935,8 +935,9 @@ impl ReviewState {
     /// listing only knows the count ahead of the upstream.
     fn pr_plan(&self) -> Result<(String, String), ShipRefusal> {
         let listing = self.listing().ok_or(ShipRefusal::DefaultUnknown)?;
-        let base = self
-            .base_name()
+        let configured_base = self.base_name();
+        can_push(listing, self.scope, configured_base.as_deref())?;
+        let base = configured_base
             .or_else(|| listing.default_branch.clone())
             .ok_or(ShipRefusal::DefaultUnknown)?;
         let gh = self.gh.clone().unwrap_or(GhReady::Ready {
@@ -1193,8 +1194,8 @@ impl ReviewState {
                     format!("Commit {} on {branch}", counted(staged, "staged file"))
                 } else {
                     format!(
-                        "Nothing is staged: this commit will include all {} on {branch}.",
-                        counted(listing.total.max(listing.files.len()), "changed file")
+                        "Nothing is staged: this commit will include all {} changed files on {branch}.",
+                        listing.total.max(listing.files.len())
                     )
                 }
             }
