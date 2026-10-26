@@ -1160,10 +1160,10 @@ impl TuiScreen {
                 actions.push(UserAction::Subagent(SubagentAction::CloseTail));
             }
             actions.push(UserAction::SubagentNextSession);
-        } else if let Some(action) = mode_action {
-            if let Some(control) = panel.handle(action, tree) {
-                actions.push(UserAction::Subagent(control));
-            }
+        } else if let Some(action) = mode_action
+            && let Some(control) = panel.handle(action, tree)
+        {
+            actions.push(UserAction::Subagent(control));
         }
         let mut answered_pause = false;
         if let Some(control) = panel.take_pending_action() {
