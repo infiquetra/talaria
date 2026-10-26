@@ -17,6 +17,7 @@ use smoke::scrub::Scrubber;
 use smoke::steps::run_smoke;
 use smoke::steps2a::{run_smoke_2a, scratch_for};
 use smoke::steps2b::run_smoke_2b;
+use smoke::steps3::{run_smoke_3, shell_lines};
 use smoke::suite::Suite;
 use smoke::terminal::{HerdrCli, Terminal};
 use smoke::tmux::{Paster, TmuxCli};
@@ -51,7 +52,8 @@ struct Cli {
     /// The provider the model comes from.
     #[arg(long, global = true, default_value = "ollama-cloud")]
     provider: String,
-    /// The whole run, in seconds [default: 300 for phase1, 1800 for phase2a, 1500 for phase2b].
+    /// The whole run, in seconds [default: 300 for phase1, 1800 for phase2a, 1500 for phase2b,
+    /// 1200 for phase3].
     #[arg(long, global = true)]
     deadline_secs: Option<u64>,
     /// The scale of the per-step limits; the deadline and the quiet periods stay.
@@ -60,7 +62,7 @@ struct Cli {
     /// Where the failure report is written.
     #[arg(long, global = true)]
     report_dir: Option<PathBuf>,
-    /// Which suite runs: phase1, phase2a, or phase2b.
+    /// Which suite runs: phase1, phase2a, phase2b, or phase3.
     #[arg(long, global = true, default_value = "phase1")]
     suite: Suite,
     /// The tmux command line the phase2a suite pastes through.
@@ -107,6 +109,13 @@ fn run(cli: &Cli) -> Result<u8, String> {
         && (cli.model != "minimax-m3.1-flash" || cli.provider != "ollama-cloud")
     {
         return Err("phase2b needs the default provider and model (ollama-cloud, minimax-m3.1-flash): its expected texts name them".to_owned());
+    }
+    if suite == Suite::Phase3
+        && (cli.profile != "fixture"
+            || cli.model != "minimax-m3.1-flash"
+            || cli.provider != "ollama-cloud")
+    {
+        return Err("phase3 needs the default profile, provider and model (fixture, ollama-cloud, minimax-m3.1-flash): its expected texts name them".to_owned());
     }
     if let Some(dir) = &cli.report_dir
         && !dir.is_dir()
@@ -163,7 +172,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
             &temp_root,
         )?;
     }
-    if suite == Suite::Phase2b {
+    if suite == Suite::Phase2b || suite == Suite::Phase3 {
         let root = temp_root.to_string_lossy();
         if root.contains(' ') || root.contains('\'') {
             return Err(scrubber.scrub(&format!(
@@ -187,6 +196,29 @@ fn run(cli: &Cli) -> Result<u8, String> {
         Some(path) => path,
         None => default_talaria(),
     };
+    if suite == Suite::Phase3 {
+        // The run id is not drawn yet; a placeholder of its length gives the same lengths.
+        let absolute = std::path::absolute(&talaria).unwrap_or_else(|_| talaria.clone());
+        let scratch = temp_root.join("talaria-smoke-00000000");
+        let cfg = (
+            cli.profile.as_str(),
+            cli.model.as_str(),
+            cli.provider.as_str(),
+        );
+        let home = hermes_home
+            .as_deref()
+            .filter(|home| !home.is_empty())
+            .map(std::path::Path::new);
+        if shell_lines(&absolute, &scratch, "00000000", cfg, home)
+            .iter()
+            .any(|line| line.chars().count() >= MAX_LAUNCH_LINE)
+        {
+            return Err(
+                "a phase 3 shell line is longer than 600 characters; use a shorter temporary directory or binary path"
+                    .to_owned(),
+            );
+        }
+    }
     let resolved = talaria.canonicalize().ok();
     let binary = match &resolved {
         Some(path) if path.is_file() && is_executable(path) => path.clone(),
@@ -214,8 +246,6 @@ fn run(cli: &Cli) -> Result<u8, String> {
     // The phase 2a run fixes its seed, so its scratch project, and with it the editor script
     // every launch line names, is known before it starts.
     let seed = match cli.suite {
-        // Phase 3 is not parsed yet. The arm keeps the match exhaustive and uses the
-        // first suite's seed rule.
         Suite::Phase1 | Suite::Phase3 => None,
         Suite::Phase2a | Suite::Phase2b => Some(rand::random::<u64>()),
     };
@@ -272,7 +302,12 @@ fn run(cli: &Cli) -> Result<u8, String> {
                 .unwrap_or_else(|| cli.suite.default_deadline_secs()),
         ),
         step_scale: cli.step_scale,
-        report_dir: Some(report_dir.clone()),
+        // Phase 3 keeps its scratch only when --report-dir asks for the captures.
+        report_dir: if suite == Suite::Phase3 {
+            cli.report_dir.clone()
+        } else {
+            Some(report_dir.clone())
+        },
         require: std::env::var("TALARIA_LIVE_REQUIRE").as_deref() == Ok("1"),
         temp_root,
         seed,
@@ -290,8 +325,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
 
     let clock = SystemClock::new();
     let report = match suite {
-        // Phase 3 is not parsed yet, so this arm is not reached from the command line.
-        Suite::Phase1 | Suite::Phase3 => run_smoke(&herdr, &clock, &config, &stop),
+        Suite::Phase1 => run_smoke(&herdr, &clock, &config, &stop),
         Suite::Phase2a => {
             let seed = seed.unwrap_or(0);
             let scratch = scratch_for(&config.temp_root, seed);
@@ -303,6 +337,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
             run_smoke_2a(&herdr, &tmux, &clock, &config, &cfg2, &stop)
         }
         Suite::Phase2b => run_smoke_2b(&herdr, &clock, &config, &stop),
+        Suite::Phase3 => run_smoke_3(&herdr, &clock, &config, &stop),
     };
 
     // The scratch project is known now, so the pane text can name it as well.

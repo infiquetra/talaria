@@ -46,6 +46,8 @@ pub struct SmokeReport {
     pub scratch: PathBuf,
     /// The steps in which a submit fallback was sent.
     pub fallback_steps: Vec<&'static str>,
+    /// Notes printed after a step's line, as `(step, text)`.
+    pub notes: Vec<(&'static str, String)>,
 }
 
 impl SmokeReport {
@@ -114,6 +116,9 @@ impl SmokeReport {
             };
             if self.fallback_steps.contains(step) {
                 lines.push(format!("NOTE submit fallback: sent Enter (step {step})"));
+            }
+            for (_, text) in self.notes.iter().filter(|(noted, _)| noted == step) {
+                lines.push(format!("NOTE {text}"));
             }
         }
         lines.join("\n")

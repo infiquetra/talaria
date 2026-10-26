@@ -22,6 +22,9 @@ pub const BG_USAGE_PREFIX: &str = "Usage: /bg <prompt>";
 // #240, the foreground row
 /// The suffix on the foreground row of the fleet view.
 pub const HERE_SUFFIX: &str = " (here)";
+// #240, the title line of the fleet overlay
+/// The start of the fleet overlay's title line, `Fleet · <n> sessions`.
+pub const FLEET_TITLE: &str = "Fleet \u{00b7} ";
 // #240, a filter that matches nothing
 /// The fleet-view line when the filter matches nothing.
 pub const NO_SESSIONS_MATCH: &str = "No sessions match \"zzz-no-match\".";

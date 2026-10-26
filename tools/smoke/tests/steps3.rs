@@ -54,6 +54,14 @@ fn last_call_at(exec: &Exec3, want: impl Fn(&Call) -> bool) -> Duration {
         .expect("the trigger call")
 }
 
+/// The first `pane run` holding `needle`: the start of a poll that runs one line many times.
+fn first_run_at(exec: &Exec3, needle: &str) -> Duration {
+    run_times(exec, needle)
+        .first()
+        .copied()
+        .expect("the trigger call")
+}
+
 fn last_run_at(exec: &Exec3, needle: &str) -> Duration {
     last_call_at(
         exec,
@@ -396,7 +404,7 @@ fn fleet_list_never_done_fails() {
         Step::FleetList,
         "fleet-list",
         NEVER_DONE,
-        |exec| last_run_at(exec, "f.json"),
+        |exec| first_run_at(exec, "f.json"),
         120,
     );
 }

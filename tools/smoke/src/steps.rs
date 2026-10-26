@@ -243,6 +243,7 @@ pub fn run_smoke(
                 tab: None,
                 scratch: scratch.clone(),
                 fallback_steps: Vec::new(),
+                notes: Vec::new(),
             };
         }
     };
@@ -332,6 +333,7 @@ pub fn run_smoke(
         tab: Some(tab.tab),
         scratch,
         fallback_steps: run.fallback_steps,
+        notes: Vec::new(),
     }
 }
 

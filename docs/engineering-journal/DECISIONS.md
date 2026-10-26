@@ -4,6 +4,16 @@
 
 ## 2026-10-26
 
+### The phase 3 smoke suite answers only the approval it provoked, and only by denying it
+
+**Decision.** The `needs-you` step of `smoke run --suite phase3` (issue #248) launches one background prompt that asks for `rm -rf ./talaria-smoke-probe` inside the scratch `probe` folder, waits for the fleet to list the request, starts Talaria, opens the fleet view with `alt+a` and types only the digit that the card shows beside `deny`. It never approves, never answers another session's request, and never sends the auto-approve flag, `/permissions` or `/yolo`.
+
+**Rationale.** Denying is the one answer that changes nothing outside the scratch folder, and the probe folder that must still exist afterwards proves the command did not run. A request the step leaves behind is denied by Hermes after 300 s.
+
+**Rejected alternatives.** Approving the probe (it would delete a folder on an operator's say-so that the suite gave itself); answering whatever request is first in the queue (it could belong to real work); skipping the answer (the waiting request would block the next run's `fleet-quiet`).
+
+**Revisit when.** Hermes offers a per-request approval id the suite could aim at, or the suite needs to prove an approval path.
+
 ### The review is local git and gh, behind fixed names and guards
 
 **Decision.** The review of a session's folder (issue #245) opens with `v` in the fleet view and `/changes` in the foreground, because Hermes owns `/review` and `/diff`. It offers two scopes: uncommitted changes, where every action works, and the branch's commits, which are read-only for every action, push and pull request included. Discard works on one file after a second keypress; there is no discard-all. Pull requests are always drafts, pushed with an explicit `origin refs/heads/<b>:refs/heads/<b>` refspec, never forced, never from a detached head, the default branch (`main` and `master` always count) or the base, and never when the default branch is unknown. Commit hooks and clean, smudge and process filters run with the operator's configuration (diff drivers and `core.fsmonitor` are disabled); hooks, filters and `gh` are exempt from the allow-listed environment rule and get the process environment plus fixed keys.

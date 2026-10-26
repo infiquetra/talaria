@@ -45,8 +45,7 @@
 //!
 //! * `then`: a list of further stages. The fields of the rule itself are the first stage; each
 //!   entry of `then` has `after_polls`, `append`, `churn_polls`, `foreground`, `remove_in_cwd`,
-//!   `write_in_scratch`, `remove_in_scratch`, `clear` and the fields below, and counts its reads
-//!   from the moment the rule fired.
+//!   `clear` and the fields below, and counts its reads from the moment the rule fired.
 //! * `churn_line`, `churn_start`, `churn_step`: the text of a churn line, with `{n}` replaced by
 //!   `churn_start + churn_step * (index)`. The default line is `working... {n}`; a counting
 //!   script uses `{n}` alone so every read shows one more number.

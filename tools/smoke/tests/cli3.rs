@@ -7,6 +7,7 @@
 mod support;
 
 use smoke::Suite;
+use support::scripts3::{FleetQuiet, Shapes, Step, script_3};
 use support::{Harness, Outcome, Startup};
 
 fn explain(outcome: &Outcome) -> String {
@@ -23,6 +24,15 @@ fn everything(outcome: &Outcome) -> String {
 /// A run that ends at the first step: the binary exits with code 1 at once.
 fn quick_failure() -> Harness {
     Harness::from_scenario(&support::Scenario::happy().startup(Startup::ExitsWith(7)))
+}
+
+/// A phase 3 run that ends at its first step, `fleet-quiet`: `talaria fleet list` exits 7.
+fn quick_failure_3() -> Harness {
+    let shapes = Shapes {
+        fleet_quiet: FleetQuiet::Exit(7),
+        ..Default::default()
+    };
+    Harness::new(&script_3(&shapes, Step::FleetQuiet))
 }
 
 const PHASE3_PROFILE_SENTENCE: &str = "phase3 needs the default profile, provider and model (fixture, ollama-cloud, minimax-m3.1-flash): its expected texts name them";
@@ -44,10 +54,12 @@ fn help_lists_the_four_suites() {
 
 #[test]
 fn phase3_is_accepted() {
-    let outcome = quick_failure().cmd().arg("--suite").arg("phase3").run();
+    let outcome = quick_failure_3().cmd().arg("--suite").arg("phase3").run();
     assert_eq!(outcome.code, Some(1), "{}", explain(&outcome));
     assert!(
-        outcome.stdout.contains("SMOKE_RESULT: FAILED (startup)"),
+        outcome
+            .stdout
+            .contains("SMOKE_RESULT: FAILED (fleet-quiet)"),
         "phase3 runs and stops at the first step: {}",
         explain(&outcome)
     );
@@ -97,15 +109,17 @@ fn phase3_exit_codes() {
         explain(&outcome)
     );
 
-    let outcome = quick_failure().cmd().arg("--suite").arg("phase3").run();
+    let outcome = quick_failure_3().cmd().arg("--suite").arg("phase3").run();
     assert_eq!(outcome.code, Some(1), "{}", explain(&outcome));
     assert!(
-        outcome.stdout.contains("SMOKE_RESULT: FAILED (startup)"),
+        outcome
+            .stdout
+            .contains("SMOKE_RESULT: FAILED (fleet-quiet)"),
         "a failing step exits 1: {}",
         explain(&outcome)
     );
 
-    let outcome = quick_failure()
+    let outcome = quick_failure_3()
         .cmd()
         .arg("--suite")
         .arg("phase3")
@@ -149,10 +163,12 @@ fn phase3_with_another_profile_model_or_provider_exits_2() {
 
 #[test]
 fn phase3_needs_no_tmux() {
-    let outcome = quick_failure().cmd().arg("--suite").arg("phase3").run();
+    let outcome = quick_failure_3().cmd().arg("--suite").arg("phase3").run();
     assert_eq!(outcome.code, Some(1), "{}", explain(&outcome));
     assert!(
-        outcome.stdout.contains("SMOKE_RESULT: FAILED (startup)"),
+        outcome
+            .stdout
+            .contains("SMOKE_RESULT: FAILED (fleet-quiet)"),
         "no tmux preflight stops the run: {}",
         explain(&outcome)
     );

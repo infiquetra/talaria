@@ -124,6 +124,7 @@ pub fn run_smoke_2b(
         tab: None,
         scratch: scratch.clone(),
         fallback_steps: Vec::new(),
+        notes: Vec::new(),
     };
     let _scratch = match make_scratch(&scratch) {
         Ok(guard) => guard,
