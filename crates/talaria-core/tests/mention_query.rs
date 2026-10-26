@@ -56,7 +56,7 @@ fn filters_profile_items() {
         "@hermes",
         "@file:a.py",
         "@diff",
-        "@jira:ABC-1",
+        "@jira:XYZ-1",
         "@staged",
         "@other",
     ]
@@ -72,7 +72,7 @@ fn filters_profile_items() {
         vec![
             "@file:a.py".to_string(),
             "@diff".to_string(),
-            "@jira:ABC-1".to_string(),
+            "@jira:XYZ-1".to_string(),
             "@staged".to_string(),
         ]
     );

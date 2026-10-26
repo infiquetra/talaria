@@ -514,9 +514,9 @@ fn growing_live_region_leaves_no_stale_rows() {
     let mut vt = Vt::new(COLS, ROWS);
     vt.feed(&rig.setup);
 
-    rig.draw_into(&mut vt, &texts(&["OLD-1", "OLD-2"]));
+    rig.draw_into(&mut vt, &texts(&["PREVIOUS-1", "PREVIOUS-2"]));
     assert_eq!(rig.term.viewport(), Rect::new(0, 22, COLS, 2));
-    assert_eq!(vt.rows(), screen_of(22, &["OLD-1", "OLD-2"]));
+    assert_eq!(vt.rows(), screen_of(22, &["PREVIOUS-1", "PREVIOUS-2"]));
 
     rig.draw_into(&mut vt, &texts(&["\n\nNEW-3\nNEW-4"]));
     assert_eq!(rig.term.viewport(), Rect::new(0, 20, COLS, 4));
