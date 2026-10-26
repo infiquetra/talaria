@@ -156,6 +156,7 @@ async fn first_frame_precedes_any_call() {
             driver.submit("/resume");
             *inside.lock().expect("the stamp is open") = (draws_before, std::time::Instant::now());
             drive::eventually("a draw after /resume", || driver.draws() > draws_before).await;
+            settle_short().await;
             driver.quit();
             driver.finished().await;
         })
