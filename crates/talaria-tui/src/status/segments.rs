@@ -2,6 +2,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use talaria_core::review::{LabelTone, PrLabel};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{Connection, RunMode, StatusPalette, Tone, TurnState};
@@ -86,6 +87,8 @@ pub struct StatusInputs {
     pub usage_tokens: Option<TokenUsage>,
     /// The approvals segment, when the permissions state shows one (#237).
     pub approvals: Option<ApprovalsSegment>,
+    /// The foreground folder's pull-request label, when its branch has one (#245).
+    pub pull_request: Option<PrLabel>,
 }
 
 /// The approvals segment text and tone, handed over by the caller.
@@ -131,11 +134,13 @@ pub enum Segment {
     Failed,
     /// Background rows whose turn is done.
     Done,
+    /// The foreground folder's pull-request label (#245).
+    PullRequest,
 }
 
 impl Segment {
     /// Every segment, from the one dropped last to the one dropped first.
-    pub const ALL: [Segment; 11] = [
+    pub const ALL: [Segment; 12] = [
         Segment::Connection,
         Segment::NeedsYou,
         Segment::Approvals,
@@ -146,10 +151,11 @@ impl Segment {
         Segment::Working,
         Segment::Done,
         Segment::Cost,
+        Segment::PullRequest,
         Segment::External,
     ];
 
-    /// 1 is dropped last, 9 first.
+    /// 1 is dropped last, 12 first.
     pub fn priority(self) -> u8 {
         match self {
             Segment::Connection => 1,
@@ -162,7 +168,8 @@ impl Segment {
             Segment::Working => 8,
             Segment::Done => 9,
             Segment::Cost => 10,
-            Segment::External => 11,
+            Segment::PullRequest => 11,
+            Segment::External => 12,
         }
     }
 
@@ -179,7 +186,8 @@ impl Segment {
             Segment::Failed => 8,
             Segment::Working => 9,
             Segment::Done => 10,
-            Segment::External => 11,
+            Segment::PullRequest => 11,
+            Segment::External => 12,
         }
     }
 }
@@ -236,6 +244,11 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     add(&mut pieces, Segment::Failed, failed_segment(inputs));
     add(&mut pieces, Segment::Working, working_segment(inputs));
     add(&mut pieces, Segment::Done, done_segment(inputs));
+    add(
+        &mut pieces,
+        Segment::PullRequest,
+        pull_request_segment(inputs),
+    );
     add(&mut pieces, Segment::External, external_segment(external));
 
     // One blank column on the left is reserved, so the line never reaches the last column.
@@ -478,6 +491,28 @@ fn done_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
         return None;
     }
     Some((format!("✓ {} done", inputs.done), Tone::Success))
+}
+
+/// The pull-request segment: the foreground folder's label, or nothing (#245).
+fn pull_request_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+    let label = inputs.pull_request.as_ref()?;
+    let text = sanitize(label.text.trim()).into_owned();
+    if text.is_empty() {
+        return None;
+    }
+    Some((text, label_tone(label.tone)))
+}
+
+/// The status-line tone for a pull-request label. The line has no accent tone, so a merged
+/// pull request (`Accent`) draws in the terminal's own foreground.
+fn label_tone(tone: LabelTone) -> Tone {
+    match tone {
+        LabelTone::Success => Tone::Success,
+        LabelTone::Error => Tone::Error,
+        LabelTone::Warning => Tone::Warning,
+        LabelTone::Muted => Tone::Muted,
+        LabelTone::Accent => Tone::Text,
+    }
 }
 
 /// The external segment: the command's own text.

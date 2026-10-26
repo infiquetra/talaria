@@ -90,17 +90,25 @@ impl HerdrCli {
 
     /// Runs the command line and returns its standard output.
     fn call(&self, args: &[&str]) -> Result<String, TermError> {
-        let output =
-            Command::new(&self.executable)
-                .args(args)
-                .output()
-                .map_err(|error| match error.kind() {
-                    ErrorKind::NotFound => TermError::NotFound(format!(
-                        "the command line {} is not there: {error}",
-                        self.executable.display()
-                    )),
-                    _ => TermError::Io(format!("{}: {error}", self.executable.display())),
-                })?;
+        let mut attempts = 0u32;
+        let output = loop {
+            match Command::new(&self.executable).args(args).output() {
+                Ok(output) => break output,
+                Err(error) if error.raw_os_error() == Some(26) && attempts < 20 => {
+                    attempts += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => {
+                    return Err(match error.kind() {
+                        ErrorKind::NotFound => TermError::NotFound(format!(
+                            "the command line {} is not there: {error}",
+                            self.executable.display()
+                        )),
+                        _ => TermError::Io(format!("{}: {error}", self.executable.display())),
+                    });
+                }
+            }
+        };
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
         }

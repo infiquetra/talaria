@@ -15,7 +15,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const NOW: f64 = 1_792_700_000.0;
 // The bound actions' hints in order, with this unit's hint last.
-const FOOTER: &str = "enter open \u{b7} space peek \u{b7} r reply \u{b7} x stop \u{b7} / filter \u{b7} esc close \u{b7} o new pane";
+const FOOTER: &str = "enter open \u{b7} space peek \u{b7} r reply \u{b7} x stop \u{b7} v review \u{b7} / filter \u{b7} esc close \u{b7} o new pane";
 const NOTICE_T2: &str = "Opened \"migrate\" in a new Herdr pane.";
 const NOTICE_T3: &str = "Not inside Herdr or tmux. To watch \"migrate\" side by side, run this in another terminal: '/t/talaria' attach 'local-ab' --profile 'fixture'";
 
@@ -262,7 +262,7 @@ fn expect_screen(
     if let Some(notice) = notice {
         lines[height - 2] = notice.trim_end().to_owned();
     }
-    lines[height - 1] = FOOTER.to_owned();
+    lines[height - 1] = fit(FOOTER, width).trim_end().to_owned();
     lines
 }
 

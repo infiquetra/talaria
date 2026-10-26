@@ -1,6 +1,8 @@
 //! The list part of the fleet overlay: header text, columns, group headers and rows.
 
 use ratatui::buffer::Buffer;
+use std::collections::BTreeMap;
+
 use ratatui::style::Style;
 use talaria_core::directory::rows::{RowKey, format_age};
 use talaria_core::fleet::{FleetRow, ProfileStatus, RowState};
@@ -8,6 +10,7 @@ use talaria_core::fleet_view::detail::short_model;
 use talaria_core::fleet_view::{
     FleetViewState, ProfileFilter, VisibleGroup, glyph, title_or_untitled,
 };
+use talaria_core::review::PrLabel;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -22,6 +25,8 @@ const TITLE_WIDTH: usize = 28;
 const PROFILE_WIDTH: usize = 12;
 /// Width of the model column.
 const MODEL_WIDTH: usize = 18;
+/// Width of the pull-request column.
+const PR_WIDTH: usize = 14;
 /// Width of the age column.
 const AGE_WIDTH: usize = 4;
 /// Width of the cost column.
@@ -30,6 +35,8 @@ const COST_WIDTH: usize = 7;
 const PROFILE_MIN_WIDTH: u16 = 80;
 /// The model column needs this many columns.
 const MODEL_MIN_WIDTH: u16 = 60;
+/// The pull-request column needs this many columns.
+const PR_MIN_WIDTH: u16 = 110;
 /// The cost column needs this many columns.
 const COST_MIN_WIDTH: u16 = 100;
 /// Between two columns.
@@ -177,13 +184,18 @@ pub(super) fn not_listed_lines(profiles: &[(String, ProfileStatus)]) -> Vec<Stri
 pub(super) struct Columns {
     profile: bool,
     model: bool,
+    pr: bool,
     cost: bool,
     title: usize,
     detail: usize,
 }
 
 impl Columns {
-    pub(super) fn new(groups: &[VisibleGroup<'_>], width: u16) -> Self {
+    pub(super) fn new(
+        groups: &[VisibleGroup<'_>],
+        labels: &BTreeMap<RowKey, PrLabel>,
+        width: u16,
+    ) -> Self {
         let mut profiles: Vec<&str> = groups
             .iter()
             .flat_map(|group| group.rows.iter().map(|(row, _)| row.key.profile.as_str()))
@@ -192,12 +204,19 @@ impl Columns {
         profiles.dedup();
         let profile = width >= PROFILE_MIN_WIDTH && profiles.len() > 1;
         let model = width >= MODEL_MIN_WIDTH;
+        let pr = width >= PR_MIN_WIDTH
+            && groups
+                .iter()
+                .flat_map(|group| group.rows.iter())
+                .any(|(row, _)| labels.contains_key(&row.key));
         let cost = width >= COST_MIN_WIDTH;
-        let count = 5 + usize::from(profile) + usize::from(model) + usize::from(cost);
+        let count =
+            5 + usize::from(profile) + usize::from(model) + usize::from(pr) + usize::from(cost);
         let others = 2 * MARK_WIDTH
             + AGE_WIDTH
             + if profile { PROFILE_WIDTH } else { 0 }
             + if model { MODEL_WIDTH } else { 0 }
+            + if pr { PR_WIDTH } else { 0 }
             + if cost { COST_WIDTH } else { 0 }
             + (count - 1) * GAP.len();
         let room = usize::from(width).saturating_sub(others);
@@ -206,6 +225,7 @@ impl Columns {
         Self {
             profile,
             model,
+            pr,
             cost,
             title,
             detail,
@@ -274,6 +294,7 @@ pub(super) fn draw_body_line(
     columns: &Columns,
     cursor: Option<&RowKey>,
     state: &FleetViewState,
+    labels: &BTreeMap<RowKey, PrLabel>,
     theme: &FleetTheme,
 ) {
     let width = usize::from(buf.area.right().saturating_sub(x));
@@ -291,19 +312,29 @@ pub(super) fn draw_body_line(
             if on_cursor {
                 style = style.patch(theme.cursor);
             }
-            let text = row_text(row, detail, columns, on_cursor, state);
+            let label = labels.get(&row.key);
+            let (text, pr_at) = row_text(row, detail, columns, on_cursor, state, label);
             draw_text(buf, x, y, &text, width, style);
+            // The label is drawn over its blank cell so that its tone can differ from the row's.
+            if let (Some(at), Some(label)) = (pr_at, label) {
+                let at = u16::try_from(at).unwrap_or(u16::MAX);
+                let cell = style.patch(theme.label_style(label.tone));
+                let text = cut(&label.text, PR_WIDTH, true);
+                draw_text(buf, x.saturating_add(at), y, &text, PR_WIDTH, cell);
+            }
         }
     }
 }
 
+/// The row's text, and the column its pull-request cell starts at when the column is shown.
 fn row_text(
     row: &FleetRow,
     detail: &str,
     columns: &Columns,
     on_cursor: bool,
     state: &FleetViewState,
-) -> String {
+    label: Option<&PrLabel>,
+) -> (String, Option<usize>) {
     let mut parts = vec![
         if on_cursor { "\u{203a}" } else { " " }.to_owned(),
         glyph(row.state).to_string(),
@@ -320,6 +351,15 @@ fn row_text(
             .map_or("-", short_model);
         parts.push(cut(model, MODEL_WIDTH, true));
     }
+    let mut pr_at = None;
+    if columns.pr {
+        pr_at = Some(columns_of(&parts.join(GAP)) + GAP.len());
+        parts.push(cut(
+            label.map_or("", |label| label.text.as_str()),
+            PR_WIDTH,
+            true,
+        ));
+    }
     parts.push(cut(detail, columns.detail, true));
     parts.push(cut(
         &format_age(Some(row.state_since), state.now()),
@@ -333,7 +373,7 @@ fn row_text(
             .unwrap_or_default();
         parts.push(cut(&cost, COST_WIDTH, true));
     }
-    parts.join(GAP)
+    (parts.join(GAP), pr_at)
 }
 
 /// The title with its marker, cut so that the marker stays.

@@ -25,6 +25,10 @@ pub enum KeyContext {
     Fleet,
     /// The full-screen subagent panel. Issue #242.
     Agents,
+    /// The review overlay list. Issue #245.
+    Review,
+    /// The commit message editor. Issue #245.
+    CommitMessage,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -119,6 +123,12 @@ impl Binding {
         Action::from_config_name(name)
             .map(Self::Composer)
             .or_else(|| ModelAction::from_config_name(name).map(Self::Model))
+    }
+    fn default_chords(self) -> &'static [&'static str] {
+        match self {
+            Self::Composer(action) => action.default_chords(),
+            Self::Model(action) => action.default_chords(),
+        }
     }
 }
 
@@ -323,6 +333,46 @@ pub enum Action {
     FleetNewWorktree,
     /// Jump to the oldest background request.
     AttentionNext,
+    /// Review the fleet row's session folder.
+    FleetReview,
+    /// Move the review cursor up. Issue #245.
+    ReviewUp,
+    /// Move the review cursor down. Issue #245.
+    ReviewDown,
+    /// First review file. Issue #245.
+    ReviewTop,
+    /// Last review file. Issue #245.
+    ReviewBottom,
+    /// Show the selected diff in place of the list. Issue #245.
+    ReviewShowDiff,
+    /// Scroll the diff panel up. Issue #245.
+    ReviewDiffPageUp,
+    /// Scroll the diff panel down. Issue #245.
+    ReviewDiffPageDown,
+    /// Switch Uncommitted and Branch scopes. Issue #245.
+    ReviewScope,
+    /// Stage or unstage the selected file. Issue #245.
+    ReviewStage,
+    /// Stage everything. Issue #245.
+    ReviewStageAll,
+    /// Unstage everything. Issue #245.
+    ReviewUnstageAll,
+    /// Discard the selected file, after a second press. Issue #245.
+    ReviewDiscard,
+    /// Open the commit editor. Issue #245.
+    ReviewCommit,
+    /// Push the branch. Issue #245.
+    ReviewPush,
+    /// Open a draft pull request. Issue #245.
+    ReviewPullRequest,
+    /// Open the known pull request in the browser. Issue #245.
+    ReviewOpenPr,
+    /// Reload the list and refresh status. Issue #245.
+    ReviewRefresh,
+    /// Commit the editor text. Issue #245.
+    CommitSubmit,
+    /// Draft a message with the session's model. Issue #245.
+    CommitDraft,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -354,7 +404,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 111] = [
+    pub const ALL: [Self; 131] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -466,6 +516,26 @@ impl Action {
         Self::FleetNew,
         Self::FleetNewWorktree,
         Self::AttentionNext,
+        Self::FleetReview,
+        Self::ReviewUp,
+        Self::ReviewDown,
+        Self::ReviewTop,
+        Self::ReviewBottom,
+        Self::ReviewShowDiff,
+        Self::ReviewDiffPageUp,
+        Self::ReviewDiffPageDown,
+        Self::ReviewScope,
+        Self::ReviewStage,
+        Self::ReviewStageAll,
+        Self::ReviewUnstageAll,
+        Self::ReviewDiscard,
+        Self::ReviewCommit,
+        Self::ReviewPush,
+        Self::ReviewPullRequest,
+        Self::ReviewOpenPr,
+        Self::ReviewRefresh,
+        Self::CommitSubmit,
+        Self::CommitDraft,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -583,6 +653,26 @@ impl Action {
             Self::FleetNew => "fleet_new",
             Self::FleetNewWorktree => "fleet_new_worktree",
             Self::AttentionNext => "attention_next",
+            Self::FleetReview => "fleet_review",
+            Self::ReviewUp => "review_up",
+            Self::ReviewDown => "review_down",
+            Self::ReviewTop => "review_top",
+            Self::ReviewBottom => "review_bottom",
+            Self::ReviewShowDiff => "review_show_diff",
+            Self::ReviewDiffPageUp => "review_diff_page_up",
+            Self::ReviewDiffPageDown => "review_diff_page_down",
+            Self::ReviewScope => "review_scope",
+            Self::ReviewStage => "review_stage",
+            Self::ReviewStageAll => "review_stage_all",
+            Self::ReviewUnstageAll => "review_unstage_all",
+            Self::ReviewDiscard => "review_discard",
+            Self::ReviewCommit => "review_commit",
+            Self::ReviewPush => "review_push",
+            Self::ReviewPullRequest => "review_pull_request",
+            Self::ReviewOpenPr => "review_open_pr",
+            Self::ReviewRefresh => "review_refresh",
+            Self::CommitSubmit => "commit_submit",
+            Self::CommitDraft => "commit_draft",
         }
     }
 
@@ -692,7 +782,8 @@ impl Action {
             | Self::FleetProfileNext
             | Self::FleetProfilePrev
             | Self::FleetNew
-            | Self::FleetNewWorktree => KeyContext::Fleet,
+            | Self::FleetNewWorktree
+            | Self::FleetReview => KeyContext::Fleet,
             Self::AgentsUp
             | Self::AgentsDown
             | Self::AgentsTail
@@ -709,6 +800,24 @@ impl Action {
             | Self::AgentsTop
             | Self::AgentsBottom
             | Self::AgentsOpenInPane => KeyContext::Agents,
+            Self::ReviewUp
+            | Self::ReviewDown
+            | Self::ReviewTop
+            | Self::ReviewBottom
+            | Self::ReviewShowDiff
+            | Self::ReviewDiffPageUp
+            | Self::ReviewDiffPageDown
+            | Self::ReviewScope
+            | Self::ReviewStage
+            | Self::ReviewStageAll
+            | Self::ReviewUnstageAll
+            | Self::ReviewDiscard
+            | Self::ReviewCommit
+            | Self::ReviewPush
+            | Self::ReviewPullRequest
+            | Self::ReviewOpenPr
+            | Self::ReviewRefresh => KeyContext::Review,
+            Self::CommitSubmit | Self::CommitDraft => KeyContext::CommitMessage,
         }
     }
 
@@ -833,6 +942,26 @@ impl Action {
             Self::FleetNew => &["n"],
             Self::FleetNewWorktree => &["w"],
             Self::AttentionNext => &["alt+a"],
+            Self::FleetReview => &["v"],
+            Self::ReviewUp => &["up", "k"],
+            Self::ReviewDown => &["down", "j"],
+            Self::ReviewTop => &["home", "g"],
+            Self::ReviewBottom => &["end", "shift+g"],
+            Self::ReviewShowDiff => &["enter"],
+            Self::ReviewDiffPageUp => &["pageup"],
+            Self::ReviewDiffPageDown => &["pagedown"],
+            Self::ReviewScope => &["tab"],
+            Self::ReviewStage => &["space"],
+            Self::ReviewStageAll => &["a"],
+            Self::ReviewUnstageAll => &["shift+a"],
+            Self::ReviewDiscard => &["shift+x"],
+            Self::ReviewCommit => &["c"],
+            Self::ReviewPush => &["p"],
+            Self::ReviewPullRequest => &["shift+p"],
+            Self::ReviewOpenPr => &["o"],
+            Self::ReviewRefresh => &["r"],
+            Self::CommitSubmit => &["ctrl+s"],
+            Self::CommitDraft => &["ctrl+d"],
         }
     }
 }
@@ -1241,7 +1370,11 @@ impl KeyMap {
             for text in texts {
                 match KeyChord::parse(text, parse_context(action)) {
                     Ok(chord) => {
-                        if chord.is_risky() {
+                        // A written binding that only repeats the default needs no warning.
+                        let is_default = action.default_chords().iter().any(|default| {
+                            KeyChord::parse(default, parse_context(action)).as_ref() == Ok(&chord)
+                        });
+                        if chord.is_risky() && !is_default {
                             notices.push(format!(
                                 "[keys] {name} in {FILE}: {} may not reach Talaria in some \
                                  terminals (the system, Herdr or terminal flow control can take \
@@ -1575,7 +1708,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 131);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1639,7 +1772,26 @@ mod tests {
                 | Action::FleetProfileNext
                 | Action::FleetProfilePrev
                 | Action::FleetNew
-                | Action::FleetNewWorktree => KeyContext::Fleet,
+                | Action::FleetNewWorktree
+                | Action::FleetReview => KeyContext::Fleet,
+                Action::ReviewUp
+                | Action::ReviewDown
+                | Action::ReviewTop
+                | Action::ReviewBottom
+                | Action::ReviewShowDiff
+                | Action::ReviewDiffPageUp
+                | Action::ReviewDiffPageDown
+                | Action::ReviewScope
+                | Action::ReviewStage
+                | Action::ReviewStageAll
+                | Action::ReviewUnstageAll
+                | Action::ReviewDiscard
+                | Action::ReviewCommit
+                | Action::ReviewPush
+                | Action::ReviewPullRequest
+                | Action::ReviewOpenPr
+                | Action::ReviewRefresh => KeyContext::Review,
+                Action::CommitSubmit | Action::CommitDraft => KeyContext::CommitMessage,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -1723,7 +1875,26 @@ mod tests {
                 | Action::FleetProfileNext
                 | Action::FleetProfilePrev
                 | Action::FleetNew
-                | Action::FleetNewWorktree => KeyContext::Fleet,
+                | Action::FleetNewWorktree
+                | Action::FleetReview => KeyContext::Fleet,
+                Action::ReviewUp
+                | Action::ReviewDown
+                | Action::ReviewTop
+                | Action::ReviewBottom
+                | Action::ReviewShowDiff
+                | Action::ReviewDiffPageUp
+                | Action::ReviewDiffPageDown
+                | Action::ReviewScope
+                | Action::ReviewStage
+                | Action::ReviewStageAll
+                | Action::ReviewUnstageAll
+                | Action::ReviewDiscard
+                | Action::ReviewCommit
+                | Action::ReviewPush
+                | Action::ReviewPullRequest
+                | Action::ReviewOpenPr
+                | Action::ReviewRefresh => KeyContext::Review,
+                Action::CommitSubmit | Action::CommitDraft => KeyContext::CommitMessage,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -1847,6 +2018,7 @@ mod tests {
             (Action::AgentsOpenInPane, vec!["O"]),
             (Action::FleetNew, vec!["N"]),
             (Action::FleetNewWorktree, vec!["W"]),
+            (Action::FleetReview, vec!["V"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1859,8 +2031,11 @@ mod tests {
         for action in Action::ALL {
             for chord in map.chords(action) {
                 let label = chord.label();
+                // The review's commit editor submits with Ctrl+S, as its issue settled; raw mode
+                // turns flow control off, and the key is configurable.
+                let settled = action == Action::CommitSubmit && label == "Ctrl+S";
                 assert!(
-                    !risky.contains(&label.as_str()),
+                    settled || !risky.contains(&label.as_str()),
                     "{label} is bound to {}",
                     action.config_name()
                 );
@@ -1992,7 +2167,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 111);
+        assert_eq!(Action::ALL.len(), 131);
     }
 
     #[test]

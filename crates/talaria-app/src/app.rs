@@ -207,6 +207,10 @@ pub enum UserAction {
     Processes(ProcessesIntent),
     /// The fleet view's launch dialog, which the terminal owns, changed.
     LaunchDialog(crate::bg::dialog::DialogEvent),
+    /// A key for the open review.
+    Review(talaria_core::review::ReviewKey),
+    /// A paste for the open review's commit editor.
+    ReviewPaste(String),
     /// A key for the open rewind overlay. Issue #233.
     Rewind(RewindKey),
     /// How many list rows the rewind overlay shows.
@@ -350,6 +354,12 @@ pub struct View<'a> {
     pub launch_status: Option<(u64, &'a crate::bg::dialog::DialogStatus)>,
     /// The folder Talaria was started in: the launch dialog's folder with no session open.
     pub launch_folder: &'a Path,
+    /// The open review, drawn in the overlay in place of the fleet list or over the screen.
+    pub review: Option<talaria_core::review::ReviewView<'a>>,
+    /// The foreground folder's pull-request label, for the status line.
+    pub pull_request: Option<talaria_core::review::PrLabel>,
+    /// Pull-request labels of fleet rows.
+    pub pr_labels: BTreeMap<RowKey, talaria_core::review::PrLabel>,
     /// The background counters the status line shows.
     pub fleet_counts: StatusCounts,
 }
@@ -719,6 +729,14 @@ pub struct AppState {
     fleet_fg_stop: Option<RowKey>,
     /// The fleet view's launch dialog and the launches it started.
     pub launch_ui: crate::bg::dialog::LaunchUi,
+    /// The open review, if any, and the runners it uses.
+    pub review_service: Option<crate::review::ReviewService>,
+    /// Where the open review was opened from.
+    review_origin: Option<ReviewOrigin>,
+    /// Pull-request status, shared by the review, the fleet column and the status line.
+    review_pr: Option<Arc<crate::review::PrStatusService>>,
+    /// Repositories whose worktree records map branches to sessions.
+    review_repos: Vec<PathBuf>,
     /// Seconds since 1970 at app-clock zero, from the latest fleet snapshot.
     fleet_clock: f64,
 }
@@ -877,6 +895,10 @@ impl AppState {
             fleet_fg_reply: None,
             fleet_fg_stop: None,
             launch_ui: crate::bg::dialog::LaunchUi::default(),
+            review_service: None,
+            review_origin: None,
+            review_pr: None,
+            review_repos: Vec::new(),
             fleet_clock: 0.0,
             submitted_attachments: BTreeMap::new(),
             held_attachments: VecDeque::new(),
@@ -939,6 +961,20 @@ impl AppState {
             fleet_snapshot: self.fleet_snapshot.as_deref(),
             launch_status: self.launch_ui.status(),
             launch_folder: &self.launch_folder,
+            review: self
+                .review_service
+                .as_ref()
+                .and_then(crate::review::ReviewService::view),
+            pull_request: self.review_pr.as_ref().and_then(|pr| {
+                pr.foreground_label()
+                    .map(|(status, stale)| talaria_core::review::pr_label(&status, stale))
+            }),
+            pr_labels: self.review_pr.as_ref().map_or_else(BTreeMap::new, |pr| {
+                pr.labels()
+                    .into_iter()
+                    .map(|(key, status)| (key, talaria_core::review::pr_label(&status, false)))
+                    .collect()
+            }),
             fleet_counts: self.status_counts,
         }
     }
@@ -1090,6 +1126,18 @@ pub enum AppMessage {
     Launch(crate::bg::LaunchNotice),
     /// One second passed for the launch the dialog shows.
     LaunchTick(u64),
+    /// A review effect's result.
+    Review(talaria_core::review::ReviewInput),
+    /// A notice from a review action that has no state input, such as the browser failing.
+    ReviewNotice(String),
+    /// A review's folder was looked up.
+    ReviewLocated {
+        located: crate::review::Located,
+        origin: ReviewOrigin,
+        info: Option<Result<crate::review::SessionInfoReply, crate::review::SessionInfoError>>,
+    },
+    /// Pull-request labels changed.
+    PrStatus(crate::review::PrStatusNotice),
     /// A fleet snapshot or attention. Stored; nothing is drawn for it.
     Fleet(crate::fleet::FleetNotice),
     User(UserAction),
@@ -1250,6 +1298,13 @@ pub enum AppEffect {
     FleetInput(talaria_core::fleet_view::FleetViewInput),
     /// Answer the peek's card.
     FleetAnswer(crate::peek::CardAnswer),
+    /// Run one review effect on the review service.
+    Review(talaria_core::review::ReviewEffect),
+    /// Find a session's folder for a review, off the loop.
+    ReviewLocate {
+        row: RowKey,
+        origin: ReviewOrigin,
+    },
     /// Run one rewind call; its reply comes back as [`AppMessage::Rewind`]. Issue #233.
     Rewind {
         ticket: u64,
@@ -1859,6 +1914,26 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 Vec::new()
             }
         }
+        AppMessage::Review(input) => {
+            redraw = false;
+            review_input(state, input)
+        }
+        AppMessage::ReviewNotice(text) => {
+            redraw = false;
+            review_notice(state, text)
+        }
+        AppMessage::ReviewLocated {
+            located,
+            origin,
+            info,
+        } => {
+            redraw = false;
+            review_located(state, located, origin, info)
+        }
+        AppMessage::PrStatus(_) => {
+            redraw = false;
+            review_pr_changed(state)
+        }
         // The toggle asks for its own redraw: one when a panel is there, none otherwise.
         AppMessage::User(UserAction::ToggleTasks)
         | AppMessage::ForegroundKey(UserAction::ToggleTasks) => {
@@ -1971,7 +2046,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         } => compact_done(state, request, outcome, typed),
         AppMessage::Tick { now_ms } => {
             state.now_ms = now_ms;
-            let mut effects = Vec::new();
+            let mut effects = review_tick(state);
             if state.fleet.is_some() && state.fleet_clock > 0.0 {
                 let now = state.fleet_clock + now_ms as f64 / 1000.0;
                 effects.extend(fleet_input(
@@ -2423,6 +2498,9 @@ fn local_effect(
     }
     if action == LocalAction::Agents {
         return agents_command(state, &argument);
+    }
+    if action == LocalAction::Review {
+        return changes_command(state);
     }
     if matches!(
         action,
@@ -2985,6 +3063,10 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             effects
         }
         UserAction::FleetAnswer(intent) => vec![AppEffect::FleetAnswer(intent)],
+        UserAction::Review(key) => review_input(state, talaria_core::review::ReviewInput::Key(key)),
+        UserAction::ReviewPaste(text) => {
+            review_input(state, talaria_core::review::ReviewInput::Paste(text))
+        }
         UserAction::LaunchDialog(event) => {
             use crate::bg::dialog::DialogEvent;
             match event {
@@ -7518,6 +7600,19 @@ fn apply<S: Screen>(
                     drop_peek_worker(state);
                 }
             }
+            AppEffect::Review(effect) => {
+                if let Some(service) = &state.review_service {
+                    service.execute(effect, executor.sender.clone());
+                }
+            }
+            AppEffect::ReviewLocate { row, origin } => {
+                let job = review_locate_job(state, row, origin);
+                let sender = executor.sender.clone();
+                executor.spawn(async move {
+                    let message = job.run().await;
+                    let _ = sender.send(message);
+                });
+            }
             AppEffect::FleetAnswer(intent) => {
                 let Some(worker) = &state.peek_worker else {
                     continue;
@@ -8045,6 +8140,12 @@ pub(crate) fn open_fleet_view(state: &mut AppState) -> Vec<AppEffect> {
     if !state.fleet_enabled {
         return vec![notice_lines(FLEET_DISABLED)];
     }
+    if let Some(pr) = review_pr(state) {
+        pr.want(crate::review::PrDemand::Fleet(true));
+        for root in &state.review_repos {
+            pr.know(root);
+        }
+    }
     if state.fleet.is_none() {
         let now = state
             .fleet_snapshot
@@ -8192,6 +8293,10 @@ pub(crate) fn fleet_effect(
             effects
         }
         FleetViewEffect::FocusAnswer => Vec::new(),
+        FleetViewEffect::Review(row) => vec![AppEffect::ReviewLocate {
+            row,
+            origin: ReviewOrigin::Fleet,
+        }],
         other => vec![AppEffect::FleetPeek(other)],
     }
 }
@@ -8201,6 +8306,9 @@ fn close_overlay(state: &mut AppState) -> Vec<AppEffect> {
     let Some(view) = state.fleet.take() else {
         return Vec::new();
     };
+    if let Some(pr) = state.review_pr.as_ref() {
+        pr.want(crate::review::PrDemand::Fleet(false));
+    }
     state.peek_frame = None;
     let mut effects: Vec<AppEffect> = crate::fleet_actions::unsettled_notices(&view)
         .iter()
@@ -8708,6 +8816,310 @@ pub async fn run<S: Screen>(
         outcome.stderr.push('\n');
     }
     outcome
+}
+
+/// Where a review was opened from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReviewOrigin {
+    /// `v` on a fleet row: the review replaces the fleet list, and Esc returns to it.
+    Fleet,
+    /// `/changes`: the review opens over the screen, and Esc closes it.
+    Changes,
+}
+
+/// What `v` shows for a row with no folder, and what `/changes` shows instead.
+const FLEET_NO_FOLDER: &str = "Talaria cannot find this session's folder.";
+const CHANGES_NO_FOLDER: &str = "Hermes did not report a folder for this session.";
+const CHANGES_NO_SESSION: &str = "No session in the foreground, so there is no folder to review.";
+
+/// The pull-request status service, made on first use.
+fn review_pr(state: &mut AppState) -> Option<Arc<crate::review::PrStatusService>> {
+    if state.review_pr.is_none() {
+        let sender = state.sender.clone()?;
+        let notify = move |notice| {
+            let _ = sender.send(AppMessage::PrStatus(notice));
+        };
+        state.review_pr = Some(Arc::new(crate::review::PrStatusService::new(
+            crate::review::GhRunner::from_env(),
+            crate::worktree::GitRunner::from_env(),
+            Arc::new(Instant::now),
+            notify,
+        )));
+    }
+    state.review_pr.clone()
+}
+
+/// The review clock, in seconds.
+fn review_now(state: &AppState) -> f64 {
+    state.now_ms as f64 / 1000.0
+}
+
+/// The review's effects as the app's: `Close` and `Redraw` belong here.
+fn review_effects(
+    state: &mut AppState,
+    effects: Vec<talaria_core::review::ReviewEffect>,
+) -> Vec<AppEffect> {
+    use talaria_core::review::ReviewEffect;
+    let mut out = Vec::new();
+    for effect in effects {
+        match effect {
+            ReviewEffect::Close => out.extend(close_review(state)),
+            ReviewEffect::Redraw => out.push(AppEffect::Redraw),
+            other => out.push(AppEffect::Review(other)),
+        }
+    }
+    out
+}
+
+fn review_input(state: &mut AppState, input: talaria_core::review::ReviewInput) -> Vec<AppEffect> {
+    let Some(service) = state.review_service.as_mut() else {
+        return Vec::new();
+    };
+    let effects = service.update(input);
+    review_effects(state, effects)
+}
+
+/// Close the review. The fleet list it replaced shows again with its cursor unchanged.
+fn close_review(state: &mut AppState) -> Vec<AppEffect> {
+    let Some(service) = state.review_service.as_mut() else {
+        return Vec::new();
+    };
+    let root = service
+        .state()
+        .map(|review| review.target().main_root.clone());
+    service.close();
+    state.review_origin = None;
+    if let (Some(pr), Some(root)) = (state.review_pr.as_ref(), root) {
+        pr.want(crate::review::PrDemand::Review(root, false));
+    }
+    vec![AppEffect::Redraw]
+}
+
+/// A review notice: on the fleet view's notice line while it is open, else the main one.
+fn review_notice(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    if state.fleet.is_some() {
+        let mut effects = fleet_input(
+            state,
+            talaria_core::fleet_view::FleetViewInput::Notice(text),
+        );
+        effects.push(AppEffect::Redraw);
+        return effects;
+    }
+    notice_effect(state, text)
+}
+
+/// `/changes`: review the foreground session's folder.
+fn changes_command(state: &mut AppState) -> Vec<AppEffect> {
+    match fleet_foreground_key(state) {
+        Some(row) => vec![AppEffect::ReviewLocate {
+            row,
+            origin: ReviewOrigin::Changes,
+        }],
+        None => notice_effect(state, CHANGES_NO_SESSION.to_owned()),
+    }
+}
+
+/// Once a second: due pull-request refreshes, and the review's own clock.
+fn review_tick(state: &mut AppState) -> Vec<AppEffect> {
+    if let Some(pr) = state.review_pr.as_ref() {
+        pr.tick();
+    }
+    if state
+        .review_service
+        .as_ref()
+        .is_some_and(crate::review::ReviewService::is_open)
+    {
+        let now = review_now(state);
+        return review_input(state, talaria_core::review::ReviewInput::Tick { now });
+    }
+    Vec::new()
+}
+
+/// Labels changed: the review's own label, the fleet column and the status line.
+fn review_pr_changed(state: &mut AppState) -> Vec<AppEffect> {
+    let mut effects = Vec::new();
+    if let (Some(pr), Some((root, branch))) = (state.review_pr.clone(), review_branch(state)) {
+        let status = pr.for_branch(&root, &branch).map(|(status, _)| status);
+        effects.extend(review_input(
+            state,
+            talaria_core::review::ReviewInput::PrStatus(status),
+        ));
+    }
+    effects.push(AppEffect::Redraw);
+    effects
+}
+
+/// The open review's repository and branch, when it is on one.
+fn review_branch(state: &AppState) -> Option<(PathBuf, String)> {
+    let review = state.review_service.as_ref()?.state()?;
+    let target = review.target();
+    let branch = review
+        .listing()
+        .and_then(|listing| listing.head.head.clone())
+        .or_else(|| target.record.as_ref().map(|record| record.branch.clone()))?;
+    Some((target.main_root.clone(), branch))
+}
+
+/// Whether the reviewed session has a turn running: its fleet row, or the foreground's turn.
+fn review_working(state: &AppState, row: Option<&RowKey>) -> bool {
+    let Some(row) = row else {
+        return false;
+    };
+    let from_fleet = state.fleet_snapshot.as_ref().and_then(|snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .find(|item| &item.key == row)
+            .map(|item| {
+                matches!(
+                    item.state,
+                    talaria_core::fleet::RowState::Working
+                        | talaria_core::fleet::RowState::NeedsYou
+                )
+            })
+    });
+    from_fleet.unwrap_or_else(|| {
+        fleet_foreground_key(state).as_ref() == Some(row) && state.view().turn_running()
+    })
+}
+
+/// A folder was found, or not: open the review, or say why.
+fn review_located(
+    state: &mut AppState,
+    located: crate::review::Located,
+    origin: ReviewOrigin,
+    info: Option<Result<crate::review::SessionInfoReply, crate::review::SessionInfoError>>,
+) -> Vec<AppEffect> {
+    use talaria_core::review::ReviewInput;
+    let target = match located {
+        crate::review::Located::Found(target) => target,
+        crate::review::Located::NotFound(text) => return review_notice(state, text),
+    };
+    let Some(pr) = review_pr(state) else {
+        return Vec::new();
+    };
+    let root = target.main_root.clone();
+    if !state.review_repos.contains(&root) {
+        state.review_repos.push(root.clone());
+    }
+    pr.know(&root);
+    pr.want(crate::review::PrDemand::Review(root.clone(), true));
+    if let Some(record) = &target.record {
+        pr.note_branch(&root, &record.branch, target.session.clone());
+    }
+    let working = review_working(state, target.session.as_ref());
+    let has_session = target.session.is_some();
+    let now = review_now(state);
+    if state.review_service.is_none() {
+        state.review_service = Some(
+            crate::review::ReviewService::new(
+                crate::worktree::GitRunner::from_env(),
+                crate::review::GhRunner::from_env(),
+                Arc::clone(&pr),
+            )
+            .with_link(state.hermes_home.clone(), state.profile.clone()),
+        );
+    }
+    let Some(service) = state.review_service.as_mut() else {
+        return Vec::new();
+    };
+    let mut effects = service.open(target, now);
+    let (model, can_draft) = match info {
+        Some(Ok(reply)) => {
+            let model = reply.model.filter(|model| !model.is_empty());
+            let can_draft = (!reply.lazy || reply.cwd.is_some()) && model.is_some();
+            (model, can_draft)
+        }
+        _ => (None, false),
+    };
+    if has_session {
+        effects.extend(service.update(ReviewInput::SessionInfo { model, can_draft }));
+    }
+    effects.extend(service.update(ReviewInput::SessionWorking(working)));
+    state.review_origin = Some(origin);
+    let mut out = review_effects(state, effects);
+    out.extend(review_pr_changed(state));
+    out
+}
+
+/// Everything a folder lookup needs, taken from the app state.
+struct ReviewLocateJob {
+    row: RowKey,
+    origin: ReviewOrigin,
+    roots: Vec<PathBuf>,
+    folders: Vec<PathBuf>,
+    foreground: Option<(RowKey, Option<String>)>,
+    home: PathBuf,
+    profile: String,
+}
+
+fn review_locate_job(state: &AppState, row: RowKey, origin: ReviewOrigin) -> ReviewLocateJob {
+    let foreground_cwd = state
+        .opened
+        .as_ref()
+        .and_then(|opened| opened.info.cwd.clone());
+    let mut folders = vec![state.launch_folder.clone()];
+    folders.extend(foreground_cwd.clone().map(PathBuf::from));
+    ReviewLocateJob {
+        row,
+        origin,
+        roots: state.review_repos.clone(),
+        folders,
+        foreground: fleet_foreground_key(state).map(|key| (key, foreground_cwd)),
+        home: state.hermes_home.clone(),
+        profile: state.profile.clone(),
+    }
+}
+
+impl ReviewLocateJob {
+    /// Find the folder: the worktree record, then the foreground's own folder, then
+    /// `session.info`, which also decides whether the session can draft.
+    async fn run(self) -> AppMessage {
+        use crate::review::{
+            KnownRepos, LinkInfoSource, LocateContext, Located, SessionInfoSource,
+        };
+        let git = crate::worktree::GitRunner::from_env();
+        let mut known = KnownRepos::new();
+        for root in self.roots {
+            known.insert(root);
+        }
+        for folder in &self.folders {
+            if let Ok(root) = crate::worktree::main_root_of(&git, folder).await {
+                known.insert(root);
+            }
+        }
+        let source = LinkInfoSource::new(self.home, self.profile);
+        let ctx = LocateContext {
+            git: &git,
+            known_roots: &known,
+            foreground: self
+                .foreground
+                .as_ref()
+                .map(|(key, cwd)| (key, cwd.as_deref())),
+            info: &source,
+        };
+        let mut located = crate::review::locate(&self.row, &ctx).await;
+        if self.origin == ReviewOrigin::Changes
+            && matches!(&located, Located::NotFound(text) if text == FLEET_NO_FOLDER)
+        {
+            located = Located::NotFound(CHANGES_NO_FOLDER.to_owned());
+        }
+        let info = match &located {
+            Located::Found(target) => match &target.session {
+                Some(row) => match source.last() {
+                    Some(reply) => Some(reply),
+                    None => Some(source.info(row).await),
+                },
+                None => None,
+            },
+            Located::NotFound(_) => None,
+        };
+        AppMessage::ReviewLocated {
+            located,
+            origin: self.origin,
+            info,
+        }
+    }
 }
 
 #[cfg(test)]

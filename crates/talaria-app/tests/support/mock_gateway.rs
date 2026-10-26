@@ -1916,7 +1916,7 @@ fn plan_subagent_method(
 pub const SIDE_TASK_ID: &str = "btw_1a2b3c";
 
 /// The handshake, session, finite-turn, model, rollback, context and export methods the mock answers.
-pub const SESSION_METHODS: [&str; 23] = [
+pub const SESSION_METHODS: [&str; 25] = [
     "runtime.describe",
     "client.capabilities",
     "session.create",
@@ -1940,6 +1940,8 @@ pub const SESSION_METHODS: [&str; 23] = [
     "session.stats",
     "usage.bars",
     "session.control.read",
+    "llm.oneshot",
+    "session.info",
 ];
 
 /// Finite-turn scenarios, enabled only by headless flow tests.
@@ -2129,6 +2131,10 @@ struct SessionSide {
     hold_automation_reads: bool,
     /// The held automation reads, answered once the hold is released.
     held_automation: Vec<HeldAutomation>,
+    /// The text an `llm.oneshot` reply carries. Issue #245.
+    oneshot_text: String,
+    /// The `session.info` result the mock answers with. Issue #245.
+    session_info: Value,
     /// Hold `session.list` replies until the test releases them. Other methods are
     /// never held: the handshake's `client.capabilities` reply must flow, or the
     /// side connection stalls. Issue #246.
@@ -2224,6 +2230,8 @@ impl SessionSide {
             config_values: HashMap::new(),
             hold_automation_reads: false,
             held_automation: Vec::new(),
+            oneshot_text: String::new(),
+            session_info: json!({"cwd": Value::Null, "branch": Value::Null, "model": Value::Null, "lazy": true}),
             hold_lists: false,
             held_lists: Vec::new(),
         }
@@ -2489,6 +2497,19 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             vec!["session_id", "hash", "file_path", "all"],
         ),
         "session.control.read" => (vec!["session_id"], vec!["session_id"]),
+        // Issue #245: closed keys for drafting. `profile` rides along only when routed.
+        "llm.oneshot" => (
+            vec!["session_id", "template", "variables"],
+            vec![
+                "session_id",
+                "template",
+                "temperature",
+                "variables",
+                "profile",
+            ],
+        ),
+        // Issue #245: exactly `session_id`, plus `profile` when routed.
+        "session.info" => (vec!["session_id"], vec!["session_id", "profile"]),
         _ => (Vec::new(), Vec::new()),
     }
 }
@@ -3421,6 +3442,10 @@ fn plan_session_method(
         "prompt.btw" => Ok(json!(TaskIdResult {
             task_id: SIDE_TASK_ID.to_owned(),
         })),
+        // Issue #245: the draft text the test scripted.
+        "llm.oneshot" => Ok(json!({"text": state.sess.oneshot_text.clone()})),
+        // Issue #245: the session folder the test scripted.
+        "session.info" => Ok(state.sess.session_info.clone()),
         _ => handle_interrupt(state, params),
     };
     if matches!(behavior, Behavior::DropBeforeReply) {
@@ -4468,6 +4493,16 @@ impl MockGateway {
             .entry(method.to_owned())
             .or_default()
             .push_back(behavior);
+    }
+
+    /// Script the text an `llm.oneshot` reply carries. Issue #245.
+    pub fn set_oneshot_text(&self, text: &str) {
+        lock(&self.shared).sess.oneshot_text = text.to_owned();
+    }
+
+    /// Script the `session.info` result the mock answers with. Issue #245.
+    pub fn set_session_info(&self, info: Value) {
+        lock(&self.shared).sess.session_info = info;
     }
 
     /// Script the two `model.options` catalogues. Each must decode as a model catalogue.

@@ -1,0 +1,9 @@
+{
+  "args_prefix": [
+    "auth",
+    "status"
+  ],
+  "exit": 1,
+  "stderr": "You are not logged into any GitHub hosts. To log in, run: gh auth login\n",
+  "stdout": ""
+}

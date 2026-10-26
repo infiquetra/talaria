@@ -90,6 +90,16 @@ impl GitRepo {
     }
 }
 
+/// True when `git` runs: for tests that skip, with a message, when it cannot.
+pub fn git_available() -> bool {
+    Command::new("git")
+        .arg("version")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 /// Fail the test when `git` is missing or older than 2.28. Never skips.
 pub fn require_git() {
     let output = Command::new("git")

@@ -43,6 +43,8 @@ pub enum FleetAction {
     New,
     /// Start a background session in a new worktree.
     NewInWorktree,
+    /// Review the row's session folder.
+    Review,
 }
 
 /// How far a peek has got.
@@ -148,13 +150,18 @@ pub enum FleetViewInput {
 pub enum FleetViewEffect {
     OpenPeek(RowKey),
     ClosePeek,
-    SendReply { key: RowKey, text: String },
+    SendReply {
+        key: RowKey,
+        text: String,
+    },
     ResendReply(RowKey),
     Stop(RowKey),
     Acknowledge(RowKey),
     Open(RowKey),
     OpenInPane(RowKey),
     FocusAnswer,
+    /// Open the review of this row's session folder.
+    Review(RowKey),
     Close,
 }
 
@@ -856,6 +863,15 @@ fn list_key(
         FleetAction::Answer => return answer_start(state),
         // The app opens the launch dialog; the overlay itself does nothing.
         FleetAction::New | FleetAction::NewInWorktree => {}
+        // The app finds the row's folder and opens the review over the list.
+        FleetAction::Review => {
+            return state
+                .cursor
+                .clone()
+                .map(FleetViewEffect::Review)
+                .into_iter()
+                .collect();
+        }
     }
     Vec::new()
 }

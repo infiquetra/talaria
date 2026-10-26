@@ -64,6 +64,8 @@ pub enum LocalAction {
     Bg,
     /// Stop the running turn and this session's background processes.
     Stop,
+    /// Review the foreground session's folder. Issue #245.
+    Review,
 }
 
 /// One local command.
@@ -257,6 +259,15 @@ const BUILTIN: &[LocalCommand] = &[
         action: LocalAction::Agents,
         tag: "talaria",
     },
+    LocalCommand {
+        name: "changes",
+        aliases: &[],
+        summary: "Review the foreground session's changed files",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Review,
+        tag: "talaria",
+    },
 ];
 
 /// The five rewind commands, in table order. Issue #233.
@@ -408,6 +419,10 @@ pub fn parse(line: &str) -> Result<(LocalAction, String), String> {
         return Err(format!("/{name} is not a Talaria command."));
     };
     if !command.takes_argument && !argument.is_empty() {
+        // The review's command keeps the wording its own issue settled.
+        if command.action == LocalAction::Review {
+            return Err(format!("/{} takes no arguments.", command.name));
+        }
         return Err(format!("/{} does not take an argument.", command.name));
     }
     Ok((command.action, argument.to_owned()))

@@ -5,11 +5,15 @@
 mod peek;
 mod rows;
 
+use std::collections::BTreeMap;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use talaria_core::directory::rows::RowKey;
 use talaria_core::fleet::RowState;
 use talaria_core::fleet_view::{FleetViewState, Focus, PeekStatus};
+use talaria_core::review::{LabelTone, PrLabel};
 use talaria_core::session::SessionState;
 
 use crate::keys::{Action, KeyMap};
@@ -54,6 +58,7 @@ pub struct FleetKeyLabels {
     pub reply: Option<String>,
     pub stop: Option<String>,
     pub answer: Option<String>,
+    pub review: Option<String>,
     pub filter: Option<String>,
 }
 
@@ -67,6 +72,7 @@ impl Default for FleetKeyLabels {
             reply: some("r"),
             stop: some("x"),
             answer: some("a"),
+            review: some("v"),
             filter: some("/"),
         }
     }
@@ -84,6 +90,7 @@ impl FleetKeyLabels {
             reply: label(Action::FleetReply),
             stop: label(Action::FleetStop),
             answer: label(Action::FleetAnswer),
+            review: label(Action::FleetReview),
             filter: label(Action::FleetFilter),
         }
     }
@@ -106,6 +113,16 @@ pub struct FleetTheme {
     pub group: Style,
     /// The notice line.
     pub notice: Style,
+    /// A pull-request label with passing checks, or a merged pull request in `Success`.
+    pub success: Style,
+    /// A pull-request label with failing checks.
+    pub error: Style,
+    /// A pull-request label with pending checks.
+    pub warning: Style,
+    /// A pull-request label with no checks, a closed pull request, or a stale label.
+    pub muted: Style,
+    /// A merged pull request.
+    pub accent: Style,
     /// The key names the footer shows.
     pub keys: FleetKeyLabels,
 }
@@ -124,6 +141,11 @@ impl Default for FleetTheme {
             cursor: Style::default().add_modifier(Modifier::BOLD),
             group: Style::default().add_modifier(Modifier::BOLD),
             notice: Style::default(),
+            success: Style::default(),
+            error: Style::default(),
+            warning: Style::default(),
+            muted: Style::default().add_modifier(Modifier::DIM),
+            accent: Style::default(),
             keys: FleetKeyLabels::default(),
         }
     }
@@ -151,6 +173,18 @@ impl FleetTheme {
         };
         if stale { base.patch(self.dim) } else { base }
     }
+
+    /// The style for a pull-request label in `tone`.
+    #[must_use]
+    pub fn label_style(&self, tone: LabelTone) -> Style {
+        match tone {
+            LabelTone::Success => self.success,
+            LabelTone::Error => self.error,
+            LabelTone::Warning => self.warning,
+            LabelTone::Muted => self.muted,
+            LabelTone::Accent => self.accent,
+        }
+    }
 }
 
 /// What the peek area shows.
@@ -175,6 +209,19 @@ impl FleetView {
         buf: &mut Buffer,
         theme: &FleetTheme,
     ) {
+        Self::draw_with_labels(state, peek, area, buf, theme, &BTreeMap::new());
+    }
+
+    /// Draw like `draw`, with each row's pull-request label taken from `labels`. A row without
+    /// a label leaves its cell blank, and the `PR` column shows only when a visible row has one.
+    pub fn draw_with_labels(
+        state: &FleetViewState,
+        peek: Option<PeekPanel<'_>>,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &FleetTheme,
+        labels: &BTreeMap<RowKey, PrLabel>,
+    ) {
         let area = area.intersection(buf.area);
         if area.is_empty() {
             return;
@@ -196,7 +243,7 @@ impl FleetView {
         let has_card = panel_has_card(state, panel.as_ref());
 
         if state.seen_snapshot() {
-            draw_body(state, panel.as_ref(), area, buf, theme, notice_row);
+            draw_body(state, panel.as_ref(), area, buf, theme, notice_row, labels);
         } else {
             draw_text(buf, area.x, area.y, LOOKING, width, theme.notice);
         }
@@ -261,6 +308,7 @@ fn draw_body(
     buf: &mut Buffer,
     theme: &FleetTheme,
     notice_row: u16,
+    labels: &BTreeMap<RowKey, PrLabel>,
 ) {
     let width = usize::from(area.width);
     let mut y = area.y;
@@ -288,7 +336,7 @@ fn draw_body(
     let avail = usize::from(notice_row.saturating_sub(top).saturating_sub(reserved));
 
     let visible = state.visible();
-    let columns = Columns::new(&visible, area.width);
+    let columns = Columns::new(&visible, labels, area.width);
     let (lines, cursor_index) = body_lines(state, &visible);
     let list_rows = match panel {
         None => avail,
@@ -306,7 +354,9 @@ fn draw_body(
     let cursor = state.cursor();
     for (index, line) in lines.iter().skip(offset).take(shown).enumerate() {
         let row_y = top + u16::try_from(index).unwrap_or(0);
-        draw_body_line(buf, area.x, row_y, line, &columns, cursor, state, theme);
+        draw_body_line(
+            buf, area.x, row_y, line, &columns, cursor, state, labels, theme,
+        );
     }
     let mut next = top + u16::try_from(shown).unwrap_or(0);
 
@@ -398,6 +448,7 @@ fn list_footer(keys: &FleetKeyLabels, has_card: bool) -> String {
     if has_card {
         hint(&keys.answer, "answer");
     }
+    hint(&keys.review, "review");
     hint(&keys.filter, "filter");
     hint(&Some("esc".to_owned()), "close");
     hint(&keys.open_in_pane, "new pane");

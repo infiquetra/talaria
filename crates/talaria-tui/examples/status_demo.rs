@@ -67,6 +67,7 @@ fn full() -> StatusInputs {
         failed: 0,
         done: 0,
         approvals: None,
+        pull_request: None,
     }
 }
 

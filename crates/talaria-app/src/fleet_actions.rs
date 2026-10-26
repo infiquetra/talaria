@@ -232,7 +232,8 @@ async fn run_effect(peek: &mut PeekService, effect: FleetViewEffect) -> Vec<Flee
         FleetViewEffect::Acknowledge(_)
         | FleetViewEffect::Open(_)
         | FleetViewEffect::OpenInPane(_)
-        | FleetViewEffect::FocusAnswer => Vec::new(),
+        | FleetViewEffect::FocusAnswer
+        | FleetViewEffect::Review(_) => Vec::new(),
     }
 }
 
