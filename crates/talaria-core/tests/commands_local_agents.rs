@@ -18,14 +18,11 @@ fn agents_command_forms() {
             .action,
         LocalAction::Agents
     );
-    // Issue #242 asks for a `tasks` alias here, but `/tasks` already toggles
-    // the checklist (issue #226) and the table forbids a repeated name. Until
-    // the phase planner resolves which command owns `/tasks`, the alias stays
-    // off and `/tasks` keeps toggling.
-    assert_eq!(
-        table.find("tasks").expect("/tasks").action,
-        LocalAction::Tasks
-    );
+    for name in ["tasks", "/TASKS"] {
+        let alias = table.find(name).expect("/tasks alias");
+        assert_eq!(alias.action, LocalAction::Agents);
+        assert!(alias.takes_argument);
+    }
 
     for open in ["", "   "] {
         assert_eq!(parse_agents_arg(open), AgentsArg::Open, "{open:?}");

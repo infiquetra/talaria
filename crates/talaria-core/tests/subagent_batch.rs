@@ -88,7 +88,6 @@ fn batch_returned_once_with_descendants() {
     tree.apply(&event("subagent.start", nested), clock(4_001));
     complete(&mut tree, "root-a", Some("deleg-1"), 5_000);
     complete(&mut tree, "root-b", Some("deleg-1"), 6_000);
-    complete(&mut tree, "solo", None, 7_000);
 
     assert!(
         tree.take_finished_batches().is_empty(),
@@ -107,6 +106,7 @@ fn batch_returned_once_with_descendants() {
 
     let joined = with(payload("solo"), "delegation_id", json!("deleg-1"));
     tree.apply(&event("subagent.start", joined), clock(9_000));
+    complete(&mut tree, "solo", Some("deleg-1"), 9_001);
     let batches = batch_ids(&mut tree);
     assert_eq!(batches.len(), 1, "one batch with all three roots");
     assert_eq!(batches[0].0, "deleg-1");

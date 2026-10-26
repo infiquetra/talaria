@@ -12,8 +12,6 @@
 pub enum LocalAction {
     /// Leave Talaria. The Hermes session keeps running.
     Quit,
-    /// Collapse or expand the agent's task checklist.
-    Tasks,
     /// Choose the model of the foreground session.
     Model,
     /// Choose the reasoning level of the foreground session.
@@ -99,15 +97,6 @@ const BUILTIN: &[LocalCommand] = &[
         takes_argument: false,
         action: LocalAction::Quit,
         tag: "talaria",
-    },
-    LocalCommand {
-        name: "tasks",
-        tag: "talaria",
-        aliases: &[],
-        summary: "Collapse or expand the agent's task checklist",
-        args_hint: "",
-        takes_argument: false,
-        action: LocalAction::Tasks,
     },
     LocalCommand {
         name: "btw",
@@ -253,13 +242,9 @@ const BUILTIN: &[LocalCommand] = &[
         action: LocalAction::Export,
         tag: "talaria",
     },
-    // Issue #242. The issue asks for a `tasks` alias here, but `/tasks`
-    // already toggles the checklist (issue #226) and the table forbids a
-    // repeated name, so this entry ships without aliases until the phase
-    // planner resolves which command owns `/tasks`.
     LocalCommand {
         name: "agents",
-        aliases: &[],
+        aliases: &["tasks"],
         summary: "Show the session's subagents; `pause` and `resume` switch spawning",
         args_hint: "[pause|resume]",
         takes_argument: true,
