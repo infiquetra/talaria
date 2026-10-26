@@ -258,8 +258,10 @@ async fn live_rows_from_events_and_list() {
         |n, hub, msgs| {
             if let Notification::SubagentStart(payload) = n
                 && let Some(id) = &payload.subagent_id
+                && first_start.is_none()
             {
-                first_start.get_or_insert((id.clone(), Instant::now()));
+                first_start = Some((id.clone(), Instant::now()));
+                hub.act(&key, SubagentAction::Refresh, live_clock(started));
             }
             let (id, at) = first_start.clone()?;
             for msg in msgs {
