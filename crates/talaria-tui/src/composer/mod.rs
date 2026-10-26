@@ -628,6 +628,7 @@ impl Composer {
             | Action::FleetTop
             | Action::FleetBottom
             | Action::FleetOpen
+            | Action::FleetOpenInPane
             | Action::FleetPeek
             | Action::FleetReply
             | Action::FleetStop

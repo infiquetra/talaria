@@ -347,3 +347,32 @@ fn footer_hint_and_notices_snapshots() {
     let expected = expect_screen(&rows, Some(NOTICE_T2), 80, 24);
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn pane_footer_uses_the_bound_key_and_omits_unbound_action() {
+    use std::collections::BTreeMap;
+    use talaria_tui::keys::KeyMap;
+    let state = hold(three_rows());
+    for (bindings, expected) in [
+        (vec!["ctrl+o".to_owned()], Some("ctrl+o new pane")),
+        (Vec::new(), None),
+    ] {
+        let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
+            "fleet_open_in_pane".to_owned(),
+            bindings,
+        )]));
+        assert!(notices.is_empty());
+        let theme = FleetTheme::with_key_map(&map);
+        let mut terminal = Terminal::new(TestBackend::new(160, 48)).expect("terminal");
+        terminal
+            .draw(|frame| FleetView::draw(&state, None, frame.area(), frame.buffer_mut(), &theme))
+            .expect("draw");
+        let footer = (0..160)
+            .map(|x| terminal.backend().buffer()[(x, 47)].symbol())
+            .collect::<String>();
+        match expected {
+            Some(text) => assert!(footer.contains(text), "{footer}"),
+            None => assert!(!footer.contains("new pane"), "{footer}"),
+        }
+    }
+}

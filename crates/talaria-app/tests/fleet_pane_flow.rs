@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use fake_fleet::{FakeFleetSink, FleetCall};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use talaria_app::app::{self, AppEffect, AppMessage, AppState};
+use talaria_app::app::{self, AppEffect, AppMessage, AppState, UserAction};
 use talaria_app::fleet_actions;
 use talaria_app::panes::{
     CommandRunner, CommandSpec, PaneEnv, PaneOutcome, PaneRequest, PaneSettings, RunResult,
@@ -83,6 +83,7 @@ fn overlay() -> (FleetViewState, FleetRow) {
 struct FakeRunner {
     calls: Mutex<Vec<CommandSpec>>,
     script: Mutex<VecDeque<RunResult>>,
+    delay: Duration,
 }
 
 impl FakeRunner {
@@ -90,6 +91,7 @@ impl FakeRunner {
         Self {
             calls: Mutex::new(Vec::new()),
             script: Mutex::new(script.into()),
+            delay: Duration::ZERO,
         }
     }
 
@@ -116,7 +118,10 @@ impl CommandRunner for FakeRunner {
                 stderr: "unscripted call".to_owned(),
                 timed_out: false,
             });
-        Box::pin(async move { out })
+        Box::pin(async move {
+            tokio::time::sleep(self.delay).await;
+            out
+        })
     }
 }
 
@@ -434,6 +439,38 @@ async fn outcome_after_overlay_closed_goes_to_main_screen() {
 }
 
 #[tokio::test]
+async fn panel_target_uses_supplied_title_and_acknowledges_only_opened() {
+    let dir = tempfile::tempdir().expect("a folder");
+    let mut app = AppState::new("launch");
+    let sink = Arc::new(FakeFleetSink::new());
+    app.pane_sink = Some(sink.clone());
+    app.pane_env = herdr_test_env(&dir);
+    app.pane_runner = Some(Arc::new(FakeRunner::new(vec![
+        ok("{\"result\":{\"pane\":{\"pane_id\":\"w1:p7\"}}}"),
+        ok(""),
+    ])));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    app.sender = Some(tx);
+    let child = key("fixture", "local-child");
+    let effects = app::update(
+        &mut app,
+        AppMessage::User(UserAction::OpenInPane {
+            key: child.clone(),
+            title: "child task".to_owned(),
+        }),
+    );
+    assert!(committed(&effects).contains("Opening \"child task\" in a new Herdr pane…"));
+    assert!(sink.calls().is_empty());
+    let completion = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("pane task finishes")
+        .expect("completion");
+    let effects = app::update(&mut app, completion);
+    assert!(committed(&effects).contains("Opened \"child task\" in a new Herdr pane."));
+    assert_eq!(sink.calls(), [FleetCall::Acknowledge(child)]);
+}
+
+#[tokio::test]
 async fn slow_split_never_blocks_the_loop() {
     let dir = tempfile::tempdir().expect("a folder");
     let (fleet, working) = overlay();
@@ -442,31 +479,47 @@ async fn slow_split_never_blocks_the_loop() {
     app.pane_env = herdr_test_env(&dir);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     app.sender = Some(tx);
+    let mut runner = FakeRunner::new(vec![
+        ok("{\"result\":{\"pane\":{\"pane_id\":\"w1:p7\"}}}"),
+        ok(""),
+    ]);
+    runner.delay = Duration::from_secs(2);
+    let runner = Arc::new(runner);
+    app.pane_runner = Some(runner.clone());
 
     // The opening notice is in the frame of the key itself, before the spawned
     // open can finish.
-    let inputs =
-        fleet_actions::execute(&mut app, FleetViewEffect::OpenInPane(working.key.clone())).await;
-    let fleet = app.fleet.as_mut().expect("overlay");
-    for input in inputs {
-        talaria_core::fleet_view::update(fleet, input, PAGE);
-    }
+    let effects = app::update(
+        &mut app,
+        AppMessage::FleetView(FleetViewInput::Action(FleetAction::OpenInPane)),
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Redraw))
+    );
     let rows = draw_rows(app.fleet.as_ref().expect("overlay"), 80, 24);
     assert!(
         rows.iter()
             .any(|row| row.contains("Opening \"migrate\" in a new Herdr pane…")),
         "the key's frame has no opening notice: {rows:?}"
     );
+    tokio::time::timeout(Duration::from_millis(500), async {
+        while runner.calls().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the split starts on its task");
 
     // Fifty cursor keys, timed from key to frame: the 48th smallest (the 95th
     // percentile of 50) fits the 16 ms keystroke budget.
     let mut times: Vec<Duration> = Vec::new();
     for _ in 0..50 {
         let started = Instant::now();
-        talaria_core::fleet_view::update(
-            app.fleet.as_mut().expect("overlay"),
-            FleetViewInput::Action(FleetAction::Down),
-            PAGE,
+        app::update(
+            &mut app,
+            AppMessage::FleetView(FleetViewInput::Action(FleetAction::Down)),
         );
         let _ = draw_rows(app.fleet.as_ref().expect("overlay"), 80, 24);
         times.push(started.elapsed());
@@ -476,5 +529,15 @@ async fn slow_split_never_blocks_the_loop() {
         times[47] <= Duration::from_millis(16),
         "the loop stalled behind the open: {:?}",
         times[47]
+    );
+    assert_eq!(runner.calls().len(), 1, "the slow split is still in flight");
+    assert_eq!(
+        app.fleet
+            .as_ref()
+            .expect("overlay")
+            .find_row(&working.key)
+            .expect("working row")
+            .title,
+        "migrate"
     );
 }

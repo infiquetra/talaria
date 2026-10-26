@@ -44,6 +44,7 @@ fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
     #[allow(unreachable_patterns)]
     let labels: &[&str] = match action {
         Action::Submit => &["Enter"],
+        Action::FleetOpenInPane => &["O"],
         Action::Newline => &["Shift+Enter", "Alt+Enter", "Ctrl+J"],
         Action::Interrupt => &["Esc"],
         Action::Cancel => &["Ctrl+C"],

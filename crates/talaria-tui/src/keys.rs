@@ -267,6 +267,8 @@ pub enum Action {
     FleetBottom,
     /// Open the fleet row as the foreground session.
     FleetOpen,
+    /// Open a fleet session in another multiplexer pane.
+    FleetOpenInPane,
     /// Toggle the peek panel for the fleet row.
     FleetPeek,
     /// Reply to the fleet row's session.
@@ -344,7 +346,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 106] = [
+    pub const ALL: [Self; 107] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -428,6 +430,7 @@ impl Action {
         Self::FleetTop,
         Self::FleetBottom,
         Self::FleetOpen,
+        Self::FleetOpenInPane,
         Self::FleetPeek,
         Self::FleetReply,
         Self::FleetStop,
@@ -540,6 +543,7 @@ impl Action {
             Self::FleetTop => "fleet_top",
             Self::FleetBottom => "fleet_bottom",
             Self::FleetOpen => "fleet_open",
+            Self::FleetOpenInPane => "fleet_open_in_pane",
             Self::FleetPeek => "fleet_peek",
             Self::FleetReply => "fleet_reply",
             Self::FleetStop => "fleet_stop",
@@ -662,6 +666,7 @@ impl Action {
             | Self::FleetTop
             | Self::FleetBottom
             | Self::FleetOpen
+            | Self::FleetOpenInPane
             | Self::FleetPeek
             | Self::FleetReply
             | Self::FleetStop
@@ -780,6 +785,7 @@ impl Action {
             Self::FleetTop => &["home", "g"],
             Self::FleetBottom => &["end", "shift+g"],
             Self::FleetOpen => &["enter"],
+            Self::FleetOpenInPane => &["o"],
             Self::FleetPeek => &["space"],
             Self::FleetReply => &["r"],
             Self::FleetStop => &["x"],
