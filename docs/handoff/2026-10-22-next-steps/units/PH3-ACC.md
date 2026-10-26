@@ -589,12 +589,13 @@ PASS: AUTO-8 prints six `PASS` lines (P1-13's steps) and `SMOKE_RESULT: PASSED (
 
 ### 7.2 Source rows (45 scenarios)
 
-Run each as written in Appendix A, with the four allowed changes of the issue's REQ-11:
+Run each as written in Appendix A, with the five allowed changes of the issue's REQ-11 (`Settled C-5` keeps the 77-row reading (a) baseline; `Settled C-7` adds item 5 for `P3-08 UAT-2`):
 
 1. `target/release/talaria` (the absolute `$T`) wherever a scenario says `talaria`, `"$T"`, `<talaria>` or the debug path (`P3-08` already builds a release binary and uses `T` for it: use the candidate's `$T`; `P3-04` UAT-5's and others' `talaria --profile fixture` lines are shorthand for the same).
 2. `--no-ensure` on every launch of `talaria` that starts a live session and lacks it (every live scenario's start line lacks it, except those that already carry it). `talaria fleet list` and `talaria fleet list --watch` take no such option and never start a gateway.
 3. Every `smoke run` that lacks `--talaria` gets `--talaria "$T"` (none of the 45 source scenarios runs `smoke`).
 4. Where Herdr rejects the pane-split form a scenario writes, the helper `pane_new` of section 3; say so in the evidence.
+5. In `P3-08 UAT-2` (`Settled C-7`), the operator creates and later removes `attach-dup-<tag>` on `default`, and the agent tester creates the `fixture` half and runs the read-only checks on `default` (else `BLOCKED (no access)`).
 
 These are not changes: cleanup before a scenario starts (close a leftover `talaria-smoke-` tab, answer or clear a leftover session by the quiet-fleet rule of section 3); the demo programs built by `cargo run` in debug (they are tools, not the product: `P3-04`'s `subagents_demo` is one); a key name Herdr rejects when the scenario itself allows another. A test target or demo that no longer exists is `BLOCKED (not built)`.
 
@@ -1492,7 +1493,7 @@ Common setup (operator sets up the gateway as in Dependencies): `cargo build --r
 - Persona: developer
 - Covers: AC-2, AC-4
 - Runner: agent tester in Herdr
-- Preconditions: UAT-1 done; pane A ran `"$T" --profile default`, `/rename attach-dup-<tag>`, `/quit`, then the same with `--profile fixture` (no prompts; if unlisted, record BLOCKED with the reason, U4)
+- Preconditions: UAT-1 done; the operator created `attach-dup-<tag>` on `default` (`Settled C-7`), and pane A ran `"$T" --profile fixture`, `/rename attach-dup-<tag>`, `/quit` (no prompts; if `default` is unprepared, record `BLOCKED (no access)`, `Settled C-7`)
 - Given pane A at a shell prompt
 - When the tester runs, each followed by `echo "exit=$?"`: `"$T" attach zz-none-<tag>`; `"$T" attach attach-dup-<tag>`; `"$T" attach attach-dup-<tag> --profile fixture` (then `/quit`); `"$T" attach "  "`; `"$T" attach abcd --model x`; `"$T" attach abcd --profile nosuch`
 - Then in order: `talaria: no session matches "zz-none-<tag>" in the profiles default, fixture` (more names may follow) and `exit=1`; `talaria: 2 sessions match "attach-dup-<tag>":` with a `default` and a `fixture` line, `exit=2`; `── Resumed: attach-dup-<tag> ──`, `exit=0`; `talaria: the session to attach to is empty.`, `exit=2`; a line starting `error: ` that names `--model`, `exit=2`; `talaria: the profile nosuch is not served by the gateway (served: default, fixture` (more names may follow), `exit=2`
