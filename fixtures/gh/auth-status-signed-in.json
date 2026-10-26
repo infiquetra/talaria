@@ -1,0 +1,9 @@
+{
+  "args_prefix": [
+    "auth",
+    "status"
+  ],
+  "exit": 0,
+  "stderr": "",
+  "stdout": "github.com\n  ✓ Logged in to github.com account fixture-user (keyring)\n  - Active account: true\n  - Git operations protocol: ssh\n  - Token: gho_************************************\n  - Token scopes: 'admin:org', 'admin:org_hook', 'admin:public_key', 'delete_repo', 'gist', 'project', 'repo', 'workflow'\n"
+}

@@ -1,0 +1,9 @@
+{
+  "args_prefix": [
+    "api",
+    "graphql"
+  ],
+  "exit": 0,
+  "stderr": "",
+  "stdout": "{\"data\":{\"repository\":{\"b0\":{\"nodes\":[{\"number\":2,\"state\":\"OPEN\",\"isDraft\":true,\"isCrossRepository\":false,\"url\":\"https://github.com/fixture-owner/fixture-repo/pull/2\",\"headRefName\":\"talaria/live-5e7812af\",\"reviewDecision\":null,\"commits\":{\"nodes\":[{\"commit\":{\"statusCheckRollup\":null}}]}}]}}}}"
+}

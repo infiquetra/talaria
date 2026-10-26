@@ -149,7 +149,10 @@ pub enum FleetViewInput {
 pub enum FleetViewEffect {
     OpenPeek(RowKey),
     ClosePeek,
-    SendReply { key: RowKey, text: String },
+    SendReply {
+        key: RowKey,
+        text: String,
+    },
     ResendReply(RowKey),
     Stop(RowKey),
     Acknowledge(RowKey),
@@ -849,8 +852,15 @@ fn list_key(
         FleetAction::Answer => return answer_start(state),
         // The app opens the launch dialog; the overlay itself does nothing.
         FleetAction::New | FleetAction::NewInWorktree => {}
-        // Step 0: reviewing a row does nothing yet.
-        FleetAction::Review => {}
+        // The app finds the row's folder and opens the review over the list.
+        FleetAction::Review => {
+            return state
+                .cursor
+                .clone()
+                .map(FleetViewEffect::Review)
+                .into_iter()
+                .collect();
+        }
     }
     Vec::new()
 }

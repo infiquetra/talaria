@@ -636,7 +636,8 @@ impl Composer {
             | Action::FleetProfileNext
             | Action::FleetProfilePrev
             | Action::FleetNew
-            | Action::FleetNewWorktree => {}
+            | Action::FleetNewWorktree
+            | Action::FleetReview => {}
             // Review actions never edit the draft; the review owns them. Issue #245.
             Action::ReviewUp
             | Action::ReviewDown

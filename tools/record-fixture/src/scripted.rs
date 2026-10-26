@@ -17,7 +17,7 @@ use tokio::time::Instant;
 use crate::{AttemptResult, DriverConfig, Scenario, call_options, check_info, submit_params};
 
 /// The scenarios of this module, in the order they are recorded.
-pub const SCRIPTED_SCENARIOS: [&str; 8] = [
+pub const SCRIPTED_SCENARIOS: [&str; 10] = [
     "queue-edit-remove",
     "queue-steer",
     "queue-move-send-now",
@@ -26,6 +26,8 @@ pub const SCRIPTED_SCENARIOS: [&str; 8] = [
     "shell-and-btw",
     "background-work",
     "bg-launch",
+    "review-session-info",
+    "review-oneshot",
 ];
 
 /// Whether `name` is one of [`SCRIPTED_SCENARIOS`].
@@ -79,6 +81,8 @@ pub(crate) fn scenario(name: &str) -> Option<Scenario> {
         "background-work" => (owned(&[BACKGROUND_PROMPT]), owned(&["complete"])),
         // Detach without waiting, so a recording is not required to contain a completed turn.
         "bg-launch" => (Vec::new(), Vec::new()),
+        // No turn runs: the review only reads the session and asks for one message.
+        "review-session-info" | "review-oneshot" => (Vec::new(), Vec::new()),
         _ => return None,
     };
     Some(Scenario {
@@ -652,6 +656,8 @@ async fn drive(run: &mut Run<'_>, scenario: &Scenario, config: &DriverConfig) ->
     match scenario.name.as_str() {
         "hermes-commands" => hermes_commands(run).await,
         "session-picker" => session_picker(run).await,
+        "review-session-info" => review_session_info(run).await,
+        "review-oneshot" => review_oneshot(run).await,
         "rewind-and-rollback" => rewind_and_rollback(run).await,
         "context-compaction" => context_compaction(run).await,
         "queue-edit-remove" => queue_edit_remove(run).await,
@@ -695,6 +701,42 @@ async fn bg_launch(run: &mut Run<'_>, config: &DriverConfig) -> Step {
     run.session_id.clear();
     Ok(())
 }
+
+/// The review's folder lookup: `session.info` for the session just created.
+async fn review_session_info(run: &mut Run<'_>) -> Step {
+    let session_id = run.session_id.clone();
+    run.call("session.info", json!({"session_id": session_id}))
+        .await?;
+    Ok(())
+}
+
+/// The review's message draft: `llm.oneshot` bound to the session just created.
+async fn review_oneshot(run: &mut Run<'_>) -> Step {
+    let session_id = run.session_id.clone();
+    let reply = run
+        .call_for(
+            "llm.oneshot",
+            json!({
+                "session_id": session_id,
+                "template": "commit_message",
+                "temperature": 0.8,
+                "variables": {
+                    "diff": REVIEW_DIFF,
+                    "recent_commits": "",
+                    "avoid": "",
+                },
+            }),
+            Duration::from_secs(90),
+        )
+        .await?;
+    if reply["text"].as_str().unwrap_or("").trim().is_empty() {
+        return Err("llm.oneshot returned no text".into());
+    }
+    Ok(())
+}
+
+/// A small diff for the drafting scenario.
+const REVIEW_DIFF: &str = "diff --git a/hello.txt b/hello.txt\nnew file mode 100644\n--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1 @@\n+hello\n";
 
 fn text_of(result: &Value) -> String {
     let mut text = String::new();
@@ -1811,6 +1853,16 @@ pub(crate) fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Resu
             }
             if sent("session.mutate") == 0 {
                 return Err("no session.mutate request".to_owned());
+            }
+        }
+        "review-session-info" | "review-oneshot" => {
+            let method = if scenario.name == "review-oneshot" {
+                "llm.oneshot"
+            } else {
+                "session.info"
+            };
+            if sent(method) != 1 {
+                return Err(format!("{} did not send one {method}", scenario.name));
             }
         }
         "bg-launch" => {

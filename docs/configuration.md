@@ -113,6 +113,26 @@ agents_top = ["g", "home"]
 agents_bottom = ["shift+g", "end"]
 fleet_new = ["n"]
 fleet_new_worktree = ["w"]
+fleet_review = ["v"]
+review_up = ["up", "k"]
+review_down = ["down", "j"]
+review_top = ["home", "g"]
+review_bottom = ["end", "shift+g"]
+review_show_diff = ["enter"]
+review_diff_page_up = ["pageup"]
+review_diff_page_down = ["pagedown"]
+review_scope = ["tab"]
+review_stage = ["space"]
+review_stage_all = ["a"]
+review_unstage_all = ["shift+a"]
+review_discard = ["shift+x"]
+review_commit = ["c"]
+review_push = ["p"]
+review_pull_request = ["shift+p"]
+review_open_pr = ["o"]
+review_refresh = ["r"]
+commit_submit = ["ctrl+s"]
+commit_draft = ["ctrl+d"]
 [editor]
 command = ""
 [history]
@@ -220,6 +240,14 @@ same), and `fleet_new_worktree` starts it in a new git worktree at `.worktrees/t
 the branch `talaria/<name>`, cut from freshly fetched `origin`. Files listed in `.worktreeinclude`
 are copied into the tree, but folders listed there are links to the main checkout's, so edits in
 them are shared; uncommitted changes in the main checkout are not carried into the tree.
+`fleet_review` (`v`) on a fleet row, or `/changes` for the foreground session, opens a review of
+the session's folder: `review_scope` switches between uncommitted changes and the branch's
+commits (read-only), `review_stage`, `review_stage_all` and `review_unstage_all` stage,
+`review_discard` discards one file on a second press, `review_commit` opens a message editor
+(`commit_submit` commits, `commit_draft` asks the session's own model for a message),
+`review_push` pushes the branch to `origin` (never forced, never the default branch) and
+`review_pull_request` opens a draft pull request with `gh`; `review_open_pr` opens it in the
+browser and `review_refresh` reloads. Esc and Ctrl+C are fixed there and never act.
 
 A key is modifiers (`ctrl`, `alt`, `shift`, `super`, each once) and one key joined by `+`, in any
 case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrows, `home`, `end`,
@@ -227,7 +255,8 @@ case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrow
 `super`; an uppercase letter means Shift. A key you wrote beats a default; between two you wrote,
 the earlier action keeps it and the other gets a notice. Shift+Enter needs the Kitty keyboard
 protocol, so Ctrl+J and Alt+Enter are the portable newline keys. No default uses F1, F2, Ctrl+B or
-Ctrl+S (macOS, nested Herdr, flow control); binding them works, with a notice.
+Ctrl+S (macOS, nested Herdr, flow control), except `commit_submit` in the review's commit editor;
+binding them works, with a notice.
 
 ## Approvals and working folder
 

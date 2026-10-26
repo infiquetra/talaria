@@ -45,6 +45,7 @@ use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
 use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
+use talaria_core::review::{ReviewFocus, ReviewKey, ReviewView};
 use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
@@ -79,6 +80,7 @@ use talaria_tui::pager::{
 use talaria_tui::palette::PaletteSection;
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
+use talaria_tui::review_view::draw_review;
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
 use talaria_tui::session_picker::{PickerTheme, SessionPickerView};
 use talaria_tui::side::{SideTasksSection, SideTheme, shell_mode_title};
@@ -147,6 +149,8 @@ enum Overlay {
     Agents,
     /// The foreground session's background processes.
     Processes,
+    /// A review opened with `/changes`.
+    Review,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -435,6 +439,32 @@ fn is_ctrl_c(key: &Key) -> bool {
         && matches!(key.code, KeyCode::Char('c' | 'C'))
 }
 
+/// The review's key for a key map action.
+fn review_action(action: Action) -> Option<ReviewKey> {
+    Some(match action {
+        Action::ReviewUp => ReviewKey::Up,
+        Action::ReviewDown => ReviewKey::Down,
+        Action::ReviewTop => ReviewKey::Top,
+        Action::ReviewBottom => ReviewKey::Bottom,
+        Action::ReviewShowDiff => ReviewKey::ShowDiff,
+        Action::ReviewDiffPageUp => ReviewKey::PageUp,
+        Action::ReviewDiffPageDown => ReviewKey::PageDown,
+        Action::ReviewScope => ReviewKey::Scope,
+        Action::ReviewStage => ReviewKey::StageToggle,
+        Action::ReviewStageAll => ReviewKey::StageAll,
+        Action::ReviewUnstageAll => ReviewKey::UnstageAll,
+        Action::ReviewDiscard => ReviewKey::Discard,
+        Action::ReviewCommit => ReviewKey::Commit,
+        Action::ReviewPush => ReviewKey::Push,
+        Action::ReviewPullRequest => ReviewKey::PullRequest,
+        Action::ReviewOpenPr => ReviewKey::OpenPr,
+        Action::ReviewRefresh => ReviewKey::Refresh,
+        Action::CommitDraft => ReviewKey::Draft,
+        Action::CommitSubmit => ReviewKey::Submit,
+        _ => return None,
+    })
+}
+
 /// The fleet overlay's action for a key map action.
 fn fleet_action(action: Action) -> Option<FleetAction> {
     Some(match action {
@@ -454,6 +484,7 @@ fn fleet_action(action: Action) -> Option<FleetAction> {
         Action::FleetProfilePrev => FleetAction::ProfilePrev,
         Action::FleetNew => FleetAction::New,
         Action::FleetNewWorktree => FleetAction::NewInWorktree,
+        Action::FleetReview => FleetAction::Review,
         _ => return None,
     })
 }
@@ -891,6 +922,7 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         subagents_terminal: counts.map_or(0, |counts| counts.terminal),
         context_percent,
         approvals: view.approvals.as_ref().map(approvals_segment),
+        pull_request: view.pull_request.clone(),
         ..StatusInputs::default()
     }
 }
@@ -1022,6 +1054,46 @@ impl TuiScreen {
                 }
             }
         }
+    }
+
+    /// One key for the open review, by its focus: the commit editor takes text, every other
+    /// focus goes through the key map's review context. Esc and Ctrl+C are fixed.
+    fn review_key(&self, key: Key, review: &ReviewView<'_>) -> Vec<UserAction> {
+        if key.kind == KeyKind::Release {
+            return Vec::new();
+        }
+        let send = |key: ReviewKey| vec![UserAction::Review(key)];
+        if is_escape(&key) {
+            return send(ReviewKey::Esc);
+        }
+        if is_ctrl_c(&key) {
+            return send(ReviewKey::CtrlC);
+        }
+        if *review.focus == ReviewFocus::Commit {
+            match self.keymap.resolve_in(&key, KeyContext::CommitMessage) {
+                Some(Action::CommitSubmit) => return send(ReviewKey::Submit),
+                Some(Action::CommitDraft) => return send(ReviewKey::Draft),
+                _ => {}
+            }
+            if let Some(character) = typed_character(&key) {
+                return send(ReviewKey::Char(character));
+            }
+            return send(match key.code {
+                KeyCode::Enter => ReviewKey::Newline,
+                KeyCode::Backspace => ReviewKey::Backspace,
+                KeyCode::Up => ReviewKey::Up,
+                KeyCode::Down => ReviewKey::Down,
+                _ => ReviewKey::Other,
+            });
+        }
+        if *review.focus == ReviewFocus::ConfirmPr && key.code == KeyCode::Enter {
+            return send(ReviewKey::Enter);
+        }
+        let mapped = self
+            .keymap
+            .resolve_in(&key, KeyContext::Review)
+            .and_then(review_action);
+        send(mapped.unwrap_or(ReviewKey::Other))
     }
 
     /// `n` or `w` in the fleet list: the dialog starts from the foreground session's profile
@@ -1608,6 +1680,10 @@ impl TuiScreen {
                 }
                 // The launch dialog owns every key while it is open, then the fleet overlay;
                 // in the overlay's answer focus the peeked session's card takes them.
+                // An open review owns every key: its list, its confirmations, its editor.
+                if let Some(review) = &view.review {
+                    return self.review_key(Key::from(raw), review);
+                }
                 if view.fleet.is_some() && self.launch_dialog.is_some() {
                     return self.launch_key(Key::from(raw));
                 }
@@ -1818,6 +1894,9 @@ impl TuiScreen {
                 }
                 if self.terminal.is_released() {
                     return Vec::new();
+                }
+                if view.review.is_some() {
+                    return vec![UserAction::ReviewPaste(text)];
                 }
                 if view.fleet.is_some()
                     && let Some(dialog) = self.launch_dialog.as_mut()
@@ -2233,10 +2312,19 @@ impl Screen for TuiScreen {
                     now: clock,
                 })
         };
+        // A review opened from the fleet list draws in its place; Esc returns to the list.
+        if let Some(review) = &view.review {
+            let theme = &self.tool_theme;
+            let _ = self
+                .terminal
+                .draw_overlay(|area, buf| draw_review(review, theme, area, buf));
+            return;
+        }
         let theme = FleetTheme::with_key_map(&self.keymap);
         let dialog = self.launch_dialog.as_ref();
+        let labels = &view.pr_labels;
         let _ = self.terminal.draw_overlay(|area, buf| {
-            FleetView::draw(fleet, panel, area, buf, &theme);
+            FleetView::draw_with_labels(fleet, panel, area, buf, &theme, labels);
             if let Some(dialog) = dialog {
                 dialog.draw(dialog.area(area), buf);
             }
@@ -2323,6 +2411,18 @@ impl Screen for TuiScreen {
             return;
         }
         self.close_overlay(Overlay::Processes);
+        // A review opened with `/changes` has the overlay to itself.
+        match (&view.review, view.fleet) {
+            (Some(review), None) => {
+                self.open_overlay(Overlay::Review);
+                let theme = &self.tool_theme;
+                let _ = self
+                    .terminal
+                    .draw_overlay(|area, buf| draw_review(review, theme, area, buf));
+                return;
+            }
+            _ => self.close_overlay(Overlay::Review),
+        }
         let now = Instant::now();
         if let Some(cwd) = view.folder.and_then(|folder| folder.cwd.as_deref()) {
             self.folder = std::path::PathBuf::from(cwd);

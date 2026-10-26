@@ -4,6 +4,16 @@
 
 ## 2026-10-26
 
+### The review is local git and gh, behind fixed names and guards
+
+**Decision.** The review of a session's folder (issue #245) opens with `v` in the fleet view and `/changes` in the foreground, because Hermes owns `/review` and `/diff`. It offers two scopes: uncommitted changes, where every action works, and the branch's commits, which are read-only for every action, push and pull request included. Discard works on one file after a second keypress; there is no discard-all. Pull requests are always drafts, pushed with an explicit `origin refs/heads/<b>:refs/heads/<b>` refspec, never forced, never from a detached head, the default branch (`main` and `master` always count) or the base, and never when the default branch is unknown. Commit hooks and clean, smudge and process filters run with the operator's configuration (diff drivers and `core.fsmonitor` are disabled); hooks, filters and `gh` are exempt from the allow-listed environment rule and get the process environment plus fixed keys.
+
+**Rationale.** Hermes has no git method and its Desktop does this work in the client. Draft-only, never-forced pushes and per-file discard keep every action recoverable or confirmed. Disabling filters would break Git LFS, and hooks and signing are the operator's own commit; a session's agent can write the repository's config, so that is recorded as an accepted risk, and the commit editor shows how many hooks are active.
+
+**Rejected alternatives.** Hermes's REST routes `/api/git/review/*` (loopback-only Talaria would need a second authenticated client, and they blank the operator's git configuration); `/review` or `/diff` as names; discard-all; ready pull requests; pushing from the branch view; disabling filters as Hermes's own plumbing does.
+
+**Revisit when.** The operator asks for filters to be disabled (the issue's operator question 2), Hermes offers a git method on the gateway, or ready pull requests are wanted.
+
 ### Background launch submits an ordinary turn
 
 **Decision.** `talaria --bg` and the fleet view's `n` and `w` (issue #241) submit the prompt with exactly `session_id`, `text` and `submission_id` (plus `profile` when routed): never `finite` and never `unattended`, so an approval in the background turn waits in the fleet view's needs-you queue.

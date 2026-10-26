@@ -124,6 +124,12 @@ impl Binding {
             .map(Self::Composer)
             .or_else(|| ModelAction::from_config_name(name).map(Self::Model))
     }
+    fn default_chords(self) -> &'static [&'static str] {
+        match self {
+            Self::Composer(action) => action.default_chords(),
+            Self::Model(action) => action.default_chords(),
+        }
+    }
 }
 
 /// One command a key chord can run.
@@ -321,6 +327,8 @@ pub enum Action {
     FleetNew,
     /// Start a background session in a new worktree from the fleet list.
     FleetNewWorktree,
+    /// Review the fleet row's session folder.
+    FleetReview,
     /// Move the review cursor up. Issue #245.
     ReviewUp,
     /// Move the review cursor down. Issue #245.
@@ -390,7 +398,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 127] = [
+    pub const ALL: [Self; 128] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -499,6 +507,7 @@ impl Action {
         Self::AgentsBottom,
         Self::FleetNew,
         Self::FleetNewWorktree,
+        Self::FleetReview,
         Self::ReviewUp,
         Self::ReviewDown,
         Self::ReviewTop,
@@ -632,6 +641,7 @@ impl Action {
             Self::AgentsBottom => "agents_bottom",
             Self::FleetNew => "fleet_new",
             Self::FleetNewWorktree => "fleet_new_worktree",
+            Self::FleetReview => "fleet_review",
             Self::ReviewUp => "review_up",
             Self::ReviewDown => "review_down",
             Self::ReviewTop => "review_top",
@@ -758,7 +768,8 @@ impl Action {
             | Self::FleetProfileNext
             | Self::FleetProfilePrev
             | Self::FleetNew
-            | Self::FleetNewWorktree => KeyContext::Fleet,
+            | Self::FleetNewWorktree
+            | Self::FleetReview => KeyContext::Fleet,
             Self::AgentsUp
             | Self::AgentsDown
             | Self::AgentsTail
@@ -913,6 +924,7 @@ impl Action {
             Self::AgentsBottom => &["shift+g", "end"],
             Self::FleetNew => &["n"],
             Self::FleetNewWorktree => &["w"],
+            Self::FleetReview => &["v"],
             Self::ReviewUp => &["up", "k"],
             Self::ReviewDown => &["down", "j"],
             Self::ReviewTop => &["home", "g"],
@@ -1340,7 +1352,11 @@ impl KeyMap {
             for text in texts {
                 match KeyChord::parse(text, parse_context(action)) {
                     Ok(chord) => {
-                        if chord.is_risky() {
+                        // A written binding that only repeats the default needs no warning.
+                        let is_default = action.default_chords().iter().any(|default| {
+                            KeyChord::parse(default, parse_context(action)).as_ref() == Ok(&chord)
+                        });
+                        if chord.is_risky() && !is_default {
                             notices.push(format!(
                                 "[keys] {name} in {FILE}: {} may not reach Talaria in some \
                                  terminals (the system, Herdr or terminal flow control can take \
@@ -1674,7 +1690,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 108);
+        assert_eq!(Action::ALL.len(), 128);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1737,7 +1753,26 @@ mod tests {
                 | Action::FleetProfileNext
                 | Action::FleetProfilePrev
                 | Action::FleetNew
-                | Action::FleetNewWorktree => KeyContext::Fleet,
+                | Action::FleetNewWorktree
+                | Action::FleetReview => KeyContext::Fleet,
+                Action::ReviewUp
+                | Action::ReviewDown
+                | Action::ReviewTop
+                | Action::ReviewBottom
+                | Action::ReviewShowDiff
+                | Action::ReviewDiffPageUp
+                | Action::ReviewDiffPageDown
+                | Action::ReviewScope
+                | Action::ReviewStage
+                | Action::ReviewStageAll
+                | Action::ReviewUnstageAll
+                | Action::ReviewDiscard
+                | Action::ReviewCommit
+                | Action::ReviewPush
+                | Action::ReviewPullRequest
+                | Action::ReviewOpenPr
+                | Action::ReviewRefresh => KeyContext::Review,
+                Action::CommitSubmit | Action::CommitDraft => KeyContext::CommitMessage,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -1819,7 +1854,26 @@ mod tests {
                 | Action::FleetProfileNext
                 | Action::FleetProfilePrev
                 | Action::FleetNew
-                | Action::FleetNewWorktree => KeyContext::Fleet,
+                | Action::FleetNewWorktree
+                | Action::FleetReview => KeyContext::Fleet,
+                Action::ReviewUp
+                | Action::ReviewDown
+                | Action::ReviewTop
+                | Action::ReviewBottom
+                | Action::ReviewShowDiff
+                | Action::ReviewDiffPageUp
+                | Action::ReviewDiffPageDown
+                | Action::ReviewScope
+                | Action::ReviewStage
+                | Action::ReviewStageAll
+                | Action::ReviewUnstageAll
+                | Action::ReviewDiscard
+                | Action::ReviewCommit
+                | Action::ReviewPush
+                | Action::ReviewPullRequest
+                | Action::ReviewOpenPr
+                | Action::ReviewRefresh => KeyContext::Review,
+                Action::CommitSubmit | Action::CommitDraft => KeyContext::CommitMessage,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -1941,6 +1995,7 @@ mod tests {
             (Action::AgentsBottom, vec!["Shift+G", "End"]),
             (Action::FleetNew, vec!["N"]),
             (Action::FleetNewWorktree, vec!["W"]),
+            (Action::FleetReview, vec!["V"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1953,8 +2008,11 @@ mod tests {
         for action in Action::ALL {
             for chord in map.chords(action) {
                 let label = chord.label();
+                // The review's commit editor submits with Ctrl+S, as its issue settled; raw mode
+                // turns flow control off, and the key is configurable.
+                let settled = action == Action::CommitSubmit && label == "Ctrl+S";
                 assert!(
-                    !risky.contains(&label.as_str()),
+                    settled || !risky.contains(&label.as_str()),
                     "{label} is bound to {}",
                     action.config_name()
                 );
@@ -2086,7 +2144,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 108);
+        assert_eq!(Action::ALL.len(), 128);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 25] = [
+const NAMES: [&str; 27] = [
     "background-work",
     "attachments-mention-image",
     "plain-answer",
@@ -43,6 +43,8 @@ const NAMES: [&str; 25] = [
     "fleet-registry",
     "fleet-peek",
     "bg-launch",
+    "review-session-info",
+    "review-oneshot",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -76,6 +78,8 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         "fleet-peek" => &["complete", "complete", "complete"],
         // The launch detaches as soon as the prompt is admitted, before any turn ends.
         "bg-launch" => &[],
+        // The review only reads the session and drafts one message; no turn runs.
+        "review-session-info" | "review-oneshot" => &[],
         _ => &["complete"],
     }
 }
@@ -107,8 +111,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 25,
-        "expected twenty-five fixtures in fixtures/frames, found {}",
+        files.len() == 27,
+        "expected twenty-seven fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -187,7 +191,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 25);
+    assert_eq!(fixtures.len(), 27);
 }
 
 #[test]
@@ -791,6 +795,23 @@ fn scenario_evidence_present() {
                 assert!(
                     sent.iter().any(|frame| frame["method"] == wanted),
                     "{name}: no outbound {wanted}"
+                );
+            }
+            "review-session-info" | "review-oneshot" => {
+                let method = if name == "review-oneshot" {
+                    "llm.oneshot"
+                } else {
+                    "session.info"
+                };
+                let calls: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| record["dir"] == "out" && record["frame"]["method"] == method)
+                    .map(|record| &record["frame"])
+                    .collect();
+                assert_eq!(calls.len(), 1, "{name}: one outbound {method}");
+                assert!(
+                    calls[0]["params"]["session_id"].is_string(),
+                    "{name}: {method} names no session"
                 );
             }
             other => panic!("unlisted fixture {other}"),

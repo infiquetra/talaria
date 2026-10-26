@@ -207,6 +207,8 @@ fn scenario_table_matches_the_spec() {
             "shell-and-btw",
             "background-work",
             "bg-launch",
+            "review-session-info",
+            "review-oneshot",
         ]
     );
     for name in SCRIPTED_SCENARIOS {

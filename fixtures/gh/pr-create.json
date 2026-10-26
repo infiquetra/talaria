@@ -1,0 +1,9 @@
+{
+  "args_prefix": [
+    "pr",
+    "create"
+  ],
+  "exit": 0,
+  "stderr": "",
+  "stdout": "https://github.com/fixture-owner/fixture-repo/pull/2\n"
+}

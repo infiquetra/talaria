@@ -2,6 +2,38 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — Hermes has no git remote procedure call
+
+**Evidence.** Issue #245's specification: at Hermes v0.22.4 Desktop's review pane runs git and `gh` in its Electron main process through IPC handlers (`apps/desktop/electron/git-ipc.ts:67-105`), and the REST routes `/api/git/review/*` (`hermes_cli/web_routers/git.py:125-197`) exist only for Desktop on a remote gateway. The gateway contract has no git or review method. Talaria's review runs git through `crates/talaria-app/src/review/git_ops.rs` and `gh` through `crates/talaria-app/src/review/gh.rs`.
+
+**Mechanism.** Hermes treats work on the operator's machine (files, git, browsers) as the client's job; the gateway only owns sessions. A local client that waits for a git method waits forever, and the REST facade would add a second authenticated client and blank the operator's global git configuration.
+
+**Generalizable rule.** When Hermes's own client does machine work outside the gateway, Talaria does it locally too.
+
+## 2026-10-26 — A one-shot needs the session's own route
+
+**Evidence.** Issue #245's specification: `gateway/session_llm_oneshot.py:208-230` (`_session_runtime`) borrows a session's model only when it has a resident agent or a launch policy whose route resolves; otherwise `run_oneshot` uses the auxiliary backend, which can be another provider, and the `{text}` reply cannot show which model answered. `session.info` (`gateway/session_local.py:406-419`) reports `lazy`, `cwd` and `model`, the same signs. The recorded `fixtures/frames/review-session-info.jsonl` shows a fresh session as `lazy: true` with a `cwd`, which still drafts with its own route.
+
+**Mechanism.** `llm.oneshot` with a `session_id` is a request, not a guarantee: the binding falls back silently. The draft would carry the operator's diff to a provider the session never used.
+
+**Generalizable rule.** Bind a one-shot to the session whose data it carries, and check that the session has its own route before sending.
+
+## 2026-10-26 — An empty clone has no origin/HEAD
+
+**Evidence.** Issue #245's specification (git fact checked on git 2.55.0) and test `review_git::refuses_default_branch_and_detached`: cloning an empty bare repository and pushing `main` leaves `refs/remotes/origin/HEAD` unset, while `git ls-remote --symref origin HEAD` still names the default branch. The guard in `crates/talaria-app/src/review/git_ops.rs` (`run_action` for a push) resolves it in full and refuses before spawning `git push` when it stays unknown.
+
+**Mechanism.** `origin/HEAD` is set by `git clone` only when the remote already had a default branch to report; a repository that was empty when cloned never gets it, so a default-branch guard built only on it lets every branch through.
+
+**Generalizable rule.** A safety guard that cannot find its reference fails closed.
+
+## 2026-10-26 — numstat runs textconv drivers
+
+**Evidence.** Test `review_git::diff_never_runs_attribute_drivers` (a `.gitattributes` diff driver whose `textconv` writes a marker file) and the specification's observation on git 2.55.0: `git diff --numstat` ran the driver, and only `--no-textconv` stopped it; a configured `core.fsmonitor` ran on `git status` until `-c core.fsmonitor=false` was added.
+
+**Mechanism.** numstat computes a diff to count lines, so it goes through the same diff driver machinery as a printed patch. A repository the agent can write may name any program there.
+
+**Generalizable rule.** Put `--no-ext-diff --no-textconv` on every `git diff`, not only on the ones that print a patch, and pin `core.fsmonitor=false` on every git call.
+
 ## 2026-10-26 — session.create with a title resumes an existing session
 
 **Evidence.** Issue #241's specification (fact 3): at Hermes v0.22.4, `gateway/session_controls.py:419-430` first resolves a create-time `title` as an existing session id or title (`resolve_titled_session(..., missing_ok=True)`) and resumes that session when it finds one; titles are also unique, so a clash is refused `admission_conflict` (`:444`, `:479-480`). The background launch's parameter builder (`crates/talaria-app/src/bg/wire.rs`) never names the key, and the launch wire test asserts it is absent from every frame.

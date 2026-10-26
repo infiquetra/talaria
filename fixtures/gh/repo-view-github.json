@@ -1,0 +1,9 @@
+{
+  "args_prefix": [
+    "repo",
+    "view"
+  ],
+  "exit": 0,
+  "stderr": "",
+  "stdout": "fixture-owner/fixture-repo\n"
+}

@@ -419,6 +419,10 @@ pub fn parse(line: &str) -> Result<(LocalAction, String), String> {
         return Err(format!("/{name} is not a Talaria command."));
     };
     if !command.takes_argument && !argument.is_empty() {
+        // The review's command keeps the wording its own issue settled.
+        if command.action == LocalAction::Review {
+            return Err(format!("/{} takes no arguments.", command.name));
+        }
         return Err(format!("/{} does not take an argument.", command.name));
     }
     Ok((command.action, argument.to_owned()))

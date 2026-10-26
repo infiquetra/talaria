@@ -1,4 +1,4 @@
-//! The review: diff, commit, push and draft pull request. Step 0 stubs. Issue #245.
+//! The review: diff, commit, push and draft pull request. Issue #245.
 
 pub mod draft;
 pub mod model;
@@ -22,6 +22,6 @@ pub use pr::{
 };
 pub use ship::{GhReady, ShipRefusal, can_commit, can_open_pr, can_push, refusal_text};
 pub use state::{
-    GitAction, Listing, RecordView, ReviewEffect, ReviewFocus, ReviewInput, ReviewKey, ReviewState,
-    ReviewTarget, ReviewView, Scope,
+    DiffContent, EditorView, GitAction, Listing, RecordView, ReviewEffect, ReviewFocus,
+    ReviewInput, ReviewKey, ReviewState, ReviewTarget, ReviewView, Scope,
 };
