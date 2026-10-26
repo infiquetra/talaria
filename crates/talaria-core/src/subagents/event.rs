@@ -25,7 +25,19 @@ impl SubagentEvent {
     /// Decode the six `subagent.*` variants; `None` for every other
     /// notification or a payload that fails its contract shape.
     #[must_use]
-    pub fn from_notification(_n: &Notification) -> Option<SubagentEvent> {
-        todo!("#242")
+    pub fn from_notification(n: &Notification) -> Option<SubagentEvent> {
+        let (kind, payload) = match n {
+            Notification::SubagentSpawnRequested(p) => (SubagentEventKind::SpawnRequested, p),
+            Notification::SubagentStart(p) => (SubagentEventKind::Start, p),
+            Notification::SubagentProgress(p) => (SubagentEventKind::Progress, p),
+            Notification::SubagentThinking(p) => (SubagentEventKind::Thinking, p),
+            Notification::SubagentTool(p) => (SubagentEventKind::Tool, p),
+            Notification::SubagentComplete(p) => (SubagentEventKind::Complete, p),
+            _ => return None,
+        };
+        Some(Self {
+            kind,
+            payload: payload.clone(),
+        })
     }
 }

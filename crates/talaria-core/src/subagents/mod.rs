@@ -15,3 +15,6 @@ pub use command::{AgentsArg, parse_agents_arg};
 pub use event::{SubagentEvent, SubagentEventKind};
 pub use row::{Activity, ActivityKind, FailKind, RowState, SubagentRow};
 pub use tree::{Applied, Caps, Clock, Spawning, SubagentCounts, SubagentTree, TreeRow};
+
+#[cfg(test)]
+mod tests;
