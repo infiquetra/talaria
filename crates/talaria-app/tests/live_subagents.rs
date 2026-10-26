@@ -552,6 +552,7 @@ async fn live_pause_blocks_new_spawns() {
         exercised,
         "LIVE_SUBAGENT_RESULT: FAILED (pause not exercised)"
     );
+    println!("LIVE_SUBAGENT_RESULT: PASSED");
 }
 
 async fn hub_unpause(client: &Client) {
