@@ -68,7 +68,11 @@ async fn recorded_fleet_fixture_gives_expected_alerts() {
     let handle = FleetService::start(
         home.path().to_path_buf(),
         "fixture".to_owned(),
-        FleetConfig::scaled_for_tests(),
+        FleetConfig {
+            hot_poll: Duration::from_secs(60),
+            cold_poll: Duration::from_secs(60),
+            ..FleetConfig::scaled_for_tests()
+        },
         move |notice| {
             let _ = sender.send(notice);
         },

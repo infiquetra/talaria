@@ -88,6 +88,7 @@ fleet_page_down = ["pagedown"]
 fleet_top = ["home", "g"]
 fleet_bottom = ["end", "shift+g"]
 fleet_open = ["enter"]
+fleet_open_in_pane = ["o"]
 fleet_peek = ["space"]
 fleet_reply = ["r"]
 fleet_stop = ["x"]
@@ -96,6 +97,7 @@ fleet_filter = ["/"]
 fleet_profile_next = ["tab"]
 fleet_profile_prev = ["shift+tab"]
 agents_panel = ["alt+s"]
+agents_open_in_pane = ["o"]
 agents_up = ["up", "k"]
 agents_down = ["down", "j"]
 agents_tail = ["enter"]
@@ -147,6 +149,10 @@ backstop_s = 30
 poll_s = 5
 tail_poll_ms = 2000
 dock_rows = 3
+[panes]
+multiplexer = "auto"
+direction = "auto"
+focus = false
 ```
 
 ## Settings
@@ -195,6 +201,18 @@ so a request that was already waiting does not ring the bell; the counters show 
 window skipped. One rate limit covers every alert, foreground and background: two alerts less
 than two seconds apart pass only when the second one is more urgent (needs you, then failed,
 then done), and a dropped alert is not repeated later.
+
+`[panes]` controls O in `/fleet` and `/agents`: `multiplexer` is `auto`, `herdr`, `tmux`,
+or `off`; auto prefers Herdr. `direction` is `auto`, `right`, or `down`; auto splits right
+when the pane is at least 120 columns and twice as wide as it is tall, otherwise down.
+`focus = false` keeps focus in the current pane. The new pane runs this Talaria binary's
+`attach` command in a shell, so an error stays visible. A subagent must have a session id.
+These actions are `fleet_open_in_pane` and `agents_open_in_pane` and can be rebound or unbound.
+
+`talaria attach [--profile <name>] [--no-ensure] [--record <path>] [--] <SESSION>` resumes by
+full id, id prefix (at least four characters), or title. Without a profile it searches served
+profiles when permitted. Ambiguous matches require a longer id or `--profile`; listing searches
+the newest 200 live and stored rows per profile. A full id with `--profile` skips listing.
 
 Talaria never stops for this file: anything it cannot use falls back to its default with one notice
 naming `~/.talaria/config.toml`. A syntax error (with line and column) or an unreadable file gives

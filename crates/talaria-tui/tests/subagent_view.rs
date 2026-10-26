@@ -497,7 +497,7 @@ fn panel_list_snapshot_160x48() {
             format!("  ✓ {goal3}  {model}      20s  4 tools   Closed 4 issues"),
             "Steer queued for \"list the files in the current directory\". It reaches the subagent at its next step.".to_owned(),
             // Hints render lowercase with shift+x as X, per the rules' sample.
-            "enter tail · d detail · e steer · x stop · X stop all · p pause spawns · tab session · esc close".to_owned(),
+            "enter tail · d detail · o new pane · e steer · x stop · X stop all · p pause spawns · tab session · esc close".to_owned(),
         ]
     );
 
@@ -515,7 +515,7 @@ fn panel_list_snapshot_160x48() {
             format!("  ◐ read notes.txt  {:>7}", "8s"),
             format!("  ✓ summarise the findings  {:>7}", "20s"),
             "Steer queued for \"list the files in the current directory\". It reaches the subagent at its next st…".to_owned(),
-            "enter tail · d detail · e steer · x stop · X stop all · p pause spawns · tab session · esc close".to_owned(),
+            "enter tail · d detail · o new pane · e steer · x stop · X stop all · p pause spawns · tab session …".to_owned(),
         ]
     );
 }

@@ -104,6 +104,8 @@ pub struct Config {
     pub composer: ComposerConfig,
     /// Fleet poll timings from `[fleet]`.
     pub fleet: crate::fleet::FleetConfig,
+    /// How fleet sessions open in another multiplexer pane.
+    pub panes: crate::panes::PaneSettings,
     /// Subagent poll and dock settings from `[subagents]`. Issue #242.
     pub subagents: crate::subagents::SubagentsConfig,
 }
@@ -249,6 +251,7 @@ impl Default for Config {
             },
             composer: ComposerConfig::default(),
             fleet: crate::fleet::FleetConfig::default(),
+            panes: crate::panes::PaneSettings::default(),
             subagents: crate::subagents::SubagentsConfig::default(),
         }
     }
@@ -303,6 +306,7 @@ pub fn parse(text: &str) -> LoadedConfig {
         "ui",
         "composer",
         "fleet",
+        "panes",
         "subagents",
     ] {
         let Some(value) = table.get(name) else {
@@ -322,6 +326,7 @@ pub fn parse(text: &str) -> LoadedConfig {
             "ui" => config.ui = read_ui(section, &mut notices),
             "composer" => config.composer = read_composer(section, &mut notices),
             "fleet" => config.fleet = read_fleet(section, &mut notices),
+            "panes" => config.panes = read_panes(section, &mut notices),
             "subagents" => config.subagents = read_subagents(section, &mut notices),
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
@@ -340,6 +345,7 @@ pub fn parse(text: &str) -> LoadedConfig {
                 | "ui"
                 | "composer"
                 | "fleet"
+                | "panes"
                 | "subagents"
         ) {
             continue;
@@ -574,6 +580,49 @@ fn read_subagents(section: &Table, notices: &mut Vec<String>) -> crate::subagent
         notices.push(unknown_setting("subagents", key));
     }
     config
+}
+
+fn read_panes(section: &Table, notices: &mut Vec<String>) -> crate::panes::PaneSettings {
+    use crate::panes::{DirectionSetting, MultiplexerSetting, PaneSettings};
+    let mut settings = PaneSettings::default();
+    for (name, value) in section {
+        match name.as_str() {
+            "multiplexer" => {
+                settings.multiplexer = match value.as_str() {
+                    Some("auto") => MultiplexerSetting::Auto,
+                    Some("herdr") => MultiplexerSetting::Herdr,
+                    Some("tmux") => MultiplexerSetting::Tmux,
+                    Some("off") => MultiplexerSetting::Off,
+                    _ => {
+                        notices.push(
+                            "[panes] multiplexer must be auto, herdr, tmux or off; using auto."
+                                .into(),
+                        );
+                        MultiplexerSetting::Auto
+                    }
+                }
+            }
+            "direction" => {
+                settings.direction = match value.as_str() {
+                    Some("auto") => DirectionSetting::Auto,
+                    Some("right") => DirectionSetting::Right,
+                    Some("down") => DirectionSetting::Down,
+                    _ => {
+                        notices.push(
+                            "[panes] direction must be auto, right or down; using auto.".into(),
+                        );
+                        DirectionSetting::Auto
+                    }
+                }
+            }
+            "focus" => match value.as_bool() {
+                Some(focus) => settings.focus = focus,
+                None => notices.push("[panes] focus must be true or false; using false.".into()),
+            },
+            _ => notices.push(unknown_setting("panes", name)),
+        }
+    }
+    settings
 }
 
 fn read_fleet(section: &Table, notices: &mut Vec<String>) -> crate::fleet::FleetConfig {

@@ -437,6 +437,7 @@ fn fleet_action(action: Action) -> Option<FleetAction> {
         Action::FleetTop => FleetAction::Top,
         Action::FleetBottom => FleetAction::Bottom,
         Action::FleetOpen => FleetAction::Open,
+        Action::FleetOpenInPane => FleetAction::OpenInPane,
         Action::FleetPeek => FleetAction::Peek,
         Action::FleetReply => FleetAction::Reply,
         Action::FleetStop => FleetAction::Stop,
@@ -1190,6 +1191,12 @@ impl TuiScreen {
                 actions.push(UserAction::Subagent(SubagentAction::CloseTail));
             }
             actions.push(UserAction::SubagentNextSession);
+        } else if mode_action == Some(Action::AgentsOpenInPane) {
+            if let Some((key, title)) = panel.pane_target(tree) {
+                actions.push(UserAction::OpenInPane { key, title });
+            } else {
+                panel.set_flash("This subagent has no session id yet.".to_owned());
+            }
         } else if let Some(action) = mode_action
             && let Some(control) = panel.handle(action, tree)
         {
@@ -2028,6 +2035,14 @@ impl StatusHost for TuiScreen {
 }
 
 impl Screen for TuiScreen {
+    fn pane_settings(&self) -> talaria_app::panes::PaneSettings {
+        self.config.panes.clone()
+    }
+
+    fn pane_size(&self) -> (u16, u16) {
+        (self.terminal.viewport().width, self.rows)
+    }
+
     type Input = ScreenInput;
 
     fn subagents_config(&self) -> talaria_app::subagents::SubagentsConfig {

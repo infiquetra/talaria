@@ -4,6 +4,19 @@
 
 ## 2026-10-26
 
+### Open in new pane types the attach command into a shell
+
+**Decision.** Split a shell pane, then type the exact running binary's quoted attach command.
+Keep focus in the current pane by default and leave the new pane open after a typing failure.
+
+**Rationale.** Herdr splits without a command, and a shell keeps startup errors visible and the
+pane reusable. Two viewers of the same Hermes session are normal; an existing peek stays open.
+
+**Rejected.** Executing Talaria directly in a tmux pane, where an exit hides errors; tmux's
+`split-window -k`, which leaves a dead pane and requires newer tmux versions.
+
+**Revisit when.** Herdr's split accepts a command and keeps the pane usable after an error.
+
 ### The fleet view peeks on its own connection
 
 **Decision.** The fleet overlay (issue #240) peeks one session at a time on a profile-scoped link of its own, opened with the launch's connection service for the row's profile and never starting a gateway; it is reused for rows of the same profile, replaced for another profile, and closed with the overlay. Space attaches with `session.resume {session_id, display_projection: true}`; moving the cursor never does; a move or a close detaches with exactly `{session_id, subscription_id}`, never `end_reason`. A reply is a queued `prompt.submit`; a stop is `x` twice, then `session.interrupt` with the attached generation after open approvals are denied. On this link, server requests of the masked kinds become the peek's card; every other kind is ignored, never refused. The foreground row is never attached a second time: it uses the foreground's own paths. All peek work runs on one worker task that owns the peek, so effects keep their order and the app loop never waits.

@@ -600,7 +600,8 @@ impl Composer {
             | Action::AgentsPageUp
             | Action::AgentsPageDown
             | Action::AgentsTop
-            | Action::AgentsBottom => {}
+            | Action::AgentsBottom
+            | Action::AgentsOpenInPane => {}
             // Picker actions never edit the draft; the picker owns them.
             Action::SessionPickerOpen
             | Action::PickerUp
@@ -630,6 +631,7 @@ impl Composer {
             | Action::FleetTop
             | Action::FleetBottom
             | Action::FleetOpen
+            | Action::FleetOpenInPane
             | Action::FleetPeek
             | Action::FleetReply
             | Action::FleetStop

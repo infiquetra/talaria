@@ -7,6 +7,49 @@ use std::path::PathBuf;
 use talaria_app::config::{Config, parse};
 
 #[test]
+fn pane_settings_accept_each_option_and_fall_back_independently() {
+    use talaria_app::panes::{DirectionSetting, MultiplexerSetting, PaneSettings};
+    for (name, expected) in [
+        ("auto", MultiplexerSetting::Auto),
+        ("herdr", MultiplexerSetting::Herdr),
+        ("tmux", MultiplexerSetting::Tmux),
+        ("off", MultiplexerSetting::Off),
+    ] {
+        let loaded = parse(&format!(
+            "[panes]\nmultiplexer = '{name}'\ndirection = 'right'\nfocus = true\n"
+        ));
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+        assert_eq!(loaded.config.panes.multiplexer, expected);
+        assert_eq!(loaded.config.panes.direction, DirectionSetting::Right);
+        assert!(loaded.config.panes.focus);
+    }
+    for (name, expected) in [
+        ("auto", DirectionSetting::Auto),
+        ("down", DirectionSetting::Down),
+    ] {
+        let loaded = parse(&format!("[panes]\ndirection = '{name}'\n"));
+        assert!(loaded.notices.is_empty());
+        assert_eq!(loaded.config.panes.direction, expected);
+    }
+    let loaded =
+        parse("[panes]\nmultiplexer = 'unknown'\ndirection = 5\nfocus = 'yes'\nextra = true\n");
+    assert_eq!(loaded.config.panes, PaneSettings::default());
+    assert_eq!(loaded.notices.len(), 4);
+    assert!(
+        loaded
+            .notices
+            .iter()
+            .any(|notice| notice.contains("panes.extra"))
+    );
+    let loaded = parse("panes = false\n");
+    assert_eq!(loaded.config.panes, PaneSettings::default());
+    assert_eq!(
+        loaded.notices,
+        ["panes in ~/.talaria/config.toml must be a table; using the defaults for it."]
+    );
+}
+
+#[test]
 fn doc_default_shape_loads_cleanly() {
     let blocks = toml_blocks(&read_document());
     assert_eq!(blocks.len(), 1, "found {} toml blocks", blocks.len());
@@ -133,6 +176,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("fleet_top", &["home", "g"][..]),
         ("fleet_bottom", &["end", "shift+g"][..]),
         ("fleet_open", &["enter"][..]),
+        ("fleet_open_in_pane", &["o"][..]),
         ("fleet_peek", &["space"][..]),
         ("fleet_reply", &["r"][..]),
         ("fleet_stop", &["x"][..]),
@@ -141,6 +185,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("fleet_profile_next", &["tab"][..]),
         ("fleet_profile_prev", &["shift+tab"][..]),
         ("agents_panel", &["alt+s"][..]),
+        ("agents_open_in_pane", &["o"][..]),
         ("agents_up", &["up", "k"][..]),
         ("agents_down", &["down", "j"][..]),
         ("agents_tail", &["enter"][..]),
