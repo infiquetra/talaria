@@ -70,6 +70,16 @@
 //! The phase 2b suite adds two `write_in_cwd` features. Its `path` expands `$<n>` captures and
 //! remembered values like any other template, and an optional numeric `mode` sets the file mode
 //! after writing, for the exported file the rename step checks.
+//!
+//! The phase 3 suite adds two fields that use the scratch root instead of the pane's working
+//! folder. `write_in_scratch` is `{path, text}` and writes that file under the scratch root.
+//! `remove_in_scratch` deletes a path under the scratch root. Both follow `write_in_cwd` and
+//! `remove_in_cwd`: the path is expanded, an absolute path is ignored, and `remove_in_scratch`
+//! also ignores a path that would leave the root. The scratch root is the parent of the pane's
+//! working folder when that folder is named `a` (the session folder the suite opens); any other
+//! working folder is its own root, so a script that never sets these fields is unchanged. A
+//! scripted shell line is a `run` rule whose `matches` names the line's output file. The rule
+//! writes that file with `write_in_scratch` and appends its marker with `append: "SMOKE_EXIT:<n>\n"`.
 
 #![allow(dead_code)]
 
@@ -149,6 +159,8 @@ pub struct Stage {
     pub wipe: bool,
     pub stop_churn: bool,
     pub write_in_cwd: Option<WriteFile>,
+    pub write_in_scratch: Option<WriteFile>,
+    pub remove_in_scratch: Option<String>,
     pub get: Option<String>,
 }
 
@@ -279,6 +291,8 @@ fn parse_stage(object: &Value) -> Result<Stage, String> {
         wipe: bool_field(object, "wipe")?.unwrap_or(false),
         stop_churn: bool_field(object, "stop_churn")?.unwrap_or(false),
         write_in_cwd: parse_write_in_cwd(object)?,
+        write_in_scratch: parse_write_in_scratch(object)?,
+        remove_in_scratch: text_field(object, "remove_in_scratch")?,
         get: text_field(object, "get")?,
     })
 }
@@ -295,6 +309,17 @@ fn parse_write_in_cwd(object: &Value) -> Result<Option<WriteFile>, String> {
         path: text_field(entry, "path")?.ok_or("write_in_cwd needs 'path'")?,
         text: text_field(entry, "text")?.ok_or("write_in_cwd needs 'text'")?,
         mode,
+    }))
+}
+
+fn parse_write_in_scratch(object: &Value) -> Result<Option<WriteFile>, String> {
+    let Some(entry) = field(object, "write_in_scratch") else {
+        return Ok(None);
+    };
+    Ok(Some(WriteFile {
+        path: text_field(entry, "path")?.ok_or("write_in_scratch needs 'path'")?,
+        text: text_field(entry, "text")?.ok_or("write_in_scratch needs 'text'")?,
+        mode: None,
     }))
 }
 
@@ -635,6 +660,17 @@ impl Machine {
                 file.mode,
             )
         });
+        let scratch_written = stage.write_in_scratch.as_ref().map(|file| {
+            (
+                self.expand(&file.path, caps),
+                self.expand(&file.text, caps),
+                file.mode,
+            )
+        });
+        let scratch_removed = stage
+            .remove_in_scratch
+            .as_ref()
+            .map(|path| self.expand(path, caps));
         let foreground = stage.foreground.as_ref().map(|list| {
             list.iter()
                 .map(|t| self.expand(t, caps))
@@ -671,6 +707,13 @@ impl Machine {
         }
         if let (true, Some((path, text, mode))) = (touch_fs, &written) {
             write_under(&state.cwd, path, text, *mode);
+        }
+        let scratch = scratch_root(&state.cwd);
+        if let (true, Some(relative)) = (touch_fs, &scratch_removed) {
+            remove_under(&scratch, relative);
+        }
+        if let (true, Some((path, text, mode))) = (touch_fs, &scratch_written) {
+            write_under(&scratch, path, text, *mode);
         }
         if let Some(text) = pane_get {
             state.pane_get = text;
@@ -803,6 +846,18 @@ fn join_tail(text: &str, count: usize) -> String {
         out.push('\n');
     }
     out
+}
+
+/// The scratch root for a pane. The suite's session folder is named `a`, and the scratch
+/// root is its parent. Any other working folder is used as its own root.
+fn scratch_root(cwd: &Path) -> PathBuf {
+    if cwd.file_name().is_some_and(|name| name == "a") {
+        cwd.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| cwd.to_path_buf())
+    } else {
+        cwd.to_path_buf()
+    }
 }
 
 /// Removes a relative path under `cwd`; anything that could leave the folder is ignored.

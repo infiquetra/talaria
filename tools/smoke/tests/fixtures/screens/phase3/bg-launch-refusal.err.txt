@@ -1,0 +1,2 @@
+talaria: talaria --bg cannot be combined with -p.
+Next step: Run talaria --help.

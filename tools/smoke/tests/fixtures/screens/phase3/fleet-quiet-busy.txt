@@ -1,0 +1,14 @@
+NEEDS YOU (1)
+  fixture  <title>  minimax-m3.1-flash  approval: rm -rf ./talaria-smoke-probe  1m
+WORKING (2)
+  fixture  <title>  minimax-m3.1-flash  working  1m
+  fixture  <title>  minimax-m3.1-flash  working  2m
+DONE (3)
+  fixture  <title>  minimax-m3.1-flash  done  3m
+  fixture  <title>  minimax-m3.1-flash  done  4m
+  fixture  <title>  minimax-m3.1-flash  done  5m
+IDLE (4)
+  fixture  <title>  minimax-m3.1-flash  idle  6m
+  fixture  <title>  minimax-m3.1-flash  idle  7m
+  fixture  <title>  minimax-m3.1-flash  idle  8m
+  fixture  <title>  minimax-m3.1-flash  idle  9m

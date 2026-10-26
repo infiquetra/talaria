@@ -115,6 +115,38 @@ cargo clippy -p smoke --all-targets -- -D warnings
 
 The ignored live tests run only when the live gateway is available for this suite.
 
+## Phase 3 suite
+
+Run `smoke run --suite phase3` with the fixture profile, provider `ollama-cloud` and model
+`minimax-m3.1-flash`; other values are refused during preflight. The default deadline is 1200 s.
+It needs no tmux. Every shell line must stay under 600 characters with the absolute binary path
+and the scratch root, so a very long `TMPDIR` or binary path is refused before the run. The run
+copies the caller's `HERMES_HOME` into the tab's shell, because a new Herdr tab does not inherit it.
+
+Preconditions: the gateway serves the fixture profile, the fleet is quiet (no session that needs
+you or is still working), the tab is at least 100 columns by 24 rows, and the profile has
+`approvals.mode: manual`. Without manual approvals the `needs-you` step skips (exit 3).
+
+| Step | What it checks |
+|---|---|
+| `fleet-quiet` | `talaria fleet list` works, the tab is big enough, nothing needs you or works |
+| `bg-launch` | `--bg` prints one `launched` JSON line; `--bg -p` is refused with exit 2 |
+| `worktree-launch` | `--bg --worktree` starts from the fetched `origin/main` and leaves the checkout clean |
+| `fleet-list` | both sessions are listed; an unserved profile and an empty Hermes home are refused |
+| `attach` | `talaria attach <8 hex>` resumes the session; an unknown reference exits 1 |
+| `startup`, `plain-answer` | the first suite's checks |
+| `local-commands` | `/tasks`, `/agents frobnicate`, `/processes` and `/bg` without a prompt |
+| `fleet-view` | `/fleet` marks this session `(here)`, filters to nothing, closes with Ctrl+C |
+| `open-in-pane` | `o` opens the first session in a new Herdr pane |
+| `quit` | `/quit` exits 0 and the answer stays in the pane |
+| `needs-you` | an approval that waited while Talaria was closed is announced, then denied from the fleet view |
+
+The suite never answers an approval except by denying the one it provoked. If `needs-you` fails
+while that request waits, the report says so; Hermes denies it after 300 s, and the next run's
+`fleet-quiet` fails until then. The scratch root (two clones, a bare origin, the worktree, the
+probe folder and the output files) is removed at the end unless `--report-dir` is given. The
+sessions the suite started stay in the gateway. Exact screen wording lives in `src/wording3.rs`.
+
 ## Reading a failure
 
 A failing step prints the screen of the pane it was in and writes the same text, with the
