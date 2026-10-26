@@ -394,6 +394,8 @@ enum Cmd {
 }
 
 struct State {
+    delegation_paused: bool,
+    waited_requests: HashMap<String, usize>,
     session_id: String,
     connection: u64,
     commands: mpsc::UnboundedSender<Cmd>,
@@ -509,6 +511,8 @@ fn new_shared(
 ) -> Arc<Shared> {
     Arc::new(Shared {
         state: Mutex::new(State {
+            delegation_paused: false,
+            waited_requests: HashMap::new(),
             session_id: session_id.to_owned(),
             connection,
             commands,
@@ -1083,6 +1087,14 @@ impl MockGateway {
             .collect()
     }
 
+    /// Next distinct request awaited by a sequential wire-test driver.
+    pub fn next_expected_request(&self, method: &str) -> usize {
+        let mut state = lock(&self.shared);
+        let count = state.waited_requests.entry(method.into()).or_default();
+        *count += 1;
+        *count
+    }
+
     /// Every response frame read (answers to server requests), in order.
     pub fn answers(&self) -> Vec<Seen> {
         self.seen()
@@ -1531,6 +1543,10 @@ fn plan_request(
         plan_directory_method(state, method, id, params, outgoing);
         return;
     }
+    if SUBAGENT_METHODS.contains(&method) {
+        plan_subagent_method(state, method, id, params, outgoing);
+        return;
+    }
     if SESSION_METHODS.contains(&method) || SIDE_METHODS.contains(&method) {
         plan_session_method(state, method, id, params, outgoing);
         return;
@@ -1676,6 +1692,126 @@ pub const CODE_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
 /// The two side calls, answered by the session side with the same scripted behaviours.
 pub const SIDE_METHODS: [&str; 2] = ["shell.exec", "prompt.btw"];
+
+const SUBAGENT_METHODS: [&str; 6] = [
+    "subagent.list",
+    "subagent.tail",
+    "subagent.steer",
+    "subagent.interrupt",
+    "delegation.status",
+    "delegation.pause",
+];
+
+// Hermes v0.22.4 gateway/session_ancillary.py:38-61,193-216,523-536 and
+// gateway/session_tui_ops.py:169-193; methods_session.py:2196-2201.
+// Started children, transcript text and control answers are scripted through
+// push_result/push_matched_result; the defaults model an empty live registry.
+fn plan_subagent_method(
+    state: &mut State,
+    method: &str,
+    id: &Value,
+    params: &Value,
+    outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
+) {
+    let behavior = next_behavior(state, method);
+    if state.silent_all
+        || state.silent_methods.contains(method)
+        || matches!(behavior, Behavior::Silent)
+    {
+        return;
+    }
+    if matches!(
+        behavior,
+        Behavior::DropAfterFrame | Behavior::DropBeforeReply
+    ) {
+        state.kill_after = true;
+        return;
+    }
+    let delay = match &behavior {
+        Behavior::Delay(delay) => Some(*delay),
+        _ => None,
+    };
+    match &behavior {
+        Behavior::RefuseCode { reason, code } => {
+            outgoing.push((
+                delay,
+                refusal_code_text(id, reason, *code),
+                reply_meta(id, method),
+            ));
+            return;
+        }
+        Behavior::Refuse(reason) => {
+            outgoing.push((
+                delay,
+                refusal_text(id, reason, None),
+                reply_meta(id, method),
+            ));
+            return;
+        }
+        _ => {}
+    }
+    let allowed: &[&str] = match method {
+        "subagent.list" => &["session_id", "profile"],
+        "subagent.tail" | "subagent.interrupt" => &["session_id", "subagent_id", "profile"],
+        "subagent.steer" => &["session_id", "subagent_id", "text", "profile"],
+        "delegation.pause" => &["paused", "profile", "session_id"],
+        _ => &["profile"],
+    };
+    let required: &[&str] = match method {
+        "subagent.list" => &["session_id"],
+        "subagent.tail" | "subagent.interrupt" => &["session_id", "subagent_id"],
+        "subagent.steer" => &["session_id", "subagent_id", "text"],
+        _ => &[],
+    };
+    let invalid = params
+        .as_object()
+        .is_none_or(|object| object.keys().any(|key| !allowed.contains(&key.as_str())))
+        || required
+            .iter()
+            .any(|key| params[*key].as_str().is_none_or(str::is_empty))
+        || (method == "delegation.pause" && params.get("paused").is_some_and(|v| !v.is_boolean()));
+    if invalid {
+        outgoing.push((
+            delay,
+            refusal_text(id, "invalid_params", None),
+            reply_meta(id, method),
+        ));
+        return;
+    }
+    if method.starts_with("subagent.") && params["session_id"] != state.session_id {
+        outgoing.push((
+            delay,
+            refusal_text(id, "not_found", None),
+            reply_meta(id, method),
+        ));
+        return;
+    }
+    let result = match method {
+        "subagent.list" => json!({"subagents": [], "delegations": []}),
+        "subagent.tail" => {
+            json!({"subagent_id":params["subagent_id"], "available":false,"text":"","truncated":false})
+        }
+        "subagent.steer" => {
+            json!({"subagent_id":params["subagent_id"], "status":"rejected","text":params["text"]})
+        }
+        "subagent.interrupt" => json!({"subagent_id":params["subagent_id"], "found":false}),
+        "delegation.status" => {
+            json!({"active":[],"paused":state.delegation_paused,"max_spawn_depth":1,"max_concurrent_children":10})
+        }
+        _ => {
+            state.delegation_paused = params
+                .get("paused")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            json!({"paused":state.delegation_paused})
+        }
+    };
+    outgoing.push((
+        delay,
+        json!({"jsonrpc":"2.0","id":id,"result":result}).to_string(),
+        reply_meta(id, method),
+    ));
+}
 
 /// The task id the mock gives every accepted side question.
 pub const SIDE_TASK_ID: &str = "btw_1a2b3c";

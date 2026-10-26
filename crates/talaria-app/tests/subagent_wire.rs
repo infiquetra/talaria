@@ -85,24 +85,32 @@ async fn wait_call(
     method: &str,
     now_ms: &mut u64,
 ) -> Drained {
+    let expected = gateway.next_expected_request(method);
+    let mut out = Drained::default();
     for _ in 0..200 {
-        if !gateway.requests(method).is_empty() {
+        append(&mut out, drain(hub, rx, clock_ms(*now_ms)));
+        if gateway.requests(method).len() >= expected {
             break;
         }
-        tokio::time::advance(Duration::from_millis(10)).await;
-        *now_ms += 10;
+        tokio::time::advance(Duration::ZERO).await;
         tokio::task::yield_now().await;
     }
     assert!(
-        !gateway.requests(method).is_empty(),
-        "the hub sent {method}"
+        gateway.requests(method).len() >= expected,
+        "the hub sent request {expected} for {method}"
     );
     for _ in 0..50 {
         tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_millis(10)).await;
-        *now_ms += 10;
+        tokio::time::advance(Duration::ZERO).await;
+        append(&mut out, drain(hub, rx, clock_ms(*now_ms)));
     }
-    drain(hub, rx, clock_ms(*now_ms))
+    append(&mut out, drain(hub, rx, clock_ms(*now_ms)));
+    out
+}
+
+fn append(out: &mut Drained, mut more: Drained) {
+    out.hub_msgs.append(&mut more.hub_msgs);
+    out.notices.append(&mut more.notices);
 }
 
 async fn settle(
@@ -110,12 +118,14 @@ async fn settle(
     rx: &mut mpsc::UnboundedReceiver<AppMessage>,
     now_ms: &mut u64,
 ) -> Drained {
+    let mut out = Drained::default();
     for _ in 0..50 {
         tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_millis(10)).await;
-        *now_ms += 10;
+        tokio::time::advance(Duration::ZERO).await;
+        append(&mut out, drain(hub, rx, clock_ms(*now_ms)));
     }
-    drain(hub, rx, clock_ms(*now_ms))
+    append(&mut out, drain(hub, rx, clock_ms(*now_ms)));
+    out
 }
 
 fn notification(kind: &str, payload: Value) -> Notification {
@@ -265,7 +275,9 @@ async fn poll_only_while_live_or_open() {
     );
     gateway.set_behavior("subagent.list", Behavior::Silent);
     let before = gateway.requests("subagent.list").len();
-    for _ in 0..2 {
+    // Events arm the periodic list; they are not an immediate-list trigger.
+    // Three polls are needed for two refusals and the unanswered third call.
+    for _ in 0..3 {
         tokio::time::advance(Duration::from_secs(5)).await;
         now_ms += 5_000;
         settle(&mut hub, &mut rx, &mut now_ms).await;
@@ -700,7 +712,8 @@ async fn stop_all_needs_second_press() {
     live_child(&mut hub, &key, "child-1", clock_ms(now_ms));
     live_child(&mut hub, &key, "child-2", clock_ms(now_ms));
 
-    hub.act(&key, SubagentAction::StopAll, clock_ms(now_ms));
+    let armed_ms = now_ms;
+    hub.act(&key, SubagentAction::StopAll, clock_ms(armed_ms));
     settle(&mut hub, &mut rx, &mut now_ms).await;
     assert!(
         gateway.requests("subagent.interrupt").is_empty(),
@@ -712,9 +725,9 @@ async fn stop_all_needs_second_press() {
     hub.act(
         &key,
         SubagentAction::ConfirmStopAll,
-        clock_ms(now_ms + 2_999),
+        clock_ms(armed_ms + 2_999),
     );
-    now_ms += 2_999;
+    now_ms = armed_ms + 2_999;
     wait_call(
         &mut hub,
         &mut rx,
@@ -736,14 +749,15 @@ async fn stop_all_needs_second_press() {
     hub.attach(key.clone(), client);
     wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
     live_child(&mut hub, &key, "child-1", clock_ms(now_ms));
-    hub.act(&key, SubagentAction::StopAll, clock_ms(now_ms));
+    let armed_ms = now_ms;
+    hub.act(&key, SubagentAction::StopAll, clock_ms(armed_ms));
     settle(&mut hub, &mut rx, &mut now_ms).await;
     hub.act(
         &key,
         SubagentAction::ConfirmStopAll,
-        clock_ms(now_ms + 3_001),
+        clock_ms(armed_ms + 3_001),
     );
-    now_ms += 3_001;
+    now_ms = armed_ms + 3_001;
     settle(&mut hub, &mut rx, &mut now_ms).await;
     assert!(
         gateway.requests("subagent.interrupt").is_empty(),
@@ -776,12 +790,12 @@ async fn pause_confirms_and_resume_does_not() {
         "max_concurrent_children": 10,
     }));
     hub.act(&key, SubagentAction::ConfirmPause(true), clock_ms(now_ms));
-    wait_call(&mut hub, &mut rx, &gateway, "delegation.pause", &mut now_ms).await;
+    let mut drained = wait_call(&mut hub, &mut rx, &gateway, "delegation.pause", &mut now_ms).await;
     assert_eq!(
         params_of(&gateway, "delegation.pause", 0),
         json!({"paused": true})
     );
-    wait_call(
+    let status = wait_call(
         &mut hub,
         &mut rx,
         &gateway,
@@ -789,8 +803,9 @@ async fn pause_confirms_and_resume_does_not() {
         &mut now_ms,
     )
     .await;
+    append(&mut drained, status);
     assert_eq!(params_of(&gateway, "delegation.status", 0), json!({}));
-    let drained = settle(&mut hub, &mut rx, &mut now_ms).await;
+    append(&mut drained, settle(&mut hub, &mut rx, &mut now_ms).await);
     assert_eq!(
         control_outcomes(&drained),
         vec![ControlOutcome::Paused(true)]
@@ -996,7 +1011,7 @@ async fn dropped_call_is_unknown() {
         SubagentAction::Stop("child-1".to_owned()),
         clock_ms(now_ms),
     );
-    wait_call(
+    let mut drained = wait_call(
         &mut hub,
         &mut rx,
         &gateway,
@@ -1004,7 +1019,7 @@ async fn dropped_call_is_unknown() {
         &mut now_ms,
     )
     .await;
-    let drained = settle(&mut hub, &mut rx, &mut now_ms).await;
+    append(&mut drained, settle(&mut hub, &mut rx, &mut now_ms).await);
     let outcomes = control_outcomes(&drained);
     assert_eq!(outcomes, vec![ControlOutcome::Lost { action: "stop" }]);
     assert_eq!(
