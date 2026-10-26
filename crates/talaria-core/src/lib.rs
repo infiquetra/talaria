@@ -1,5 +1,6 @@
 //! Domain state and pure reducers without input, output or terminal libraries.
 
+pub mod alert_gate;
 pub mod appearance;
 pub mod attachments;
 pub mod attention;
@@ -11,6 +12,7 @@ pub mod context;
 pub mod diff;
 pub mod directory;
 pub mod fleet;
+pub mod fleet_attention;
 pub mod fleet_view;
 pub mod models;
 pub mod mutation;

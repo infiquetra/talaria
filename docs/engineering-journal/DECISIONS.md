@@ -85,6 +85,16 @@ Keeping that value after hydration would present other sessions' work as this se
 
 **Revisit when** the foreground link becomes host scoped, or the operator answers question 1 or 2 differently.
 
+### One alert gate for every alert source
+
+**Decision.** Every alert Talaria writes to the terminal passes one rate limit. The foreground alerts of `crates/talaria-core/src/attention.rs` and the background fleet alerts of `crates/talaria-core/src/fleet_attention.rs` share the gate in `crates/talaria-core/src/alert_gate.rs`, which holds a two second window and admits a new alert only when the window has passed or the new alert is more urgent than the last one (needs you, then failed, then done). A dropped alert is not queued: the status-line counters keep what it carried.
+
+**Rationale.** Two sources with two limits ring twice in a burst, and a burst of bells is what makes people turn notifications off. One gate is also the only place that knows both sources, so the rule is stated once and tested once (`crates/talaria-core/tests/alert_gate.rs`).
+
+**Rejected alternatives.** A limit per source: two sources still ring together. A queue of dropped alerts: it replays the noise later, at a moment the operator did not ask for. Leaving each tracker with its own window: the two windows drift apart and the pair cannot be tested.
+
+**Revisit when** an alert must never be dropped, for example a separate urgent channel for a request that blocks a background turn.
+
 ## 2026-10-25
 
 ### Side connection for the session picker

@@ -64,6 +64,8 @@ fn full() -> StatusInputs {
         subagents_active: 0,
         subagents_terminal: 0,
         usage_tokens: None,
+        failed: 0,
+        done: 0,
         approvals: None,
     }
 }
