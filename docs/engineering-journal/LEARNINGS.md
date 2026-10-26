@@ -2,6 +2,18 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — An advertised child id is not proof of resumability
+
+**Evidence.** In the isolated gateway's attach acceptance run, the agents panel supplied a
+`child_session_id`, but resuming it on its owner's profile returned `not_found` during execution
+and after completion. Read-only cross-profile lookup also found no session. The fleet pane
+acceptance scenarios passed independently on ordinary sessions.
+
+**Mechanism.** Subagent identity, canonical session authority and pane admission are separate
+contracts. An `Opened` pane outcome acknowledges the typed command, not successful startup.
+
+**Generalizable rule.** Verify canonical resumability separately from a subagent id or pane admission.
+
 ## 2026-10-26 — An empty attached session still needs its resumed heading
 
 **Evidence.** The live attach probe opened successfully but its five-second marker check failed.
