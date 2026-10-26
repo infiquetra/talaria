@@ -58,6 +58,8 @@ pub enum LocalAction {
     Export,
     /// Open the fleet overlay.
     Fleet,
+    /// Open the subagent panel, or pause and resume spawning. Issue #242.
+    Agents,
 }
 
 /// One local command.
@@ -249,6 +251,19 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[--no-redact] [file]",
         takes_argument: true,
         action: LocalAction::Export,
+        tag: "talaria",
+    },
+    // Issue #242. The issue asks for a `tasks` alias here, but `/tasks`
+    // already toggles the checklist (issue #226) and the table forbids a
+    // repeated name, so this entry ships without aliases until the phase
+    // planner resolves which command owns `/tasks`.
+    LocalCommand {
+        name: "agents",
+        aliases: &[],
+        summary: "Show the session's subagents; `pause` and `resume` switch spawning",
+        args_hint: "[pause|resume]",
+        takes_argument: true,
+        action: LocalAction::Agents,
         tag: "talaria",
     },
 ];

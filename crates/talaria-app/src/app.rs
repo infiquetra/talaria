@@ -573,6 +573,8 @@ pub struct AppState {
     prompts: Option<Arc<Mutex<PromptService>>>,
     pending: Option<JoinHandle<Result<Ready, LaunchFailure>>>,
     command_service: Option<CommandService>,
+    /// The subagent hub, once a sender exists to build it with. Issue #242.
+    pub subagents: Option<crate::subagents::SubagentHub>,
     /// Standing automation state.
     pub automation: AutomationState,
     automation_ticker: AutomationTicker,
@@ -708,6 +710,7 @@ impl AppState {
             prompts: None,
             pending: None,
             command_service: None,
+            subagents: None,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
             caret: 0,
             attachment_epoch: 0,
@@ -1031,6 +1034,8 @@ pub enum AppMessage {
         /// Whether the export left the secrets in.
         redact: bool,
     },
+    /// One of the subagent hub's own messages. Issue #242.
+    Subagents(crate::subagents::SubagentMsg),
 }
 
 /// What a finished switch or branch brings back: the new session and, when the profile
@@ -1669,6 +1674,8 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::Recovered(result) => recovered(state, result),
         AppMessage::Rewind(input) => rewind_input(state, input),
+        // Issue #242: the hub's routing lands with the implementation.
+        AppMessage::Subagents(_) => Vec::new(),
         AppMessage::ForegroundKey(action) => foreground_key(state, action),
         AppMessage::Commands(CommandReply::Commands(input)) => commands_input(state, input),
         AppMessage::Commands(CommandReply::Palette(input)) => {

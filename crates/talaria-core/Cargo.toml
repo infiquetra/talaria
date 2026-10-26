@@ -29,5 +29,9 @@ harness = false
 name = "fleet_registry"
 harness = false
 
+[[bench]]
+name = "subagent_tree"
+harness = false
+
 [lints]
 workspace = true

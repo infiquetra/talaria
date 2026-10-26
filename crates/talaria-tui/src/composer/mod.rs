@@ -582,6 +582,23 @@ impl Composer {
             | Action::QueueLeave
             | Action::ComposerSendNow
             | Action::ComposerSteer => {}
+            // Panel actions never edit the draft; the panel owns them. Issue #242.
+            Action::AgentsPanel
+            | Action::AgentsUp
+            | Action::AgentsDown
+            | Action::AgentsTail
+            | Action::AgentsDetail
+            | Action::AgentsBack
+            | Action::AgentsClose
+            | Action::AgentsSteer
+            | Action::AgentsStop
+            | Action::AgentsStopAll
+            | Action::AgentsPause
+            | Action::AgentsNextSession
+            | Action::AgentsPageUp
+            | Action::AgentsPageDown
+            | Action::AgentsTop
+            | Action::AgentsBottom => {}
             // Picker actions never edit the draft; the picker owns them.
             Action::SessionPickerOpen
             | Action::PickerUp

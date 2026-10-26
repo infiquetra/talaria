@@ -10,6 +10,8 @@ publish.workspace = true
 
 [dependencies]
 talaria-core.workspace = true
+# Issue #242: the subagent panel returns the hub's control type.
+talaria-app.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 rustix = { workspace = true, features = ["event", "termios"] }
@@ -56,6 +58,10 @@ harness = false
 
 [[bench]]
 name = "fleet_view"
+harness = false
+
+[[bench]]
+name = "subagent_panel"
 harness = false
 
 [lints]

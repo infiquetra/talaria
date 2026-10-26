@@ -23,6 +23,8 @@ pub enum KeyContext {
     SessionPickerExport,
     /// The fleet overlay list.
     Fleet,
+    /// The full-screen subagent panel. Issue #242.
+    Agents,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -279,6 +281,38 @@ pub enum Action {
     FleetProfileNext,
     /// The previous fleet profile filter.
     FleetProfilePrev,
+    /// Open the subagent panel from the composer, or close it. Issue #242.
+    AgentsPanel,
+    /// Move the panel selection one row up.
+    AgentsUp,
+    /// Move the panel selection one row down.
+    AgentsDown,
+    /// Open the tail view for the selected row.
+    AgentsTail,
+    /// Open the detail view for the selected row.
+    AgentsDetail,
+    /// Back to the list, or close the panel from the list.
+    AgentsBack,
+    /// Close the panel.
+    AgentsClose,
+    /// Steer the selected row.
+    AgentsSteer,
+    /// Stop the selected row.
+    AgentsStop,
+    /// Stop every running row, with confirmation.
+    AgentsStopAll,
+    /// Pause spawning, or resume when paused.
+    AgentsPause,
+    /// Move the panel to the next attached session.
+    AgentsNextSession,
+    /// A page toward the start of the list or view.
+    AgentsPageUp,
+    /// A page toward the end of the list or view.
+    AgentsPageDown,
+    /// The first row.
+    AgentsTop,
+    /// The last row.
+    AgentsBottom,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -310,7 +344,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 90] = [
+    pub const ALL: [Self; 106] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -401,6 +435,22 @@ impl Action {
         Self::FleetFilter,
         Self::FleetProfileNext,
         Self::FleetProfilePrev,
+        Self::AgentsPanel,
+        Self::AgentsUp,
+        Self::AgentsDown,
+        Self::AgentsTail,
+        Self::AgentsDetail,
+        Self::AgentsBack,
+        Self::AgentsClose,
+        Self::AgentsSteer,
+        Self::AgentsStop,
+        Self::AgentsStopAll,
+        Self::AgentsPause,
+        Self::AgentsNextSession,
+        Self::AgentsPageUp,
+        Self::AgentsPageDown,
+        Self::AgentsTop,
+        Self::AgentsBottom,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -497,6 +547,22 @@ impl Action {
             Self::FleetFilter => "fleet_filter",
             Self::FleetProfileNext => "fleet_profile_next",
             Self::FleetProfilePrev => "fleet_profile_prev",
+            Self::AgentsPanel => "agents_panel",
+            Self::AgentsUp => "agents_up",
+            Self::AgentsDown => "agents_down",
+            Self::AgentsTail => "agents_tail",
+            Self::AgentsDetail => "agents_detail",
+            Self::AgentsBack => "agents_back",
+            Self::AgentsClose => "agents_close",
+            Self::AgentsSteer => "agents_steer",
+            Self::AgentsStop => "agents_stop",
+            Self::AgentsStopAll => "agents_stop_all",
+            Self::AgentsPause => "agents_pause",
+            Self::AgentsNextSession => "agents_next_session",
+            Self::AgentsPageUp => "agents_page_up",
+            Self::AgentsPageDown => "agents_page_down",
+            Self::AgentsTop => "agents_top",
+            Self::AgentsBottom => "agents_bottom",
         }
     }
 
@@ -549,7 +615,8 @@ impl Action {
             | Self::ToggleTasks
             | Self::ApprovalsToggle
             | Self::ComposerSendNow
-            | Self::ComposerSteer => KeyContext::Composer,
+            | Self::ComposerSteer
+            | Self::AgentsPanel => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
             | Self::PagerPageUp
@@ -602,6 +669,21 @@ impl Action {
             | Self::FleetFilter
             | Self::FleetProfileNext
             | Self::FleetProfilePrev => KeyContext::Fleet,
+            Self::AgentsUp
+            | Self::AgentsDown
+            | Self::AgentsTail
+            | Self::AgentsDetail
+            | Self::AgentsBack
+            | Self::AgentsClose
+            | Self::AgentsSteer
+            | Self::AgentsStop
+            | Self::AgentsStopAll
+            | Self::AgentsPause
+            | Self::AgentsNextSession
+            | Self::AgentsPageUp
+            | Self::AgentsPageDown
+            | Self::AgentsTop
+            | Self::AgentsBottom => KeyContext::Agents,
         }
     }
 
@@ -705,6 +787,22 @@ impl Action {
             Self::FleetFilter => &["/"],
             Self::FleetProfileNext => &["tab"],
             Self::FleetProfilePrev => &["shift+tab"],
+            Self::AgentsPanel => &["alt+s"],
+            Self::AgentsUp => &["up", "k"],
+            Self::AgentsDown => &["down", "j"],
+            Self::AgentsTail => &["enter"],
+            Self::AgentsDetail => &["d", "right"],
+            Self::AgentsBack => &["esc", "left"],
+            Self::AgentsClose => &["q"],
+            Self::AgentsSteer => &["e"],
+            Self::AgentsStop => &["x"],
+            Self::AgentsStopAll => &["shift+x"],
+            Self::AgentsPause => &["p"],
+            Self::AgentsNextSession => &["tab"],
+            Self::AgentsPageUp => &["pageup"],
+            Self::AgentsPageDown => &["pagedown"],
+            Self::AgentsTop => &["g", "home"],
+            Self::AgentsBottom => &["shift+g", "end"],
         }
     }
 }
@@ -1417,7 +1515,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 90);
+        assert_eq!(Action::ALL.len(), 106);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1479,6 +1577,21 @@ mod tests {
                 | Action::FleetFilter
                 | Action::FleetProfileNext
                 | Action::FleetProfilePrev => KeyContext::Fleet,
+                Action::AgentsUp
+                | Action::AgentsDown
+                | Action::AgentsTail
+                | Action::AgentsDetail
+                | Action::AgentsBack
+                | Action::AgentsClose
+                | Action::AgentsSteer
+                | Action::AgentsStop
+                | Action::AgentsStopAll
+                | Action::AgentsPause
+                | Action::AgentsNextSession
+                | Action::AgentsPageUp
+                | Action::AgentsPageDown
+                | Action::AgentsTop
+                | Action::AgentsBottom => KeyContext::Agents,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), wanted);
@@ -1544,6 +1657,21 @@ mod tests {
                 | Action::FleetFilter
                 | Action::FleetProfileNext
                 | Action::FleetProfilePrev => KeyContext::Fleet,
+                Action::AgentsUp
+                | Action::AgentsDown
+                | Action::AgentsTail
+                | Action::AgentsDetail
+                | Action::AgentsBack
+                | Action::AgentsClose
+                | Action::AgentsSteer
+                | Action::AgentsStop
+                | Action::AgentsStopAll
+                | Action::AgentsPause
+                | Action::AgentsNextSession
+                | Action::AgentsPageUp
+                | Action::AgentsPageDown
+                | Action::AgentsTop
+                | Action::AgentsBottom => KeyContext::Agents,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), context, "{name}");
@@ -1632,6 +1760,22 @@ mod tests {
             (Action::PickerFormatJson, vec!["J"]),
             (Action::PickerFormatHtml, vec!["H"]),
             (Action::PickerToggleRedact, vec!["X"]),
+            (Action::AgentsPanel, vec!["Alt+S"]),
+            (Action::AgentsUp, vec!["Up", "K"]),
+            (Action::AgentsDown, vec!["Down", "J"]),
+            (Action::AgentsTail, vec!["Enter"]),
+            (Action::AgentsDetail, vec!["D", "Right"]),
+            (Action::AgentsBack, vec!["Esc", "Left"]),
+            (Action::AgentsClose, vec!["Q"]),
+            (Action::AgentsSteer, vec!["E"]),
+            (Action::AgentsStop, vec!["X"]),
+            (Action::AgentsStopAll, vec!["Shift+X"]),
+            (Action::AgentsPause, vec!["P"]),
+            (Action::AgentsNextSession, vec!["Tab"]),
+            (Action::AgentsPageUp, vec!["PageUp"]),
+            (Action::AgentsPageDown, vec!["PageDown"]),
+            (Action::AgentsTop, vec!["G", "Home"]),
+            (Action::AgentsBottom, vec!["Shift+G", "End"]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1777,7 +1921,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 90);
+        assert_eq!(Action::ALL.len(), 106);
     }
 
     #[test]

@@ -103,6 +103,8 @@ pub struct Config {
     pub composer: ComposerConfig,
     /// Fleet poll timings from `[fleet]`.
     pub fleet: crate::fleet::FleetConfig,
+    /// Subagent poll and dock settings from `[subagents]`. Issue #242.
+    pub subagents: crate::subagents::SubagentsConfig,
 }
 
 /// Paste collapse thresholds. Zero turns that rule off.
@@ -240,6 +242,7 @@ impl Default for Config {
             },
             composer: ComposerConfig::default(),
             fleet: crate::fleet::FleetConfig::default(),
+            subagents: crate::subagents::SubagentsConfig::default(),
         }
     }
 }
@@ -293,6 +296,7 @@ pub fn parse(text: &str) -> LoadedConfig {
         "ui",
         "composer",
         "fleet",
+        "subagents",
     ] {
         let Some(value) = table.get(name) else {
             continue;
@@ -311,6 +315,8 @@ pub fn parse(text: &str) -> LoadedConfig {
             "ui" => config.ui = read_ui(section, &mut notices),
             "composer" => config.composer = read_composer(section, &mut notices),
             "fleet" => config.fleet = read_fleet(section, &mut notices),
+            // Issue #242: the `[subagents]` reader lands with the implementation.
+            "subagents" => {}
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
@@ -328,6 +334,7 @@ pub fn parse(text: &str) -> LoadedConfig {
                 | "ui"
                 | "composer"
                 | "fleet"
+                | "subagents"
         ) {
             continue;
         }
