@@ -65,6 +65,10 @@ pub struct StatusInputs {
     pub cost_status: Option<String>,
     /// Prompts waiting for the operator.
     pub needs_you: u32,
+    /// Background rows whose turn failed.
+    pub failed: u32,
+    /// Background rows whose turn is done.
+    pub done: u32,
     /// Sessions working on a turn.
     pub working: u32,
     /// Whether the client is live or replaying.
@@ -126,38 +130,46 @@ pub enum Segment {
     External,
     /// The approvals state (#237).
     Approvals,
+    /// Background rows whose turn failed.
+    Failed,
+    /// Background rows whose turn is done.
+    Done,
     /// The foreground folder's pull-request label (#245).
     PullRequest,
 }
 
 impl Segment {
     /// Every segment, from the one dropped last to the one dropped first.
-    pub const ALL: [Segment; 10] = [
+    pub const ALL: [Segment; 12] = [
         Segment::Connection,
         Segment::NeedsYou,
         Segment::Approvals,
+        Segment::Failed,
         Segment::Model,
         Segment::Context,
         Segment::Folder,
         Segment::Working,
+        Segment::Done,
         Segment::Cost,
         Segment::PullRequest,
         Segment::External,
     ];
 
-    /// 1 is dropped last, 10 first.
+    /// 1 is dropped last, 12 first.
     pub fn priority(self) -> u8 {
         match self {
             Segment::Connection => 1,
             Segment::NeedsYou => 2,
             Segment::Approvals => 3,
-            Segment::Model => 4,
-            Segment::Context => 5,
-            Segment::Folder => 6,
-            Segment::Working => 7,
-            Segment::Cost => 8,
-            Segment::PullRequest => 9,
-            Segment::External => 10,
+            Segment::Failed => 4,
+            Segment::Model => 5,
+            Segment::Context => 6,
+            Segment::Folder => 7,
+            Segment::Working => 8,
+            Segment::Done => 9,
+            Segment::Cost => 10,
+            Segment::PullRequest => 11,
+            Segment::External => 12,
         }
     }
 
@@ -171,9 +183,11 @@ impl Segment {
             Segment::Context => 5,
             Segment::Cost => 6,
             Segment::NeedsYou => 7,
-            Segment::Working => 8,
-            Segment::PullRequest => 9,
-            Segment::External => 10,
+            Segment::Failed => 8,
+            Segment::Working => 9,
+            Segment::Done => 10,
+            Segment::PullRequest => 11,
+            Segment::External => 12,
         }
     }
 }
@@ -227,7 +241,9 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     add(&mut pieces, Segment::Context, context_segment(inputs));
     add(&mut pieces, Segment::Cost, cost_segment(inputs));
     add(&mut pieces, Segment::NeedsYou, needs_you_segment(inputs));
+    add(&mut pieces, Segment::Failed, failed_segment(inputs));
     add(&mut pieces, Segment::Working, working_segment(inputs));
+    add(&mut pieces, Segment::Done, done_segment(inputs));
     add(
         &mut pieces,
         Segment::PullRequest,
@@ -459,6 +475,22 @@ fn working_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
         return None;
     }
     Some((format!("{} working", inputs.working), Tone::Muted))
+}
+
+/// The failed segment: a background turn failed.
+fn failed_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+    if inputs.failed == 0 {
+        return None;
+    }
+    Some((format!("✗ {} failed", inputs.failed), Tone::Error))
+}
+
+/// The done segment: a background turn is done.
+fn done_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
+    if inputs.done == 0 {
+        return None;
+    }
+    Some((format!("✓ {} done", inputs.done), Tone::Success))
 }
 
 /// The pull-request segment: the foreground folder's label, or nothing (#245).

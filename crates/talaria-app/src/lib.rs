@@ -17,6 +17,7 @@ pub mod directory;
 pub mod failure;
 pub mod fleet;
 pub mod fleet_actions;
+pub mod fleet_attention;
 pub mod headless;
 pub mod launch;
 pub mod models;

@@ -38,6 +38,7 @@ use talaria_core::context::usage::UsageReport;
 use talaria_core::directory::export::ExportFormat;
 use talaria_core::directory::rows::RowKey;
 use talaria_core::directory::state::{PickerEffect, PickerInput, PickerState};
+use talaria_core::fleet_attention::{FleetAttentionConfig, FleetScope};
 use talaria_core::fleet_view::FleetViewState;
 use talaria_core::models::{
     ConfirmKey, ModelCommandOrEffort, ModelsEffect, ModelsInput, ModelsState, NoticeLevel,
@@ -93,6 +94,9 @@ use crate::connection::{ConnectionService, OpenConnection, find_git_toplevel};
 use crate::context::{ContextBlock, ContextService, ContextTimeouts};
 use crate::directory::{DirectoryService, ExportResult, ExportTarget};
 use crate::failure::{self, LaunchFailure};
+use crate::fleet_attention::{
+    AttentionHub, HubOutput, NextNeed, StatusCounts, next_need, status_counts,
+};
 use crate::launch::{
     Belongs, Launch, ListRow, MAX_HELD_PROMPTS, RESUME_HISTORY_CELLS, SessionRequest, StartMode,
     belongs, merge_rows, new_request_id, plain, plan, workspace_key,
@@ -279,6 +283,8 @@ pub enum UserAction {
     },
     /// One input for the session picker (#231).
     Picker(talaria_core::directory::state::PickerInput),
+    /// Jump to the oldest background request.
+    AttentionNext,
 }
 
 /// Which screen owned the approvals toggle key (#237).
@@ -354,6 +360,8 @@ pub struct View<'a> {
     pub pull_request: Option<talaria_core::review::PrLabel>,
     /// Pull-request labels of fleet rows.
     pub pr_labels: BTreeMap<RowKey, talaria_core::review::PrLabel>,
+    /// The background counters the status line shows.
+    pub fleet_counts: StatusCounts,
 }
 
 impl View<'_> {
@@ -447,6 +455,28 @@ pub trait Screen: ComposerDeadline + StatusHost {
         }
     }
 
+    /// The fleet's alert settings: the channels, the done threshold and the two scopes.
+    fn fleet_attention_config(&self) -> FleetAttentionConfig {
+        FleetAttentionConfig {
+            bell: vec![
+                talaria_core::attention::AlertKind::NeedsYou,
+                talaria_core::attention::AlertKind::Failed,
+            ],
+            desktop: vec![
+                talaria_core::attention::AlertKind::NeedsYou,
+                talaria_core::attention::AlertKind::Done,
+                talaria_core::attention::AlertKind::Failed,
+            ],
+            done_after: Duration::from_secs(20),
+            needs_you: FleetScope::All,
+            finished: FleetScope::Watched,
+        }
+    }
+    /// How the start-up notice names the jump key; `None` leaves the key out.
+    fn attention_key_label(&self) -> Option<String> {
+        None
+    }
+
     /// The start-up probe colours and the polarity decided from them, captured once.
     fn startup_appearance(&self) -> Option<(TerminalColors, (Polarity, PolaritySource))> {
         None
@@ -519,6 +549,16 @@ pub struct AppState {
     model_warnings: BTreeSet<String>,
     attention: talaria_core::attention::AttentionTracker,
     attention_at: Instant,
+    /// The background attention hub: the fleet tracker, the shared gate and the holds.
+    hub: AttentionHub,
+    /// The counters the status line shows.
+    status_counts: StatusCounts,
+    /// The foreground session's open requests.
+    foreground_open: u32,
+    /// The instant the hub wants to be woken at, while one is pending.
+    fleet_wake_at: Option<Instant>,
+    /// The running wake task, aborted when a newer wake replaces it.
+    fleet_wake_task: Option<JoinHandle<()>>,
     pub opened: Option<OpenedSession>,
     /// Whether the foreground session's process overlay is open.
     pub processes_open: bool,
@@ -734,6 +774,28 @@ impl AppState {
                 },
             ),
             attention_at: Instant::now(),
+            hub: AttentionHub::new(
+                FleetAttentionConfig {
+                    bell: vec![
+                        talaria_core::attention::AlertKind::NeedsYou,
+                        talaria_core::attention::AlertKind::Failed,
+                    ],
+                    desktop: vec![
+                        talaria_core::attention::AlertKind::NeedsYou,
+                        talaria_core::attention::AlertKind::Done,
+                        talaria_core::attention::AlertKind::Failed,
+                    ],
+                    done_after: Duration::from_secs(20),
+                    needs_you: FleetScope::All,
+                    finished: FleetScope::Watched,
+                },
+                "default".to_string(),
+                None,
+            ),
+            status_counts: StatusCounts::default(),
+            foreground_open: 0,
+            fleet_wake_at: None,
+            fleet_wake_task: None,
             opened: None,
             processes_open: false,
             retained_sessions: BTreeMap::new(),
@@ -913,6 +975,7 @@ impl AppState {
                     .map(|(key, status)| (key, talaria_core::review::pr_label(&status, false)))
                     .collect()
             }),
+            fleet_counts: self.status_counts,
         }
     }
 
@@ -1053,6 +1116,8 @@ pub enum AppMessage {
     Models(ModelsInput),
     /// A result for the fleet overlay.
     FleetView(talaria_core::fleet_view::FleetViewInput),
+    /// The jump key named a row: open the fleet view on it.
+    FleetOpenAt(RowKey),
     /// What the peek worker reports between results.
     Peek(crate::fleet_actions::PeekReport),
     /// A registry call the peek worker made, applied to the fleet service here.
@@ -1196,6 +1261,10 @@ pub enum AppMessage {
     },
     /// One of the subagent hub's own messages. Issue #242.
     Subagents(crate::subagents::SubagentMsg),
+    /// A quiet-window or hold deadline has arrived.
+    AttentionWake,
+    /// Jump to the oldest background request.
+    AttentionNext,
     /// A fleet-row pane open finished. Issue #246.
     PaneOpened(RowKey, PaneOutcome),
 }
@@ -1391,6 +1460,10 @@ pub enum AppEffect {
     Cd(CdEffect),
     /// One automation reducer effect. Issue #236.
     Automation(AutomationEffect),
+    /// Wake the attention hub at this instant.
+    WakeAt(Instant),
+    /// Open the fleet view on this row.
+    OpenFleetViewAt(RowKey),
 }
 
 fn notice_lines(text: &str) -> AppEffect {
@@ -1781,27 +1854,36 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             background_event(state, session_id.as_str(), event)
         }
         AppMessage::Models(input) => models_input(state, input),
-        // Stored for the fleet view, and fed to the overlay while it is open.
+        // Stored for the fleet view, fed to the overlay while it is open, and read
+        // by the attention hub for the counters, the alerts and the quiet window.
         AppMessage::Fleet(notice) => {
             redraw = false;
+            let mut effects = Vec::new();
             // Notices from the handle and the fleet task can cross; keep the newest snapshot.
-            if let crate::fleet::FleetNotice::Changed(snapshot) = notice
+            if let crate::fleet::FleetNotice::Changed(snapshot) = &notice
                 && state
                     .fleet_snapshot
                     .as_ref()
-                    .is_none_or(|held| snapshot.version > held.version)
+                    .is_none_or(|held| snapshot.version >= held.version)
             {
                 state.fleet_clock = snapshot.as_of - state.now_ms as f64 / 1000.0;
-                state.fleet_snapshot = Some(Arc::clone(&snapshot));
+                state.fleet_snapshot = Some(Arc::clone(snapshot));
                 if state.fleet.is_some() {
-                    return fleet_input(state, fleet_snapshot_input(&snapshot));
+                    effects.extend(fleet_input(state, fleet_snapshot_input(snapshot)));
                 }
             }
-            Vec::new()
+            // The hub reads the same notice for the counters, the alerts and the quiet
+            // window, whether or not the overlay is open.
+            effects.extend(fleet_notice(state, &notice));
+            effects
         }
         AppMessage::FleetView(input) => {
             redraw = false;
             fleet_input(state, input)
+        }
+        AppMessage::FleetOpenAt(key) => {
+            redraw = false;
+            fleet_open_at(state, key)
         }
         AppMessage::Peek(report) => {
             redraw = false;
@@ -2075,6 +2157,12 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             format,
             redact,
         } => exported(state, result, format, redact),
+        AppMessage::AttentionWake => {
+            // A wake only decides what was waiting; it draws nothing by itself.
+            redraw = false;
+            attention_wake(state)
+        }
+        AppMessage::AttentionNext => attention_next(state),
         AppMessage::PaneOpened(key, outcome) => {
             let title = state
                 .pending_pane
@@ -2151,7 +2239,11 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         if let Some(pane) = out.pane {
             effects.push(AppEffect::ReportPane(pane));
         }
-        if let Some(alert) = out.alert {
+        if let Some(alert) = out.alert
+            // A foreground alert shares the gate with the background ones, so two
+            // sources never ring twice in a burst.
+            && let Some(alert) = state.hub.on_foreground_alert(alert, state.attention_at)
+        {
             effects.push(AppEffect::Alert(alert));
         }
     }
@@ -2176,6 +2268,20 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             .opened
             .as_ref()
             .map(|opened| opened.state.background().version());
+    // The status line's counters changed: the line has to be drawn again.
+    let foreground_open = foreground_open(state);
+    let counts = status_counts(
+        foreground_open,
+        state
+            .fleet_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.as_ref()),
+    );
+    if counts != state.status_counts || foreground_open != state.foreground_open {
+        state.foreground_open = foreground_open;
+        state.status_counts = counts;
+        redraw = true;
+    }
     if redraw
         && !effects
             .iter()
@@ -2184,6 +2290,73 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         effects.push(AppEffect::Redraw);
     }
     effects
+}
+
+/// One fleet notice: the alerts it raises, the notice it shows, and the next wake.
+fn fleet_notice(state: &mut AppState, notice: &crate::fleet::FleetNotice) -> Vec<AppEffect> {
+    if let crate::fleet::FleetNotice::Changed(snapshot) = notice
+        && let SideScope::ProfileOnly { profile, .. } = &snapshot.scope
+    {
+        // The profile whose rows need no prefix in a label.
+        state.hub.set_foreground_profile(profile.clone());
+    }
+    let empty = crate::fleet_attention::empty_snapshot();
+    let latest = state
+        .fleet_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.as_ref())
+        .unwrap_or(&empty);
+    let out = state.hub.on_notice(notice, latest, state.attention_at);
+    hub_effects(state, out)
+}
+
+/// The quiet window or a hold deadline arrived.
+fn attention_wake(state: &mut AppState) -> Vec<AppEffect> {
+    let at = state.fleet_wake_at.take().unwrap_or(state.attention_at);
+    let empty = crate::fleet_attention::empty_snapshot();
+    let latest = state
+        .fleet_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.as_ref())
+        .unwrap_or(&empty);
+    let out = state.hub.on_wake(at, Some(latest));
+    hub_effects(state, out)
+}
+
+/// The jump key: open the fleet view on the oldest background request, or say why not.
+fn attention_next(state: &mut AppState) -> Vec<AppEffect> {
+    let snapshot = state
+        .fleet_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.as_ref());
+    match next_need(snapshot, state.fleet_enabled) {
+        NextNeed::Peek(key) => vec![AppEffect::OpenFleetViewAt(key)],
+        NextNeed::Notice(text) => vec![notice_lines(&text)],
+    }
+}
+
+/// The effects of one hub output: the alerts, the notice, and the next wake.
+fn hub_effects(state: &mut AppState, out: HubOutput) -> Vec<AppEffect> {
+    let mut effects: Vec<AppEffect> = out.alerts.into_iter().map(AppEffect::Alert).collect();
+    if let Some(text) = out.notice {
+        effects.push(notice_lines(&text));
+    }
+    if out.wake_at != state.fleet_wake_at {
+        state.fleet_wake_at = out.wake_at;
+        if let Some(at) = out.wake_at {
+            effects.push(AppEffect::WakeAt(at));
+        }
+    }
+    effects
+}
+
+/// The foreground session's open requests.
+fn foreground_open(state: &AppState) -> u32 {
+    let open = state
+        .opened
+        .as_ref()
+        .map_or(0, |opened| opened.state.open_prompts().count());
+    u32::try_from(open).unwrap_or(u32::MAX)
 }
 
 /// Observe checklist changes after committing the turn's last cell.
@@ -3067,6 +3240,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             ToggleContext::Completion | ToggleContext::Card => Vec::new(),
         },
         UserAction::Picker(input) => picker_input(state, input),
+        UserAction::AttentionNext => attention_next(state),
     }
 }
 
@@ -7568,6 +7742,20 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::WakeAt(at) => {
+                if let Some(old) = state.fleet_wake_task.take() {
+                    old.abort();
+                }
+                let sender = executor.sender.clone();
+                state.fleet_wake_task = Some(crate::fleet_attention::wake_task(at, move || {
+                    let _ = sender.send(AppMessage::AttentionWake);
+                }));
+            }
+            // The fleet view opens the row the jump key named. The overlay is the
+            // fleet view unit's own; this is the path to it from here.
+            AppEffect::OpenFleetViewAt(key) => {
+                redraw |= apply(state, AppMessage::FleetOpenAt(key), screen, executor);
+            }
         }
     }
     sync_attachment_view(state, screen, Instant::now());
@@ -7976,6 +8164,36 @@ pub(crate) fn open_fleet_view(state: &mut AppState) -> Vec<AppEffect> {
     effects
 }
 
+/// Open the fleet view on the row the jump key named.
+///
+/// The overlay and the peek belong to the fleet view unit. The cursor goes on the
+/// row and the peek opens through the same path the overlay's own Space key uses, so
+/// the peek's work runs in the worker and its answer comes back as a message.
+fn fleet_open_at(state: &mut AppState, key: RowKey) -> Vec<AppEffect> {
+    let mut effects = open_fleet_view(state);
+    let produced = state
+        .fleet
+        .as_mut()
+        .map(|view| view.open_at(key.clone()))
+        .unwrap_or_default();
+    for effect in produced {
+        for out in fleet_effect(state, effect) {
+            match out {
+                AppEffect::FleetInput(input) => effects.extend(fleet_input(state, input)),
+                AppEffect::FleetForeground(job) => effects.extend(foreground_job(state, job)),
+                other => effects.push(other),
+            }
+        }
+    }
+    if let Some(view) = state.fleet.as_mut()
+        && view.needs_redraw()
+    {
+        view.take_frame();
+        effects.push(AppEffect::Redraw);
+    }
+    effects
+}
+
 /// Apply one overlay input and turn its effects into executor effects.
 pub(crate) fn fleet_input(
     state: &mut AppState,
@@ -8359,6 +8577,11 @@ pub async fn run<S: Screen>(
     state.interrupt_label = screen.interrupt_label();
     state.home = std::env::var_os("HOME").map(PathBuf::from);
     state.profile = launch.profile.trim().to_lowercase();
+    state.hub = AttentionHub::new(
+        screen.fleet_attention_config(),
+        state.profile.clone(),
+        screen.attention_key_label(),
+    );
     state.list_title = setup.list_title;
     state.model = launch.model.clone();
     state.effort = launch.effort.clone();

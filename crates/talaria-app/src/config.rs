@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 pub use talaria_core::appearance::{ColorsSetting, ThemeMode};
 use talaria_core::attention::AlertKind;
+use talaria_core::fleet_attention::FleetScope;
 use toml::{Table, Value};
 
 /// The shared file for favourites and defaults on this machine.
@@ -157,6 +158,10 @@ pub struct NotificationsConfig {
     pub desktop: Vec<AlertKind>,
     /// A finished turn alerts only at or above these seconds.
     pub done_after_seconds: u64,
+    /// Which background requests raise an alert. The default is every background row.
+    pub fleet_needs_you: FleetScope,
+    /// Which background finishes raise an alert. The default is watched rows.
+    pub fleet_finished: FleetScope,
 }
 
 /// Herdr pane state reporting.
@@ -232,6 +237,8 @@ impl Default for Config {
                 bell: vec![AlertKind::NeedsYou, AlertKind::Failed],
                 desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
                 done_after_seconds: DEFAULT_DONE_AFTER_SECONDS,
+                fleet_needs_you: FleetScope::All,
+                fleet_finished: FleetScope::Watched,
             },
             herdr: HerdrConfig { report_state: true },
             theme: ThemeConfig {
@@ -723,6 +730,27 @@ fn read_comforts(table: &str, section: &Table, config: &mut Config, notices: &mu
                     if !kinds.contains(&kind) { kinds.push(kind); }
                 }
                 if key=="bell" { config.notifications.bell=kinds; } else { config.notifications.desktop=kinds; }
+            }
+            ("notifications", "fleet_needs_you" | "fleet_finished") => {
+                let scope = match value.as_str() {
+                    Some("all") => Some(FleetScope::All),
+                    Some("watched") => Some(FleetScope::Watched),
+                    Some("off") => Some(FleetScope::Off),
+                    _ => None,
+                };
+                match (key.as_str(), scope) {
+                    ("fleet_needs_you", Some(scope)) => config.notifications.fleet_needs_you = scope,
+                    ("fleet_needs_you", None) => notices.push(
+                        "[notifications] fleet_needs_you must be \"all\", \"watched\" or \"off\"; using \"all\"."
+                            .into(),
+                    ),
+                    ("fleet_finished", Some(scope)) => config.notifications.fleet_finished = scope,
+                    ("fleet_finished", None) => notices.push(
+                        "[notifications] fleet_finished must be \"all\", \"watched\" or \"off\"; using \"watched\"."
+                            .into(),
+                    ),
+                    _ => {}
+                }
             }
             _ => notices.push(unknown_setting(table,key)),
         }

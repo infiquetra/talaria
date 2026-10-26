@@ -331,6 +331,8 @@ pub enum Action {
     FleetNew,
     /// Start a background session in a new worktree from the fleet list.
     FleetNewWorktree,
+    /// Jump to the oldest background request.
+    AttentionNext,
     /// Review the fleet row's session folder.
     FleetReview,
     /// Move the review cursor up. Issue #245.
@@ -402,7 +404,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 130] = [
+    pub const ALL: [Self; 131] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -513,6 +515,7 @@ impl Action {
         Self::AgentsOpenInPane,
         Self::FleetNew,
         Self::FleetNewWorktree,
+        Self::AttentionNext,
         Self::FleetReview,
         Self::ReviewUp,
         Self::ReviewDown,
@@ -649,6 +652,7 @@ impl Action {
             Self::AgentsOpenInPane => "agents_open_in_pane",
             Self::FleetNew => "fleet_new",
             Self::FleetNewWorktree => "fleet_new_worktree",
+            Self::AttentionNext => "attention_next",
             Self::FleetReview => "fleet_review",
             Self::ReviewUp => "review_up",
             Self::ReviewDown => "review_down",
@@ -723,6 +727,7 @@ impl Action {
             | Self::ComposerSendNow
             | Self::ComposerSteer
             | Self::AgentsPanel => KeyContext::Composer,
+            Self::AttentionNext => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
             | Self::PagerPageUp
@@ -936,6 +941,7 @@ impl Action {
             Self::AgentsOpenInPane => &["o"],
             Self::FleetNew => &["n"],
             Self::FleetNewWorktree => &["w"],
+            Self::AttentionNext => &["alt+a"],
             Self::FleetReview => &["v"],
             Self::ReviewUp => &["up", "k"],
             Self::ReviewDown => &["down", "j"],
@@ -1702,7 +1708,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 130);
+        assert_eq!(Action::ALL.len(), 131);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -2161,7 +2167,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 130);
+        assert_eq!(Action::ALL.len(), 131);
     }
 
     #[test]
