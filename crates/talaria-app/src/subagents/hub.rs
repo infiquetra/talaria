@@ -327,17 +327,19 @@ impl SubagentHub {
         tracker.poll_scheduled = true;
         self.schedule(key, TimerKind::Poll, Duration::from_secs(self.cfg.poll_s));
     }
-    fn poll(&mut self, key: &RowKey, now: Clock) {
+    fn poll(&mut self, key: &RowKey, now: Clock) -> bool {
+        let mut changed = false;
         if let Some(tracker) = self.trackers.get_mut(key) {
-            tracker.tree.expire(now);
+            changed = tracker.tree.expire(now);
             if tracker.failures >= 3
                 || (tracker.tree.counts().live == 0 && self.panel.as_ref() != Some(key))
             {
-                return;
+                return changed;
             }
         }
         self.collect_batches(key);
         self.list(key);
+        changed
     }
     fn list(&mut self, key: &RowKey) {
         let Some(tracker) = self.trackers.get_mut(key) else {
@@ -669,6 +671,8 @@ impl SubagentHub {
                 };
                 tracker.list_inflight = false;
                 let before = tracker.tree.version();
+                let was_known = tracker.tree.hydrated() || tracker.list_disabled;
+                let previous_flash = self.flash.clone();
                 match result {
                     Ok(list) => {
                         tracker.failures = 0;
@@ -691,7 +695,9 @@ impl SubagentHub {
                             Some(outcome_text(&error_outcome("subagent.list", "list", error)));
                     }
                 }
-                let changed = before != tracker.tree.version();
+                let changed = before != tracker.tree.version()
+                    || was_known != (tracker.tree.hydrated() || tracker.list_disabled)
+                    || previous_flash != self.flash;
                 self.collect_batches(&key);
                 self.schedule_poll(&key);
                 changed
@@ -728,6 +734,8 @@ impl SubagentHub {
                         };
                         if result.available {
                             tracker.tail.text = Some(text);
+                        } else {
+                            tracker.tail.text = None;
                         }
                     }
                     _ => tracker.tail.ever_failed = true,
@@ -749,16 +757,18 @@ impl SubagentHub {
                 if !self.current(&key, generation) {
                     return false;
                 }
+                let mut changed = false;
                 if let Some(id) = id {
                     let Some(tracker) = self.trackers.get_mut(&key) else {
                         return false;
                     };
                     tracker.stopping.remove(&id);
                     if matches!(outcome, ControlOutcome::StopRequested { .. }) {
-                        tracker.tree.mark_stop_requested(&id);
+                        changed |= tracker.tree.mark_stop_requested(&id);
                     }
                 }
                 if let ControlOutcome::Paused(paused) = outcome {
+                    changed |= self.pause_known != Some(paused);
                     self.pause_known = Some(paused);
                     self.spawning = if paused {
                         Spawning::Paused(None)
@@ -766,9 +776,10 @@ impl SubagentHub {
                         Spawning::On(None)
                     };
                     self.confirm_pause = false;
+                    self.status_disabled = false;
                     self.status(&key);
                 }
-                self.set_flash(outcome_text(&outcome))
+                self.set_flash(outcome_text(&outcome)) || changed
             }
             SubagentMsg::DelegationStatus {
                 key,
@@ -807,10 +818,7 @@ impl SubagentHub {
                 self.schedule_status(&key);
                 before != self.spawning
             }
-            SubagentMsg::PollTick { key } => {
-                self.poll(&key, now);
-                false
-            }
+            SubagentMsg::PollTick { key } => self.poll(&key, now),
             SubagentMsg::TailTick { key, id } => {
                 self.fetch_tail(&key, id);
                 false
@@ -830,11 +838,10 @@ impl SubagentHub {
                 }
                 match kind {
                     TimerKind::Poll => {
-                        self.trackers
-                            .get_mut(&key)
-                            .map(|t| t.poll_scheduled = false);
-                        self.poll(&key, now);
-                        false
+                        if let Some(tracker) = self.trackers.get_mut(&key) {
+                            tracker.poll_scheduled = false;
+                        }
+                        self.poll(&key, now)
                     }
                     TimerKind::Tail { id, view } => {
                         if self.trackers[&key].tail_view == view {
@@ -1032,7 +1039,7 @@ impl SubagentHub {
 /// The exact flash and notice text for one outcome.
 #[must_use]
 pub fn outcome_text(o: &ControlOutcome) -> String {
-    let goal = |s: &str| talaria_core::attention::cut(&literal(s), 40);
+    let goal = |s: &str| literal(s).chars().take(40).collect::<String>();
     match o {
         ControlOutcome::SteerQueued { goal: g } => format!(
             "Steer queued for \"{}\". It reaches the subagent at its next step.",
@@ -1136,7 +1143,11 @@ fn error_outcome(method: &'static str, action: &'static str, error: CallError) -
             action,
             secs: after.as_secs(),
         },
-        CallError::Unknown { .. } | CallError::BadResult { .. } => ControlOutcome::Lost { action },
+        CallError::Unknown { .. } => ControlOutcome::Lost { action },
+        CallError::BadResult { .. } => ControlOutcome::Refused {
+            method,
+            reason: "Hermes returned an unreadable answer; the outcome is unknown".into(),
+        },
         CallError::Rpc(error) if error.code == -32601 => ControlOutcome::MethodMissing { method },
         CallError::Rpc(error) => ControlOutcome::Refused {
             method,

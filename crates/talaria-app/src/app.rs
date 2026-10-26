@@ -279,6 +279,8 @@ pub enum ToggleContext {
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
     pub subagents: Option<&'a crate::subagents::SubagentHub>,
+    /// Gateway usage fallback until this session's tree is known.
+    pub subagents_usage_active: u32,
     pub state: Option<&'a SessionState>,
     pub session_id: Option<&'a str>,
     pub title: Option<&'a str>,
@@ -336,6 +338,9 @@ impl View<'_> {
 
 /// The terminal side of the loop.
 pub trait Screen: ComposerDeadline + StatusHost {
+    fn subagents_config(&self) -> crate::subagents::SubagentsConfig {
+        crate::subagents::SubagentsConfig::default()
+    }
     /// Commit one finished batch using the terminal's native scrollback.
     fn commit_subagent_batch(&mut self, _batch: &talaria_core::subagents::FinishedBatch) {}
     /// Synchronize model overlays and cards without passing terminal state into the app.
@@ -588,6 +593,7 @@ pub struct AppState {
     command_service: Option<CommandService>,
     /// The subagent hub, once a sender exists to build it with. Issue #242.
     pub subagents: Option<crate::subagents::SubagentHub>,
+    pub subagents_usage_active: u32,
     /// Standing automation state.
     pub automation: AutomationState,
     automation_ticker: AutomationTicker,
@@ -724,6 +730,7 @@ impl AppState {
             pending: None,
             command_service: None,
             subagents: None,
+            subagents_usage_active: 0,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
             caret: 0,
             attachment_epoch: 0,
@@ -794,6 +801,7 @@ impl AppState {
             fleet: self.fleet.as_ref(),
             peek: self.peek_frame.as_ref(),
             subagents: self.subagents.as_ref(),
+            subagents_usage_active: self.subagents_usage_active,
         }
     }
 
@@ -4219,14 +4227,28 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 commands_follow(state, CommandsInput::SkillsChanged)
             }
             Inbound::Event(inbound) => {
+                if let Some(opened) = state.opened.as_ref()
+                    && inbound.raw.get("session_id").and_then(Value::as_str)
+                        == Some(opened.session_id.as_str())
+                    && !accept_event(
+                        &opened.cursor,
+                        inbound.raw.get("replay_epoch").and_then(Value::as_str),
+                        inbound.raw.get("seq").and_then(Value::as_u64),
+                    )
+                {
+                    return Vec::new();
+                }
                 // Child events remain independent of the parent's interrupt latch.
                 let key = inbound
                     .raw
                     .get("session_id")
                     .and_then(Value::as_str)
-                    .map(|session_id| RowKey {
-                        profile: state.profile.clone(),
-                        session_id: session_id.into(),
+                    .and_then(|session_id| {
+                        state.subagents.as_ref().and_then(|hub| {
+                            hub.attached_keys()
+                                .into_iter()
+                                .find(|key| key.session_id == session_id)
+                        })
                     });
                 let now = subagent_clock(state);
                 if let (Some(hub), Some(key)) = (state.subagents.as_mut(), key) {
@@ -4242,6 +4264,17 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     || !accept_event(&opened.cursor, epoch, seq)
                 {
                     return hub_effects;
+                }
+                if let hermes_contract::events::Notification::SessionUsage(payload) =
+                    &inbound.frame.notification
+                {
+                    state.subagents_usage_active = payload
+                        .usage
+                        .as_ref()
+                        .and_then(|usage| usage.active_subagents)
+                        .or(payload.active_subagents)
+                        .and_then(|n| u32::try_from(n).ok())
+                        .unwrap_or(0);
                 }
                 let session_id = opened.session_id.clone();
                 let mut effects = Vec::new();
@@ -4382,6 +4415,7 @@ fn opened_session(
     opened: OpenedSession,
     notice: Option<String>,
 ) -> Vec<AppEffect> {
+    state.subagents_usage_active = 0;
     state.model = opened.info.model.clone();
     state.effort = opened.effort.clone();
     // The snapshot's fences are the ones a later mutation must present.
@@ -7512,9 +7546,7 @@ pub async fn run<S: Screen>(
     let executor = Executor::new(sender);
     state.sender = Some(executor.sender.clone());
     state.subagents = Some(crate::subagents::SubagentHub::new(
-        crate::config::load_user_config(&setup.home)
-            .config
-            .subagents,
+        screen.subagents_config(),
         executor.sender.clone(),
     ));
     // The first frame is drawn; the fleet link starts in the background.
