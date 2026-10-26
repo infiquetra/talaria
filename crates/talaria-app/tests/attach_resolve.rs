@@ -140,7 +140,12 @@ fn prefix_matches_with_or_without_local_and_needs_four_chars() {
         dir_row("fixture", &wanted, "compile", RowOrigin::Live),
         dir_row("fixture", &full_id("9e8d7c6b"), "migrate", RowOrigin::Live),
     ];
-    for reference in ["1a2b3c4d", "local-1a2b3c4d", "1A2B3C4D", "LOCAL-1a2b3c4d"] {
+    for reference in [
+        "1a2b3c4d",
+        "local-1a2b3c4d",
+        "1A2B3C4D",
+        concat!("LOCAL-", "1a2b3c4d"),
+    ] {
         assert!(
             matches!(resolve(reference, &rows), Resolution::One(ref candidate) if candidate.kind == MatchKind::IdPrefix && candidate.row.key.session_id == wanted),
             "{reference} did not prefix-match"
