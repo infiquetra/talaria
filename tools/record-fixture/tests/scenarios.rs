@@ -206,6 +206,7 @@ fn scenario_table_matches_the_spec() {
             "permissions-cd",
             "shell-and-btw",
             "background-work",
+            "bg-launch",
         ]
     );
     for name in SCRIPTED_SCENARIOS {

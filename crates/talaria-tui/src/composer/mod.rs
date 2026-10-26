@@ -634,7 +634,9 @@ impl Composer {
             | Action::FleetAnswer
             | Action::FleetFilter
             | Action::FleetProfileNext
-            | Action::FleetProfilePrev => {}
+            | Action::FleetProfilePrev
+            | Action::FleetNew
+            | Action::FleetNewWorktree => {}
         }
         false
     }

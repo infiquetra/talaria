@@ -25,6 +25,9 @@ fn main() -> ExitCode {
     }
     match talaria_cli::args::Cli::try_parse() {
         Ok(cli) => {
+            if cli.bg || cli.worktree || cli.name.is_some() {
+                return ExitCode::from(talaria_cli::bg::run_bg(&cli, started));
+            }
             if let Err(error) = talaria_cli::args::validate_print_options(&cli) {
                 eprint!("talaria: {}\nNext step: {}\n", error.what, error.next_step);
                 return ExitCode::from(2);

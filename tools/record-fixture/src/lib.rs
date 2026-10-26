@@ -2049,7 +2049,7 @@ async fn wait_for_turns(
 }
 
 /// 32 lower-case hex characters no other request of this process shares.
-fn request_id() -> String {
+pub(crate) fn request_id() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let started = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

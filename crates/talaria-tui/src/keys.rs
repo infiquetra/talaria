@@ -313,6 +313,10 @@ pub enum Action {
     AgentsTop,
     /// The last row.
     AgentsBottom,
+    /// Start a background session from the fleet list.
+    FleetNew,
+    /// Start a background session in a new worktree from the fleet list.
+    FleetNewWorktree,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -344,7 +348,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 106] = [
+    pub const ALL: [Self; 108] = [
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -451,6 +455,8 @@ impl Action {
         Self::AgentsPageDown,
         Self::AgentsTop,
         Self::AgentsBottom,
+        Self::FleetNew,
+        Self::FleetNewWorktree,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -563,6 +569,8 @@ impl Action {
             Self::AgentsPageDown => "agents_page_down",
             Self::AgentsTop => "agents_top",
             Self::AgentsBottom => "agents_bottom",
+            Self::FleetNew => "fleet_new",
+            Self::FleetNewWorktree => "fleet_new_worktree",
         }
     }
 
@@ -668,7 +676,9 @@ impl Action {
             | Self::FleetAnswer
             | Self::FleetFilter
             | Self::FleetProfileNext
-            | Self::FleetProfilePrev => KeyContext::Fleet,
+            | Self::FleetProfilePrev
+            | Self::FleetNew
+            | Self::FleetNewWorktree => KeyContext::Fleet,
             Self::AgentsUp
             | Self::AgentsDown
             | Self::AgentsTail
@@ -803,6 +813,9 @@ impl Action {
             Self::AgentsPageDown => &["pagedown"],
             Self::AgentsTop => &["g", "home"],
             Self::AgentsBottom => &["shift+g", "end"],
+            // Left unbound until the fleet list owns the keys. A plain letter bound here
+            // would be the default the fleet list looks up.
+            Self::FleetNew | Self::FleetNewWorktree => &[],
         }
     }
 }
@@ -1519,7 +1532,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 106);
+        assert_eq!(Action::ALL.len(), 108);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1580,7 +1593,9 @@ mod tests {
                 | Action::FleetAnswer
                 | Action::FleetFilter
                 | Action::FleetProfileNext
-                | Action::FleetProfilePrev => KeyContext::Fleet,
+                | Action::FleetProfilePrev
+                | Action::FleetNew
+                | Action::FleetNewWorktree => KeyContext::Fleet,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -1660,7 +1675,9 @@ mod tests {
                 | Action::FleetAnswer
                 | Action::FleetFilter
                 | Action::FleetProfileNext
-                | Action::FleetProfilePrev => KeyContext::Fleet,
+                | Action::FleetProfilePrev
+                | Action::FleetNew
+                | Action::FleetNewWorktree => KeyContext::Fleet,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -1780,6 +1797,8 @@ mod tests {
             (Action::AgentsPageDown, vec!["PageDown"]),
             (Action::AgentsTop, vec!["G", "Home"]),
             (Action::AgentsBottom, vec!["Shift+G", "End"]),
+            (Action::FleetNew, vec![]),
+            (Action::FleetNewWorktree, vec![]),
         ];
         for (action, want) in expected {
             assert_eq!(labels(&map, action), want, "{}", action.config_name());
@@ -1925,7 +1944,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 106);
+        assert_eq!(Action::ALL.len(), 108);
     }
 
     #[test]

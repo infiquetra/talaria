@@ -54,6 +54,15 @@ pub struct Cli {
     pub no_ensure: bool,
     #[arg(short = 'p', long = "print")]
     pub print: bool,
+    /// Start a session in the background and return.
+    #[arg(long)]
+    pub bg: bool,
+    /// Create a git worktree for the background session.
+    #[arg(short = 'w', long)]
+    pub worktree: bool,
+    /// Name for the worktree. Needs `--worktree`.
+    #[arg(long)]
+    pub name: Option<String>,
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
     #[arg(long = "output-format")]
