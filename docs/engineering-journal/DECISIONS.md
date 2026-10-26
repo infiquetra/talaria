@@ -2,6 +2,30 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-26
+
+### The fleet registry reads instead of attaching
+
+**Decision.** The fleet registry (issue #239) learns about sessions nobody in this Talaria is attached to only through reads with no side effect on a live session: `session.list` (membership and labels), `session.active_list` (liveness), `approval.pending` (what a waiting session asks) and `session.events.since` (how a turn that just ended finished). Sessions this Talaria is attached to (today the foreground session) are reported by their owner as a `SubscribedView` built from its `SessionState`. Two architecture rules are adapted for unattached sessions: a `snapshot_required` reply means the outcome is `Unknown`, never a `session.resume`; replies from a replaced connection are still dropped, by link generation, in the service.
+
+**Rationale.** At Hermes v0.22.4 every attach returns the whole history (the session authority ignores `omit_messages`), cancels a pending close and re-reads the profile's settings, so attaching every session would move megabytes per refresh and change Hermes's own housekeeping. Unattached state is coarser (a sudo or secret prompt reads `working`; polled approvals carry no execution generation), so such items are never answered as they stand.
+
+**Rejected alternatives.** Attaching every session (cost and side effects above). Polling only, without `sessions.changed` (new sessions and finished turns would wait for a timer).
+
+**Revisit when** Hermes honours `omit_messages` on the session authority or publishes a "session started waiting" signal.
+
+### A long-lived host-scoped fleet connection
+
+**Decision.** The fleet service holds one host-scoped interactive connection beside the foreground link for the life of an interactive launch, started after the first frame and never in `-p` mode (`crates/talaria-app/src/fleet/`). If the gateway refuses the host-scoped ticket it covers the foreground profile only and says so; every reconnect asks for host scope again. It polls `session.active_list` every 2 s for profiles with a waiting or working session, every 4 s for the others, spread evenly, and rediscovers profiles every 30 s (`[fleet]` in the configuration file). It attaches to no session, so Hermes sends it no server request; one that arrives anyway is refused at once with Talaria's not-supported reply, whatever the request's kind, and noted once per connection. That is an exception to point 3 of draft decision 0007 (Talaria answers every server request).
+
+**Rationale.** Listing other profiles needs a host-scoped ticket; the foreground link is profile scoped and the session picker's side connection is short-lived with no event stream, and the registry needs `sessions.changed` and heartbeats. The two-tier cadence keeps a new approval in an idle profile within about 4 s without relying on change events, at 7.5 calls a second for 30 idle profiles.
+
+**Rejected alternatives.** Host-scoping the foreground link (changes every foreground request shape). Hot polls only (an idle profile's first new turn would rely on `sessions.changed`, and a short turn can start and end between polls).
+
+**Operator decisions.** Issue #239 asks the operator two questions this entry depends on: whether this second long-lived connection is accepted as a further exception to draft decision 0007 (question 1, a merge gate), and whether the 2 s, 4 s and 30 s cadence is acceptable (question 2). Both are open as of this entry; the defaults above are the specification's, not an operator's choice.
+
+**Revisit when** the foreground link becomes host scoped, or the operator answers question 1 or 2 differently.
+
 ## 2026-10-25
 
 ### Side connection for the session picker

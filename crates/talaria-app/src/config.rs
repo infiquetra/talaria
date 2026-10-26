@@ -101,6 +101,8 @@ pub struct Config {
     pub ui: UiConfig,
     /// When a paste becomes a label.
     pub composer: ComposerConfig,
+    /// Fleet poll timings from `[fleet]`.
+    pub fleet: crate::fleet::FleetConfig,
 }
 
 /// Paste collapse thresholds. Zero turns that rule off.
@@ -237,6 +239,7 @@ impl Default for Config {
                 reduced_motion: false,
             },
             composer: ComposerConfig::default(),
+            fleet: crate::fleet::FleetConfig::default(),
         }
     }
 }
@@ -289,6 +292,7 @@ pub fn parse(text: &str) -> LoadedConfig {
         "theme",
         "ui",
         "composer",
+        "fleet",
     ] {
         let Some(value) = table.get(name) else {
             continue;
@@ -306,6 +310,7 @@ pub fn parse(text: &str) -> LoadedConfig {
             "theme" => config.theme = read_theme(section, &mut notices),
             "ui" => config.ui = read_ui(section, &mut notices),
             "composer" => config.composer = read_composer(section, &mut notices),
+            "fleet" => config.fleet = read_fleet(section, &mut notices),
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
@@ -322,6 +327,7 @@ pub fn parse(text: &str) -> LoadedConfig {
                 | "theme"
                 | "ui"
                 | "composer"
+                | "fleet"
         ) {
             continue;
         }
@@ -520,6 +526,81 @@ fn read_composer(section: &Table, notices: &mut Vec<String>) -> ComposerConfig {
         }
     }
     composer
+}
+
+fn read_fleet(section: &Table, notices: &mut Vec<String>) -> crate::fleet::FleetConfig {
+    let mut fleet = crate::fleet::FleetConfig::default();
+    for (name, value) in section {
+        match name.as_str() {
+            "enabled" => match value.as_bool() {
+                Some(enabled) => fleet.enabled = enabled,
+                None => {
+                    notices.push("[fleet] enabled must be true or false; using true.".into());
+                }
+            },
+            "hot_poll_ms" => {
+                fleet.hot_poll = std::time::Duration::from_millis(
+                    u64::try_from(read_fleet_whole(
+                        value,
+                        1000,
+                        10_000,
+                        2000,
+                        "hot_poll_ms",
+                        notices,
+                    ))
+                    .unwrap_or(2000),
+                );
+            }
+            "cold_poll_ms" => {
+                fleet.cold_poll = std::time::Duration::from_millis(
+                    u64::try_from(read_fleet_whole(
+                        value,
+                        2000,
+                        30_000,
+                        4000,
+                        "cold_poll_ms",
+                        notices,
+                    ))
+                    .unwrap_or(4000),
+                );
+            }
+            "backstop_s" => {
+                fleet.backstop = std::time::Duration::from_secs(
+                    u64::try_from(read_fleet_whole(value, 10, 300, 30, "backstop_s", notices))
+                        .unwrap_or(30),
+                );
+            }
+            _ => notices.push(unknown_setting("fleet", name)),
+        }
+    }
+    fleet
+}
+
+/// A whole number in `min..=max`. Out of range is clamped. Anything else uses `fallback`.
+fn read_fleet_whole(
+    value: &Value,
+    min: i64,
+    max: i64,
+    fallback: i64,
+    key: &str,
+    notices: &mut Vec<String>,
+) -> i64 {
+    match value.as_integer() {
+        Some(number) if (min..=max).contains(&number) => number,
+        Some(number) => {
+            let clamped = number.clamp(min, max);
+            notices.push(format!(
+                "[fleet] {key} must be a whole number from {min} to {max}; using {clamped}."
+            ));
+            clamped
+        }
+        None => {
+            notices.push(format!(
+                "[fleet] {key} must be a whole number from {min} to {max}; using {fallback}."
+            ));
+            fallback
+        }
+    }
 }
 
 fn unknown_setting(table: &str, key: &str) -> String {

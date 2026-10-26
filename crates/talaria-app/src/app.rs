@@ -561,6 +561,12 @@ pub struct AppState {
     submitted_attachments: BTreeMap<String, (String, SubmittedAttachments)>,
     held_attachments: VecDeque<SubmittedAttachments>,
     failed_attachments: VecDeque<(String, SubmittedAttachments, bool)>,
+    /// The fleet service of an interactive launch, once the first frame is drawn.
+    fleet: Option<crate::fleet::FleetHandle>,
+    /// The latest fleet snapshot.
+    pub fleet_snapshot: Option<Arc<crate::fleet::FleetSnapshot>>,
+    /// The foreground row and view last reported to the fleet service.
+    fleet_reported: Option<(RowKey, talaria_core::fleet::SubscribedView)>,
 }
 
 struct SubmittedAttachments {
@@ -668,6 +674,9 @@ impl AppState {
             attachment_epoch: 0,
             attachment_home: PathBuf::new(),
             attachment_folder: PathBuf::new(),
+            fleet: None,
+            fleet_snapshot: None,
+            fleet_reported: None,
             submitted_attachments: BTreeMap::new(),
             held_attachments: VecDeque::new(),
             failed_attachments: VecDeque::new(),
@@ -839,6 +848,8 @@ pub enum TranscriptAction {
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
     Models(ModelsInput),
+    /// A fleet snapshot or attention. Stored; nothing is drawn for it.
+    Fleet(crate::fleet::FleetNotice),
     User(UserAction),
     /// A key from the terminal.
     Input(InputKey),
@@ -1479,6 +1490,20 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     };
     let mut effects = match message {
         AppMessage::Models(input) => models_input(state, input),
+        // Stored for the fleet view; this unit draws nothing for it.
+        AppMessage::Fleet(notice) => {
+            redraw = false;
+            // Notices from the handle and the fleet task can cross; keep the newest snapshot.
+            if let crate::fleet::FleetNotice::Changed(snapshot) = notice
+                && state
+                    .fleet_snapshot
+                    .as_ref()
+                    .is_none_or(|held| snapshot.version > held.version)
+            {
+                state.fleet_snapshot = Some(snapshot);
+            }
+            Vec::new()
+        }
         // The toggle asks for its own redraw: one when a panel is there, none otherwise.
         AppMessage::User(UserAction::ToggleTasks)
         | AppMessage::ForegroundKey(UserAction::ToggleTasks) => {
@@ -5363,6 +5388,8 @@ pub struct RunSetup {
     pub notices: Vec<String>,
     /// The key table of the configuration file.
     pub keys: BTreeMap<String, Vec<String>>,
+    /// Fleet timings when the interactive launch runs the fleet service; `None` runs none.
+    pub fleet: Option<crate::fleet::FleetConfig>,
 }
 
 fn held_text(held: &VecDeque<String>) -> String {
@@ -6586,6 +6613,52 @@ fn run_cd(state: &AppState, executor: &Executor, effect: CdEffect) {
     });
 }
 
+/// Report the foreground session to the fleet service: the row on a switch, and the view only
+/// when it changed since the last report.
+fn sync_fleet(state: &mut AppState) {
+    let Some(fleet) = &state.fleet else {
+        return;
+    };
+    let current = state.opened.as_ref().map(|opened| {
+        let key = RowKey {
+            profile: state.profile.clone(),
+            session_id: opened.session_id.clone(),
+        };
+        let masked: Vec<(String, talaria_core::attention::NeedSummary)> = state
+            .masked
+            .iter()
+            .filter(|request| {
+                request
+                    .session_id
+                    .as_deref()
+                    .is_none_or(|id| id == opened.session_id)
+            })
+            .map(|request| (request.id.clone(), masked_summary(request.kind)))
+            .collect();
+        let mut view = talaria_core::fleet::SubscribedView::from_state(&opened.state, &masked);
+        if view.title.is_none() {
+            view.title.clone_from(&opened.title);
+        }
+        (key, view)
+    });
+    for report in crate::fleet::foreground_reports(state.fleet_reported.as_ref(), current.as_ref())
+    {
+        fleet.report(report);
+    }
+    state.fleet_reported = current;
+}
+
+fn masked_summary(kind: crate::prompts::MaskedKind) -> talaria_core::attention::NeedSummary {
+    use crate::prompts::MaskedKind;
+    use talaria_core::attention::NeedSummary;
+    match kind {
+        MaskedKind::Sudo => NeedSummary::Sudo,
+        MaskedKind::Secret => NeedSummary::Secret,
+        MaskedKind::VaultCode => NeedSummary::VaultCode,
+        MaskedKind::VaultUnlockPrompt => NeedSummary::VaultUnlock,
+    }
+}
+
 /// The earliest of any number of deadlines.
 fn earliest_of(deadlines: impl IntoIterator<Item = Option<Instant>>) -> Option<Instant> {
     deadlines.into_iter().flatten().min()
@@ -6659,6 +6732,18 @@ pub async fn run<S: Screen>(
     let (sender, mut messages) = mpsc::unbounded_channel();
     let executor = Executor::new(sender);
     state.sender = Some(executor.sender.clone());
+    // The first frame is drawn; the fleet link starts in the background.
+    if let Some(cfg) = setup.fleet.take() {
+        let fleet_sender = executor.sender.clone();
+        state.fleet = Some(crate::fleet::FleetService::start(
+            setup.home.clone(),
+            state.profile.clone(),
+            cfg,
+            move |notice| {
+                let _ = fleet_sender.send(AppMessage::Fleet(notice));
+            },
+        ));
+    }
     let mut pending = Some(tokio::spawn(connect_and_open(
         launch,
         setup.home,
@@ -6780,6 +6865,7 @@ pub async fn run<S: Screen>(
         if state.quitting {
             break Ending::Quit;
         }
+        sync_fleet(&mut state);
         if redraw {
             sync_models(&mut state, screen);
             sync_picker(&state, screen);
@@ -6821,6 +6907,9 @@ pub async fn run<S: Screen>(
             outcome.code = failure.exit_code;
             outcome.stderr.push_str(&failure.render());
         }
+    }
+    if let Some(fleet) = state.fleet.take() {
+        fleet.close().await;
     }
     if executor.flush_model_files().await {
         outcome

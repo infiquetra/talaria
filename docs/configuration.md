@@ -104,6 +104,11 @@ follow_hermes_skin = true
 colors = "auto"
 [ui]
 reduced_motion = false
+[fleet]
+enabled = true
+hot_poll_ms = 2000
+cold_poll_ms = 4000
+backstop_s = 30
 ```
 
 ## Settings
@@ -123,6 +128,13 @@ change at most once a second. A paste of `paste_collapse_lines` lines or `paste_
 characters becomes a label (0 turns that rule off). `TALARIA_THEME` beats `theme.mode`,
 `TALARIA_REDUCED_MOTION` beats `ui.reduced_motion`, and a non-empty `NO_COLOR` turns colour off.
 See [themes](themes.md).
+
+`[fleet]` runs the background fleet link of an interactive launch (never `-p`): `enabled = false`
+turns it off. It polls the liveness of profiles with a waiting or working session every
+`hot_poll_ms` (1000 to 10000), every other profile every `cold_poll_ms` (2000 to 30000, spread
+evenly), and rediscovers profiles every `backstop_s` (10 to 300); out-of-range values are clamped
+with one notice. `talaria fleet list` uses the same timings and ignores `enabled`; its JSON is
+[`talaria.fleet.v1`](formats/fleet-list-v1.md).
 
 Talaria never stops for this file: anything it cannot use falls back to its default with one notice
 naming `~/.talaria/config.toml`. A syntax error (with line and column) or an unreadable file gives

@@ -122,6 +122,11 @@ pub fn render_usage(error: &clap::Error) -> (String, u8) {
     }
 }
 
+/// True when the first argument is the fleet command.
+pub fn is_fleet_command(args: &[String]) -> bool {
+    args.first().is_some_and(|arg| arg == "fleet")
+}
+
 pub fn write_usage(error: &clap::Error) -> u8 {
     let (text, code) = render_usage(error);
     match code {

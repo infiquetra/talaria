@@ -22,6 +22,8 @@ talaria-app.workspace = true
 talaria-core.workspace = true
 talaria-tui.workspace = true
 tokio.workspace = true
+time = { workspace = true, features = ["local-offset"] }
+unicode-width.workspace = true
 
 [dev-dependencies]
 futures-util = { workspace = true, features = ["sink"] }

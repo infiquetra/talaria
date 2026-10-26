@@ -52,6 +52,19 @@ pub const SESSION_PICKER: &str = "session-picker";
 /// profile.
 const PICKER_PROFILE: &str = "fixture";
 
+/// The scenario of the fleet registry: two `fixture` sessions, one waiting on an approval and
+/// one finished, then the reads `talaria fleet list --profile fixture` makes. Recorded by name.
+pub const FLEET_REGISTRY: &str = "fleet-registry";
+
+/// The fleet scenario's finished session answers this.
+const FLEET_READY_PROMPT: &str = "Reply with the single word: ready";
+
+/// The fleet scenario's waiting session asks for this; `manual` mode raises an approval.
+const FLEET_PROBE_PROMPT: &str = "Run this exact shell command: rm -rf ./talaria-fleet-probe";
+
+/// How long the fleet scenario waits for its approval, and for the denied turn to end.
+const FLEET_WAIT: Duration = Duration::from_secs(120);
+
 /// How many rows one picker list call asks for.
 const PICKER_LIMIT: i64 = 20;
 
@@ -178,6 +191,8 @@ impl Scenario {
             ),
             "hermes-commands" => (&[], &[]),
             SESSION_PICKER => (&[PICKER_PROMPT], &["complete"]),
+            // The denied probe turn also ends complete: the agent reports the refusal.
+            FLEET_REGISTRY => (&[FLEET_READY_PROMPT], &["complete", "complete"]),
             _ => return None,
         };
         Some(Scenario {
@@ -471,6 +486,9 @@ fn position(events: &[(String, Value)], kind: &str, from: usize) -> Option<usize
 
 /// The required evidence and final statuses of section 8.4 over a recorded file.
 pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), String> {
+    if scenario.name == FLEET_REGISTRY {
+        return fleet_registry_evidence(source);
+    }
     let events = recorded_events(source);
     let statuses: Vec<String> = events
         .iter()
@@ -662,6 +680,9 @@ pub fn build_scenario_substitutions(
 /// Value-level scrubbing a scenario asks for, applied to the recorded lines. Substitution
 /// cannot do it: the values differ from run to run and must become fixed placeholders.
 pub fn scrub_recording(scenario: &str, text: &str) -> String {
+    if scenario == FLEET_REGISTRY {
+        return scrub_fleet_rows(text);
+    }
     if scenario != "model-switch" {
         return text.to_owned();
     }
@@ -1157,6 +1178,115 @@ fn hermes_commands_evidence(source: &ReplaySource) -> Result<(), String> {
 /// Issue #231. The recording lists both scopes of the `fixture` profile, renames the session the
 /// turn created, lists again, exports the session as Markdown and detaches. No frame names
 /// another profile.
+/// The fleet recording names only `fixture`, holds the three fleet reads with the fleet's own
+/// params, a waiting session in the liveness reply, and its approval with the probe command.
+/// Both turns completed: the finished one, and the probe turn after its approval was denied.
+fn fleet_registry_evidence(source: &ReplaySource) -> Result<(), String> {
+    for frame in source.outbound().chain(source.inbound()) {
+        let mut named = Vec::new();
+        collect_profiles(&frame.frame, &mut named);
+        if let Some(other) = named.into_iter().find(|name| *name != PICKER_PROFILE) {
+            return Err(format!("a frame names the profile {other}"));
+        }
+    }
+    let events = recorded_events(source);
+    let statuses: Vec<String> = events
+        .iter()
+        .filter(|(kind, _)| kind == "message.complete")
+        .map(|(_, params)| turn_status(&params["payload"]))
+        .collect();
+    if statuses != ["complete", "complete"] {
+        return Err(format!(
+            "the turns ended {statuses:?}, expected two complete"
+        ));
+    }
+    let calls = picker_calls(source);
+    let answer = |method: &str, params: &Value| {
+        calls
+            .iter()
+            .find(|(called, sent, _)| called == method && sent == params)
+            .map(|(_, _, answer)| answer["result"].clone())
+    };
+    let Some(roster) = answer(
+        "session.list",
+        &json!({"profile": PICKER_PROFILE, "scope": "live", "limit": 200}),
+    ) else {
+        return Err("no fleet session.list".to_owned());
+    };
+    let Some(live) = answer("session.active_list", &json!({"profile": PICKER_PROFILE})) else {
+        return Err("no fleet session.active_list".to_owned());
+    };
+    let rows = roster["sessions"].as_array().map_or(0, Vec::len);
+    if rows != 2 {
+        return Err(format!(
+            "the list holds {rows} rows, expected the two of the scenario"
+        ));
+    }
+    let waiting: Vec<&str> = live["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["status"] == "waiting")
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    let [waiting] = waiting.as_slice() else {
+        return Err(format!("{} waiting sessions, expected one", waiting.len()));
+    };
+    let Some(pending) = answer(
+        "approval.pending",
+        &json!({"session_id": waiting, "profile": PICKER_PROFILE}),
+    ) else {
+        return Err("no approval.pending for the waiting session".to_owned());
+    };
+    let probe = pending["approvals"].as_array().is_some_and(|approvals| {
+        approvals.iter().any(|approval| {
+            approval["command"]
+                .as_str()
+                .is_some_and(|command| command.contains("talaria-fleet-probe"))
+        })
+    });
+    if !probe {
+        return Err("the pending approval is not the probe command".to_owned());
+    }
+    Ok(())
+}
+
+/// Keep only the scenario's own sessions in the fleet list replies: the profile's other live
+/// sessions are not part of the fixture.
+fn scrub_fleet_rows(text: &str) -> String {
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap_or(Value::Null))
+        .collect();
+    let own: std::collections::HashSet<String> = lines
+        .iter()
+        .filter_map(|line| line["frame"]["result"]["session_id"].as_str())
+        .map(str::to_owned)
+        .collect();
+    let mut out = String::with_capacity(text.len());
+    for (raw, mut value) in text.lines().zip(lines) {
+        let sessions = value
+            .get_mut("frame")
+            .and_then(|frame| frame.get_mut("result"))
+            .and_then(|result| result.get_mut("sessions"))
+            .and_then(Value::as_array_mut);
+        match sessions {
+            Some(sessions) => {
+                sessions.retain(|row| {
+                    row["id"]
+                        .as_str()
+                        .or_else(|| row["session_id"].as_str())
+                        .is_some_and(|id| own.contains(id))
+                });
+                out.push_str(&value.to_string());
+            }
+            None => out.push_str(raw),
+        }
+        out.push('\n');
+    }
+    out
+}
+
 fn session_picker_evidence(source: &ReplaySource) -> Result<(), String> {
     for frame in source.outbound().chain(source.inbound()) {
         let mut named = Vec::new();
@@ -1462,19 +1592,20 @@ async fn drive(
     if let Err(reason) = submit(client, session, &scenario.prompts[0]).await {
         return AttemptResult::Failed(reason);
     }
-    if let Err(result) = wait_for_turns(
-        client,
-        inbound,
-        scenario,
-        session,
-        scenario.expected_statuses.len(),
-    )
-    .await
-    {
+    // The fleet scenario's second turn runs on a second session, driven below.
+    let turns = if scenario.name == FLEET_REGISTRY {
+        1
+    } else {
+        scenario.expected_statuses.len()
+    };
+    if let Err(result) = wait_for_turns(client, inbound, scenario, session, turns).await {
         return result;
     }
     if scenario.name == SESSION_PICKER {
         return drive_session_picker(client, inbound, scenario, session).await;
+    }
+    if scenario.name == FLEET_REGISTRY {
+        return drive_fleet_registry(client, inbound, config, session).await;
     }
     if scenario.name == "subagent-batch" {
         let deadline = tokio::time::Instant::now() + SUBAGENT_LINGER;
@@ -1869,6 +2000,122 @@ async fn drive_session_picker(
         return result;
     }
     AttemptResult::Ok
+}
+
+/// The second session asks for the probe command and waits on its approval; then the fleet reads
+/// run as `talaria fleet list --profile fixture` makes them; then the approval is denied and the
+/// second session is let go. The first session (already finished) is cleaned up by the caller.
+async fn drive_fleet_registry(
+    client: &Client,
+    inbound: &mut InboundStream,
+    config: &DriverConfig,
+    session: &Session,
+) -> AttemptResult {
+    let failed = |reason: String| AttemptResult::Failed(reason);
+    if session.profile_name != PICKER_PROFILE {
+        return failed(format!(
+            "the {FLEET_REGISTRY} scenario records the profile `{PICKER_PROFILE}` only; \
+             the gateway served the profile `{}`",
+            session.profile_name
+        ));
+    }
+    let _ = std::fs::create_dir_all(config.scratch.join("talaria-fleet-probe"));
+    let created = match step(
+        client,
+        "session.create",
+        json!({"source": "cli", "cwd": config.scratch.to_string_lossy(),
+               "model": config.model, "provider": config.provider}),
+    )
+    .await
+    {
+        Ok(created) => created,
+        Err(result) => return result,
+    };
+    let Some(waiting) = created["session_id"].as_str().map(str::to_owned) else {
+        return failed("the second session snapshot has no session_id".to_owned());
+    };
+    let params = match submit_params(&waiting, FLEET_PROBE_PROMPT) {
+        Ok(params) => params,
+        Err(reason) => return failed(reason),
+    };
+    if let Err(result) = step(client, "prompt.submit", params).await {
+        return result;
+    }
+    let approval = wait_fleet_event(inbound, &waiting, "approval.request").await;
+    let outcome = match &approval {
+        None => AttemptResult::PreconditionAbsent(NO_APPROVAL_CARD.to_owned()),
+        Some(_) => fleet_reads(client, &waiting).await,
+    };
+    let options = call_options(CLEANUP_TIMEOUT);
+    if let Some(payload) = approval {
+        let _ = client
+            .call_raw(
+                "approval.respond",
+                json!({"session_id": waiting, "execution_generation": payload["execution_generation"],
+                       "prompt_id": payload["prompt_id"], "choice": "deny"}),
+                options,
+            )
+            .await;
+        let _ = wait_fleet_event(inbound, &waiting, "message.complete").await;
+    }
+    let _ = client
+        .call_raw(
+            "session.detach",
+            json!({"session_id": waiting, "subscription_id": created["subscription_id"]}),
+            options,
+        )
+        .await;
+    outcome
+}
+
+/// The reads of a one-shot fleet listing of `fixture`, with its exact params.
+async fn fleet_reads(client: &Client, waiting: &str) -> AttemptResult {
+    for (method, params) in [
+        (
+            "session.list",
+            json!({"profile": PICKER_PROFILE, "scope": "live", "limit": 200}),
+        ),
+        ("session.active_list", json!({"profile": PICKER_PROFILE})),
+        (
+            "approval.pending",
+            json!({"session_id": waiting, "profile": PICKER_PROFILE}),
+        ),
+    ] {
+        if let Err(result) = step(client, method, params).await {
+            return result;
+        }
+    }
+    AttemptResult::Ok
+}
+
+/// The payload of the next `kind` event of `session_id`, or `None` after [`FLEET_WAIT`].
+async fn wait_fleet_event(
+    inbound: &mut InboundStream,
+    session_id: &str,
+    kind: &str,
+) -> Option<Value> {
+    let deadline = tokio::time::Instant::now() + FLEET_WAIT;
+    loop {
+        match tokio::time::timeout_at(deadline, inbound.next()).await {
+            Ok(Some(Inbound::Event(event))) => {
+                if event.raw["type"] == kind && event.raw["session_id"] == session_id {
+                    let mut payload = event.raw["payload"].clone();
+                    if payload.get("execution_generation").is_none() {
+                        payload["execution_generation"] = event.raw["execution_generation"].clone();
+                    }
+                    return Some(payload);
+                }
+            }
+            Ok(Some(Inbound::ServerRequest(request))) => {
+                let _ = request
+                    .responder
+                    .fail(-32601, "the fixture script does not answer this request")
+                    .await;
+            }
+            Ok(Some(Inbound::Malformed(_))) => {}
+            Ok(Some(Inbound::Closed(_)) | None) | Err(_) => return None,
+        }
+    }
 }
 
 /// The revision the session has after its turn. The `session.info` event that empties the

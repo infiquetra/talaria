@@ -2,6 +2,39 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — Hermes signals session changes, not session liveness
+
+**Evidence.** Hermes v0.22.4 `tui_gateway/change_watcher.py` lines 189 to 197 and 378 to 428: `sessions.changed` is a digest of the session table, checked every 0.5 s and broadcast at most once per 2 s, and it leaves out activity heartbeats ("Liveness comes from session.active_list"). An approval opening changes no session row, so it never moves the digest. Hermes Desktop polls `session.active_list` every 1.5 s without change events and every 30 s with them (`apps/desktop/src/app/contrib/hooks/use-background-sync.ts` lines 683 to 698). The fleet registry (issue #239, `crates/talaria-app/src/fleet/service.rs`) polls liveness every 2 s for profiles with a waiting or working session and every 4 s, spread, for the others; live test 50 measured needs-you latencies of 525 ms, 720 ms and 659 ms (95th percentile 720 ms) against the 5 s budget.
+
+**Mechanism.** A session that starts waiting on an approval is still `running` in the table; only `session.active_list`, which reads the pending controls, reports `waiting`. Two gaps remain upstream: a session blocked on a sudo or secret prompt reads `working`, because those prompts are not in the pending controls Hermes lists (`gateway/session_pending_controls.py` lines 1 to 5); and an approval answered between the liveness read and the `approval.pending` read of a first observation shows a brief `waiting for an answer` item that the next liveness read removes.
+
+**Generalizable rule.** Poll `session.active_list` for waiting sessions and refetch the lists on `sessions.changed`; never wait for a change event to learn that a session needs the operator.
+
+## 2026-10-26 — Reading a session that is not live restores it
+
+**Evidence.** Hermes v0.22.4 `gateway/session_authority.py` lines 180 to 205: `session.events.since` authorizes through `authorize`, which restores a session missing from the authority's live set from the store; the dispatcher runs `adopt_before_restore` first for either `session.events.since` or `approval.pending` (`gateway/session_controls.py` lines 282 to 291). The fleet service sends both reads only for a session id in the latest successful liveness reply of its profile on the current connection (`FleetTask::guard`), and the mock gateway's non-live counter stays 0 in `crates/talaria-app/tests/fleet_wire.rs::never_reads_a_session_that_is_not_live`.
+
+**Mechanism.** A read that looks side-effect free is an attach in disguise when it names a session the authority has let go: the restore cancels Hermes's own housekeeping for that session. A session that closed between two polls is therefore marked done with an unknown outcome instead of being probed.
+
+**Generalizable rule.** Read only session ids the latest liveness reply listed, on the connection that reply came from.
+
+## 2026-10-26 — sessions.changed for sibling profiles
+
+**Evidence.** Live test 52 (`crates/talaria-cli/tests/live_fleet.rs::live_sessions_changed_sibling_report`) against the pinned gateway (Hermes v0.22.4, the operator's test gateway): a host-scoped connection whose ticket names `default` received `sessions.changed` within 6 s of a `fixture` session being created on another connection. It printed `SESSIONS_CHANGED_SIBLING: seen` in all four full runs on 2026-10-26.
+
+**Mechanism.** The change watcher's digest covers the homes the gateway serves (`tui_gateway/change_watcher.py` lines 278 to 289), and session-less broadcasts reach every WebSocket transport registered after `gateway.ready`, whatever its profile (`tui_gateway/server.py` lines 747 to 779). The question left open in the unit specification (whether a served profile other than the launch home moves the digest) is answered yes for this gateway.
+
+**Generalizable rule.** One host-scoped fleet link hears list changes for every served profile; the 4 s cold poll stays, because no change event announces a session that starts waiting.
+
+## 2026-10-26 — A test connection's buffered events answer the wrong turn
+
+**Evidence.** Live test 51 (`live_finished_turn_outcome`) first failed with "the interrupted turn was not reported interrupted". Instrumenting the outcome probe showed Hermes stored the second turn as `message.complete` with status `complete` at generation 2, and the test had sent `session.interrupt` for generation 1 thirty milliseconds after the first turn ended. The test's own connection created the session, so the first turn's `message.start` and deltas were still queued on it; the loop that waited for "the first delta" of the second turn took one of those. Draining the queue before the second submit, and accepting a delta only after a `message.start` of a newer generation, made the test pass in consecutive runs; the registry's report had been right each time.
+
+**Mechanism.** An attached connection buffers every event of its session until read; a test that reads only at checkpoints holds stale events, and an interrupt naming a finished generation is accepted as a no-op.
+
+**Generalizable rule.** Before reacting to "the next" event of a turn on a connection that has been ignoring its inbound stream, drain the stream and match the turn's generation.
+
+
 ## 2026-10-25
 
 ### Terminal pane zoom toggles and server-side session auto-titling during Phase 2b live acceptance

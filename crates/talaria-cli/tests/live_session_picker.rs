@@ -227,6 +227,7 @@ where
         list_title: None,
         notices: Vec::new(),
         keys: BTreeMap::new(),
+        fleet: None,
     };
     let driver = Driver {
         inputs,
