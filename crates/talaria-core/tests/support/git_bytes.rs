@@ -35,7 +35,11 @@ impl GitBytes {
         let home = tmp.path().join("home");
         let global = tmp.path().join("gitconfig");
         std::fs::create_dir_all(&home).expect("home");
-        std::fs::write(&global, "").expect("gitconfig");
+        std::fs::write(
+            &global,
+            "[user]\n\tname = fixture\n\temail = fixture@example.invalid\n",
+        )
+        .expect("gitconfig");
         let origin = tmp.path().join("origin.git");
         let repo = tmp.path().join("repo");
         run_ok(
