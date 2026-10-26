@@ -98,6 +98,8 @@ use crate::launch::{
     belongs, merge_rows, new_request_id, plain, plan, workspace_key,
 };
 use crate::mutation::MutationClient;
+use crate::panes::{PaneEnv, PaneOutcome};
+use crate::peek::FleetSink;
 use crate::permissions::PermissionsService;
 use crate::prompts::{MaskedRequestInfo, PromptService, ServerRequestPolicy, policy_for};
 use crate::queue::{QueueCommand, QueueService, queue_command, steer_command};
@@ -535,6 +537,15 @@ pub struct AppState {
     pub picker_scope_note: Option<String>,
     /// The listing generation; one more than the last.
     pub picker_generation: u64,
+    /// When false, `/fleet` shows a notice and opens nothing.
+    pub fleet_enabled: bool,
+    /// The fleet overlay, while `/fleet` has it open. The stub leaves this empty.
+    pub fleet: Option<FleetViewState>,
+    /// Takes the pane-open acknowledgement in tests. Issue #246.
+    pub pane_sink: Option<Arc<dyn FleetSink>>,
+    /// The environment pane detection reads. The process environment at
+    /// startup; tests point it at fakes. Issue #246.
+    pub pane_env: PaneEnv,
     /// A switch or a branch is in flight.
     pub switching: bool,
     /// A rename, an export or a switch runs; one session action at a time.
@@ -713,6 +724,10 @@ impl AppState {
             picker_profiles: Vec::new(),
             picker_scope_note: None,
             picker_generation: 0,
+            fleet_enabled: true,
+            fleet: None,
+            pane_sink: None,
+            pane_env: PaneEnv::from_process(),
             switching: false,
             session_action: false,
             hermes_home: PathBuf::new(),
@@ -1099,6 +1114,8 @@ pub enum AppMessage {
     },
     /// One of the subagent hub's own messages. Issue #242.
     Subagents(crate::subagents::SubagentMsg),
+    /// A fleet-row pane open finished. Issue #246.
+    PaneOpened(RowKey, PaneOutcome),
 }
 
 /// What a finished switch or branch brings back: the new session and, when the profile
@@ -1935,6 +1952,8 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             format,
             redact,
         } => exported(state, result, format, redact),
+        // No-op until the pane flow exists. Issue #246.
+        AppMessage::PaneOpened(_, _) => Vec::new(),
     };
     if let Some(session_id) = settled {
         share_fences(state, &session_id);
