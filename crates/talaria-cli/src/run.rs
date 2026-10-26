@@ -48,6 +48,7 @@ use talaria_core::session::{
 };
 use talaria_core::subagents::{Clock as SubagentClock, FinishedBatch};
 use talaria_tui::automation::{AutomationSection, AutomationTheme};
+use talaria_tui::background::{BackgroundSection, BackgroundTheme, ProcessesView};
 use talaria_tui::checklist::{
     ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS, SHORT_TERMINAL_ROWS, committed_block_lines,
 };
@@ -141,6 +142,18 @@ enum Overlay {
     Fleet,
     /// The subagent tree, details and transcript.
     Agents,
+    /// The foreground session's background processes.
+    Processes,
+}
+
+fn background_theme(color: bool) -> BackgroundTheme {
+    let mut theme = BackgroundTheme::default();
+    if !color {
+        theme.warning = ratatui::style::Style::default();
+        theme.error = ratatui::style::Style::default();
+        theme.ok = ratatui::style::Style::default();
+    }
+    theme
 }
 
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
@@ -196,6 +209,7 @@ pub struct TuiScreen {
     agents: Option<AgentsPanel>,
     agents_flash: Option<String>,
     agents_pause_pending: bool,
+    processes: ProcessesView,
     confirmation: Option<Confirmation>,
     confirmation_focused: Option<Instant>,
     /// The rewind overlay holds the alternate screen. Issue #233.
@@ -599,6 +613,13 @@ impl CellLines for CapturedCells<'_> {
     fn lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
         if matches!(cell, Cell::Tool(_)) {
             return self.tools.lines(cell, width);
+        }
+        if let Cell::Background(cell) = cell {
+            return talaria_tui::background::background_cell_lines(
+                cell,
+                width,
+                &background_theme(self.current.color),
+            );
         }
         let theme = themed_cell_id(cell)
             .and_then(|id| self.captured.get(&id))
@@ -1036,6 +1057,9 @@ impl TuiScreen {
     }
 
     fn sync_agents(&mut self, view: &View<'_>) {
+        if view.processes_open {
+            return;
+        }
         let Some(hub) = view.subagents else {
             self.agents = None;
             self.agents_flash = None;
@@ -1454,6 +1478,15 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                if view.processes_open {
+                    return view.state.map_or_else(Vec::new, |state| {
+                        vec![UserAction::Processes(self.processes.handle_key(
+                            Key::from(raw),
+                            state.background(),
+                            view.now_ms,
+                        ))]
+                    });
+                }
                 // The fleet overlay owns every key while it is open; in its answer focus the
                 // peeked session's card takes them.
                 if let Some(fleet) = view.fleet {
@@ -1658,6 +1691,9 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(text) => {
+                if view.processes_open {
+                    return Vec::new();
+                }
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
@@ -2015,6 +2051,9 @@ impl Screen for TuiScreen {
     }
 
     fn sync_fleet(&mut self, view: &View<'_>) {
+        if view.processes_open {
+            return;
+        }
         let Some(fleet) = view.fleet else {
             self.close_overlay(Overlay::Fleet);
             return;
@@ -2116,6 +2155,30 @@ impl Screen for TuiScreen {
     fn draw(&mut self, view: &View<'_>) {
         self.sync_agents(view);
         self.apply_transcript(view);
+        if view.processes_open {
+            if self.overlay != Overlay::Processes {
+                if let Some(state) = view.state {
+                    self.processes.reopen(state.background());
+                }
+                self.open_overlay(Overlay::Processes);
+            }
+            if let Some(state) = view.state {
+                let theme = background_theme(self.color);
+                let processes = &self.processes;
+                let _ = self.terminal.draw_overlay(|area, buf| {
+                    processes.render(
+                        state.background(),
+                        view.now_ms,
+                        state.background().wall_s(),
+                        area,
+                        buf,
+                        &theme,
+                    );
+                });
+            }
+            return;
+        }
+        self.close_overlay(Overlay::Processes);
         let now = Instant::now();
         if let Some(cwd) = view.folder.and_then(|folder| folder.cwd.as_deref()) {
             self.folder = std::path::PathBuf::from(cwd);
@@ -2230,6 +2293,12 @@ impl Screen for TuiScreen {
             now_ms: view.now_ms,
             theme: &side_theme,
         });
+        let background_theme = background_theme(self.color);
+        let background = view.state.map(|state| BackgroundSection {
+            work: state.background(),
+            width_hint: width,
+            theme: &background_theme,
+        });
         let mention = self
             .attachments
             .mention
@@ -2305,6 +2374,12 @@ impl Screen for TuiScreen {
             .as_ref()
             .map(|s| s.section(std::time::SystemTime::now()));
         if let Some(search) = &search {
+            if let Some(side) = &side {
+                sections.push(side);
+            }
+            if let Some(background) = &background {
+                sections.push(background);
+            }
             sections.push(search);
         } else {
             sections.push(&queue);
@@ -2319,6 +2394,9 @@ impl Screen for TuiScreen {
             }
             if let Some(side) = &side {
                 sections.push(side);
+            }
+            if let Some(background) = &background {
+                sections.push(background);
             }
             sections.push(&composer);
             if !composer_is_empty || prompts.is_none() {
@@ -2897,6 +2975,7 @@ fn session(
         agents: None,
         agents_flash: None,
         agents_pause_pending: false,
+        processes: ProcessesView::new(),
         confirmation: None,
         confirmation_focused: None,
         rewind_open: false,

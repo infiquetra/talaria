@@ -10,19 +10,21 @@ use std::time::Duration;
 use hermes_client::{
     CallError, CallOptions, Client, Inbound, InboundStream, ReplaySource, RpcError,
 };
+use hermes_contract::{methods::legacy as native, native::NativeMethod};
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
 use crate::{AttemptResult, DriverConfig, Scenario, call_options, check_info, submit_params};
 
 /// The scenarios of this module, in the order they are recorded.
-pub const SCRIPTED_SCENARIOS: [&str; 6] = [
+pub const SCRIPTED_SCENARIOS: [&str; 7] = [
     "queue-edit-remove",
     "queue-steer",
     "queue-move-send-now",
     "model-switch",
     "permissions-cd",
     "shell-and-btw",
+    "background-work",
 ];
 
 /// Whether `name` is one of [`SCRIPTED_SCENARIOS`].
@@ -40,6 +42,7 @@ const PICKER_PROMPT: &str = "Reply with exactly the single word: pong. Do not us
 const SHELL_PROMPT: &str = "Reply with the single word ready.";
 /// The side question of the shell scenario, asked while the turn is over.
 const BTW_QUESTION: &str = "What single word did you just reply with?";
+const BACKGROUND_PROMPT: &str = "Run the command sh tick.sh in the background with the terminal tool (background=true, notify=false). Reply with only its process id.";
 const NUMBER_WORDS: [&str; 16] = [
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
     "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
@@ -72,6 +75,7 @@ pub(crate) fn scenario(name: &str) -> Option<Scenario> {
         ),
         "model-switch" | "permissions-cd" => (Vec::new(), Vec::new()),
         "shell-and-btw" => (owned(&[SHELL_PROMPT]), owned(&["complete"])),
+        "background-work" => (owned(&[BACKGROUND_PROMPT]), owned(&["complete"])),
         _ => return None,
     };
     Some(Scenario {
@@ -125,6 +129,9 @@ struct Run<'a> {
     pending_approvals: Vec<(Value, Value)>,
     /// Requests that put state back, run newest first by `cleanup`.
     undo: Vec<(&'static str, Value)>,
+    expected_tick_approval: bool,
+    tick_approval_answered: bool,
+    background_cleanup: bool,
 }
 
 fn number(value: &Value) -> Option<i64> {
@@ -148,6 +155,9 @@ impl<'a> Run<'a> {
             unexpected: None,
             pending_approvals: Vec::new(),
             undo: Vec::new(),
+            expected_tick_approval: false,
+            tick_approval_answered: false,
+            background_cleanup: false,
         }
     }
 
@@ -182,6 +192,7 @@ impl<'a> Run<'a> {
         if params["session_id"]
             .as_str()
             .is_some_and(|id| id != self.session_id)
+            && !(self.expected_tick_approval && params["type"] == "approval.request")
         {
             return;
         }
@@ -209,6 +220,32 @@ impl<'a> Run<'a> {
                 self.statuses.push(crate::turn_status(&payload));
             }
             "approval.request" => {
+                if self.expected_tick_approval {
+                    let expected = !self.tick_approval_answered
+                        && params["session_id"] == self.session_id
+                        && payload["command"].as_str() == Some("sh tick.sh");
+                    let choice = if expected { "once" } else { "deny" };
+                    let result = self
+                        .client
+                        .call_raw(
+                            "approval.respond",
+                            json!({"session_id": params["session_id"],
+                               "request_id": payload["prompt_id"], "choice": choice}),
+                            call_options(Duration::from_secs(30)),
+                        )
+                        .await;
+                    if expected && result.is_ok() {
+                        self.tick_approval_answered = true;
+                    } else {
+                        self.unexpected = Some(if expected {
+                            "the expected tick approval could not be answered".into()
+                        } else {
+                            "an unexpected approval appeared; it was denied".into()
+                        });
+                    }
+                    self.events.push((kind, params));
+                    return;
+                }
                 let prompt = (
                     payload["prompt_id"].clone(),
                     self.event_generation(&payload),
@@ -282,6 +319,27 @@ impl<'a> Run<'a> {
     /// A request that must succeed.
     async fn call(&mut self, method: &str, params: Value) -> Step<Value> {
         self.call_for(method, params, Duration::from_secs(60)).await
+    }
+
+    /// Native calls retain the generated parameter and result types while events are read.
+    async fn native<M: NativeMethod>(
+        &mut self,
+        params: M::Params,
+        timeout: Duration,
+    ) -> Step<M::Result> {
+        let client: &'a Client = self.client;
+        let call = client.call_with::<M>(params, call_options(timeout));
+        tokio::pin!(call);
+        loop {
+            tokio::select! {
+                result = &mut call => return result.map_err(|error|
+                    Stop::Fail(format!("{} failed: {}", M::NAME, describe(&error)))),
+                item = self.inbound.next() => match item {
+                    Some(item) => self.observe(item).await,
+                    None => return Err("the inbound stream ended".into()),
+                },
+            }
+        }
     }
 
     async fn call_for(&mut self, method: &str, params: Value, timeout: Duration) -> Step<Value> {
@@ -497,6 +555,18 @@ impl<'a> Run<'a> {
             return;
         }
         let options = call_options(crate::CLEANUP_TIMEOUT);
+        if self.background_cleanup {
+            let _ = self
+                .client
+                .call_with::<native::process_stop::Marker>(
+                    native::process_stop::Params {
+                        session_id: Some(self.session_id.clone()),
+                        profile: None,
+                    },
+                    options,
+                )
+                .await;
+        }
         for (method, params) in std::mem::take(&mut self.undo).into_iter().rev() {
             let _ = self.client.call_raw(method, params, options).await;
         }
@@ -583,6 +653,7 @@ async fn drive(run: &mut Run<'_>, scenario: &Scenario, config: &DriverConfig) ->
         "queue-move-send-now" => queue_move_send_now(run).await,
         "permissions-cd" => permissions_cd(run, config).await,
         "shell-and-btw" => shell_and_btw(run).await,
+        "background-work" => background_work(run).await,
         other => Err(Stop::Fail(format!("unknown scripted scenario {other}"))),
     }
 }
@@ -1417,6 +1488,113 @@ async fn shell_and_btw(run: &mut Run<'_>) -> Step {
     Ok(())
 }
 
+async fn background_work(run: &mut Run<'_>) -> Step {
+    let full = run.call("config.get", json!({"key": "full"})).await?;
+    let deny = &full["config"]["approvals"]["deny"];
+    if !deny.is_null() && !deny.as_array().is_some_and(Vec::is_empty) {
+        return Err(Stop::Absent(
+            "the fixture profile must have no approvals.deny rules".into(),
+        ));
+    }
+    run.expected_tick_approval = true;
+    run.background_cleanup = true;
+    run.progress("start the background tick command");
+    run.turn(BACKGROUND_PROMPT).await?;
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let process = loop {
+        let listed = run
+            .native::<native::process_list::Marker>(
+                native::process_list::Params {
+                    session_id: run.session_id.clone(),
+                    profile: None,
+                },
+                Duration::from_secs(10),
+            )
+            .await?;
+        if let Some(process) = listed
+            .processes
+            .into_iter()
+            .find(|p| p.status == "running" && p.command == "sh tick.sh")
+        {
+            break process;
+        }
+        if Instant::now() >= deadline {
+            return Err("no running sh tick.sh process was listed".into());
+        }
+        run.linger(Duration::from_secs(1)).await;
+    };
+    run.progress("collect five seconds of output, then kill the process");
+    run.linger(Duration::from_secs(5)).await;
+    let killed = run
+        .native::<native::process_kill::Marker>(
+            native::process_kill::Params {
+                session_id: run.session_id.clone(),
+                process_id: process.session_id.clone(),
+                profile: None,
+            },
+            Duration::from_secs(30),
+        )
+        .await?;
+    if killed.status != hermes_contract::schemas::ProcessKillStatus::Killed {
+        return Err("process.kill did not report killed".into());
+    }
+    let listed = run
+        .native::<native::process_list::Marker>(
+            native::process_list::Params {
+                session_id: run.session_id.clone(),
+                profile: None,
+            },
+            Duration::from_secs(10),
+        )
+        .await?;
+    if !listed.processes.iter().any(|p| {
+        p.session_id == process.session_id
+            && p.completion_reason.as_deref() == Some("killed")
+            && p.output_tail
+                .as_deref()
+                .is_some_and(|tail| tail.contains("tick 1"))
+    }) {
+        return Err("the killed process or its tick output was absent".into());
+    }
+    run.progress("receive the detached background answer");
+    let mark = run.events.len();
+    let task = run
+        .native::<native::prompt_background::Marker>(
+            native::prompt_background::Params {
+                session_id: run.session_id.clone(),
+                text: "Reply with exactly: bg-ok".into(),
+                profile: None,
+            },
+            Duration::from_secs(15),
+        )
+        .await?;
+    run.wait_event(
+        "background.complete",
+        mark,
+        Duration::from_secs(120),
+        |payload| {
+            payload["task_id"].as_str() == Some(task.task_id.as_str())
+                && payload["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("bg-ok"))
+        },
+    )
+    .await?;
+    run.native::<native::process_stop::Marker>(
+        native::process_stop::Params {
+            session_id: Some(run.session_id.clone()),
+            profile: None,
+        },
+        Duration::from_secs(60),
+    )
+    .await?;
+    run.background_cleanup = false;
+    if let Some(reason) = run.unexpected.clone() {
+        return Err(Stop::Fail(reason));
+    }
+    Ok(())
+}
+
 // -------------------------------------------------------------------------------------------
 // evidence over a recorded file
 // -------------------------------------------------------------------------------------------
@@ -1461,6 +1639,42 @@ pub(crate) fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Resu
     };
     let text = inbound_text(source);
     match scenario.name.as_str() {
+        "background-work" => {
+            for method in [
+                "process.list",
+                "process.kill",
+                "prompt.background",
+                "process.stop",
+            ] {
+                if results_of(source, method).is_empty() {
+                    return Err(format!("no successful {method} reply"));
+                }
+            }
+            if !results_of(source, "process.list").iter().any(|result| {
+                result["processes"].as_array().is_some_and(|processes| {
+                    processes.iter().any(|p| {
+                        p["completion_reason"] == "killed"
+                            && p["output_tail"]
+                                .as_str()
+                                .is_some_and(|tail| tail.contains("tick 1"))
+                    })
+                })
+            }) {
+                return Err("no killed process with tick output".into());
+            }
+            let tasks = results_of(source, "prompt.background");
+            if !source.inbound().any(|frame| {
+                frame.frame["params"]["type"] == "background.complete"
+                    && tasks
+                        .iter()
+                        .any(|task| task["task_id"] == frame.frame["params"]["payload"]["task_id"])
+                    && frame.frame["params"]["payload"]["text"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("bg-ok"))
+            }) {
+                return Err("no matching background answer".into());
+            }
+        }
         "hermes-commands" => {
             if count_events(source, "session.control.update") < 10 {
                 return Err("fewer than ten session.control.update events".to_owned());

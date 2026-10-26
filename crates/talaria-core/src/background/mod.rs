@@ -5,6 +5,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::side::RequestId;
 
+mod bg;
+mod output;
+mod process;
+mod schedule;
+mod text;
+
 /// How often a foreground session with a running process is listed, in milliseconds.
 pub const PROCESS_POLL_MS: u64 = 5_000;
 /// How often the open process view lists while its selection is running.
@@ -74,16 +80,35 @@ impl ListedProcess {
     /// Read one gateway process entry. Missing fields take the empty defaults.
     #[must_use]
     pub fn from_entry(entry: &hermes_contract::schemas::ProcessEntry) -> ListedProcess {
-        let _ = entry;
-        todo!()
+        Self {
+            id: ProcessId(entry.session_id.clone()),
+            command: entry.command.clone(),
+            status_raw: entry.status.clone(),
+            exit_code: entry.exit_code,
+            started_epoch_s: entry.started_epoch,
+            exited_at_s: entry.exited_at,
+            completion_reason: entry.completion_reason.clone(),
+            output_tail: entry.output_tail.clone(),
+        }
     }
 }
 
 /// Map one listed entry to a status.
 #[must_use]
 pub fn status_of(listed: &ListedProcess) -> ProcessStatus {
-    let _ = listed;
-    todo!()
+    if listed.status_raw != "exited" {
+        return ProcessStatus::Running;
+    }
+    match listed.completion_reason.as_deref() {
+        Some("killed") => ProcessStatus::Killed,
+        Some("lost") => ProcessStatus::Lost,
+        Some("failed_start") => ProcessStatus::FailedToStart,
+        _ => match listed.exit_code {
+            Some(0) => ProcessStatus::Done,
+            Some(code) => ProcessStatus::Failed { code },
+            None => ProcessStatus::Ended,
+        },
+    }
 }
 
 /// A kill that is idle, in flight, or showing a note.
@@ -133,44 +158,43 @@ pub struct ProcessOutput {
     fence: String,
     trimmed_front: bool,
     last_write_ms: u64,
+    start: usize,
+    chars: usize,
 }
 
 impl ProcessOutput {
     /// Append one output chunk and apply the per-process cap.
     pub fn push_chunk(&mut self, chunk: &str, now_ms: u64) {
-        let _ = (chunk, now_ms);
-        todo!()
+        self.append(chunk, now_ms);
     }
 
     /// Merge one polled tail into the buffer.
     pub fn merge_snapshot(&mut self, tail: &str, now_ms: u64) {
-        let _ = (tail, now_ms);
-        todo!()
+        self.merge(tail, now_ms);
     }
 
     /// The raw buffer.
     #[must_use]
     pub fn raw(&self) -> &str {
-        todo!()
+        &self.raw[self.start..]
     }
 
     /// Whether the front of the output was dropped.
     #[must_use]
     pub fn trimmed_front(&self) -> bool {
-        todo!()
+        self.trimmed_front
     }
 
     /// The latest non-empty line, cleaned and cut to 200 characters.
     #[must_use]
     pub fn last_line(&self) -> String {
-        todo!()
+        self.last_clean_line()
     }
 
     /// Cleaned text for drawing, at most `max_chars` characters.
     #[must_use]
     pub fn visible_tail(&self, max_chars: usize) -> String {
-        let _ = max_chars;
-        todo!()
+        self.tail(max_chars)
     }
 }
 
@@ -282,12 +306,42 @@ pub struct BackgroundWork {
     consecutive_list_failures: u32,
     next_request: u64,
     version: u64,
+    now_ms: u64,
+    last_live_ms: Option<u64>,
+    last_frame_ms: u64,
+    wall_s: f64,
+    overlay_output_dirty: bool,
 }
 
 impl BackgroundWork {
+    /// Supply the current app time before a wire event, without scheduling or drawing.
+    pub fn observe_time(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
+    }
+
+    /// Latest application time supplied with a background event.
+    #[must_use]
+    pub fn now_ms(&self) -> u64 {
+        self.now_ms
+    }
+
+    /// Wall-clock seconds from the latest clock event.
+    #[must_use]
+    pub fn wall_s(&self) -> f64 {
+        self.wall_s
+    }
+
     /// Process rows in overlay order.
     pub fn rows(&self) -> impl Iterator<Item = &ProcessRow> {
         self.rows.iter()
+    }
+
+    /// The remembered process selection, or the first row when opening the overlay.
+    #[must_use]
+    pub fn selected_process(&self) -> Option<&ProcessId> {
+        self.selected
+            .as_ref()
+            .or_else(|| self.rows().next().map(|row| &row.id))
     }
 
     /// Output for one process, when a buffer is kept.
@@ -323,7 +377,24 @@ impl BackgroundWork {
     /// Counts for later units.
     #[must_use]
     pub fn summary(&self) -> BackgroundSummary {
-        BackgroundSummary::default()
+        BackgroundSummary {
+            running: self
+                .rows
+                .iter()
+                .filter(|row| row.status == ProcessStatus::Running)
+                .count(),
+            finished_recently: self
+                .rows
+                .iter()
+                .filter(|row| {
+                    row.status != ProcessStatus::Running
+                        && row
+                            .finished_seen_ms
+                            .is_some_and(|at| self.now_ms < at.saturating_add(FINISHED_ROW_MS))
+                })
+                .count(),
+            bg_running: self.bg_tasks.len(),
+        }
     }
 
     /// Rises by one exactly when something visible changed.
@@ -550,61 +621,59 @@ pub struct BackgroundCell {
 /// Apply one event. Reads no clock.
 #[must_use]
 pub fn update(work: &mut BackgroundWork, event: BackgroundEvent) -> Vec<BackgroundEffect> {
-    let _ = (work, event);
-    todo!()
+    work.apply(event)
 }
 
 /// The next app-clock millisecond when background work needs a wake-up.
 #[must_use]
 pub fn next_deadline(work: &BackgroundWork, now_ms: u64) -> Option<u64> {
-    let _ = (work, now_ms);
-    todo!()
+    schedule::deadline(work, now_ms)
 }
 
 /// Keep tasks, rows, and output across a session rebuild.
 pub fn carry_over(old: &BackgroundWork, new: &mut BackgroundWork) {
-    let _ = (old, new);
-    todo!()
+    *new = old.clone();
 }
 
 /// Whether a finished tool should refresh the process list.
 #[must_use]
 pub fn is_process_tool(name: &str) -> bool {
-    let _ = name;
-    todo!()
+    matches!(name, "terminal" | "process_manage" | "process")
 }
 
 /// Whole seconds as `4s`, `3m05s`, or `1h02m`.
 #[must_use]
 pub fn format_elapsed(secs: u64) -> String {
-    let _ = secs;
-    todo!()
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3_600 {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h{:02}m", secs / 3_600, (secs % 3_600) / 60)
+    }
 }
 
 /// The sentence for a failed detached-task start.
 #[must_use]
 pub fn bg_failure_text(failure: &CallFailure) -> String {
-    let _ = failure;
-    todo!()
+    text::bg_failure(failure)
 }
 
 /// The list note for a stale or stopped list, when one should show.
 #[must_use]
 pub fn list_failure_text(state: &ListState, now_ms: u64) -> Option<String> {
-    let _ = (state, now_ms);
-    todo!()
+    let _ = now_ms;
+    text::list_failure(state)
 }
 
 /// The overlay note for one kill outcome.
 #[must_use]
 pub fn kill_note_text(outcome: &KillOutcome) -> String {
-    let _ = outcome;
-    todo!()
+    text::kill_note(outcome)
 }
 
 /// The notice level and text for one stop outcome.
 #[must_use]
 pub fn stop_notice_text(outcome: &StopOutcome) -> (NoticeLevel, String) {
-    let _ = outcome;
-    todo!()
+    text::stop_notice(outcome)
 }

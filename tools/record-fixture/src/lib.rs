@@ -318,6 +318,12 @@ impl ScratchDir {
     /// it moves the session from one to the other.
     pub fn create_for(scenario: &str) -> std::io::Result<ScratchDir> {
         let mut scratch = ScratchDir::create()?;
+        if scenario == "background-work" {
+            std::fs::write(
+                scratch.path.join("tick.sh"),
+                "for i in $(seq 1 600); do echo \"tick $i\"; sleep 1; done\n",
+            )?;
+        }
         if scenario == "permissions-cd" {
             let second = tempfile::Builder::new()
                 .prefix("record-fixture-second-")
