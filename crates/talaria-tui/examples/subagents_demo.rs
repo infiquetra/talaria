@@ -51,7 +51,8 @@ fn run() -> Result<(), String> {
             continue;
         }
         let ms = value
-            .get("t_ms")
+            .get("tMs")
+            .or_else(|| value.get("t_ms"))
             .and_then(|v| v.as_u64())
             .unwrap_or_default();
         let now = Clock {
@@ -81,6 +82,22 @@ fn run() -> Result<(), String> {
         );
         for row in dock.lines(width) {
             println!("live| {}", text(&row));
+        }
+    }
+    // The historical batch recording ends before one child completes. Close the offline
+    // observation as the replay tests do: missing outcomes become Gone, never successful.
+    if tree.counts().live > 0 {
+        let empty = hermes_contract::schemas::SubagentListResult::default();
+        let now = Clock {
+            mono_ms: 0,
+            wall_s: 0.0,
+        };
+        tree.reconcile(&empty, now);
+        tree.reconcile(&empty, now);
+        for batch in tree.take_finished_batches() {
+            for row in batch_block_lines(&batch, width, &style) {
+                println!("scrollback| {}", text(&row));
+            }
         }
     }
     Ok(())
