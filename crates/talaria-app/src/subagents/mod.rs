@@ -7,7 +7,8 @@
 pub mod hub;
 
 pub use hub::{
-    ControlOutcome, SubagentAction, SubagentHub, SubagentMsg, SubagentsConfig, outcome_text,
+    ControlOutcome, SubagentAction, SubagentHub, SubagentMsg, SubagentTailView, SubagentsConfig,
+    outcome_text,
 };
 pub use talaria_core::subagents::{Spawning, SubagentCounts};
 

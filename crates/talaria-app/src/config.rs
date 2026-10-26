@@ -315,8 +315,7 @@ pub fn parse(text: &str) -> LoadedConfig {
             "ui" => config.ui = read_ui(section, &mut notices),
             "composer" => config.composer = read_composer(section, &mut notices),
             "fleet" => config.fleet = read_fleet(section, &mut notices),
-            // Issue #242: the `[subagents]` reader lands with the implementation.
-            "subagents" => {}
+            "subagents" => config.subagents = read_subagents(section, &mut notices),
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
@@ -533,6 +532,41 @@ fn read_composer(section: &Table, notices: &mut Vec<String>) -> ComposerConfig {
         }
     }
     composer
+}
+
+fn read_subagents(section: &Table, notices: &mut Vec<String>) -> crate::subagents::SubagentsConfig {
+    let mut config = crate::subagents::SubagentsConfig::default();
+    for key in ["poll_s", "tail_poll_ms", "dock_rows"] {
+        let Some(value) = section.get(key) else {
+            continue;
+        };
+        let (min, max, fallback) = match key {
+            "poll_s" => (2, 60, 5),
+            "tail_poll_ms" => (1000, 10000, 2000),
+            _ => (0, 10, 3),
+        };
+        let number = match value.as_integer() {
+            Some(number) if (min..=max).contains(&number) => number as u64,
+            _ => {
+                notices.push(format!(
+                    "[subagents] {key} must be an integer from {min} to {max}; using {fallback}."
+                ));
+                fallback as u64
+            }
+        };
+        match key {
+            "poll_s" => config.poll_s = number,
+            "tail_poll_ms" => config.tail_poll_ms = number,
+            _ => config.dock_rows = number as u16,
+        }
+    }
+    for key in section
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "poll_s" | "tail_poll_ms" | "dock_rows"))
+    {
+        notices.push(unknown_setting("subagents", key));
+    }
+    config
 }
 
 fn read_fleet(section: &Table, notices: &mut Vec<String>) -> crate::fleet::FleetConfig {
