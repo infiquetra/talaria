@@ -1320,7 +1320,10 @@ impl KeyMap {
     pub fn resolve(&self, key: &Key, context: KeyContext) -> Option<Action> {
         Action::ALL
             .into_iter()
-            .filter(|action| action.context() == context)
+            .filter(|action| {
+                action.context() == context
+                    || (context == KeyContext::Agents && *action == Action::AgentsPanel)
+            })
             .find(|action| self.chords(*action).iter().any(|chord| chord.matches(key)))
     }
 
@@ -1328,7 +1331,8 @@ impl KeyMap {
     #[must_use]
     pub fn resolve_in(&self, key: &Key, context: KeyContext) -> Option<Action> {
         Action::ALL.into_iter().find(|action| {
-            action.context() == context
+            (action.context() == context
+                || (context == KeyContext::Agents && *action == Action::AgentsPanel))
                 && self.chords(*action).iter().any(|chord| chord.matches(key))
         })
     }
