@@ -106,6 +106,7 @@ fn fast_path_lists_nothing_and_resumes() {
     let home = temp_home();
     let gateway = StandaloneGateway::start(home.path());
     let mut snap = mock_gateway::recorded_resume_snapshot();
+    snap["prompts"] = json!([]);
     snap["session_id"] = json!(id);
     snap["stored_session_id"] = json!(id);
     gateway.set_resume_snapshot(snap);
@@ -184,6 +185,7 @@ fn prefix_resolves_then_opens_like_resume() {
         )],
     );
     let mut snap = mock_gateway::recorded_resume_snapshot();
+    snap["prompts"] = json!([]);
     snap["session_id"] = json!(id);
     snap["stored_session_id"] = json!(id);
     snap["info"]["title"] = json!("attach probe");
