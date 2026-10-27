@@ -1106,7 +1106,7 @@ Common setup (operator preconditions above). In a scratch folder (`mktemp -d`) h
 - Persona: fleet-lead
 - Covers: AC-2, AC-8
 - Runner: agent tester in Herdr
-- Preconditions: common setup; pane B sent `Run this exact shell command: rm -rf ./talaria-peek-probe`, shows its approval card, then `/quit`; the tester presses the digit within 240 s of B's card appearing (Hermes denies at 300 s)
+- Preconditions: common setup; pane B sent `Run this exact shell command: rm -rf ./talaria-peek-probe`, shows its approval card, and pane B's Talaria process is ended (`pkill -TERM -f 'talaria --profile fixture'`, because a focused card takes typed keys, as P3-01 UAT-3 specifies); the tester presses the digit within 50 s of B's card appearing (the default is 300 s, or 60 s when `approvals.timeout: 60` is set on `fixture`)
 - Given pane A is idle at its prompt
 - When the tester sends `/fleet` in pane A, puts the cursor on the `NEEDS YOU` row, presses space, then `a`, waits 1 s, then presses the digit shown beside `deny`
 - Then before the digit the row's detail reads `approval: rm -rf ./talaria-peek-probe` and the panel still shows the card with a line `<n>. deny`; within 5 s of the digit the row leaves `NEEDS YOU`; `ls -d talaria-peek-probe` still prints the folder; pane A's status line still names its own session
