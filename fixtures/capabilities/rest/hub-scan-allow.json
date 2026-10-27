@@ -1,0 +1,67 @@
+{
+  "name": "fixture-allow",
+  "identifier": "official/fixture-allow",
+  "source": "official",
+  "trust_level": "official",
+  "verdict": "reviewed",
+  "summary": "Synthetic scan.",
+  "policy": "allow",
+  "policy_reason": "Passed.",
+  "findings": [
+    {
+      "severity": "low",
+      "category": "fixture",
+      "file": "SKILL.md",
+      "line": 1,
+      "description": "Synthetic finding."
+    },
+    {
+      "severity": "high",
+      "category": "fixture",
+      "file": "SKILL.md",
+      "line": 2,
+      "description": "Synthetic finding."
+    },
+    {
+      "severity": "critical",
+      "category": "fixture",
+      "file": "SKILL.md",
+      "line": 3,
+      "description": "Synthetic finding."
+    },
+    {
+      "severity": "medium",
+      "category": "fixture",
+      "file": "SKILL.md",
+      "line": 4,
+      "description": "Synthetic finding."
+    },
+    {
+      "severity": "high",
+      "category": "fixture",
+      "file": "SKILL.md",
+      "line": 5,
+      "description": "Synthetic finding."
+    },
+    {
+      "severity": "low",
+      "category": "fixture",
+      "file": "SKILL.md",
+      "line": 6,
+      "description": "Synthetic finding."
+    },
+    {
+      "severity": "medium",
+      "category": "fixture",
+      "file": "SKILL.md",
+      "line": 7,
+      "description": "Synthetic finding."
+    }
+  ],
+  "severity_counts": {
+    "critical": 1,
+    "high": 2,
+    "medium": 2,
+    "low": 2
+  }
+}

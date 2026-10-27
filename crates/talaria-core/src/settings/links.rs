@@ -23,6 +23,16 @@ pub const SETTINGS_LINKS: &[SettingsLink] = &[
         label: "MCP servers",
         action: LocalAction::Mcp(crate::mcp::McpOpen::Tab(crate::mcp::McpTab::Servers)),
     },
+    SettingsLink {
+        label: "Skills, toolsets and plugins",
+        action: LocalAction::Capabilities,
+    },
 ];
 /// The labels of the settings page's link rows, in order.
-pub const PAGE_ROWS: &[&str] = &["Profiles", "Providers", "Model roles", "MCP servers"];
+pub const PAGE_ROWS: &[&str] = &[
+    "Profiles",
+    "Providers",
+    "Model roles",
+    "MCP servers",
+    "Skills, toolsets and plugins",
+];

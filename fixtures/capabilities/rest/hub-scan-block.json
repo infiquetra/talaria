@@ -1,0 +1,17 @@
+{
+  "name": "fixture-block",
+  "identifier": "official/fixture-block",
+  "source": "official",
+  "trust_level": "official",
+  "verdict": "reviewed",
+  "summary": "Synthetic scan.",
+  "policy": "block",
+  "policy_reason": "Needs operator review.",
+  "findings": [],
+  "severity_counts": {
+    "critical": 1,
+    "high": 2,
+    "medium": 2,
+    "low": 2
+  }
+}

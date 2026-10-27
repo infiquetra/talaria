@@ -1,0 +1,14 @@
+{
+  "output": "Reloading skills...\nAdded skills:\n  - fixture-skill-b\n41 skill(s) available",
+  "result": {
+    "added": [
+      {
+        "name": "fixture-skill-b"
+      }
+    ],
+    "removed": [],
+    "unchanged": [],
+    "total": 41,
+    "commands": 41
+  }
+}

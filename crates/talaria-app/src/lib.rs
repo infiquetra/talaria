@@ -7,6 +7,7 @@ pub mod attachments;
 pub mod automation;
 pub mod background;
 pub mod bg;
+pub mod capabilities;
 pub mod clipboard;
 pub mod comforts;
 pub mod commands;

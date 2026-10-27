@@ -1,0 +1,17 @@
+{
+  "results": [
+    {
+      "name": "fixture-skill-b",
+      "description": "Synthetic fixture skill.",
+      "source": "official",
+      "identifier": "official/fixture-skill-b",
+      "trust_level": "official"
+    }
+  ],
+  "timed_out": [
+    "github"
+  ],
+  "installed": {
+    "official/fixture-skill-b": {}
+  }
+}

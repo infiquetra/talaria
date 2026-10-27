@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "unchanged": false,
+  "restart_required": false,
+  "activation": {
+    "live_now": {
+      "mcp_servers": [
+        {
+          "name": "fixture-mcp",
+          "connected": true,
+          "tools": []
+        }
+      ],
+      "skills": [
+        {
+          "name": "fixture-skill-b"
+        }
+      ]
+    },
+    "deferred": {
+      "tools": [
+        "fixture_tool"
+      ]
+    }
+  },
+  "name": "fixture-plugin",
+  "plugin": {
+    "name": "fixture-plugin",
+    "key": "fixture-plugin",
+    "version": "1.0.0",
+    "description": "Synthetic plugin.",
+    "source": "user",
+    "status": "disabled",
+    "servers": [],
+    "catalog_tier": null,
+    "update_available": false,
+    "settings_schema": []
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "fixture-skill-b",
+  "description": "Synthetic fixture skill.",
+  "source": "official",
+  "identifier": "official/fixture-skill-b",
+  "trust_level": "official",
+  "tags": [
+    "fixture"
+  ],
+  "skill_md": "# Fixture skill\nSynthetic public text.",
+  "files": [
+    "SKILL.md"
+  ]
+}

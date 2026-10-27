@@ -35,4 +35,5 @@ pub mod terminal;
 pub mod theme;
 pub mod tool_cell;
 
+pub mod capabilities;
 pub mod settings;

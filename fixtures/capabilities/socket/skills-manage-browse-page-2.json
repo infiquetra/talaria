@@ -1,0 +1,42 @@
+{
+  "items": [
+    {
+      "name": "fixture-hub-21",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-21"
+    },
+    {
+      "name": "fixture-hub-22",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-22"
+    },
+    {
+      "name": "fixture-hub-23",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-23"
+    },
+    {
+      "name": "fixture-hub-24",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-24"
+    },
+    {
+      "name": "fixture-hub-25",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": null
+    }
+  ],
+  "page": 2,
+  "total_pages": 2,
+  "total": 25
+}

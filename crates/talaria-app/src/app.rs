@@ -24,6 +24,9 @@ use talaria_core::automation::{
     AutomationEffect, AutomationEvent, AutomationState, CommandResult, canonical_name,
 };
 use talaria_core::background::{self, BackgroundEffect, BackgroundEvent, ProcessesIntent};
+use talaria_core::capabilities::{
+    CapEffect, CapError, CapInput, CapTab, CapView, CapabilitiesState, SessionRef as CapSessionRef,
+};
 use talaria_core::checklist::{Checklist, ChecklistCommit, ChecklistTracker};
 use talaria_core::commands::local;
 use talaria_core::commands::{
@@ -188,6 +191,8 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// Input owned by the capabilities overlay.
+    Capabilities(Box<CapInput>),
     /// Input owned by the settings overlay.
     Settings(talaria_core::settings::SettingsInput),
     /// A key for the doctor overlay.
@@ -322,6 +327,7 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub capabilities: Option<CapView>,
     pub settings: Option<talaria_core::settings::SettingsView>,
     pub doctor: Option<&'a DoctorView>,
     pub doctor_restart: &'a RestartState,
@@ -611,6 +617,10 @@ struct BackgroundBinding {
 }
 
 pub struct AppState {
+    capabilities: Option<CapabilitiesState>,
+    capabilities_service: Option<Arc<crate::capabilities::CapabilitiesService>>,
+    capabilities_generation: u64,
+    capabilities_started: Instant,
     settings: talaria_core::settings::SettingsState,
     settings_service: Option<Arc<crate::settings::SettingsService>>,
     settings_generation: u64,
@@ -847,6 +857,10 @@ impl AppState {
         let ledger = MutationLedger::new(&launch_id);
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
+            capabilities: None,
+            capabilities_service: None,
+            capabilities_generation: 0,
+            capabilities_started: Instant::now(),
             settings: talaria_core::settings::SettingsState::new(
                 talaria_core::settings::SETTINGS_LINKS,
             ),
@@ -1029,6 +1043,11 @@ impl AppState {
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
+            capabilities: self
+                .capabilities
+                .as_ref()
+                .filter(|state| state.is_open())
+                .map(CapabilitiesState::view),
             settings: self
                 .settings
                 .is_open()
@@ -1231,6 +1250,11 @@ pub enum TranscriptAction {
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
+    Capabilities {
+        generation: u64,
+        service: Option<Arc<crate::capabilities::CapabilitiesService>>,
+        input: CapInput,
+    },
     Settings {
         generation: u64,
         profile: String,
@@ -1447,6 +1471,13 @@ pub struct SwitchInstall {
 /// What the executor does after one update. Ranges index the open session's cells.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
+    Capabilities {
+        generation: u64,
+        home: PathBuf,
+        service: Option<Arc<crate::capabilities::CapabilitiesService>>,
+        socket: Option<hermes_client::Client>,
+        effect: CapEffect,
+    },
     Settings {
         generation: u64,
         profile: String,
@@ -2169,6 +2200,10 @@ fn doctor_restart_input(state: &mut AppState, input: RestartInput) -> Vec<AppEff
 
 /// Apply one message. No input or output: the effects say what to do.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
+    let previous_capabilities_foreground = state
+        .capabilities
+        .as_ref()
+        .and_then(|_| capabilities_foreground(state));
     let background_version = state
         .opened
         .as_ref()
@@ -2209,6 +2244,19 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         _ => true,
     };
     let mut effects = match message {
+        AppMessage::Capabilities {
+            generation,
+            service,
+            input,
+        } => {
+            if generation != state.capabilities_generation || state.capabilities.is_none() {
+                return Vec::new();
+            }
+            if let Some(service) = service {
+                state.capabilities_service = Some(service);
+            }
+            capabilities_input(state, input)
+        }
         AppMessage::Settings {
             generation,
             profile,
@@ -2680,6 +2728,15 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     if let Some(session_id) = settled {
         share_fences(state, &session_id);
     }
+    if state.capabilities.is_some() {
+        let foreground = capabilities_foreground(state);
+        if foreground != previous_capabilities_foreground {
+            effects.extend(capabilities_input(
+                state,
+                CapInput::SetForeground(foreground),
+            ));
+        }
+    }
     if model_card_blocked(state) {
         effects.extend(models_input(state, ModelsInput::CardOpened));
     }
@@ -3060,6 +3117,309 @@ fn model_roles_effects(
     }]
 }
 
+fn capabilities_foreground(state: &AppState) -> Option<CapSessionRef> {
+    state.opened.as_ref().map(|opened| CapSessionRef {
+        session_id: opened.session_id.clone(),
+        profile: state.profile.clone(),
+    })
+}
+
+fn capabilities_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    let tab = match argument.trim() {
+        "" | "skills" => CapTab::Skills,
+        "hub" => CapTab::Hub,
+        "toolsets" => CapTab::Toolsets,
+        "plugins" => CapTab::Plugins,
+        _ => {
+            return vec![notice_lines(
+                "Use /capabilities skills, hub, toolsets or plugins.",
+            )];
+        }
+    };
+    if state.capabilities.is_none() {
+        let mut capabilities =
+            CapabilitiesState::new(state.profile.clone(), capabilities_foreground(state), tab);
+        capabilities.set_display_paths(
+            state.hermes_home.to_string_lossy().into_owned(),
+            std::env::var("HOME").unwrap_or_default(),
+        );
+        state.capabilities = Some(capabilities);
+        state.capabilities_service = None;
+        state.capabilities_generation = state.capabilities_generation.wrapping_add(1);
+        state.capabilities_started = Instant::now();
+    }
+    let foreground = capabilities_foreground(state);
+    let mut effects = capabilities_input(state, CapInput::SetForeground(foreground));
+    effects.extend(capabilities_input(state, CapInput::Open(tab)));
+    effects
+}
+
+fn capabilities_input(state: &mut AppState, input: CapInput) -> Vec<AppEffect> {
+    let Some(capabilities) = state.capabilities.as_mut() else {
+        return Vec::new();
+    };
+    let was_open = capabilities.is_open();
+    let now_ms = state
+        .capabilities_started
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
+    let produced = capabilities.update(input, now_ms);
+    let mut effects = Vec::new();
+    for effect in produced {
+        match effect {
+            CapEffect::Notice(text) => {
+                if !state
+                    .capabilities
+                    .as_ref()
+                    .is_some_and(CapabilitiesState::is_open)
+                {
+                    if state.opened.is_some() {
+                        let success = [
+                            "Turned ",
+                            "Installed ",
+                            "Removed ",
+                            "Plugin ",
+                            "Installing ",
+                            "Hermes is installing ",
+                        ]
+                        .iter()
+                        .any(|prefix| text.starts_with(prefix));
+                        effects.extend(reduce(
+                            state,
+                            Event::Notice {
+                                kind: if success {
+                                    NoticeKind::System
+                                } else {
+                                    NoticeKind::Error
+                                },
+                                text,
+                            },
+                        ));
+                    } else {
+                        effects.push(notice_lines(&text));
+                    }
+                }
+            }
+            CapEffect::Dispose => {
+                state.capabilities = None;
+                state.capabilities_service = None;
+                state.capabilities_generation = state.capabilities_generation.wrapping_add(1);
+            }
+            effect => effects.push(AppEffect::Capabilities {
+                generation: state.capabilities_generation,
+                home: state.hermes_home.clone(),
+                service: state.capabilities_service.clone(),
+                socket: state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned(),
+                effect,
+            }),
+        }
+    }
+    if was_open
+        || state
+            .capabilities
+            .as_ref()
+            .is_some_and(CapabilitiesState::is_open)
+    {
+        effects.push(AppEffect::Redraw);
+    }
+    effects
+}
+
+async fn capabilities_service(
+    home: PathBuf,
+    socket: hermes_client::Client,
+) -> Option<Arc<crate::capabilities::CapabilitiesService>> {
+    use hermes_client::rest::{NativeHttpMinter, TicketMinter};
+    use hermes_client::{DiscoverOptions, EnsurePolicy, discover_with};
+    let endpoint = Arc::new(
+        discover_with(
+            &home,
+            &DiscoverOptions {
+                ensure: EnsurePolicy::Never,
+                ..DiscoverOptions::default()
+            },
+        )
+        .await
+        .ok()?,
+    );
+    let origin = endpoint.api_origin().to_owned();
+    let profiles = endpoint
+        .profiles()
+        .iter()
+        .map(|profile| profile.name.clone())
+        .collect();
+    let hermes_home = home.to_string_lossy().into_owned();
+    let factory = Arc::new(move |name: &str| -> Arc<dyn TicketMinter> {
+        // The immutable served-profile list is checked before this factory is called.
+        let profile = endpoint
+            .resolve_profile(name)
+            .expect("served profile was validated");
+        Arc::new(NativeHttpMinter::new(
+            home.clone(),
+            endpoint.clone(),
+            profile,
+        ))
+    });
+    Some(Arc::new(crate::capabilities::CapabilitiesService::new(
+        Some(origin),
+        profiles,
+        factory,
+        socket,
+        hermes_home,
+        std::env::var("HOME").unwrap_or_default(),
+    )))
+}
+
+fn capabilities_unavailable(effect: CapEffect) -> Vec<CapInput> {
+    let error = CapError::NotConnected;
+    let input = match effect {
+        CapEffect::Fetch {
+            tab, generation, ..
+        } => CapInput::Loaded {
+            tab,
+            generation,
+            result: Err(error),
+        },
+        CapEffect::HubBrowse { generation, .. } | CapEffect::HubSearch { generation, .. } => {
+            CapInput::Loaded {
+                tab: CapTab::Hub,
+                generation,
+                result: Err(error),
+            }
+        }
+        CapEffect::ReadBack { op_id, .. } => CapInput::ReadBack {
+            op_id,
+            result: Err(error),
+        },
+        CapEffect::FetchDetail {
+            tab, generation, ..
+        } => CapInput::DetailLoaded {
+            tab,
+            generation,
+            result: Err(error),
+        },
+        CapEffect::HubPreview { .. } => CapInput::PreviewDone(Err(error)),
+        CapEffect::HubScan { .. } => CapInput::ScanDone(Err(error)),
+        CapEffect::LookupPlugin { .. } => CapInput::LookupDone(Err(error)),
+        CapEffect::ReloadSkills { .. } => CapInput::ReloadDone(Err(error)),
+        CapEffect::FetchCatalog { generation, .. } => CapInput::CatalogLoaded {
+            generation,
+            result: Err(error),
+        },
+        CapEffect::ToggleSkill { op_id, .. }
+        | CapEffect::ToggleToolset { op_id, .. }
+        | CapEffect::TogglePlugin { op_id, .. }
+        | CapEffect::InstallSkill { op_id, .. }
+        | CapEffect::InstallPlugin { op_id, .. }
+        | CapEffect::RemovePlugin { op_id, .. } => CapInput::WriteDone {
+            op_id,
+            result: Err(error),
+        },
+        _ => return Vec::new(),
+    };
+    vec![input]
+}
+
+#[cfg(test)]
+mod capabilities_wiring_tests {
+    use super::*;
+
+    #[test]
+    fn disposed_overlay_ignores_late_loads() {
+        let mut state = AppState::new("capability-generation");
+        capabilities_command(&mut state, "skills");
+        let generation = state.capabilities_generation;
+        capabilities_input(&mut state, CapInput::Close);
+        assert!(state.capabilities.is_none());
+        let effects = update(
+            &mut state,
+            AppMessage::Capabilities {
+                generation,
+                service: None,
+                input: CapInput::Loaded {
+                    tab: CapTab::Skills,
+                    generation: 1,
+                    result: Ok(talaria_core::capabilities::CapData::Skills(Vec::new())),
+                },
+            },
+        );
+        assert!(effects.is_empty());
+        assert!(state.capabilities.is_none());
+    }
+
+    #[test]
+    fn hidden_write_keeps_its_profile_and_reports_before_disposal() {
+        use talaria_core::capabilities::{CapData, KeyAction, Provenance, SkillRow};
+        let mut state = AppState::new("capability-hidden-write");
+        state.profile = "fixture".into();
+        let effects = capabilities_command(&mut state, "skills");
+        let load_generation = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Capabilities {
+                    effect:
+                        CapEffect::Fetch {
+                            generation,
+                            tab: CapTab::Skills,
+                            ..
+                        },
+                    ..
+                } => Some(*generation),
+                _ => None,
+            })
+            .expect("opening Skills schedules its load");
+        capabilities_input(
+            &mut state,
+            CapInput::Loaded {
+                tab: CapTab::Skills,
+                generation: load_generation,
+                result: Ok(CapData::Skills(vec![SkillRow {
+                    name: "fixture-skill".into(),
+                    description: String::new(),
+                    category: None,
+                    enabled: true,
+                    usage: 0,
+                    provenance: Provenance::Bundled,
+                }])),
+            },
+        );
+        let effects = capabilities_input(&mut state, CapInput::Key(KeyAction::Toggle));
+        let op_id = effects
+            .iter()
+            .find_map(|effect| match effect {
+                AppEffect::Capabilities {
+                    effect: CapEffect::ToggleSkill { op_id, .. },
+                    ..
+                } => Some(*op_id),
+                _ => None,
+            })
+            .expect("Space schedules the selected skill toggle");
+        capabilities_input(&mut state, CapInput::Close);
+        assert!(state.view().capabilities.is_none());
+        let generation = state.capabilities_generation;
+        state.profile = "other-profile".into();
+        capabilities_command(&mut state, "skills");
+        assert_eq!(state.capabilities_generation, generation);
+        assert_eq!(state.view().capabilities.unwrap().profile, "fixture");
+        assert!(state.capabilities.as_ref().unwrap().is_busy());
+        capabilities_input(&mut state, CapInput::Close);
+        let effects = capabilities_input(
+            &mut state,
+            CapInput::WriteDone {
+                op_id,
+                result: Err(CapError::Connect),
+            },
+        );
+        assert!(effects.iter().any(|effect| matches!(effect, AppEffect::CommitLines(lines) if lines.iter().any(|line| line.contains("could not reach the gateway")))));
+        assert!(state.capabilities.is_none());
+    }
+}
+
 fn settings_input(
     state: &mut AppState,
     input: talaria_core::settings::SettingsInput,
@@ -3184,6 +3544,9 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Capabilities {
+        return capabilities_command(state, &argument);
+    }
     if action == LocalAction::Config {
         let input = talaria_core::settings::SettingsInput::Command {
             profile: state.profile.clone(),
@@ -3695,6 +4058,7 @@ fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
+        UserAction::Capabilities(input) => capabilities_input(state, *input),
         UserAction::Settings(input) => settings_input(state, input, None),
         UserAction::Doctor(key) => doctor_key(state, key),
         UserAction::Profiles(input) => profiles_input(state, input),
@@ -5683,7 +6047,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             Inbound::Event(inbound)
                 if inbound.raw.get("type").and_then(Value::as_str) == Some("skills.changed") =>
             {
-                commands_follow(state, CommandsInput::SkillsChanged)
+                let mut effects = commands_follow(state, CommandsInput::SkillsChanged);
+                effects.extend(capabilities_input(state, CapInput::SkillsChanged));
+                effects
             }
             Inbound::Event(inbound) => {
                 if let Some(opened) = state.opened.as_ref()
@@ -8047,6 +8413,43 @@ fn apply<S: Screen>(
     }
     for effect in update(state, message) {
         match effect {
+            AppEffect::Capabilities {
+                generation,
+                home,
+                service,
+                socket,
+                effect,
+            } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    if let CapEffect::ScheduleTick { after_ms } = effect {
+                        tokio::time::sleep(Duration::from_millis(after_ms)).await;
+                        let _ = sender.send(AppMessage::Capabilities {
+                            generation,
+                            service: None,
+                            input: CapInput::Tick,
+                        });
+                        return;
+                    }
+                    let service = match (service, socket) {
+                        (Some(service), _) => Some(service),
+                        (None, Some(socket)) => capabilities_service(home, socket).await,
+                        (None, None) => None,
+                    };
+                    let inputs = if let Some(service) = &service {
+                        service.execute(effect).await
+                    } else {
+                        capabilities_unavailable(effect)
+                    };
+                    for input in inputs {
+                        let _ = sender.send(AppMessage::Capabilities {
+                            generation,
+                            service: service.clone(),
+                            input,
+                        });
+                    }
+                });
+            }
             AppEffect::Settings {
                 generation,
                 profile,

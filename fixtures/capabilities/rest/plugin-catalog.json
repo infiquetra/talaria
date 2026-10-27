@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "name": "fixture-plugin",
+      "title": "Fixture plugin",
+      "description": "Synthetic plugin.",
+      "tier": "community",
+      "sha_short": "abc1234",
+      "installed": true,
+      "platforms": [
+        "cli"
+      ]
+    },
+    {
+      "name": "fixture-nosha",
+      "title": "Fixture without commit",
+      "description": "Synthetic plugin.",
+      "tier": "community",
+      "sha_short": null,
+      "installed": false,
+      "platforms": []
+    }
+  ],
+  "removed": [],
+  "generated_at": "2026-10-27T00:00:00Z"
+}

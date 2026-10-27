@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "plugin_name": "fixture-plugin",
+  "warnings": [
+    "Synthetic warning."
+  ],
+  "missing_env": [
+    "FIXTURE_TOKEN"
+  ],
+  "enabled": true,
+  "known_issues": [],
+  "restart_required": false,
+  "activation": {
+    "live_now": {
+      "mcp_servers": [],
+      "skills": []
+    },
+    "deferred": {}
+  }
+}

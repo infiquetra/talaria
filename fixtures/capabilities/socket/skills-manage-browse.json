@@ -1,0 +1,147 @@
+{
+  "items": [
+    {
+      "name": "fixture-hub-1",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-1"
+    },
+    {
+      "name": "fixture-hub-2",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-2"
+    },
+    {
+      "name": "fixture-hub-3",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-3"
+    },
+    {
+      "name": "fixture-hub-4",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-4"
+    },
+    {
+      "name": "fixture-hub-5",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-5"
+    },
+    {
+      "name": "fixture-hub-6",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-6"
+    },
+    {
+      "name": "fixture-hub-7",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-7"
+    },
+    {
+      "name": "fixture-hub-8",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-8"
+    },
+    {
+      "name": "fixture-hub-9",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-9"
+    },
+    {
+      "name": "fixture-hub-10",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-10"
+    },
+    {
+      "name": "fixture-hub-11",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-11"
+    },
+    {
+      "name": "fixture-hub-12",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-12"
+    },
+    {
+      "name": "fixture-hub-13",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-13"
+    },
+    {
+      "name": "fixture-hub-14",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-14"
+    },
+    {
+      "name": "fixture-hub-15",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-15"
+    },
+    {
+      "name": "fixture-hub-16",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-16"
+    },
+    {
+      "name": "fixture-hub-17",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-17"
+    },
+    {
+      "name": "fixture-hub-18",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-18"
+    },
+    {
+      "name": "fixture-hub-19",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-19"
+    },
+    {
+      "name": "fixture-hub-20",
+      "description": "Synthetic hub skill.",
+      "source": "official",
+      "trust": "official",
+      "identifier": "official/fixture-hub-20"
+    }
+  ],
+  "page": 1,
+  "total_pages": 2,
+  "total": 25
+}

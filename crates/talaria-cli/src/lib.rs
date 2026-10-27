@@ -2,6 +2,7 @@ pub mod args;
 pub mod attach_cmd;
 pub mod bench_replay;
 pub mod bg;
+pub mod capabilities_cmd;
 pub mod doctor_cmd;
 pub mod fleet_cmd;
 pub mod mcp_wiring;

@@ -2,9 +2,49 @@
 
 use std::collections::BTreeMap;
 
+use crate::capabilities::{CapTab, KeyAction};
 use crate::model_roles::{RolesKey, Section};
 use crate::settings::SettingsAction;
 use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
+
+static CAP_BINDINGS: [(KeyAction, &str, &str); 24] = [
+    (KeyAction::NextTab, "capabilities_next_tab", "tab"),
+    (KeyAction::PrevTab, "capabilities_prev_tab", "shift+tab"),
+    (
+        KeyAction::SelectTab(CapTab::Skills),
+        "capabilities_skills",
+        "1",
+    ),
+    (KeyAction::SelectTab(CapTab::Hub), "capabilities_hub", "2"),
+    (
+        KeyAction::SelectTab(CapTab::Toolsets),
+        "capabilities_toolsets",
+        "3",
+    ),
+    (
+        KeyAction::SelectTab(CapTab::Plugins),
+        "capabilities_plugins",
+        "4",
+    ),
+    (KeyAction::Up, "capabilities_up", "up"),
+    (KeyAction::Down, "capabilities_down", "down"),
+    (KeyAction::PageUp, "capabilities_page_up", "pageup"),
+    (KeyAction::PageDown, "capabilities_page_down", "pagedown"),
+    (KeyAction::Home, "capabilities_home", "home"),
+    (KeyAction::End, "capabilities_end", "end"),
+    (KeyAction::Enter, "capabilities_enter", "enter"),
+    (KeyAction::Toggle, "capabilities_toggle", "space"),
+    (KeyAction::Filter, "capabilities_filter", "/"),
+    (KeyAction::NextPage, "capabilities_next_page", "n"),
+    (KeyAction::PrevPage, "capabilities_prev_page", "p"),
+    (KeyAction::Install, "capabilities_install", "i"),
+    (KeyAction::Catalog, "capabilities_catalog", "c"),
+    (KeyAction::Remove, "capabilities_remove", "x"),
+    (KeyAction::ShowAll, "capabilities_show_all", "a"),
+    (KeyAction::Refresh, "capabilities_refresh", "r"),
+    (KeyAction::Confirm, "capabilities_confirm", "y"),
+    (KeyAction::Cancel, "capabilities_cancel", "esc"),
+];
 
 static SETTINGS_BINDINGS: [(SettingsAction, &str, &str); 16] = [
     (SettingsAction::Up, "settings_up", "up"),
@@ -149,6 +189,8 @@ pub enum KeyContext {
     RoutePicker,
     /// The MCP servers screen.
     Mcp,
+    /// The capabilities screen.
+    Capabilities,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -287,6 +329,7 @@ enum Binding {
     Settings(usize),
     ModelRoles(usize),
     RoutePicker(usize),
+    Capabilities(usize),
 }
 
 impl Binding {
@@ -298,6 +341,7 @@ impl Binding {
             .chain((0..SETTINGS_BINDINGS.len()).map(Self::Settings))
             .chain((0..MODEL_ROLES_BINDINGS.len()).map(Self::ModelRoles))
             .chain((0..ROUTE_PICKER_BINDINGS.len()).map(Self::RoutePicker))
+            .chain((0..CAP_BINDINGS.len()).map(Self::Capabilities))
     }
     fn index(self) -> usize {
         match self {
@@ -314,6 +358,14 @@ impl Binding {
                     + MODEL_ROLES_BINDINGS.len()
                     + index
             }
+            Self::Capabilities(index) => {
+                Action::ALL.len()
+                    + ModelAction::ALL.len()
+                    + SETTINGS_BINDINGS.len()
+                    + MODEL_ROLES_BINDINGS.len()
+                    + ROUTE_PICKER_BINDINGS.len()
+                    + index
+            }
         }
     }
     fn context(self) -> KeyContext {
@@ -323,6 +375,7 @@ impl Binding {
             Self::Settings(_) => KeyContext::Settings,
             Self::ModelRoles(_) => KeyContext::ModelRoles,
             Self::RoutePicker(_) => KeyContext::RoutePicker,
+            Self::Capabilities(_) => KeyContext::Capabilities,
         }
     }
     fn config_name(self) -> &'static str {
@@ -332,6 +385,7 @@ impl Binding {
             Self::Settings(index) => SETTINGS_BINDINGS[index].1,
             Self::ModelRoles(index) => MODEL_ROLES_BINDINGS[index].1,
             Self::RoutePicker(index) => ROUTE_PICKER_BINDINGS[index].1,
+            Self::Capabilities(index) => CAP_BINDINGS[index].1,
         }
     }
     fn from_config_name(name: &str) -> Option<Self> {
@@ -356,6 +410,12 @@ impl Binding {
                     .position(|(_, held, _)| *held == name)
                     .map(Self::RoutePicker)
             })
+            .or_else(|| {
+                CAP_BINDINGS
+                    .iter()
+                    .position(|(_, held, _)| *held == name)
+                    .map(Self::Capabilities)
+            })
     }
     fn default_chords(self) -> &'static [&'static str] {
         match self {
@@ -364,6 +424,7 @@ impl Binding {
             Self::Settings(index) => std::slice::from_ref(&SETTINGS_BINDINGS[index].2),
             Self::ModelRoles(index) => MODEL_ROLES_BINDINGS[index].2,
             Self::RoutePicker(index) => ROUTE_PICKER_BINDINGS[index].2,
+            Self::Capabilities(index) => std::slice::from_ref(&CAP_BINDINGS[index].2),
         }
     }
 }
@@ -1830,6 +1891,21 @@ pub struct KeyMap {
 }
 
 impl KeyMap {
+    /// Resolve a key in the capabilities overlay.
+    pub fn resolve_capabilities(&self, context: KeyContext, key: &Key) -> Option<KeyAction> {
+        if context != KeyContext::Capabilities {
+            return None;
+        }
+        CAP_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (action, _, _))| {
+                self.chords[Binding::Capabilities(index).index()]
+                    .iter()
+                    .any(|chord| chord.matches(key))
+                    .then(|| action.clone())
+            })
+    }
     /// Browse actions with the labels of the configured bindings, including unbound actions.
     #[must_use]
     pub fn settings_help(&self) -> Vec<(String, String)> {
@@ -1933,7 +2009,8 @@ impl KeyMap {
                 + ModelAction::ALL.len()
                 + SETTINGS_BINDINGS.len()
                 + MODEL_ROLES_BINDINGS.len()
-                + ROUTE_PICKER_BINDINGS.len()];
+                + ROUTE_PICKER_BINDINGS.len()
+                + CAP_BINDINGS.len()];
         let mut notices = Vec::new();
 
         for (name, texts) in entries {

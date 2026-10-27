@@ -1,0 +1,21 @@
+{
+  "has_category": true,
+  "active_provider": "fixture-provider",
+  "providers": [
+    {
+      "name": "fixture-provider",
+      "is_active": true,
+      "status": "configured",
+      "env_vars": [
+        {
+          "key": "FIXTURE_TOKEN",
+          "is_set": true
+        },
+        {
+          "key": "FIXTURE_URL",
+          "is_set": false
+        }
+      ]
+    }
+  ]
+}

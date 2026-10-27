@@ -1,0 +1,89 @@
+{
+  "plugins": [
+    {
+      "name": "fixture-bundled-a",
+      "key": "fixture-bundled-a",
+      "version": "1.0.0",
+      "description": "Synthetic plugin.",
+      "source": "bundled",
+      "status": "enabled",
+      "servers": [],
+      "catalog_tier": null,
+      "update_available": false,
+      "settings_schema": []
+    },
+    {
+      "name": "fixture-bundled-b",
+      "key": "fixture-bundled-b",
+      "version": "1.0.0",
+      "description": "Synthetic plugin.",
+      "source": "bundled",
+      "status": "enabled",
+      "servers": [],
+      "catalog_tier": null,
+      "update_available": false,
+      "settings_schema": []
+    },
+    {
+      "name": "fixture-plugin",
+      "key": "fixture-plugin",
+      "version": "1.0.0",
+      "description": "Synthetic plugin.",
+      "source": "user",
+      "status": "enabled",
+      "servers": [
+        {
+          "name": "fixture-mcp",
+          "state": "connected",
+          "sentence": "Connected"
+        }
+      ],
+      "catalog_tier": null,
+      "update_available": false,
+      "settings_schema": [
+        {
+          "key": "fixture_password",
+          "label": "Fixture password",
+          "type": "secret",
+          "has_value": true
+        }
+      ]
+    },
+    {
+      "name": "fixture-git",
+      "key": "fixture-git",
+      "version": "1.0.0",
+      "description": "Synthetic plugin.",
+      "source": "git",
+      "status": "disabled",
+      "servers": [],
+      "catalog_tier": null,
+      "update_available": false,
+      "settings_schema": []
+    },
+    {
+      "name": "fixture-package",
+      "key": "fixture-package",
+      "version": "1.0.0",
+      "description": "Synthetic plugin.",
+      "source": "entrypoint",
+      "status": "not enabled",
+      "servers": [],
+      "catalog_tier": null,
+      "update_available": false,
+      "settings_schema": []
+    },
+    {
+      "name": "fixture-no-key",
+      "key": null,
+      "version": "1.0.0",
+      "description": "Synthetic plugin.",
+      "source": "user",
+      "status": "enabled",
+      "servers": [],
+      "catalog_tier": null,
+      "update_available": false,
+      "settings_schema": []
+    }
+  ]
+}
