@@ -20,10 +20,16 @@ fn paint(shown: &CronView, cols: u16, rows: u16) -> String {
         for x in 0..cols {
             line.push_str(buf[(x, y)].symbol());
         }
-        line.push_str("\r\n");
+        if y + 1 < rows {
+            line.push_str("\r\n");
+        }
         vt.feed(line.as_bytes());
     }
-    vt.rows().join("\n")
+    vt.rows()
+        .iter()
+        .map(|row| row.trim())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn list_view(status: Option<&str>, rows: Vec<RowView>, banner: Option<&str>) -> CronView {
@@ -209,6 +215,28 @@ fn opens_without_waiting_and_idles() {
         &mut state,
         CronInput::Listed {
             seq: 1,
+            result: Ok(ListReply {
+                jobs: Vec::new(),
+                warning: None,
+            }),
+        },
+        now + Duration::from_secs(2),
+        1_792_746_032,
+    );
+    let idle = view(&state, 1_792_746_032);
+    assert!(gate.needs_draw(&idle));
+    update(
+        &mut state,
+        CronInput::Key(talaria_core::cron::CronKey::Action(
+            talaria_core::cron::CronAction::Reload,
+        )),
+        now + Duration::from_secs(2),
+        1_792_746_032,
+    );
+    update(
+        &mut state,
+        CronInput::Listed {
+            seq: 2,
             result: Ok(ListReply {
                 jobs: Vec::new(),
                 warning: None,

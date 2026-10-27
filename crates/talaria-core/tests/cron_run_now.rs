@@ -66,6 +66,12 @@ fn confirms_and_warns() {
     );
     update(
         &mut state,
+        CronInput::Key(CronKey::Char('n')),
+        support::clock(),
+        support::WALL,
+    );
+    update(
+        &mut state,
         CronInput::Key(CronKey::Down),
         support::clock(),
         support::WALL,
@@ -77,12 +83,24 @@ fn confirms_and_warns() {
     );
     update(
         &mut state,
+        CronInput::Key(CronKey::Char('n')),
+        support::clock(),
+        support::WALL,
+    );
+    update(
+        &mut state,
         CronInput::Key(CronKey::Down),
         support::clock(),
         support::WALL,
     );
     run_now(&mut state);
     assert!(question(&state).contains("It runs its script only, with no agent"));
+    update(
+        &mut state,
+        CronInput::Key(CronKey::Char('n')),
+        support::clock(),
+        support::WALL,
+    );
     update(
         &mut state,
         CronInput::Key(CronKey::Down),
@@ -464,9 +482,19 @@ fn pending_row_and_fast_poll() {
     let job = support::job("a1b2c3d4e5f6", "daily digest", "scheduled");
     let mut state = open_list(Ok(()), vec![job.clone()]);
     let start = support::clock();
-    update(
+    let initial_history = update(
         &mut state,
         CronInput::Key(CronKey::Enter),
+        start,
+        support::WALL,
+    );
+    update(
+        &mut state,
+        CronInput::RunsLoaded {
+            job_id: job.job_id.clone(),
+            seq: support::runs_seq(&initial_history),
+            result: Ok(Vec::new()),
+        },
         start,
         support::WALL,
     );
@@ -525,11 +553,11 @@ fn pending_row_and_fast_poll() {
         &mut state,
         CronInput::RunsLoaded {
             job_id: job.job_id.clone(),
-            seq: 1,
+            seq: support::runs_seq(&polled),
             result: Ok(vec![too_old.clone()]),
         },
-        start,
-        support::WALL,
+        start + std::time::Duration::from_secs(2),
+        support::WALL + 2,
     );
     let CronBody::Detail(still) = view(&state, support::WALL).body else {
         panic!("card");
@@ -541,17 +569,23 @@ fn pending_row_and_fast_poll() {
     let fresh = RunRow {
         started_at: Some((support::WALL - 2) as f64),
         id: "new".into(),
-        ..too_old
+        ..too_old.clone()
     };
+    let next_poll = update(
+        &mut state,
+        CronInput::Tick,
+        start + std::time::Duration::from_secs(4),
+        support::WALL + 4,
+    );
     update(
         &mut state,
         CronInput::RunsLoaded {
             job_id: job.job_id.clone(),
-            seq: 2,
+            seq: support::runs_seq(&next_poll),
             result: Ok(vec![fresh]),
         },
-        start,
-        support::WALL,
+        start + std::time::Duration::from_secs(4),
+        support::WALL + 4,
     );
     let CronBody::Detail(settled) = view(&state, support::WALL).body else {
         panic!("card");
@@ -562,9 +596,19 @@ fn pending_row_and_fast_poll() {
     assert!(pending.is_none());
 
     let mut expiring = open_list(Ok(()), vec![job.clone()]);
-    update(
+    let expiring_history = update(
         &mut expiring,
         CronInput::Key(CronKey::Enter),
+        start,
+        support::WALL,
+    );
+    update(
+        &mut expiring,
+        CronInput::RunsLoaded {
+            job_id: job.job_id.clone(),
+            seq: support::runs_seq(&expiring_history),
+            result: Ok(vec![too_old]),
+        },
         start,
         support::WALL,
     );

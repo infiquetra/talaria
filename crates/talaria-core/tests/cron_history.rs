@@ -129,7 +129,7 @@ fn run_rows_from_v0224_reply() {
         &mut state,
         CronInput::RunsLoaded {
             job_id: "a1b2c3d4e5f6".into(),
-            seq: 1,
+            seq: 2,
             result: Ok(runs),
         },
         support::clock(),
@@ -217,7 +217,7 @@ fn states_failures_and_open_run() {
         &mut empty,
         CronInput::RunsLoaded {
             job_id: job.job_id.clone(),
-            seq: 1,
+            seq: 2,
             result: Ok(Vec::new()),
         },
         support::clock(),
@@ -233,7 +233,7 @@ fn states_failures_and_open_run() {
         &mut failed,
         CronInput::RunsLoaded {
             job_id: job.job_id.clone(),
-            seq: 1,
+            seq: 2,
             result: Err(RestFailure::NotSent("gateway down".into())),
         },
         support::clock(),
@@ -292,7 +292,7 @@ fn states_failures_and_open_run() {
         &mut rows,
         CronInput::RunsLoaded {
             job_id: job.job_id.clone(),
-            seq: 1,
+            seq: 2,
             result: Ok(runs.clone()),
         },
         support::clock(),
@@ -317,7 +317,7 @@ fn states_failures_and_open_run() {
             &mut one,
             CronInput::RunsLoaded {
                 job_id: job.job_id.clone(),
-                seq: 1,
+                seq: 2,
                 result: Ok(runs.clone()),
             },
             support::clock(),

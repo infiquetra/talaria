@@ -379,6 +379,13 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("memory_copy", &["c"][..]),
         ("memory_save", &["ctrl+s"][..]),
         ("memory_close", &["esc"][..]),
+        ("cron_new", &["ctrl+n"][..]),
+        ("cron_run_now", &["ctrl+t"][..]),
+        ("cron_toggle_pause", &["ctrl+e"][..]),
+        ("cron_remove", &["ctrl+d"][..]),
+        ("cron_reload", &["ctrl+r"][..]),
+        ("cron_save", &["ctrl+s"][..]),
+        ("cron_open_run", &["o"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

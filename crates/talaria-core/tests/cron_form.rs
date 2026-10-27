@@ -205,6 +205,18 @@ fn add_request_is_exact() {
 fn add_failures() {
     let mut state = open_form();
     let clock = support::clock();
+    update(
+        &mut state,
+        CronInput::Listed {
+            seq: 1,
+            result: Ok(talaria_core::cron::ListReply {
+                jobs: Vec::new(),
+                warning: None,
+            }),
+        },
+        clock,
+        support::WALL,
+    );
     for key in [
         CronKey::Paste("daily digest".into()),
         CronKey::Tab,
@@ -222,7 +234,7 @@ fn add_failures() {
         clock,
         support::WALL,
     );
-    update(
+    let schedule_failure = update(
         &mut state,
         CronInput::Added(Err(CallFailure::Tool {
             error: BLUE_MOON.into(),
@@ -245,6 +257,24 @@ fn add_failures() {
 
     update(
         &mut state,
+        CronInput::Listed {
+            seq: support::list_seq(&schedule_failure),
+            result: Ok(talaria_core::cron::ListReply {
+                jobs: Vec::new(),
+                warning: None,
+            }),
+        },
+        clock,
+        support::WALL,
+    );
+    update(
+        &mut state,
+        CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::Save)),
+        clock,
+        support::WALL,
+    );
+    let duration_failure = update(
+        &mut state,
         CronInput::Added(Err(CallFailure::Tool {
             error: EVERY_BLUE.into(),
             job_saved: false,
@@ -265,6 +295,24 @@ fn add_failures() {
         ]
     );
 
+    update(
+        &mut state,
+        CronInput::Listed {
+            seq: support::list_seq(&duration_failure),
+            result: Ok(talaria_core::cron::ListReply {
+                jobs: Vec::new(),
+                warning: None,
+            }),
+        },
+        clock,
+        support::WALL,
+    );
+    update(
+        &mut state,
+        CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::Save)),
+        clock,
+        support::WALL,
+    );
     let saved = update(
         &mut state,
         CronInput::Added(Err(CallFailure::Tool {
@@ -345,6 +393,14 @@ fn delivery_target_choices() {
             ("Discord (discord) · no home channel set".into(), false),
         ]
     );
+    for _ in 0..4 {
+        update(
+            &mut state,
+            CronInput::Key(CronKey::Tab),
+            clock,
+            support::WALL,
+        );
+    }
     for _ in 0..3 {
         update(
             &mut state,

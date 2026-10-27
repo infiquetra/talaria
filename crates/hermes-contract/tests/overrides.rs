@@ -4,6 +4,38 @@ use hermes_contract::methods::canonical::prompt_submit::Params;
 use hermes_contract::overrides::{check_prompt_submit, prompt_submit_params};
 
 #[test]
+fn scheduled_fire_error_shapes_decode_at_the_typed_result_boundary() {
+    // Hermes cron/jobs.py:2323-2330 and cron/scheduler_gateway_gate.py:48-59
+    // at 4d04303818b61bf3aa09278af48356315515965b persist object errors.
+    use hermes_contract::overrides::CronManageResult;
+    use serde_json::json;
+    for (value, expected) in [
+        (json!(null), None),
+        (json!("failure"), Some((None, "failure".to_string()))),
+        (
+            json!({"at": "today", "detail": "failure"}),
+            Some((Some("today".to_string()), "failure".to_string())),
+        ),
+        (
+            json!({"message": "failure"}),
+            Some((None, "failure".to_string())),
+        ),
+    ] {
+        let result: CronManageResult = serde_json::from_value(
+            json!({"success": true, "jobs": [{"job_id": "job", "last_fire_error": value}]}),
+        )
+        .unwrap();
+        assert_eq!(
+            result.jobs.unwrap()[0]
+                .last_fire_error
+                .clone()
+                .map(|e| (e.at, e.detail)),
+            expected
+        );
+    }
+}
+
+#[test]
 fn prompt_submit_requires_submission_or_input_id() {
     let mut missing: Params = prompt_submit_params("session", "hello", "sub-1");
     missing.submission_id = None;

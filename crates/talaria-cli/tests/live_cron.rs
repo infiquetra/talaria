@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use hermes_client::{
@@ -38,9 +38,9 @@ fn finish(result: Result<(), String>) {
     }
 }
 
-fn write_gate() -> std::sync::MutexGuard<'static, ()> {
-    static GATE: Mutex<()> = Mutex::new(());
-    GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+async fn write_gate() -> tokio::sync::MutexGuard<'static, ()> {
+    static GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    GATE.lock().await
 }
 
 struct VerdictJob {
@@ -65,8 +65,23 @@ fn run_verdict(
     job: &VerdictJob,
     runs: &[VerdictRun],
 ) -> Result<(), String> {
-    let _ = (triggered_at, before_last_run_at, job, runs);
-    todo!()
+    if job.last_status.as_deref() != Some("ok") {
+        return Err("the job did not finish successfully".into());
+    }
+    if job.last_run_at.as_deref().is_none() || job.last_run_at.as_deref() == before_last_run_at {
+        return Err("the job has no fresh last-run time".into());
+    }
+    if !runs.iter().any(|run| {
+        run.source == "cron"
+            && run.started_at >= triggered_at
+            && run.ended_at.is_some_and(|end| end >= run.started_at)
+            && run.input_tokens.saturating_add(run.output_tokens) > 0
+            && run.model.as_deref() == Some("minimax-m3.1-flash")
+            && run.end_reason.as_deref() == Some("completed")
+    }) {
+        return Err("no fresh completed agent run used the expected model and tokens".into());
+    }
+    Ok(())
 }
 
 fn pass_case() -> (VerdictJob, Vec<VerdictRun>) {
@@ -337,7 +352,7 @@ async fn manage(
 #[tokio::test]
 #[ignore]
 async fn live_add_pause_resume_remove_on_fixture() {
-    let _gate = write_gate();
+    let _gate = write_gate().await;
     if std::env::var("TALARIA_PROBE_WRITES").ok().as_deref() != Some("1") {
         skip("TALARIA_PROBE_WRITES is not 1");
         return;
@@ -420,23 +435,15 @@ async fn live_add_pause_resume_remove_on_fixture() {
     }
     let job_id = probe.unwrap().job_id.clone();
     guard.job_id = Some(job_id.clone());
-    if let Err(error) = manage(&client, CronAction::Pause, Some(job_id.clone()), None, None).await {
+    if let Err(error) = manage(client, CronAction::Pause, Some(job_id.clone()), None, None).await {
         finish(Err(error));
         return;
     }
-    if let Err(error) = manage(
-        &client,
-        CronAction::Resume,
-        Some(job_id.clone()),
-        None,
-        None,
-    )
-    .await
-    {
+    if let Err(error) = manage(client, CronAction::Resume, Some(job_id.clone()), None, None).await {
         finish(Err(error));
         return;
     }
-    if let Err(error) = manage(&client, CronAction::Remove, Some(job_id), None, None).await {
+    if let Err(error) = manage(client, CronAction::Remove, Some(job_id), None, None).await {
         finish(Err(error));
         return;
     }
@@ -467,7 +474,7 @@ async fn live_add_pause_resume_remove_on_fixture() {
 #[tokio::test]
 #[ignore]
 async fn live_run_now_and_history_on_fixture() {
-    let _gate = write_gate();
+    let _gate = write_gate().await;
     if std::env::var("TALARIA_PROBE_WRITES").ok().as_deref() != Some("1") {
         skip("TALARIA_PROBE_WRITES is not 1");
         return;
@@ -507,6 +514,11 @@ async fn live_run_now_and_history_on_fixture() {
         client: Some(client),
         job_id: Some(job_id.clone()),
     };
+    let before_last_run_at = created.job.as_ref().and_then(|job| job.last_run_at.clone());
+    let triggered_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_secs_f64();
     let triggered = hermes_client::cron_api::trigger_job(
         &rest,
         "fixture",
@@ -564,8 +576,8 @@ async fn live_run_now_and_history_on_fixture() {
         })
         .collect::<Vec<_>>();
     let verdict = run_verdict(
-        0.0,
-        None,
+        triggered_at,
+        before_last_run_at.as_deref(),
         &VerdictJob {
             last_status: job.last_status.clone(),
             last_run_at: job.last_run_at.clone(),

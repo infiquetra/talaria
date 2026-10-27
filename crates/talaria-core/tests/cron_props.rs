@@ -159,7 +159,7 @@ proptest! {
         for text in walk(&shown) {
             prop_assert!(hostile_free(&text));
         }
-        update(
+        let history_request = update(
             &mut state,
             CronInput::Key(CronKey::Enter),
             clock,
@@ -185,9 +185,23 @@ proptest! {
             &mut state,
             CronInput::RunsLoaded {
                 job_id: "a1b2c3d4e5f6".into(),
-                seq: 1,
+                seq: support::runs_seq(&history_request),
                 result: Ok(vec![run]),
             },
+            clock,
+            support::WALL,
+        );
+        for text in walk(&view(&state, support::WALL)) {
+            prop_assert!(hostile_free(&text));
+        }
+        update(&mut state, CronInput::Open(CronOpen::NewJob), clock, support::WALL);
+        update(
+            &mut state,
+            CronInput::TargetsLoaded(Ok(vec![DeliveryTarget {
+                id: "platform".into(),
+                name: poison("Platform"),
+                home_target_set: true,
+            }])),
             clock,
             support::WALL,
         );
@@ -326,7 +340,9 @@ fn input_from(byte: u8) -> CronInput {
         12 => CronInput::Tick,
         13 => CronInput::Changed,
         14 => CronInput::Close,
-        15 => CronInput::Connection { up: byte % 2 == 0 },
+        15 => CronInput::Connection {
+            up: byte.is_multiple_of(2),
+        },
         16 => CronInput::Listed {
             seq: 1,
             result: Err(CallFailure::NotSent("down".into())),

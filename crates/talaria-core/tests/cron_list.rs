@@ -47,7 +47,7 @@ fn rows_from_v0224_list_reply() {
             .map(|fire| fire.detail.as_str()),
         Some("forward to gateway failed")
     );
-    let (mut state, _) = open_with_rows();
+    let (state, _) = open_with_rows();
     let shown = view(&state, support::WALL);
     assert_eq!(shown.title, "Scheduled jobs · profile fixture");
     assert_eq!(
@@ -167,6 +167,12 @@ fn changed_is_debounced_and_coalesced() {
     );
     update(
         &mut state,
+        listed(1, Vec::new(), None),
+        start,
+        support::WALL,
+    );
+    update(
+        &mut state,
         CronInput::Changed,
         start + Duration::from_millis(10),
         support::WALL,
@@ -212,10 +218,16 @@ fn changed_is_debounced_and_coalesced() {
             .iter()
             .all(|effect| !matches!(effect, CronEffect::List { .. }))
     );
+    update(
+        &mut state,
+        CronInput::Tick,
+        start + Duration::from_millis(620),
+        support::WALL,
+    );
     let after = update(
         &mut state,
         listed(2, Vec::new(), None),
-        start + Duration::from_millis(320),
+        start + Duration::from_millis(620),
         support::WALL,
     );
     assert_eq!(
@@ -283,10 +295,16 @@ fn backstop_and_minute_tick_only() {
         }
     }
     assert_eq!(lists, (1..=10).map(|n| n * 60).collect::<Vec<_>>());
+    let failed_request = update(
+        &mut state,
+        CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::Reload)),
+        start + Duration::from_secs(600),
+        wall + 600,
+    );
     update(
         &mut state,
         CronInput::Listed {
-            seq: 99,
+            seq: support::list_seq(&failed_request),
             result: Err(CallFailure::NotSent("down".into())),
         },
         start + Duration::from_secs(600),
@@ -323,6 +341,12 @@ fn stale_list_reply_is_ignored() {
     let (mut state, jobs) = open_with_rows();
     let row = jobs.iter().find(|job| job.state == "scheduled").unwrap();
     let start = support::clock();
+    let stale_request = update(
+        &mut state,
+        CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::Reload)),
+        start,
+        support::WALL,
+    );
     update(
         &mut state,
         CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::TogglePause)),
@@ -341,9 +365,9 @@ fn stale_list_reply_is_ignored() {
         start,
         support::WALL,
     );
-    update(
+    let fresh_request = update(
         &mut state,
-        listed(1, jobs.clone(), None),
+        listed(support::list_seq(&stale_request), jobs.clone(), None),
         start,
         support::WALL,
     );
@@ -361,7 +385,12 @@ fn stale_list_reply_is_ignored() {
     if let Some(item) = fresh.iter_mut().find(|item| item.job_id == row.job_id) {
         item.state = "paused".into();
     }
-    update(&mut state, listed(3, fresh, None), start, support::WALL);
+    update(
+        &mut state,
+        listed(support::list_seq(&fresh_request), fresh, None),
+        start,
+        support::WALL,
+    );
     let shown = view(&state, support::WALL);
     let CronBody::List(list) = shown.body else {
         panic!("list");
@@ -394,9 +423,15 @@ fn filter_and_empty_states() {
         panic!("list");
     };
     assert_eq!(list.status.as_deref(), Some("No job matches \"zz\"."));
+    let empty_request = update(
+        &mut state,
+        CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::Reload)),
+        start,
+        support::WALL,
+    );
     update(
         &mut state,
-        listed(2, Vec::new(), None),
+        listed(support::list_seq(&empty_request), Vec::new(), None),
         start,
         support::WALL,
     );
@@ -461,7 +496,7 @@ fn pause_resume_effects_and_texts() {
         effect,
         CronEffect::SetPaused { paused: true, job_id } if job_id == &scheduled.job_id
     )));
-    let mut paused_state = state.clone_via_reopen();
+    let paused_state = state.clone_via_reopen();
     let _ = paused_state;
     let mut paused = CronState::new("fixture".into(), Ok(()));
     let mut row = support::job("0f9e8d7c6b5a", "nightly check", "paused");
@@ -714,7 +749,16 @@ fn tool_failures_are_failures() {
         let start = support::clock();
         update(
             &mut state,
-            CronInput::Added(Err(failure)),
+            CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::TogglePause)),
+            start,
+            support::WALL,
+        );
+        update(
+            &mut state,
+            CronInput::PauseSet {
+                job_id: jobs[0].job_id.clone(),
+                result: Err(failure),
+            },
             start,
             support::WALL,
         );
@@ -732,6 +776,32 @@ fn unknown_write_outcome_is_never_resent() {
     update(
         &mut state,
         CronInput::Open(CronOpen::NewJob),
+        start,
+        support::WALL,
+    );
+    update(
+        &mut state,
+        listed(1, Vec::new(), None),
+        start,
+        support::WALL,
+    );
+    for key in [
+        CronKey::Tab,
+        CronKey::Paste("every 2h".into()),
+        CronKey::Tab,
+        CronKey::Paste("Reply ok.".into()),
+    ] {
+        update(&mut state, CronInput::Key(key), start, support::WALL);
+    }
+    update(
+        &mut state,
+        CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::Save)),
+        start,
+        support::WALL,
+    );
+    update(
+        &mut state,
+        CronInput::Connection { up: false },
         start,
         support::WALL,
     );

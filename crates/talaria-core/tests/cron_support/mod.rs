@@ -2,13 +2,33 @@
 
 use serde_json::Value;
 use std::time::Instant;
-use talaria_core::cron::{FireError, JobRow};
+use talaria_core::cron::{CronEffect, FireError, JobRow};
 
 /// `2026-10-23T09:00:00Z`.
 pub const WALL: i64 = 1_792_746_000;
 
 pub fn clock() -> Instant {
     Instant::now()
+}
+
+pub fn list_seq(effects: &[CronEffect]) -> u64 {
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            CronEffect::List { seq } => Some(*seq),
+            _ => None,
+        })
+        .expect("a list request")
+}
+
+pub fn runs_seq(effects: &[CronEffect]) -> u64 {
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            CronEffect::Runs { seq, .. } => Some(*seq),
+            _ => None,
+        })
+        .expect("a runs request")
 }
 
 pub fn job(id: &str, name: &str, state: &str) -> JobRow {
