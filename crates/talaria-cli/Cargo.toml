@@ -22,6 +22,7 @@ talaria-app.workspace = true
 talaria-core.workspace = true
 talaria-tui.workspace = true
 tokio.workspace = true
+zeroize.workspace = true
 time = { workspace = true, features = ["local-offset"] }
 unicode-width.workspace = true
 tempfile.workspace = true
@@ -30,6 +31,7 @@ tempfile.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 hermes-contract.workspace = true
 portable-pty.workspace = true
+proptest.workspace = true
 serde_json.workspace = true
 tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
 vt100.workspace = true

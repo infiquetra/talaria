@@ -63,6 +63,8 @@ pub enum KeyContext {
     Doctor,
     /// The profiles overlay list. Issue #253.
     Profiles,
+    /// The providers overlay.
+    Providers,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -137,6 +139,66 @@ impl ModelAction {
             Self::ModelScope => &["ctrl+g"],
             Self::ModelFavourite => &["ctrl+f"],
             Self::ModelRefresh => &["ctrl+r"],
+        }
+    }
+}
+
+/// Providers overlay commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProvidersAction {
+    /// Next tab.
+    NextTab,
+    /// Previous tab.
+    PrevTab,
+    /// Reload.
+    Reload,
+    /// Remove or sign out.
+    Remove,
+    /// Test an endpoint.
+    Test,
+    /// Save an endpoint.
+    Save,
+    /// Clear a saved endpoint key.
+    ClearKey,
+    /// Open a link.
+    OpenLink,
+    /// Copy a code or a command.
+    Copy,
+}
+
+impl ProvidersAction {
+    /// Every providers action, in binding order.
+    pub const ALL: [Self; 9] = [Self::NextTab, Self::PrevTab, Self::Reload, Self::Remove, Self::Test, Self::Save, Self::ClearKey, Self::OpenLink, Self::Copy];
+
+    /// Configuration key.
+    #[must_use]
+    pub const fn config_name(self) -> &'static str {
+        match self {
+            Self::NextTab => "providers_next_tab",
+            Self::PrevTab => "providers_prev_tab",
+            Self::Reload => "providers_reload",
+            Self::Remove => "providers_remove",
+            Self::Test => "providers_test",
+            Self::Save => "providers_save",
+            Self::ClearKey => "providers_clear_key",
+            Self::OpenLink => "providers_open_link",
+            Self::Copy => "providers_copy",
+        }
+    }
+
+    /// The chord the providers screen uses.
+    #[must_use]
+    pub const fn default_chord(self) -> &'static str {
+        match self {
+            Self::NextTab => "tab",
+            Self::PrevTab => "shift+tab",
+            Self::Reload => "ctrl+r",
+            Self::Remove => "ctrl+d",
+            Self::Test => "ctrl+t",
+            Self::Save => "ctrl+s",
+            Self::ClearKey => "ctrl+x",
+            Self::OpenLink => "o",
+            Self::Copy => "c",
         }
     }
 }
@@ -1792,6 +1854,20 @@ impl KeyMap {
                 || (context == KeyContext::Agents && *action == Action::AgentsPanel))
                 && self.chords(*action).iter().any(|chord| chord.matches(key))
         })
+    }
+
+    /// Providers actions bound in the providers context.
+    #[must_use]
+    pub fn resolve_providers(&self, key: &Key) -> Option<ProvidersAction> {
+        let _ = key;
+        None
+    }
+
+    /// Chords bound to one providers action.
+    #[must_use]
+    pub fn providers_chords(&self, action: ProvidersAction) -> &[KeyChord] {
+        let _ = action;
+        &[]
     }
 
     /// Model actions are resolved in their active context before ordinary composer actions.

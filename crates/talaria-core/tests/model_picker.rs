@@ -304,19 +304,6 @@ fn not_set_up_and_unavailable_rows() {
     );
     assert!(state.view().is_some());
 
-    move_down_to(
-        &mut state,
-        &RowKey::NotSetUp {
-            provider: "anthropic".to_owned(),
-        },
-    );
-    let effects = press(&mut state, PickerKey::Enter);
-    assert!(drive::mutates(&effects).is_empty());
-    assert_eq!(
-        notices(&effects),
-        vec!["Anthropic is not set up. Set it up with hermes model in a terminal, then press ctrl+r here.".to_owned()]
-    );
-
     press(&mut state, PickerKey::Home);
     press(&mut state, PickerKey::Down);
     let effects = press(&mut state, PickerKey::Enter);
@@ -325,6 +312,35 @@ fn not_set_up_and_unavailable_rows() {
         vec!["missing-model is no longer listed by Ollama Cloud. Press ctrl+f to remove it from favourites.".to_owned()]
     );
     assert!(drive::mutates(&effects).is_empty());
+
+    move_down_to(
+        &mut state,
+        &RowKey::NotSetUp {
+            provider: "anthropic".to_owned(),
+        },
+    );
+    let label = {
+        let shown = state.view().expect("the picker is open");
+        shown
+            .rows
+            .iter()
+            .find(|row| {
+                matches!(&row.key, Some(RowKey::NotSetUp { provider }) if provider == "anthropic")
+            })
+            .map(|row| row.text.clone())
+            .unwrap_or_default()
+    };
+    let effects = press(&mut state, PickerKey::Enter);
+    assert!(
+        drive::mutates(&effects).is_empty()
+            && has_close(&effects)
+            && effects.iter().any(|effect| {
+                matches!(effect, ModelsEffect::OpenProviders { slug } if slug == "anthropic")
+            })
+            && label.contains("set up in /providers")
+            && notices(&effects).is_empty(),
+        "not-set-up Enter still returns the old notice: {effects:?}; label {label:?}"
+    );
 }
 
 #[test]

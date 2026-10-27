@@ -142,6 +142,11 @@ pub enum ModelsEffect {
         level: NoticeLevel,
         text: String,
     },
+    /// Enter on a not-set-up row. The app closes the picker and opens providers.
+    OpenProviders {
+        /// Provider slug.
+        slug: String,
+    },
 }
 
 /// One fact the app feeds the picker.

@@ -2648,6 +2648,7 @@ dependencies = [
  "hermes-client",
  "hermes-contract",
  "portable-pty",
+ "proptest",
  "ratatui",
  "serde_json",
  "talaria-app",
@@ -2659,6 +2660,7 @@ dependencies = [
  "tokio-tungstenite",
  "unicode-width",
  "vt100",
+ "zeroize",
 ]
 
 [[package]]
