@@ -89,6 +89,8 @@ snap()     { for f in "$FH"/*.yaml "$FH"/*.md "$FH"/.env; do [ -f "$f" ] && prin
 
 **"The composer is visible".** No source issue names one fixed composer text, so the manual rows use a baseline: right after Talaria starts in a row's pane and shows an empty composer, the tester takes one `vis` read and keeps its last three non-blank lines (the composer and the status line) as `$X/idle-tail.txt`. "The composer is visible" means the last three non-blank lines of a later read equal that file (a status-line command, if one were configured, could change them, which is why the operator precondition says none is). The smoke suite's `idle_screen` uses the same rule against the R0 read of step 3, recorded from the real binary.
 
+After opening `/model`, the comparison may use `--allow-readonly-effort-hydration`: the read-only `models.list` call can populate the active model's default reasoning-effort badge (`minimax-m3.1-flash` becomes `minimax-m3.1-flash medium`). The composer rows and all other status fields must remain identical, and the recording must contain zero outbound `session.mutate` and `prompt.submit` frames. This exception applies to P4-02 UAT-1 and XF-3 only; it permits no model change or turn.
+
 **`$BASE`.** The `main` commit the smoke extension started from: just before the `p4a-acc-smoke` pull request merges, the lead runs `git fetch origin; git merge-base origin/main origin/p4a-acc-smoke`, posts the 40-character result on the issue as `BASE=<sha>` and adds the same line to `../acc.env`. The `p4a-acc-smoke` branch is kept until closeout so AC-1 can read it.
 
 `--no-ensure` is on every launch that starts a live session, so Talaria can never start a gateway. Preflight before stage 1 (once, with the Herdr in use): `herdr --version`, `tmux -V`, `jq --version`; run both pane-split forms (the source scenarios' `herdr pane split --current --direction right --cwd . --no-focus` and the helper's) and close the panes they make. A form Herdr rejects is reported on the issue and allowed by REQ-11 change (4). The source scenarios of P4-03 name a 160 by 48 pane: size the pane or the Herdr window to that before running them. If a code path changes after this point the candidate is dead: start again from the top of this section.
@@ -483,7 +485,7 @@ PASS: `exit=0`, the FAIL count 0, the PASS count 1 or more; each bench exits 0 a
 TALARIA_LIVE_REQUIRE=1 cargo test -p hermes-client --test live_rest_config -- --ignored --nocapture live_reads_on_fixture
 TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_providers -- --ignored --nocapture live_read_tabs_on_fixture live_rejected_key_is_not_saved 2>&1 | tee "$X/prov.txt"
 TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_model_roles reads_all_sections -- --ignored --nocapture
-TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_profiles -- --ignored --nocapture live_profiles_read
+TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_profiles -- --ignored --nocapture live_profiles_list_classifies
 TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-app --test live_doctor -- --ignored --nocapture
 ```
 
@@ -496,18 +498,20 @@ cargo run -q -p record-fixture -- scan fixtures/frames
 ! git grep -nE 'unsafe *(\{|fn |impl )' -- crates tools
 ! git grep -nE '/(Users|home|private|var)/[A-Za-z]' -- crates tools
 ! git grep -n 'unattended' -- tools/smoke ':!tools/smoke/tests/typed_input*.rs' ':!tools/smoke/README.md'
-! git grep -nE 'end_reason|"unattended"' -- crates/talaria-app/src crates/talaria-cli/src
+! git grep -nE 'end_reason|"unattended"' -- crates/talaria-app/src crates/talaria-cli/src ':!crates/talaria-app/src/bg/*'
 ! git grep -nE '"(unattended|clone_channels|clone_all|share_auth|no_alias|no_skills)"' -- crates/talaria-app/src/profiles.rs crates/talaria-core/src/profiles
 ! git grep -nE 'TALARIA_PROBE_WRITES|--restart' -- tools/smoke ':!tools/smoke/tests/typed_input4a.rs' ':!tools/smoke/README.md'
-SECRET='sk-[A-Za-z0-9]{8,}|sk-or-v1-[0-9a-f]{8,}|Bearer '
+SECRET='(^|[^A-Za-z0-9])sk-[A-Za-z0-9]{8,}|sk-or-v1-[0-9a-f]{8,}|Bearer '
 printf '%s\n' 'sk-abcdefgh12345678' | grep -cE "$SECRET"; printf '%s\n' 'sk-or-v1-0000000000' | grep -cE "$SECRET"; printf '%s\n' 'Authorization: Bearer x' | grep -cE "$SECRET"
 test -n "$(ls fixtures/rest/model-roles/*.json 2>/dev/null)" && ! grep -rnE "$SECRET|/(Users|home)/" fixtures/rest/model-roles/ fixtures/configuration-surface/
 ! grep -E '/(Users|home|private|var/folders|tmp)/' fixtures/frames/profiles.jsonl
-! git grep -hoE -e '--profile[ =]+"?[A-Za-z0-9_-]+' -- crates tools | sed -E 's/.*[ =]"?//' | grep -vxE 'default|fixture|nosuchprofile|nosuch'
+! git grep -hoE -e '--profile[ =]+"?[A-Za-z0-9_-]+' -- crates tools | sed -E 's/.*[ =]"?//' | grep -vxE 'default|fixture|nosuchprofile|nosuch|to|the|fixture-a'
 git grep -nE 'config\.set' -- crates/talaria-app/src crates/talaria-cli/src
 ```
 
 PASS: the `!` lines print nothing; the one `config.set` line prints only hits whose key is not `model` (P4-03 forbids `config.set key=model`; P4-00's finding says what else is allowed), each hit read and listed in the evidence, and any hit that sets `model` is a FAIL; every other line exits 0. The three positive controls (a generic key, an OpenRouter key, a bearer credential) each print 1 before the clean scan counts: the pattern is the same as AC-11's, because `sk-[A-Za-z0-9]{8,}` alone misses `sk-or-v1-...` (the hyphen after `or` ends the match: checked while repairing this unit, the old control printed 0). A control that prints 0 makes the row FAIL whatever the scan shows. `nosuchprofile` and `nosuch` are allowed in the profile scan because the profile and doctor sources type them as deliberately unknown names. A finding is a FAIL reported on this issue and a new candidate follows. Evidence: the command lines that printed something, and `0` counts.
+
+The background detach implementation is excluded from the `end_reason` scan because Phase 3 requires that field there; the profile implementation remains scanned. The source scan also permits prose tokens `to` and `the`, and the synthetic unit-test name `fixture-a`. This does not expand the evidence file's four-name profile allowlist.
 
 **AUTO-7: smoke suite offline tests.**
 
@@ -516,7 +520,9 @@ cargo test -p smoke
 cargo test -p smoke -- --list --ignored 2>/dev/null | grep ': test$'
 cargo run -q -p smoke -- run --help
 B=$(mktemp -d)/base; git worktree add "$B" "$BASE"                  # the baseline: the same list at $BASE (section 3)
-(cd "$B" && cargo test -p smoke -- --list --ignored 2>/dev/null | grep ': test$') > "$X/ignored-base.txt"; git worktree remove --force "$B"
+BT=$(mktemp -d)                                                  # never share the candidate's Cargo fingerprints
+(cd "$B" && CARGO_TARGET_DIR="$BT" cargo test -p smoke -- --list --ignored 2>/dev/null | grep ': test$') > "$X/ignored-base.txt"
+git worktree remove --force "$B"; rm -rf "$BT"
 cargo test -p smoke -- --list --ignored 2>/dev/null | grep ': test$' > "$X/ignored-now.txt"; diff "$X/ignored-base.txt" "$X/ignored-now.txt"
 ```
 
@@ -600,13 +606,13 @@ Each row: a persona, what seam it covers, steps, a binary pass rule, evidence. S
 - Evidence: the four exit lines and the matching lines.
 
 **XF-2: the settings screen, the model roles page and the profile list name the same main model.** Persona configurer. Covers P4-01, P4-03 and P4-06 (one profile, three readers). Needs `fixture`'s main model to be `minimax-m3.1-flash` on `ollama-cloud` (operator precondition).
-- Steps: start Talaria in `$PANE`. `submit "$PANE" '/config'`; once `Settings · profile fixture` shows, send text `/` then `model.default` (no Enter), read V1; `esc`, `esc` (wait 400 ms after each). `submit "$PANE" '/models'`; once the title shows, read V2 (the Main section is the first). `esc`. `submit "$PANE" '/profiles'`; type `/fixture`, read V3; `esc`, `esc`.
-- Pass: V1 holds a `model.default` row whose value is `minimax-m3.1-flash` (`grep -cE 'model\.default.*minimax-m3\.1-flash'` prints 1 or more); V2 holds `minimax-m3.1-flash` and `ollama-cloud`; V3 holds `minimax-m3.1-flash · ollama-cloud`. Counted with `grep -c`, each at least 1. No `Failed` text in V2.
+- Steps: start Talaria in `$PANE`. `submit "$PANE" '/config'`; once `Settings · profile fixture` shows, send text `/` then `model` (no Enter), read V1; `esc`, `esc` (wait 400 ms after each). `submit "$PANE" '/models'`; once the title shows, read V2 (the Main section is the first). `esc`. `submit "$PANE" '/profiles'`; type `/fixture`, read V3; `esc`, `esc`.
+- Pass: V1 holds a `model` row whose value is `minimax-m3.1-flash` (`grep -cE '\bmodel\b.*minimax-m3\.1-flash'` prints 1 or more); V2 holds `minimax-m3.1-flash` and `ollama-cloud`; V3 holds `minimax-m3.1-flash · ollama-cloud`. Counted with `grep -c`, each at least 1. No `Failed` text in V2. The pinned config schema names the setting `model`; `profiles.describe` separately nests `model.default`.
 - Evidence: the three reads (the lines that match).
 
 **XF-3: the palette lists the five commands, and `/model` stays apart from `/models`.** Persona developer. Covers P4-01, P4-02, P4-03, P4-06, P4-10 with P2-03 (the palette) and P2-06 (the session model picker).
 - Steps: start Talaria. For each of `/conf`, `/prov`, `/mode`, `/prof`, `/doct`: send the text without Enter, read, then `ctrl+c` (clears the draft) and read once to confirm an empty composer. Then `submit "$PANE" '/model'`, read V4, `esc`; `submit "$PANE" '/models'`, read V5, `esc`.
-- Pass: the five reads hold `/config`, `/providers`, `/models`, `/profiles`, `/doctor` respectively, and the `/mode` read holds both `/model` and `/models`; V4 does not hold `Model roles - profile fixture`; V5 does. After the last `esc` the composer is visible and no turn started.
+- Pass: the five reads hold `/config`, `/providers`, `/models`, `/profiles`, `/doctor` respectively, and the `/mode` read holds both `/model` and `/models`; V4 does not hold `Model roles - profile fixture`; V5 does. After the last `esc` the composer is visible and no turn started. The section 3 read-only effort-badge hydration exception applies, with zero outbound `session.mutate` or `prompt.submit` frames.
 - Evidence: the matching lines of the seven reads.
 
 **XF-4: a secret typed anywhere reaches no screen, history file or report (negative).** Persona developer. Covers P4-01 REQ-13, P4-02 (rejected key) and P4-10, P4-06 outputs. The two strings are the only secret-shaped texts allowed (REQ-16): `S1=not-a-real-key`, `S2=sk-or-v1-` followed by 64 zeros.
@@ -615,7 +621,7 @@ Each row: a persona, what seam it covers, steps, a binary pass rule, evidence. S
 - Evidence: the counts and the `cmp=` line only.
 
 **XF-5: with no gateway every command fails plainly and starts nothing (negative).** Persona scripter. Covers P4-06 UAT-6, P4-10 UAT-3 and P1-12 UAT-5 together on one empty Hermes home.
-- Steps: `H=$(mktemp -d)`. `HERMES_HOME="$H" "$T" doctor > "$X/a.txt" 2>&1; echo "exit=$?"`; `HERMES_HOME="$H" "$T" profiles > "$X/b.txt" 2>&1; echo "exit=$?"`; `HERMES_HOME="$H" "$T" --no-ensure > "$X/c.txt" 2>&1; echo "exit=$?"` (wait at most 30 s); `ls -A "$H" | wc -l`.
+- Steps: `H=$(mktemp -d)`. `HERMES_HOME="$H" "$T" doctor > "$X/a.txt" 2>&1; echo "exit=$?"`; `HERMES_HOME="$H" "$T" profiles > "$X/b.txt" 2>&1; echo "exit=$?"`; run `HERMES_HOME="$H" "$T" --no-ensure` inside a pseudo-terminal or throwaway Herdr pane and capture its output to `$X/c.txt` with its exit code (wait at most 30 s); `ls -A "$H" | wc -l`. Both stdin and stdout must be terminals so discovery runs; redirecting this interactive launch directly to a file tests the terminal guard instead.
 - Pass: `a.txt` has a `Gateway` row starting `FAIL` followed by the fix line `Fix: Run `hermes gateway ensure --json` to start the Hermes gateway, then try again.` and exits 1; `b.txt` says no Hermes gateway is running for this home with a `Next step:` line and exits 1; `c.txt` holds `talaria: no Hermes gateway is running for this home` and exits 1; none of the three holds `panic` or `RUST_BACKTRACE`; the folder listing count is 0.
 - Evidence: the three outputs (scrubbed) and the count.
 
@@ -625,13 +631,13 @@ Each row: a persona, what seam it covers, steps, a binary pass rule, evidence. S
 - Evidence: the title lines of the eight reads and the four zero counts.
 
 **XF-7: screens opened during a running turn leave the turn running.** Persona developer. Covers the five screens with P1-08 (Esc) and P2-03 UAT-7 (commands while busy).
-- Steps: start Talaria; `submit "$PANE" 'Count from 1 to 2000, one number per line, and do not stop early.'`; wait for 15 counting lines (P1-13's rule: a number alone on its line, value 1 to 2000, taken after the last echo of the prompt). Then for each of `/doctor`, `/config`, `/providers`, `/models`, `/profiles`: `submit`, wait 2 s, read, `esc`, wait 400 ms, read. Finally read the highest counting value twice, 1 s apart (M0, M1).
-- Pass: every attempt's first read shows either the screen's title (opened; the title constants of section 9.5 and `Doctor:`) or a line containing `can't run mid-turn` that was not in the read before the attempt (the busy refusal P2-03 UAT-7 names: a System line containing those words); anything else, including an unchanged screen, is a FAIL. After the last `esc` the counting is still growing (M1 above M0) or a counting line with the value 2000 is visible; the counting never restarts from 1 twice; the composer is visible. If the turn ends by itself before the five attempts are done, repeat the row once with `Count from 1 to 5000, one number per line, and do not stop early.` and the value 5000 in place of 2000 (counts toward the three runs).
+- Steps: start Talaria; `submit "$PANE" 'Count from 1 to 2000, one number per line, and do not stop early.'`; wait for 15 counting lines (P1-13's rule: a number alone on its line, value 1 to 2000, taken after the last echo of the prompt). Then for each of `/doctor`, `/config`, `/providers`, `/models`, `/profiles`: `submit`, wait 2 s, read; send `esc` only when the first read contains the screen's title (an overlay opened), wait 400 ms, read. An Esc with no overlay would interrupt the foreground turn. Finally read the highest counting value twice, 1 s apart (M0, M1).
+- Pass: every attempt's first read shows either the screen's title (opened; the title constants of section 9.5 and `Doctor:`) or a line containing `can't run mid-turn` that was not in the read before the attempt (the busy refusal P2-03 UAT-7 names: a System line containing those words); anything else, including an unchanged screen, is a FAIL. After the last attempt no overlay title remains and the composer input row is visible while counting is still growing (M1 above M0) or a counting line with the value 2000 is visible. The recording's `message.delta` stream must show a single start, with no second restart from 1; the entire sequence need not fit contiguously in the viewport. If the turn ends by itself before the five attempts are done, repeat the row once with `Count from 1 to 5000, one number per line, and do not stop early.` and the value 5000 in place of 2000 (counts toward the three runs).
 - Evidence: the ten reads' matching lines and M0, M1.
 
 **XF-8: all five screens fit 80 by 24.** Persona developer. Covers P4-01, P4-02, P4-03, P4-06, P4-10 (P4-03 AC-4 names 80 by 24). Needs `tmux`.
 - Steps: `tmux new-session -d -s accxf8 -x 80 -y 24 -c "$X" "unset HERDR_ENV HERDR_PANE_ID HERDR_BIN_PATH; $T $F"`. For each of `/config`, `/providers`, `/models`, `/profiles`, `/doctor` (n = 1 to 5): `tmux send-keys -t accxf8 -l '<command>'`; `tmux send-keys -t accxf8 Enter`; `sleep 3`; `tmux capture-pane -p -J -t accxf8 > "$X/xf8-<n>.txt"` (`-J` joins lines tmux wrapped, so content that overflowed 80 columns shows as one long line); `tmux send-keys -t accxf8 Escape`; `sleep 1`; `tmux capture-pane -p -J -t accxf8 > "$X/xf8-<n>-closed.txt"`; if the screen's title is still in it, send Escape once more, wait 1 s and capture again. `tmux kill-session -t accxf8`.
-- Pass: for each open capture: it holds the screen's title text (`Settings · profile fixture`, `Providers · profile fixture`, `Model roles - profile fixture`, `Profiles (`, `Doctor:`), so the top is not clipped; the display-width check `python3 -c 'import sys,unicodedata as u; print(sum(1 for l in sys.stdin.read().split("\n") if sum(2 if u.east_asian_width(c) in "WF" else 0 if u.combining(c) else 1 for c in l.rstrip()) > 80))' < file` prints 0 (it counts terminal columns, two for a wide character, zero for a combining mark, after removing the trailing spaces `-J` keeps); the last non-blank line is the screen's key hint line, so the bottom is not clipped: it equals the last non-blank line of the same screen's recording under `tools/smoke/tests/fixtures/screens/phase4a/`, or, where the hint is shortened to fit 80 columns, is a non-empty prefix of it that holds `Esc` (the tester quotes both). For each closed capture: no title text of any of the five screens, and the composer is visible.
+- Pass: for each open capture: it holds the screen's title text (`Settings · profile fixture`, `Providers · profile fixture`, `Model roles - profile fixture`, `Profiles (`, `Doctor:`), so the top is not clipped; the display-width check `python3 -c 'import sys,unicodedata as u; print(sum(1 for l in sys.stdin.read().split("\n") if sum(2 if u.east_asian_width(c) in "WF" else 0 if u.combining(c) else 1 for c in l.rstrip()) > 80))' < file` prints 0 (it counts terminal columns, two for a wide character, zero for a combining mark, after removing the trailing spaces `-J` keeps). The screen's complete 80-column key hint must be present, with its closing border where applicable; the hint need not be the final non-blank line. Providers places its tab/key hint inside its border, with a closing `╰─…─╯` below; Profiles places hints in its header with details below. Model roles may use `Enter open  Esc close  ? keys`, or wrap its complete footer over `Enter change … Ctrl+R reload` and `Esc close ? keys`; quote the actual complete hint and its recording reference rather than require one contiguous line. For each closed capture: no title text of any of the five screens, and the composer is visible.
 - Evidence: the five title lines, the five counts, the five quoted hint lines and the five closed-capture checks.
 
 **XF-9: idle cost after every screen was used.** Persona developer. Covers the five screens, the idle budget of P1-11 and the zero-idle-bytes rule of P4-01 REQ-15.
@@ -683,7 +689,7 @@ cargo test -p hermes-client --test live_config_surface -- --ignored --nocapture 
 cargo test -p hermes-client --test live_rest_config -- --ignored --nocapture live_write_round_trip_on_fixture
 cargo test -p talaria-cli --test live_providers -- --ignored --nocapture live_endpoint_round_trip_on_fixture
 cargo test -p talaria-cli --test live_model_roles round_trip_writes_on_fixture -- --ignored --nocapture
-cargo test -p talaria-cli --test live_profiles -- --ignored --nocapture live_profiles_write_on_fixture
+cargo test -p talaria-cli --test live_profiles -- --ignored --nocapture live_profiles_configure_round_trip
 ```
 
 PASS: each exits 0 and prints its signal (`LIVE_CONFIG_SURFACE_RESULT: PASSED` with `write-restored` for C10 and C19; `LIVE_SETTINGS_RESULT: PASSED`; `LIVE_PROVIDERS_RESULT: PASSED`; `LIVE_MODEL_ROLES_RESULT: PASSED` with its U1 line; the profiles test's pass line), and none prints `SKIPPED`; each test restores and reads back its own values. The operator unsets `TALARIA_PROBE_WRITES` afterwards. Evidence: the five signal lines and the operator's note.
@@ -714,6 +720,12 @@ These settle points where two rules of the issue could be read against each othe
 4. **Dropping a row or a step before the freeze (settled decision 2).** Let N be 60 minus the rows dropped, and S 17 minus the steps dropped. In one commit whose message gives the reason, the lead changes: in the issue, every `60` (Objective, user-visible result, REQ-7, REQ-9, the Tests paragraph, UAT-1, UAT-2, AC-5, AC-9), the row counts `13 + 36 + 10 + 1` (AC-7), `36`, `10`, the 17 operator source rows, the 19 agent source rows and the 19 operator items (REQ-11 to REQ-14, UAT-5, AC-8) as far as they drop, and, for a dropped step, every `17` (REQ-2, REQ-10, UAT-3, the AUTO-12 and AUTO-13 pass rule); here, the section 4 skeleton (rows removed) and the red-run line (`FAILED (N problems, 0 of N rows PASS)`); and in the checker, the `IDS=` line (the only list: the test script builds its rows from it). In the test script: case 1's `58 of 58` becomes `N of N`; a case that names a dropped id (`P4-10 UAT-6`, `AUTO-5`, `XF-2`, `P4-03 UAT-2`, `AUTO-1`, `OP-1`, `P4-06 UAT-6`, `XF-1`, `AUTO-2`, `AUTO-3`, `XF-6`) names another kept id in its place, with the same role; the number of cases stays 24. For a dropped smoke step, the test author deletes that step's functions, screens and wording constants in a commit `test(smoke): drop step <name> (operator decision)`, and the counts of functions (34 step functions, the lists in 9.9) and steps are updated. The lead lists every number changed in a comment on the issue before the freeze. Dropping after the freeze is not possible: it is a new candidate.
 5. **A source row whose Hermes behaviour differs on the candidate's Hermes release.** The source issue says which facts to re-verify at the pinned commit. If P4-00's finding says a call moved to another transport, the source rows follow the issue as edited by the planner; a row that only passes with the old transport is a FAIL reported to the owner.
 6. **A key card is never submitted by an agent.** An agent row or smoke step that would press Enter in a key card (P4-02's `API key for <label>` card) is out of bounds, whatever the key: Enter validates, and Hermes's validate route answers `ok: true` on HTTP 429, after which P4-02 saves (section 2.2). Such a scenario is the operator's.
+
+### 8.2 Approved corrections on the frozen candidate
+
+The corrections above follow [the first correction and rerun ruling](https://github.com/infiquetra/talaria/issues/255#issuecomment-6443054455): the live profile test selectors, the background detach and source-profile scan exceptions, terminal-backed XF-5 discovery, conditional Esc in XF-7, and actual 80-column hint placement in XF-8. [The second correction and rerun ruling](https://github.com/infiquetra/talaria/issues/255#issuecomment-6444601815) aligns XF-2 with schema key `model`, permits only read-only reasoning-effort badge hydration after `/model`, and records the harness observation repairs for masked captions, number-editor hints, wrapped sign-in instructions, counting-stream observations and wrapped model-role hints. [The Cargo-cache rerun ruling](https://github.com/infiquetra/talaria/issues/255#issuecomment-6444490912) requires a separate temporary target for the baseline worktree in AUTO-7. Every earlier failed run remains in the corresponding evidence section; no product code, expected behavior or frozen binary changed.
+
+[The public-safety correction](https://github.com/infiquetra/talaria/issues/255#issuecomment-6446478367) adds `(^|[^A-Za-z0-9])` before the generic key prefix in the AC-11 regex, preserving all three positive controls while avoiding the `sk-execution` substring in the older Phase 1 record's `terminal-task-execution` prose. The AUTO-6 expression above follows the same corrected pattern; the evidence preserves the actual original run commands. The same comment supplies the section 10.4 at-rest receipt.
 
 ## 9. The smoke suite extension
 
@@ -1085,6 +1097,7 @@ All: operator preconditions met; release build, `talaria --profile fixture --pro
 - Given an idle session
 - When the tester types `/providers`, Enter, reads; Tab, reads; Tab, reads; Esc; types `/model`, Enter, `openrouter`, presses Down to the OpenRouter row, reads, Enter, reads; Esc twice, reads
 - Then read 1 shows `Providers · profile fixture`, `Ollama Cloud` with status `ready ·` and `key …` plus four characters, and `OpenRouter` with `no key`; read 2 shows `not signed in` or `signed in` per row; read 3 shows `+ Add an endpoint`; read 4 shows OpenRouter labelled `set up in /providers`; read 5 shows `API key for OpenRouter` and no picker; the last shows the transcript; no key's first characters anywhere
+- The section 3 read-only effort-badge hydration exception applies after `/model`, with identical composer rows and remaining status fields and zero outbound `session.mutate` or `prompt.submit` frames.
 - Evidence: the six pane reads; the time from Enter to the Keys list
 - Result: NOT RUN
 
@@ -1349,3 +1362,22 @@ Live rules: `T=<checkout>/target/debug/talaria` (the branch build); profile `fix
 - Then the first shows `Profiles` as `FAIL` with `the gateway never discovered a profile named nosuch` and the fix `Create the profile, or check the name with hermes profile list.`, `Attach` as `skip`, and `exit=1`; the second prints a usage error and `exit=2`
 - Evidence: the pane text
 - Result: NOT RUN
+
+## Settled before the next phase
+
+The parent [settled decisions and operating rulings](https://github.com/infiquetra/talaria/issues/216#issuecomment-6432512594) stand: C-1 supplies shared REST POST and DELETE helpers; C-2 keeps model-role and provider ownership outside the generic settings editor; C-3 keeps `SETTINGS_LINKS` with settings and the profiles premise with profiles; C-4 shares ticketless status reads with an eight-second timeout; C-5 makes all six source issues start gates; C-6 gives this acceptance issue's operator assignments precedence; C-7 accepts the queued client-settings gap; C-8 sets the configuration document limit strictly below 600 lines and links the model-role guide.
+
+The same parent comment records D-1's verified loopback REST surface with read-back and digest checks; D-2's category layout, ownership split and secret controls; D-3's named tester's isolated fixture-only write authorization with restoration (default and restart remain operator-only); D-4's verified provider routes and masked secrets; D-5's atomic model-role blocks; D-6's read-only profile listing with creation and deletion deferred; D-7's ticketless doctor status, operator-confirmed restart and report format; and D-8's accepted client-settings gap. Benchmark dispatch and merge authority were granted there. These historical rulings do not change this gate's operator-only write rows.
+
+The parent [planning and record-shape confirmation](https://github.com/infiquetra/talaria/issues/216#issuecomment-6432751236) records the verified source gates, transport symbols, pinned Hermes contract and document limit. Both Shape A's four committed acceptance files and Shape B's PR body and evidence comments are required. The parent [freeze](https://github.com/infiquetra/talaria/issues/216#issuecomment-6442756797) fixes candidate `8b2fe42b1a93a412ca81536cd2ec0ddcd0346977`, baseline `02126748f9e637a4d6562355cb27447c4a1a3c6a`, Hermes `v0.22.4` and Herdr `herdr 0.9.4` after smoke PR #353.
+
+On 2026-10-27, all 60 rows (41 agent rows and 19 operator rows) passed on that candidate. Their complete ordered evidence, including earlier failed runs, approved retries, and [the operator's Stage 3 verification and confirmation](https://github.com/infiquetra/talaria/issues/255#issuecomment-6446854559), is in [the evidence file](../../../acceptance/v0.7.0/phase-4a-evidence.md) and [the record](../../../acceptance/v0.7.0/phase-4a.md) (`ACCEPTANCE_RESULT: PASSED (60 of 60 rows PASS, candidate 8b2fe42)`).
+
+Section 10.4 facts established by the supplied candidate evidence:
+
+- AUTO-9's `palette` step passes with the additional local commands. AUTO-12 and AUTO-13 each pass all 17 steps in their final runs, including masked text entry without submitting the key card and the incomplete-preset path after `5` then Left.
+- P4-03 UAT-5 captures the incomplete-preset refusal and wrapped Mixture of Agents unsaved-changes question; no review is offered for the invalid preset. P4-03 UAT-2, UAT-3 and UAT-4 verify the write reviews (`Review changes to Main - profile fixture`, `Fallbacks`, and `Helpers`) and full value restoration.
+- XF-2's approved final run captures `minimax-m3.1-flash` on `ollama-cloud` consistently in settings, model roles and profiles. XF-6 captures served `default`, profile-specific titles for both profiles, and no opposite-profile title leakage. The model-role title uses a hyphen; settings and providers use a middle dot.
+- The candidate pins Hermes `v0.22.4` at `4d04303818b61bf3aa09278af48356315515965b`. P4-10 UAT-4, P4-10 UAT-5 and XF-10 verify both refused/cancelled restart (`exit=3`, `Not restarted.`) and confirmed gateway restart (`Gateway restarted in 7 s`) with automatic session reconnection and screen reload across `/config`, `/providers`, `/models` and `/profiles`.
+- The passing smoke runs, source captures and Stage 3 operator rows verify the displayed constants along all exercised paths, including wrapped hints and the read-only effort-badge exception documented above.
+- All supplied before/after protected-file comparisons are equal (`cmp=0`), including the two passing phase 4a smoke runs and the post-sitting snapshot after the `cmp=1` digest control in P4-01 UAT-2. The lead's [at-rest receipt](https://github.com/infiquetra/talaria/issues/255#issuecomment-6446478367) separately verifies `config.yaml`, `profile.yaml`, `SOUL.md` and `.env` across an 86-second idle interval, from `2026-10-27T15:42:49Z` to `2026-10-27T15:44:15Z`, with the gateway running: four files, `cmp=0`. No file is excluded from the comparison.
