@@ -333,9 +333,25 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
             deep_merge(&mut state.raw, &patch);
         }
         state.requests.push(request.clone());
-        let switch = state.switches.entry(key.clone()).or_default().clone();
+        let switch_key = if state.switches.contains_key(&key) {
+            key.clone()
+        } else if let Some((base, _)) = request.path.split_once('?') {
+            let base_key = route(&request.method, base);
+            if state.switches.contains_key(&base_key) {
+                base_key
+            } else {
+                key.clone()
+            }
+        } else {
+            key.clone()
+        };
+        let switch = state
+            .switches
+            .entry(switch_key.clone())
+            .or_default()
+            .clone();
         if switch.first_401 {
-            state.switches.entry(key.clone()).or_default().first_401 = false;
+            state.switches.entry(switch_key).or_default().first_401 = false;
         }
         let (status, body) = respond(&request, &key, &switch, &mut state);
         if let Some(external) = &mut state.external
