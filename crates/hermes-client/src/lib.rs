@@ -14,6 +14,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod capabilities_api;
 pub mod channel;
 pub mod config_api;
 pub mod connect;

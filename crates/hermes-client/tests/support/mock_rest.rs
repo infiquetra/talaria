@@ -132,6 +132,7 @@ struct ExternalWrite {
     armed: bool,
 }
 struct State {
+    capabilities: Option<CapabilityLists>,
     requests: Vec<RecordedRequest>,
     tickets: BTreeSet<String>,
     defaults: Value,
@@ -163,6 +164,7 @@ impl MockRest {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let state = Arc::new(Mutex::new(State {
+            capabilities: None,
             requests: Vec::new(),
             tickets: BTreeSet::new(),
             defaults: serde_json::from_slice(&fixture("config-defaults.json")).unwrap(),
@@ -191,6 +193,13 @@ impl MockRest {
     }
     pub fn origin(&self) -> String {
         format!("http://{}", self.address)
+    }
+    pub fn with_capabilities(self) -> Self {
+        self.state.lock().unwrap().capabilities = Some(CapabilityLists {
+            skills: capability_fixture("rest/skills.json"),
+            toolsets: capability_fixture("rest/toolsets.json"),
+        });
+        self
     }
     pub async fn requests(&self) -> Vec<RecordedRequest> {
         self.state.lock().unwrap().requests.clone()
@@ -379,14 +388,22 @@ fn respond(
         return json_reply(401, json!({"detail":"Unauthorized"}));
     }
     let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
-    let own_profile = state.own_profile.as_deref();
-    let foreign_query = query_pairs(&request.path)
+    let has_profile = query_pairs(&request.path)
         .iter()
-        .any(|(name, value)| name == "profile" && own_profile != Some(value.as_str()));
-    let foreign_body = body
-        .get("profile")
-        .is_some_and(|value| own_profile.is_none() || value.as_str() != own_profile);
-    if foreign_query || foreign_body {
+        .any(|(name, _)| name == "profile")
+        || body.get("profile").is_some();
+    let allowed_profile = state.own_profile.as_deref().is_some_and(|own| {
+        query_pairs(&request.path)
+            .iter()
+            .filter(|(key, _)| key == "profile")
+            .all(|(_, value)| value == own || value.is_empty() || value == "current")
+            && body.get("profile").is_none_or(|value| {
+                value
+                    .as_str()
+                    .is_some_and(|value| value == own || value.is_empty() || value == "current")
+            })
+    });
+    if has_profile && !allowed_profile {
         return json_reply(403, json!({"detail":"profile_scope_mismatch"}));
     }
     if let Some((status, detail)) = &switch.failure {
@@ -398,6 +415,11 @@ fn respond(
     if let Some(handler) = state.routes.get(key) {
         let (status, body) = handler(request);
         return json_reply(status, body);
+    }
+    if let Some(capabilities) = &mut state.capabilities
+        && let Some((status, reply)) = capabilities.respond(request, &body)
+    {
+        return json_reply(status, reply);
     }
     match (request.method.as_str(), path) {
         ("GET", "/api/config/schema") => (200, state.schema.clone()),
@@ -433,6 +455,131 @@ fn respond(
             json_reply(200, json!({"ok":true}))
         }
         _ => json_reply(404, json!({"detail":"Not Found"})),
+    }
+}
+
+pub fn capability_fixture(name: &str) -> Value {
+    serde_json::from_slice(
+        &std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/capabilities")
+                .join(name),
+        )
+        .expect("capabilities fixture"),
+    )
+    .expect("fixture JSON")
+}
+struct CapabilityLists {
+    skills: Value,
+    toolsets: Value,
+}
+impl CapabilityLists {
+    fn respond(&mut self, request: &RecordedRequest, body: &Value) -> Option<(u16, Value)> {
+        let path = request.path.split('?').next().unwrap();
+        let query = query_pairs(&request.path);
+        let selector = |key: &str| {
+            query
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.as_str())
+                .unwrap_or("")
+        };
+        let reply = match (request.method.as_str(), path) {
+            ("GET", "/api/skills") => (200, self.skills.clone()),
+            ("PUT", "/api/skills/toggle") => {
+                if let Some(rows) = self.skills.as_array_mut() {
+                    for row in rows.iter_mut().filter(|row| row["name"] == body["name"]) {
+                        row["enabled"] = body["enabled"].clone();
+                    }
+                }
+                (
+                    200,
+                    json!({"ok":true,"name":body["name"],"enabled":body["enabled"]}),
+                )
+            }
+            ("GET", "/api/skills/content") => {
+                if self
+                    .skills
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["name"] == selector("name"))
+                {
+                    (200, capability_fixture("rest/skill-content.json"))
+                } else {
+                    (
+                        404,
+                        json!({"detail":format!("Skill '{}' not found.",selector("name"))}),
+                    )
+                }
+            }
+            ("GET", "/api/skills/hub/search") => {
+                let mut reply = capability_fixture("rest/hub-search.json");
+                if selector("q") == "zzz" {
+                    reply["results"] = json!([]);
+                }
+                (200, reply)
+            }
+            ("GET", "/api/skills/hub/preview") => {
+                if selector("identifier").contains("nosuch") {
+                    (
+                        404,
+                        json!({"detail":format!("Skill not found: {}", selector("identifier"))}),
+                    )
+                } else {
+                    (200, capability_fixture("rest/hub-preview.json"))
+                }
+            }
+            ("GET", "/api/skills/hub/scan") => {
+                let id = selector("identifier");
+                if id.contains("nosuch") {
+                    (404, json!({"detail":format!("Skill not found: {id}")}))
+                } else {
+                    let policy = if id.ends_with("ask") {
+                        "ask"
+                    } else if id.ends_with("block") {
+                        "block"
+                    } else {
+                        "allow"
+                    };
+                    (
+                        200,
+                        capability_fixture(&format!("rest/hub-scan-{policy}.json")),
+                    )
+                }
+            }
+            ("GET", "/api/tools/toolsets") => (200, self.toolsets.clone()),
+            ("GET", "/api/dashboard/plugins/catalog") => {
+                (200, capability_fixture("rest/plugin-catalog.json"))
+            }
+            (method, path) if path.starts_with("/api/tools/toolsets/") => {
+                let tail = path.strip_prefix("/api/tools/toolsets/").unwrap();
+                let name = decode_query(tail.strip_suffix("/config").unwrap_or(tail));
+                if let Some(row) = self
+                    .toolsets
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|row| row["name"] == name)
+                {
+                    if method == "GET" && tail.ends_with("/config") {
+                        (200, capability_fixture("rest/toolset-config.json"))
+                    } else if method == "PUT" && !tail.ends_with("/config") {
+                        row["enabled"] = body["enabled"].clone();
+                        (
+                            200,
+                            json!({"ok":true,"name":name,"platform":row["platform"],"enabled":body["enabled"],"post_setup_started":if name == "image_gen" && body["enabled"] == true { json!("fixture-setup") } else { Value::Null }}),
+                        )
+                    } else {
+                        return None;
+                    }
+                } else {
+                    (400, json!({"detail":format!("Unknown toolset: {name}")}))
+                }
+            }
+            _ => return None,
+        };
+        Some(reply)
     }
 }
 fn remove_key(value: &mut Value, key: &str) {

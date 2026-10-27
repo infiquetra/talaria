@@ -1,0 +1,8 @@
+{
+  "status": "found",
+  "entry": {
+    "name": "fixture-plugin",
+    "repo": "https://example.invalid/fixture/plugin",
+    "sha": "abc1234567890"
+  }
+}

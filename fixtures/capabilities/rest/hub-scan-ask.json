@@ -1,0 +1,17 @@
+{
+  "name": "fixture-ask",
+  "identifier": "official/fixture-ask",
+  "source": "official",
+  "trust_level": "official",
+  "verdict": "reviewed",
+  "summary": "Synthetic scan.",
+  "policy": "ask",
+  "policy_reason": "Needs operator review.",
+  "findings": [],
+  "severity_counts": {
+    "critical": 1,
+    "high": 2,
+    "medium": 2,
+    "low": 2
+  }
+}

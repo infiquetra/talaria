@@ -1,0 +1,50 @@
+[
+  {
+    "name": "web",
+    "label": "web",
+    "description": "Synthetic toolset.",
+    "platform": "cli",
+    "platform_label": "Terminal",
+    "enabled": true,
+    "configured": true,
+    "tools": [
+      "fixture_tool"
+    ]
+  },
+  {
+    "name": "image_gen",
+    "label": "image_gen",
+    "description": "Synthetic toolset.",
+    "platform": "cli",
+    "platform_label": "Terminal",
+    "enabled": false,
+    "configured": false,
+    "tools": [
+      "fixture_tool"
+    ]
+  },
+  {
+    "name": "fixture-toolset",
+    "label": "fixture-toolset",
+    "description": "Synthetic toolset.",
+    "platform": "cli",
+    "platform_label": "Terminal",
+    "enabled": true,
+    "configured": true,
+    "tools": [
+      "fixture_tool"
+    ]
+  },
+  {
+    "name": "fixture-platform",
+    "label": "fixture-platform",
+    "description": "Synthetic toolset.",
+    "platform": "discord",
+    "platform_label": "Discord",
+    "enabled": true,
+    "configured": true,
+    "tools": [
+      "fixture_tool"
+    ]
+  }
+]

@@ -1,0 +1,34 @@
+[
+  {
+    "name": "fixture-skill-a",
+    "description": "Synthetic fixture skill.",
+    "category": "creative",
+    "enabled": true,
+    "usage": 0,
+    "provenance": "bundled"
+  },
+  {
+    "name": "fixture-skill-b",
+    "description": "Synthetic fixture skill.",
+    "category": "development",
+    "enabled": false,
+    "usage": 0,
+    "provenance": "hub"
+  },
+  {
+    "name": "fixture-skill-c",
+    "description": "Synthetic fixture skill.",
+    "category": null,
+    "enabled": true,
+    "usage": 0,
+    "provenance": "agent"
+  },
+  {
+    "name": "fixture-skill-d",
+    "description": null,
+    "category": "creative",
+    "enabled": true,
+    "usage": 0,
+    "provenance": "external"
+  }
+]

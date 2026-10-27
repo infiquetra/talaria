@@ -149,6 +149,8 @@ pub enum KeyContext {
     RoutePicker,
     /// The MCP servers screen.
     Mcp,
+    /// The capabilities screen.
+    Capabilities,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -1866,6 +1868,14 @@ impl KeyMap {
                 )
             })
             .collect()
+    }
+
+    pub fn resolve_capabilities(
+        &self,
+        _context: KeyContext,
+        _key: &Key,
+    ) -> Option<crate::capabilities::KeyAction> {
+        todo!("capabilities stub")
     }
 
     /// Resolve a key in the settings screen.

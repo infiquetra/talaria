@@ -332,6 +332,8 @@ pub enum FrameKind {
 /// One frame the mock read from the client.
 #[derive(Clone, Debug)]
 pub struct Seen {
+    /// The complete outbound frame, including its envelope.
+    pub raw: Value,
     /// Position among everything read, from 0.
     pub index: usize,
     pub kind: FrameKind,
@@ -394,6 +396,7 @@ enum Cmd {
 }
 
 struct State {
+    capabilities: Option<CapabilityScript>,
     delegation_paused: bool,
     waited_requests: HashMap<String, usize>,
     session_id: String,
@@ -449,6 +452,178 @@ struct State {
     background: BackgroundScript,
     mcp: McpSide,
     drop_after: HashSet<String>,
+}
+
+type CapabilityFailure = (String, String, i64, String, Value);
+struct CapabilityScript {
+    profile: String,
+    plugins: Value,
+    failures: VecDeque<CapabilityFailure>,
+    unchanged: bool,
+}
+fn capability_fixture(name: &str) -> Value {
+    serde_json::from_slice(
+        &std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/capabilities/socket")
+                .join(name),
+        )
+        .expect("capability fixture"),
+    )
+    .expect("fixture JSON")
+}
+fn plan_capabilities(
+    state: &mut State,
+    method: &str,
+    id: &Value,
+    params: &Value,
+    outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
+) -> bool {
+    if !matches!(
+        method,
+        "skills.manage" | "skills.reload" | "plugins.manage" | "plugins.catalog.lookup"
+    ) {
+        return false;
+    }
+    let Some(script) = state.capabilities.as_mut() else {
+        return false;
+    };
+    if state.silent_all || state.silent_methods.contains(method) {
+        return true;
+    }
+    let mut error = None;
+    let action = params["action"].as_str().unwrap_or("");
+    if method != "skills.reload" && params["profile"].as_str() != Some(script.profile.as_str()) {
+        error = Some((
+            4001,
+            "profile_mismatch".to_owned(),
+            json!({"reason":"profile_mismatch"}),
+        ));
+    } else if let Some(index) = script
+        .failures
+        .iter()
+        .position(|(wanted, wanted_action, ..)| wanted == method && wanted_action == action)
+    {
+        let (_, _, code, message, data) = script.failures.remove(index).unwrap();
+        error = Some((code, message, data));
+    }
+    let result = if error.is_some() {
+        Value::Null
+    } else {
+        match (method, action) {
+            ("skills.manage", "browse") => capability_fixture(if params["page"] == 2 {
+                "skills-manage-browse-page-2.json"
+            } else {
+                "skills-manage-browse.json"
+            }),
+            ("skills.manage", "install") => json!({"installed":true,"name":params["query"]}),
+            ("skills.reload", _) => capability_fixture("skills-reload.json"),
+            ("plugins.catalog.lookup", _) => {
+                let name = params["name"].as_str().unwrap_or("");
+                if name == "fixture-plugin" || name == "fixture-nosha" {
+                    let mut reply = capability_fixture("plugins-catalog-lookup.json");
+                    reply["entry"]["name"] = json!(name);
+                    if name == "fixture-nosha" {
+                        reply["entry"].as_object_mut().unwrap().remove("sha");
+                    }
+                    reply
+                } else if name.is_empty()
+                    || name.len() > 64
+                    || !name.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_-".contains(&byte)
+                    })
+                {
+                    json!({"status":"invalid_name"})
+                } else {
+                    json!({"status":"unknown"})
+                }
+            }
+            ("plugins.manage", "list") => json!({"plugins":script.plugins}),
+            ("plugins.manage", "toggle") => {
+                let mut reply = capability_fixture("plugins-manage-toggle.json");
+                reply["unchanged"] = json!(script.unchanged);
+                script.unchanged = false;
+                if let Some(row) = script
+                    .plugins
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|row| row["key"] == params["key"])
+                {
+                    if reply["unchanged"] != true {
+                        row["status"] = json!(if params["enable"] == true {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        });
+                    }
+                    reply["plugin"] = row.clone();
+                    reply["name"] = row["name"].clone();
+                }
+                reply
+            }
+            ("plugins.manage", "install") => {
+                let reply = capability_fixture("plugins-manage-install.json");
+                if !script
+                    .plugins
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["name"] == "fixture-plugin")
+                {
+                    let rows = capability_fixture("plugins-manage-list.json");
+                    script
+                        .plugins
+                        .as_array_mut()
+                        .unwrap()
+                        .push(rows["plugins"][2].clone());
+                }
+                reply
+            }
+            ("plugins.manage", "remove") => {
+                let name = params["name"].as_str().unwrap_or("");
+                let row = script
+                    .plugins
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["name"] == name);
+                if row.is_some_and(|row| row["source"] == "bundled") {
+                    error = Some((
+                        5026,
+                        "Bundled plugins cannot be removed from the dashboard.".into(),
+                        Value::Null,
+                    ));
+                } else if row.is_none_or(|row| row["source"] == "entrypoint") {
+                    let directory = std::env::temp_dir().join("capability-fixture-home/plugins");
+                    error = Some((
+                        5026,
+                        format!("Plugin not found in {}", directory.display()),
+                        Value::Null,
+                    ));
+                } else {
+                    script
+                        .plugins
+                        .as_array_mut()
+                        .unwrap()
+                        .retain(|row| row["name"] != name);
+                }
+                json!({"ok":true,"name":name,"cleared_memory_provider":false})
+            }
+            _ => {
+                error = Some((-32602, "Unsupported capability action".into(), Value::Null));
+                Value::Null
+            }
+        }
+    };
+    let frame = match error {
+        Some((code, message, data)) => {
+            json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message,"data":data}})
+        }
+        None => json!({"jsonrpc":"2.0","id":id,"result":result}),
+    };
+    outgoing.push((None, frame.to_string(), reply_meta(id, method)));
+    true
 }
 
 struct ScriptedError {
@@ -522,6 +697,7 @@ fn new_shared(
 ) -> Arc<Shared> {
     Arc::new(Shared {
         state: Mutex::new(State {
+            capabilities: None,
             delegation_paused: false,
             waited_requests: HashMap::new(),
             session_id: session_id.to_owned(),
@@ -565,6 +741,42 @@ fn new_shared(
 }
 
 impl MockGateway {
+    pub fn with_capabilities(&self, profile: &str) {
+        lock(&self.shared).capabilities = Some(CapabilityScript {
+            profile: profile.to_owned(),
+            plugins: capability_fixture("plugins-manage-list.json")["plugins"].clone(),
+            failures: VecDeque::new(),
+            unchanged: false,
+        });
+    }
+    pub fn fail_capability(
+        &self,
+        method: &str,
+        action: &str,
+        code: i64,
+        message: &str,
+        data: Value,
+    ) {
+        lock(&self.shared)
+            .capabilities
+            .as_mut()
+            .expect("capabilities enabled")
+            .failures
+            .push_back((
+                method.to_owned(),
+                action.to_owned(),
+                code,
+                message.to_owned(),
+                data,
+            ));
+    }
+    pub fn unchanged_capability_toggle(&self) {
+        lock(&self.shared)
+            .capabilities
+            .as_mut()
+            .expect("capabilities enabled")
+            .unchanged = true;
+    }
     /// Start the mock for the recorded session and a client attached to it.
     pub async fn start() -> (Self, Client, InboundStream) {
         Self::start_with_session(SESSION_ID).await
@@ -1431,6 +1643,7 @@ async fn handle_frame(
         let mut state = lock(shared);
         let index = state.seen.len();
         state.seen.push(Seen {
+            raw: frame.clone(),
             index,
             kind,
             id: id.clone(),
@@ -1631,6 +1844,9 @@ fn plan_request(
         return;
     }
     if plan_mcp(state, method, id, params, outgoing) {
+        return;
+    }
+    if plan_capabilities(state, method, id, params, outgoing) {
         return;
     }
     if matches!(
@@ -4818,9 +5034,9 @@ pub struct ControlSeen {
 
 struct IssuedTicket {
     value: String,
+    purpose: String,
     profile_id: String,
     scope: String,
-    purpose: String,
     used: bool,
     at: Instant,
 }
@@ -4838,6 +5054,8 @@ pub struct TicketSeen {
 }
 
 struct StandaloneInfo {
+    capability_http: Mutex<Vec<(String, String)>>,
+    capability_http_failure: Mutex<Option<u16>>,
     home: String,
     fixture: String,
     origin: String,
@@ -4951,6 +5169,8 @@ impl StandaloneGateway {
             .set_nonblocking(true)
             .unwrap_or_else(|_| panic!("the mock could not set its port non-blocking"));
         let info = Arc::new(StandaloneInfo {
+            capability_http: Mutex::new(Vec::new()),
+            capability_http_failure: Mutex::new(None),
             home: home.to_string_lossy().into_owned(),
             fixture: fixture.to_string_lossy().into_owned(),
             origin: format!("http://127.0.0.1:{port}"),
@@ -5033,6 +5253,12 @@ impl StandaloneGateway {
     /// The loopback origin the identify answer names.
     pub fn api_origin(&self) -> &str {
         &self.info.origin
+    }
+    pub fn capability_http_requests(&self) -> Vec<(String, String)> {
+        plain(&self.info.capability_http).clone()
+    }
+    pub fn fail_capability_http(&self, status: u16) {
+        *plain(&self.info.capability_http_failure) = Some(status);
     }
 
     /// Every control request read, in order.
@@ -5307,9 +5533,9 @@ fn issue_ticket(info: &StandaloneInfo, request: &Value) -> Value {
     let value = ticket_token(tickets.len() as u64 + 1);
     tickets.push(IssuedTicket {
         value: value.clone(),
+        purpose: params["purpose"].as_str().unwrap_or("").to_owned(),
         profile_id: profile.to_owned(),
         scope: scope.clone(),
-        purpose: params["purpose"].as_str().unwrap_or("").to_owned(),
         used: false,
         at: Instant::now(),
     });
@@ -5372,6 +5598,30 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
 
 async fn serve_socket(stream: TcpStream, shared: Arc<Shared>, info: Arc<StandaloneInfo>) {
     let _ = stream.set_nodelay(true);
+    let capabilities_enabled = lock(&shared).capabilities.is_some();
+    if capabilities_enabled {
+        let mut bytes = [0; 16384];
+        let header = loop {
+            let Ok(size) = stream.peek(&mut bytes).await else {
+                return;
+            };
+            if size == 0 {
+                return;
+            }
+            let text = String::from_utf8_lossy(&bytes[..size]).into_owned();
+            if text.contains("\r\n\r\n") {
+                break text;
+            }
+            if size == bytes.len() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        };
+        if !header.to_ascii_lowercase().contains("upgrade: websocket") {
+            serve_capability_http(stream, &shared, &info, &header).await;
+            return;
+        }
+    }
     let profile = Arc::new(Mutex::new(String::new()));
     let callback = {
         let profile = Arc::clone(&profile);
@@ -5456,6 +5706,90 @@ async fn serve_socket(stream: TcpStream, shared: Arc<Shared>, info: Arc<Standalo
     drop(commands);
     shared.changed.notify_waiters();
     run_socket(socket, receiver, weak, Arc::downgrade(&shared), connection).await;
+}
+
+async fn serve_capability_http(
+    mut stream: TcpStream,
+    shared: &Shared,
+    info: &StandaloneInfo,
+    header: &str,
+) {
+    let mut words = header.lines().next().unwrap_or("").split_whitespace();
+    let method = words.next().unwrap_or("").to_owned();
+    let path = words.next().unwrap_or("").to_owned();
+    plain(&info.capability_http).push((method.clone(), path.clone()));
+    let credential = header
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("x-hermes-gateway-ticket"))
+        .map(|(_, value)| value.trim())
+        .unwrap_or("");
+    let profile = {
+        let mut tickets = plain(&info.tickets);
+        tickets
+            .iter_mut()
+            .find(|ticket| {
+                ticket.value == credential && !ticket.used && ticket.purpose == "native-http"
+            })
+            .map(|ticket| {
+                ticket.used = true;
+                ticket.profile_id.clone()
+            })
+    };
+    let profile_name = if profile.as_deref() == Some(info.fixture.as_str()) {
+        "fixture"
+    } else {
+        "default"
+    };
+    let selector = path.split_once('?').and_then(|(_, query)| {
+        query
+            .split('&')
+            .find_map(|part| part.strip_prefix("profile="))
+    });
+    let (status, body) = if profile.is_none() {
+        (401, json!({"detail":"Unauthorized"}))
+    } else if selector
+        .is_some_and(|name| name != profile_name && name != "current" && !name.is_empty())
+    {
+        (403, json!({"detail":"profile_scope_mismatch"}))
+    } else if let Some(status) = *plain(&info.capability_http_failure) {
+        (status, json!({"detail":"Synthetic failure"}))
+    } else {
+        match (method.as_str(), path.split('?').next().unwrap_or("")) {
+            ("GET", "/api/skills") => (
+                200,
+                serde_json::from_slice(
+                    &std::fs::read(
+                        Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("../../fixtures/capabilities/rest/skills.json"),
+                    )
+                    .expect("skills fixture"),
+                )
+                .unwrap(),
+            ),
+            ("GET", "/api/tools/toolsets") => (
+                200,
+                serde_json::from_slice(
+                    &std::fs::read(
+                        Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("../../fixtures/capabilities/rest/toolsets.json"),
+                    )
+                    .expect("toolsets fixture"),
+                )
+                .unwrap(),
+            ),
+            _ => (404, json!({"detail":"Not Found"})),
+        }
+    };
+    let _ = shared;
+    let body = serde_json::to_vec(&body).expect("HTTP reply");
+    let reply = format!(
+        "HTTP/1.1 {status} response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = stream.write_all(reply.as_bytes()).await;
+    let _ = stream.write_all(&body).await;
+    let _ = stream.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------------------------

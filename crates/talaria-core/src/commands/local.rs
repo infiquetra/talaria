@@ -77,6 +77,8 @@ pub enum LocalAction {
     ModelRoles,
     /// Open the MCP servers screen.
     Mcp(crate::mcp::McpOpen),
+    /// Open the capabilities screen.
+    Capabilities,
 }
 
 /// One local command.
@@ -333,6 +335,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[servers | catalogue | apply]",
         takes_argument: true,
         action: LocalAction::Mcp(crate::mcp::McpOpen::Tab(crate::mcp::McpTab::Servers)),
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "capabilities",
+        aliases: &[],
+        summary: "Manage skills, toolsets and plugins for this profile",
+        args_hint: "[skills | hub | toolsets | plugins]",
+        takes_argument: true,
+        action: LocalAction::Capabilities,
         tag: "talaria",
     },
 ];

@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "name": "fixture-toolset",
+  "platform": "cli",
+  "enabled": false,
+  "post_setup_started": null
+}

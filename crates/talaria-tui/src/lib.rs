@@ -2,6 +2,7 @@
 
 pub mod automation;
 pub mod background;
+pub mod capabilities;
 pub mod checklist;
 pub mod comfort_route;
 pub mod composer;

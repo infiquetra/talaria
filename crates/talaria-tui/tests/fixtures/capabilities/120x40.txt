@@ -1,0 +1,40 @@
+Capabilities · profile fixture
+ [Skills 3/4 on]  Skill hub  Toolsets  Plugins
+ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ creative
+ > [x] ascii-art                     bundled  used 3    Draw text banners in the terminal.
+   [ ] audiocraft-audio-generation   hub      used 0    Generate music and sound effects from a text prompt.
+ software-development
+   [x] code-review                   bundled  used 41   Review a diff for correctness and style.
+ (no category)
+   [x] fixture-skill-c               local    used 0    A top-level skill with no category folder.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ascii-art · creative · bundled · used 3
+ Draw text banners in the terminal.
+
+
+
+
+
+
+
+
+
+
+
+ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Space on/off  Enter read  / filter  Tab next tab  r refresh  Esc close
