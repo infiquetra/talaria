@@ -1,0 +1,44 @@
+# recorded
+┌Providers · profile fixture────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│[Keys]  Accounts   Endpoints                                                                                                                                           │
+│› DeepSeek · DEEPSEEK_API_KEY · ready · 2 models · key …abcd                                                                                                           │
+│  Ollama Cloud · OLLAMA_API_KEY · ready · 24 models · key …abcd                                                                                                        │
+│  OpenCode Go · OPENCODE_GO_API_KEY · ready · 50 models · key …abcd                                                                                                    │
+│  OpenCode Zen · OPENCODE_ZEN_API_KEY · ready · 128 models · key …abcd                                                                                                 │
+│  Actual Computer · ACTUAL_API_KEY · no key                                                                                                                            │
+│  Alibaba Cloud (Coding Plan) · ALIBABA_CODING_PLAN_API_KEY · no key · also used by Alibaba Cloud (Coding Plan, China)                                                 │
+│  Alibaba Cloud (Coding Plan, China) · ALIBABA_CODING_PLAN_CN_API_KEY · no key                                                                                         │
+│  Alibaba Cloud (Token Plan) · ALIBABA_TOKEN_PLAN_API_KEY · ready · credential not in this profile's key file · also used by Alibaba Cloud (Token Plan, China)         │
+│  Alibaba Cloud (Token Plan, China) · ALIBABA_TOKEN_PLAN_CN_API_KEY · no key                                                                                           │
+│  Anthropic · ANTHROPIC_API_KEY · ready · credential not in this profile's key file                                                                                    │
+│  Arcee AI · ARCEEAI_API_KEY · no key                                                                                                                                  │
+│  Azure Foundry · AZURE_FOUNDRY_API_KEY · no key                                                                                                                       │
+│  CommandCode · COMMANDCODE_API_KEY · no key · also used by CommandCode (Anthropic)                                                                                    │
+│  DeepInfra · DEEPINFRA_API_KEY · no key                                                                                                                               │
+│  Fireworks AI · FIREWORKS_API_KEY · no key                                                                                                                            │
+│  GitHub Copilot · COPILOT_GITHUB_TOKEN · ready · credential not in this profile's key file                                                                            │
+│  GMI Cloud · GMI_API_KEY · no key                                                                                                                                     │
+│  Google AI Studio · GOOGLE_API_KEY · ready · credential not in this profile's key file                                                                                │
+│  HuggingFace · HF_TOKEN · no key                                                                                                                                      │
+│  Kilo Code · KILOCODE_API_KEY · no key                                                                                                                                │
+│  Kimi / Kimi Coding Plan · KIMI_API_KEY · no key                                                                                                                      │
+│  Kimi / Moonshot (China) · KIMI_CN_API_KEY · no key                                                                                                                   │
+│  LM Studio · LM_API_KEY · no key                                                                                                                                      │
+│  Meta Model API · MODEL_API_KEY · ready · credential not in this profile's key file                                                                                   │
+│  MiniMax · MINIMAX_API_KEY · no key                                                                                                                                   │
+│  MiniMax (China) · MINIMAX_CN_API_KEY · no key                                                                                                                        │
+│  Nebius Token Factory · NEBIUS_API_KEY · no key                                                                                                                       │
+│  NovitaAI · NOVITA_API_KEY · no key                                                                                                                                   │
+│  NVIDIA NIM · NVIDIA_API_KEY · no key                                                                                                                                 │
+│  OpenAI API · OPENAI_API_KEY · ready · credential not in this profile's key file                                                                                      │
+│  OpenRouter · OPENROUTER_API_KEY · no key                                                                                                                             │
+│  Qwen Cloud · DASHSCOPE_API_KEY · no key · also used by Alibaba Cloud DashScope (China), Alibaba Cloud (Coding Plan), Alibaba Cloud (Coding Plan, China)              │
+│  Ramp Router · RAMP_ROUTER_API_KEY · no key                                                                                                                           │
+│  StepFun Step Plan · STEPFUN_API_KEY · no key                                                                                                                         │
+│  Tencent TokenHub · TOKENHUB_API_KEY · no key                                                                                                                         │
+│  Tencent TokenPlan · TOKENPLAN_API_KEY · no key                                                                                                                       │
+│  Upstage Solar · UPSTAGE_API_KEY · no key                                                                                                                             │
+│  Vercel AI Gateway · AI_GATEWAY_API_KEY · no key                                                                                                                      │
+│  xAI · XAI_API_KEY · no key                                                                                                                                           │
+│  Xiaomi MiMo · XIAOMI_API_KEY · no key                                                                                                                                │
+│enter set key · ctrl+d remove · ctrl+r reload · tab next tab · type to filter                                                                                          │

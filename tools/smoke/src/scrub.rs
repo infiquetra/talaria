@@ -97,7 +97,7 @@ impl Scrubber {
     /// Replaces every needle in one pass; the output is never read again.
     pub fn scrub(&self, text: &str) -> String {
         let Some(pattern) = &self.pattern else {
-            return text.to_owned();
+            return scrub_typed_secrets(text.to_owned());
         };
         let mut out = String::with_capacity(text.len());
         let mut last = 0;
@@ -122,8 +122,14 @@ impl Scrubber {
             last = whole.end();
         }
         out.push_str(&text[last..]);
-        out
+        scrub_typed_secrets(out)
     }
+}
+
+fn scrub_typed_secrets(text: String) -> String {
+    let junk = format!("sk-or-v1-{}", "0".repeat(64));
+    text.replace("not-a-real-key", "<typed-secret>")
+        .replace(&junk, "<typed-secret>")
 }
 
 fn trim_separator(value: &str) -> &str {

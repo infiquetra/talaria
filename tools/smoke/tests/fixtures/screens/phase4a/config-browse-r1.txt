@@ -1,0 +1,42 @@
+# recorded
+Settings · profile fixture
+> general          > model                               "minimax-m3.1-flash"          set      may need a restart
+  agent              model_context_length                0                             set      may need a restart
+  terminal           fallback_providers                  [{"base_url":"https://op…     set      may need a restart
+  display            toolsets                            [hermes-cli]                  default  may need a restart
+  delegation         max_concurrent_sessions             (not set)                     default  may need a restart
+  memory             max_live_sessions                   16                            default  may need a restart
+  compression        session.terminal_continue           true                          default  may need a restart
+  security           context_file_max_chars              (not set)                     default  may need a restart
+  browser            context_file_read_timeout           5.0                           default  may need a restart
+  voice              file_read_max_chars                 100000                        default  may need a restart
+  tts                mcp_discovery_timeout               1.5                           default  may need a restart
+  stt                mcp_single_query_discovery_timeout  15.0                          default  may need a restart
+  logging            prefill_messages_file               ""                            default  may need a restart
+  discord            timezone                            ""                            default  may need a restart
+  auxiliary          command_allowlist                   []                            default  may need a restart
+  attachments        hooks_auto_accept                   false                         default  may need a restart
+  bedrock            doctor.live_probe_timeout           10                            default  may need a restart
+  bot_desktop        updates.check                       true                          default  may need a restart
+  curator            updates.pre_update_backup           "quick"                       default  may need a restart
+  database           updates.backup_keep                 5                             default  may need a restart
+  desktop            updates.non_interactive_local_cha…  "stash"                       default  may need a restart
+  gateway            updates.auto_switch_parked_branch   true                          default  may need a restart
+  kanban             updates.parked_branch_strategy      "switch"                      default  may need a restart
+  local_runtime      updates.refresh_cua_driver          true                          default  may need a restart
+  loops              paste_collapse_threshold            5                             default  may need a restart
+  lsp                paste_collapse_threshold_fallback   5                             default  may need a restart
+  matrix             paste_collapse_char_threshold       2000                          default  may need a restart
+  mattermost
+  moa
+  model_catalog
+  monitoring
+  openrouter
+  proxy
+  secrets
+  sessions
+  slack
+  streaming
+model · string · Default model (e.g. anthropic/claude-sonnet-4.6) · default "" · may need a restart · The default model is set on the model roles screen; /model changes
+this session's model. edit in Model roles
+Enter edit · / filter · a review · ? help · Esc close

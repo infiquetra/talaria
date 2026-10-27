@@ -19,6 +19,7 @@ use smoke::steps2a::{run_smoke_2a, scratch_for};
 use smoke::steps2b::run_smoke_2b;
 use smoke::steps3::{run_smoke_3, shell_lines};
 use smoke::suite::Suite;
+use smoke::suite4a::{Phase4aConfig, run_smoke_4a};
 use smoke::terminal::{HerdrCli, Terminal};
 use smoke::tmux::{Paster, TmuxCli};
 
@@ -53,7 +54,7 @@ struct Cli {
     #[arg(long, global = true, default_value = "ollama-cloud")]
     provider: String,
     /// The whole run, in seconds [default: 300 for phase1, 1800 for phase2a, 1500 for phase2b,
-    /// 1200 for phase3].
+    /// 1200 for phase3, 900 for phase4a].
     #[arg(long, global = true)]
     deadline_secs: Option<u64>,
     /// The scale of the per-step limits; the deadline and the quiet periods stay.
@@ -62,7 +63,7 @@ struct Cli {
     /// Where the failure report is written.
     #[arg(long, global = true)]
     report_dir: Option<PathBuf>,
-    /// Which suite runs: phase1, phase2a, phase2b, or phase3.
+    /// Which suite runs: phase1, phase2a, phase2b, phase3, or phase4a.
     #[arg(long, global = true, default_value = "phase1")]
     suite: Suite,
     /// The tmux command line the phase2a suite pastes through.
@@ -92,6 +93,23 @@ fn main() -> ExitCode {
 /// The preflight, the run and the printing.
 fn run(cli: &Cli) -> Result<u8, String> {
     let suite = cli.suite;
+    if suite == Suite::Phase4a {
+        let jq_found = std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|dir| {
+                let jq = dir.join("jq");
+                jq.is_file() && is_executable(&jq)
+            })
+        });
+        if !jq_found {
+            return Err("the phase4a suite needs jq on the PATH to parse the doctor and profiles JSON; install jq and run it again".to_owned());
+        }
+        if cli.profile != "fixture"
+            || cli.model != "minimax-m3.1-flash"
+            || cli.provider != "ollama-cloud"
+        {
+            return Err("the phase4a suite checks texts that name profile fixture, model minimax-m3.1-flash and provider ollama-cloud; run it without --profile, --model and --provider".to_owned());
+        }
+    }
     if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
         return Err(NOT_IN_HERDR.to_owned());
     }
@@ -246,7 +264,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
     // The phase 2a run fixes its seed, so its scratch project, and with it the editor script
     // every launch line names, is known before it starts.
     let seed = match cli.suite {
-        Suite::Phase1 | Suite::Phase3 => None,
+        Suite::Phase1 | Suite::Phase3 | Suite::Phase4a => None,
         Suite::Phase2a | Suite::Phase2b => Some(rand::random::<u64>()),
     };
     let (start_line, resume_line) = match (cli.suite, seed) {
@@ -290,7 +308,9 @@ fn run(cli: &Cli) -> Result<u8, String> {
         Some(dir) => dir.clone(),
         None => temp_root.join(format!("smoke-report-{}", run_id())),
     };
-    let _ = std::fs::create_dir_all(&report_dir);
+    if suite != Suite::Phase4a {
+        let _ = std::fs::create_dir_all(&report_dir);
+    }
 
     let config = SmokeConfig {
         talaria: binary,
@@ -303,7 +323,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
         ),
         step_scale: cli.step_scale,
         // Phase 3 keeps its scratch only when --report-dir asks for the captures.
-        report_dir: if suite == Suite::Phase3 {
+        report_dir: if suite == Suite::Phase3 || suite == Suite::Phase4a {
             cli.report_dir.clone()
         } else {
             Some(report_dir.clone())
@@ -317,10 +337,12 @@ fn run(cli: &Cli) -> Result<u8, String> {
     flag::register(SIGINT, Arc::clone(&stop)).map_err(|error| error.to_string())?;
     flag::register(SIGTERM, Arc::clone(&stop)).map_err(|error| error.to_string())?;
 
-    println!(
-        "talaria: {}",
+    let binary_label = if suite == Suite::Phase4a {
+        "<binary>".to_owned()
+    } else {
         scrubber.scrub(&config.talaria.display().to_string())
-    );
+    };
+    println!("talaria: {binary_label}");
     println!("herdr: {}", scrubber.scrub(&herdr.version()));
 
     let clock = SystemClock::new();
@@ -338,6 +360,15 @@ fn run(cli: &Cli) -> Result<u8, String> {
         }
         Suite::Phase2b => run_smoke_2b(&herdr, &clock, &config, &stop),
         Suite::Phase3 => run_smoke_3(&herdr, &clock, &config, &stop),
+        Suite::Phase4a => run_smoke_4a(
+            &herdr,
+            &clock,
+            &config,
+            &Phase4aConfig {
+                empty_home_parent: config.temp_root.clone(),
+            },
+            &stop,
+        ),
     };
 
     // The scratch project is known now, so the pane text can name it as well.
@@ -348,8 +379,15 @@ fn run(cli: &Cli) -> Result<u8, String> {
         hermes_home.as_deref(),
         &std::env::temp_dir(),
     );
+    let public_text = |text: &str| {
+        if suite == Suite::Phase4a {
+            late.scrub(&text.replace(&config.talaria.to_string_lossy().to_string(), "<binary>"))
+        } else {
+            late.scrub(text)
+        }
+    };
     for line in report.step_lines().lines() {
-        println!("{}", late.scrub(line));
+        println!("{}", public_text(line));
     }
     if let Some(tab) = &report.tab {
         println!("tab: {}", tab.0);
@@ -357,22 +395,22 @@ fn run(cli: &Cli) -> Result<u8, String> {
     if let Some((step, reason)) = failing_step(&report) {
         let block = pane_block(&report, step);
         for line in &block {
-            println!("{}", late.scrub(line));
+            println!("{}", public_text(line));
         }
         let path = report_dir.join("smoke-report.txt");
         let mut text = String::new();
-        text.push_str(&format!("step: {step}\nreason: {reason}\n"));
+        text.push_str(&public_text(&format!("step: {step}\nreason: {reason}\n")));
         text.push_str(&format!("herdr: {}\n", report.version));
-        text.push_str(&format!(
-            "talaria: {}\n",
-            late.scrub(&config.talaria.display().to_string())
-        ));
+        text.push_str(&format!("talaria: {binary_label}\n"));
         for line in &block {
-            text.push_str(&late.scrub(line));
+            text.push_str(&public_text(line));
             text.push('\n');
         }
-        let _ = std::fs::write(&path, text);
-        println!("report: {}", late.scrub(&path.display().to_string()));
+        if suite != Suite::Phase4a || !report.interrupted {
+            let _ = std::fs::create_dir_all(&report_dir);
+            let _ = std::fs::write(&path, text);
+            println!("report: {}", late.scrub(&path.display().to_string()));
+        }
     }
     if let Some(tab) = &report.unclosed_tab {
         println!("cleanup: tab {} was not closed", tab.0);
@@ -446,10 +484,15 @@ fn pane_block(report: &smoke::SmokeReport, step: &str) -> Vec<String> {
             capture.pane
         );
         lines.push(marker.clone());
-        lines.push(capture.visible.trim_end().to_owned());
+        let recent = capture.recent.trim_end();
+        let visible = capture.visible.trim_end();
+        let include_recent = index + 1 == outcome.len() && !recent.is_empty();
+        if !include_recent || !recent.contains(visible) {
+            lines.push(visible.to_owned());
+        }
         // The recent text of the pane in use is the last one.
-        if index + 1 == outcome.len() {
-            lines.push(capture.recent.trim_end().to_owned());
+        if include_recent {
+            lines.push(recent.to_owned());
         }
         lines.push(marker);
     }

@@ -1,0 +1,11 @@
+# recorded
+ Model roles - profile fixture
+ 1 Main  2 Fallbacks  3 Helpers  4 Subagents  5 Mixture of Agents
+ > Model: minimax-m3.1-flash (via ollama-cloud)
+   Context window: 1,000,000 tokens (auto-detected)
+   Can use: tools, images, reasoning
+   Max output: 512,000 tokens
+   Family: minimax
+   Default effort: inherited
+   Applies to new sessions. Running sessions keep their model; change a session with /model.
+ Enter change  c context  e effort  Ctrl+S review  u discard  Ctrl+R reload  Esc close  ? keys

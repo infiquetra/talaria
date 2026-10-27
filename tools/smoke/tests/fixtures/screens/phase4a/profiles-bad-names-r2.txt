@@ -1,0 +1,11 @@
+# recorded
+Profiles (2 on disk · 2 served)                                                                                        r refresh · R rescan · n new · e describe · s soul
+  default  served          -                                  talaria --profile default
+▸ fixture  served          minimax-m3.1-flash · ollama-cloud  talaria --profile fixture
+New profile
+▸ Name: default
+    default is reserved by Hermes. Choose another name.
+  Description:
+  Start from: ‹ fresh ›
+  [x] Copy provider keys from fixture
+Enter next · Tab move · Esc cancel

@@ -1,0 +1,41 @@
+# recorded
+Settings · profile fixture
+/ compact
+  general          > display.compact                     false                         set      may need a restart
+  agent              compression.micro_compact           false                         default  may need a restart
+  terminal           compression.micro_compact_every_n…  1                             default  may need a restart
+  display            compression.micro_compact_defrag_…  2000                          default  may need a restart
+  delegation         compression.codex_responses_compa…  (not set)                     default  may need a restart
+  memory             compression.idle_compact_after_se…  0                             default  may need a restart
+  compression
+  security
+  browser
+  voice
+  tts
+  stt
+  logging
+  discord
+  auxiliary
+  attachments
+  bedrock
+  bot_desktop
+  curator
+  database
+  desktop
+  gateway
+  kanban
+  local_runtime
+  loops
+  lsp
+  matrix
+  mattermost
+  moa
+  model_catalog
+  monitoring
+  openrouter
+  proxy
+  secrets
+  sessions
+  slack
+display.compact · boolean · Display → Compact · default false · may need a restart ·
+Enter edit · / filter · a review · ? help · Esc close

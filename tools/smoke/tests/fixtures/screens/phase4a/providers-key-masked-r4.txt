@@ -1,0 +1,6 @@
+# recorded
+┌Providers · profile fixture────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│[Keys]  Accounts   Endpoints                                                                                                                                           │
+│Filter: openrouter                                                                                                                                                     │
+│› OpenRouter · OPENROUTER_API_KEY · no key                                                                                                                             │
+│enter set key · ctrl+d remove · ctrl+r reload · tab next tab · type to filter                                                                                          │

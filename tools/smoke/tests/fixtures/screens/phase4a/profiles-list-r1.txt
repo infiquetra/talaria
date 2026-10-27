@@ -1,0 +1,14 @@
+# recorded
+Profiles (2 on disk · 2 served)                                                                                                                                  /fixture
+▸ fixture  served          minimax-m3.1-flash · ollama-cloud  talaria --profile fixture
+fixture · served
+Served by this gateway. Start a session on it with: talaria --profile fixture
+Model: ollama-cloud · minimax-m3.1-flash
+Skills: 58 of 58 on
+Toolsets: default set
+MCP servers: none
+Description: none
+Soul:
+<profile>
+<profile>
+<profile>

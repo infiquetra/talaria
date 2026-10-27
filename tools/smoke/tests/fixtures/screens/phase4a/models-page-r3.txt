@@ -1,0 +1,17 @@
+# recorded
+ Model roles - profile fixture
+ 1 Main  2 Fallbacks  3 Helpers  4 Subagents  5 Mixture of Agents
+ > Vision - Image analysis  follows main model  effort: inherited
+   Compression - Context compaction  minimax-m3.1-flash (via ollama-cloud)  effort: inherited
+   Skills hub - Skill search  follows main model  effort: inherited
+   Approval - Smart auto-approve  follows main model  effort: inherited
+   MCP - MCP tool routing  follows main model  effort: inherited
+   Title gen - Session titles  follows main model  effort: inherited
+   Review - /review reviewer subagent  follows main model  effort: inherited
+   Voice chat - Spoken voice-mode replies  follows main model  effort: none
+   Triage specifier - Kanban spec fleshing  follows main model  effort: inherited
+   Kanban decomposer - Task decomposition  follows main model  effort: inherited
+   Profile describer - Auto profile descriptions  follows main model  effort: inherited
+   Curator - Skill-usage review  follows main model  effort: inherited
+ Enter open  e effort  i inherit  R reset stale  Ctrl+S review  u discard  Ctrl+R reload  Esc close  ? keys
+ Applies to new sessions. Sessions already running may keep their current setting.
