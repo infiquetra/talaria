@@ -1,0 +1,11 @@
+# synthetic
+Connectors and messaging · profile fixture
+Signal
+On: no
+State: off
+Fields
+HTTP URL (SIGNAL_HTTP_URL) · required    not set
+Pairing
+Waiting to pair (0)
+Paired (0)
+esc back

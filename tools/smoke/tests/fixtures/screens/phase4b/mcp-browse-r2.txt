@@ -1,0 +1,15 @@
+# synthetic
+MCP servers · profile fixture
+ Servers  [Catalogue]
+ > alpha-docs                remote          Documentation
+   beta-docs                 remote          Documentation
+   charlie-docs              remote          Documentation
+   deepwiki                  remote          Read public project documentation
+   delta-docs                remote          Documentation
+   echo-docs                 remote          Documentation
+   foxtrot-docs              remote          Documentation
+   golf-docs                 remote          Documentation
+   hotel-docs                remote          Documentation
+   india-docs                remote          Documentation
+10 servers in Hermes's catalogue
+Tab next tab · / filter · Esc close

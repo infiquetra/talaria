@@ -1,0 +1,4 @@
+# synthetic
+talaria: no Hermes gateway is running for this home
+Next step: Start the Hermes gateway, then try again.
+exit=1

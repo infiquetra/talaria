@@ -1,0 +1,5 @@
+# synthetic
+Connectors and messaging · profile fixture
+[Connectors]  Messaging
+Connectors run through Nous Research's hosted tool gateway. If profile fixture has no Nous sign-in, Hermes creates a free guest identity for it when you continue.
+enter continue · esc back

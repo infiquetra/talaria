@@ -1,0 +1,5 @@
+# synthetic
+MCP servers · profile fixture
+ [Servers]  Catalogue
+   fixture-docs              remote
+Tab next tab · / filter · Esc close

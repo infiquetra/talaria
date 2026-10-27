@@ -1,0 +1,4 @@
+# synthetic
+NAME  STATE  SOURCE  CATEGORY
+fixture-art  on  bundled  creative
+exit=0

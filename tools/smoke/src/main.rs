@@ -264,7 +264,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
     // The phase 2a run fixes its seed, so its scratch project, and with it the editor script
     // every launch line names, is known before it starts.
     let seed = match cli.suite {
-        Suite::Phase1 | Suite::Phase3 | Suite::Phase4a => None,
+        Suite::Phase1 | Suite::Phase3 | Suite::Phase4a | Suite::Phase4b => None,
         Suite::Phase2a | Suite::Phase2b => Some(rand::random::<u64>()),
     };
     let (start_line, resume_line) = match (cli.suite, seed) {
@@ -365,6 +365,15 @@ fn run(cli: &Cli) -> Result<u8, String> {
             &clock,
             &config,
             &Phase4aConfig {
+                empty_home_parent: config.temp_root.clone(),
+            },
+            &stop,
+        ),
+        Suite::Phase4b => smoke::suite4b::run_smoke_4b(
+            &herdr,
+            &clock,
+            &config,
+            &smoke::suite4b::Phase4bConfig {
                 empty_home_parent: config.temp_root.clone(),
             },
             &stop,

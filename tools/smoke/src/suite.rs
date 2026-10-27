@@ -16,6 +16,8 @@ pub enum Suite {
     Phase3,
     /// The configuration screens suite.
     Phase4a,
+    /// The capabilities and operations screens suite.
+    Phase4b,
 }
 
 impl FromStr for Suite {
@@ -46,6 +48,7 @@ impl Suite {
             Suite::Phase2b => 1500,
             Suite::Phase3 => 1200,
             Suite::Phase4a => 900,
+            Suite::Phase4b => 300,
         }
     }
 }

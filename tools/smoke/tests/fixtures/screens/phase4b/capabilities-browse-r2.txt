@@ -1,0 +1,6 @@
+# synthetic
+Capabilities · profile fixture
+ Skills  Skill hub  [Toolsets 1/2 on]  Plugins
+ > [x] Web (web)                 3 tools
+   [ ] Image generation         2 tools     needs setup
+Space on/off · / filter · Esc close

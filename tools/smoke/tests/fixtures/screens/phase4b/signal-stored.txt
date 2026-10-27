@@ -1,0 +1,5 @@
+# synthetic
+Connectors and messaging · profile fixture
+Signal
+Fields
+HTTP URL (SIGNAL_HTTP_URL) · required    set unexpected-value

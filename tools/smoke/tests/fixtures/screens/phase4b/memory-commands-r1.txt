@@ -1,0 +1,4 @@
+# synthetic
+No pending memory writes.
+Talaria · profile fixture
+>

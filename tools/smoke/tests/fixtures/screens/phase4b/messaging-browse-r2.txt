@@ -1,0 +1,6 @@
+# synthetic
+Connectors and messaging · profile fixture
+ Connectors  [Messaging]
+ > Signal       off
+Filter: signal
+Enter open · / filter · Esc close

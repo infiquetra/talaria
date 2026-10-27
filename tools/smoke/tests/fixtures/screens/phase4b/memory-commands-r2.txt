@@ -1,0 +1,5 @@
+# synthetic
+No pending memory writes.
+curator: ENABLED
+Talaria · profile fixture
+>

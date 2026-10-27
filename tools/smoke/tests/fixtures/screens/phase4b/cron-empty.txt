@@ -1,0 +1,4 @@
+# synthetic
+Scheduled jobs · profile fixture
+No scheduled jobs in profile fixture. ctrl+n creates one.
+esc close

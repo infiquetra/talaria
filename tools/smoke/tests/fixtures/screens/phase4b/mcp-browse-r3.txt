@@ -1,0 +1,6 @@
+# synthetic
+MCP servers · profile fixture
+ Servers  [Catalogue]
+ > deepwiki                  remote          Read public project documentation
+Filter: deepwiki
+Tab next tab · / filter · Esc close

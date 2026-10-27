@@ -1,0 +1,4 @@
+# synthetic
+Scheduled jobs · profile fixture
+NAME                         SCHEDULE               STATE
+fixture-daily                0 8 * * *

@@ -1,0 +1,14 @@
+# synthetic
+Connectors and messaging · profile fixture
+ Connectors  [Messaging]
+ > Telegram     needs setup
+   Discord      needs setup
+   Slack        needs setup
+   WhatsApp     needs setup
+   Signal       off
+   Matrix       needs setup
+   Mattermost   needs setup
+   SMS          needs setup
+   Email        needs setup
+   Home Assistant  needs setup
+Enter open · / filter · Esc close

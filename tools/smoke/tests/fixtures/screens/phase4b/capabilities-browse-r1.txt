@@ -1,0 +1,10 @@
+# synthetic
+Capabilities · profile fixture
+ [Skills 2/3 on]  Skill hub  Toolsets  Plugins
+ creative
+ > [x] fixture-art              bundled  used 3    Draw banners.
+ software-development
+   [ ] fixture-code             hub      used 0    Review code.
+ (no category)
+   [x] fixture-guide            local    used 0    A guide.
+Space on/off · Enter read · / filter · Esc close

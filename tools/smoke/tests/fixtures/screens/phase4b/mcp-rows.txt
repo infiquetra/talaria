@@ -1,0 +1,6 @@
+# synthetic
+MCP servers · profile fixture
+ [Servers]  Catalogue
+ > fixture-docs              remote    connected · 3 tools
+   fixture-local             local     off
+Tab next tab · / filter · Esc close

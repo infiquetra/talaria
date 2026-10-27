@@ -1,0 +1,3 @@
+# synthetic
+SMOKETOKEN_A
+SMOKE_EXIT:0
