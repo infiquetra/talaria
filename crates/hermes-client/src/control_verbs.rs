@@ -1,9 +1,11 @@
-//! Extra control-socket verbs beyond discovery. Issue #253.
+//! Profile control requests using discovery's authenticated socket exchange.
 
 use std::path::Path;
 use std::time::Duration;
 
-use crate::discovery::{Endpoint, NodeKind, NodeProblem};
+use serde_json::json;
+
+use crate::discovery::{DiscoveryError, Endpoint, NodeKind, NodeProblem, control_request};
 
 /// How long a rescan waits for the gateway's answer.
 pub const RESCAN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -11,62 +13,120 @@ pub const RESCAN_TIMEOUT: Duration = Duration::from_secs(10);
 /// What a rescan answered. Absent lists are empty.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RescanOutcome {
-    /// Whether the gateway multiplexes.
     pub multiplex: bool,
-    /// Profiles added by this reconcile.
     pub added: Vec<String>,
-    /// Profiles removed by this reconcile.
     pub removed: Vec<String>,
-    /// Profiles parked by this reconcile.
     pub parked: Vec<String>,
-    /// Served profile names.
     pub served: Vec<String>,
-    /// The gateway is still rescanning.
     pub pending: bool,
 }
 
 /// Why a control verb did not return an outcome. Texts carry no path.
 #[derive(Debug)]
 pub enum ControlVerbError {
-    /// The gateway predates the verb.
     UnknownVerb,
-    /// The gateway refused the verb, with scrubbed words.
     Refused(String),
-    /// No answer within the deadline.
     Timeout,
-    /// The reply did not decode.
     InvalidReply,
-    /// The socket read or write failed.
     Io(std::io::ErrorKind),
-    /// A node check failed before anything was sent.
     UnsafeNode {
-        /// The node that failed.
         node: NodeKind,
-        /// How it failed.
         problem: NodeProblem,
     },
 }
 
-/// Served names and scrubbed `(name, reason)` parked pairs of one endpoint.
+/// Served names and scrubbed parked pairs of one endpoint.
 #[must_use]
-pub fn served_and_parked(
-    _endpoint: &Endpoint,
-    _home: &Path,
-) -> (Vec<String>, Vec<(String, String)>) {
-    todo!("profiles stub")
+pub fn served_and_parked(endpoint: &Endpoint, home: &Path) -> (Vec<String>, Vec<(String, String)>) {
+    (
+        endpoint
+            .profiles()
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect(),
+        endpoint
+            .parked()
+            .iter()
+            .map(|(name, reason)| (name.clone(), scrub_reason(reason, home)))
+            .collect(),
+    )
 }
 
-/// Scrub one reason the way peer text is scrubbed: a home path reads `<home>`,
-/// any other absolute path `<path>`, at most 500 characters.
+/// Replace home and absolute paths in peer text and retain at most 500 characters.
 #[must_use]
-pub fn scrub_reason(_text: &str, _home: &Path) -> String {
-    todo!("profiles stub")
+pub fn scrub_reason(text: &str, home: &Path) -> String {
+    crate::discovery::scrub_peer_text(text, home, 500)
 }
 
-/// Ask the gateway to rescan profiles over the control socket. Issue #253.
+/// Ask the gateway to rescan through the same safety checks as discovery.
 pub async fn rescan_profiles(
-    _home: &Path,
-    _timeout: Duration,
+    home: &Path,
+    timeout: Duration,
 ) -> Result<RescanOutcome, ControlVerbError> {
-    todo!("profiles stub")
+    let reply = control_request(
+        home,
+        json!({"protocol": 1, "verb": "rescan-profiles", "id": 1}),
+        timeout,
+    )
+    .await
+    .map_err(map_discovery_error)?;
+    if reply["ok"] == false {
+        let text = reply["error"]
+            .as_str()
+            .ok_or(ControlVerbError::InvalidReply)?;
+        return Err(if text.starts_with("unknown verb:") {
+            ControlVerbError::UnknownVerb
+        } else {
+            ControlVerbError::Refused(scrub_reason(text, home))
+        });
+    }
+    let result = reply
+        .get("result")
+        .filter(|value| value.is_object())
+        .ok_or(ControlVerbError::InvalidReply)?;
+    let names = |key: &str| -> Result<Vec<String>, ControlVerbError> {
+        let Some(value) = result.get(key) else {
+            return Ok(Vec::new());
+        };
+        value
+            .as_array()
+            .ok_or(ControlVerbError::InvalidReply)?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(|name| crate::discovery::scrub_peer_text(name, home, 200))
+                    .ok_or(ControlVerbError::InvalidReply)
+            })
+            .collect()
+    };
+    Ok(RescanOutcome {
+        multiplex: result["multiplex"]
+            .as_bool()
+            .ok_or(ControlVerbError::InvalidReply)?,
+        pending: match result.get("pending") {
+            None => false,
+            Some(value) => value.as_bool().ok_or(ControlVerbError::InvalidReply)?,
+        },
+        added: names("added")?,
+        removed: names("removed")?,
+        parked: names("parked")?,
+        served: names("served_profiles")?,
+    })
+}
+
+fn map_discovery_error(error: DiscoveryError) -> ControlVerbError {
+    match error {
+        DiscoveryError::ControlTimeout => ControlVerbError::Timeout,
+        DiscoveryError::UnsafeNode { node, problem } => {
+            ControlVerbError::UnsafeNode { node, problem }
+        }
+        DiscoveryError::BadPointer(_) => ControlVerbError::UnsafeNode {
+            node: NodeKind::PointerFile,
+            problem: NodeProblem::WrongType,
+        },
+        DiscoveryError::Io(kind) => ControlVerbError::Io(kind),
+        DiscoveryError::NoGateway => ControlVerbError::Io(std::io::ErrorKind::NotFound),
+        _ => ControlVerbError::InvalidReply,
+    }
 }

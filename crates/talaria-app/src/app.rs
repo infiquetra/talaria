@@ -53,6 +53,7 @@ use talaria_core::permissions::{
     ApprovalSegmentText, CallFailure as PermissionsFailure, PermissionsEffect, PermissionsInput,
     PermissionsState, hermes_command_finished, parse_permissions_command,
 };
+use talaria_core::profiles::{ProfilesEffect, ProfilesInput, ProfilesState, ProfilesView, RawEdit};
 use talaria_core::queue::{
     IdSource, QueueAction, QueueIntent, RECONCILE_WAIT, SubmissionId, update_queue,
 };
@@ -190,6 +191,13 @@ pub enum UserAction {
     Settings(talaria_core::settings::SettingsInput),
     /// A key for the doctor overlay.
     Doctor(DoctorKey),
+    /// An input captured by the profiles overlay.
+    Profiles(ProfilesInput),
+    /// The terminal resized while the profiles overlay was open.
+    ProfilesLayout {
+        width: u16,
+        page_size: usize,
+    },
     /// A key for the open fleet overlay.
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
@@ -311,6 +319,10 @@ pub struct View<'a> {
     pub settings: Option<talaria_core::settings::SettingsView>,
     pub doctor: Option<&'a DoctorView>,
     pub doctor_restart: &'a RestartState,
+    /// The profiles overlay while open, kept independently of the foreground session.
+    pub profiles: Option<ProfilesView>,
+    /// A profiles text field owns printable keys.
+    pub profiles_text_focus: bool,
     pub subagents: Option<&'a crate::subagents::SubagentHub>,
     /// Gateway usage fallback until this session's tree is known.
     pub subagents_usage_active: u32,
@@ -386,6 +398,25 @@ impl View<'_> {
 
 /// The terminal side of the loop.
 pub trait Screen: ComposerDeadline + StatusHost {
+    /// Open or close the profiles overlay before other overlay synchronizers run.
+    fn sync_profiles(&mut self, _view: Option<&ProfilesView>) {}
+    /// The number of profiles rows visible above notices in this terminal.
+    fn profiles_page_size(&self, view: &ProfilesView) -> usize {
+        let (width, height) = self.pane_size();
+        if width >= 100 {
+            usize::from(height.saturating_sub(2) / 2)
+                .min(view.rows.len())
+                .max(1)
+        } else {
+            usize::from(height.saturating_sub(1)).max(1)
+        }
+    }
+    /// Hand the terminal to the raw soul editor; an asynchronous result returns as an input.
+    fn edit_profile_soul(&mut self, _text: String) -> Option<RawEdit> {
+        Some(RawEdit::Failed(
+            "The external editor is unavailable.".to_string(),
+        ))
+    }
     /// Multiplexer pane settings from the screen's startup configuration.
     fn pane_settings(&self) -> PaneSettings {
         PaneSettings::default()
@@ -561,6 +592,9 @@ pub struct AppState {
     pub doctor: Option<DoctorView>,
     /// A restart continues after its overlay closes.
     pub doctor_restart: RestartState,
+    /// Profiles and kept soul edits outlive foreground session changes.
+    pub profiles: ProfilesState,
+    profiles_ticks: BTreeMap<u64, JoinHandle<()>>,
     pub models: ModelsState,
     model_service: Option<Arc<crate::models::ModelService>>,
     model_notice_counter: u64,
@@ -780,6 +814,8 @@ impl AppState {
             settings_generation: 0,
             doctor: None,
             doctor_restart: RestartState::Idle,
+            profiles: ProfilesState::new("default"),
+            profiles_ticks: BTreeMap::new(),
             models: ModelsState::new(&format!("{launch_id}-model"), Ok(SavedModels::empty())),
             model_service: None,
             model_notice_counter: 0,
@@ -946,6 +982,8 @@ impl AppState {
                 .filter(|view| view.profile == self.profile),
             doctor: self.doctor.as_ref(),
             doctor_restart: &self.doctor_restart,
+            profiles: self.profiles.is_open().then(|| self.profiles.view()),
+            profiles_text_focus: self.profiles.text_focus(),
             processes_open: self.processes_open,
             state: opened.map(|opened| &opened.state),
             session_id: opened.map(|opened| opened.session_id.as_str()),
@@ -1144,6 +1182,8 @@ pub enum AppMessage {
     DoctorFacts(DoctorFacts),
     /// A result or input for the independent gateway restart.
     DoctorRestart(RestartInput),
+    /// A profiles transport reply or a scheduled profiles tick.
+    Profiles(ProfilesInput),
     /// A background call's reply, still owned by the session that made it.
     BackgroundDone {
         session_id: SessionId,
@@ -1338,6 +1378,8 @@ pub enum AppEffect {
         old_instance: String,
     },
     DoctorProbeAfter(Duration),
+    /// Run one profiles call or manage its local timers and editor.
+    Profiles(ProfilesEffect),
     CommitSubagentBatch(talaria_core::subagents::FinishedBatch),
     /// A background call or log message for one session.
     Background {
@@ -1534,6 +1576,19 @@ fn model_card_blocked(state: &AppState) -> bool {
 }
 
 fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
+    let (width, _) = screen.pane_size();
+    let page_size = screen.profiles_page_size(&state.profiles.view());
+    state.profiles.set_layout(width, page_size);
+    screen.sync_profiles(
+        state
+            .profiles
+            .is_open()
+            .then(|| state.profiles.view())
+            .as_ref(),
+    );
+    if state.profiles.is_open() {
+        return;
+    }
     state.models.set_list_height(screen.model_list_height());
     screen.sync_models(
         state.models.view(),
@@ -1543,6 +1598,33 @@ fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
             state.models.confirmation()
         },
     );
+}
+
+fn profiles_input(state: &mut AppState, input: ProfilesInput) -> Vec<AppEffect> {
+    let is_tick = matches!(&input, ProfilesInput::Tick { .. });
+    let was_open = state.profiles.is_open();
+    if let ProfilesInput::Tick { token } = &input {
+        state.profiles_ticks.remove(token);
+    }
+    state.profiles.set_connected_profile(&state.profile);
+    let produced = state.profiles.update(input, state.now_ms);
+    let mut effects = Vec::new();
+    for effect in produced {
+        match effect {
+            ProfilesEffect::Notice(text) => effects.extend(reduce(
+                state,
+                Event::Notice {
+                    kind: NoticeKind::Diagnostic,
+                    text,
+                },
+            )),
+            effect => effects.push(AppEffect::Profiles(effect)),
+        }
+    }
+    if !is_tick && (was_open || state.profiles.is_open()) {
+        effects.push(AppEffect::Redraw);
+    }
+    effects
 }
 
 fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
@@ -1983,7 +2065,10 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         | AppMessage::DoctorFacts(_)
         | AppMessage::DoctorRestart(_)
         | AppMessage::User(UserAction::Doctor(_))
-        | AppMessage::ForegroundKey(UserAction::Doctor(_)) => false,
+        | AppMessage::ForegroundKey(UserAction::Doctor(_))
+        | AppMessage::Profiles(_)
+        | AppMessage::User(UserAction::Profiles(_))
+        | AppMessage::ForegroundKey(UserAction::Profiles(_)) => false,
         AppMessage::Input(key) if !state.pager_open && tasks_key(state, key) => false,
         // A disabled fleet view only commits its notice; nothing on the live screen changes.
         AppMessage::User(UserAction::Submit(text))
@@ -2038,6 +2123,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             background_event(state, session_id.as_str(), event)
         }
         AppMessage::Models(input) => models_input(state, input),
+        AppMessage::Profiles(input) => profiles_input(state, input),
         // Stored for the fleet view, fed to the overlay while it is open, and read
         // by the attention hub for the counters, the alerts and the quiet window.
         AppMessage::Fleet(notice) => {
@@ -2805,6 +2891,13 @@ fn local_effect(
     if action == LocalAction::Doctor {
         return open_doctor(state);
     }
+    if action == LocalAction::Profiles {
+        return if argument.trim().is_empty() {
+            profiles_input(state, ProfilesInput::Open)
+        } else {
+            vec![notice_lines("/profiles takes no arguments.")]
+        };
+    }
     if action == LocalAction::Fleet {
         return open_fleet_view(state);
     }
@@ -3282,6 +3375,11 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
         UserAction::Settings(input) => settings_input(state, input, None),
         UserAction::Doctor(key) => doctor_key(state, key),
+        UserAction::Profiles(input) => profiles_input(state, input),
+        UserAction::ProfilesLayout { width, page_size } => {
+            state.profiles.set_layout(width, page_size);
+            vec![AppEffect::Redraw]
+        }
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -7309,8 +7407,54 @@ fn scope_parts(scope: &SideScope) -> (Vec<String>, Option<String>) {
 
 /// Tell the screen what the picker shows, so it can open or close the overlay.
 fn sync_picker<S: Screen>(state: &AppState, screen: &mut S) {
+    if state.profiles.is_open() {
+        return;
+    }
     screen.sync_picker(state.picker.as_ref());
     screen.sync_fleet(&state.view());
+}
+
+async fn profiles_without_client(
+    effect: ProfilesEffect,
+    home: PathBuf,
+    profile: String,
+) -> Option<ProfilesInput> {
+    use hermes_client::discovery::{DiscoverOptions, EnsurePolicy, discover_with};
+    use talaria_core::profiles::{CallFailure, DiscoveryFailure, RescanFailure};
+    Some(match effect {
+        ProfilesEffect::Discover { generation } => {
+            let options = DiscoverOptions {
+                ensure: EnsurePolicy::Never,
+                ..DiscoverOptions::default()
+            };
+            let result = discover_with(&home, &options)
+                .await
+                .map(|endpoint| crate::profiles::gateway_view(&endpoint, &home))
+                .map_err(|error| DiscoveryFailure {
+                    message: error.to_string(),
+                    next_step: error.next_step().to_owned(),
+                });
+            ProfilesInput::Discovered(generation, result)
+        }
+        ProfilesEffect::List { generation } => {
+            ProfilesInput::Listed(generation, Err("not connected".to_string()))
+        }
+        ProfilesEffect::Topology { generation } => ProfilesInput::Topology(
+            generation,
+            crate::profiles::load_topology(&home, &profile).await,
+        ),
+        ProfilesEffect::Describe { generation, name } => {
+            ProfilesInput::Described(generation, name, Err(CallFailure::NotSent))
+        }
+        ProfilesEffect::Create(_) => ProfilesInput::CreateAnswered(Err(CallFailure::NotSent)),
+        ProfilesEffect::Configure { name, section, .. } => {
+            ProfilesInput::ConfigureAnswered(name, section, Err(CallFailure::NotSent))
+        }
+        ProfilesEffect::Rescan => {
+            ProfilesInput::RescanAnswered(Err(RescanFailure::Other("not connected".to_string())))
+        }
+        _ => return None,
+    })
 }
 
 /// Apply one message and run its effects. Returns whether the screen needs a draw.
@@ -7536,6 +7680,63 @@ fn apply<S: Screen>(
                     AppMessage::Rewind(input)
                 });
             }
+            AppEffect::Profiles(effect) => match effect {
+                ProfilesEffect::Redraw => redraw = true,
+                ProfilesEffect::ScheduleTick { after_ms, token } => {
+                    if let Some(previous) = state.profiles_ticks.remove(&token) {
+                        previous.abort();
+                    }
+                    let sender = executor.sender.clone();
+                    let task = tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(after_ms)).await;
+                        let _ = sender.send(AppMessage::Profiles(ProfilesInput::Tick { token }));
+                    });
+                    state.profiles_ticks.insert(token, task);
+                }
+                ProfilesEffect::CancelTicks | ProfilesEffect::Close => {
+                    for (_, task) in std::mem::take(&mut state.profiles_ticks) {
+                        task.abort();
+                    }
+                }
+                ProfilesEffect::OpenEditor(text) => {
+                    if let Some(result) = screen.edit_profile_soul(text) {
+                        let _ = executor
+                            .sender
+                            .send(AppMessage::Profiles(ProfilesInput::EditorReturned(result)));
+                    }
+                }
+                effect => {
+                    let Some(client) = state
+                        .service
+                        .as_ref()
+                        .and_then(SessionService::client)
+                        .cloned()
+                    else {
+                        let home = state.hermes_home.clone();
+                        let profile = state.profile.clone();
+                        let sender = executor.sender.clone();
+                        tokio::spawn(async move {
+                            if let Some(input) =
+                                profiles_without_client(effect, home, profile).await
+                            {
+                                let _ = sender.send(AppMessage::Profiles(input));
+                            }
+                        });
+                        continue;
+                    };
+                    let service = crate::profiles::ProfilesService::new(
+                        client,
+                        state.hermes_home.clone(),
+                        state.profile.clone(),
+                    );
+                    let sender = executor.sender.clone();
+                    tokio::spawn(async move {
+                        if let Some(input) = service.execute(effect).await {
+                            let _ = sender.send(AppMessage::Profiles(input));
+                        }
+                    });
+                }
+            },
             AppEffect::Models(effect) => match effect {
                 ModelsEffect::OpenOverlay | ModelsEffect::CloseOverlay => redraw = true,
                 ModelsEffect::Notice { level, text, .. } => {
@@ -9176,6 +9377,9 @@ pub async fn run<S: Screen>(
         }
     };
 
+    for (_, task) in std::mem::take(&mut state.profiles_ticks) {
+        task.abort();
+    }
     let mut outcome = Outcome::default();
     match ending {
         Ending::Quit | Ending::InputClosed => {

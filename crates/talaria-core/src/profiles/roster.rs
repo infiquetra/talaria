@@ -64,31 +64,152 @@ pub struct ProfileRow {
 
 /// Hermes's profile name normalisation: trim, then lower-case.
 #[must_use]
-pub fn normalize_profile_name(_input: &str) -> String {
-    todo!("profiles stub")
+pub fn normalize_profile_name(input: &str) -> String {
+    input.trim().to_lowercase()
 }
 
 /// Classify one name. The first matching rule wins; an absent topology skips
 /// its rows. Issue #253.
 #[must_use]
 pub fn classify(
-    _name: &str,
-    _gateway: &GatewayView,
-    _topology: Option<&HostTopology>,
-    _created_at_ms: Option<u64>,
-    _now_ms: u64,
+    name: &str,
+    gateway: &GatewayView,
+    topology: Option<&HostTopology>,
+    created_at_ms: Option<u64>,
+    now_ms: u64,
 ) -> ServeState {
-    todo!("profiles stub")
+    let name = normalize_profile_name(name);
+    let matches = |value: &String| normalize_profile_name(value) == name;
+    if gateway.served.iter().any(matches) {
+        return ServeState::Served;
+    }
+    if let Some((_, reason)) = gateway.parked.iter().find(|(value, _)| matches(value)) {
+        return ServeState::Parked {
+            reason: reason.clone(),
+        };
+    }
+    if let Some(topology) = topology {
+        if topology.stopped.iter().any(matches) {
+            return ServeState::Stopped;
+        }
+        if topology
+            .own_gateway
+            .as_ref()
+            .is_some_and(|names| names.iter().any(matches))
+        {
+            return ServeState::OwnGateway;
+        }
+        if topology
+            .gateway_mode
+            .as_deref()
+            .is_some_and(|mode| mode != "multiplex")
+            && let Some(reason) = topology
+                .single_reason
+                .as_ref()
+                .filter(|reason| !reason.trim().is_empty())
+        {
+            return ServeState::HostSingle {
+                reason: reason.clone(),
+            };
+        }
+    }
+    if created_at_ms.is_some_and(|created| created <= now_ms && now_ms - created < 40_000) {
+        ServeState::Starting
+    } else {
+        ServeState::NeverDiscovered
+    }
 }
 
 /// Join every source into sorted rows, each name exactly once. Issue #253.
 #[must_use]
 pub fn join_roster(
-    _roster: Option<&[RosterEntry]>,
-    _gateway: &GatewayView,
-    _topology: Option<&HostTopology>,
-    _created: &[(String, u64)],
-    _now_ms: u64,
+    roster: Option<&[RosterEntry]>,
+    gateway: &GatewayView,
+    topology: Option<&HostTopology>,
+    created: &[(String, u64)],
+    now_ms: u64,
 ) -> Vec<ProfileRow> {
-    todo!("profiles stub")
+    let mut names = std::collections::BTreeSet::new();
+    names.extend(
+        roster
+            .into_iter()
+            .flatten()
+            .map(|row| normalize_profile_name(&row.name)),
+    );
+    names.extend(
+        gateway
+            .served
+            .iter()
+            .map(|name| normalize_profile_name(name)),
+    );
+    names.extend(
+        gateway
+            .parked
+            .iter()
+            .map(|(name, _)| normalize_profile_name(name)),
+    );
+    if let Some(topology) = topology {
+        names.extend(
+            topology
+                .stopped
+                .iter()
+                .map(|name| normalize_profile_name(name)),
+        );
+        names.extend(
+            topology
+                .own_gateway
+                .iter()
+                .flatten()
+                .map(|name| normalize_profile_name(name)),
+        );
+    }
+    names.extend(
+        created
+            .iter()
+            .filter(|(_, at)| *at <= now_ms && now_ms - *at < 40_000)
+            .map(|(name, _)| normalize_profile_name(name)),
+    );
+    let mut rows: Vec<_> = names
+        .into_iter()
+        .map(|name| {
+            let entry = roster
+                .into_iter()
+                .flatten()
+                .find(|row| normalize_profile_name(&row.name) == name);
+            let created_at = created
+                .iter()
+                .find(|(value, _)| normalize_profile_name(value) == name)
+                .map(|(_, at)| *at);
+            ProfileRow {
+                display_name: entry.map_or_else(
+                    || name.clone(),
+                    |entry| {
+                        if entry.display_name.is_empty() {
+                            name.clone()
+                        } else {
+                            entry.display_name.clone()
+                        }
+                    },
+                ),
+                is_default: entry.is_some_and(|entry| entry.is_default),
+                model: entry
+                    .filter(|entry| !entry.model.is_empty())
+                    .map(|entry| entry.model.clone()),
+                provider: entry
+                    .filter(|entry| !entry.provider.is_empty())
+                    .map(|entry| entry.provider.clone()),
+                in_roster: entry.is_some(),
+                state: classify(&name, gateway, topology, created_at, now_ms),
+                name,
+            }
+        })
+        .collect();
+    rows.sort_by_key(|row| {
+        (
+            row.name != "default",
+            row.state != ServeState::Served,
+            row.name.clone(),
+        )
+    });
+    rows
 }

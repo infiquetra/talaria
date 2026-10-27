@@ -566,6 +566,7 @@ fn cell_style(cell: &ratatui::buffer::Cell) -> Style {
 struct Overlay {
     previous: Buffer,
     clear: bool,
+    cursor: Option<(u16, u16)>,
 }
 
 /// A fixed viewport at the bottom of the terminal with native scrollback above it.
@@ -885,6 +886,7 @@ impl<W: io::Write> InlineTerminal<W> {
         self.overlay = Some(Overlay {
             previous: Buffer::empty(self.screen_area()),
             clear: false,
+            cursor: None,
         });
         self.send(batch).map(drop)
     }
@@ -894,6 +896,17 @@ impl<W: io::Write> InlineTerminal<W> {
         &mut self,
         render: impl FnOnce(Rect, &mut Buffer),
     ) -> io::Result<FrameStats> {
+        self.draw_overlay_with_cursor(|area, buffer| {
+            render(area, buffer);
+            None
+        })
+    }
+
+    /// Render an overlay and show its insertion cursor only inside the screen bounds.
+    pub fn draw_overlay_with_cursor(
+        &mut self,
+        render: impl FnOnce(Rect, &mut Buffer) -> Option<(u16, u16)>,
+    ) -> io::Result<FrameStats> {
         if self.closed || self.released {
             return Ok(FrameStats::default());
         }
@@ -902,12 +915,12 @@ impl<W: io::Write> InlineTerminal<W> {
         };
         let area = self.screen_area();
         let mut frame = Buffer::empty(area);
-        render(area, &mut frame);
+        let cursor = render(area, &mut frame).filter(|&(x, y)| area.contains((x, y).into()));
         if overlay.previous.area != area {
             overlay.previous = Buffer::empty(area);
             overlay.clear = true;
         }
-        if !overlay.clear && frame == overlay.previous {
+        if !overlay.clear && frame == overlay.previous && cursor == overlay.cursor {
             self.overlay = Some(overlay);
             return Ok(FrameStats::default());
         }
@@ -925,27 +938,29 @@ impl<W: io::Write> InlineTerminal<W> {
             &overlay.previous
         };
         let drawn = CrosstermBackend::new(&mut batch.bytes).draw(base.diff(&frame).into_iter());
+        let positioned = match cursor {
+            Some((x, y)) => {
+                let result = CrosstermBackend::new(&mut batch.bytes).set_cursor_position((x, y));
+                batch.put(SHOW_CURSOR);
+                result
+            }
+            None => {
+                batch.put(HIDE_CURSOR);
+                Ok(())
+            }
+        };
         self.sync_off(&mut batch);
         overlay.previous = frame;
         overlay.clear = false;
+        overlay.cursor = cursor;
         self.overlay = Some(overlay);
         drawn?;
+        positioned?;
         let bytes = self.send(batch)?;
         Ok(FrameStats {
             drew: bytes > 0,
             bytes,
         })
-    }
-
-    /// Render a full-screen frame, then place the terminal cursor where the render
-    /// says: a zero-based `(column, row)` shows it there, `None` hides it. A
-    /// cursor-only move still writes. Issue #253.
-    pub fn draw_overlay_with_cursor(
-        &mut self,
-        render: impl FnOnce(Rect, &mut Buffer) -> Option<(u16, u16)>,
-    ) -> io::Result<FrameStats> {
-        let _ = render;
-        todo!("profiles stub")
     }
 
     /// Leave the alternate screen, clear the live region, write the lines that waited, and
@@ -956,6 +971,7 @@ impl<W: io::Write> InlineTerminal<W> {
         }
         let mut batch = self.begin();
         self.sync_on(&mut batch);
+        batch.put(HIDE_CURSOR);
         batch.put(ALTERNATE_OFF);
         batch.mark(Mark::OverlayOff);
         if self.placed {

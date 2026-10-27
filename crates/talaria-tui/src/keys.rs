@@ -1172,7 +1172,7 @@ impl Action {
             Self::ProfilesOpen => &["enter"],
             Self::ProfilesFilter => &["/"],
             Self::ProfilesRefresh => &["r"],
-            Self::ProfilesRescan => &["R"],
+            Self::ProfilesRescan => &["shift+r"],
             Self::ProfilesNew => &["n"],
             Self::ProfilesDescription => &["e"],
             Self::ProfilesSoul => &["s"],

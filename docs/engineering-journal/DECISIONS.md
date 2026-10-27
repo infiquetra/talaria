@@ -33,6 +33,18 @@ the identity, and never writes Hermes configuration or runs an ensure command.
 or silently restarting a gateway that serves only one profile.
 
 **Revisit when.** Hermes exposes a restart receipt that survives the restart.
+### Profiles explain gateway state and delegate changes to Hermes
+
+**Decision.** The profiles overlay and command join the folder roster, control-socket discovery,
+and optional public host status. Discovery decides served and runtime-parked states; host status
+only refines the remaining reasons. Talaria prints corrective commands and never executes them.
+Only profile creation, description, soul, and an explicitly confirmed rescan are writable here.
+
+**Rationale.** Hermes owns configuration and service lifecycle. A status endpoint failure must not
+hide the gateway's authoritative answer or silently turn an operator stop into a runtime failure.
+Soul writes require a fresh comparison; conflicting edits remain in memory for explicit review.
+
+**Revisit when.** Hermes publishes a unified profile-state endpoint or changes its profile authority.
 
 ### The phase 3 smoke suite answers only the approval it provoked, and only by denying it
 
