@@ -54,6 +54,7 @@ use talaria_core::permissions::{
     PermissionsState, hermes_command_finished, parse_permissions_command,
 };
 use talaria_core::profiles::{ProfilesEffect, ProfilesInput, ProfilesState, ProfilesView, RawEdit};
+use talaria_core::providers::{ProvidersEffect, ProvidersInput, ProvidersState, ProvidersView};
 use talaria_core::queue::{
     IdSource, QueueAction, QueueIntent, RECONCILE_WAIT, SubmissionId, update_queue,
 };
@@ -198,6 +199,7 @@ pub enum UserAction {
         width: u16,
         page_size: usize,
     },
+    Providers(Box<ProvidersInput>),
     /// A key for the open fleet overlay.
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
@@ -417,6 +419,12 @@ pub trait Screen: ComposerDeadline + StatusHost {
             "The external editor is unavailable.".to_string(),
         ))
     }
+    fn sync_providers(&mut self, _view: Option<ProvidersView>) {}
+    fn provider_secret(&self, _effect: &ProvidersEffect) -> Option<Zeroizing<String>> {
+        None
+    }
+    fn forget_provider_secret(&mut self) {}
+    fn copy_provider_text(&mut self, _text: &str) {}
     /// Multiplexer pane settings from the screen's startup configuration.
     fn pane_settings(&self) -> PaneSettings {
         PaneSettings::default()
@@ -595,6 +603,11 @@ pub struct AppState {
     /// Profiles and kept soul edits outlive foreground session changes.
     pub profiles: ProfilesState,
     profiles_ticks: BTreeMap<u64, JoinHandle<()>>,
+    pub providers: ProvidersState,
+    provider_service: Option<Arc<crate::providers::ProviderService>>,
+    provider_generation: u64,
+    provider_initializing: bool,
+    provider_pending_loads: Vec<ProvidersEffect>,
     pub models: ModelsState,
     model_service: Option<Arc<crate::models::ModelService>>,
     model_notice_counter: u64,
@@ -816,6 +829,11 @@ impl AppState {
             doctor_restart: RestartState::Idle,
             profiles: ProfilesState::new("default"),
             profiles_ticks: BTreeMap::new(),
+            providers: ProvidersState::new(),
+            provider_service: None,
+            provider_generation: 0,
+            provider_initializing: false,
+            provider_pending_loads: Vec::new(),
             models: ModelsState::new(&format!("{launch_id}-model"), Ok(SavedModels::empty())),
             model_service: None,
             model_notice_counter: 0,
@@ -1184,6 +1202,14 @@ pub enum AppMessage {
     DoctorRestart(RestartInput),
     /// A profiles transport reply or a scheduled profiles tick.
     Profiles(ProfilesInput),
+    Providers {
+        generation: u64,
+        input: ProvidersInput,
+    },
+    ProviderReady {
+        generation: u64,
+        result: Result<Arc<crate::providers::ProviderService>, talaria_core::providers::Failure>,
+    },
     /// A background call's reply, still owned by the session that made it.
     BackgroundDone {
         session_id: SessionId,
@@ -1380,6 +1406,7 @@ pub enum AppEffect {
     DoctorProbeAfter(Duration),
     /// Run one profiles call or manage its local timers and editor.
     Profiles(ProfilesEffect),
+    Providers(ProvidersEffect),
     CommitSubagentBatch(talaria_core::subagents::FinishedBatch),
     /// A background call or log message for one session.
     Background {
@@ -1579,6 +1606,9 @@ fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
     let (width, _) = screen.pane_size();
     let page_size = screen.profiles_page_size(&state.profiles.view());
     state.profiles.set_layout(width, page_size);
+    if state.profiles.is_open() {
+        screen.sync_providers(None);
+    }
     screen.sync_profiles(
         state
             .profiles
@@ -1598,6 +1628,27 @@ fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
             state.models.confirmation()
         },
     );
+    screen.sync_providers(
+        state
+            .providers
+            .is_open()
+            .then(|| talaria_core::providers::view(&state.providers, Instant::now())),
+    );
+}
+
+fn providers_input(state: &mut AppState, input: ProvidersInput) -> Vec<AppEffect> {
+    if matches!(&input, ProvidersInput::Open { .. })
+        && let Some(service) = &state.provider_service
+    {
+        service.open();
+    }
+    let mut effects: Vec<_> =
+        talaria_core::providers::update(&mut state.providers, input, Instant::now())
+            .into_iter()
+            .map(AppEffect::Providers)
+            .collect();
+    effects.push(AppEffect::Redraw);
+    effects
 }
 
 fn profiles_input(state: &mut AppState, input: ProfilesInput) -> Vec<AppEffect> {
@@ -1692,12 +1743,22 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
         }
         _ => {}
     }
-    state
-        .models
-        .update(input)
-        .into_iter()
-        .map(AppEffect::Models)
-        .collect()
+    let mut effects = Vec::new();
+    for effect in state.models.update(input) {
+        if let ModelsEffect::OpenProviders { slug } = effect {
+            effects.extend(providers_input(
+                state,
+                ProvidersInput::Open {
+                    target: talaria_core::providers::OpenTarget::Provider { slug },
+                    profile_name: state.profile.clone(),
+                    connected: state.link_state == LinkView::Connected,
+                },
+            ));
+        } else {
+            effects.push(AppEffect::Models(effect));
+        }
+    }
+    effects
 }
 
 /// How a foreground rebuild was caused.
@@ -2105,6 +2166,37 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
         }
         AppMessage::DoctorRestart(input) => doctor_restart_input(state, input),
+        AppMessage::Providers { generation, input } => {
+            if generation != state.provider_generation {
+                return Vec::new();
+            }
+            providers_input(state, input)
+        }
+        AppMessage::ProviderReady { generation, result } => {
+            if generation != state.provider_generation {
+                return Vec::new();
+            }
+            state.provider_initializing = false;
+            let pending = std::mem::take(&mut state.provider_pending_loads);
+            match result {
+                Ok(service) => {
+                    if state.providers.is_open() {
+                        service.open();
+                    }
+                    state.provider_service = Some(service);
+                    pending.into_iter().map(AppEffect::Providers).collect()
+                }
+                Err(reason) => {
+                    let mut effects = Vec::new();
+                    for effect in pending {
+                        if let Some(input) = provider_failed(effect, reason.clone()) {
+                            effects.extend(providers_input(state, input));
+                        }
+                    }
+                    effects
+                }
+            }
+        }
         AppMessage::BackgroundRecovered { session_id, result } => {
             if is_open_session(state, &session_id) {
                 recovered(state, result)
@@ -2898,6 +2990,16 @@ fn local_effect(
             vec![notice_lines("/profiles takes no arguments.")]
         };
     }
+    if let LocalAction::Providers(target) = action {
+        return providers_input(
+            state,
+            ProvidersInput::Open {
+                target,
+                profile_name: state.profile.clone(),
+                connected: state.link_state == LinkView::Connected,
+            },
+        );
+    }
     if action == LocalAction::Fleet {
         return open_fleet_view(state);
     }
@@ -3380,6 +3482,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             state.profiles.set_layout(width, page_size);
             vec![AppEffect::Redraw]
         }
+        UserAction::Providers(input) => providers_input(state, *input),
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -5296,22 +5399,31 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             }
             effects.extend(commands_follow(state, CommandsInput::Connected));
             effects.extend(permissions(state, PermissionsInput::ConnectionOpened));
+            if state.providers.is_open() {
+                effects.extend(providers_input(
+                    state,
+                    ProvidersInput::Connection { connected: true },
+                ));
+            }
             effects
         }
         LinkEvent::State(LinkState::Reconnecting { .. }) => {
             state.link_state = LinkView::Reconnecting;
-            Vec::new()
+            providers_input(state, ProvidersInput::Connection { connected: false })
         }
         LinkEvent::State(LinkState::Closed) => {
             state.link_state = LinkView::Closed;
-            Vec::new()
+            providers_input(state, ProvidersInput::Connection { connected: false })
         }
         event @ LinkEvent::State(LinkState::Failed { .. }) => {
             state.link_state = LinkView::Failed;
             state.link_failed = true;
-            link_notice(&event)
-                .map(|text| vec![notice_lines(&text)])
-                .unwrap_or_default()
+            let mut effects =
+                providers_input(state, ProvidersInput::Connection { connected: false });
+            if let Some(text) = link_notice(&event) {
+                effects.push(notice_lines(&text));
+            }
+            effects
         }
         LinkEvent::Inbound { item, .. } => match item {
             // A skill root moved: refetch the catalogue. It is not a session event.
@@ -6231,7 +6343,13 @@ pub fn slash_line(text: &str) -> Slash {
         return match command.action {
             LocalAction::Quit => Slash::Quit,
             LocalAction::Btw => Slash::Btw(line.arg.clone()),
-            _ => Slash::Local(command.action, line.arg),
+            LocalAction::Providers(_) => {
+                match talaria_core::providers::parse_providers_args(&line.arg) {
+                    Ok(target) => Slash::Local(LocalAction::Providers(target), line.arg),
+                    Err(usage) => Slash::Notice(usage.into()),
+                }
+            }
+            _ => Slash::Local(command.action.clone(), line.arg),
         };
     }
     Slash::Command(text.to_string())
@@ -7188,7 +7306,7 @@ fn context_task(
             return AppMessage::ContextDone {
                 block: ContextBlock::Error {
                     typed,
-                    command: command_of(action).to_owned(),
+                    command: command_of(action.clone()).to_owned(),
                     method: method_of(action).to_owned(),
                     sid: session_id,
                     error: talaria_core::context::text::ReadError::NotConnected,
@@ -7220,7 +7338,7 @@ fn context_task(
                 }
                 Err(error) => ContextBlock::Error {
                     typed,
-                    command: command_of(action).to_owned(),
+                    command: command_of(action.clone()).to_owned(),
                     method: method_of(action).to_owned(),
                     sid: session_id,
                     error,
@@ -7584,6 +7702,81 @@ fn apply<S: Screen>(
                         posted_at.elapsed(),
                     )));
                     let _ = sender.send(AppMessage::DoctorRestart(RestartInput::Probe(result)));
+                });
+            }
+            AppEffect::Providers(ProvidersEffect::ForgetSecret) => screen.forget_provider_secret(),
+            AppEffect::Providers(ProvidersEffect::CopyText(text)) => {
+                screen.copy_provider_text(&text)
+            }
+            AppEffect::Providers(ProvidersEffect::OpenUrl(url)) => {
+                let sender = executor.sender.clone();
+                let generation = state.provider_generation;
+                executor.spawn(async move {
+                    let opened = tokio::task::spawn_blocking(move || {
+                        use std::process::{Command, Stdio};
+                        let argv = crate::providers::opener_argv(&url)?;
+                        Command::new(&argv[0])
+                            .args(&argv[1..])
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .spawn()
+                            .and_then(|mut child| child.wait())
+                            .ok()
+                            .filter(std::process::ExitStatus::success)
+                    })
+                    .await;
+                    if !matches!(opened, Ok(Some(_))) {
+                        let _ = sender.send(AppMessage::Providers {
+                            generation,
+                            input: ProvidersInput::OpenFailed,
+                        });
+                    }
+                });
+            }
+            AppEffect::Providers(ProvidersEffect::Close) => {
+                if let Some(service) = state.provider_service.clone() {
+                    let closing = service.close();
+                    executor.spawn(closing);
+                }
+            }
+            AppEffect::Providers(effect) => {
+                if matches!(
+                    effect,
+                    ProvidersEffect::LoadEnv
+                        | ProvidersEffect::LoadOptions
+                        | ProvidersEffect::LoadOauth
+                        | ProvidersEffect::LoadEndpoints
+                ) {
+                    if state.provider_service.is_none() && !state.provider_initializing {
+                        start_provider_service(state, executor);
+                    }
+                    if state.provider_initializing {
+                        state.provider_pending_loads.push(effect);
+                        continue;
+                    }
+                }
+                let secret = screen.provider_secret(&effect);
+                let service = state.provider_service.clone();
+                let sender = executor.sender.clone();
+                let generation = state.provider_generation;
+                executor.defer(move || {
+                    tokio::spawn(async move {
+                        let inputs = match service {
+                            Some(service) => service.execute(effect, secret).await,
+                            None => provider_failed(
+                                effect,
+                                talaria_core::providers::Failure::NotSent(
+                                    "the profile configuration service is not available".into(),
+                                ),
+                            )
+                            .into_iter()
+                            .collect(),
+                        };
+                        for input in inputs {
+                            let _ = sender.send(AppMessage::Providers { generation, input });
+                        }
+                    });
                 });
             }
             AppEffect::CommitSubagentBatch(batch) => screen.commit_subagent_batch(&batch),
@@ -8404,6 +8597,68 @@ fn sync_attachment_view<S: Screen>(state: &AppState, screen: &mut S, now: Instan
     });
 }
 
+async fn make_provider_service(
+    home: PathBuf,
+    profile_name: String,
+    client: hermes_client::Client,
+) -> Result<Arc<crate::providers::ProviderService>, talaria_core::providers::Failure> {
+    use hermes_client::rest::{NativeHttpMinter, RestClient, RestOptions};
+    use talaria_core::providers::Failure;
+    let options = hermes_client::DiscoverOptions {
+        ensure: hermes_client::EnsurePolicy::Never,
+        ..Default::default()
+    };
+    let endpoint = hermes_client::discover_with(&home, &options)
+        .await
+        .map_err(|_| {
+            Failure::NotSent("could not discover the profile configuration service".into())
+        })?;
+    let profile = endpoint
+        .resolve_profile(&profile_name)
+        .map_err(|_| Failure::NotSent("the connected profile is not served".into()))?;
+    let endpoint = Arc::new(endpoint);
+    let minter = NativeHttpMinter::new(home, Arc::clone(&endpoint), profile);
+    let rest = RestClient::new(
+        endpoint.api_origin(),
+        Arc::new(minter),
+        RestOptions::default(),
+    )
+    .map_err(|_| Failure::NotSent("could not prepare the profile configuration service".into()))?;
+    Ok(Arc::new(crate::providers::ProviderService::new(
+        client,
+        rest,
+        profile_name,
+    )))
+}
+
+fn provider_failed(
+    effect: ProvidersEffect,
+    failure: talaria_core::providers::Failure,
+) -> Option<ProvidersInput> {
+    Some(match effect {
+        ProvidersEffect::LoadEnv => ProvidersInput::EnvLoaded(Err(failure)),
+        ProvidersEffect::LoadOptions => ProvidersInput::OptionsLoaded(Err(failure)),
+        ProvidersEffect::LoadOauth => ProvidersInput::OauthLoaded(Err(failure)),
+        ProvidersEffect::LoadEndpoints => ProvidersInput::EndpointsLoaded(Err(failure)),
+        ProvidersEffect::CheckKey { .. } => ProvidersInput::KeyChecked(Err(failure)),
+        ProvidersEffect::SaveKey { .. } => ProvidersInput::KeySaved(Err(failure)),
+        ProvidersEffect::Disconnect { .. } => ProvidersInput::Disconnected(Err(failure)),
+        ProvidersEffect::StartSignIn { attempt, .. } => ProvidersInput::SignInStarted {
+            attempt,
+            result: Err(failure),
+        },
+        ProvidersEffect::Poll { session_id, .. } => ProvidersInput::SignInPolled {
+            session_id,
+            result: Err(failure),
+        },
+        ProvidersEffect::SignOut { .. } => ProvidersInput::SignedOut(Err(failure)),
+        ProvidersEffect::CheckEndpoint(_) => ProvidersInput::EndpointChecked(Err(failure)),
+        ProvidersEffect::SaveEndpoint(_) => ProvidersInput::EndpointSaved(Err(failure)),
+        ProvidersEffect::DeleteEndpoint { .. } => ProvidersInput::EndpointDeleted(Err(failure)),
+        _ => return None,
+    })
+}
+
 /// Take the opened session's handles into the state and start forwarding link events.
 fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessage {
     let Ready {
@@ -8459,6 +8714,12 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         .map(crate::background::BackgroundService::new)
         .map(Arc::new);
     state.service = Some(service);
+    state.provider_generation = state.provider_generation.wrapping_add(1);
+    state.provider_pending_loads.clear();
+    if let Some(service) = state.provider_service.take() {
+        executor.spawn(service.close());
+    }
+    start_provider_service(state, executor);
     state.model_service = Some(Arc::new(crate::models::ModelService::new(
         state
             .service
@@ -8482,6 +8743,30 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         }
     });
     AppMessage::Opened { opened, notice }
+}
+
+fn start_provider_service(state: &mut AppState, executor: &Executor) {
+    state.provider_initializing = true;
+    let provider_generation = state.provider_generation;
+    let provider_home = state.hermes_home.clone();
+    let provider_profile = state.profile.clone();
+    let provider_client = state
+        .service
+        .as_ref()
+        .and_then(SessionService::client)
+        .cloned();
+    executor.send_later(async move {
+        let result = match provider_client {
+            Some(client) => make_provider_service(provider_home, provider_profile, client).await,
+            None => Err(talaria_core::providers::Failure::NotSent(
+                "no gateway connection is open".into(),
+            )),
+        };
+        AppMessage::ProviderReady {
+            generation: provider_generation,
+            result,
+        }
+    });
 }
 
 /// Run one permissions call on a task; its reply comes back as a message. With no connection
@@ -9270,6 +9555,8 @@ pub async fn run<S: Screen>(
         };
         let deadline = earliest_of([deadline, state.attachments.next_deadline()]);
         let deadline = earliest_of([deadline, state.automation_deadline]);
+        let provider_deadline = talaria_core::providers::next_deadline(&state.providers);
+        let deadline = earliest_of([deadline, provider_deadline]);
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
@@ -9322,6 +9609,10 @@ pub async fn run<S: Screen>(
                         }), screen, &executor);
                 }
                 let _ = apply(&mut state, AppMessage::AttachmentTick(now), screen, &executor);
+                if provider_deadline.is_some_and(|due| due <= now) {
+                    let generation = state.provider_generation;
+                    let _ = apply(&mut state, AppMessage::Providers { generation, input: ProvidersInput::Tick }, screen, &executor);
+                }
                 // A countdown that changed its text arms the next one.
                 state.automation_wake(now);
                 redraw = true;
@@ -9380,6 +9671,13 @@ pub async fn run<S: Screen>(
     for (_, task) in std::mem::take(&mut state.profiles_ticks) {
         task.abort();
     }
+    let provider_closing = state.provider_service.as_ref().map(|service| {
+        let closing = service.close();
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(1), closing).await;
+        })
+    });
+    screen.forget_provider_secret();
     let mut outcome = Outcome::default();
     match ending {
         Ending::Quit | Ending::InputClosed => {
@@ -9411,6 +9709,9 @@ pub async fn run<S: Screen>(
             outcome.code = failure.exit_code;
             outcome.stderr.push_str(&failure.render());
         }
+    }
+    if let Some(closing) = provider_closing {
+        let _ = closing.await;
     }
     let unfinished = state.launch_ui.shutdown().await;
     if let Some(fleet) = state.fleet_service.take() {
@@ -10027,6 +10328,39 @@ mod comfort_event_tests {
 }
 
 #[cfg(test)]
+mod providers_command_tests {
+    use super::*;
+    use talaria_core::providers::{OpenTarget, ProvidersTab};
+
+    #[test]
+    fn provider_tabs_and_invalid_arguments_reach_the_application() {
+        for (argument, tab) in [
+            ("", ProvidersTab::Keys),
+            (" KeYs ", ProvidersTab::Keys),
+            (" AcCoUnTs ", ProvidersTab::Accounts),
+            (" EnDpOiNtS ", ProvidersTab::Endpoints),
+        ] {
+            let typed = format!("/providers {argument}");
+            let Slash::Local(action, argument) = slash_line(&typed) else {
+                panic!("expected a local provider command");
+            };
+            assert_eq!(action, LocalAction::Providers(OpenTarget::Tab(tab)));
+            let mut state = AppState::new("provider-command");
+            state.profile = "fixture".into();
+            local_effect(&mut state, action, argument, typed);
+            let view = talaria_core::providers::view(&state.providers, Instant::now());
+            assert!(state.providers.is_open());
+            assert_eq!(view.tab, tab);
+            assert_eq!(view.title, "Providers · profile fixture");
+        }
+        assert_eq!(
+            slash_line("/providers other"),
+            Slash::Notice("Usage: /providers [keys|accounts|endpoints]".into())
+        );
+    }
+}
+
+#[cfg(test)]
 mod checklist_command_tests {
     use super::*;
     use talaria_core::session::TodoState;
@@ -10035,7 +10369,7 @@ mod checklist_command_tests {
     fn tasks_alias_opens_agents_and_the_checklist_key_still_toggles() {
         let command = LocalCommandTable::builtin()
             .find("tasks")
-            .copied()
+            .cloned()
             .expect("local tasks");
         assert_eq!(command.action, LocalAction::Agents);
         assert_eq!(

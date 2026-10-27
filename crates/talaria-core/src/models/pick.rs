@@ -663,8 +663,9 @@ impl ModelsState {
         };
         let (provider, model) = match key {
             RowKey::NotSetUp { provider } => {
-                let text = notice_t14(&name(&provider));
-                self.picker_notice(&sid, text, effects);
+                self.picker = None;
+                effects.push(ModelsEffect::CloseOverlay);
+                effects.push(ModelsEffect::OpenProviders { slug: provider });
                 return;
             }
             RowKey::Model { provider, model } | RowKey::Favourite { provider, model } => {
@@ -1403,7 +1404,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_row_stays_visible_with_its_notice_until_the_next_key() {
+    fn an_unavailable_row_stays_visible_with_its_notice_until_the_next_key() {
         let mut state = seeded();
         state.update(ModelsInput::OpenPicker {
             session_id: Some("s".into()),
@@ -1413,13 +1414,14 @@ mod tests {
             session_id: "s".into(),
             result: serde_json::from_value(json!({
                 "model":"current", "provider":"other", "providers":[{
-                    "name":"Other", "slug":"other", "models":[], "authenticated":false
+                    "name":"Other", "slug":"other", "models":["blocked"],
+                    "authenticated":true, "unavailable_models":["blocked"]
                 }]
             }))
             .unwrap(),
         });
         let effects = state.update(ModelsInput::Picker(PickerKey::Enter));
-        let text = notice_t14("Other");
+        let text = notice_t15("blocked", "Other");
         assert_eq!(state.view().unwrap().banner, Some(text.as_str()));
         assert!(effects.iter().any(|effect| matches!(effect,
             ModelsEffect::Notice { text: shown, .. } if shown == &text)));

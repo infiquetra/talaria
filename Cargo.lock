@@ -988,6 +988,7 @@ dependencies = [
  "tokio-tungstenite",
  "trybuild",
  "url",
+ "zeroize",
 ]
 
 [[package]]

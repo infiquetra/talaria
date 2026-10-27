@@ -1,374 +1,389 @@
-//! Provider dashboard routes. The functions build no request and send nothing.
+//! Profile-bound provider routes. Request bodies are never recorded here.
 
-use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use zeroize::Zeroize;
 
 use crate::rest::{RestClient, RestError};
 
-/// One `GET /api/env` entry. Unknown fields are ignored.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct EnvVarWire {
-    /// Whether a value is stored.
     pub is_set: Option<bool>,
-    /// Redacted preview, when present.
     pub redacted_value: Option<String>,
-    /// Human description.
     pub description: Option<String>,
-    /// Documentation link.
     pub url: Option<String>,
-    /// Category name.
     pub category: Option<String>,
-    /// Whether the value is a password.
     pub is_password: Option<bool>,
-    /// Tool names.
     #[serde(default)]
     pub tools: Option<Vec<String>>,
-    /// Advanced flag.
     pub advanced: Option<bool>,
-    /// Channel-managed flag.
     pub channel_managed: Option<bool>,
-    /// Provider slug.
     pub provider: Option<String>,
-    /// Provider label.
     pub provider_label: Option<String>,
-    /// Other providers that share the variable.
     #[serde(default)]
     pub provider_profiles: Option<Vec<Value>>,
-    /// Primary variable for the provider.
     pub provider_primary: Option<bool>,
-    /// Custom variable flag.
     pub custom: Option<bool>,
 }
 
-/// `GET /api/providers/oauth` body.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct ProviderProfileWire {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub provider_label: String,
+    pub description: Option<String>,
+    pub url: Option<String>,
+    #[serde(default)]
+    pub primary: bool,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct OauthListWire {
-    /// Providers in dashboard order.
     #[serde(default)]
     pub providers: Vec<OauthProviderWire>,
 }
 
-/// One account row. Unknown fields are ignored.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct OauthProviderWire {
-    /// Provider id.
     pub id: Option<String>,
-    /// Display name.
     pub name: Option<String>,
-    /// `device_code` or `external`.
     pub flow: Option<String>,
-    /// Command to run outside this program.
     pub cli_command: Option<String>,
-    /// Documentation link.
     pub docs_url: Option<String>,
-    /// Hint when sign-out is not offered.
     pub disconnect_hint: Option<String>,
-    /// Command shown when sign-out is not offered.
     pub disconnect_command: Option<String>,
-    /// Whether sign-out is offered.
     pub disconnectable: Option<bool>,
-    /// Sign-in status object.
     pub status: Option<Value>,
 }
 
-/// `POST .../start` body.
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct OauthStatusWire {
+    #[serde(default)]
+    pub logged_in: bool,
+    pub source: Option<String>,
+    pub source_label: Option<String>,
+    pub expires_at: Option<Value>,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct OauthStartWire {
-    /// Session id.
     pub session_id: Option<String>,
-    /// Flow name.
     pub flow: Option<String>,
-    /// Code the person types.
     pub user_code: Option<String>,
-    /// Page to open.
     pub verification_url: Option<String>,
-    /// Lifetime in seconds.
     pub expires_in: Option<u64>,
-    /// Suggested poll spacing in seconds.
     pub poll_interval: Option<i64>,
 }
 
-/// Poll body. Unknown fields are ignored.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct OauthPollWire {
-    /// Session id.
     pub session_id: Option<String>,
-    /// Status word.
     pub status: Option<String>,
-    /// Error text.
     pub error_message: Option<String>,
-    /// Expiry instant. A string, a number, or null.
     pub expires_at: Option<Value>,
-    /// Unused reason field.
     pub reason: Option<String>,
-    /// Account email, when the server sent one.
     pub account_email: Option<String>,
-    /// Default model, when the server sent one.
     pub model: Option<String>,
-    /// Whether another try is allowed.
     pub retryable: Option<bool>,
-    /// Seconds to wait before another try.
     pub retry_after: Option<u64>,
 }
 
-/// Endpoint list body.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct EndpointListWire {
-    /// Saved endpoints.
     #[serde(default)]
     pub endpoints: Vec<EndpointWire>,
-    /// Current model selection.
     pub current: Option<EndpointCurrentWire>,
-    /// Save replies may include this.
     pub ok: Option<bool>,
-    /// Saved id.
     pub id: Option<String>,
 }
 
-/// One endpoint. The preview field is accepted and not shown by callers.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct EndpointWire {
-    /// Endpoint id.
-    pub id: Option<String>,
-    /// Display name.
-    pub name: Option<String>,
-    /// Base URL.
-    pub base_url: Option<String>,
-    /// Selected model.
+pub struct EndpointCurrentWire {
+    pub provider: Option<String>,
     pub model: Option<String>,
-    /// Known models.
+    pub base_url: Option<String>,
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq)]
+pub struct EndpointWire {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
     #[serde(default)]
     pub models: Option<Vec<String>>,
-    /// API mode.
     pub api_mode: Option<String>,
-    /// Context length.
     pub context_length: Option<u64>,
-    /// Whether models are discovered.
     pub discover_models: Option<bool>,
-    /// Whether a key is stored.
     pub has_api_key: Option<bool>,
-    /// Redacted key preview. Callers must not show it.
     pub api_key_preview: Option<String>,
-    /// Whether this endpoint is the current provider.
     pub is_current: Option<bool>,
-    /// `custom_providers` marks the older format.
     pub source: Option<String>,
 }
 
-/// Current model selection.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct EndpointCurrentWire {
-    /// Provider slug.
-    pub provider: Option<String>,
-    /// Model id.
-    pub model: Option<String>,
-    /// Base URL.
-    pub base_url: Option<String>,
-}
-
-/// JSON object for an endpoint write. `Debug` hides `api_key`. The key is borrowed.
-#[derive(Deserialize, PartialEq)]
-pub struct EndpointBodyWire<'a> {
-    /// Endpoint id. Empty when adding.
-    pub id: Option<String>,
-    /// Display name.
-    pub name: Option<String>,
-    /// Base URL.
-    pub base_url: Option<String>,
-    /// Model id.
-    pub model: Option<String>,
-    /// Typed key. Never printed.
-    #[serde(borrow)]
-    pub api_key: Option<&'a str>,
-    /// API mode. Empty means auto.
-    pub api_mode: Option<String>,
-    /// Context length.
-    pub context_length: Option<u64>,
-    /// Discover models flag.
-    pub discover_models: Option<bool>,
-    /// Always false for this screen.
-    pub make_default: Option<bool>,
-    /// Models learned from a test.
-    #[serde(default)]
-    pub models: Option<Vec<String>>,
-    /// Model details learned from a test.
-    #[serde(default)]
-    pub model_details: Option<Vec<Value>>,
-}
-
-impl std::fmt::Debug for EndpointBodyWire<'_> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = self.api_key;
-        formatter.write_str("EndpointBodyWire([redacted])")
-    }
-}
-
-/// Key check reply.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct ProviderValidationWire {
-    /// Whether the key was accepted.
     pub ok: Option<bool>,
-    /// Whether the provider answered.
     pub reachable: Option<bool>,
-    /// Provider message.
     pub message: Option<String>,
 }
 
-/// Endpoint test reply.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct EndpointValidationWire {
-    /// Whether the test passed.
     pub ok: Option<bool>,
-    /// Whether the address answered.
     pub reachable: Option<bool>,
-    /// Provider message.
     pub message: Option<String>,
-    /// Discovered models.
     #[serde(default)]
     pub models: Option<Vec<String>>,
-    /// Extra model details.
     #[serde(default)]
     pub model_details: Option<Vec<Value>>,
-    /// Transport that was probed.
     pub transport_checked: Option<String>,
-    /// Address that answered.
     pub resolved_base_url: Option<String>,
 }
 
-/// A detail field that may be a string or a list.
+#[derive(Serialize)]
+pub struct KeyBodyWire<'a> {
+    pub key: &'a str,
+    pub value: &'a str,
+}
+
+#[derive(Default, Serialize)]
+pub struct EndpointBodyWire<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discover_models: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub make_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_details: Option<Vec<Value>>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum DetailWire {
-    /// A single string.
     Text(String),
-    /// A list of values.
     List(Vec<Value>),
 }
 
-fn not_sent<T>(error: RestError) -> Result<T, RestError> {
-    Err(error)
+macro_rules! redacted_debug {
+    ($($ty:ty),+ $(,)?) => {$(impl fmt::Debug for $ty {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(concat!(stringify!($ty), "([redacted])"))
+        }
+    })+};
+}
+redacted_debug!(
+    EnvVarWire,
+    EndpointWire,
+    OauthProviderWire,
+    OauthStatusWire,
+    OauthPollWire,
+    KeyBodyWire<'_>,
+    EndpointBodyWire<'_>
+);
+
+struct SecretBody(Value);
+impl Drop for SecretBody {
+    fn drop(&mut self) {
+        for field in ["value", "api_key"] {
+            if let Some(Value::String(value)) = self.0.get_mut(field) {
+                value.zeroize();
+            }
+        }
+    }
 }
 
-/// `GET /api/env`. Sends nothing.
-pub async fn get_env(rest: &RestClient) -> Result<serde_json::Map<String, Value>, RestError> {
-    let value = rest.get_json("/api/env").await?;
-    value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| RestError::BadBody("env list was not an object".into()))
+fn decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RestError> {
+    serde_json::from_value(value)
+        .map_err(|_| RestError::BadBody("provider reply did not decode".into()))
 }
 
-/// `POST /api/providers/validate`. Sends nothing. The value is not printed.
-pub async fn validate_provider(
-    rest: &RestClient,
+async fn post<T: serde::de::DeserializeOwned>(
+    client: &RestClient,
+    path: &str,
+    body: &impl Serialize,
+) -> Result<T, RestError> {
+    let body = SecretBody(
+        serde_json::to_value(body)
+            .map_err(|_| RestError::BadBody("provider request did not encode".into()))?,
+    );
+    decode(client.post_json(path, &body.0).await?)
+}
+
+pub async fn load_env(client: &RestClient) -> Result<BTreeMap<String, EnvVarWire>, RestError> {
+    decode(client.get_json("/api/env").await?)
+}
+pub async fn check_key(
+    client: &RestClient,
     key: &str,
     value: &str,
 ) -> Result<ProviderValidationWire, RestError> {
-    let body = serde_json::json!({ "key": key, "value": value });
-    let reply = rest.post_json("/api/providers/validate", &body).await?;
-    serde_json::from_value(reply).map_err(|_| RestError::BadBody("validate reply".into()))
+    post(
+        client,
+        "/api/providers/validate",
+        &KeyBodyWire { key, value },
+    )
+    .await
 }
-
-/// `GET /api/providers/oauth`. Sends nothing.
-pub async fn list_oauth(rest: &RestClient) -> Result<OauthListWire, RestError> {
-    let reply = rest.get_json("/api/providers/oauth").await?;
-    serde_json::from_value(reply).map_err(|_| RestError::BadBody("oauth list".into()))
+pub async fn load_oauth(client: &RestClient) -> Result<OauthListWire, RestError> {
+    decode(client.get_json("/api/providers/oauth").await?)
 }
-
-/// `POST /api/providers/oauth/<id>/start` with `{}`. Sends nothing.
-pub async fn start_oauth(rest: &RestClient, id: &str) -> Result<OauthStartWire, RestError> {
-    let path = format!("/api/providers/oauth/{}/start", encode_segment(id));
-    let body = serde_json::json!({});
-    let reply = rest.post_json(&path, &body).await?;
-    serde_json::from_value(reply).map_err(|_| RestError::BadBody("oauth start".into()))
+pub async fn start_sign_in(client: &RestClient, id: &str) -> Result<OauthStartWire, RestError> {
+    post(
+        client,
+        &format!("/api/providers/oauth/{}/start", percent_encode(id)),
+        &serde_json::json!({}),
+    )
+    .await
 }
-
-/// `GET /api/providers/oauth/<id>/poll/<session_id>`. Sends nothing.
-pub async fn poll_oauth(
-    rest: &RestClient,
+pub async fn poll_sign_in(
+    client: &RestClient,
     id: &str,
     session_id: &str,
 ) -> Result<OauthPollWire, RestError> {
-    let path = format!(
-        "/api/providers/oauth/{}/poll/{}",
-        encode_segment(id),
-        encode_segment(session_id)
-    );
-    let reply = rest.get_json(&path).await?;
-    serde_json::from_value(reply).map_err(|_| RestError::BadBody("oauth poll".into()))
+    decode(
+        client
+            .get_json(&format!(
+                "/api/providers/oauth/{}/poll/{}",
+                percent_encode(id),
+                percent_encode(session_id)
+            ))
+            .await?,
+    )
 }
-
-/// `DELETE /api/providers/oauth/sessions/<session_id>`. Sends nothing.
-pub async fn cancel_oauth(rest: &RestClient, session_id: &str) -> Result<Value, RestError> {
-    let path = format!(
-        "/api/providers/oauth/sessions/{}",
-        encode_segment(session_id)
-    );
-    rest.delete_json(&path).await
+pub async fn cancel_sign_in(client: &RestClient, session_id: &str) -> Result<Value, RestError> {
+    client
+        .delete_json(&format!(
+            "/api/providers/oauth/sessions/{}",
+            percent_encode(session_id)
+        ))
+        .await
 }
-
-/// `DELETE /api/providers/oauth/<id>`. Sends nothing.
-pub async fn sign_out_oauth(rest: &RestClient, id: &str) -> Result<Value, RestError> {
-    let path = format!("/api/providers/oauth/{}", encode_segment(id));
-    rest.delete_json(&path).await
+pub async fn sign_out(client: &RestClient, id: &str) -> Result<Value, RestError> {
+    client
+        .delete_json(&format!("/api/providers/oauth/{}", percent_encode(id)))
+        .await
 }
-
-/// `GET /api/providers/custom-endpoints`. Sends nothing.
-pub async fn list_endpoints(rest: &RestClient) -> Result<EndpointListWire, RestError> {
-    let reply = rest.get_json("/api/providers/custom-endpoints").await?;
-    serde_json::from_value(reply).map_err(|_| RestError::BadBody("endpoint list".into()))
+pub async fn load_endpoints(client: &RestClient) -> Result<EndpointListWire, RestError> {
+    decode(client.get_json("/api/providers/custom-endpoints").await?)
 }
-
-/// `POST /api/providers/custom-endpoints/validate`. Sends nothing.
-pub async fn validate_endpoint(
-    rest: &RestClient,
+pub async fn check_endpoint(
+    client: &RestClient,
     body: &EndpointBodyWire<'_>,
 ) -> Result<EndpointValidationWire, RestError> {
-    let value = endpoint_body_value(body);
-    let reply = rest
-        .post_json("/api/providers/custom-endpoints/validate", &value)
-        .await?;
-    serde_json::from_value(reply).map_err(|_| RestError::BadBody("endpoint validate".into()))
+    post(client, "/api/providers/custom-endpoints/validate", body).await
 }
-
-/// `POST /api/providers/custom-endpoints`. Sends nothing.
 pub async fn save_endpoint(
-    rest: &RestClient,
+    client: &RestClient,
     body: &EndpointBodyWire<'_>,
 ) -> Result<EndpointListWire, RestError> {
-    let value = endpoint_body_value(body);
-    let reply = rest
-        .post_json("/api/providers/custom-endpoints", &value)
-        .await?;
-    serde_json::from_value(reply).map_err(|_| RestError::BadBody("endpoint save".into()))
+    post(client, "/api/providers/custom-endpoints", body).await
+}
+pub async fn delete_endpoint(client: &RestClient, id: &str) -> Result<EndpointListWire, RestError> {
+    decode(
+        client
+            .delete_json(&format!(
+                "/api/providers/custom-endpoints/{}",
+                percent_encode(id)
+            ))
+            .await?,
+    )
 }
 
-/// `DELETE /api/providers/custom-endpoints/<id>`. Sends nothing.
-pub async fn delete_endpoint(rest: &RestClient, id: &str) -> Result<EndpointListWire, RestError> {
-    let path = format!("/api/providers/custom-endpoints/{}", encode_segment(id));
-    let reply = rest.delete_json(&path).await?;
-    serde_json::from_value(reply).map_err(|_| RestError::BadBody("endpoint delete".into()))
+pub async fn get_env(client: &RestClient) -> Result<serde_json::Map<String, Value>, RestError> {
+    match client.get_json("/api/env").await? {
+        Value::Object(rows) => Ok(rows),
+        _ => Err(RestError::BadBody("env list was not an object".into())),
+    }
 }
+pub use cancel_sign_in as cancel_oauth;
+pub use check_endpoint as validate_endpoint;
+pub use check_key as validate_provider;
+pub use load_endpoints as list_endpoints;
+pub use load_oauth as list_oauth;
+pub use poll_sign_in as poll_oauth;
+pub use sign_out as sign_out_oauth;
+pub use start_sign_in as start_oauth;
 
-fn endpoint_body_value(body: &EndpointBodyWire<'_>) -> Value {
-    let _ = body;
-    Value::Object(serde_json::Map::new())
-}
-
-fn encode_segment(text: &str) -> String {
-    let mut out = String::new();
+/// Encode one path segment, including slashes and non-ASCII bytes.
+pub fn percent_encode(text: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::new();
     for byte in text.bytes() {
-        let plain = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~');
-        if plain {
-            out.push(char::from(byte));
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            encoded.push(char::from(byte));
         } else {
-            out.push_str(&format!("%{byte:02X}"));
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 15)]));
         }
     }
-    out
+    encoded
 }
 
-#[allow(dead_code)]
-fn _keep(error: RestError) -> Result<(), RestError> {
-    not_sent(error)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_fields_and_new_fields_are_lenient() {
+        let row: EnvVarWire =
+            serde_json::from_value(serde_json::json!({"future": true, "provider_profiles": null}))
+                .unwrap();
+        assert_eq!(row.provider, None);
+        let list: OauthListWire =
+            serde_json::from_value(serde_json::json!({"future": []})).unwrap();
+        assert!(list.providers.is_empty());
+        let reply: EndpointValidationWire = serde_json::from_value(
+            serde_json::json!({"models": null, "transport_checked": "chat_completions"}),
+        )
+        .unwrap();
+        assert_eq!(reply.models, None);
+        assert_eq!(reply.transport_checked.as_deref(), Some("chat_completions"));
+    }
+
+    #[test]
+    fn keys_are_borrowed_and_never_debugged() {
+        let secret = zeroize::Zeroizing::new("test-only-credential".to_string());
+        let body = KeyBodyWire {
+            key: "EXAMPLE_KEY",
+            value: &secret,
+        };
+        assert!(!format!("{body:?}").contains(secret.as_str()));
+        assert_eq!(
+            serde_json::to_value(&body).unwrap()["value"],
+            secret.as_str()
+        );
+        let poll: OauthPollWire = serde_json::from_value(
+            serde_json::json!({"status": "approved", "account_email": "person@example.invalid"}),
+        )
+        .unwrap();
+        assert!(!format!("{poll:?}").contains("person@"));
+    }
+
+    #[test]
+    fn path_segments_encode_reserved_and_utf8_bytes() {
+        assert_eq!(percent_encode("a/b ?#%é"), "a%2Fb%20%3F%23%25%C3%A9");
+        assert_eq!(percent_encode("abc-._~09"), "abc-._~09");
+    }
 }

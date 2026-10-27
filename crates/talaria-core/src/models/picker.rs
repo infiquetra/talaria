@@ -122,6 +122,9 @@ pub enum ModelCommandOrEffort {
 /// What the app should do after one picker step.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModelsEffect {
+    OpenProviders {
+        slug: String,
+    },
     OpenOverlay,
     CloseOverlay,
     LoadOptions {
@@ -141,11 +144,6 @@ pub enum ModelsEffect {
         session_id: String,
         level: NoticeLevel,
         text: String,
-    },
-    /// Enter on a not-set-up row. The app closes the picker and opens providers.
-    OpenProviders {
-        /// Provider slug.
-        slug: String,
     },
 }
 

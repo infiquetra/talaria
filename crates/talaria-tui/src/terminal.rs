@@ -611,6 +611,13 @@ pub struct InlineTerminal<W: io::Write> {
 }
 
 impl<W: io::Write> InlineTerminal<W> {
+    /// Ask the terminal to copy text to its clipboard.
+    pub fn copy_to_clipboard(&mut self, text: &str) -> io::Result<()> {
+        self.out
+            .write_all(crate::providers::osc52(text).as_bytes())?;
+        self.out.flush()
+    }
+
     /// Switch on bracketed paste, hide the cursor, push keyboard flags when the terminal has the
     /// protocol, and place the viewport from the probe's cursor. No mouse mode is ever written.
     pub fn new(

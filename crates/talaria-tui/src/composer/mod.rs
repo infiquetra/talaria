@@ -691,7 +691,16 @@ impl Composer {
             | Action::ProfilesNew
             | Action::ProfilesDescription
             | Action::ProfilesSoul
-            | Action::ProfilesBack => {}
+            | Action::ProfilesBack
+            | Action::ProvidersNextTab
+            | Action::ProvidersPrevTab
+            | Action::ProvidersReload
+            | Action::ProvidersRemove
+            | Action::ProvidersTest
+            | Action::ProvidersSave
+            | Action::ProvidersClearKey
+            | Action::ProvidersOpenLink
+            | Action::ProvidersCopy => {}
         }
         false
     }

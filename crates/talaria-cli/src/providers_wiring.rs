@@ -1,274 +1,430 @@
-//! Routes provider keys into the secret field and lends that field to the service.
+//! Routes provider input while keeping key values outside application state.
 
-use talaria_app::providers::ProviderService;
-use talaria_core::providers::{ProvidersEffect, ProvidersInput, ProvidersKey, ProvidersView};
-use talaria_tui::providers::SecretField;
-use zeroize::Zeroizing;
+use talaria_core::providers::{
+    ApiKeyChange, CardKind, ProvidersEffect, ProvidersInput, ProvidersKey, ProvidersView,
+};
+use talaria_tui::keys::{Action, Key, KeyCode, KeyContext, KeyKind, KeyMap};
+use talaria_tui::providers::{SecretField, SecretOutcome};
+use zeroize::{Zeroize, Zeroizing};
 
-/// The overlay's one secret field.
+#[must_use]
+pub fn key_for(view: &ProvidersView, map: &KeyMap, key: Key) -> Option<ProvidersKey> {
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other;
+    if key.mods.ctrl && !key.mods.alt && !key.mods.super_key && key.code == KeyCode::Char('u') {
+        return Some(ProvidersKey::CtrlU);
+    }
+    if plain && let KeyCode::Char(ch) = key.code {
+        let locked_key_field = !view.secret_focus
+            && view.card.as_ref().is_some_and(|card| {
+                card.kind == CardKind::EndpointForm
+                    && card
+                        .lines
+                        .get(2)
+                        .is_some_and(|line| line.trim_start().starts_with('›'))
+            });
+        if locked_key_field {
+            return None;
+        }
+        if view.secret_focus
+            || view.card.is_none()
+            || view
+                .card
+                .as_ref()
+                .is_some_and(|card| card.kind == CardKind::EndpointForm)
+        {
+            return Some(ProvidersKey::Char(ch));
+        }
+        if matches!(ch, 'y' | 'n')
+            && view.card.as_ref().is_some_and(|card| {
+                matches!(
+                    card.kind,
+                    CardKind::RemoveConfirm | CardKind::SignOutConfirm | CardKind::DeleteConfirm
+                )
+            })
+        {
+            return Some(ProvidersKey::Char(ch));
+        }
+    }
+    if view.card.is_some() && key.code == KeyCode::Tab {
+        return Some(if key.mods.shift {
+            ProvidersKey::BackTab
+        } else {
+            ProvidersKey::Tab
+        });
+    }
+    let action = map.resolve(&key, KeyContext::Providers).and_then(|action| {
+        Some(match action {
+            Action::ProvidersNextTab => talaria_core::providers::ProvidersAction::NextTab,
+            Action::ProvidersPrevTab => talaria_core::providers::ProvidersAction::PrevTab,
+            Action::ProvidersReload => talaria_core::providers::ProvidersAction::Reload,
+            Action::ProvidersRemove => talaria_core::providers::ProvidersAction::Remove,
+            Action::ProvidersTest => talaria_core::providers::ProvidersAction::Test,
+            Action::ProvidersSave => talaria_core::providers::ProvidersAction::Save,
+            Action::ProvidersClearKey => talaria_core::providers::ProvidersAction::ClearKey,
+            Action::ProvidersOpenLink => talaria_core::providers::ProvidersAction::OpenLink,
+            Action::ProvidersCopy => talaria_core::providers::ProvidersAction::Copy,
+            _ => return None,
+        })
+    });
+    if let Some(action) = action {
+        return Some(ProvidersKey::Action(action));
+    }
+    if !plain {
+        return None;
+    }
+    Some(match key.code {
+        KeyCode::Enter => ProvidersKey::Enter,
+        KeyCode::Esc => ProvidersKey::Esc,
+        KeyCode::Backspace => ProvidersKey::Backspace,
+        KeyCode::Up => ProvidersKey::Up,
+        KeyCode::Down => ProvidersKey::Down,
+        KeyCode::PageUp => ProvidersKey::PageUp,
+        KeyCode::PageDown => ProvidersKey::PageDown,
+        KeyCode::Home => ProvidersKey::Home,
+        KeyCode::End => ProvidersKey::End,
+        KeyCode::Left => ProvidersKey::Left,
+        KeyCode::Right => ProvidersKey::Right,
+        _ => return None,
+    })
+}
+
+#[derive(Default)]
 pub struct ProvidersWiring {
     field: SecretField,
 }
 
 impl ProvidersWiring {
-    /// An empty field with its buffer reserved.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            field: SecretField::new(),
-        }
+        Self::default()
     }
 
-    /// Give a key to the field while it is focused. The stub always hands the key to core.
     pub fn route_key(&mut self, view: &ProvidersView, key: ProvidersKey) -> ProvidersInput {
-        let _ = (view, &self.field);
+        if view.secret_focus {
+            let outcome = if let ProvidersKey::Paste(mut text) = key {
+                let outcome = self.field.handle_paste(&text);
+                text.zeroize();
+                return field_input(outcome).unwrap_or(ProvidersInput::SecretEdited {
+                    empty: self.field.is_empty(),
+                });
+            } else {
+                self.field.handle_key(&key)
+            };
+            if let Some(input) = field_input(outcome) {
+                return input;
+            }
+            if matches!(key, ProvidersKey::Char(_)) {
+                return ProvidersInput::SecretEdited {
+                    empty: self.field.is_empty(),
+                };
+            }
+        }
         ProvidersInput::Key(key)
     }
 
-    /// Give pasted text to the focused field. The stub accepts none.
     pub fn route_paste(&mut self, view: &ProvidersView, text: &str) -> Option<ProvidersInput> {
-        let _ = (view, text, &self.field);
-        None
+        if view.secret_focus {
+            return field_input(self.field.handle_paste(text));
+        }
+        let card = view.card.as_ref()?;
+        if card.kind == CardKind::EndpointForm
+            && card
+                .lines
+                .iter()
+                .take(6)
+                .enumerate()
+                .any(|(index, line)| index != 2 && line.trim_start().starts_with('›'))
+        {
+            Some(ProvidersInput::Key(ProvidersKey::Paste(text.to_owned())))
+        } else {
+            None
+        }
     }
 
-    /// A copy of the field for the one call that needs it. The stub lends nothing.
+    #[must_use]
     pub fn secret_for(&self, effect: &ProvidersEffect) -> Option<Zeroizing<String>> {
-        let _ = (effect, &self.field);
-        None
+        let needs_key = match effect {
+            ProvidersEffect::CheckKey { .. } | ProvidersEffect::SaveKey { .. } => true,
+            ProvidersEffect::CheckEndpoint(draft) | ProvidersEffect::SaveEndpoint(draft) => {
+                draft.api_key == ApiKeyChange::Typed
+            }
+            _ => false,
+        };
+        if !needs_key {
+            return None;
+        }
+        let mut owned = Zeroizing::new(String::with_capacity(self.field.value().len()));
+        owned.push_str(self.field.value());
+        Some(owned)
     }
 
-    /// Zero the field.
     pub fn forget(&mut self) {
         self.field.clear();
     }
 
-    /// How many characters the field holds.
     #[must_use]
     pub fn secret_len(&self) -> usize {
         self.field.len()
     }
-}
 
-impl Default for ProvidersWiring {
-    fn default() -> Self {
-        Self::new()
+    pub fn draw(
+        &self,
+        view: &ProvidersView,
+        area: ratatui::layout::Rect,
+        buffer: &mut ratatui::buffer::Buffer,
+    ) {
+        talaria_tui::providers::draw_providers(view, self.secret_len(), area, buffer);
+    }
+
+    pub fn copy<W: std::io::Write>(
+        &mut self,
+        terminal: &mut talaria_tui::terminal::InlineTerminal<W>,
+        text: &str,
+    ) -> std::io::Result<()> {
+        terminal.copy_to_clipboard(text)
     }
 }
 
-/// Run one effect. The overlay loop calls this; the tests name it so the seam stays visible.
-#[allow(dead_code)]
-pub async fn run_effect(
-    service: &ProviderService,
-    effect: ProvidersEffect,
-    secret: Option<Zeroizing<String>>,
-) -> Vec<ProvidersInput> {
-    service.execute(effect, secret).await
+fn field_input(outcome: SecretOutcome) -> Option<ProvidersInput> {
+    match outcome {
+        SecretOutcome::Edited { empty } => Some(ProvidersInput::SecretEdited { empty }),
+        SecretOutcome::Submit => Some(ProvidersInput::SecretSubmitted),
+        SecretOutcome::Clear => Some(ProvidersInput::SecretCleared),
+        SecretOutcome::NotHandled => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
+    use super::*;
     use proptest::prelude::*;
-    use ratatui::buffer::Buffer;
-    use ratatui::layout::Rect;
-    use talaria_core::providers::{
-        ApiKeyChange, CardKind, CardView, EndpointDraft, ProvidersEffect, ProvidersInput,
-        ProvidersKey, ProvidersState, ProvidersTab, ProvidersView, update, view,
-    };
-    use talaria_tui::providers::draw_providers;
+    use ratatui::{buffer::Buffer, layout::Rect};
+    use std::time::{Duration, Instant};
+    use talaria_core::providers::{self, EndpointDraft, OpenTarget, ProvidersState, ProvidersTab};
 
-    use super::{ProvidersWiring, run_effect};
-
-    const SENTINEL: &str = "sk-test-SENTINEL-0123456789abcdef";
-
-    fn focus(on: bool) -> ProvidersView {
-        ProvidersView {
-            title: "Providers · profile fixture".into(),
-            tab: ProvidersTab::Keys,
-            rows: vec!["OpenRouter".into()],
-            filter: String::new(),
-            selected: Some(0),
-            card: Some(CardView {
-                kind: CardKind::Key,
-                lines: vec!["API key for OpenRouter".into()],
-                footer: "enter save · ctrl+u clear · esc cancel".into(),
-            }),
-            notice: None,
-            banner: None,
-            secret_focus: on,
-            footer: String::new(),
+    fn check_domain(
+        wiring: &mut ProvidersWiring,
+        state: &mut ProvidersState,
+        input: ProvidersInput,
+        now: Instant,
+        secret: &str,
+    ) -> Vec<ProvidersEffect> {
+        assert!(!format!("{input:?}").contains(secret));
+        let effects = providers::update(state, input, now);
+        for effect in &effects {
+            assert!(!format!("{effect:?}").contains(secret));
+            let _copy = wiring.secret_for(effect);
+            if matches!(effect, ProvidersEffect::ForgetSecret) {
+                wiring.forget();
+                assert_eq!(wiring.secret_len(), 0);
+            }
         }
+        let view = providers::view(state, now);
+        assert!(!format!("{state:?} {view:?}").contains(secret));
+        let area = Rect::new(0, 0, 100, 24);
+        let mut buffer = Buffer::empty(area);
+        talaria_tui::providers::draw_providers(&view, wiring.secret_len(), area, &mut buffer);
+        let drawn: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(!drawn.contains(secret));
+        effects
     }
 
-    fn typed_draft() -> EndpointDraft {
-        EndpointDraft {
-            id: String::new(),
-            name: "example-endpoint".into(),
-            base_url: "https://example.invalid/v1".into(),
-            model: "example-model".into(),
-            api_key: ApiKeyChange::Typed,
-            api_mode: None,
-            context_length: None,
-            discover_models: true,
-            models: None,
-            model_details: None,
-        }
-    }
-
-    fn kept_draft(change: ApiKeyChange) -> EndpointDraft {
-        let mut draft = typed_draft();
-        draft.api_key = change;
-        draft
-    }
-
-    fn buffer_text(buf: &Buffer) -> String {
-        (0..buf.area.height)
-            .map(|y| {
-                (0..buf.area.width)
-                    .map(|x| buf[(x, y)].symbol())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+    fn key_card(wiring: &mut ProvidersWiring, now: Instant, secret: &str) -> ProvidersState {
+        let mut state = ProvidersState::default();
+        check_domain(
+            wiring,
+            &mut state,
+            ProvidersInput::Open {
+                target: OpenTarget::Provider {
+                    slug: "example".into(),
+                },
+                profile_name: "fixture".into(),
+                connected: true,
+            },
+            now,
+            secret,
+        );
+        check_domain(
+            wiring,
+            &mut state,
+            ProvidersInput::EnvLoaded(Ok(vec![providers::EnvRow {
+                env_var: "EXAMPLE_API_KEY".into(),
+                slug: "example".into(),
+                label: "Example".into(),
+                primary: true,
+                is_password: true,
+                ..Default::default()
+            }])),
+            now,
+            secret,
+        );
+        let options = serde_json::from_value(serde_json::json!({"providers": [{
+            "slug":"example", "name":"Example", "models":[], "authenticated":false,
+            "auth_type":"api_key", "key_env":"EXAMPLE_API_KEY"
+        }]}))
+        .expect("valid catalogue fixture");
+        check_domain(
+            wiring,
+            &mut state,
+            ProvidersInput::OptionsLoaded(Ok(options)),
+            now,
+            secret,
+        );
+        check_domain(
+            wiring,
+            &mut state,
+            ProvidersInput::OauthLoaded(Ok(Vec::new())),
+            now,
+            secret,
+        );
+        assert!(providers::view(&state, now).secret_focus);
+        state
     }
 
     proptest! {
         #[test]
-        fn key_never_leaves_the_secret_field(secret in "sk-test-[a-z0-9]{12,24}") {
-            let _ = run_effect;
-            let mut wiring = ProvidersWiring::new();
-            let shown = focus(true);
-            let mut state = ProvidersState::new();
-            let mut dumped = String::new();
+        fn keys_stay_outside_domain_and_rendered_output(suffix in "[a-zA-Z0-9]{16,96}") {
+            let secret = format!("credential_{suffix}");
             let now = Instant::now();
+            let mut wiring = ProvidersWiring::new();
+            let mut state = key_card(&mut wiring, now, &secret);
             for ch in secret.chars() {
-                let input = wiring.route_key(&shown, ProvidersKey::Char(ch));
-                let effects = update(&mut state, input.clone(), now);
-                dumped.push_str(&format!(
-                    "{input:?} {effects:?} {state:?} {:?}\n",
-                    view(&state, now)
-                ));
+                let view = providers::view(&state, now);
+                let input = wiring.route_key(&view, ProvidersKey::Char(ch));
+                assert!(matches!(input, ProvidersInput::SecretEdited { .. }));
+                check_domain(&mut wiring, &mut state, input, now, &secret);
             }
-            let pasted = wiring.route_paste(&shown, &secret);
-            dumped.push_str(&format!("{pasted:?}\n"));
-            let cleared = wiring.route_key(&shown, ProvidersKey::CtrlU);
-            dumped.push_str(&format!("{cleared:?}\n"));
-            for ch in secret.chars() {
-                let _ = wiring.route_key(&shown, ProvidersKey::Char(ch));
-            }
-            let check = ProvidersEffect::CheckKey {
-                env_var: "OPENROUTER_API_KEY".into(),
-            };
-            let save = ProvidersEffect::SaveKey {
-                slug: "openrouter".into(),
-            };
-            let copied = wiring.secret_for(&check);
-            prop_assert_eq!(
-                copied.as_ref().map(|value| value.as_str()),
-                Some(secret.as_str())
-            );
-            let _ = wiring.secret_for(&save);
-            wiring.forget();
-            prop_assert_eq!(wiring.secret_len(), 0);
-            let area = Rect::new(0, 0, 80, 24);
-            let mut buf = Buffer::empty(area);
-            draw_providers(&shown, wiring.secret_len(), area, &mut buf);
-            dumped.push_str(&buffer_text(&buf));
-            dumped.push_str(&format!("{:?} {:?}", view(&state, now), state));
-            prop_assert!(!dumped.contains(secret.as_str()));
+            let view = providers::view(&state, now);
+            let clear = wiring.route_key(&view, ProvidersKey::CtrlU);
+            check_domain(&mut wiring, &mut state, clear, now, &secret);
+            assert_eq!(wiring.secret_len(), 0);
+            let input = wiring.route_paste(&providers::view(&state, now), &secret).expect("key field takes paste");
+            check_domain(&mut wiring, &mut state, input, now, &secret);
+            let input = wiring.route_key(&providers::view(&state, now), ProvidersKey::Enter);
+            let effects = check_domain(&mut wiring, &mut state, input, now, &secret);
+            assert!(effects.iter().any(|effect| matches!(effect, ProvidersEffect::CheckKey { .. })));
+            let effects = check_domain(&mut wiring, &mut state, ProvidersInput::KeyChecked(Ok(providers::KeyCheck {
+                ok: true, reachable: true, message: String::new(),
+            })), now, &secret);
+            assert!(effects.iter().any(|effect| matches!(effect, ProvidersEffect::SaveKey { .. })));
+            let saved = serde_json::from_value(serde_json::json!({"slug":"example", "name":"Example", "models":[], "authenticated":true})).expect("saved provider fixture");
+            check_domain(&mut wiring, &mut state, ProvidersInput::KeySaved(Ok(saved)), now, &secret);
+            assert_eq!(wiring.secret_len(), 0);
+            check_domain(&mut wiring, &mut state, ProvidersInput::Close, now, &secret);
+            state = key_card(&mut wiring, now, &secret);
+            let input = wiring.route_paste(&providers::view(&state, now), &secret).expect("key field takes paste");
+            check_domain(&mut wiring, &mut state, input, now, &secret);
+            let input = wiring.route_key(&providers::view(&state, now), ProvidersKey::Esc);
+            check_domain(&mut wiring, &mut state, input, now, &secret);
+            assert_eq!(wiring.secret_len(), 0);
+            check_domain(&mut wiring, &mut state, ProvidersInput::Close, now, &secret);
         }
     }
 
     #[test]
-    fn only_four_effects_get_the_key() {
-        let _ = run_effect;
+    fn rejected_secret_text_never_reaches_domain_input() {
+        let now = Instant::now();
         let mut wiring = ProvidersWiring::new();
-        let shown = focus(true);
-        let first = wiring.route_key(&shown, ProvidersKey::Char('s'));
-        assert!(
-            matches!(first, ProvidersInput::SecretEdited { empty: false }),
-            "a focused key reached the overlay: {first:?}"
-        );
-        for ch in SENTINEL.chars().skip(1) {
-            let _ = wiring.route_key(&shown, ProvidersKey::Char(ch));
+        let state = key_card(&mut wiring, now, "credential_probe_0123456789");
+        let view = providers::view(&state, now);
+        assert!(wiring.route_paste(&view, &"x".repeat(65_536)).is_some());
+        for key in [
+            ProvidersKey::Char('z'),
+            ProvidersKey::Char('\u{001b}'),
+            ProvidersKey::Paste("credential_overflow_0123456789".into()),
+        ] {
+            assert!(matches!(
+                wiring.route_key(&view, key),
+                ProvidersInput::SecretEdited { empty: false }
+            ));
+            assert_eq!(wiring.secret_len(), 65_536);
         }
-        let pasted = wiring.route_paste(&shown, SENTINEL);
-        assert!(
-            matches!(pasted, Some(ProvidersInput::SecretEdited { empty: false })),
-            "focused paste did not reach the field: {pasted:?}"
-        );
+    }
 
-        let idle = focus(false);
-        let passed = wiring.route_key(&idle, ProvidersKey::Char('z'));
-        assert!(
-            matches!(passed, ProvidersInput::Key(ProvidersKey::Char('z'))),
-            "an unfocused key was swallowed: {passed:?}"
-        );
-        assert!(wiring.route_paste(&idle, SENTINEL).is_none());
-
-        let typed = typed_draft();
-        let kept = kept_draft(ApiKeyChange::Keep);
-        let cleared = kept_draft(ApiKeyChange::Clear);
-        let effects = [
+    #[test]
+    fn lends_secrets_only_to_the_four_secret_effects() {
+        let mut wiring = ProvidersWiring::new();
+        let now = Instant::now();
+        let secret = "credential_example_0123456789";
+        let mut state = key_card(&mut wiring, now, secret);
+        let input = wiring
+            .route_paste(&providers::view(&state, now), secret)
+            .expect("focused field");
+        check_domain(&mut wiring, &mut state, input, now, secret);
+        let mut draft = EndpointDraft::default();
+        let plain = draft.clone();
+        draft.api_key = ApiKeyChange::Typed;
+        for effect in [
             ProvidersEffect::CheckKey {
-                env_var: "OPENROUTER_API_KEY".into(),
+                env_var: "KEY".into(),
             },
             ProvidersEffect::SaveKey {
-                slug: "openrouter".into(),
+                slug: "example".into(),
             },
-            ProvidersEffect::CheckEndpoint(typed.clone()),
-            ProvidersEffect::SaveEndpoint(typed),
-            ProvidersEffect::CheckEndpoint(kept.clone()),
-            ProvidersEffect::SaveEndpoint(kept),
-            ProvidersEffect::CheckEndpoint(cleared.clone()),
-            ProvidersEffect::SaveEndpoint(cleared),
+            ProvidersEffect::CheckEndpoint(draft.clone()),
+            ProvidersEffect::SaveEndpoint(draft),
+        ] {
+            assert_eq!(
+                wiring.secret_for(&effect).expect("secret effect").as_str(),
+                secret
+            );
+        }
+        for effect in [
             ProvidersEffect::LoadEnv,
             ProvidersEffect::LoadOptions,
             ProvidersEffect::LoadOauth,
             ProvidersEffect::LoadEndpoints,
             ProvidersEffect::ForgetSecret,
             ProvidersEffect::Disconnect {
-                slug: "openrouter".into(),
+                slug: "example".into(),
             },
             ProvidersEffect::StartSignIn {
-                id: "nous".into(),
+                id: "example".into(),
                 attempt: 1,
             },
             ProvidersEffect::Poll {
-                id: "nous".into(),
-                session_id: "sess-1".into(),
-                after: std::time::Duration::from_secs(2),
+                id: "example".into(),
+                session_id: "session".into(),
+                after: Duration::from_secs(2),
             },
             ProvidersEffect::CancelSignIn {
-                session_id: "sess-1".into(),
+                session_id: "session".into(),
             },
-            ProvidersEffect::SignOut { id: "nous".into() },
-            ProvidersEffect::DeleteEndpoint { id: "demo".into() },
-            ProvidersEffect::OpenUrl("https://example.invalid/device".into()),
-            ProvidersEffect::CopyText("ABCD-1234".into()),
+            ProvidersEffect::SignOut {
+                id: "example".into(),
+            },
+            ProvidersEffect::CheckEndpoint(plain.clone()),
+            ProvidersEffect::SaveEndpoint(plain),
+            ProvidersEffect::DeleteEndpoint {
+                id: "example".into(),
+            },
+            ProvidersEffect::OpenUrl("https://example.invalid".into()),
+            ProvidersEffect::CopyText("device-code".into()),
             ProvidersEffect::Close,
-        ];
-        for effect in &effects {
-            let got = wiring.secret_for(effect);
-            let wants = match effect {
-                ProvidersEffect::CheckKey { .. } | ProvidersEffect::SaveKey { .. } => true,
-                ProvidersEffect::CheckEndpoint(draft) | ProvidersEffect::SaveEndpoint(draft) => {
-                    draft.api_key == ApiKeyChange::Typed
-                }
-                _ => false,
-            };
-            if wants {
-                assert_eq!(
-                    got.as_ref().map(|value| value.as_str()),
-                    Some(SENTINEL),
-                    "the key was not lent for {effect:?}"
-                );
-            } else {
-                assert!(got.is_none(), "the key was lent for {effect:?}");
-            }
+        ] {
+            assert!(wiring.secret_for(&effect).is_none());
         }
+        let cleared = EndpointDraft {
+            api_key: ApiKeyChange::Clear,
+            ..Default::default()
+        };
+        for effect in [
+            ProvidersEffect::CheckEndpoint(cleared.clone()),
+            ProvidersEffect::SaveEndpoint(cleared),
+        ] {
+            assert!(wiring.secret_for(&effect).is_none());
+        }
+        let closed = providers::view(&ProvidersState::default(), now);
+        assert!(matches!(
+            wiring.route_key(&closed, ProvidersKey::Char('x')),
+            ProvidersInput::Key(ProvidersKey::Char('x'))
+        ));
+        assert!(wiring.route_paste(&closed, secret).is_none());
         wiring.forget();
         assert_eq!(wiring.secret_len(), 0);
+        assert_eq!(closed.tab, ProvidersTab::Keys);
     }
 }

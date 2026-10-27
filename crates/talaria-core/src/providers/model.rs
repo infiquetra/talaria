@@ -1,406 +1,426 @@
-//! Providers overlay state. `update` returns no effects and `view` is empty.
-
+use hermes_contract::schemas::{ModelOptionProvider, ModelOptionsResult};
 use std::time::{Duration, Instant};
 
-use hermes_contract::schemas::{ModelOptionProvider, ModelOptionsResult};
-
-use super::accounts::{Account, PollReply, SignInStart};
-use super::endpoints::{EndpointCheck, EndpointDraft, EndpointList};
-use super::keys::{EnvRow, KeyCheck};
-use super::text::USAGE;
-
-/// Which providers tab is showing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ProvidersTab {
-    /// API keys.
+    #[default]
     Keys,
-    /// Account sign-in.
     Accounts,
-    /// Custom endpoints.
     Endpoints,
 }
-
-/// How `/providers` was opened.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpenTarget {
-    /// A named tab.
     Tab(ProvidersTab),
-    /// A provider slug from the model picker.
-    Provider {
-        /// Provider slug.
-        slug: String,
-    },
+    Provider { slug: String },
 }
-
-/// What to do with a saved endpoint key. The typed text is not stored here.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnvRow {
+    pub env_var: String,
+    pub slug: String,
+    pub label: String,
+    pub is_set: bool,
+    pub tail: Option<String>,
+    pub shared_with: Vec<(String, String)>,
+    pub primary: bool,
+    pub is_password: bool,
+    pub channel_managed: bool,
+    pub custom: bool,
+    pub profile_slugs: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Account {
+    pub id: String,
+    pub name: String,
+    pub device_code: bool,
+    pub cli_command: Option<String>,
+    pub docs_url: Option<String>,
+    pub disconnect_hint: Option<String>,
+    pub disconnect_command: Option<String>,
+    pub disconnectable: bool,
+    pub status: AccountStatus,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AccountStatus {
+    SignedIn {
+        source_label: String,
+        expires_in_s: Option<i64>,
+    },
+    Unknown(String),
+    NotSignedIn,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignInStart {
+    pub session_id: String,
+    pub user_code: String,
+    pub verification_url: String,
+    pub expires_in: Option<u64>,
+    pub poll_interval: Option<i64>,
+}
+#[derive(Clone, PartialEq, Eq)]
+pub struct PollReply {
+    pub status: PollStatus,
+    pub error_message: Option<String>,
+    pub account_email: Option<String>,
+    pub model: Option<String>,
+    pub retryable: Option<bool>,
+    pub retry_after: Option<u64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PollStatus {
+    Pending,
+    Approved,
+    Denied,
+    Expired,
+    Error,
+    Cancelled,
+    Other(String),
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Endpoint {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    pub models: Vec<String>,
+    pub api_mode: Option<String>,
+    pub context_length: Option<u64>,
+    pub discover_models: bool,
+    pub has_api_key: bool,
+    pub is_current: bool,
+    pub source: String,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EndpointList {
+    pub endpoints: Vec<Endpoint>,
+    pub current_provider: String,
+    pub current_model: String,
+}
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EndpointDraft {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    pub api_key: ApiKeyChange,
+    pub api_mode: Option<String>,
+    pub context_length: Option<u64>,
+    pub discover_models: bool,
+    pub models: Option<Vec<String>>,
+    pub model_details: Option<Vec<serde_json::Value>>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ApiKeyChange {
-    /// Leave the saved key as it is.
+    #[default]
     Keep,
-    /// Remove the saved key.
     Clear,
-    /// Replace the saved key with the typed text.
     Typed,
 }
-
-/// A failure the service reports to the overlay.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyCheck {
+    pub ok: bool,
+    pub reachable: bool,
+    pub message: String,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct EndpointCheck {
+    pub ok: bool,
+    pub reachable: bool,
+    pub message: String,
+    pub models: Vec<String>,
+    pub model_details: Vec<serde_json::Value>,
+    pub resolved_base_url: Option<String>,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Failure {
-    /// The gateway returned an error object.
-    Refused {
-        /// Error code.
-        code: i64,
-        /// Error message.
-        message: String,
-    },
-    /// An HTTP status.
-    Http {
-        /// Status code.
-        status: u16,
-        /// Detail string, when the body had one.
-        detail: Option<String>,
-    },
-    /// The request was not written.
+    Refused { code: i64, message: String },
+    Http { status: u16, detail: Option<String> },
     NotSent(String),
-    /// The reply could not be read.
     BadReply,
-    /// The outcome is unknown.
     Unknown,
 }
-
-/// A key the overlay handles.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ProvidersKey {
-    /// One typed character.
-    Char(char),
-    /// Bracketed paste. Not used while the secret field is focused.
-    Paste(String),
-    /// Enter.
-    Enter,
-    /// Escape.
-    Esc,
-    /// Tab.
-    Tab,
-    /// Shift+Tab.
-    BackTab,
-    /// Up arrow.
-    Up,
-    /// Down arrow.
-    Down,
-    /// Page up.
-    PageUp,
-    /// Page down.
-    PageDown,
-    /// Home.
-    Home,
-    /// End.
-    End,
-    /// Left arrow.
-    Left,
-    /// Right arrow.
-    Right,
-    /// Backspace.
-    Backspace,
-    /// Ctrl+U in the secret field.
-    CtrlU,
-    /// One of the nine providers bindings.
-    Action(ProvidersAction),
-}
-
-/// The nine providers bindings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProvidersAction {
-    /// Next tab.
     NextTab,
-    /// Previous tab.
     PrevTab,
-    /// Reload the lists.
     Reload,
-    /// Remove or sign out.
     Remove,
-    /// Test an endpoint.
     Test,
-    /// Save an endpoint.
     Save,
-    /// Clear a saved endpoint key.
     ClearKey,
-    /// Open a link.
     OpenLink,
-    /// Copy a code or a command.
     Copy,
 }
-
-/// One fact fed to the overlay.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProvidersKey {
+    Char(char),
+    Paste(String),
+    Enter,
+    Esc,
+    Tab,
+    BackTab,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Left,
+    Right,
+    Backspace,
+    Clear,
+    CtrlU,
+    Action(ProvidersAction),
+}
 #[derive(Clone, Debug, PartialEq)]
+// Keep the generated provider result by value in the fixed service-message interface.
+#[allow(clippy::large_enum_variant)]
 pub enum ProvidersInput {
-    /// Open the overlay.
     Open {
-        /// Tab or provider slug.
         target: OpenTarget,
-        /// Connected profile name.
         profile_name: String,
-        /// Whether the socket is up.
         connected: bool,
     },
-    /// A key press.
     Key(ProvidersKey),
-    /// The countdown timer fired.
     Tick,
-    /// The socket connected or dropped.
     Connection {
-        /// Whether the socket is up.
         connected: bool,
     },
-    /// Close the overlay.
     Close,
-    /// The browser could not be opened.
     OpenFailed,
-    /// The secret field changed. The text stays in the field.
     SecretEdited {
-        /// Whether the field is empty.
         empty: bool,
     },
-    /// The secret field was submitted.
     SecretSubmitted,
-    /// The secret field was cleared.
     SecretCleared,
-    /// Environment list reply.
     EnvLoaded(Result<Vec<EnvRow>, Failure>),
-    /// `model.options` reply.
     OptionsLoaded(Result<ModelOptionsResult, Failure>),
-    /// Account list reply.
     OauthLoaded(Result<Vec<Account>, Failure>),
-    /// Endpoint list reply.
     EndpointsLoaded(Result<EndpointList, Failure>),
-    /// Key check reply.
     KeyChecked(Result<KeyCheck, Failure>),
-    /// Key save reply.
     KeySaved(Result<ModelOptionProvider, Failure>),
-    /// Credential removal reply.
     Disconnected(Result<(), Failure>),
-    /// Sign-in start reply. `attempt` matches the start that was sent.
     SignInStarted {
-        /// Attempt counter.
         attempt: u64,
-        /// Start reply.
         result: Result<SignInStart, Failure>,
     },
-    /// Poll reply.
     SignInPolled {
-        /// Session the poll was for.
         session_id: String,
-        /// Poll reply.
         result: Result<PollReply, Failure>,
     },
-    /// Sign-out reply.
     SignedOut(Result<(), Failure>),
-    /// Endpoint test reply.
     EndpointChecked(Result<EndpointCheck, Failure>),
-    /// Endpoint save reply.
     EndpointSaved(Result<EndpointList, Failure>),
-    /// Endpoint delete reply.
     EndpointDeleted(Result<EndpointList, Failure>),
 }
-
-/// Work the app should do after one step.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProvidersEffect {
-    /// Load `GET /api/env`.
     LoadEnv,
-    /// Load `model.options`.
     LoadOptions,
-    /// Load the account list.
     LoadOauth,
-    /// Load the endpoint list.
     LoadEndpoints,
-    /// Check the typed key for this variable.
     CheckKey {
-        /// Variable name.
         env_var: String,
     },
-    /// Save the typed key for this provider.
     SaveKey {
-        /// Provider slug.
         slug: String,
     },
-    /// Zero the secret field.
     ForgetSecret,
-    /// Remove credentials for this provider.
     Disconnect {
-        /// Provider slug.
         slug: String,
     },
-    /// Start a device-code sign-in.
     StartSignIn {
-        /// Provider id.
         id: String,
-        /// Attempt counter.
         attempt: u64,
     },
-    /// Poll a sign-in after `after`.
     Poll {
-        /// Provider id.
         id: String,
-        /// Session id.
         session_id: String,
-        /// Delay before the poll.
         after: Duration,
     },
-    /// Cancel a sign-in session.
     CancelSignIn {
-        /// Session id.
         session_id: String,
     },
-    /// Sign out of an account.
     SignOut {
-        /// Provider id.
         id: String,
     },
-    /// Test an endpoint draft.
     CheckEndpoint(EndpointDraft),
-    /// Save an endpoint draft.
     SaveEndpoint(EndpointDraft),
-    /// Delete an endpoint.
     DeleteEndpoint {
-        /// Endpoint id.
         id: String,
     },
-    /// Open an https link.
     OpenUrl(String),
-    /// Copy text that is not a key.
     CopyText(String),
-    /// Close the overlay.
     Close,
 }
-
-/// What kind of card is open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CardKind {
-    /// API key entry.
     Key,
-    /// Remove-credentials confirmation.
-    RemoveConfirm,
-    /// External account instructions.
     External,
-    /// Device-code wait.
     Waiting,
-    /// Sign-in finished or stopped.
     Ended,
-    /// Sign-out confirmation.
+    RemoveConfirm,
     SignOutConfirm,
-    /// Sign-out is not offered.
     DisconnectHint,
-    /// Endpoint form.
     EndpointForm,
-    /// Delete-endpoint confirmation.
     DeleteConfirm,
 }
-
-/// One open card.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CardView {
-    /// Which card.
     pub kind: CardKind,
-    /// Body lines. No key text.
     pub lines: Vec<String>,
-    /// Card footer.
     pub footer: String,
 }
-
-/// What the screen draws. It never carries key text.
+pub type ProvidersCard = CardView;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProvidersView {
-    /// Title line.
     pub title: String,
-    /// Selected tab.
     pub tab: ProvidersTab,
-    /// Row lines, including a dim second line when a row has one.
     pub rows: Vec<String>,
-    /// Filter text.
-    pub filter: String,
-    /// Selected row, when the list has one.
     pub selected: Option<usize>,
-    /// Open card.
-    pub card: Option<CardView>,
-    /// Notice line.
+    pub filter: String,
+    pub card: Option<ProvidersCard>,
     pub notice: Option<String>,
-    /// Connection banner.
     pub banner: Option<String>,
-    /// Whether the secret field takes input.
     pub secret_focus: bool,
-    /// List footer.
     pub footer: String,
 }
 
-/// Overlay state. The stub keeps no rows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Load {
+    pub running: bool,
+    pub again: bool,
+    pub done: bool,
+    pub error: Option<Failure>,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct KeyCard {
+    pub row: EnvRow,
+    pub empty: bool,
+    pub unchecked: bool,
+    pub message: Option<String>,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct Form {
+    pub draft: EndpointDraft,
+    pub field: usize,
+    pub context: String,
+    pub dirty: bool,
+    pub cleared: bool,
+    pub result: Option<EndpointCheck>,
+    pub original: Option<Endpoint>,
+    pub mode_changed: bool,
+}
+#[derive(Clone, Debug)]
+pub(crate) enum Card {
+    Key(KeyCard),
+    Confirm {
+        title: String,
+        effect: ProvidersEffect,
+    },
+    External {
+        title: String,
+        lines: Vec<String>,
+        copy: Option<String>,
+    },
+    Starting {
+        account: Account,
+        attempt: u64,
+    },
+    Waiting {
+        account: Account,
+        start: SignInStart,
+        expires: Option<Instant>,
+        repaint: Instant,
+        failures: u8,
+    },
+    Approved {
+        account: Account,
+        text: String,
+    },
+    Ended {
+        account: Account,
+        text: String,
+        retryable: bool,
+        retry_at: Option<Instant>,
+    },
+    Form(Form),
+    Discard(Form),
+}
+#[derive(Clone, Debug)]
+pub(crate) enum Busy {
+    CheckKey,
+    DiscardedKeyCheck,
+    SaveKey(EnvRow),
+    Disconnect(String),
+    Start(u64),
+    SignOut(String),
+    CheckEndpoint,
+    DiscardedEndpointCheck,
+    SaveEndpoint(String),
+    DeleteEndpoint(String),
+}
+#[derive(Clone, Default)]
 pub struct ProvidersState {
-    open: bool,
+    pub(crate) open: bool,
+    pub(crate) profile: String,
+    pub(crate) connected: bool,
+    pub(crate) tab: ProvidersTab,
+    pub(crate) filter: String,
+    pub(crate) selected: usize,
+    pub(crate) env: Vec<EnvRow>,
+    pub(crate) keys: Vec<EnvRow>,
+    pub(crate) options: Option<ModelOptionsResult>,
+    pub(crate) accounts: Vec<Account>,
+    pub(crate) endpoints: EndpointList,
+    pub(crate) loads: [Load; 4],
+    pub(crate) card: Option<Card>,
+    pub(crate) busy: Option<Busy>,
+    pub(crate) target: Option<String>,
+    pub(crate) notice: Option<String>,
+    pub(crate) attempt: u64,
 }
 
-impl Default for ProvidersState {
-    fn default() -> Self {
-        Self::new()
+impl std::fmt::Debug for PollReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PollReply")
+            .field("status", &self.status)
+            .field("error_message", &self.error_message)
+            .field("account_email", &"[redacted]")
+            .field("model", &self.model)
+            .field("retryable", &self.retryable)
+            .field("retry_after", &self.retry_after)
+            .finish()
     }
 }
-
+impl std::fmt::Debug for CardView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug = f.debug_struct("CardView");
+        debug.field("kind", &self.kind);
+        if self.kind == CardKind::Ended {
+            debug.field("lines", &"[screen only]");
+        } else {
+            debug.field("lines", &self.lines);
+        }
+        debug.field("footer", &self.footer).finish()
+    }
+}
+impl std::fmt::Debug for ProvidersState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProvidersState")
+            .field("open", &self.open)
+            .field("tab", &self.tab)
+            .field("connected", &self.connected)
+            .field("selected", &self.selected)
+            .field("card_open", &self.card.is_some())
+            .field("busy", &self.busy)
+            .finish_non_exhaustive()
+    }
+}
 impl ProvidersState {
-    /// A closed overlay.
-    #[must_use]
     pub fn new() -> Self {
-        Self { open: false }
+        Self::default()
     }
-}
-
-/// Apply one input. The stub returns no effects.
-#[must_use]
-pub fn update(
-    state: &mut ProvidersState,
-    input: ProvidersInput,
-    now: Instant,
-) -> Vec<ProvidersEffect> {
-    let _ = (state, input, now);
-    Vec::new()
-}
-
-/// Draw data for the overlay. The stub is an empty screen.
-#[must_use]
-pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
-    let _ = (state.open, now);
-    ProvidersView {
-        title: String::new(),
-        tab: ProvidersTab::Keys,
-        rows: Vec::new(),
-        filter: String::new(),
-        selected: None,
-        card: None,
-        notice: None,
-        banner: None,
-        secret_focus: false,
-        footer: String::new(),
-    }
-}
-
-/// Next countdown instant. The stub has no card, so there is no deadline.
-#[must_use]
-pub fn next_deadline(state: &ProvidersState) -> Option<Instant> {
-    let _ = state;
-    None
-}
-
-/// Parse the words after `/providers`.
-#[must_use]
-pub fn parse_providers_args(args: &str) -> Result<OpenTarget, &'static str> {
-    let words: Vec<&str> = args.split_whitespace().collect();
-    match words.as_slice() {
-        [] => Ok(OpenTarget::Tab(ProvidersTab::Keys)),
-        [word] if word.eq_ignore_ascii_case("keys") => Ok(OpenTarget::Tab(ProvidersTab::Keys)),
-        [word] if word.eq_ignore_ascii_case("accounts") => {
-            Ok(OpenTarget::Tab(ProvidersTab::Accounts))
-        }
-        [word] if word.eq_ignore_ascii_case("endpoints") => {
-            Ok(OpenTarget::Tab(ProvidersTab::Endpoints))
-        }
-        _ => Err(USAGE),
+    pub fn is_open(&self) -> bool {
+        self.open
     }
 }

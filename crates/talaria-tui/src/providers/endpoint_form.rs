@@ -1,7 +1,15 @@
-//! Endpoint form lines. The stub draws none.
+use talaria_core::providers::CardView;
 
-/// Lines for the endpoint form.
-#[must_use]
-pub fn form_lines() -> Vec<String> {
-    Vec::new()
+pub(super) fn lines(card: &CardView, secret_len: usize) -> Vec<String> {
+    card.lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let mut text = super::safe(line);
+            if index == 2 && secret_len > 0 {
+                text.push_str(&format!(" {}", super::mask(secret_len)));
+            }
+            text
+        })
+        .collect()
 }

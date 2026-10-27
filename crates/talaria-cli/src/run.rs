@@ -48,6 +48,7 @@ use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
 use talaria_core::profiles::{
     KeyAction as ProfilesKey, Panel as ProfilesPanel, ProfilesInput, ProfilesView, RawEdit,
 };
+use talaria_core::providers::{ProvidersEffect, ProvidersView};
 use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::review::{ReviewFocus, ReviewKey, ReviewView};
 use talaria_core::session::{
@@ -166,6 +167,7 @@ enum Overlay {
     Settings,
     /// The gateway diagnostics and confirmed restart card.
     Doctor,
+    Providers,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -181,6 +183,8 @@ fn background_theme(color: bool) -> BackgroundTheme {
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
 /// status line.
 pub struct TuiScreen {
+    providers: crate::providers_wiring::ProvidersWiring,
+    providers_view: Option<ProvidersView>,
     guard: TerminalGuard,
     input: Option<InputThread>,
     history: PromptHistory,
@@ -1699,6 +1703,36 @@ impl TuiScreen {
         prefix: &mut Vec<UserAction>,
     ) -> Vec<UserAction> {
         use crossterm::event::Event;
+        if view.profiles.is_none()
+            && view.settings.is_none()
+            && view.doctor.is_none()
+            && !self.terminal.is_released()
+            && let Some(providers) = self.providers_view.as_ref()
+        {
+            match event {
+                Event::Key(raw) => {
+                    return crate::providers_wiring::key_for(
+                        providers,
+                        &self.keymap,
+                        Key::from(raw),
+                    )
+                    .map(|key| {
+                        UserAction::Providers(Box::new(self.providers.route_key(providers, key)))
+                    })
+                    .into_iter()
+                    .collect();
+                }
+                Event::Paste(mut text) => {
+                    let input = self.providers.route_paste(providers, &text);
+                    zeroize::Zeroize::zeroize(&mut text);
+                    return input
+                        .map(|input| UserAction::Providers(Box::new(input)))
+                        .into_iter()
+                        .collect();
+                }
+                _ => {}
+            }
+        }
         match event {
             Event::Key(raw) => {
                 if self.terminal.is_released() {
@@ -2367,6 +2401,27 @@ impl StatusHost for TuiScreen {
 }
 
 impl Screen for TuiScreen {
+    fn sync_providers(&mut self, view: Option<ProvidersView>) {
+        if view.is_some() {
+            self.open_overlay(Overlay::Providers);
+        } else {
+            self.close_overlay(Overlay::Providers);
+        }
+        self.providers_view = view;
+    }
+
+    fn provider_secret(&self, effect: &ProvidersEffect) -> Option<zeroize::Zeroizing<String>> {
+        self.providers.secret_for(effect)
+    }
+
+    fn forget_provider_secret(&mut self) {
+        self.providers.forget();
+    }
+
+    fn copy_provider_text(&mut self, text: &str) {
+        let _ = self.providers.copy(&mut self.terminal, text);
+    }
+
     fn pane_settings(&self) -> talaria_app::panes::PaneSettings {
         self.config.panes.clone()
     }
@@ -2627,6 +2682,13 @@ impl Screen for TuiScreen {
             return;
         }
         self.close_overlay(Overlay::Settings);
+        if let Some(providers) = &self.providers_view {
+            let wiring = &self.providers;
+            let _ = self
+                .terminal
+                .draw_overlay(|area, buffer| wiring.draw(providers, area, buffer));
+            return;
+        }
         if view.processes_open {
             if self.overlay != Overlay::Processes {
                 if let Some(state) = view.state {
@@ -3417,6 +3479,8 @@ fn session(
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     composer.set_style(theme.composer);
     let mut screen = TuiScreen {
+        providers: crate::providers_wiring::ProvidersWiring::new(),
+        providers_view: None,
         guard,
         input: None,
         history,

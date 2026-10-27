@@ -1034,7 +1034,7 @@ impl SettingsState {
             SettingsAction::Edit | SettingsAction::Toggle => {
                 if self.more() {
                     if let Some(link) = self.links.get(self.cursor) {
-                        self.close_action = Some(link.action);
+                        self.close_action = Some(link.action.clone());
                         return self.request_close();
                     }
                 } else if !self.unverified {

@@ -1,7 +1,14 @@
-//! Sign-in card lines. The stub draws none.
+use talaria_core::providers::{CardKind, CardView};
 
-/// Lines for a waiting sign-in card.
-#[must_use]
-pub fn waiting_lines() -> Vec<String> {
-    Vec::new()
+pub(super) fn lines(card: &CardView, secret_len: usize) -> Vec<String> {
+    let mut lines: Vec<_> = card
+        .lines
+        .iter()
+        .skip(1)
+        .map(|line| super::safe(line))
+        .collect();
+    if card.kind == CardKind::Key {
+        lines.insert(lines.len().min(1), super::mask(secret_len));
+    }
+    lines
 }

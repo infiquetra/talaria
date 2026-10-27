@@ -175,7 +175,7 @@ impl Catalog {
                 {
                     row.text.push_str(&format!(" · needs {key}"));
                 }
-                row.text.push_str(" · set up with hermes model");
+                row.text.push_str(" · set up in /providers");
                 rows.push(row);
             }
         }
