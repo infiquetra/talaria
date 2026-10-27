@@ -171,6 +171,8 @@ enum Overlay {
     /// The profile's model roles.
     ModelRoles,
     Mcp,
+    /// Profile skills, toolsets and plugins.
+    Capabilities,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -1743,6 +1745,15 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                if let Some(capabilities) = &view.capabilities {
+                    let input = talaria_tui::capabilities::route_capabilities(
+                        capabilities,
+                        &self.keymap,
+                        &Key::from(raw),
+                    )
+                    .unwrap_or(talaria_core::capabilities::CapInput::DismissMessage);
+                    return vec![UserAction::Capabilities(Box::new(input))];
+                }
                 if let Some(mcp) = &self.mcp_view {
                     return self
                         .mcp_wiring
@@ -2066,6 +2077,20 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(text) => {
+                if let Some(capabilities) = &view.capabilities {
+                    if self.terminal.is_released() || !capabilities.text_focus {
+                        return Vec::new();
+                    }
+                    return text
+                        .chars()
+                        .filter(|character| !character.is_control())
+                        .map(|character| {
+                            UserAction::Capabilities(Box::new(
+                                talaria_core::capabilities::CapInput::Char(character),
+                            ))
+                        })
+                        .collect();
+                }
                 if let Some(mcp) = &self.mcp_view {
                     return self
                         .mcp_wiring
@@ -2774,6 +2799,14 @@ impl Screen for TuiScreen {
         self.close_overlay(Overlay::Doctor);
         self.sync_agents(view);
         self.apply_transcript(view);
+        if let Some(capabilities) = &view.capabilities {
+            self.open_overlay(Overlay::Capabilities);
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::capabilities::draw_capabilities(capabilities, area, buf);
+            });
+            return;
+        }
+        self.close_overlay(Overlay::Capabilities);
         if let Some(settings) = &view.settings {
             let mut settings = settings.clone();
             settings.help = self.keymap.settings_help();

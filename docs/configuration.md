@@ -241,6 +241,30 @@ mcp_save = ["ctrl+s"]
 mcp_open_link = ["o"]
 mcp_copy = ["c"]
 mcp_paste_redirect = ["p"]
+capabilities_next_tab = ["tab"]
+capabilities_prev_tab = ["shift+tab"]
+capabilities_skills = ["1"]
+capabilities_hub = ["2"]
+capabilities_toolsets = ["3"]
+capabilities_plugins = ["4"]
+capabilities_up = ["up"]
+capabilities_down = ["down"]
+capabilities_page_up = ["pageup"]
+capabilities_page_down = ["pagedown"]
+capabilities_home = ["home"]
+capabilities_end = ["end"]
+capabilities_enter = ["enter"]
+capabilities_toggle = ["space"]
+capabilities_filter = ["/"]
+capabilities_next_page = ["n"]
+capabilities_prev_page = ["p"]
+capabilities_install = ["i"]
+capabilities_catalog = ["c"]
+capabilities_remove = ["x"]
+capabilities_show_all = ["a"]
+capabilities_refresh = ["r"]
+capabilities_confirm = ["y"]
+capabilities_cancel = ["esc"]
 [editor]
 command = ""
 [history]
@@ -378,6 +402,13 @@ The `mcp_*` actions can be rebound under `[keys]`: `mcp_next_tab`, `mcp_prev_tab
 inside the MCP screen.
 
 ## Keys
+
+`/capabilities` (and `talaria capabilities`) opens the current profile's skills, skill hub, toolsets and plugins.
+The `capabilities_*` bindings above apply in that overlay. Tab switches tabs, Space
+toggles the selected item, and Enter opens its detail. The hub and plugins also offer
+installation; review the displayed information and confirm with Y. While typing a filter,
+search or install input, printable keys enter text, Backspace deletes, Enter submits and
+Esc cancels. These input keys stay fixed even if overlay commands are rebound.
 
 `/config` opens the current Hermes profile's settings. `/config <text>` opens a filter;
 each word must match the setting's key, description or category. Left and Right switch

@@ -13,6 +13,25 @@ fn main() -> ExitCode {
     if talaria_cli::args::is_doctor_command(&args) {
         return ExitCode::from(talaria_cli::doctor_cmd::run(&args));
     }
+    if args.first().is_some_and(|arg| arg == "capabilities") {
+        let parsed = match talaria_cli::capabilities_cmd::parse(&args) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                eprintln!("{error}");
+                return ExitCode::from(2);
+            }
+        };
+        return match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime.block_on(talaria_cli::capabilities_cmd::run(parsed)),
+            Err(_) => {
+                eprintln!("talaria capabilities: could not start the runtime");
+                ExitCode::from(1)
+            }
+        };
+    }
     if talaria_cli::args::is_attach_command(&args) {
         return talaria_cli::attach_cmd::run(&args);
     }

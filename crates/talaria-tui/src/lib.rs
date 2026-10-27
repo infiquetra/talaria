@@ -2,7 +2,6 @@
 
 pub mod automation;
 pub mod background;
-pub mod capabilities;
 pub mod checklist;
 pub mod comfort_route;
 pub mod composer;
@@ -36,4 +35,5 @@ pub mod terminal;
 pub mod theme;
 pub mod tool_cell;
 
+pub mod capabilities;
 pub mod settings;

@@ -1,4 +1,10 @@
-use serde_json::Value;
+mod install;
+mod rows;
+mod state;
+mod text;
+pub use install::{classify_install_input, redact_paths};
+pub use state::CapabilitiesState;
+pub use text::format_text;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CapTab {
@@ -123,12 +129,6 @@ pub enum InstallTarget {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstallInputError;
-pub fn classify_install_input(_input: &str) -> Result<InstallTarget, InstallInputError> {
-    todo!("capabilities stub")
-}
-pub fn redact_paths(_text: &str, _hermes_home: &str, _user_home: &str) -> String {
-    todo!("capabilities stub")
-}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CapabilityChange {
     Skill { name: String, enabled: bool },
@@ -175,11 +175,6 @@ pub enum CapData {
     Hub(HubPage),
     Toolsets(Vec<ToolsetRow>),
     Plugins(Vec<PluginRow>),
-}
-impl CapData {
-    pub fn from_json(_tab: CapTab, _value: &Value) -> Result<Self, CapError> {
-        todo!("capabilities stub")
-    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CapError {
@@ -263,9 +258,11 @@ pub struct CatalogEntry {
     pub installed: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum CapInput {
     Open(CapTab),
     Close,
+    DismissMessage,
     Key(KeyAction),
     Char(char),
     Backspace,
@@ -426,21 +423,11 @@ pub struct CapView {
     pub loading: bool,
     pub catalog: bool,
 }
-#[derive(Debug)]
-pub struct CapabilitiesState;
-impl CapabilitiesState {
-    pub fn new(_profile: String, _foreground: Option<SessionRef>, _open_at: CapTab) -> Self {
-        todo!("capabilities stub")
-    }
-    pub fn update(&mut self, _input: CapInput, _now_ms: u64) -> Vec<CapEffect> {
-        todo!("capabilities stub")
-    }
-    pub fn view(&self) -> CapView {
-        todo!("capabilities stub")
-    }
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapText {
+    FilterPrompt,
+    SearchPrompt,
+    InstallPrompt,
     Loading,
     EmptySkills,
     EmptyToolsets,
@@ -492,9 +479,6 @@ pub enum CapText {
     FindingsTail,
     EmptyFilter,
     EmptyLog,
-    FilterPrompt,
-    SearchPrompt,
-    InstallPrompt,
 }
 #[derive(Clone, Debug, Default)]
 pub struct TextArgs {
@@ -522,7 +506,4 @@ pub struct TextArgs {
     pub known_issues: Vec<String>,
     pub cleared_memory_provider: bool,
     pub session_line: Option<Result<String, String>>,
-}
-pub fn format_text(_kind: CapText, _args: &TextArgs) -> String {
-    todo!("capabilities stub")
 }

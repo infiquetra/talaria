@@ -1,12 +1,14 @@
-//! Hand-typed capability routes for the dashboard API.
+//! Profile-scoped capability routes on the dashboard API.
 
-use crate::rest::{RestClient, RestError};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use crate::rest::{Method, RequestOpts, RestClient, RestError};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
+use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SkillDto {
     pub name: String,
+    #[serde(default, deserialize_with = "empty_text")]
     pub description: String,
     pub category: Option<String>,
     pub enabled: bool,
@@ -77,66 +79,189 @@ pub struct PluginCatalogDto {
     pub entries: Vec<Value>,
 }
 
-pub async fn skills_list(_rest: &RestClient, _profile: &str) -> Result<Vec<SkillDto>, RestError> {
-    todo!("capabilities stub")
+fn empty_text<'de, D: serde::Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(de)?.unwrap_or_default())
+}
+fn decode<T: DeserializeOwned>(value: Value) -> Result<T, RestError> {
+    serde_json::from_value(value).map_err(|_| RestError::BadBody("invalid capability reply".into()))
+}
+fn opts(seconds: u64) -> RequestOpts {
+    RequestOpts {
+        deadline: Some(Duration::from_secs(seconds)),
+        ..RequestOpts::default()
+    }
+}
+fn encode(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
+}
+async fn read<T: DeserializeOwned>(
+    rest: &RestClient,
+    route: String,
+    seconds: u64,
+) -> Result<T, RestError> {
+    decode(
+        rest.request(Method::Get, &route, None, opts(seconds))
+            .await?,
+    )
+}
+pub async fn skills_list(rest: &RestClient, profile: &str) -> Result<Vec<SkillDto>, RestError> {
+    read(rest, format!("/api/skills?profile={}", encode(profile)), 30).await
 }
 pub async fn skill_toggle(
-    _rest: &RestClient,
-    _profile: &str,
-    _name: &str,
-    _enabled: bool,
+    rest: &RestClient,
+    profile: &str,
+    name: &str,
+    enabled: bool,
 ) -> Result<SkillToggleDto, RestError> {
-    todo!("capabilities stub")
+    let reply: SkillToggleDto = decode(
+        rest.request(
+            Method::Put,
+            "/api/skills/toggle",
+            Some(&json!({"name":name,"enabled":enabled,"profile":profile})),
+            opts(30),
+        )
+        .await?,
+    )?;
+    if !reply.ok {
+        return Err(RestError::BadBody("invalid skill toggle reply".into()));
+    }
+    Ok(reply)
 }
 pub async fn skill_content(
-    _rest: &RestClient,
-    _profile: &str,
-    _name: &str,
+    rest: &RestClient,
+    profile: &str,
+    name: &str,
 ) -> Result<String, RestError> {
-    todo!("capabilities stub")
+    #[derive(Deserialize)]
+    struct Content {
+        content: String,
+    }
+    let reply: Content = read(
+        rest,
+        format!(
+            "/api/skills/content?name={}&profile={}",
+            encode(name),
+            encode(profile)
+        ),
+        30,
+    )
+    .await?;
+    Ok(cap_content(&reply.content))
 }
 pub async fn hub_search(
-    _rest: &RestClient,
-    _profile: &str,
-    _q: &str,
+    rest: &RestClient,
+    profile: &str,
+    q: &str,
 ) -> Result<HubSearchDto, RestError> {
-    todo!("capabilities stub")
+    read(
+        rest,
+        format!(
+            "/api/skills/hub/search?q={}&source=all&limit=20&profile={}",
+            encode(q),
+            encode(profile)
+        ),
+        45,
+    )
+    .await
 }
 pub async fn hub_preview(
-    _rest: &RestClient,
-    _profile: &str,
-    _identifier: &str,
+    rest: &RestClient,
+    profile: &str,
+    identifier: &str,
 ) -> Result<HubPreviewDto, RestError> {
-    todo!("capabilities stub")
+    let mut reply: HubPreviewDto = read(
+        rest,
+        format!(
+            "/api/skills/hub/preview?identifier={}&profile={}",
+            encode(identifier),
+            encode(profile)
+        ),
+        45,
+    )
+    .await?;
+    reply.skill_md = cap_content(&reply.skill_md);
+    Ok(reply)
 }
 pub async fn hub_scan(
-    _rest: &RestClient,
-    _profile: &str,
-    _identifier: &str,
+    rest: &RestClient,
+    profile: &str,
+    identifier: &str,
 ) -> Result<HubScanDto, RestError> {
-    todo!("capabilities stub")
+    read(
+        rest,
+        format!(
+            "/api/skills/hub/scan?identifier={}&profile={}",
+            encode(identifier),
+            encode(profile)
+        ),
+        45,
+    )
+    .await
 }
-pub async fn toolsets_list(
-    _rest: &RestClient,
-    _profile: &str,
-) -> Result<Vec<ToolsetDto>, RestError> {
-    todo!("capabilities stub")
+pub async fn toolsets_list(rest: &RestClient, profile: &str) -> Result<Vec<ToolsetDto>, RestError> {
+    read(
+        rest,
+        format!("/api/tools/toolsets?profile={}", encode(profile)),
+        30,
+    )
+    .await
 }
 pub async fn toolset_toggle(
-    _rest: &RestClient,
-    _profile: &str,
-    _name: &str,
-    _enabled: bool,
+    rest: &RestClient,
+    profile: &str,
+    name: &str,
+    enabled: bool,
 ) -> Result<ToolsetToggleDto, RestError> {
-    todo!("capabilities stub")
+    let reply: ToolsetToggleDto = decode(
+        rest.request(
+            Method::Put,
+            &format!("/api/tools/toolsets/{}", encode(name)),
+            Some(&json!({"enabled":enabled,"profile":profile})),
+            opts(30),
+        )
+        .await?,
+    )?;
+    if !reply.ok {
+        return Err(RestError::BadBody("invalid toolset toggle reply".into()));
+    }
+    Ok(reply)
 }
 pub async fn toolset_config(
-    _rest: &RestClient,
-    _profile: &str,
-    _name: &str,
+    rest: &RestClient,
+    profile: &str,
+    name: &str,
 ) -> Result<ToolsetConfigDto, RestError> {
-    todo!("capabilities stub")
+    read(
+        rest,
+        format!(
+            "/api/tools/toolsets/{}/config?profile={}",
+            encode(name),
+            encode(profile)
+        ),
+        30,
+    )
+    .await
 }
-pub async fn plugin_catalog(_rest: &RestClient) -> Result<PluginCatalogDto, RestError> {
-    todo!("capabilities stub")
+pub async fn plugin_catalog(rest: &RestClient) -> Result<PluginCatalogDto, RestError> {
+    read(rest, "/api/dashboard/plugins/catalog".into(), 30).await
+}
+pub fn cap_content(text: &str) -> String {
+    const LIMIT: usize = 256 * 1024;
+    if text.len() <= LIMIT {
+        return text.to_owned();
+    }
+    let mut end = LIMIT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n(showing the first 256 KiB)", &text[..end])
 }

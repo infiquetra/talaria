@@ -17,6 +17,21 @@
 **Mechanism.** Without `preserve_order`, `serde_json::Map` is a `BTreeMap`, so any round trip through `Value` sorts object keys. A typed struct (or a `Vec` of pairs serialised as a map) keeps its field and entry order when it is encoded directly. Turning `preserve_order` on workspace-wide would also enlarge `Map` and push `rpc::CallError` over clippy's `result_large_err` limit.
 
 **Generalizable rule.** When the receiver keeps a JSON object's key order, encode that object from typed data straight to bytes, and assert order on the bytes, never on a parsed `Value`.
+## 2026-10-27 — A generated response can be stricter than a tolerant capability view
+
+**Evidence.** At the pinned Hermes revision, generated plugin rows require a key and filesystem metadata, and generated catalog entries require a commit hash. The capabilities contract deliberately accepts a missing key as read-only and a missing commit hash as unknown. Decoding through the generated response type rejects those cases before the view can apply its rules.
+
+**Mechanism.** A local typed method projection reuses the generated method name and request parameters while selecting a response type that retains only the documented fields. Secret setting values and filesystem metadata are discarded while decoding. Requests still use the native typed call path and its deadline.
+
+**Generalizable rule.** Keep generated request contracts intact; when a view must tolerate incomplete responses, use a narrow typed response projection and discard sensitive fields before state sees them.
+
+## 2026-10-27 — A capability name is a display label, not always a mutation identity
+
+**Evidence.** Hermes plugins can share a display name across category folders. The pinned toggle interface accepts a key, while removal resolves a name. The capabilities reducer checks the selected plugin's key for toggles and refuses ambiguous removal names.
+
+**Mechanism.** Selecting a row by its display name can address the first matching plugin rather than the row the operator selected. Keeping the selected key through the operation also ties its pending marker and read-back to the intended row. Display sanitization stays separate from the original identifiers used in requests.
+
+**Generalizable rule.** Preserve the server's mutation identity through selection and read-back; never substitute a sanitized or non-unique display label.
 
 ## 2026-10-26 — A successful settings reply does not establish the saved value
 

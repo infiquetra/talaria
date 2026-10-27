@@ -4319,3 +4319,13 @@ catalogue installation commands are displayed or copied, never run.
 **Rejected.** Putting values into a server's configuration or an application input would expose
 them to ordinary state inspection and persistence. **Revisit when.** Hermes provides a replacement
 secret-entry protocol that retains these boundaries.
+
+### Capabilities keeps generated requests with narrow typed responses
+
+**Decision.** Local native method markers reuse the generated plugin method names and parameter types, with lenient typed response projections for the fields the capabilities view consumes. Calls retain explicit deadlines and the native typed client path. Generated files and the RPC client remain unchanged.
+
+**Rationale.** The view must handle a missing plugin key as read-only and a missing catalog commit hash as unknown. The generated result types require those fields and unrelated filesystem metadata. A response projection satisfies those display rules while discarding paths and secret setting values before application state receives them. **Rejected.** Untyped calls, changing the generated contract, or padding replies with invented metadata. **Revisit when.** The published schema makes these fields optional.
+
+### Deferred activation kinds use deterministic map order
+
+**Decision.** Keep deferred activation kinds in a `BTreeMap` and display them in sorted kind order. Keep the workspace JSON feature set unchanged. **Rationale.** Reply object order carries no activation semantics. Enabling global insertion ordering enlarges every JSON value and pushes the existing client error type over the lint size limit. **Revisit when.** The gateway specifies a meaningful activation order.
