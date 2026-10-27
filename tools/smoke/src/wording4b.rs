@@ -5,6 +5,18 @@ pub const MCP_TITLE_FMT: &str = "MCP servers · profile <name>";
 pub const MCP_EMPTY_FMT: &str = "No MCP servers in profile <name> yet.";
 pub const MCP_REMOTE: &str = "remote";
 pub const MCP_BAD_TRANSPORT: &str = "TransportSpec(";
+pub const MCP_KINDS: [&str; 2] = [MCP_REMOTE, "local"];
+pub const MCP_STATE_PREFIXES: [&str; 8] = [
+    "off",
+    "needs sign-in",
+    "connected ·",
+    "ready ·",
+    "connecting…",
+    "failed to connect ·",
+    "configured ·",
+    "status unknown",
+];
+pub const ROW_SELECTION_MARKS: [char; 2] = ['>', '›'];
 
 // Capabilities: profile title, enabled boxes, tool count, and bundled source.
 pub const CAPABILITIES_TITLE_FMT: &str = "Capabilities · profile <name>";
@@ -12,6 +24,15 @@ pub const CAPABILITIES_ON: &str = "[x]";
 pub const CAPABILITIES_OFF: &str = "[ ]";
 pub const CAPABILITIES_TOOLS_RE: &str = r"([0-9]+) tools";
 pub const CAPABILITIES_BUNDLED: &str = "bundled";
+pub const CAPABILITIES_SOURCES: [&str; 6] = [
+    CAPABILITIES_BUNDLED,
+    "hub",
+    "external",
+    "local",
+    "yours",
+    "package",
+];
+pub const CAPABILITIES_TOOLS_SUFFIX: &str = " tools";
 pub const CAPABILITIES_PLUGINS_EMPTY_FMT: &str = "You have not installed any plugins in profile <p>. Press a to show the <n> that ship with Hermes, or i to install one.";
 // Capabilities: skills are grouped by named categories, then an uncategorized group.
 pub const CAPABILITIES_NO_CATEGORY: &str = "(no category)";
@@ -49,6 +70,20 @@ pub const SIGNAL_ROW: &str = "Signal";
 pub const SIGNAL_URL_FIELD: &str = "SIGNAL_HTTP_URL";
 pub const FIELD_SET: &str = "set";
 pub const FIELD_NOT_SET: &str = "not set";
+pub const PLATFORM_STATES: [&str; 12] = [
+    "connected",
+    "connecting…",
+    "retrying",
+    "error",
+    "off",
+    "needs setup",
+    "restart needed",
+    "gateway stopped",
+    "startup failed",
+    "paused",
+    "disconnected",
+    "unknown",
+];
 
 // Connectors: opening consent explains the hosted service and names the profile.
 pub const CONNECTORS_CONSENT_FMT: &str = "Connectors run through Nous Research's hosted tool gateway. If profile <p> has no Nous sign-in, Hermes creates a free guest identity for it when you continue.";
@@ -59,6 +94,16 @@ pub const CONFIGURE_SECRET_REFUSAL: &str = "That request contains something that
 
 // Inline chat: an empty composer.
 pub const COMPOSER: &str = ">";
+
+// Chat answers use this prefix; a reply prevents a submit fallback.
+pub const REPLY_PREFIX: &str = "agent:";
+// The catalogue's read-only filter names this documented server.
+pub const MCP_FILTER: &str = "deepwiki";
+// Built-in memory sizes use the owner's byte display units.
+pub const MEMORY_SIZE_RE: &str = r"[0-9]+(?:\.[0-9]+)? (?:B|KB|MB|GB)\b";
+// This synthetic key is only submitted to exercise the local refusal.
+pub const CONFIGURE_SECRET_LINE: &str =
+    "/configure use my openrouter key sk-or-v1-talaria-sentinel-0000000000000000";
 
 // Integration screens: notices which mean a write occurred.
 pub const WRITE_BANNERS: [&str; 15] = [

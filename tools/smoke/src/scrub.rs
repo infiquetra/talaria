@@ -59,6 +59,13 @@ impl Scrubber {
         if let Some(hermes) = hermes_home {
             add(hermes, "<hermes-home>");
         }
+        for secret in [
+            "not-a-real-key".to_owned(),
+            format!("sk-or-v1-{}", "0".repeat(64)),
+            "sk-or-v1-talaria-sentinel-0000000000000000".to_owned(),
+        ] {
+            needles.push((secret, "<typed-secret>".to_owned()));
+        }
         // The longest needle wins, so a path inside a longer path is replaced as one.
         needles.sort_by_key(|needle| std::cmp::Reverse(needle.0.len()));
         let scratch_suffix = scratch
@@ -97,7 +104,7 @@ impl Scrubber {
     /// Replaces every needle in one pass; the output is never read again.
     pub fn scrub(&self, text: &str) -> String {
         let Some(pattern) = &self.pattern else {
-            return scrub_typed_secrets(text.to_owned());
+            return text.to_owned();
         };
         let mut out = String::with_capacity(text.len());
         let mut last = 0;
@@ -122,14 +129,8 @@ impl Scrubber {
             last = whole.end();
         }
         out.push_str(&text[last..]);
-        scrub_typed_secrets(out)
+        out
     }
-}
-
-fn scrub_typed_secrets(text: String) -> String {
-    let junk = format!("sk-or-v1-{}", "0".repeat(64));
-    text.replace("not-a-real-key", "<typed-secret>")
-        .replace(&junk, "<typed-secret>")
 }
 
 fn trim_separator(value: &str) -> &str {

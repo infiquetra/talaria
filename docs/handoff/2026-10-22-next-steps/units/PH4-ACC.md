@@ -866,6 +866,12 @@ Pass conditions (limits in 9.6; reasons in 9.4). `<n>` is a number of lines; "ro
 
 The startup and plain-answer reasons are P1-13's. The generic lines (`deadline exceeded in step <name>`, `skipped: <reason>; TALARIA_LIVE_REQUIRE=1`) are P1-13's as well. The suite has no step that may SKIP: a missing precondition is a FAIL of the step that needs it, never a skip. P1-13's only skip is in its approval step, which phase 4b does not run, so a real phase4b run exits 0 (passed), 1 (failed) or 2 (preflight) and never 3; `TALARIA_LIVE_REQUIRE=1` changes nothing for it. The skip and exit-3 behaviour of the shared runner stays covered by the earlier suites' own tests, which this unit does not edit.
 
+The idle invariant also applies to the last guarded read of every screen step. If the
+screen has no more specific failure above but is not idle, its reason is
+`the step did not return to an idle composer`. Before submitting `/curator status`, the
+first command must have returned idle; otherwise the reason is
+`the memory command did not return to an idle composer`. These checks send no recovery keys.
+
 ### 9.5 Talaria screen texts the steps depend on
 
 One constant per text in `wording4b.rs`; the tests assert the constant, the steps use it. Each source comment describes the behaviour in plain words (for example `// MCP servers: the empty-list sentence`), never a planning code, because the roadmap's rule 7 says not to write planning codes into source comments; this table is the map from constant to source scenario. Each constant is the exact screen text of its source; where a source issue's body abbreviates a text with `...`, the dots are an abbreviation, not screen text, and the full text comes from that issue's specification.
@@ -874,8 +880,10 @@ One constant per text in `wording4b.rs`; the tests assert the constant, the step
 |---|---|---|
 | `MCP_TITLE_FMT`, `MCP_EMPTY_FMT` | `MCP servers · profile <name>`, `No MCP servers in profile <name> yet.` | P4-04 UAT-1 |
 | `MCP_REMOTE`, `MCP_BAD_TRANSPORT` | `remote`, `TransportSpec(` (the second must be absent) | P4-04 UAT-1 |
+| `MCP_KINDS`, `MCP_STATE_PREFIXES`, `ROW_SELECTION_MARKS` | `remote`, `local`; the eight state labels of the Servers table; `›` and the synthetic fixture's `>` selection marker. At 80 columns the kind column is absent. | P4-04 specification 4.3 |
 | `CAPABILITIES_TITLE_FMT` | `Capabilities · profile <name>` | P4-05 UAT-1 |
 | `CAPABILITIES_ON`, `CAPABILITIES_OFF`, `CAPABILITIES_TOOLS_RE`, `CAPABILITIES_BUNDLED` | `[x]`, `[ ]`, `<n> tools`, `bundled` | P4-05 UAT-1 |
+| `CAPABILITIES_SOURCES`, `CAPABILITIES_TOOLS_SUFFIX` | `bundled`, `hub`, `external`, `local`, `yours`, `package`; ` tools` | P4-05 specification 6.1 and command columns |
 | `CAPABILITIES_PLUGINS_EMPTY_FMT` | `You have not installed any plugins in profile <p>. Press a to show the <n> that ship with Hermes, or i to install one.` (T4 in P4-05's specification, section 5.1) | P4-05 UAT-1 |
 | `CAPABILITIES_CLI_HEADER`, `CAPABILITIES_UNKNOWN_FMT` | `NAME  STATE  SOURCE  CATEGORY`, `talaria capabilities: unknown list <name>; use skills, toolsets or plugins` | P4-05 UAT-1, UAT-6 |
 | `NO_GATEWAY_FMT` | `talaria: no Hermes gateway is running for this home` (and the `Next step:` prefix) | P1-12 UAT-5; P4-05 UAT-6 |
@@ -887,6 +895,9 @@ One constant per text in `wording4b.rs`; the tests assert the constant, the step
 | `MESSAGING_TITLE_FMT`, `SIGNAL_ROW`, `SIGNAL_URL_FIELD`, `FIELD_SET`, `FIELD_NOT_SET` | `Connectors and messaging · profile <name>`, `Signal`, `SIGNAL_HTTP_URL`, `set`, `not set` | P4-11 UAT-1 |
 | `CONNECTORS_CONSENT_FMT`, `CONNECTORS_CONSENT_HINT` | `Connectors run through Nous Research's hosted tool gateway. If profile <p> has no Nous sign-in, Hermes creates a free guest identity for it when you continue.` (P4-11's specification, the consent card); `enter continue · esc back` | P4-11 UAT-2 |
 | `MEMORY_FILE_ROWS` | `MEMORY.md`, `USER.md` (the two built-in memory file rows; P4-07 AC-13 greps `MEMORY.md`) | P4-07 UAT-1, UAT-5 |
+| `MEMORY_SIZE_RE` | A byte count with unit `B`, `KB`, `MB` or `GB` | P4-07 memory-file display and formatBytes rule |
+| `PLATFORM_STATES` | The twelve platform labels, including error details and pairing suffixes | P4-11 specification 4.7 |
+| `MCP_FILTER`, `CONFIGURE_SECRET_LINE`, `COMPOSER`, `REPLY_PREFIX` | `deepwiki`; the secret-refusal submission above; `>`; the synthetic terminal's `agent:` safety guard (not a positive live pass predicate) | The input table above and the synthetic terminal harness |
 | `CONFIGURE_SECRET_REFUSAL` | `That request contains something that looks like a key or token. Talaria never sends secrets to a model. Add keys with /providers.` | P4-09 UAT-3 |
 | `WRITE_BANNERS` | `Saved.`, `Saved the key`, `MCP servers reloaded.`, `Installed `, `Removed `, `Deleted `, `Cron job '`, `Curator paused`, `Curator resumed`, `Curator running`, `Configured profile`, `Pairing approved`, `Renamed to`, `Signed in to`, `Applying ` | the owners' success texts |
 

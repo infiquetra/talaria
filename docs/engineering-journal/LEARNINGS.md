@@ -5798,3 +5798,39 @@ buffers from accepted drafts and retry values.
 **Mechanism.** A model proposal is untrusted input, not permission to write. Detect secrets before shortening strings or recording history, keep withholding markers tainted across validation passes, and apply only through the service that owns the mutation. Compare fresh state with the proposal baseline before writing; confirm success from a separate readback. A saved job is already durable even when its scheduling step fails.
 
 **Generalizable rule.** Preserve authorization and freshness checks across adapters, and repair a contradictory test setup instead of bypassing the guard it needs to exercise.
+
+## 2026-10-27 — A masked field check must inspect every displayed column
+
+**Evidence.** The Phase 4b smoke suite's Signal-card check originally read only the state
+column. A row such as `SIGNAL_HTTP_URL  set  unexpected` would therefore have passed the
+masking check. `tools/smoke/src/screen4b.rs` now classifies trailing columns as stored text,
+and its unit test covers both `set` and `not set`. These are synthetic offline checks;
+no live account or gateway mutation was performed.
+
+**Mechanism.** Column splitting separates a valid state label from an invalid exposed value.
+Accepting the state label alone ignores the part of the row the check exists to protect.
+
+**Generalizable rule.** A secrecy check consumes the complete displayed field, including
+trailing columns, before accepting a masked state.
+
+## 2026-10-27 — Screen checks wait for loaded data and isolate shell output
+
+**Evidence.** The combined capabilities and integrations smoke suite passed all 14 steps
+in 58 seconds against the isolated test gateway. Step times in seconds: startup 3.0;
+plain-answer 5.8; mcp-browse 2.4; capabilities-browse 2.5; memory-open 1.4;
+memory-commands 21.6; cron-browse 1.3; messaging-browse 2.9; connectors-consent 1.3;
+configure-secret-refused 4.0; quit 0.8; resume 9.6; capabilities-cli 1.2; no-gateway 0.4.
+All steps stayed within their existing limits and the 900-second default deadline.
+Recorded controls cover the real title-and-tab row, composer borders, platform rows,
+masked Signal field, consent footer and secret refusal. The pinned synthetic controls
+remain unchanged. No consent, credential, installation or configuration write was confirmed.
+
+**Mechanism.** A tab can show its title before its rows arrive. Real platform and field rows
+use punctuation rather than synthetic table columns. A command diagnostic may have no
+terminating newline, and a shell prompt can arrive in the same capture as its completion
+marker. Save the actual exit status, print it on a separate line, and stop the command's
+capture at its own marker so a shell prompt cannot count as a file in an empty directory.
+Only terminal borders are removed when checking an empty composer; draft characters stay.
+
+**Generalizable rule.** Wait within the original deadline, preserve complete secrecy and
+idle predicates, and delimit each command's output before interpreting its rows.
