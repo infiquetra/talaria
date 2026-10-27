@@ -132,7 +132,10 @@ pub struct ConfigureView {
 }
 impl ConfigureView {
     pub fn text_lines(&self) -> Vec<String> {
-        todo!("configure stub")
+        std::iter::once(self.title.clone())
+            .chain(self.lines.iter().map(|line| line.text.clone()))
+            .chain(std::iter::once(self.footer.clone()))
+            .collect()
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]

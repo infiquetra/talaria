@@ -139,3 +139,54 @@ One write runs at a time through its read-back. An uncertain result triggers a r
 an automatic resend. Drafts survive a refusal. A successful earlier save leaves newer edits in
 place. Use Tab to switch tabs, `/` to filter, and Escape to close one layer. Editor letters remain
 literal text; confirmation cards accept only their confirm, cancel, and close actions.
+
+## Providers
+
+`/providers` opens **Keys** for the connected Hermes profile. `/providers keys`,
+`/providers accounts` and `/providers endpoints` select a tab directly. Enter on a model
+picker row labelled `set up in /providers` opens the matching provider here.
+
+On a list, type to filter, use arrows to select, and press Tab or Shift+Tab to switch tabs.
+Ctrl+R reloads. Esc closes a card first, then clears the filter, then returns to the transcript.
+The `providers_*` entries in `[keys]` above configure the tab, reload, removal, test, save,
+clear-key, browser and copy actions in this overlay. Printable keys such as `o` and `c` still
+filter a list; they open or copy only when the displayed card offers that action.
+
+**Keys.** Enter opens a masked field. Paste a key and press Enter to check and save it.
+A rejected key stays in the card for correction. If the provider cannot be reached, the card
+asks for a second Enter to save unchecked; editing the key clears that confirmation.
+Ctrl+U clears the field. A saved key shows at most its last four characters.
+
+`ready` means Hermes lists the provider as authenticated in its catalogue. It does not prove
+that the saved key currently works. Ctrl+D confirms removal of every credential Hermes saves
+for that provider, including its account sign-in. The confirmation names known shared key
+variables and the other providers that would lose them.
+
+**Accounts.** Enter starts the provider's device-code sign-in or shows instructions for an
+external sign-in command. A device-code card shows the browser address, code and expiry.
+Press `o` to open its https link, `c` to copy its code, or Esc to cancel. External commands
+can be copied and run in a separate terminal. Ctrl+D signs out after confirmation when Hermes
+supports it; otherwise the card gives the provider's removal instructions. Clipboard copying
+depends on the terminal allowing access.
+
+**Endpoints.** Choose `+ Add an endpoint`, or Enter on an existing row to edit it. Fill in Name,
+Base URL, API key, API mode, Model and optional Context length. Tab and Shift+Tab move between
+fields. Ctrl+T tests the endpoint and fills discovered model choices. Ctrl+S saves; a failed
+test can still be saved for an endpoint that is currently offline. Testing can identify a
+different answering base address, which the form displays before saving it.
+
+While editing, an untouched empty API key field keeps the saved key; Ctrl+X explicitly clears
+it. Leaving an existing Context length empty keeps its old Hermes value. Endpoint saves leave
+the profile's default model selection as it was. Ctrl+D confirms deletion, including removal
+of the endpoint's saved key. An endpoint set directly in model settings is read-only here.
+
+While disconnected, the screen disables changes and reloads when Talaria reconnects. A change
+whose reply was lost is reported as uncertain and the list is reloaded; the change is not automatically repeated.
+
+## Configure
+
+`[configure]` optionally selects the provider and model used by `/configure`. Set both to non-empty strings; otherwise Talaria uses the foreground session model when available, then the profile default. The dry-run command uses its command-line model first, then this table, then the profile default.
+
+Describe a change with `/configure <request>`, review the proposed rows, and confirm before applying.
+The dry-run command presents the same review without making changes. Selecting a memory provider
+opens `/memory-settings` so its owner can validate and activate it.

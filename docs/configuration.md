@@ -310,6 +310,21 @@ connectors_doctor = ["shift+r"]
 connectors_confirm = ["y"]
 connectors_cancel = ["n"]
 connectors_close = ["esc"]
+
+configure_up = ["up"]
+configure_down = ["down"]
+configure_page_up = ["pageup"]
+configure_page_down = ["pagedown"]
+configure_home = ["home"]
+configure_end = ["end"]
+configure_toggle = ["space"]
+configure_apply = ["a"]
+configure_refine = ["r"]
+configure_detail = ["d"]
+configure_yes = ["y"]
+configure_no = ["n"]
+configure_open_next = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+configure_close = ["esc"]
 [editor]
 command = ""
 [history]
@@ -349,6 +364,11 @@ dock_rows = 3
 multiplexer = "auto"
 direction = "auto"
 focus = false
+
+[configure]
+# Set both provider and model to use a specific configuration assistant model.
+# provider = "example-provider"
+# model = "example-model"
 ```
 
 ## Settings
@@ -412,6 +432,8 @@ an unavailable saved model is dropped. Hermes's profile default never changes.
 
 `/memory-settings` opens memory providers and curator controls; see the [terminal guide](terminal-ui.md#memory-and-curator).
 `/connectors` and `/messaging` manage accounts and chat platforms; see the [terminal guide](terminal-ui.md#connectors-and-messaging).
+
+`/configure` reviews proposed changes; `talaria configure --dry-run` previews them without applying. See the [terminal guide](terminal-ui.md#configure).
 
 ## Keys
 
@@ -499,46 +521,7 @@ binding them works, with a notice.
 
 ## Providers
 
-`/providers` opens **Keys** for the connected Hermes profile. `/providers keys`,
-`/providers accounts` and `/providers endpoints` select a tab directly. Enter on a model
-picker row labelled `set up in /providers` opens the matching provider here.
-
-On a list, type to filter, use arrows to select, and press Tab or Shift+Tab to switch tabs.
-Ctrl+R reloads. Esc closes a card first, then clears the filter, then returns to the transcript.
-The `providers_*` entries in `[keys]` above configure the tab, reload, removal, test, save,
-clear-key, browser and copy actions in this overlay. Printable keys such as `o` and `c` still
-filter a list; they open or copy only when the displayed card offers that action.
-
-**Keys.** Enter opens a masked field. Paste a key and press Enter to check and save it.
-A rejected key stays in the card for correction. If the provider cannot be reached, the card
-asks for a second Enter to save unchecked; editing the key clears that confirmation.
-Ctrl+U clears the field. A saved key shows at most its last four characters.
-
-`ready` means Hermes lists the provider as authenticated in its catalogue. It does not prove
-that the saved key currently works. Ctrl+D confirms removal of every credential Hermes saves
-for that provider, including its account sign-in. The confirmation names known shared key
-variables and the other providers that would lose them.
-
-**Accounts.** Enter starts the provider's device-code sign-in or shows instructions for an
-external sign-in command. A device-code card shows the browser address, code and expiry.
-Press `o` to open its https link, `c` to copy its code, or Esc to cancel. External commands
-can be copied and run in a separate terminal. Ctrl+D signs out after confirmation when Hermes
-supports it; otherwise the card gives the provider's removal instructions. Clipboard copying
-depends on the terminal allowing access.
-
-**Endpoints.** Choose `+ Add an endpoint`, or Enter on an existing row to edit it. Fill in Name,
-Base URL, API key, API mode, Model and optional Context length. Tab and Shift+Tab move between
-fields. Ctrl+T tests the endpoint and fills discovered model choices. Ctrl+S saves; a failed
-test can still be saved for an endpoint that is currently offline. Testing can identify a
-different answering base address, which the form displays before saving it.
-
-While editing, an untouched empty API key field keeps the saved key; Ctrl+X explicitly clears
-it. Leaving an existing Context length empty keeps its old Hermes value. Endpoint saves leave
-the profile's default model selection as it was. Ctrl+D confirms deletion, including removal
-of the endpoint's saved key. An endpoint set directly in model settings is read-only here.
-
-While disconnected, the screen disables changes and reloads when Talaria reconnects. A change
-whose reply was lost is reported as uncertain and the list is reloaded; the change is not automatically repeated.
+`/providers` manages keys, accounts, and endpoints; see the [terminal guide](terminal-ui.md#providers).
 
 ## Approvals and working folder
 

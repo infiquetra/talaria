@@ -87,6 +87,8 @@ pub enum LocalAction {
     Cron,
     /// Open the connectors and messaging overlay.
     Connectors(ConnectorsOpen),
+    /// Propose configuration changes for review.
+    Configure,
 }
 
 /// One local command.
@@ -388,6 +390,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: true,
         action: LocalAction::Connectors(ConnectorsOpen::Tab(ConnectorsTab::Messaging)),
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "configure",
+        aliases: &[],
+        summary: "Describe configuration changes, review them, then apply",
+        args_hint: "<what you want to change>",
+        takes_argument: true,
+        action: LocalAction::Configure,
         tag: "talaria",
     },
 ];

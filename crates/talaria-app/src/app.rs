@@ -194,6 +194,8 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// Input owned by the configuration assistant overlay.
+    Configure(Box<talaria_core::configure::ConfigureInput>),
     /// Input owned by the capabilities overlay.
     Capabilities(Box<CapInput>),
     Cron(Box<CronInput>),
@@ -334,6 +336,9 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub configure: Option<talaria_core::configure::ConfigureView>,
+    pub configure_refining: bool,
+    pub configure_session: Option<&'a SessionState>,
     pub capabilities: Option<CapView>,
     pub connectors: Option<talaria_core::connectors::ConnectorsView>,
     pub connectors_filtering: bool,
@@ -605,6 +610,9 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     /// How notices name the approvals toggle key: its first binding, or `None` when the
     /// person unbound it (#237).
+    fn configure_model(&self) -> Option<(String, String)> {
+        None
+    }
     fn toggle_label(&self) -> Option<String> {
         Some(DEFAULT_TOGGLE_LABEL.to_string())
     }
@@ -654,6 +662,11 @@ struct CronBinding {
 }
 
 pub struct AppState {
+    configure: Option<talaria_core::configure::ConfigureState>,
+    configure_service: Option<Arc<crate::configure::Service>>,
+    configure_generation: u64,
+    configure_tick_at: Option<Instant>,
+    configure_model: Option<(String, String)>,
     capabilities: Option<CapabilitiesState>,
     capabilities_service: Option<Arc<crate::capabilities::CapabilitiesService>>,
     capabilities_generation: u64,
@@ -903,6 +916,12 @@ struct SubmittedAttachments {
 }
 
 impl AppState {
+    #[inline(never)]
+    fn new_boxed(launch_id: String) -> Box<Self> {
+        Box::new(Self::new(launch_id))
+    }
+
+    #[inline(never)]
     #[must_use]
     pub fn new(launch_id: impl Into<String>) -> Self {
         let launch_id = launch_id.into();
@@ -911,6 +930,11 @@ impl AppState {
         let ledger = MutationLedger::new(&launch_id);
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
+            configure: None,
+            configure_service: None,
+            configure_generation: 0,
+            configure_tick_at: None,
+            configure_model: None,
             capabilities: None,
             capabilities_service: None,
             capabilities_generation: 0,
@@ -1107,10 +1131,25 @@ impl AppState {
     }
 
     /// The view the screen draws from.
+    #[inline(never)]
     #[must_use]
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
+            configure: self
+                .configure
+                .as_ref()
+                .filter(|state| !state.is_closed())
+                .map(|state| state.view(Instant::now())),
+            configure_refining: self
+                .configure
+                .as_ref()
+                .is_some_and(|state| state.refinement_active()),
+            configure_session: self
+                .configure
+                .as_ref()
+                .filter(|state| !state.is_closed())
+                .and_then(|state| state.session()),
             capabilities: self
                 .capabilities
                 .as_ref()
@@ -1330,6 +1369,11 @@ pub enum TranscriptAction {
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
+    Configure {
+        generation: u64,
+        service: Option<Arc<crate::configure::Service>>,
+        input: talaria_core::configure::ConfigureInput,
+    },
     Capabilities {
         generation: u64,
         service: Option<Arc<crate::capabilities::CapabilitiesService>>,
@@ -1573,6 +1617,15 @@ pub struct SwitchInstall {
 /// What the executor does after one update. Ranges index the open session's cells.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
+    Configure {
+        generation: u64,
+        profile: String,
+        home: PathBuf,
+        client: Option<hermes_client::Client>,
+        consent: crate::connectors::ConnectorsConsent,
+        service: Option<Arc<crate::configure::Service>>,
+        effects: Vec<talaria_core::configure::ConfigureEffect>,
+    },
     Capabilities {
         generation: u64,
         home: PathBuf,
@@ -2705,6 +2758,7 @@ fn connectors_input(
 }
 
 /// Apply one message. No input or output: the effects say what to do.
+#[inline(never)]
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let previous_capabilities_foreground = state
         .capabilities
@@ -2756,6 +2810,24 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         _ => true,
     };
     let mut effects = match message {
+        AppMessage::Configure {
+            generation,
+            service,
+            input,
+        } => {
+            if generation != state.configure_generation {
+                if let Some(service) = service {
+                    tokio::spawn(async move {
+                        service.close().await;
+                    });
+                }
+                return Vec::new();
+            }
+            if let Some(service) = service {
+                state.configure_service = Some(service);
+            }
+            configure_input(state, input, None)
+        }
         AppMessage::Connectors {
             generation,
             profile,
@@ -3186,6 +3258,17 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Tick { now_ms } => {
             state.now_ms = now_ms;
             let mut effects = review_tick(state);
+            if state
+                .configure_tick_at
+                .is_some_and(|at| Instant::now() >= at)
+            {
+                effects.extend(configure_input(
+                    state,
+                    talaria_core::configure::ConfigureInput::Tick,
+                    None,
+                ));
+            }
+
             if state.fleet.is_some() && state.fleet_clock > 0.0 {
                 let now = state.fleet_clock + now_ms as f64 / 1000.0;
                 effects.extend(fleet_input(
@@ -4204,6 +4287,99 @@ mod memory_wiring_tests {
     }
 }
 
+fn configure_input(
+    state: &mut AppState,
+    input: talaria_core::configure::ConfigureInput,
+    submitted: Option<String>,
+) -> Vec<AppEffect> {
+    use talaria_core::configure::{ConfigureEffect, Phase};
+    let Some(configure) = state.configure.as_mut() else {
+        return Vec::new();
+    };
+    let now = Instant::now();
+    let produced = configure.update(input, now);
+    let phase = configure.view(now).phase;
+    state.configure_tick_at =
+        matches!(phase, Phase::Thinking | Phase::Applying).then(|| now + Duration::from_secs(1));
+    let mut effects = Vec::new();
+    let mut network = Vec::new();
+    for effect in produced {
+        match effect {
+            ConfigureEffect::Notice(text) => effects.push(notice_lines(&text)),
+            ConfigureEffect::ForgetHistoryLine(_) => {
+                if let Some(text) = &submitted {
+                    effects.push(AppEffect::UnrecordSubmit(text.clone()));
+                }
+            }
+            ConfigureEffect::ClearEditor | ConfigureEffect::CloseOverlay => {}
+            ConfigureEffect::Open(action) => {
+                effects.extend(local_effect(state, action, String::new(), String::new()))
+            }
+            effect => network.push(effect),
+        }
+    }
+    if !network.is_empty() {
+        effects.push(AppEffect::Configure {
+            generation: state.configure_generation,
+            profile: state.profile.clone(),
+            home: state.hermes_home.clone(),
+            client: state
+                .service
+                .as_ref()
+                .and_then(|service| service.client())
+                .cloned(),
+            consent: state.connectors_consent.clone(),
+            service: state.configure_service.clone(),
+            effects: network,
+        });
+    }
+    effects.push(AppEffect::Redraw);
+    effects
+}
+
+fn configure_command(state: &mut AppState, request: String, typed: String) -> Vec<AppEffect> {
+    use talaria_core::configure::{ConfigureInput, ConfigureState};
+    if state
+        .configure
+        .as_ref()
+        .is_some_and(|configure| !configure.is_closed())
+    {
+        let mut effects = vec![
+            notice_lines("A /configure is already open."),
+            AppEffect::Redraw,
+        ];
+        if crate::configure::service::detect_secret(&request) {
+            effects.push(AppEffect::UnrecordSubmit(typed));
+        }
+        return effects;
+    }
+    state.configure_generation = state.configure_generation.wrapping_add(1);
+    state.configure_service = None;
+    state.configure = Some(ConfigureState::new_with_prefix(
+        crate::configure::service::detect_secret,
+        format!(
+            "{}-configure-{}",
+            state.launch_id, state.configure_generation
+        ),
+    ));
+    let model = state.configure_model.clone().or_else(|| {
+        state
+            .opened
+            .as_ref()
+            .and_then(|opened| opened.info.provider.clone().zip(opened.info.model.clone()))
+    });
+    configure_input(
+        state,
+        ConfigureInput::Open {
+            request,
+            profile: state.profile.clone(),
+            connected: state.link_state == LinkView::Connected,
+            model,
+        },
+        Some(typed),
+    )
+}
+
 fn settings_input(
     state: &mut AppState,
     input: talaria_core::settings::SettingsInput,
@@ -4395,6 +4571,105 @@ mod connectors_wiring_tests {
 }
 
 #[cfg(test)]
+mod configure_wiring_tests {
+    use super::*;
+
+    #[test]
+    fn secret_request_forgets_exact_composer_line_without_network_work() {
+        let mut state = AppState::new("configure-history");
+        let token = "sk-or-v1-talaria-sentinel-0000000000000000";
+        let line = format!("  /configure use {token}  ");
+        let effects = submit(&mut state, line.clone());
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::UnrecordSubmit(text) if text == &line))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Configure { .. }))
+        );
+        assert!(!format!("{:?}", state.configure).contains(token));
+        let home = tempfile::tempdir().unwrap();
+        let (mut history, _) = crate::comforts::prompt_history::PromptHistory::open(
+            home.path(),
+            true,
+            "configure-history",
+        );
+        assert!(crate::settings::append_history(&mut history, &line).is_none());
+        assert!(history.composer_seed().is_empty());
+    }
+
+    #[test]
+    fn a_second_command_focuses_the_existing_configuration_run() {
+        let mut state = AppState::new("configure-focus");
+        state.link_state = LinkView::Connected;
+        let first = submit(&mut state, "/configure enable the bell".into());
+        assert!(
+            first
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Configure { .. }))
+        );
+        let generation = state.configure_generation;
+        let second = submit(&mut state, "/configure make it compact".into());
+        assert_eq!(state.configure_generation, generation);
+        assert!(
+            !second
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Configure { .. }))
+        );
+        assert!(state.view().configure.is_some());
+    }
+
+    #[test]
+    fn sibling_screen_handoffs_open_their_real_overlays() {
+        use talaria_core::{
+            connectors::{ConnectorsOpen, ConnectorsTab},
+            mcp::{McpOpen, McpTab},
+            providers::{OpenTarget, ProvidersTab},
+        };
+        for (name, action) in [
+            (
+                "providers",
+                LocalAction::Providers(OpenTarget::Tab(ProvidersTab::Keys)),
+            ),
+            ("mcp", LocalAction::Mcp(McpOpen::Tab(McpTab::Servers))),
+            ("capabilities", LocalAction::Capabilities),
+            ("cron", LocalAction::Cron),
+            ("profiles", LocalAction::Profiles),
+            (
+                "connectors",
+                LocalAction::Connectors(ConnectorsOpen::Tab(ConnectorsTab::Connectors)),
+            ),
+            ("memory", LocalAction::MemorySettings),
+            ("models", LocalAction::ModelRoles),
+        ] {
+            let mut state = AppState::new("configure-handoff");
+            state.profile = "fixture".into();
+            let effects = local_effect(&mut state, action, String::new(), String::new());
+            assert!(
+                !effects
+                    .iter()
+                    .any(|effect| matches!(effect, AppEffect::ContextRead { .. }))
+            );
+            let opened = match name {
+                "providers" => state.providers.is_open(),
+                "mcp" => state.mcp.is_open(),
+                "capabilities" => state.view().capabilities.is_some(),
+                "cron" => cron_view(&state).is_some(),
+                "profiles" => state.profiles.is_open(),
+                "connectors" => state.view().connectors.is_some(),
+                "memory" => state.view().memory.is_some(),
+                "models" => state.model_roles.is_some(),
+                _ => false,
+            };
+            assert!(opened, "{name} handoff must open its owner overlay");
+        }
+    }
+}
+
+#[cfg(test)]
 mod settings_wiring_tests {
     use super::*;
 
@@ -4475,6 +4750,9 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Configure {
+        return configure_command(state, argument, typed);
+    }
     if action == LocalAction::Capabilities {
         return capabilities_command(state, &argument);
     }
@@ -4681,6 +4959,7 @@ fn attachment_event(state: &mut AppState, event: AttachmentEvent) -> Vec<AppEffe
 }
 
 /// Feed the reducer and turn its effects into executor effects.
+#[inline(never)]
 fn reduce(state: &mut AppState, event: Event) -> Vec<AppEffect> {
     let observed = observe_context(state, &event);
     let mut effects = automation_from_session(state, &event);
@@ -5011,6 +5290,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             CronInput::Open(mode) => open_cron(state, mode),
             input => cron_input(state, input),
         },
+        UserAction::Configure(input) => configure_input(state, *input, None),
         UserAction::Settings(input) => settings_input(state, input, None),
         UserAction::Doctor(key) => doctor_key(state, key),
         UserAction::Profiles(input) => profiles_input(state, input),
@@ -6620,6 +6900,9 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         return Vec::new();
     }
+    if let Some(Ok((LocalAction::Configure, request))) = local_line(&text) {
+        return configure_command(state, request, text);
+    }
     if talaria_core::settings::is_secret_config_line(&text) {
         let args = text
             .trim_start()
@@ -6976,6 +7259,11 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 talaria_core::mcp::McpInput::Connection { connected: false },
             ));
             effects.extend(cron_input(state, CronInput::Connection { up: false }));
+            effects.extend(configure_input(
+                state,
+                talaria_core::configure::ConfigureInput::LinkLost,
+                None,
+            ));
             effects
         }
         LinkEvent::State(LinkState::Closed) => {
@@ -6987,6 +7275,11 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 talaria_core::mcp::McpInput::Connection { connected: false },
             ));
             effects.extend(cron_input(state, CronInput::Connection { up: false }));
+            effects.extend(configure_input(
+                state,
+                talaria_core::configure::ConfigureInput::LinkLost,
+                None,
+            ));
             effects
         }
         event @ LinkEvent::State(LinkState::Failed { .. }) => {
@@ -6999,6 +7292,11 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 talaria_core::mcp::McpInput::Connection { connected: false },
             ));
             effects.extend(cron_input(state, CronInput::Connection { up: false }));
+            effects.extend(configure_input(
+                state,
+                talaria_core::configure::ConfigureInput::LinkLost,
+                None,
+            ));
             if let Some(text) = link_notice(&event) {
                 effects.push(notice_lines(&text));
             }
@@ -7014,6 +7312,38 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 effects
             }
             Inbound::Event(inbound) => {
+                if inbound
+                    .raw
+                    .get("session_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| {
+                        state
+                            .configure
+                            .as_ref()
+                            .and_then(|state| state.hidden_session_id())
+                            == Some(id)
+                    })
+                {
+                    let session_id = inbound
+                        .raw
+                        .get("session_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .into();
+                    let event = Event::Session {
+                        session_id,
+                        frame: inbound.frame,
+                        raw: inbound.raw,
+                    };
+                    if let Some(service) = &state.configure_service {
+                        service.observe(&event);
+                    }
+                    return configure_input(
+                        state,
+                        talaria_core::configure::ConfigureInput::Session(event),
+                        None,
+                    );
+                }
                 if let Some(opened) = state.opened.as_ref()
                     && inbound.raw.get("session_id").and_then(Value::as_str)
                         == Some(opened.session_id.as_str())
@@ -7192,7 +7522,29 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 }
                 effects
             }
-            Inbound::ServerRequest(request) => vec![AppEffect::ServerRequest(request)],
+            Inbound::ServerRequest(request) => {
+                if request.session_id.as_deref().is_some_and(|id| {
+                    state
+                        .configure
+                        .as_ref()
+                        .and_then(|state| state.hidden_session_id())
+                        == Some(id)
+                }) {
+                    let request_id = request.id.clone();
+                    if let Some(service) = &state.configure_service {
+                        service.hold_request(request);
+                    }
+                    return configure_input(
+                        state,
+                        talaria_core::configure::ConfigureInput::ServerRequest {
+                            request_id,
+                            method: "server request".into(),
+                        },
+                        None,
+                    );
+                }
+                vec![AppEffect::ServerRequest(request)]
+            }
             Inbound::Malformed(_) | Inbound::Closed(_) => Vec::new(),
         },
         LinkEvent::Gap(gap) => {
@@ -9326,6 +9678,7 @@ async fn profiles_without_client(
 }
 
 /// Apply one message and run its effects. Returns whether the screen needs a draw.
+#[inline(never)]
 fn apply<S: Screen>(
     state: &mut AppState,
     message: AppMessage,
@@ -9375,6 +9728,48 @@ fn apply<S: Screen>(
     }
     for effect in update(state, message) {
         match effect {
+            AppEffect::Configure {
+                generation,
+                profile,
+                home,
+                client,
+                consent,
+                service,
+                effects,
+            } => {
+                let sender = executor.sender.clone();
+                executor.defer(move || {
+                    tokio::spawn(async move {
+                        let service = match (service, client) {
+                            (Some(service), _) => Some(service),
+                            (None, Some(client)) => {
+                                crate::configure::discover_service(home, client, profile, consent)
+                                    .await
+                            }
+                            _ => None,
+                        };
+                        if let Some(service) = service {
+                            for effect in effects {
+                                for input in service.execute(effect).await {
+                                    let _ = sender.send(AppMessage::Configure {
+                                        generation,
+                                        service: Some(service.clone()),
+                                        input,
+                                    });
+                                }
+                            }
+                        } else {
+                            let _ = sender.send(AppMessage::Configure {
+                                generation,
+                                service: None,
+                                input: talaria_core::configure::ConfigureInput::GatherFailed(
+                                    "Not connected to Hermes. /configure needs the gateway.".into(),
+                                ),
+                            });
+                        }
+                    });
+                });
+            }
             AppEffect::Connectors {
                 generation,
                 profile,
@@ -11551,13 +11946,37 @@ enum Ending {
 /// Run one launch: start-up in the background, the loop, and the quit. The first frame is
 /// drawn before anything touches the network. The screen is restored before this returns;
 /// the caller prints the outcome.
+#[inline(never)]
+fn draw_current_view<S: Screen>(state: &AppState, screen: &mut S) {
+    screen.draw(&state.view());
+}
+
+#[inline(never)]
+fn route_screen_input<S: Screen>(
+    state: &AppState,
+    screen: &mut S,
+    input: S::Input,
+    now: Instant,
+) -> Vec<UserAction> {
+    screen.input(input, &state.view(), now)
+}
+
 pub async fn run<S: Screen>(
+    launch: Launch,
+    setup: RunSetup,
+    screen: &mut S,
+    inputs: mpsc::UnboundedReceiver<S::Input>,
+) -> Outcome {
+    Box::pin(run_inner(launch, setup, screen, inputs)).await
+}
+
+async fn run_inner<S: Screen>(
     launch: Launch,
     mut setup: RunSetup,
     screen: &mut S,
     mut inputs: mpsc::UnboundedReceiver<S::Input>,
 ) -> Outcome {
-    let mut state = AppState::new(setup.launch_id.clone());
+    let mut state = AppState::new_boxed(setup.launch_id.clone());
     state.models = ModelsState::new(
         &format!("{}-model", setup.launch_id),
         crate::config::load_models(),
@@ -11596,10 +12015,11 @@ pub async fn run<S: Screen>(
     state.launch_folder = launch.folder.clone();
     state.launch = Some(launch.clone());
     state.pane_settings = screen.pane_settings();
+    state.configure_model = screen.configure_model();
     state.pane_size = screen.pane_size();
     sync_models(&mut state, screen);
     sync_picker(&state, screen);
-    screen.draw(&state.view());
+    draw_current_view(&state, screen);
     screen.report_pane(&state.attention.pane(), None);
     if !setup.notices.is_empty() {
         screen.commit_lines(
@@ -11609,7 +12029,7 @@ pub async fn run<S: Screen>(
                 .map(|notice| format!("\u{b7} {notice}"))
                 .collect(),
         );
-        screen.draw(&state.view());
+        draw_current_view(&state, screen);
     }
 
     let (sender, mut messages) = mpsc::unbounded_channel();
@@ -11667,6 +12087,7 @@ pub async fn run<S: Screen>(
         };
         let deadline = earliest_of([deadline, state.attachments.next_deadline()]);
         let deadline = earliest_of([deadline, state.automation_deadline]);
+        let deadline = earliest_of([deadline, state.configure_tick_at]);
         let provider_deadline = talaria_core::providers::next_deadline(&state.providers);
         let deadline = earliest_of([deadline, provider_deadline]);
         let deadline = earliest_of([deadline, talaria_core::mcp::next_deadline(&state.mcp)]);
@@ -11681,7 +12102,7 @@ pub async fn run<S: Screen>(
                 sync_models(&mut state, screen);
                 sync_picker(&state, screen);
                 state.now_ms = executor.now_ms();
-                let actions = screen.input(input, &state.view(), Instant::now());
+                let actions = route_screen_input(&state, screen, input, Instant::now());
                 state.pane_size = screen.pane_size();
                 for action in actions {
                     redraw |= apply(&mut state, AppMessage::ForegroundKey(action), screen, &executor);
@@ -11714,7 +12135,7 @@ pub async fn run<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
-                if side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) {
+                if side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
                     let _ = apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
@@ -11762,7 +12183,7 @@ pub async fn run<S: Screen>(
                 sync_models(&mut state, screen);
                 sync_picker(&state, screen);
                 state.now_ms = executor.now_ms();
-                let actions = screen.input(input, &state.view(), Instant::now());
+                let actions = route_screen_input(&state, screen, input, Instant::now());
                 state.pane_size = screen.pane_size();
                 for action in actions {
                     redraw |= apply(
@@ -11789,7 +12210,7 @@ pub async fn run<S: Screen>(
         if redraw {
             sync_models(&mut state, screen);
             sync_picker(&state, screen);
-            screen.draw(&state.view());
+            draw_current_view(&state, screen);
             state.cron.first_frame_pending = false;
             screen.on_tick(Instant::now());
             // The frame is on screen; the work that waited for it may go.
