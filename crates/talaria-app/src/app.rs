@@ -182,6 +182,8 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// Input owned by the settings overlay.
+    Settings(talaria_core::settings::SettingsInput),
     /// A key for the open fleet overlay.
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
@@ -300,6 +302,7 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub settings: Option<talaria_core::settings::SettingsView>,
     pub subagents: Option<&'a crate::subagents::SubagentHub>,
     /// Gateway usage fallback until this session's tree is known.
     pub subagents_usage_active: u32,
@@ -543,6 +546,9 @@ struct BackgroundBinding {
 }
 
 pub struct AppState {
+    settings: talaria_core::settings::SettingsState,
+    settings_service: Option<Arc<crate::settings::SettingsService>>,
+    settings_generation: u64,
     pub models: ModelsState,
     model_service: Option<Arc<crate::models::ModelService>>,
     model_notice_counter: u64,
@@ -755,6 +761,11 @@ impl AppState {
         let ledger = MutationLedger::new(&launch_id);
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
+            settings: talaria_core::settings::SettingsState::new(
+                talaria_core::settings::SETTINGS_LINKS,
+            ),
+            settings_service: None,
+            settings_generation: 0,
             models: ModelsState::new(&format!("{launch_id}-model"), Ok(SavedModels::empty())),
             model_service: None,
             model_notice_counter: 0,
@@ -914,6 +925,11 @@ impl AppState {
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
+            settings: self
+                .settings
+                .is_open()
+                .then(|| self.settings.view())
+                .filter(|view| view.profile == self.profile),
             processes_open: self.processes_open,
             state: opened.map(|opened| &opened.state),
             session_id: opened.map(|opened| opened.session_id.as_str()),
@@ -1102,6 +1118,12 @@ pub enum TranscriptAction {
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
+    Settings {
+        generation: u64,
+        profile: String,
+        service: Option<Arc<crate::settings::SettingsService>>,
+        input: talaria_core::settings::SettingsInput,
+    },
     /// A background call's reply, still owned by the session that made it.
     BackgroundDone {
         session_id: SessionId,
@@ -1283,6 +1305,13 @@ pub struct SwitchInstall {
 /// What the executor does after one update. Ranges index the open session's cells.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
+    Settings {
+        generation: u64,
+        profile: String,
+        home: PathBuf,
+        service: Option<Arc<crate::settings::SettingsService>>,
+        effect: talaria_core::settings::SettingsEffect,
+    },
     CommitSubagentBatch(talaria_core::subagents::FinishedBatch),
     /// A background call or log message for one session.
     Background {
@@ -1836,6 +1865,20 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         _ => true,
     };
     let mut effects = match message {
+        AppMessage::Settings {
+            generation,
+            profile,
+            service,
+            input,
+        } => {
+            if generation != state.settings_generation || profile != state.profile {
+                return Vec::new();
+            }
+            if let Some(service) = service {
+                state.settings_service = Some(service);
+            }
+            settings_input(state, input, None)
+        }
         AppMessage::BackgroundRecovered { session_id, result } => {
             if is_open_session(state, &session_id) {
                 recovered(state, result)
@@ -2487,12 +2530,137 @@ fn pane_notice(state: &mut AppState, text: String) -> Vec<AppEffect> {
     }
 }
 
+fn settings_input(
+    state: &mut AppState,
+    input: talaria_core::settings::SettingsInput,
+    submitted: Option<String>,
+) -> Vec<AppEffect> {
+    use talaria_core::settings::SettingsEffect;
+    if matches!(input, talaria_core::settings::SettingsInput::Key(_))
+        && state.settings.view().profile != state.profile
+    {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    for effect in state.settings.update(input) {
+        match effect {
+            SettingsEffect::Notice(text) => result.push(notice_lines(&text)),
+            SettingsEffect::ForgetHistoryLine => {
+                if let Some(text) = &submitted {
+                    result.push(AppEffect::UnrecordSubmit(text.clone()));
+                }
+            }
+            SettingsEffect::OpenLocal(action) => {
+                result.extend(local_effect(state, action, String::new(), String::new()))
+            }
+            SettingsEffect::CloseOverlay => {}
+            effect => {
+                if matches!(effect, SettingsEffect::Load { .. }) {
+                    state.settings_generation = state.settings_generation.wrapping_add(1);
+                    state.settings_service = None;
+                }
+                result.push(AppEffect::Settings {
+                    generation: state.settings_generation,
+                    profile: state.profile.clone(),
+                    home: state.hermes_home.clone(),
+                    service: state.settings_service.clone(),
+                    effect,
+                });
+            }
+        }
+    }
+    result.push(AppEffect::Redraw);
+    result
+}
+
+#[cfg(test)]
+mod settings_wiring_tests {
+    use super::*;
+
+    #[test]
+    fn sensitive_submission_forgets_exact_line_without_loading() {
+        let mut state = AppState::new("settings-history");
+        let line = "  /config delegation.api_key=\"example-unclosed".to_owned();
+        let effects = submit(&mut state, line.clone());
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::UnrecordSubmit(text) if text == &line))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Settings { .. }))
+        );
+        assert!(state.view().settings.is_none());
+    }
+
+    #[test]
+    fn stale_settings_replies_are_discarded() {
+        let mut state = AppState::new("settings-generation");
+        let profile = state.profile.clone();
+        let effects = settings_input(
+            &mut state,
+            talaria_core::settings::SettingsInput::Open {
+                profile: profile.clone(),
+                filter: None,
+            },
+            None,
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Settings { .. }))
+        );
+        let effects = update(
+            &mut state,
+            AppMessage::Settings {
+                generation: 0,
+                profile,
+                service: None,
+                input: talaria_core::settings::SettingsInput::LoadFailed(
+                    talaria_core::settings::FailReason::NotConnected,
+                ),
+            },
+        );
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.settings.view().screen,
+            talaria_core::settings::Screen::Loading
+        );
+        let generation = state.settings_generation;
+        let effects = update(
+            &mut state,
+            AppMessage::Settings {
+                generation,
+                profile: "other-profile".into(),
+                service: None,
+                input: talaria_core::settings::SettingsInput::LoadFailed(
+                    talaria_core::settings::FailReason::NotConnected,
+                ),
+            },
+        );
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.settings.view().screen,
+            talaria_core::settings::Screen::Loading
+        );
+    }
+}
+
 fn local_effect(
     state: &mut AppState,
     action: LocalAction,
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Config {
+        let input = talaria_core::settings::SettingsInput::Command {
+            profile: state.profile.clone(),
+            args: argument,
+        };
+        return settings_input(state, input, Some(typed));
+    }
     if action == LocalAction::Fleet {
         return open_fleet_view(state);
     }
@@ -2968,6 +3136,7 @@ fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
+        UserAction::Settings(input) => settings_input(state, input, None),
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -4553,6 +4722,19 @@ fn tasks_key(state: &AppState, key: &InputKey) -> bool {
 fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
         return Vec::new();
+    }
+    if talaria_core::settings::is_secret_config_line(&text) {
+        let args = text
+            .trim_start()
+            .strip_prefix("/config")
+            .unwrap_or_default()
+            .to_owned();
+        let profile = state.profile.clone();
+        return settings_input(
+            state,
+            talaria_core::settings::SettingsInput::Command { profile, args },
+            Some(text),
+        );
     }
     // A switch is running: the prompt stays in the composer and nothing is sent.
     if state.switching {
@@ -7033,6 +7215,46 @@ fn apply<S: Screen>(
     }
     for effect in update(state, message) {
         match effect {
+            AppEffect::Settings {
+                generation,
+                profile,
+                home,
+                service,
+                effect,
+            } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    use talaria_core::settings::{FailReason, SettingsEffect, SettingsInput};
+                    if let SettingsEffect::ScheduleReveal { id, after } = effect {
+                        tokio::time::sleep(after).await;
+                        let _ = sender.send(AppMessage::Settings {
+                            generation,
+                            profile,
+                            service: None,
+                            input: SettingsInput::RevealTimeout(id),
+                        });
+                        return;
+                    }
+                    let service = if matches!(effect, SettingsEffect::Load { .. }) {
+                        crate::settings::discover_service(home).await
+                    } else {
+                        service
+                    };
+                    let inputs = if let Some(service) = &service {
+                        service.execute(effect).await
+                    } else {
+                        vec![SettingsInput::LoadFailed(FailReason::NotConnected)]
+                    };
+                    for input in inputs {
+                        let _ = sender.send(AppMessage::Settings {
+                            generation,
+                            profile: profile.clone(),
+                            service: service.clone(),
+                            input,
+                        });
+                    }
+                });
+            }
             AppEffect::CommitSubagentBatch(batch) => screen.commit_subagent_batch(&batch),
             AppEffect::Background {
                 session_id,

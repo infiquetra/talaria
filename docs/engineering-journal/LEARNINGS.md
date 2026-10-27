@@ -2,6 +2,22 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — A successful settings reply does not establish the saved value
+
+**Evidence.** The configuration routes at the pinned Hermes revision normalize model values and deep-merge explicit settings. The settings reducer tests exercise a successful write followed by an unchanged, adjusted, missing, or differently typed read-back. The mock merge test also verifies that writing a value equal to its default leaves it explicit in the raw configuration.
+
+**Mechanism.** A successful HTTP reply describes the handler outcome. It does not prove that every requested key became the effective value. Reading both effective and raw configuration after the write establishes the actual value and its origin. A transport failure after bytes were sent cannot establish whether the write happened, so it needs the same read-back rather than a repeated write.
+
+**Generalizable rule.** Classify each written setting from a fresh read-back; never turn a successful response into a saved badge or treat a default value as an absent override.
+
+## 2026-10-26 — Sensitive command history must be filtered before persistence
+
+**Evidence.** The settings command tests include secret assignments with invalid quoting and the ambiguous multi-word searches `key binding` and `token count`. The application history test verifies that refused secret-shaped command input never enters the saved history or its in-memory search snapshot.
+
+**Mechanism.** Command parsing can fail before dispatch, and forgetting composer recall after submission cannot undo a line already appended to disk. The same raw-input secret check runs before persistence and before syntax parsing; the composer removes only the exact newest submitted line.
+
+**Generalizable rule.** Reject sensitive input at every persistence boundary before parsing can short-circuit its normal handler.
+
 ## 2026-10-26 — The gateway socket does not cover configuration; the dashboard REST routes do
 
 **Evidence.** Exploration #249, live probe `crates/hermes-client/tests/live_config_surface.rs` against Hermes v0.22.4 on the `fixture` profile, recorded in `fixtures/configuration-surface/matrix.json` and `docs/analysis/2026-10-26-hermes-configuration-surface.md`. Canonical `config.get key=display.skin` and `config.set key=display.skin` both gave 4001 `invalid_params` (rows C06, C08); `GET /api/config?profile=fixture` answered in 4 ms (C15); `PUT /api/config` with one key wrote it, the next read showed it, and a second `PUT` restored the file byte for byte (C19, digest unchanged). One credential-shaped leaf came back unmasked (C15). The REST rows could not use `mint_ticket`'s ticket: its secret is crate-private (`Ticket::expose` in `crates/hermes-client/src/ticket.rs`).

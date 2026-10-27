@@ -2661,6 +2661,7 @@ dependencies = [
  "criterion",
  "hermes-contract",
  "proptest",
+ "serde",
  "serde_json",
  "tempfile",
 ]

@@ -22,8 +22,7 @@ pub mod queue;
 pub mod review;
 pub mod rewind;
 pub mod session;
+pub mod settings;
 pub mod side;
 pub mod subagents;
 pub mod workspace;
-
-pub mod settings;

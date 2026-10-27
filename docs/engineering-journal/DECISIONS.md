@@ -4266,3 +4266,15 @@ same process or stop action. **Rejected.** Immediate deletion makes an accidenta
 and is absent from replay is not recovered on the next launch. **Rejected.** Reading the side
 agent's stored session would introduce out-of-order answers and depend on unverified listing
 visibility. **Revisit when.** Hermes provides a result-recovery interface or the operator requests it.
+
+### Configuration uses a small HTTP adapter alongside the session connection
+
+**Decision.** Use the pinned `hyper` HTTP client with Tokio I/O for the gateway's configuration routes. Discover the loopback endpoint without starting the gateway, mint a fresh native HTTP ticket for every attempt, and open one connection per attempt with connection close. Keep the adapter in `hermes-client`, effects in the application, and schema state independent of transport and terminal libraries.
+
+**Rationale.** At the pinned Hermes revision the configuration schema, defaults, raw read, and deep-merge write are dashboard HTTP routes. The session socket's configuration calls do not provide that contract. The small adapter makes connection lifetime, permitted headers, response size, retry rules, and uncertain write outcomes explicit without a pooled HTTP client, TLS, proxy discovery, or a new domain dependency.
+
+**Rejected.** Reconstructing the schema from socket calls loses the gateway's schema contract; using a general pooled client adds behavior these local routes do not need. **Revisit when.** Hermes exposes an equivalent session protocol or the gateway requires remote HTTP transport.
+
+### Secret editors reveal with a modifier so every printable character remains editable
+
+**Decision.** Plain `r` inserts text in a settings editor. Alt+R reveals the current secret editor value once, with a visible hint; the next key or the ten-second timer hides it. Browsing keeps its rebindable reveal action. **Rationale.** The editor must accept every printable character while still providing the same temporary reveal as browsing. **Revisit when.** The operator changes the editor's fixed controls.

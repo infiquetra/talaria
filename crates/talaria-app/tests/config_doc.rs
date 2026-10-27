@@ -224,6 +224,22 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("review_refresh", &["r"][..]),
         ("commit_submit", &["ctrl+s"][..]),
         ("commit_draft", &["ctrl+d"][..]),
+        ("settings_up", &["up"][..]),
+        ("settings_down", &["down"][..]),
+        ("settings_page_up", &["pageup"][..]),
+        ("settings_page_down", &["pagedown"][..]),
+        ("settings_prev_category", &["left"][..]),
+        ("settings_next_category", &["right"][..]),
+        ("settings_edit", &["enter"][..]),
+        ("settings_toggle", &["space"][..]),
+        ("settings_filter", &["/"][..]),
+        ("settings_default", &["d"][..]),
+        ("settings_undo_field", &["u"][..]),
+        ("settings_reveal", &["r"][..]),
+        ("settings_review", &["a"][..]),
+        ("settings_reload", &["ctrl+r"][..]),
+        ("settings_help", &["?"][..]),
+        ("settings_close", &["esc"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

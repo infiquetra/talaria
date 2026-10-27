@@ -2,7 +2,35 @@
 
 use std::collections::BTreeMap;
 
+use crate::settings::SettingsAction;
 use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
+
+static SETTINGS_BINDINGS: [(SettingsAction, &str, &str); 16] = [
+    (SettingsAction::Up, "settings_up", "up"),
+    (SettingsAction::Down, "settings_down", "down"),
+    (SettingsAction::PageUp, "settings_page_up", "pageup"),
+    (SettingsAction::PageDown, "settings_page_down", "pagedown"),
+    (
+        SettingsAction::PrevCategory,
+        "settings_prev_category",
+        "left",
+    ),
+    (
+        SettingsAction::NextCategory,
+        "settings_next_category",
+        "right",
+    ),
+    (SettingsAction::Edit, "settings_edit", "enter"),
+    (SettingsAction::Toggle, "settings_toggle", "space"),
+    (SettingsAction::Filter, "settings_filter", "/"),
+    (SettingsAction::Default, "settings_default", "d"),
+    (SettingsAction::UndoField, "settings_undo_field", "u"),
+    (SettingsAction::Reveal, "settings_reveal", "r"),
+    (SettingsAction::Review, "settings_review", "a"),
+    (SettingsAction::Reload, "settings_reload", "ctrl+r"),
+    (SettingsAction::Help, "settings_help", "?"),
+    (SettingsAction::Close, "settings_close", "esc"),
+];
 
 /// Where an action is looked up. Later screens add their own variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -94,6 +122,7 @@ impl ModelAction {
 enum Binding {
     Composer(Action),
     Model(ModelAction),
+    Settings(usize),
 }
 
 impl Binding {
@@ -102,34 +131,45 @@ impl Binding {
             .into_iter()
             .map(Self::Composer)
             .chain(ModelAction::ALL.into_iter().map(Self::Model))
+            .chain((0..SETTINGS_BINDINGS.len()).map(Self::Settings))
     }
     fn index(self) -> usize {
         match self {
             Self::Composer(action) => action.index(),
             Self::Model(action) => Action::ALL.len() + action as usize,
+            Self::Settings(index) => Action::ALL.len() + ModelAction::ALL.len() + index,
         }
     }
     fn context(self) -> KeyContext {
         match self {
             Self::Composer(action) => action.context(),
             Self::Model(action) => action.context(),
+            Self::Settings(_) => KeyContext::Settings,
         }
     }
     fn config_name(self) -> &'static str {
         match self {
             Self::Composer(action) => action.config_name(),
             Self::Model(action) => action.config_name(),
+            Self::Settings(index) => SETTINGS_BINDINGS[index].1,
         }
     }
     fn from_config_name(name: &str) -> Option<Self> {
         Action::from_config_name(name)
             .map(Self::Composer)
             .or_else(|| ModelAction::from_config_name(name).map(Self::Model))
+            .or_else(|| {
+                SETTINGS_BINDINGS
+                    .iter()
+                    .position(|(_, held, _)| *held == name)
+                    .map(Self::Settings)
+            })
     }
     fn default_chords(self) -> &'static [&'static str] {
         match self {
             Self::Composer(action) => action.default_chords(),
             Self::Model(action) => action.default_chords(),
+            Self::Settings(index) => std::slice::from_ref(&SETTINGS_BINDINGS[index].2),
         }
     }
 }
@@ -1331,28 +1371,71 @@ pub struct KeyMap {
 }
 
 impl KeyMap {
+    /// Browse actions with the labels of the configured bindings, including unbound actions.
+    #[must_use]
+    pub fn settings_help(&self) -> Vec<(String, String)> {
+        let descriptions = [
+            "Move up",
+            "Move down",
+            "Page up",
+            "Page down",
+            "Previous category",
+            "Next category",
+            "Edit selected setting",
+            "Toggle selected setting",
+            "Filter settings",
+            "Use default value",
+            "Undo selected change",
+            "Reveal selected secret once",
+            "Review pending changes",
+            "Reload settings",
+            "Show keys",
+            "Clear filter or close",
+        ];
+        SETTINGS_BINDINGS
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let labels = self.labels_of(Binding::Settings(index));
+                (
+                    if labels.is_empty() {
+                        "(unbound)".to_owned()
+                    } else {
+                        labels
+                    },
+                    descriptions[index].to_owned(),
+                )
+            })
+            .collect()
+    }
+
     /// Resolve a key in the settings screen.
-    pub fn resolve_settings(
-        &self,
-        _context: KeyContext,
-        _key: &Key,
-    ) -> Option<talaria_core::settings::SettingsAction> {
-        todo!("settings stub")
+    pub fn resolve_settings(&self, context: KeyContext, key: &Key) -> Option<SettingsAction> {
+        if context != KeyContext::Settings {
+            return None;
+        }
+        SETTINGS_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (action, _, _))| {
+                self.chords[Binding::Settings(index).index()]
+                    .iter()
+                    .any(|chord| chord.matches(key))
+                    .then_some(*action)
+            })
     }
 
     /// The built-in bindings.
     #[must_use]
     pub fn defaults() -> Self {
-        let chords = Action::ALL
-            .iter()
-            .map(|action| default_chords(*action))
-            .chain(ModelAction::ALL.into_iter().map(|action| {
+        let chords = Binding::all()
+            .map(|action| {
                 action
                     .default_chords()
                     .iter()
                     .filter_map(|text| KeyChord::parse(text, action.context()).ok())
                     .collect()
-            }))
+            })
             .collect();
         Self { chords }
     }
@@ -1363,7 +1446,8 @@ impl KeyMap {
     #[must_use]
     pub fn from_entries(entries: &BTreeMap<String, Vec<String>>) -> (Self, Vec<String>) {
         let mut map = Self::defaults();
-        let mut explicit = [false; Action::ALL.len() + ModelAction::ALL.len()];
+        let mut explicit =
+            [false; Action::ALL.len() + ModelAction::ALL.len() + SETTINGS_BINDINGS.len()];
         let mut notices = Vec::new();
 
         for (name, texts) in entries {
@@ -1576,15 +1660,6 @@ fn parse_context(binding: Binding) -> KeyContext {
         Binding::Composer(Action::TranscriptOpen) => KeyContext::Pager,
         other => other.context(),
     }
-}
-
-/// The built-in chords of one action. Every default text parses; the defaults test checks it.
-fn default_chords(action: Action) -> Vec<KeyChord> {
-    action
-        .default_chords()
-        .iter()
-        .filter_map(|text| KeyChord::parse(text, action.context()).ok())
-        .collect()
 }
 
 #[cfg(test)]

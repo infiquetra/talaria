@@ -279,6 +279,11 @@ impl Composer {
         self.recall.forget_last(text);
     }
 
+    /// Forget only the newest recalled submission when it is exactly this line.
+    pub fn forget_newest_history(&mut self, text: &str) {
+        self.recall.forget_last(text);
+    }
+
     /// Replace the draft. The caret lands at the end. History is unchanged.
     pub fn load(&mut self, text: String) {
         self.clear();

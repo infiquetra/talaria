@@ -136,6 +136,22 @@ review_open_pr = ["o"]
 review_refresh = ["r"]
 commit_submit = ["ctrl+s"]
 commit_draft = ["ctrl+d"]
+settings_up = ["up"]
+settings_down = ["down"]
+settings_page_up = ["pageup"]
+settings_page_down = ["pagedown"]
+settings_prev_category = ["left"]
+settings_next_category = ["right"]
+settings_edit = ["enter"]
+settings_toggle = ["space"]
+settings_filter = ["/"]
+settings_default = ["d"]
+settings_undo_field = ["u"]
+settings_reveal = ["r"]
+settings_review = ["a"]
+settings_reload = ["ctrl+r"]
+settings_help = ["?"]
+settings_close = ["esc"]
 [editor]
 command = ""
 [history]
@@ -248,6 +264,31 @@ overrides the saved pair and `--effort` the saved effort; continue and resume ig
 an unavailable saved model is dropped. Hermes's profile default never changes.
 
 ## Keys
+
+`/config` opens the current Hermes profile's settings. `/config <text>` opens a filter;
+each word must match the setting's key, description or category. Left and Right switch
+categories, Enter edits, Space toggles a boolean, D selects the default, and U undoes the
+selected field. Changes remain pending until A opens the review and Enter applies them.
+Talaria checks for outside changes first and reads every save back before reporting success.
+An outside change asks whether to keep yours or take theirs. A restart label explains when
+a saved value takes effect; most settings may need a gateway restart.
+
+The `settings_*` bindings above apply while browsing. `/` focuses the filter; Enter leaves
+it focused on the first matching setting. In an editor, arrows, Home, End, Backspace,
+Delete and Ctrl+U edit text; Enter accepts and Esc cancels. Option lists accept typing to
+filter. Ctrl+R reloads settings, `?` shows help, and Esc clears the filter before closing.
+Pending edits require confirmation before closing. Ctrl+Z suspends as usual.
+
+Secrets are fully masked. R reveals a selected secret once for ten seconds or until the
+next key. While editing a secret, Alt+R reveals it once; plain R inserts text.
+Reviews and saved notices never reveal a secret. Environment references,
+values containing secrets, unsupported types, model roles and provider settings are read-only
+on this screen. Settings need a terminal at least 60 columns by 12 rows.
+
+`/config display.compact=true display.skin="mono"` prepares multiple changes for review.
+Quoted values support escaped quotes and backslashes. Unknown keys or invalid values reject
+the whole command. Enter applies; Esc discards and closes. Enter secrets through the form:
+commands containing a secret assignment are refused and excluded from prompt history.
 
 `cancel` clears the draft; on an empty draft it stops the running turn; with nothing running, two
 presses within 2 seconds exit. The `completion_*` keys apply only while a list is open, and a tab
