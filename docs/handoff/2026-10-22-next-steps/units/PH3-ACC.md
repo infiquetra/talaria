@@ -1535,10 +1535,10 @@ Common setup (operator sets up the gateway as in Dependencies): `cargo build --r
 
 ## Settled before the next phase
 
-The agent rows are complete on candidate `8b514e65f9aab5d579fbe788ed7c482a0ce19e13`:
-12 automated rows, 43 agent-run source scenarios, and 12 cross-feature rows all PASS (67 of 67).
-The two operator source scenarios and OP-1 through OP-8 remain NOT RUN. Agent completion does
-not supply the operator's fleet-day evidence or authorize the next phase.
+The acceptance rows are complete on candidate `8b514e65f9aab5d579fbe788ed7c482a0ce19e13`:
+12 automated rows, 45 source scenarios (43 agent-run and 2 operator-run), 12 cross-feature rows,
+and 8 operator fleet-day rows all PASS (77 of 77). Stage 3 operator sign-off is recorded in
+[the verdict comment](https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309).
 
 The following are the recorded parent rulings, preserved as rulings rather than inferred from
 test results. The parent defines C-1 through C-7 and D-1 through D-8. As explicitly confirmed

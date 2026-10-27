@@ -5547,7 +5547,9 @@ narrower rule skipped.
 and preserved reruns showed that an open fleet overlay hides transcript notices, completed child
 rows can disappear when the parent's next message starts, and background startup notices share
 text with result footers. A focused approval card also consumes typed quit input, while an extra
-Escape after an overlay closes can interrupt the foreground turn.
+Escape after an overlay closes can interrupt the foreground turn; review checks via /changes and v
+and attach checks where Hermes resolves local- plus 16 hex itself likewise depend on reading the
+active surface after each transition settles.
 
 **Mechanism.** Rendered overlays, transient rows, and committed native scrollback expose different
 states at different times. Capturing a fast transition too late loses the evidence; counting a

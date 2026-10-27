@@ -43,7 +43,7 @@ Date: 2026-10-26
 | P3-04 UAT-3 | developer | PASS | phase-3-evidence.md#p3-04-uat-3 | 8b514e6 |
 | P3-04 UAT-4 | fleet-lead | PASS | phase-3-evidence.md#p3-04-uat-4 | 8b514e6 |
 | P3-04 UAT-5 | developer | PASS | phase-3-evidence.md#p3-04-uat-5 | 8b514e6 |
-| P3-04 UAT-6 | configurer | NOT RUN | phase-3-evidence.md#p3-04-uat-6 | 8b514e6 |
+| P3-04 UAT-6 | configurer | PASS | phase-3-evidence.md#p3-04-uat-6 | 8b514e6 |
 | P3-05 UAT-1 | developer | PASS | phase-3-evidence.md#p3-05-uat-1 | 8b514e6 |
 | P3-05 UAT-2 | developer | PASS | phase-3-evidence.md#p3-05-uat-2 | 8b514e6 |
 | P3-05 UAT-3 | fleet-lead | PASS | phase-3-evidence.md#p3-05-uat-3 | 8b514e6 |
@@ -57,7 +57,7 @@ Date: 2026-10-26
 | P3-06 UAT-6 | developer | PASS | phase-3-evidence.md#p3-06-uat-6 | 8b514e6 |
 | P3-07 UAT-1 | fleet-lead | PASS | phase-3-evidence.md#p3-07-uat-1 | 8b514e6 |
 | P3-07 UAT-2 | developer | PASS | phase-3-evidence.md#p3-07-uat-2 | 8b514e6 |
-| P3-07 UAT-3 | fleet-lead | NOT RUN | phase-3-evidence.md#p3-07-uat-3 | 8b514e6 |
+| P3-07 UAT-3 | fleet-lead | PASS | phase-3-evidence.md#p3-07-uat-3 | 8b514e6 |
 | P3-07 UAT-4 | developer | PASS | phase-3-evidence.md#p3-07-uat-4 | 8b514e6 |
 | P3-07 UAT-5 | developer | PASS | phase-3-evidence.md#p3-07-uat-5 | 8b514e6 |
 | P3-08 UAT-1 | developer | PASS | phase-3-evidence.md#p3-08-uat-1 | 8b514e6 |
@@ -77,11 +77,11 @@ Date: 2026-10-26
 | XF-10 | fleet-lead | PASS | phase-3-evidence.md#xf-10 | 8b514e6 |
 | XF-11 | fleet-lead | PASS | phase-3-evidence.md#xf-11 | 8b514e6 |
 | XF-12 | scripter | PASS | phase-3-evidence.md#xf-12 | 8b514e6 |
-| OP-1 | fleet-lead | NOT RUN | phase-3-evidence.md#op-1 | 8b514e6 |
-| OP-2 | fleet-lead | NOT RUN | phase-3-evidence.md#op-2 | 8b514e6 |
-| OP-3 | fleet-lead | NOT RUN | phase-3-evidence.md#op-3 | 8b514e6 |
-| OP-4 | fleet-lead | NOT RUN | phase-3-evidence.md#op-4 | 8b514e6 |
-| OP-5 | fleet-lead | NOT RUN | phase-3-evidence.md#op-5 | 8b514e6 |
-| OP-6 | fleet-lead | NOT RUN | phase-3-evidence.md#op-6 | 8b514e6 |
-| OP-7 | fleet-lead | NOT RUN | phase-3-evidence.md#op-7 | 8b514e6 |
-| OP-8 | fleet-lead | NOT RUN | phase-3-evidence.md#op-8 | 8b514e6 |
+| OP-1 | fleet-lead | PASS | phase-3-evidence.md#op-1 | 8b514e6 |
+| OP-2 | fleet-lead | PASS | phase-3-evidence.md#op-2 | 8b514e6 |
+| OP-3 | fleet-lead | PASS | phase-3-evidence.md#op-3 | 8b514e6 |
+| OP-4 | fleet-lead | PASS | phase-3-evidence.md#op-4 | 8b514e6 |
+| OP-5 | fleet-lead | PASS | phase-3-evidence.md#op-5 | 8b514e6 |
+| OP-6 | fleet-lead | PASS | phase-3-evidence.md#op-6 | 8b514e6 |
+| OP-7 | fleet-lead | PASS | phase-3-evidence.md#op-7 | 8b514e6 |
+| OP-8 | fleet-lead | PASS | phase-3-evidence.md#op-8 | 8b514e6 |

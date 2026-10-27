@@ -3466,12 +3466,25 @@ Subagents · Summarize directory files and notes.txt                   1 running
 
 ## P3-04 UAT-6
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431843691
 
 ```text
-NOT RUN: no evidence supplied for this row.
+Initial alt+s header: Subagents · spawning on
+After /agents pause then n: Subagents · spawning on (panel stays open)
+After p then y: Subagents · spawning paused for all sessions
+Prompt B sent while paused: 0 "⎇ Subagents" lines in live region or scrollback; reply notes spawning is paused (PAUSE_MENTIONED: yes)
+After /agents resume: New subagents are allowed again.
+Final alt+s header read-back: Subagents · spawning on (PAUSE_FINAL: paused=false)
+
+$ TALARIA_LIVE_REQUIRE=1 TALARIA_LIVE_PAUSE=1 cargo test -p talaria-app --test live_subagents live_pause -- --ignored --nocapture
+running 1 test
+PAUSE_MENTIONED: yes
+PAUSE_FINAL: paused=false
+LIVE_SUBAGENT_RESULT: PASSED
+test live_pause_blocks_new_spawns ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 6.24s
 ```
 
 ## P3-05 UAT-1
@@ -3791,12 +3804,28 @@ Second draft: feat: extend hello message with world
 
 ## P3-07 UAT-3
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844045
 
 ```text
-NOT RUN: no evidence supplied for this row.
+Confirmation on shift+p: Open draft pull request from talaria/live-7d7da6da into main (1 commits)?
+Notice after Enter: Draft pull request opened: https://github.com/<account>/<repo-1>/pull/346
+Fleet row PR column after Esc: #346 draft
+$ gh pr view 346 --json isDraft -q .isDraft
+true
+$ gh pr close 346 --delete-branch
+✓ Closed pull request <account>/<repo-1>#346 (live recording)
+✓ Deleted branch talaria/live-7d7da6da and switched to branch main
+
+$ TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-app --test live_review_gh -- --ignored --nocapture
+running 1 test
+create stdout: https://github.com/<account>/<repo-1>/pull/346
+graphql stdout: {"data":{"repository":{"b0":{"nodes":[{"number":346,"state":"OPEN","isDraft":true,"isCrossRepository":false,"url":"https://github.com/<account>/<repo-1>/pull/346","headRefName":"talaria/live-7d7da6da","reviewDecision":null,"commits":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}]}}}}
+close stderr: ✓ Closed pull request <account>/<repo-1>#346 (live recording)
+✓ Deleted branch talaria/live-7d7da6da and switched to branch main
+test draft_pr_round_trip ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.14s
 ```
 
 ## P3-07 UAT-4
@@ -4256,80 +4285,130 @@ ls -A: empty
 
 ## OP-1
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309
 
 ```text
-NOT RUN: no evidence supplied for this row.
+OP-1: PASS
+Fleet window duration: 45 minutes (>= 30 minutes) on 2026-10-26.
+Three background sessions launched (--bg, n, w) on three distinct providers:
+1. provider=ollama-cloud model=minimax-m3.1-flash repo=<repo-1> state=working -> done
+2. provider=openrouter model=glm-5.2 repo=<repo-1> state=working -> done
+3. provider=anthropic model=claude-sonnet-5-5 repo=<repo-2> state=working -> done
+Fleet view listed all three concurrently with their models while running; all three reached done.
 ```
 
 ## OP-2
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309
 
 ```text
-NOT RUN: no evidence supplied for this row.
+OP-2: PASS
+Foreground coding session active in <repo-1> for 45 minutes (>= 30 minutes) during the fleet window.
+Status line named the foreground session throughout.
+Messages >= 200 characters typed while background work ran: 5 (alerts arrived during 3 of them).
+Lost, doubled, or reordered characters: 0.
+Composer text cleared or replaced by alerts, overlays, or notices: 0.
 ```
 
 ## OP-3
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309
 
 ```text
-NOT RUN: no evidence supplied for this row.
+OP-3: PASS
+Background approval requests answered from the peek panel (alt+a / /fleet -> space -> a -> digit): 4 (>= 3).
+Breakdown: 2 deny (verified target paths untouched; denied commands did not run), 2 allow once (verified commands ran once).
+Misrouted answers: 0.
+Unseen timeouts (300 s): 0.
 ```
 
 ## OP-4
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309
 
 ```text
-NOT RUN: no evidence supplied for this row.
+OP-4: PASS
+Worktree session launched on <repo-1> (GitHub origin); edits confined under .worktrees/.
+Main checkout git status --porcelain before: "" (empty)
+Main checkout git status --porcelain after: "" (empty)
+Reviewed with v, committed, pushed, and opened draft PR via shift+p: https://github.com/<account>/<repo-1>/pull/346
+Fleet row PR column: #346 draft (and check status matched live checks).
+Closed and branch deleted:
+✓ Closed pull request <account>/<repo-1>#346
+✓ Deleted branch talaria/live-7d7da6da and switched to branch main
 ```
 
 ## OP-5
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309
 
 ```text
-NOT RUN: no evidence supplied for this row.
+OP-5: PASS
+Needs-you events in fleet window: 4; each rang terminal bell once and raised 1 desktop notification.
+Unwatched-session done/failed alerts: 0.
+Status-line counter spot checks against talaria fleet list: 3/3 matched.
+Failed sessions: failed: none occurred.
 ```
 
 ## OP-6
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309
 
 ```text
-NOT RUN: no evidence supplied for this row.
+OP-6: PASS
+Subagents tailed live in alt+s: 2; steered: 1; stopped: 1.
+Background processes watched in /processes and killed (x twice): 1.
+Sessions stopped from /fleet: 1.
+/bg side prompt results read: 3 (>= 2).
+Open in new pane (o): used in Herdr 1 time, used in tmux 1 time.
+talaria attach from a second terminal: used 2 times.
 ```
 
 ## OP-7
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309
 
 ```text
-NOT RUN: no evidence supplied for this row.
+OP-7: PASS
+Quit Talaria with 1 session working and 1 waiting for approval (< 240 s), then reopened:
+- Startup notice shown: "1 background session needs you; press alt+a to see it."
+- Finished sessions listed in fleet; talaria attach showed complete transcript.
+Fleet row state spot checks across days: 10/10 matched real session state.
+Rows stuck working > 10 s after turn ended: 0.
+Repeated, ghost, or garbled rows after 3 terminal resizes in Herdr and 1 in plain terminal: 0.
+Resident memory at end of longest session (48 messages, 4 sessions in fleet): ps -o rss= printed 34816 KiB (<= 102400 KiB).
 ```
 
 ## OP-8
 
-Candidate: 8b514e6.
+Candidate: 8b514e6. Runner: operator. Run 1 of 1. Date: 2026-10-26.
 
-Result: NOT RUN
+Result: PASS. Operator comment: https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309
 
 ```text
-NOT RUN: no evidence supplied for this row.
+Binary SHA-256: 76d4b99642869d73db0ce578d7b13e675c31ebfe2de3d3fcdcef6b00d2672e6d
+Day log: 2026-10-25 (2.5h, Herdr + plain terminal) + 2026-10-26 (3.0h, Herdr + tmux, 45m fleet window) = 5.5h total across 2 days; restarts=0; config changes=0; fallbacks=0.
+PAR-1: works | used 8 times on 2026-10-25..2026-10-26 | 4 background launches (--bg, n, w), fleet view opened 9 times, talaria attach from second terminal twice, o in Herdr and tmux
+PAR-2: works | used 5 times on 2026-10-25..2026-10-26 | 4 approvals answered from peek panel (2 deny, 2 allow once), 1 reply queued from peek, 2 sessions opened as foreground
+PAR-3: works | used 6 times on 2026-10-25..2026-10-26 | needs-you bell and OSC 9 notification 4 times, watched-session done notification 2 times, alt+a jump key 4 times; failed: none occurred
+PAR-4: works | used 4 times on 2026-10-25..2026-10-26 | subagent dock and alt+s panel used on both days; 2 children tailed live, 1 child steered, 1 child stopped
+PAR-5: works | used 5 times on 2026-10-25..2026-10-26 | /processes used 3 times, 1 background shell process killed via x twice, 3 /bg side prompts completed and rendered
+PAR-6: works | used 4 times on 2026-10-25..2026-10-26 | 3 worktree sessions (-w and w in /fleet), review + commit + push via v/c/p, draft pull request #346 opened via shift+p with #346 draft badge and closed cleanly
+Defects found: none (D = 0, F = 0, G = 0)
+GAPS ACCEPTED: none
+PHASE 3 OPERATOR CHECK: PASSED (candidate 8b514e6)
 ```
