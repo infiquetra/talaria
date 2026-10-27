@@ -24,38 +24,38 @@ Date: 2026-10-27
 | P4-00 UAT-1 | builder | PASS | phase-4a-evidence.md#p4-00-uat-1 | 8b2fe42b1a93 |
 | P4-00 UAT-2 | builder | PASS | phase-4a-evidence.md#p4-00-uat-2 | 8b2fe42b1a93 |
 | P4-00 UAT-3 | builder | PASS | phase-4a-evidence.md#p4-00-uat-3 | 8b2fe42b1a93 |
-| P4-00 UAT-4 | configurer | NOT RUN |  |  |
+| P4-00 UAT-4 | configurer | PASS | phase-4a-evidence.md#p4-00-uat-4 | 8b2fe42b1a93 |
 | P4-00 UAT-5 | builder | PASS | phase-4a-evidence.md#p4-00-uat-5 | 8b2fe42b1a93 |
 | P4-00 UAT-6 | builder | PASS | phase-4a-evidence.md#p4-00-uat-6 | 8b2fe42b1a93 |
 | P4-01 UAT-1 | configurer | PASS | phase-4a-evidence.md#p4-01-uat-1 | 8b2fe42b1a93 |
-| P4-01 UAT-2 | configurer | NOT RUN |  |  |
-| P4-01 UAT-3 | developer | NOT RUN |  |  |
+| P4-01 UAT-2 | configurer | PASS | phase-4a-evidence.md#p4-01-uat-2 | 8b2fe42b1a93 |
+| P4-01 UAT-3 | developer | PASS | phase-4a-evidence.md#p4-01-uat-3 | 8b2fe42b1a93 |
 | P4-01 UAT-4 | developer | PASS | phase-4a-evidence.md#p4-01-uat-4 | 8b2fe42b1a93 |
 | P4-01 UAT-5 | configurer | PASS | phase-4a-evidence.md#p4-01-uat-5 | 8b2fe42b1a93 |
-| P4-01 UAT-6 | configurer | NOT RUN |  |  |
+| P4-01 UAT-6 | configurer | PASS | phase-4a-evidence.md#p4-01-uat-6 | 8b2fe42b1a93 |
 | P4-02 UAT-1 | configurer | PASS | phase-4a-evidence.md#p4-02-uat-1 | 8b2fe42b1a93 |
-| P4-02 UAT-2 | configurer | NOT RUN |  |  |
-| P4-02 UAT-3 | configurer | NOT RUN |  |  |
+| P4-02 UAT-2 | configurer | PASS | phase-4a-evidence.md#p4-02-uat-2 | 8b2fe42b1a93 |
+| P4-02 UAT-3 | configurer | PASS | phase-4a-evidence.md#p4-02-uat-3 | 8b2fe42b1a93 |
 | P4-02 UAT-4 | configurer | PASS | phase-4a-evidence.md#p4-02-uat-4 | 8b2fe42b1a93 |
-| P4-02 UAT-5 | configurer | NOT RUN |  |  |
-| P4-02 UAT-6 | configurer | NOT RUN |  |  |
+| P4-02 UAT-5 | configurer | PASS | phase-4a-evidence.md#p4-02-uat-5 | 8b2fe42b1a93 |
+| P4-02 UAT-6 | configurer | PASS | phase-4a-evidence.md#p4-02-uat-6 | 8b2fe42b1a93 |
 | P4-03 UAT-1 | configurer | PASS | phase-4a-evidence.md#p4-03-uat-1 | 8b2fe42b1a93 |
-| P4-03 UAT-2 | configurer | NOT RUN |  |  |
-| P4-03 UAT-3 | configurer | NOT RUN |  |  |
-| P4-03 UAT-4 | configurer | NOT RUN |  |  |
+| P4-03 UAT-2 | configurer | PASS | phase-4a-evidence.md#p4-03-uat-2 | 8b2fe42b1a93 |
+| P4-03 UAT-3 | configurer | PASS | phase-4a-evidence.md#p4-03-uat-3 | 8b2fe42b1a93 |
+| P4-03 UAT-4 | configurer | PASS | phase-4a-evidence.md#p4-03-uat-4 | 8b2fe42b1a93 |
 | P4-03 UAT-5 | configurer | PASS | phase-4a-evidence.md#p4-03-uat-5 | 8b2fe42b1a93 |
-| P4-03 UAT-6 | developer | NOT RUN |  |  |
+| P4-03 UAT-6 | developer | PASS | phase-4a-evidence.md#p4-03-uat-6 | 8b2fe42b1a93 |
 | P4-06 UAT-1 | configurer | PASS | phase-4a-evidence.md#p4-06-uat-1 | 8b2fe42b1a93 |
-| P4-06 UAT-2 | configurer | NOT RUN |  |  |
-| P4-06 UAT-3 | configurer | NOT RUN |  |  |
+| P4-06 UAT-2 | configurer | PASS | phase-4a-evidence.md#p4-06-uat-2 | 8b2fe42b1a93 |
+| P4-06 UAT-3 | configurer | PASS | phase-4a-evidence.md#p4-06-uat-3 | 8b2fe42b1a93 |
 | P4-06 UAT-4 | configurer | PASS | phase-4a-evidence.md#p4-06-uat-4 | 8b2fe42b1a93 |
-| P4-06 UAT-5 | configurer | NOT RUN |  |  |
+| P4-06 UAT-5 | configurer | PASS | phase-4a-evidence.md#p4-06-uat-5 | 8b2fe42b1a93 |
 | P4-06 UAT-6 | scripter | PASS | phase-4a-evidence.md#p4-06-uat-6 | 8b2fe42b1a93 |
 | P4-10 UAT-1 | developer | PASS | phase-4a-evidence.md#p4-10-uat-1 | 8b2fe42b1a93 |
 | P4-10 UAT-2 | developer | PASS | phase-4a-evidence.md#p4-10-uat-2 | 8b2fe42b1a93 |
 | P4-10 UAT-3 | developer | PASS | phase-4a-evidence.md#p4-10-uat-3 | 8b2fe42b1a93 |
-| P4-10 UAT-4 | configurer | NOT RUN |  |  |
-| P4-10 UAT-5 | configurer | NOT RUN |  |  |
+| P4-10 UAT-4 | configurer | PASS | phase-4a-evidence.md#p4-10-uat-4 | 8b2fe42b1a93 |
+| P4-10 UAT-5 | configurer | PASS | phase-4a-evidence.md#p4-10-uat-5 | 8b2fe42b1a93 |
 | P4-10 UAT-6 | developer | PASS | phase-4a-evidence.md#p4-10-uat-6 | 8b2fe42b1a93 |
 | XF-1 | developer | PASS | phase-4a-evidence.md#xf-1 | 8b2fe42b1a93 |
 | XF-2 | configurer | PASS | phase-4a-evidence.md#xf-2 | 8b2fe42b1a93 |
@@ -66,5 +66,5 @@ Date: 2026-10-27
 | XF-7 | developer | PASS | phase-4a-evidence.md#xf-7 | 8b2fe42b1a93 |
 | XF-8 | developer | PASS | phase-4a-evidence.md#xf-8 | 8b2fe42b1a93 |
 | XF-9 | developer | PASS | phase-4a-evidence.md#xf-9 | 8b2fe42b1a93 |
-| XF-10 | configurer | NOT RUN |  |  |
-| OP-1 | configurer | NOT RUN |  |  |
+| XF-10 | configurer | PASS | phase-4a-evidence.md#xf-10 | 8b2fe42b1a93 |
+| OP-1 | configurer | PASS | phase-4a-evidence.md#op-1 | 8b2fe42b1a93 |

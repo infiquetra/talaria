@@ -1715,6 +1715,31 @@ exit=0
 
 Result: PASS. The read-only probe ran after the smoke-suite scheduling gate.
 
+## P4-00 UAT-4
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+$ snap > "$X/sitting-before.sum"
+$ TALARIA_LIVE_REQUIRE=1 TALARIA_PROBE_WRITES=1 cargo test -p hermes-client --test live_config_surface -- --ignored --nocapture probe_writes_round_trip_on_fixture
+running 1 test
+ROW C10 ok 2ms write-restored
+ROW C19 ok 14ms write-restored
+requests sent: 20
+refuted rows: none
+hermes release: v0.22.4
+LIVE_CONFIG_SURFACE_RESULT: PASSED
+test probe_writes_round_trip_on_fixture ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 2.15s
+exit=0
+Operator note on fixture/config.yaml:
+- display.skin: default (restored to pre-probe value)
+- display.show_cost: false (restored to pre-probe value)
+- Top-level YAML comments survived intact.
+```
+
 ## P4-00 UAT-5
 
 Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
@@ -1861,6 +1886,56 @@ minimax-m3.1-flash │ approvals: manual │ <project> (master)
 Protected fixture files before / after cleanup: cmp=0
 ```
 
+## P4-01 UAT-2
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (160x48), "$T" --no-ensure --profile fixture --provider ollama-cloud --model minimax-m3.1-flash
+Given /config open and filtered to compact (cursor on display.compact, initial value false):
+1. Pressed Enter, a:
+   Review 1 change(s) · profile fixture
+   display.compact   false → true   may need a restart
+2. Pressed Enter (apply 1):
+   Saved 1 change(s) for profile fixture.
+   May need a gateway restart to take effect: display.compact.
+   Row read-back: display.compact   [✓] true   set · may need a restart
+   Digest control: snap > "$X/mid.sum"; cmp "$X/sitting-before.sum" "$X/mid.sum"; echo "cmp=$?"
+   cmp=1
+3. Pressed Enter, a, Enter (restore):
+   Review 1 change(s) · profile fixture
+   display.compact   true → false   may need a restart
+   Saved 1 change(s) for profile fixture.
+   May need a gateway restart to take effect: display.compact.
+   Restored read-back: display.compact   [ ] false   set · may need a restart
+   cmp=0
+```
+
+## P4-01 UAT-3
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (160x48), "$T" --no-ensure --profile fixture --provider ollama-cloud --model minimax-m3.1-flash
+1. Composer: /config display.compact=true -> Enter:
+   Review 1 change(s) · profile fixture
+   display.compact   false → true   may need a restart
+   Pressed Enter:
+    Overlay closed; transcript line:
+   Settings saved for profile fixture: display.compact = true.
+2. Composer: /config display.compact=false -> Enter:
+   Review 1 change(s) · profile fixture
+   display.compact   true → false   may need a restart
+   Pressed Enter:
+   Overlay closed; transcript line:
+   Settings saved for profile fixture: display.compact = false.
+Restored read-back: display.compact = false
+```
+
 ## P4-01 UAT-4
 
 Candidate: 8b2fe42. Runner: agent tester. Run 1 of 1. Date: 2026-10-27.
@@ -1937,6 +2012,32 @@ No changes to review.
 Enter edit · / filter · a review · ? help · Esc close
 [observation]
 Protected fixture files before / after cleanup: cmp=0
+```
+
+## P4-01 UAT-6
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal 1: Herdr 0.9.4 (160x48), /config open on profile fixture, filtered to compact, Enter pended true (*).
+Terminal 2:
+$ hermes --profile fixture config set display.compact true
+Updated display.compact = True
+Terminal 1: pressed a, then Enter:
+  Conflict screen:
+  Changed outside Talaria · profile fixture
+  display.compact   yours true · now true
+  t take the new values · k keep yours and review again · Esc back
+Terminal 1: pressed t:
+  Browse view:
+  1 setting(s) changed outside Talaria; showing the new values.
+  display.compact   [✓] true   set · may need a restart (no * mark, no Saved banner)
+Terminal 2 restore:
+$ hermes --profile fixture config set display.compact false
+Updated display.compact = False
+Restored read-back: display.compact = false
 ```
 
 ## P4-02 UAT-1
@@ -2029,6 +2130,48 @@ Effort hydration recording: mutation requests=0, conversational requests=0
 Protected fixture files before / after cleanup: cmp=0
 ```
 
+## P4-02 UAT-2
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (120x40), "$T" --no-ensure --profile fixture --provider ollama-cloud --model minimax-m3.1-flash --record uat-2.rec
+1. Opened /providers (Keys tab), filtered "openrouter":
+   OpenRouter   no key
+2. Pressed Enter to open "API key for OpenRouter", pasted dummy key (<typed-secret>), pressed Enter:
+   Key field: ••••••••••••••••••••••••••••••••••••••••… (40 bullets and ellipsis; raw characters never shown)
+   Banner: That API key was rejected. Double-check it and try again.
+3. Pressed Esc twice, read Keys list, then /quit:
+   OpenRouter   no key (unchanged)
+4. Verified recording file exists and holds zero occurrences of the dummy key prefix:
+   $ test -f uat-2.rec && echo "exists=1"
+   exists=1
+   $ grep -c 'sk-or-v1-0000' uat-2.rec
+   0
+Restored read-back: OpenRouter = no key
+```
+
+## P4-02 UAT-3
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (120x40), "$T" --no-ensure --profile fixture --provider ollama-cloud --model minimax-m3.1-flash
+1. Opened /providers (Keys tab), selected Ollama Cloud, pressed Enter:
+   API key for Ollama Cloud
+2. Pasted the same ollama-cloud key and pressed Enter:
+   Card closed in 1.2 s (<= 5 s).
+   Banner: Saved the key for Ollama Cloud.
+   Row read-back: Ollama Cloud   ready · 24 models · key …6291
+3. Started a new "$T" --no-ensure --profile fixture session and submitted a prompt:
+   Assistant replied normally.
+   Operator note: no configuration or .env file was opened by hand (P4-02 AC-11).
+```
+
 ## P4-02 UAT-4
 
 Candidate: 8b2fe42. Runner: agent tester. Run 1 of 2. Date: 2026-10-27.
@@ -2112,6 +2255,51 @@ Owned pane PTY verified: 120x40; no focus or takeover
 No browser/opener key or sign-in approval was sent
 [observation]
 Protected fixture files before / after cleanup: cmp=0
+```
+
+## P4-02 UAT-5
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (120x40), "$T" --no-ensure --profile fixture --provider ollama-cloud --model minimax-m3.1-flash
+1. Opened /providers -> Tab to Accounts tab, selected <provider-account> (not signed in), pressed Enter:
+   Sign in to <provider-account>
+   1. Open https://...
+   2. Enter the code ...
+2. Approved in browser:
+   Elapsed from approval to Signed in: 3.4 s (within 1 poll interval, <= 2 poll intervals).
+   Banner: Signed in to <provider-account>.
+   Row read-back: <provider-account>   signed in · <account>
+3. Pressed Ctrl+D, then y:
+   Banner: Signed out of <provider-account>.
+   Restored read-back: <provider-account>   not signed in
+```
+
+## P4-02 UAT-6
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Precondition: second pane running python3 -m http.server on <loopback> serving v1/models = {"data":[{"id":"stub-model"}]}.
+Starting endpoint list on /providers -> Endpoints tab:
+  + Add an endpoint (0 custom endpoints)
+1. Added uat-unreachable with http://<loopback>/v1, model x, pressed Ctrl+T:
+   Could not reach http://<loopback>/v1
+   Pressed Esc, y (discarded).
+2. Added uat-stub with http://<loopback>/v1 and empty Model, pressed Ctrl+T:
+   Model field filled with: stub-model
+   Warning: POST /chat/completions returned HTTP 501
+   Pressed Ctrl+S:
+   Banner: Saved uat-stub.
+   Row listed: uat-stub   http://<loopback>/v1 · stub-model
+3. Selected uat-stub, pressed Ctrl+D, y:
+   Deleted uat-stub.
+Restored endpoint list read-back: + Add an endpoint (0 custom endpoints, equal to starting list).
 ```
 
 ## P4-03 UAT-1
@@ -2383,6 +2571,81 @@ Owned pane PTY verified: 160x48; no focus or takeover
 Protected fixture files before / after cleanup: cmp=0
 ```
 
+## P4-03 UAT-2
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (160x48), "$T" --no-ensure --profile fixture --provider ollama-cloud --model minimax-m3.1-flash
+Initial Main model on fixture: minimax-m3.1-flash (ollama-cloud)
+1. In /models (1 Main), pressed Enter, filtered "ollama", chose glm-5.3-flash, pressed Ctrl+S:
+   Review changes to Main - profile fixture
+   model.provider: "ollama-cloud" -> "ollama-cloud"
+   model.default: "minimax-m3.1-flash" -> "glm-5.3-flash"
+   Pressed Enter:
+   Main section shows: glm-5.3-flash · ollama-cloud
+   Notice: Applies to new sessions.
+2. Opened new "$T" --no-ensure --profile fixture session:
+   Status line showed: glm-5.3-flash
+3. Restored in /models (1 Main): selected minimax-m3.1-flash on ollama-cloud, Ctrl+S, Enter:
+   model.default: "glm-5.3-flash" -> "minimax-m3.1-flash"
+Restored read-back: Main model = minimax-m3.1-flash (ollama-cloud).
+```
+
+## P4-03 UAT-3
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Initial fallback chain:
+$ hermes -p fixture fallback list
+1. opencode-go / minimax-m3.1-flash
+1. Opened /models -> 2 (Fallbacks):
+   Pressed a -> picked ollama-cloud / minimax-m3.1-flash.
+   Pressed a -> picked ollama-cloud / glm-5.3-flash.
+   Pressed K on glm-5.3-flash to move it above minimax-m3.1-flash.
+   Pressed Ctrl+S:
+   Review changes to Fallbacks - profile fixture
+   fallback_providers: [opencode-go/minimax-m3.1-flash] -> [opencode-go/minimax-m3.1-flash, ollama-cloud/glm-5.3-flash, ollama-cloud/minimax-m3.1-flash]
+   Pressed Enter.
+2. Verified CLI read-back matched /models section order:
+$ hermes -p fixture fallback list
+1. opencode-go / minimax-m3.1-flash
+2. ollama-cloud / glm-5.3-flash
+3. ollama-cloud / minimax-m3.1-flash
+3. Restored original chain and verified read-back:
+$ hermes -p fixture fallback list
+1. opencode-go / minimax-m3.1-flash
+```
+
+## P4-03 UAT-4
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (160x48), /models -> 3 (Helpers) on profile fixture
+Initial Title gen row: follows main model · effort: inherited
+1. Selected Title gen, pressed Enter, picked ollama-cloud and minimax-m3.1-flash, pressed e, selected low, pressed Ctrl+S:
+   Review changes to Helpers - profile fixture
+   auxiliary.title_generation.provider: "auto" -> "ollama-cloud"
+   auxiliary.title_generation.model: "" -> "minimax-m3.1-flash"
+   auxiliary.title_generation.reasoning_effort: "inherited" -> "low"
+   Pressed Enter:
+   Row read-back: Title gen   minimax-m3.1-flash (via ollama-cloud) · effort: low
+2. Pressed i, Ctrl+S, Enter:
+   Review changes to Helpers - profile fixture
+   auxiliary.title_generation.provider: "ollama-cloud" -> "auto"
+   auxiliary.title_generation.model: "minimax-m3.1-flash" -> ""
+   auxiliary.title_generation.reasoning_effort: "low" -> "inherited"
+Restored read-back: Title gen   follows main model · effort: inherited
+```
+
 ## P4-03 UAT-5
 
 Candidate: 8b2fe42. Runner: agent tester. Run 1 of 1. Date: 2026-10-27.
@@ -2455,6 +2718,22 @@ Owned pane PTY verified: 160x48; no focus or takeover
 Protected fixture files before / after cleanup: cmp=0
 ```
 
+## P4-03 UAT-6
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (160x48), "$T" --no-ensure --profile fixture attached at idle composer.
+1. Stopped gateway in second terminal; in Talaria typed /models, Enter, waited 20 s, pressed Ctrl+R:
+   Model roles - profile fixture
+   Hermes did not answer. Ctrl+R to retry.
+   Talaria remained responsive (neither exited nor froze); Esc closed the overlay back to the composer.
+2. Restarted gateway in second terminal; reopened /models in Talaria:
+   Model roles - profile fixture loaded all 5 sections (1 Main, 2 Fallbacks, 3 Helpers, 4 Subagents, 5 Mixture of Agents) with zero Failed banners.
+```
+
 ## P4-06 UAT-1
 
 Candidate: 8b2fe42. Runner: agent tester. Run 1 of 1. Date: 2026-10-27.
@@ -2503,6 +2782,55 @@ Profiles filter shown in 1.193 s; restoration cmp=0
 Protected fixture files before / after cleanup: cmp=0
 ```
 
+## P4-06 UAT-2
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+1. Initial check:
+$ "$T" profiles fixture
+NAME      STATE   MAIN MODEL                       SESSIONS  UPDATED
+fixture   served  minimax-m3.1-flash · ollama-cloud       0  just now
+2. Stopped fixture service and waited 11 s:
+$ hermes -p fixture gateway stop && sleep 11
+$ "$T" profiles fixture
+NAME      STATE    MAIN MODEL                       SESSIONS  UPDATED
+fixture   stopped  minimax-m3.1-flash · ollama-cloud       0  just now
+Next step: hermes -p fixture gateway start
+3. Opened "$T" --no-ensure --profile default -> /profiles -> /fixture:
+   Row showed: fixture   stopped   hermes -p fixture gateway start
+   Pressed R, y:
+   Banner: Rescan finished: 2 profiles (1 served, 1 stopped).
+   Row stayed: stopped
+4. Started fixture service, waited 30 s, pressed r:
+$ hermes -p fixture gateway start
+   Restored read-back: fixture   served   minimax-m3.1-flash · ollama-cloud
+```
+
+## P4-06 UAT-3
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (120x40), "$T" --no-ensure --profile default -> /profiles
+1. Pressed n, typed <profile>, Enter, selected scratch, Enter, Enter, Enter:
+   Review new profile · <profile>
+   Preset: scratch
+   Clone from: none
+   Command: hermes profile create <profile> --preset scratch
+2. Pressed Enter:
+   Banner: Created profile <profile>.
+   Polled every 5 s: <profile> transitioned starting -> served in 10 s (<= 40 s).
+   Detail pane: Skills: 58 of 58 on (above zero).
+3. Deleted disposable profile afterwards:
+$ hermes profile delete <profile> --yes
+Restored read-back: only default and fixture remain in "$T" profiles.
+```
+
 ## P4-06 UAT-4
 
 Candidate: 8b2fe42. Runner: agent tester. Run 1 of 1. Date: 2026-10-27.
@@ -2526,6 +2854,27 @@ talaria profiles: no profile named <profile>
 exit=2
 [snapshot comparison]
 Protected fixture files before / after cleanup: cmp=0
+```
+
+## P4-06 UAT-5
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Terminal: Herdr 0.9.4 (120x40), "$T" --no-ensure --profile fixture -> /profiles (fixture selected, initial description "")
+1. Pressed e, typed "P4-06 check", pressed Enter:
+   Review profile changes · fixture
+   description: "" -> "P4-06 check"
+2. Pressed Enter:
+   Banner: Saved the description of fixture.
+   Pressed r:
+   Detail read-back: Description: P4-06 check
+3. Pressed e, cleared description to "", pressed Enter, Enter, then r:
+   description: "P4-06 check" -> ""
+   Banner: Saved the description of fixture.
+   Restored read-back: Description: (none)
 ```
 
 ## P4-06 UAT-6
@@ -2655,6 +3004,60 @@ exit=1
 empty-home entry count=0
 [snapshot comparison]
 Protected fixture files before / after cleanup: cmp=0
+```
+
+## P4-10 UAT-4
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+1. Before JSON gateway summary:
+$ "$T" doctor --json --profile fixture | jq -r '.checks[] | select(.id=="gateway") | "\(.status) \(.summary)"'
+ok ready · instance 8bc6f737 · epoch 6 · started by hand
+2. In P2 (/doctor open on fixture), pressed R:
+   Restart the Hermes gateway?
+   It serves 2 profiles: default, fixture.
+   Nothing is running right now.
+   [ Cancel ]  [ Restart ]
+   Pressed Enter:
+   Not restarted.
+3. In second shell pane:
+$ "$T" doctor --restart --profile fixture < /dev/null; echo "exit=$?"
+Restart: Refusing to restart without confirmation: run in a terminal or add --yes.
+exit=3
+4. After JSON gateway summary (identical):
+ok ready · instance 8bc6f737 · epoch 6 · started by hand
+```
+
+## P4-10 UAT-5
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+$ "$T" doctor --restart --profile fixture; echo "exit=$?"
+Talaria doctor (profile fixture)
+ok    Talaria          0.6.0 (<worktree>/target/release/talaria)
+ok    Gateway          ready · instance 8bc6f737 · epoch 6 · started by hand
+ok    Hermes version   running v0.22.4 (4d043038) · built for v0.22.4 (4d043038)
+ok    Profiles         fixture served · 2 served (default, fixture)
+ok    Attach           profile fixture answered in 92 ms
+ok    Provider         ollama-cloud ready (minimax-m3.1-flash)
+ok    Disk             <home>/.talaria writable · 436.0 GiB free
+Result: 7 ok, 0 warnings, 0 failures.
+Restart the Hermes gateway?
+  It serves 2 profiles: default, fixture.
+  Nothing is running right now.
+Type yes to restart: yes
+Restart: Gateway restarted in 7 s (instance 8bc6f737 → b89d5180).
+
+Talaria doctor (profile fixture), after the restart
+Result: 7 ok, 0 warnings, 0 failures.
+exit=0
+Second pane (running Talaria on fixture without restart): submitted "say hi" -> assistant replied "Hi! How can I help you today?".
 ```
 
 ## P4-10 UAT-6
@@ -3444,4 +3847,50 @@ CPU-growth=0.28 s
 cmp=0
 [snapshot comparison]
 Protected fixture files before / after cleanup: cmp=0
+```
+
+## XF-10
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+Five panes on profile fixture (P1: /config, P2: /providers, P3: /models, P4: /profiles, P5: doctor restart):
+1. P5 ran "$T" doctor --restart --profile fixture; echo "exit=$?" with "yes":
+   Restart: Gateway restarted in 7 s (instance b89d5180 → 54a912c4).
+   Talaria doctor (profile fixture), after the restart -> Result: 7 ok, 0 warnings, 0 failures.
+   exit=0
+2. Within 60 s, pressed retry key in P1..P4 and verified process liveness + titles + 80-col key-hint footers:
+   - P1 (/config): kept working / reloaded on r -> "Settings · profile fixture", footer "Enter edit  / filter  a review  r reload  ? keys  Esc close"
+   - P2 (/providers): kept working / reloaded on Ctrl+R -> "Providers · profile fixture", footer "Tab switch tab · Enter edit · Ctrl+R refresh · Esc close"
+   - P3 (/models): showed "Hermes did not answer. Ctrl+R to retry." -> Ctrl+R reloaded "Model roles - profile fixture", footer "Enter change … Ctrl+R reload / Esc close ? keys"
+   - P4 (/profiles): kept working / reloaded on r -> "Profiles (2): 2 served", header hints "Enter details · n new · e description · r refresh · R rescan · Esc close"
+   - Process check: all 4 Talaria PIDs remained in foreground_processes (0 exited).
+   - Pressed Esc in P1..P4: all 4 overlays closed cleanly to the visible composer.
+```
+
+## OP-1
+
+Candidate: 8b2fe42. Runner: operator. Run 1 of 1. Date: 2026-10-27.
+
+Result: PASS. Operator comment: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6446854559
+
+```text
+$ export TALARIA_PROBE_WRITES=1
+$ TALARIA_LIVE_REQUIRE=1 cargo test -p hermes-client --test live_config_surface -- --ignored --nocapture probe_writes_round_trip_on_fixture
+ROW C10 ok 2ms write-restored
+ROW C19 ok 14ms write-restored
+LIVE_CONFIG_SURFACE_RESULT: PASSED (exit=0)
+$ TALARIA_LIVE_REQUIRE=1 cargo test -p hermes-client --test live_rest_config -- --ignored --nocapture live_write_round_trip_on_fixture
+LIVE_SETTINGS_RESULT: PASSED (exit=0)
+$ TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_providers -- --ignored --nocapture live_endpoint_round_trip_on_fixture
+LIVE_PROVIDERS_RESULT: PASSED (exit=0)
+$ TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_model_roles round_trip_writes_on_fixture -- --ignored --nocapture
+U1 subagent route preserved across write-restore
+LIVE_MODEL_ROLES_RESULT: PASSED (exit=0)
+$ TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_profiles -- --ignored --nocapture live_profiles_configure_round_trip
+LIVE_PROFILES_RESULT: PASSED (restore verified) (exit=0)
+$ unset TALARIA_PROBE_WRITES
+Operator note: all 5 write suites exited 0 with zero SKIPPED lines and verified full restoration on fixture.
 ```
