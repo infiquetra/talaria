@@ -25,3 +25,5 @@ pub mod session;
 pub mod side;
 pub mod subagents;
 pub mod workspace;
+
+pub mod settings;

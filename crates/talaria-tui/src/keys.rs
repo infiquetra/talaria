@@ -29,6 +29,8 @@ pub enum KeyContext {
     Review,
     /// The commit message editor. Issue #245.
     CommitMessage,
+    /// The settings screen.
+    Settings,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -1329,6 +1331,15 @@ pub struct KeyMap {
 }
 
 impl KeyMap {
+    /// Resolve a key in the settings screen.
+    pub fn resolve_settings(
+        &self,
+        _context: KeyContext,
+        _key: &Key,
+    ) -> Option<talaria_core::settings::SettingsAction> {
+        todo!("settings stub")
+    }
+
     /// The built-in bindings.
     #[must_use]
     pub fn defaults() -> Self {

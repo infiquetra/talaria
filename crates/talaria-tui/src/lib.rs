@@ -29,3 +29,5 @@ pub mod subagents;
 pub mod terminal;
 pub mod theme;
 pub mod tool_cell;
+
+pub mod settings;

@@ -40,3 +40,7 @@ harness = false
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "settings_filter"
+harness = false
