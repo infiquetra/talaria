@@ -3,6 +3,5 @@
 use super::{DiffLine, ModelRolesState};
 
 pub fn review_lines(state: &ModelRolesState) -> Vec<DiffLine> {
-    let _ = state;
-    todo!("model roles stub")
+    state.diff_lines(state.section)
 }

@@ -168,6 +168,8 @@ enum Overlay {
     /// The gateway diagnostics and confirmed restart card.
     Doctor,
     Providers,
+    /// The profile's model roles.
+    ModelRoles,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -1807,6 +1809,25 @@ impl TuiScreen {
                         .into_iter()
                         .collect();
                 }
+                if let Some(roles) = &view.model_roles {
+                    let key = Key::from(raw);
+                    if key.kind == KeyKind::Release {
+                        return Vec::new();
+                    }
+                    if key.mods.ctrl && key.code == KeyCode::Char('z') {
+                        return self.start_suspend();
+                    }
+                    if is_ctrl_c(&key) {
+                        return vec![UserAction::Interrupt];
+                    }
+                    return talaria_tui::model_roles::route_model_roles(roles, &self.keymap, &key)
+                        .map(|key| {
+                            vec![UserAction::ModelRoles(
+                                talaria_core::model_roles::RolesInput::Key(key),
+                            )]
+                        })
+                        .unwrap_or_default();
+                }
                 if view.processes_open {
                     return view.state.map_or_else(Vec::new, |state| {
                         vec![UserAction::Processes(self.processes.handle_key(
@@ -2049,6 +2070,9 @@ impl TuiScreen {
                     )];
                 }
                 if view.doctor.is_some() {
+                    return Vec::new();
+                }
+                if view.model_roles.is_some() {
                     return Vec::new();
                 }
                 if view.processes_open {
@@ -2689,6 +2713,14 @@ impl Screen for TuiScreen {
                 .draw_overlay(|area, buffer| wiring.draw(providers, area, buffer));
             return;
         }
+        if let Some(roles) = &view.model_roles {
+            self.open_overlay(Overlay::ModelRoles);
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::model_roles::draw_model_roles(roles, area, buf);
+            });
+            return;
+        }
+        self.close_overlay(Overlay::ModelRoles);
         if view.processes_open {
             if self.overlay != Overlay::Processes {
                 if let Some(state) = view.state {

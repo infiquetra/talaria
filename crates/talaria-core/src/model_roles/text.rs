@@ -81,3 +81,104 @@ pub const BUILTIN_LABELS: [(&str, &str); 12] = [
     ("Profile describer", "Auto profile descriptions"),
     ("Curator", "Skill-usage review"),
 ];
+
+pub(super) const LOADING: &str = "Loading";
+pub(super) const NO_CHANGES: &str = "No changes to apply.";
+pub(super) const CHECKING: &str = "Checking for outside changes...";
+pub(super) const APPLYING: &str = "Applying...";
+pub(super) const LEGACY_RULE: &str =
+    "Legacy entry (fallback_model): edit with the hermes fallback command";
+pub(super) const NO_USABLE_CHAIN: &str =
+    "Fallback: own chain (no usable entry, so Hermes ignores it)";
+pub(super) const SUBAGENT_HINT: &str = "Other subagent limits are in Settings.";
+pub(super) const NO_REFERENCE_ENABLED: &str = "No reference is enabled.";
+pub(super) const CHOOSE_ANOTHER: &str = "Choose another name";
+pub(super) const CATALOG_FAILED: &str = "Could not load the model list. Ctrl+R to retry.";
+pub(super) const REFRESHING: &str = "refreshing...";
+pub(super) const CHANGED_MARK: &str = "(changed)";
+pub(super) const NO_STALE: &str = "No helper uses another provider.";
+pub(super) const SIGN_IN: &str = "Talaria could not sign in to the dashboard API.";
+pub(super) const DOCTOR: &str = "Run the doctor.";
+pub(super) const BAD_REPLY: &str = "Hermes sent a reply Talaria could not read. Ctrl+R to retry.";
+pub(super) const REFUSED: &str = "Hermes refused this change:";
+pub(super) const PROBLEM: &str = "Hermes found a problem:";
+pub(super) const PROBLEM_BARE: &str = "Hermes found a problem with the request.";
+pub(super) const NOT_SAVED_SERVER: &str = "Hermes could not save the change.";
+pub(super) const READ_BACK_FAILED: &str =
+    "The change was sent, but Hermes did not answer the read-back. Ctrl+R to retry.";
+pub(super) const CHECK_FAILED: &str =
+    "Talaria could not check for outside changes, so nothing was written.";
+pub(super) const MAIN_ROW_EMPTY: &str = "(not set)";
+pub(super) const CHOOSE_MODEL: &str = "(choose a model)";
+pub(super) const EFFORT_CHOICES: [&str; 9] = [
+    "inherit", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
+pub(super) const FANOUT_CHOICES: [&str; 3] = [
+    "once per user turn",
+    "every tool step",
+    "every N tool steps",
+];
+pub(super) const KEYS_HELP: [&str; 4] = [
+    "1-5 Tab section  Up Down Home End PgUp PgDn move  Left Right pane  Enter open or change",
+    "e effort  c context  i inherit  a add  x remove  K J move  Space toggle  D default  m chain",
+    "R reset stale helpers  Ctrl+S review and apply  u discard  Ctrl+R reload",
+    "Esc close or back  ? close this list",
+];
+
+pub(super) fn not_served(name: &str) -> String {
+    NOT_SERVED.replace("{name}", name)
+}
+
+pub(super) fn section_name(section: super::Section) -> &'static str {
+    match section {
+        super::Section::Main => "Main",
+        super::Section::Fallbacks => "Fallbacks",
+        super::Section::Helpers => "Helpers",
+        super::Section::Subagents => "Subagents",
+        super::Section::Moa => "Mixture of Agents",
+    }
+}
+
+pub(super) fn tab_label(section: super::Section) -> String {
+    let number = match section {
+        super::Section::Main => 1,
+        super::Section::Fallbacks => 2,
+        super::Section::Helpers => 3,
+        super::Section::Subagents => 4,
+        super::Section::Moa => 5,
+    };
+    format!("{number} {}", section_name(section))
+}
+
+pub(super) fn unavailable(route: &str) -> String {
+    UNAVAILABLE.replace("{route}", route)
+}
+
+pub(super) fn entry_needs_model(number: usize) -> String {
+    ENTRY_NEEDS_MODEL.replace("{n}", &number.to_string())
+}
+
+pub(super) fn string_diff(number: usize) -> String {
+    STRING_DIFF.replace("{n}", &number.to_string())
+}
+
+pub(super) fn pending_prompt(section: &str) -> String {
+    PENDING_PROMPT.replace("{section}", section)
+}
+
+pub(super) fn stale_offer(slots: &str) -> String {
+    STALE_OFFER.replace("{slots}", slots)
+}
+
+pub(super) fn count(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+pub(super) const UNAPPLIED: &str = "Unapplied changes. Ctrl+S to review, u to discard.";

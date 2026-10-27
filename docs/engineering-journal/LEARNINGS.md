@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-27 — A parsed JSON value forgets key order, so ordered maps must be encoded from typed data
+
+**Evidence.** Issue #252, the Mixture of Agents save. Hermes stores the preset map in the order it receives it, and the page must send it in display order. `hermes_client::RestClient::put_json` takes a `serde_json::Value`, and the workspace's `serde_json` has no `preserve_order` feature, so a `Value` object is a sorted map: the presets went out alphabetically and the service test that read the body back as a `Value` could never see the display order. The fix sends `serde_json::to_vec(&MoaConfig)` through the crate-private `RestClient::request_encoded` (`crates/hermes-client/src/rest.rs`), and the test checks the order on the raw request bytes.
+
+**Mechanism.** Without `preserve_order`, `serde_json::Map` is a `BTreeMap`, so any round trip through `Value` sorts object keys. A typed struct (or a `Vec` of pairs serialised as a map) keeps its field and entry order when it is encoded directly. Turning `preserve_order` on workspace-wide would also enlarge `Map` and push `rpc::CallError` over clippy's `result_large_err` limit.
+
+**Generalizable rule.** When the receiver keeps a JSON object's key order, encode that object from typed data straight to bytes, and assert order on the bytes, never on a parsed `Value`.
+
 ## 2026-10-26 — A successful settings reply does not establish the saved value
 
 **Evidence.** The configuration routes at the pinned Hermes revision normalize model values and deep-merge explicit settings. The settings reducer tests exercise a successful write followed by an unchanged, adjusted, missing, or differently typed read-back. The mock merge test also verifies that writing a value equal to its default leaves it explicit in the raw configuration.

@@ -1,7 +1,13 @@
 //! Model roles for one Hermes profile: main, fallbacks, helpers, subagents, mixture of agents.
 
+mod baseline;
+mod diff;
+mod errors;
 mod fallbacks;
+mod flow;
 mod helpers;
+mod items;
+mod keys;
 mod main_role;
 mod moa;
 mod picker;
@@ -10,6 +16,7 @@ mod state;
 mod subagents;
 mod text;
 mod types;
+mod view;
 
 pub use fallbacks::{fallback_patch, route_identity};
 pub use helpers::stale_helpers;
