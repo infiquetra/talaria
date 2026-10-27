@@ -410,6 +410,23 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("connectors_confirm", &["y"][..]),
         ("connectors_cancel", &["n"][..]),
         ("connectors_close", &["esc"][..]),
+        ("configure_up", &["up"][..]),
+        ("configure_down", &["down"][..]),
+        ("configure_page_up", &["pageup"][..]),
+        ("configure_page_down", &["pagedown"][..]),
+        ("configure_home", &["home"][..]),
+        ("configure_end", &["end"][..]),
+        ("configure_toggle", &["space"][..]),
+        ("configure_apply", &["a"][..]),
+        ("configure_refine", &["r"][..]),
+        ("configure_detail", &["d"][..]),
+        ("configure_yes", &["y"][..]),
+        ("configure_no", &["n"][..]),
+        (
+            "configure_open_next",
+            &["1", "2", "3", "4", "5", "6", "7", "8", "9"][..],
+        ),
+        ("configure_close", &["esc"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

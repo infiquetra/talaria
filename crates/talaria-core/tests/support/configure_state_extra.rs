@@ -1,9 +1,4 @@
-#[path = "configure_ctx.rs"]
-mod configure_ctx;
-#[path = "events.rs"]
-mod events;
-#[path = "snapshot_json.rs"]
-mod snapshot_json;
+use super::{configure_ctx, events, snapshot_json};
 
 use configure_ctx::{context, detect};
 use serde_json::{Value, json};

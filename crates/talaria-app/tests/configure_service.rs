@@ -7,8 +7,7 @@ use talaria_core::configure::{
     ApplyStep, ConfigureEffect, ConfigureInput, Context, RowOutcome, StepResult,
 };
 
-#[path = "../../hermes-client/tests/support/mock_rest.rs"]
-mod mock_rest;
+use mock_gateway::configure_rest as mock_rest;
 
 fn sibling_backends(
     origin: String,
@@ -351,7 +350,9 @@ async fn apply_steps_reach_their_owners() {
     );
     assert_eq!(*backends.calls.lock().unwrap(), ["apply:settings"]);
 
-    let rest = mock_rest::MockRest::start().await;
+    let rest = mock_rest::MockRest::start().await.with_route("GET", "/api/model/info", |_| {
+        (200, json!({"provider":"ollama-cloud","model":"other","auto_context_length":0,"config_context_length":0,"effective_context_length":0,"capabilities":{}}))
+    });
     rest.response_body("POST", "/api/model/set", br#"{"ok":true,"scope":"main","provider":"ollama-cloud","model":"minimax-m3.1-flash","base_url":"","gateway_tools":[],"stale_aux":[]}"#.to_vec()).await;
     rest.response_body(
         "GET",
@@ -410,20 +411,26 @@ async fn apply_steps_reach_their_owners() {
         matches!(failed.as_slice(), [ConfigureInput::StepDone { result: StepResult::Rows(rows), .. }] if matches!(rows.as_slice(), [(0, RowOutcome::Unknown(_))]))
     );
 
-    let rest = mock_rest::MockRest::start().await.with_route("POST", "/api/model/set", |request| {
+    let model_applied = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let write_applied = model_applied.clone();
+    let rest = mock_rest::MockRest::start().await.with_route("GET", "/api/model/info", |_| {
+        (200, json!({"provider":"ollama-cloud","model":"other","auto_context_length":0,"config_context_length":0,"effective_context_length":0,"capabilities":{}}))
+    }).with_route("POST", "/api/model/set", move |request| {
         let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
         if body["confirm_expensive_model"] == true {
+            write_applied.store(true, std::sync::atomic::Ordering::SeqCst);
             (200, json!({"ok":true,"scope":"main","provider":"ollama-cloud","model":"minimax-m3.1-flash","base_url":"","gateway_tools":[],"stale_aux":[]}))
         } else {
             (200, json!({"ok":false,"scope":"main","provider":"ollama-cloud","model":"minimax-m3.1-flash","confirm_required":true,"confirm_message":"Confirm this model"}))
         }
+    }).with_route("GET", "/api/model/auxiliary", move |_| {
+        let model = if model_applied.load(std::sync::atomic::Ordering::SeqCst) {
+            "minimax-m3.1-flash"
+        } else {
+            "other"
+        };
+        (200, json!({"tasks":[],"main":{"provider":"ollama-cloud","model":model}}))
     });
-    rest.response_body(
-        "GET",
-        "/api/model/auxiliary",
-        br#"{"tasks":[],"main":{"provider":"ollama-cloud","model":"minimax-m3.1-flash"}}"#.to_vec(),
-    )
-    .await;
     let (_gateway, client, _inbound) = mock_gateway::MockGateway::start().await;
     let siblings = sibling_backends(
         rest.origin(),
@@ -767,7 +774,7 @@ async fn dropped_and_refused_steps() {
     assert!(
         matches!(unknown.as_slice(), [ConfigureInput::StepDone { index: 2, result: StepResult::Rows(rows) }] if matches!(rows.as_slice(), [(3, RowOutcome::Unknown(_))]))
     );
-    let calls = backends.calls.lock().unwrap();
+    let calls = backends.calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 4);
     assert!(matches!(
         &calls[0],
@@ -820,7 +827,7 @@ async fn dropped_and_refused_steps() {
     );
     assert_eq!(gateway.requests("mcp.servers.add").len(), 1);
 
-    gateway.push_matched_result("cron.manage", json!({"action":"add", "name":"daily", "schedule":"0 9 * * *", "prompt":"hello", "deliver":"local"}),
+    gateway.push_matched_result("cron.manage", json!({"action":"add", "name":"daily", "schedule":"0 9 * * *", "prompt":"hello", "deliver":"local", "continuity":null, "include_disabled":null, "repeat":null}),
         json!({"success":false, "error":"provider error", "job_id":"a1b2c3d4e5f6", "job_saved":true, "scheduler_registered":false, "retry_create":false}));
     let saved = service
         .execute(ConfigureEffect::Apply {

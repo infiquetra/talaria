@@ -30,10 +30,9 @@ proptest! {
                 let state = ConfigureState::from_reply(context(), &text, detect);
                 for line in state.view(std::time::Instant::now()).text_lines() { prop_assert!(!line.contains(token)); }
                 prop_assert!(!format!("{:?}", state).contains(token), "state debug exposed a secret");
-                if let Ok(Reply::Proposal(proposal)) = parse_reply(&text) {
-                    if let Ok(rows) = validate(&proposal, &context(), detect) {
+                if let Ok(Reply::Proposal(proposal)) = parse_reply(&text)
+                    && let Ok(rows) = validate(&proposal, &context(), detect) {
                         prop_assert!(!format!("{:?}", rows).contains(token), "row debug exposed a secret");
-                    }
                 }
             }
         }

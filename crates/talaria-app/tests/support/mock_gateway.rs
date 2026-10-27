@@ -16,7 +16,9 @@
 #![allow(dead_code)]
 
 #[path = "../../../hermes-client/tests/support/mock_rest.rs"]
-mod configure_rest;
+// Standalone gateway tests own a REST mock even when their crate imports one separately.
+#[allow(clippy::duplicate_mod)]
+pub(super) mod configure_rest;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
@@ -793,7 +795,10 @@ impl MockGateway {
         Self::start_with_recorder(session_id, None).await
     }
 
-    pub async fn start_recorded(session_id: &str, recorder: Option<hermes_client::Recorder>) -> (Self, Client, InboundStream) {
+    pub async fn start_recorded(
+        session_id: &str,
+        recorder: Option<hermes_client::Recorder>,
+    ) -> (Self, Client, InboundStream) {
         Self::start_with_recorder(session_id, recorder).await
     }
 

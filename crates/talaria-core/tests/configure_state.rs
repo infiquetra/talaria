@@ -50,8 +50,12 @@ fn open_refuses_bad_requests_and_gathers() {
     let mut s = ConfigureState::new(detect);
     let empty = s.update(open("", true), now);
     assert!(format!("{empty:?}").contains("Usage"));
+    assert!(s.update(open("hello", true), now).is_empty());
+    let mut s = ConfigureState::new(detect);
     let long = s.update(open(&"a".repeat(4_001), true), now);
     assert!(format!("{long:?}").contains("4,000"));
+    assert!(s.update(open("hello", true), now).is_empty());
+    let mut s = ConfigureState::new(detect);
     let secret = s.update(
         open("sk-or-v1-talaria-sentinel-0000000000000000", true),
         now,
@@ -62,8 +66,12 @@ fn open_refuses_bad_requests_and_gathers() {
             .any(|e| matches!(e, ConfigureEffect::ForgetHistoryLine(_)))
     );
     assert!(!secret.iter().any(|e| matches!(e, ConfigureEffect::Gather)));
+    assert!(s.update(open("hello", true), now).is_empty());
+    let mut s = ConfigureState::new(detect);
     let disconnected = s.update(open("hello", false), now);
     assert!(format!("{disconnected:?}").contains("Not connected"));
+    assert!(s.update(open("hello", true), now).is_empty());
+    let mut s = ConfigureState::new(detect);
     assert_eq!(
         s.update(open("hello", true), now),
         vec![ConfigureEffect::Gather]
