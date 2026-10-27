@@ -5540,3 +5540,21 @@ already knows which rows it has seen foreground or subscribed.
 **Generalizable rule.** Alert on a background event by default only for the sessions the user
 touched, make anything wider an explicit opt-in, and keep the counter that shows what the
 narrower rule skipped.
+
+## 2026-10-26 — Live terminal evidence has a source and a lifetime
+
+**Evidence.** The [approved live-acceptance corrections](https://github.com/infiquetra/talaria/issues/248#issuecomment-6430930652)
+and preserved reruns showed that an open fleet overlay hides transcript notices, completed child
+rows can disappear when the parent's next message starts, and background startup notices share
+text with result footers. A focused approval card also consumes typed quit input, while an extra
+Escape after an overlay closes can interrupt the foreground turn; review checks via /changes and v
+and attach checks where Hermes resolves local- plus 16 hex itself likewise depend on reading the
+active surface after each transition settles.
+
+**Mechanism.** Rendered overlays, transient rows, and committed native scrollback expose different
+states at different times. Capturing a fast transition too late loses the evidence; counting a
+shared substring counts both the startup notice and the result. Input routing likewise follows
+the current focus rather than the tester's intended destination.
+
+**Generalizable rule.** Choose the read source, capture time, and input sequence from the state
+being proved; match the specific result marker and disclose harness setup mistakes separately.

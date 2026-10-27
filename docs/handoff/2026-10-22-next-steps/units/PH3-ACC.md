@@ -224,7 +224,7 @@ scrub() {
 herdr pane read "$PANE" --source recent-unwrapped --lines 200 | scrub > "$X/evidence.txt"
 ```
 
-Then read the result: no home directory, user name (a login name under four characters cannot be scrubbed safely: say so in the section), temporary path, host name, provider key or ticket, and no profile name other than `default` or `fixture`; replace any other with `<profile>`. Shapes that are new in this unit: the fleet registry lists sessions of every profile the gateway serves, so a pane read of the fleet view or of `talaria fleet list` without `--profile fixture` shows titles and profile names that are not the tester's (the source scenarios pass `--profile fixture`; do the same, and cut any other row); `git` output shows folders and the scratch repositories (replace the temporary prefix with `<tmp>`); `gh` output shows an account name and a repository name (the operator replaces them with `<account>` and `<repo-1>`); a pull request address is written `https://github.com/<account>/<repo-1>/pull/<n>`; the operator's day log names repositories, branches and providers' accounts (replace them with `<repo-1>`, `<repo-2>`; provider ids such as `ollama-cloud` are public and stay; an account or key never appears). The checker catches paths only; AC-12 also greps `--profile` values and each runner's login name. A clean grep proves only that those shapes are absent: the reading step is the control. The operator's comments are public on this issue: the operator scrubs them the same way before posting. An agent that copies one reads it first, and if it leaks asks the operator to edit the comment and copies nothing until it is clean.
+Then read the result: no home directory, user name (a login name under four characters cannot be scrubbed safely: say so in the section), temporary path, host name, provider key or ticket, and no profile name other than `default` or `fixture`; replace any other with `<profile>`. Shapes that are new in this unit: the fleet registry lists sessions of every profile the gateway serves, so a pane read of the fleet view or of `talaria fleet list` without `--profile fixture` shows titles and profile names that are not the tester's (the source scenarios pass `--profile fixture`; do the same, and cut any other row); `git` output shows folders and the scratch repositories (replace the temporary prefix with `<tmp>`); `gh` output shows an account name and a repository name (the operator replaces them with `<account>` and `<repo-1>`); a pull request address is written `https://github.com/<account>/<repo-1>/pull/<n>`; the operator's day log names repositories, branches and providers' accounts (replace them with `<repo-1>`, `<repo-2>`; provider ids such as `ollama-cloud` are public and stay; an account or key never appears). The checker catches paths only; AC-12 also greps `--profile` values and each runner's login name. Its profile allowlist is `default|fixture|nosuch|nosuchprofile|to|the`: the last two words are known prose matches after `--profile`, not additional profile names. A clean grep proves only that those shapes are absent: the reading step is the control. The operator's comments are public on this issue: the operator scrubs them the same way before posting. An agent that copies one reads it first, and if it leaks asks the operator to edit the comment and copies nothing until it is clean.
 
 ## 6. The checker and its tests
 
@@ -635,7 +635,7 @@ Quoted texts below are the source issues' own; where a Then line of a source iss
 - Evidence: the hint line, the state poll's last line, the three key lines of `a.txt`.
 
 **XF-4: A worktree session started from the fleet view is reviewed, committed and pushed from the fleet view.** Covers `P3-03` (the `w` dialog) with `P3-07` (the review) and `P3-02`.
-- Steps: the setup of `P3-07`'s Common setup: `S=$(mktemp -d)`; `git init -q --bare -b main "$S/origin.git"`; `git clone -q "$S/origin.git" "$S/repo"`; commit `a.txt` in `repo` with `$G -C "$S/repo" commit -q -m one`; `git -C "$S/repo" push -q -u origin main`. Start Talaria in `$PANE` at `$S/repo`. `submit "$PANE" '/fleet'`; `herdr pane send-keys "$PANE" w`; type `Create hello.txt containing hello`, `enter`; `sleep 10`; `vis "$PANE" > "$X/n.txt"`. `BR=talaria/create-hello-txt-containing-hello`; `ID=$(git -C "$S/repo" config --get "branch.$BR.talaria-session")`; wait (at most 180 s) until `$S/repo/.worktrees/talaria-create-hello-txt-containing-hello/hello.txt` exists and `fleet --json | jq -r --arg id "$ID" '.rows[] | select(.session_id==$id) | .state'` prints `done` or `idle`. In the fleet view: `/`, `$ID`, `enter`, `v`; `vis > "$X/r1.txt"`; `c`, type `feat: add hello`, `ctrl+s`; `sleep 3`; `vis > "$X/r2.txt"`; `p`; `sleep 8`; `vis > "$X/r3.txt"`.
+- Steps: the setup of `P3-07`'s Common setup: `S=$(mktemp -d)`; `git init -q --bare -b main "$S/origin.git"`; `git clone -q "$S/origin.git" "$S/repo"`; commit `a.txt` in `repo` with `$G -C "$S/repo" commit -q -m one`; `git -C "$S/repo" push -q -u origin main`. Start Talaria in `$PANE` at `$S/repo`. `submit "$PANE" '/fleet'`; `herdr pane send-keys "$PANE" w`; type `Create hello.txt containing hello`, `enter`; `sleep 10`; `rec "$PANE" > "$X/n.txt"` (the launch notice belongs to the main transcript, not the fleet overlay; alternatively close `/fleet`, capture `vis`, then reopen `/fleet`). `BR=talaria/create-hello-txt-containing-hello`; `ID=$(git -C "$S/repo" config --get "branch.$BR.talaria-session")`; wait (at most 180 s) until `$S/repo/.worktrees/talaria-create-hello-txt-containing-hello/hello.txt` exists and `fleet --json | jq -r --arg id "$ID" '.rows[] | select(.session_id==$id) | .state'` prints `done` or `idle`. In the fleet view: `/`, `$ID`, `enter`, `v`; `vis > "$X/r1.txt"`; `c`, type `feat: add hello`, `ctrl+s`; `sleep 3`; `vis > "$X/r2.txt"`; `p`; `sleep 8`; `vis > "$X/r3.txt"`.
 - Pass: `n.txt` holds `Launched in fixture: "Create hello.txt containing hello" (worktree talaria/create-hello-txt-containing-hello)` (the branch text follows `P3-03` UAT-3's slug rule: lower case words joined by hyphens; if the real slug differs, the tester reads it from the notice, uses it and says so); `r1.txt` lists `hello.txt`; `r2.txt` holds `Committed ` and `on talaria/create-hello-txt-containing-hello: feat: add hello`; `r3.txt` holds `Pushed talaria/create-hello-txt-containing-hello to origin.`; `git -C "$S/origin.git" branch --list 'talaria/*'` lists the branch; `git -C "$S/repo" status --porcelain` prints nothing and `git -C "$S/repo" log -1 --format=%s main` prints `one` (the main checkout is untouched); `find "$S/repo" -name hello.txt -not -path '*/.git/*'` prints exactly one line, and it lies under `.worktrees/talaria-create-hello-txt-containing-hello/`.
 - Evidence: the key lines of `n`, `r1`, `r2`, `r3`, the `git` outputs.
 
@@ -650,8 +650,8 @@ Quoted texts below are the source issues' own; where a Then line of a source iss
 - Evidence: the key lines of `a` to `d`.
 
 **XF-7: The result of `/bg` arrives while the fleet view is open, and is not lost.** Covers `P3-05` with `P3-02` and `P1-06`.
-- Steps: start Talaria in a new folder. Draw a number `<n>` from 1000 to 9999. `submit "$PANE" "/bg Reply with exactly: bg-<n>"`; `sleep 2`; `vis > "$X/a.txt"`; `submit "$PANE" '/fleet'`; read `vis` every 5 s for up to 120 s into `$X/o-<k>.txt` while the overlay is open (the overlay stays open: press nothing); `herdr pane send-keys "$PANE" esc`; `sleep 1`; `vis > "$X/b.txt"`; `rec > "$X/c.txt"`.
-- Pass: `a.txt` holds `Background task bg_` and `started.` and a row `◌ bg · Reply with exactly: bg-<n> · running`; every `o-<k>.txt` holds the overlay (` (here)`); after the overlay closes, `grep -c 'bg · Reply with exactly: bg-<n>' "$X/c.txt"` prints 1 (one result cell, not zero and not two), `grep -cw "bg-<n>" "$X/c.txt"` prints 2 or more (the prompt text and the answer), `grep -c 'not part of the conversation' "$X/c.txt"` prints 1, and `b.txt` holds no `◌ bg ·` row; `c.txt` holds no `WORKING (` or `IDLE (`. If the answer had not arrived within 120 s the row is a FAIL only when `/bg` was still `running` at 240 s (a model delay is not asserted).
+- Steps: start Talaria in a new folder. Draw a number `<n>` from 1000 to 9999. `submit "$PANE" "/bg Reply with exactly: bg-<n>"`; `sleep 0.2`; `vis > "$X/a.txt"` (capture within 2 s, preferably after 0.2 to 0.5 s); immediately `submit "$PANE" '/fleet'`; read `vis` every 5 s for up to 120 s into `$X/o-<k>.txt` while the overlay is open (the overlay stays open: press nothing); `herdr pane send-keys "$PANE" esc`; `sleep 1`; `vis > "$X/b.txt"`; `rec > "$X/c.txt"`.
+- Pass: `a.txt` holds `Background task bg_` and `started.` and a row `◌ bg · Reply with exactly: bg-<n> · running`; every `o-<k>.txt` holds the overlay (` (here)`); after the overlay closes, `grep -c 'bg · Reply with exactly: bg-<n>' "$X/c.txt"` prints 1 (one result cell, not zero and not two), `grep -cw "bg-<n>" "$X/c.txt"` prints 2 or more (the prompt text and the answer), `grep -c 'background task bg_.* · not part of the conversation' "$X/c.txt"` prints 1 (the result footer), and `grep -c 'not part of the conversation' "$X/c.txt"` prints 2 (one startup notice and one result footer), and `b.txt` holds no `◌ bg ·` row; `c.txt` holds no `WORKING (` or `IDLE (`. If the answer had not arrived within 120 s the row is a FAIL only when `/bg` was still `running` at 240 s (a model delay is not asserted).
 - Evidence: the key lines of `a`, one `o-<k>`, `b` and `c` and the counts.
 
 **XF-8: Two viewers of one session see the same turn.** Covers `P3-08` (two attached Talarias are normal) with `P3-03` and `P3-01`.
@@ -665,7 +665,7 @@ Quoted texts below are the source issues' own; where a Then line of a source iss
 - Evidence: the three samples and conversions, the output of `diff <(printf '%s\n' "$V1") <(printf '%s\n' "$V2")` (it prints nothing).
 
 **XF-10: A queued prompt survives a background alert and the jump to the peek panel.** Covers `P2-08` with `P3-06` and `P3-02`.
-- Steps: `P=$(mktemp -d)`; `mkdir "$P/probe"`; start Talaria in `$PANE` at `$P`. `submit "$PANE" 'Run the shell command sleep 90, then reply with the word first in capital letters.'`; when the working indicator shows, `submit "$PANE" 'Reply with the word omega in capital letters.'`; `vis > "$X/q0.txt"`. In a shell pane at `$P`: `$T $L 'Run this exact shell command: rm -rf ./probe' > "$X/l.json"`. Poll `vis "$PANE"` every 5 s (at most 90 s) until the status line holds `⚑ 1 needs you`; `vis > "$X/q1.txt"`; `herdr pane send-keys "$PANE" alt+a`; `sleep 1`; `herdr pane send-keys "$PANE" a`; `sleep 1`; press the digit beside `deny`; `sleep 5`; three `esc`; `vis > "$X/q2.txt"`. Wait for `FIRST`, then `OMEGA`, and the screen to settle; `rec > "$X/r.txt"`.
+- Steps: `P=$(mktemp -d)`; `mkdir "$P/probe"`; start Talaria in `$PANE` at `$P`. `submit "$PANE" 'Run the shell command sleep 90, then reply with the word first in capital letters.'`; when the working indicator shows, `submit "$PANE" 'Reply with the word omega in capital letters.'`; `vis > "$X/q0.txt"`. In a shell pane at `$P`: `$T $L 'Run this exact shell command: rm -rf ./probe' > "$X/l.json"`. Poll `vis "$PANE"` every 5 s (at most 90 s) until the status line holds `⚑ 1 needs you`; `vis > "$X/q1.txt"`; `herdr pane send-keys "$PANE" alt+a`; `sleep 1`; `herdr pane send-keys "$PANE" a`; `sleep 1`; press the digit beside `deny`; `sleep 5`; two `esc` (closing peek and overlay; stop once the overlay closes, as section 9.3.12 specifies, so an extra Esc does not interrupt the foreground turn); `vis > "$X/q2.txt"`. Wait for `FIRST`, then `OMEGA`, and the screen to settle; `rec > "$X/r.txt"`.
 - Pass: `q0.txt` and `q1.txt` hold `queued (1)`; `q1.txt` also holds `⚑ 1 needs you`; `q2.txt` holds no `⚑` segment and holds `queued (1)` unless the first turn had already ended (then the user line of omega is already in the transcript); `ls -d "$P/probe"` prints the folder; in `r.txt`, `FIRST` precedes the user line holding `Reply with the word omega` and `OMEGA` follows it, `grep -c 'Reply with the word omega' "$X/r.txt"` prints 1 and `grep -c '⤷ steer' "$X/r.txt"` prints 0 (nothing was sent early or twice).
 - Evidence: the key lines of `q0`, `q1`, `q2`, the counts.
 
@@ -1106,7 +1106,7 @@ Common setup (operator preconditions above). In a scratch folder (`mktemp -d`) h
 - Persona: fleet-lead
 - Covers: AC-2, AC-8
 - Runner: agent tester in Herdr
-- Preconditions: common setup; pane B sent `Run this exact shell command: rm -rf ./talaria-peek-probe`, shows its approval card, then `/quit`; the tester presses the digit within 240 s of B's card appearing (Hermes denies at 300 s)
+- Preconditions: common setup; pane B sent `Run this exact shell command: rm -rf ./talaria-peek-probe`, shows its approval card, and pane B's Talaria process is ended (`pkill -TERM -f 'talaria --profile fixture'`, because a focused card takes typed keys, as P3-01 UAT-3 specifies); the tester presses the digit within 50 s of B's card appearing (the default is 300 s, or 60 s when `approvals.timeout: 60` is set on `fixture`)
 - Given pane A is idle at its prompt
 - When the tester sends `/fleet` in pane A, puts the cursor on the `NEEDS YOU` row, presses space, then `a`, waits 1 s, then presses the digit shown beside `deny`
 - Then before the digit the row's detail reads `approval: rm -rf ./talaria-peek-probe` and the panel still shows the card with a line `<n>. deny`; within 5 s of the digit the row leaves `NEEDS YOU`; `ls -d talaria-peek-probe` still prints the folder; pane A's status line still names its own session
@@ -1259,8 +1259,8 @@ Common setup (operator sets up the gateway as under Dependencies). The tester ma
 - Runner: agent tester in Herdr
 - Preconditions: as UAT-2, panel open on the `◐` row
 - Given the row is running
-- When the tester presses `x`, then reads every 5 s for 60 s
-- Then the flash line shows `Stop requested for "`, the row shows `stopping` then `■` within 60 s, and scrollback gets a block starting `⎇ Subagents · 1 finished · 1 stopped`
+- When the tester presses `x`, reads within 0.3 s, then polls up to 60 s
+- Then the flash line shows `Stop requested for "` and the row shows `stopping` then `■` within 60 s before the parent's follow-up `message.start` runs `prune_finished`; when that follow-up prunes the completed batch within 1 s, the committed scrollback block starting `⎇ Subagents · 1 finished · 1 stopped` and its `■` row prove the same stopped result
 - Evidence: the reads; seconds from `x` to `■`; the parent turn's final status (spec U4)
 - Result: PASS / FAIL / BLOCKED (environment | not built | no access) / NOT RUN
 
@@ -1270,7 +1270,7 @@ Common setup (operator sets up the gateway as under Dependencies). The tester ma
 - Runner: agent tester in Herdr
 - Preconditions: common setup, new session
 - Given no subagent has run
-- When the tester runs `/tasks`, reads, presses Esc, sends `/agents frobnicate`, then sends prompt B, opens the panel after the reply, selects a `✓` row and presses `x`
+- When the tester runs `/tasks`, reads, presses Esc, sends `/agents frobnicate`, then sends prompt B, opens the panel once a child reaches `✓` before the parent's follow-up `message.start` prunes the completed batch, or while a sibling child in the batch is still running, selects a `✓` row and presses `x`
 - Then the panel says `No subagents in this session yet.`; the option prints `Unknown /agents option: frobnicate. Use /agents, /agents pause or /agents resume.`; the stop flashes `had already finished.` and the row stays `✓`
 - Evidence: the three reads
 - Result: PASS / FAIL / BLOCKED (environment | not built | no access) / NOT RUN
@@ -1532,3 +1532,61 @@ Common setup (operator sets up the gateway as in Dependencies): `cargo build --r
 - Then the first read shows T3 ending `run this in another terminal: '$T' attach 'local-…' --profile 'fixture'`; the second shows `This session is already open in this pane.`; the pane list is unchanged
 - Evidence: both reads and both pane lists, redacted
 - Result: PASS / FAIL / BLOCKED (environment | not built | no access) / NOT RUN
+
+## Settled before the next phase
+
+The acceptance rows are complete on candidate `8b514e65f9aab5d579fbe788ed7c482a0ce19e13`:
+12 automated rows, 45 source scenarios (43 agent-run and 2 operator-run), 12 cross-feature rows,
+and 8 operator fleet-day rows all PASS (77 of 77). Stage 3 operator sign-off is recorded in
+[the verdict comment](https://github.com/infiquetra/talaria/issues/248#issuecomment-6431844309).
+
+The following are the recorded parent rulings, preserved as rulings rather than inferred from
+test results. The parent defines C-1 through C-7 and D-1 through D-8. As explicitly confirmed
+at assembly, the additional requested labels C-8, C-9, and D-9 have no parent definition.
+
+| Settlement | Recorded value |
+|---|---|
+| C-1 | Background launch (#241) keeps its start gate on the fleet view (#240) and rebases onto it before merge. |
+| C-2 | Live-region order is streaming tail/tool cells, checklist, subagent dock, side tasks, background section, composer. |
+| C-3 | Configuration documentation stays below the 400-line limit; every key-adding child checks it. |
+| C-4 | Attention (#244) merges before review (#245); the priority test checks relative order so adding `PullRequest` above `External` preserves both suites. |
+| C-5 | Reading (a) applies: resident agents (#247) are not planned, and this acceptance record keeps 77 rows. |
+| C-6 | Cost, steered, and closed gaps are accepted for v0.7.0 with queued journal entries, under D-8. |
+| C-7 | The operator creates/removes the duplicate attach title on `default`; the agent creates its `fixture` counterpart and makes read-only checks on `default`. |
+| C-8 | Not defined in the parent; no additional settled value is asserted. |
+| C-9 | Not defined in the parent; no additional settled value is asserted. |
+
+Source: [the parent's settlement comment](https://github.com/infiquetra/talaria/issues/215#issuecomment-6410199367).
+
+| Ruling | Recorded value |
+|---|---|
+| D-1 | Fleet-link exception approved; live polling is 5 seconds, cold polling 60 seconds; upstream request queued. |
+| D-2 | Peek-link exception approved; stop closes the session through detach `end_reason`, without a separate delete/close verb in v0.7.0. |
+| D-3 | Launch decisions 1–10 approved: three-connection cap, git-config session record, sibling worktree layout, and no `unattended` or `finite` keys on `prompt.submit`. This preserves the original ruling; the accepted child's implemented worktree layout remains its own authority. |
+| D-4 | Per-process buffer cap of 1,000 lines/64 KiB, five-second termination-to-force-kill grace, Ctrl+K for the selected process, and `/stop` for all session processes. |
+| D-5 | Automated review checks use a local bare origin; live draft-PR checks use the operator's throwaway private organization repository. |
+| D-6 | Not applicable under reading (a); the resident-agent questions were conditional on reading (b). |
+| D-7 | Literal ruling: Q1 shape B with the checker in the PR; Q2 `ollama-cloud` with `minimax-m3.1-flash:cloud` and `glm-5.2:cloud`; Q4 and Q7 approved; Q8 reading (a); no rows dropped. |
+| D-8 | Cost/steered/closed, pane state, and process-alert gaps accepted for v0.7.0 with queued journal entries. |
+| D-9 | Not defined in the parent; no additional settled value is asserted. |
+
+Sources: parent rulings [D-1](https://github.com/infiquetra/talaria/issues/215#issuecomment-6410197335),
+[D-2](https://github.com/infiquetra/talaria/issues/215#issuecomment-6410197695),
+[D-3](https://github.com/infiquetra/talaria/issues/215#issuecomment-6410197952),
+[D-4](https://github.com/infiquetra/talaria/issues/215#issuecomment-6410198221),
+[D-5](https://github.com/infiquetra/talaria/issues/215#issuecomment-6410198515),
+[D-7](https://github.com/infiquetra/talaria/issues/215#issuecomment-6410198797), and
+[D-8](https://github.com/infiquetra/talaria/issues/215#issuecomment-6410199078).
+
+D-7's question numbers differ from the parent's question table; its literal words do not prove
+the fleet-day duration or three-provider operator checks. The [freeze confirmation](https://github.com/infiquetra/talaria/issues/215#issuecomment-6428492387)
+settles Shape B publication: the 77-row PR table and scrubbed evidence comments. The requested
+checker foundation remains available alongside that publication. Stage 3 remains an operator gate.
+
+Approved capture corrections are incorporated above: [peek approval input](https://github.com/infiquetra/talaria/issues/248#issuecomment-6429998822),
+[subagent pruning](https://github.com/infiquetra/talaria/issues/248#issuecomment-6430506730),
+[main-transcript launch notice](https://github.com/infiquetra/talaria/issues/248#issuecomment-6430665552),
+[closing only the open overlays](https://github.com/infiquetra/talaria/issues/248#issuecomment-6430725524), and
+[prompt capture and result-footer matching](https://github.com/infiquetra/talaria/issues/248#issuecomment-6430930652).
+The issue's updated public-safety check permits the prose tokens `to` and `the` after `--profile`;
+this is a scan correction, not permission to use additional profiles.
