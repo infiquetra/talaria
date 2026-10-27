@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "name": "deepwiki",
+  "server": {
+    "name": "deepwiki",
+    "transport": "http",
+    "url": "https://example.invalid/mcp",
+    "command": null,
+    "args": [],
+    "env": [],
+    "auth": null,
+    "oauth_tokens_present": null,
+    "enabled": true,
+    "tools": null,
+    "source": "config",
+    "plugin": null
+  }
+}

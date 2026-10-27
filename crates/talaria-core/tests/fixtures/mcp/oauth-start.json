@@ -1,0 +1,6 @@
+{
+  "ok": true,
+  "session_id": "flow-example",
+  "auth_url": "https://example.invalid/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A43123%2Fcallback&state=example",
+  "flow": "pkce"
+}

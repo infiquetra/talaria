@@ -1,0 +1,9 @@
+{
+  "code": 4001,
+  "message": "mcp_servers_unavailable",
+  "data": {
+    "reason": "mcp_servers_unavailable",
+    "field": "mcp_servers",
+    "detail": "did not connect: example"
+  }
+}

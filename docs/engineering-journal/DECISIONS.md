@@ -4310,3 +4310,12 @@ visibility. **Revisit when.** Hermes provides a result-recovery interface or the
 ### Secret editors reveal with a modifier so every printable character remains editable
 
 **Decision.** Plain `r` inserts text in a settings editor. Alt+R reveals the current secret editor value once, with a visible hint; the next key or the ten-second timer hides it. Browsing keeps its rebindable reveal action. **Rationale.** The editor must accept every printable character while still providing the same temporary reveal as browsing. **Revisit when.** The operator changes the editor's fixed controls.
+## 2026-10-27 — MCP secrets stay outside the reducer
+
+**Decision.** The terminal owns reusable secret fields indexed by a slot. The reducer sees only
+whether a slot is empty. The executor takes a zeroizing copy for the one effect that needs it.
+Browser opening and clipboard writes remain explicit terminal-side effects; device sign-in and
+catalogue installation commands are displayed or copied, never run.
+**Rejected.** Putting values into a server's configuration or an application input would expose
+them to ordinary state inspection and persistence. **Revisit when.** Hermes provides a replacement
+secret-entry protocol that retains these boundaries.

@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": "Sign-in required",
+  "tools": [],
+  "oauth_needed": true,
+  "oauth_tokens_present": false
+}

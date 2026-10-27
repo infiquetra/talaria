@@ -170,6 +170,7 @@ enum Overlay {
     Providers,
     /// The profile's model roles.
     ModelRoles,
+    Mcp,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -233,6 +234,8 @@ pub struct TuiScreen {
     picker: Option<ModelOverlay>,
     profiles: ProfilesRenderer,
     overlay: Overlay,
+    mcp_view: Option<talaria_core::mcp::McpView>,
+    mcp_wiring: crate::mcp_wiring::McpWiring,
     /// The card of the peeked background session, while the fleet overlay shows it.
     peek_prompts: PromptStack,
     agents: Option<AgentsPanel>,
@@ -1740,6 +1743,14 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                if let Some(mcp) = &self.mcp_view {
+                    return self
+                        .mcp_wiring
+                        .route_key_with_map(mcp, raw, &self.keymap)
+                        .map(UserAction::Mcp)
+                        .into_iter()
+                        .collect();
+                }
                 if let Some(profiles) = &view.profiles {
                     let key = Key::from(raw);
                     if key.kind == KeyKind::Release {
@@ -2055,6 +2066,14 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(text) => {
+                if let Some(mcp) = &self.mcp_view {
+                    return self
+                        .mcp_wiring
+                        .route_paste(mcp, &text)
+                        .map(UserAction::Mcp)
+                        .into_iter()
+                        .collect();
+                }
                 if view.profiles.is_some() {
                     return if self.terminal.is_released() {
                         Vec::new()
@@ -2445,6 +2464,58 @@ impl Screen for TuiScreen {
     fn copy_provider_text(&mut self, text: &str) {
         let _ = self.providers.copy(&mut self.terminal, text);
     }
+    fn sync_mcp(&mut self, view: Option<&talaria_core::mcp::McpView>) {
+        self.mcp_view = view.cloned();
+        if self.mcp_view.is_some() {
+            self.open_overlay(Overlay::Mcp);
+        } else {
+            self.mcp_wiring.forget();
+            self.close_overlay(Overlay::Mcp);
+        }
+    }
+
+    fn take_mcp_secret(
+        &mut self,
+        effect: &talaria_core::mcp::McpEffect,
+    ) -> Option<zeroize::Zeroizing<String>> {
+        let secret = self.mcp_wiring.secret_for(effect);
+        if let Some(slot) = effect.secret_slot() {
+            self.mcp_wiring.forget_slot(slot);
+        }
+        secret
+    }
+
+    fn forget_mcp_secrets(&mut self) {
+        self.mcp_wiring.forget();
+    }
+
+    fn open_mcp_url(&mut self, url: &str) -> bool {
+        let Some(argv) = talaria_app::providers::opener_argv(url) else {
+            return false;
+        };
+        let Some((program, args)) = argv.split_first() else {
+            return false;
+        };
+        match std::process::Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                tokio::task::spawn_blocking(move || {
+                    let _ = child.wait();
+                });
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn copy_mcp_text(&mut self, text: &str) {
+        let _ = self.terminal.copy_to_clipboard(text);
+    }
 
     fn pane_settings(&self) -> talaria_app::panes::PaneSettings {
         self.config.panes.clone()
@@ -2681,6 +2752,13 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        if let Some(mcp) = &self.mcp_view {
+            let wiring = &self.mcp_wiring;
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::mcp::draw_mcp(mcp, &|slot| wiring.secret_len(slot), area, buf);
+            });
+            return;
+        }
         if let Some(profiles) = &view.profiles {
             self.sync_profiles(Some(profiles));
             return;
@@ -3569,6 +3647,8 @@ fn session(
         picker: None,
         profiles: ProfilesRenderer::default(),
         overlay: Overlay::Live,
+        mcp_view: None,
+        mcp_wiring: crate::mcp_wiring::McpWiring::default(),
         peek_prompts: PromptStack::new(),
         agents: None,
         agents_flash: None,

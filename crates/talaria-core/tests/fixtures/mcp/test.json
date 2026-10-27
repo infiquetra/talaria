@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "tools": [
+    {
+      "name": "example",
+      "description": "Example tool"
+    }
+  ],
+  "prompts": 0,
+  "resources": 0,
+  "oauth_needed": false,
+  "oauth_tokens_present": null
+}

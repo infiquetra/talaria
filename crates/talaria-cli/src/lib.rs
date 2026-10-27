@@ -4,6 +4,7 @@ pub mod bench_replay;
 pub mod bg;
 pub mod doctor_cmd;
 pub mod fleet_cmd;
+pub mod mcp_wiring;
 pub mod picker;
 pub mod print;
 pub mod profiles_cmd;

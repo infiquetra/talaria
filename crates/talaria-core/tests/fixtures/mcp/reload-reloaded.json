@@ -1,0 +1,8 @@
+{
+  "status": "reloaded",
+  "message": "MCP servers reconciled",
+  "session": "applied",
+  "session_servers": [
+    "deepwiki"
+  ]
+}

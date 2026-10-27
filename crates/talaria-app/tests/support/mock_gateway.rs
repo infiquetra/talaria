@@ -447,6 +447,8 @@ struct State {
     matched_results: Vec<(String, Value, Value)>,
     /// Process reads default to empty; process mutations and background tasks are opt-in.
     background: BackgroundScript,
+    mcp: McpSide,
+    drop_after: HashSet<String>,
 }
 
 struct ScriptedError {
@@ -555,6 +557,8 @@ fn new_shared(
             fleet: FleetTables::default(),
             matched_results: Vec::new(),
             background: BackgroundScript::default(),
+            mcp: McpSide::default(),
+            drop_after: HashSet::new(),
         }),
         changed: Notify::new(),
     })
@@ -568,7 +572,15 @@ impl MockGateway {
 
     /// Start the mock for this session id and a client attached to it.
     pub async fn start_with_session(session_id: &str) -> (Self, Client, InboundStream) {
-        let (parts, server) = socket_pair().await;
+        Self::start_with_recorder(session_id, None).await
+    }
+
+    pub async fn start_with_recorder(
+        session_id: &str,
+        recorder: Option<hermes_client::Recorder>,
+    ) -> (Self, Client, InboundStream) {
+        let (mut parts, server) = socket_pair().await;
+        parts.recorder = recorder;
         let (commands, receiver) = mpsc::unbounded_channel();
         let shared = new_shared(session_id, commands.clone(), 1);
         tokio::spawn(run_socket(
@@ -1547,6 +1559,10 @@ fn plan_request(
     params: &Value,
     outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
 ) {
+    if state.drop_after.remove(method) {
+        state.kill_after = true;
+        return;
+    }
     if matches!(method, "approval.pending" | "session.events.since") {
         let session = params
             .get("session_id")
@@ -1612,6 +1628,9 @@ fn plan_request(
     if let Some((delay, result)) = state.scripted_results.pop_front() {
         let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
         outgoing.push((delay, text, reply_meta(id, method)));
+        return;
+    }
+    if plan_mcp(state, method, id, params, outgoing) {
         return;
     }
     if matches!(
@@ -5834,3 +5853,4 @@ async fn doctor_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
     );
     let _ = stream.write_all(response.as_bytes()).await;
 }
+include!("mock_mcp.rs");

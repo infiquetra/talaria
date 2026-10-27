@@ -28,6 +28,7 @@ tempfile.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+shell-words.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 hermes-contract.workspace = true
 portable-pty.workspace = true
