@@ -348,6 +348,15 @@ const BUILTIN: &[LocalCommand] = &[
         action: LocalAction::Capabilities,
         tag: "talaria",
     },
+    LocalCommand {
+        name: "memory-settings",
+        aliases: &[],
+        summary: "Memory provider, built-in memory and the skill curator",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::MemorySettings,
+        tag: "talaria",
+    },
 ];
 
 /// The five rewind commands, in table order. Issue #233.

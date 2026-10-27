@@ -2679,6 +2679,8 @@ dependencies = [
  "shell-words",
  "similar",
  "tempfile",
+ "time",
+ "zeroize",
 ]
 
 [[package]]

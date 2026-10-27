@@ -27,6 +27,10 @@ pub const SETTINGS_LINKS: &[SettingsLink] = &[
         label: "Skills, toolsets and plugins",
         action: LocalAction::Capabilities,
     },
+    SettingsLink {
+        label: "Memory and curator",
+        action: LocalAction::MemorySettings,
+    },
 ];
 /// The labels of the settings page's link rows, in order.
 pub const PAGE_ROWS: &[&str] = &[
@@ -35,4 +39,5 @@ pub const PAGE_ROWS: &[&str] = &[
     "Model roles",
     "MCP servers",
     "Skills, toolsets and plugins",
+    "Memory and curator",
 ];

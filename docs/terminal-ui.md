@@ -37,3 +37,30 @@ For scripts, `talaria capabilities skills`, `toolsets`, or `plugins` prints a ta
 for one JSON object and `--profile <name>` to select a served profile. These commands read only,
 do not create a session, and do not start a gateway. They exit 0 on success, 1 on a failed read,
 and 2 for an invalid list or arguments.
+
+## Memory and curator
+
+`/memory-settings` opens memory providers, built-in file sizes and the skill curator for the
+foreground profile. Settings also links to it through **Memory and curator**. `/memory` and
+`/curator` retain Hermes's own command meanings. The overlay needs at least 60 columns and 16 rows.
+
+Select a provider and press Enter to read or edit its settings. `u` switches to a ready provider;
+`Ctrl+S` saves edited fields and asks before activating a different provider. Talaria reads settings
+back after writing them and reports each field's result. On the plain settings surface, Hermes
+also stores defaults for untouched fields and can refuse activation after storing values. Secrets
+stay masked, start empty when editing, and cannot be cleared here. `c` copies the displayed
+`hermes -p <profile> memory setup <provider>` command through the terminal clipboard feature;
+Talaria does not run setup or sign-in commands.
+
+On a built-in file, `d` asks before deleting it. Anywhere in the overview, `D` asks before deleting
+both `MEMORY.md` and `USER.md`. These deletes cannot be undone and do not touch external providers'
+data. Empty files send no delete request. On the curator row, `p` pauses or resumes scheduled work; pausing leaves a
+run already going alone. `R` checks for an existing run, then asks before starting a new one.
+Talaria follows its last eight output lines, stopping after 240 polls, three failed polls, a
+replaced process, or an unknown result. Closing the overlay stops following without stopping the run.
+
+`s` opens `/config` filtered to `memory.`; `k` filters to `curator.`. Pending edits require a discard
+decision before leaving. `Ctrl+R` reloads, and Esc closes the innermost editor, card or overlay.
+Confirmation buttons accept Left, Right, Tab, Enter and Esc; Cancel starts selected. The fourteen
+`memory_*` bindings in the [configuration reference](configuration.md) are rebindable outside editors. Printable keys remain literal editor
+input. A dropped write is read back and never automatically resent.

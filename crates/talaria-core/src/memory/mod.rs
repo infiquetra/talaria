@@ -1,11 +1,13 @@
 //! Pure state and presentation data for memory settings.
 use crate::settings::SecretField;
 use serde_json::{Map, Value};
-use std::{
-    collections::BTreeMap,
-    fmt,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeMap, fmt, time::Duration};
+mod fields;
+mod state;
+mod text;
+pub use fields::*;
+pub use state::MemoryState;
+pub use text::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusView {
@@ -187,7 +189,7 @@ pub enum MemoryEffect {
     Notice(String),
     CloseOverlay,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum MemoryKey {
     Up,
     Down,
@@ -211,6 +213,34 @@ pub enum MemoryKey {
     Edit(EditOp),
     Paste(String),
 }
+impl fmt::Debug for MemoryKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Up => "Up",
+            Self::Down => "Down",
+            Self::Open => "Open",
+            Self::Use => "Use",
+            Self::Delete => "Delete",
+            Self::DeleteBoth => "DeleteBoth",
+            Self::Pause => "Pause",
+            Self::Run => "Run",
+            Self::Settings => "Settings",
+            Self::CuratorSettings => "CuratorSettings",
+            Self::Reload => "Reload",
+            Self::Copy => "Copy",
+            Self::Save => "Save",
+            Self::Close => "Close",
+            Self::Left => "Left",
+            Self::Right => "Right",
+            Self::Tab => "Tab",
+            Self::Space => "Space",
+            Self::Char(_) => "Char(<redacted>)",
+            Self::Paste(_) => "Paste(<redacted>)",
+            Self::Edit(op) => return f.debug_tuple("Edit").field(op).finish(),
+        };
+        f.write_str(name)
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditOp {
     Backspace,
@@ -229,11 +259,6 @@ pub enum FieldError {
     NotJsonContainer,
     NotAnOption,
     ReadOnly(String),
-}
-impl fmt::Display for FieldError {
-    fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
-    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SavedOutcome {
@@ -307,49 +332,18 @@ pub struct FollowView {
     pub elapsed_s: u64,
     pub lines: Vec<String>,
 }
-pub struct MemoryState;
-impl MemoryState {
-    pub fn new() -> Self {
-        Self
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+
+    #[test]
+    fn editor_input_debug_hides_characters_and_pastes() {
+        let sentinel = "editor-credential-sentinel";
+        let key = MemoryKey::Paste(sentinel.into());
+        assert!(!format!("{key:?}").contains(sentinel));
+        let input = MemoryInput::Key(key);
+        assert!(!format!("{input:?}").contains(sentinel));
+        assert_eq!(format!("{:?}", MemoryKey::Char('x')), "Char(<redacted>)");
     }
-    pub fn update(&mut self, _input: MemoryInput, _now: Instant) -> Vec<MemoryEffect> {
-        todo!()
-    }
-    pub fn view(&self, _now: Instant) -> MemoryView {
-        todo!()
-    }
-}
-impl Default for MemoryState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-pub fn format_bytes(_n: u64) -> String {
-    todo!()
-}
-pub fn provider_label(_status: &str) -> String {
-    todo!()
-}
-pub fn curator_lines(_c: &CuratorView) -> (String, String, String) {
-    todo!()
-}
-pub fn field_visible(_field: &FieldView, _values: &BTreeMap<String, String>) -> bool {
-    todo!()
-}
-pub fn validate_input(_field: &FieldView, _text: &str) -> Result<Value, FieldError> {
-    todo!()
-}
-pub fn classify_saved(
-    _field: &FieldView,
-    _sent: &Value,
-    _before: &FieldView,
-    _after: &FieldView,
-) -> SavedOutcome {
-    todo!()
-}
-pub fn tail_after_header(_lines: &[String], _max: usize) -> Vec<String> {
-    todo!()
-}
-pub fn is_valid_provider_name(_name: &str) -> bool {
-    todo!()
 }

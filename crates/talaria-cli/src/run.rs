@@ -173,6 +173,8 @@ enum Overlay {
     Mcp,
     /// Profile skills, toolsets and plugins.
     Capabilities,
+    /// Memory providers, files and curator.
+    Memory,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -183,6 +185,27 @@ fn background_theme(color: bool) -> BackgroundTheme {
         theme.ok = ratatui::style::Style::default();
     }
     theme
+}
+
+fn memory_footer_key(label: &str) -> Option<talaria_core::memory::MemoryKey> {
+    use talaria_core::memory::MemoryKey;
+    Some(match label {
+        "up" => MemoryKey::Up,
+        "down" => MemoryKey::Down,
+        "enter" => MemoryKey::Open,
+        "u" => MemoryKey::Use,
+        "d" => MemoryKey::Delete,
+        "D" => MemoryKey::DeleteBoth,
+        "p" => MemoryKey::Pause,
+        "R" => MemoryKey::Run,
+        "s" => MemoryKey::Settings,
+        "k" => MemoryKey::CuratorSettings,
+        "ctrl+r" => MemoryKey::Reload,
+        "c" => MemoryKey::Copy,
+        "ctrl+s" => MemoryKey::Save,
+        "esc" => MemoryKey::Close,
+        _ => return None,
+    })
 }
 
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
@@ -1745,6 +1768,17 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                if let Some(memory) = &view.memory {
+                    let key = Key::from(raw);
+                    if key.kind == KeyKind::Release {
+                        return Vec::new();
+                    }
+                    return talaria_tui::memory::route_memory(memory, &self.keymap, &key)
+                        .map(talaria_core::memory::MemoryInput::Key)
+                        .map(UserAction::Memory)
+                        .into_iter()
+                        .collect();
+                }
                 if let Some(capabilities) = &view.capabilities {
                     let input = talaria_tui::capabilities::route_capabilities(
                         capabilities,
@@ -2077,6 +2111,11 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(text) => {
+                if view.memory.is_some() && !self.terminal.is_released() {
+                    return vec![UserAction::Memory(talaria_core::memory::MemoryInput::Key(
+                        talaria_core::memory::MemoryKey::Paste(text),
+                    ))];
+                }
                 if let Some(capabilities) = &view.capabilities {
                     if self.terminal.is_released() || !capabilities.text_focus {
                         return Vec::new();
@@ -2799,6 +2838,27 @@ impl Screen for TuiScreen {
         self.close_overlay(Overlay::Doctor);
         self.sync_agents(view);
         self.apply_transcript(view);
+        if let Some(memory) = &view.memory {
+            let mut memory = memory.clone();
+            if !memory.editing && memory.confirm.is_none() {
+                for (key, _) in &mut memory.footer {
+                    if let Some(action) = memory_footer_key(key) {
+                        let labels = self.keymap.memory_chords(&action);
+                        *key = if labels.is_empty() {
+                            "(unbound)".into()
+                        } else {
+                            labels.join("/")
+                        };
+                    }
+                }
+            }
+            self.open_overlay(Overlay::Memory);
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::memory::draw_memory(&memory, area, buf);
+            });
+            return;
+        }
+        self.close_overlay(Overlay::Memory);
         if let Some(capabilities) = &view.capabilities {
             self.open_overlay(Overlay::Capabilities);
             let _ = self.terminal.draw_overlay(|area, buf| {
