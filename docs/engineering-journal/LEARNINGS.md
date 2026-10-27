@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-26 — The gateway socket does not cover configuration; the dashboard REST routes do
+
+**Evidence.** Exploration #249, live probe `crates/hermes-client/tests/live_config_surface.rs` against Hermes v0.22.4 on the `fixture` profile, recorded in `fixtures/configuration-surface/matrix.json` and `docs/analysis/2026-10-26-hermes-configuration-surface.md`. Canonical `config.get key=display.skin` and `config.set key=display.skin` both gave 4001 `invalid_params` (rows C06, C08); `GET /api/config?profile=fixture` answered in 4 ms (C15); `PUT /api/config` with one key wrote it, the next read showed it, and a second `PUT` restored the file byte for byte (C19, digest unchanged). One credential-shaped leaf came back unmasked (C15). The REST rows could not use `mint_ticket`'s ticket: its secret is crate-private (`Ticket::expose` in `crates/hermes-client/src/ticket.rs`).
+
+**Mechanism.** The canonical authority's `config.get` and `config.set` serve a fixed list of presentation and session keys (`gateway/session_config.py:91-111`, `gateway/session_tui_config.py:45-114`), and refuse anything else before a read or a save. The dashboard routes on the same loopback listener read and deep-merge the whole `config.yaml`, behind a single-use, 30-second `native-http` ticket from the control socket, and do no redaction (`hermes_cli/web_routers/config_env.py:80-156`).
+
+**Generalizable rule.** A protocol method named like the thing you need (`config.get`) is not proof it covers the thing; probe one representative key on each transport before designing a phase on it.
+
 ## 2026-10-26 — Herdr's recent text repeats older lines after Talaria leaves the screen
 
 **Evidence.** The first live runs of `smoke run --suite phase3` (`tools/smoke/src/steps3.rs`) on Herdr 0.9.4 against the test gateway. Run one failed `fleet-quiet` with `talaria fleet list exited with code 1`: the new tab's shell had no `HERMES_HOME`, so it asked the default Hermes home. Run two failed `quit` with `/quit ended talaria with exit code 1` while the capture still showed Talaria's composer, and the capture held the whole shell history twice. Run three failed `quit` after `open-in-pane`: the overlay was still open, its filtered list hid the `(here)` row, `/quit` went into the fleet filter, and the submit fallback's Enter opened the selected session (`Now showing "Reply with ok #25"`). A hand probe in a throwaway tab confirmed that Enter in the filter keeps it, `o` prints `Opened "<title>" in a new Herdr pane.` and leaves the overlay open, Ctrl+C closes the overlay, and a single Ctrl+C on the main screen only arms `Press Ctrl+C again to exit`. Run four passed all twelve steps, and a direct run printed `SMOKE_RESULT: PASSED (elapsed 47 s)`: `bg-launch` 0.6 s, `worktree-launch` 0.8 s, `fleet-list` 6.3 s, `needs-you` 18.7 s.
