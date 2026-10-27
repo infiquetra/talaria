@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "paused": false,
+  "interval_hours": 168,
+  "last_run_at": "2026-10-20T14:03:11.123456+00:00",
+  "min_idle_hours": 2.0,
+  "stale_after_days": 14,
+  "archive_after_days": 30
+}

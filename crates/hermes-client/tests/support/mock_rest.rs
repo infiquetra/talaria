@@ -419,7 +419,22 @@ fn respond(
                     .is_some_and(|value| value == own || value.is_empty() || value == "current")
             })
     });
-    if has_profile && !allowed_profile {
+    let matching_route = state.routes.get(key).or_else(|| {
+        state
+            .routes
+            .iter()
+            .find_map(|((method, pattern), handler)| {
+                pattern
+                    .strip_suffix('*')
+                    .filter(|prefix| method == &request.method && request.path.starts_with(prefix))
+                    .map(|_| handler)
+            })
+    });
+    let registered_profile_route = (path.starts_with("/api/memory")
+        || path.starts_with("/api/curator")
+        || path.starts_with("/api/actions/"))
+        && matching_route.is_some();
+    if has_profile && !allowed_profile && !registered_profile_route {
         return json_reply(403, json!({"detail":"profile_scope_mismatch"}));
     }
     if let Some((status, detail)) = &switch.failure {
@@ -428,7 +443,7 @@ fn respond(
     if let Some(bytes) = &switch.body {
         return (switch.body_status.unwrap_or(200), bytes.clone());
     }
-    if let Some(handler) = state.routes.get(key) {
+    if let Some(handler) = matching_route {
         let (status, body) = handler(request);
         return json_reply(status, body);
     }

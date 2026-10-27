@@ -191,6 +191,8 @@ pub enum KeyContext {
     Mcp,
     /// The capabilities screen.
     Capabilities,
+    /// The memory and curator screen.
+    Memory,
 }
 
 /// Translate a doctor binding into the domain action.

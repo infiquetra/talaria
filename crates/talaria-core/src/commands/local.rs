@@ -79,6 +79,8 @@ pub enum LocalAction {
     Mcp(crate::mcp::McpOpen),
     /// Browse skills, toolsets and plugins.
     Capabilities,
+    /// Open memory and curator settings.
+    MemorySettings,
 }
 
 /// One local command.

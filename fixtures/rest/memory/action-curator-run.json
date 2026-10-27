@@ -1,0 +1,12 @@
+{
+  "name": "curator-run",
+  "running": true,
+  "exit_code": null,
+  "pid": 4242,
+  "lines": [
+    "=== curator-run started",
+    "earlier run",
+    "=== curator-run started",
+    "current run"
+  ]
+}

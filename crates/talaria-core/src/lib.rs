@@ -18,6 +18,7 @@ pub mod fleet_attention;
 pub mod fleet_view;
 pub mod mcp;
 pub mod model_roles;
+pub mod memory;
 pub mod models;
 pub mod mutation;
 pub mod permissions;

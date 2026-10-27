@@ -1,0 +1,63 @@
+{
+  "name": "retaindb",
+  "label": "Retaindb",
+  "fields": [
+    {
+      "key": "api_key",
+      "label": "Api Key",
+      "kind": "secret",
+      "description": "RetainDB API key",
+      "placeholder": "",
+      "required": true,
+      "value": "",
+      "is_set": false,
+      "options": [],
+      "url": "https://retaindb.com",
+      "when": null,
+      "minimum": null,
+      "maximum": null,
+      "step": null
+    },
+    {
+      "key": "base_url",
+      "label": "Base Url",
+      "kind": "text",
+      "description": "API endpoint",
+      "placeholder": "",
+      "required": false,
+      "value": "https://api.retaindb.com",
+      "is_set": true,
+      "options": [],
+      "url": "",
+      "when": null,
+      "minimum": null,
+      "maximum": null,
+      "step": null
+    },
+    {
+      "key": "project",
+      "label": "Project",
+      "kind": "text",
+      "description": "Project identifier (optional — uses 'default' project if not set)",
+      "placeholder": "",
+      "required": false,
+      "value": "",
+      "is_set": false,
+      "options": [],
+      "url": "",
+      "when": null,
+      "minimum": null,
+      "maximum": null,
+      "step": null
+    }
+  ],
+  "setup": {
+    "pip_dependencies": [],
+    "python_dependencies_declared": false,
+    "external_dependencies": [],
+    "required_env": [
+      "RETAINDB_API_KEY"
+    ],
+    "dependencies_installed": true
+  }
+}

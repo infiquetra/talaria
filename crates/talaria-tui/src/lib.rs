@@ -16,6 +16,7 @@ pub mod launch_dialog;
 pub mod live;
 pub mod markdown;
 pub mod mcp;
+pub mod memory;
 pub mod mention;
 pub mod model_picker;
 pub mod model_roles;
