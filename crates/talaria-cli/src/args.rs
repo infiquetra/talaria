@@ -142,15 +142,7 @@ pub fn is_attach_command(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg == "attach")
 }
 
-#[derive(Debug, Clone, Parser)]
-#[command(name = "talaria doctor")]
-pub struct DoctorCli {
-    #[arg(long, value_parser = required_text)]
-    pub profile: Option<String>,
-    #[command(flatten)]
-    pub doctor: crate::doctor_cmd::DoctorArgs,
-}
-
+/// True when the first argument is the diagnostics command.
 pub fn is_doctor_command(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg == "doctor")
 }

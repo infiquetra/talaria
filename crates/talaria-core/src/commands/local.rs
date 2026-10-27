@@ -281,6 +281,15 @@ const BUILTIN: &[LocalCommand] = &[
         action: LocalAction::Config,
         tag: "talaria",
     },
+    LocalCommand {
+        name: "doctor",
+        aliases: &[],
+        summary: "Check the link to the Hermes gateway",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Doctor,
+        tag: "talaria",
+    },
 ];
 
 /// The five rewind commands, in table order. Issue #233.

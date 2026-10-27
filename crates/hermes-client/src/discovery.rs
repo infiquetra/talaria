@@ -26,29 +26,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadVerb {
-    Identify,
-    ActiveWork,
-}
-
-impl ReadVerb {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Identify => "identify",
-            Self::ActiveWork => "active-work",
-        }
-    }
-}
-
-pub async fn control_query(
-    _home: &Path,
-    _verb: ReadVerb,
-    _options: &DiscoverOptions,
-) -> Result<Value, DiscoveryError> {
-    Err(DiscoveryError::InvalidReply)
-}
-
 /// A gateway Talaria can attach to. Fields stay private so a path cannot leak
 /// through a public field. [`Debug`] prints no path and only the first eight
 /// characters of an id.
@@ -765,6 +742,55 @@ pub async fn discover(home: &Path) -> Result<Endpoint, DiscoveryError> {
     discover_with(home, &DiscoverOptions::default()).await
 }
 
+/// A control request that cannot change the gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadVerb {
+    Identify,
+    ActiveWork,
+}
+
+impl ReadVerb {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Identify => "identify",
+            Self::ActiveWork => "active-work",
+        }
+    }
+}
+
+/// Read one control result through the authenticated, bounded exchange.
+/// This function never runs ensure, regardless of the discovery policy.
+pub async fn control_query(
+    home: &Path,
+    verb: ReadVerb,
+    options: &DiscoverOptions,
+) -> Result<Value, DiscoveryError> {
+    if !home.is_absolute() {
+        return Err(DiscoveryError::NoGateway);
+    }
+    let canonical = home.canonicalize().map_err(|err| io_error(home, err))?;
+    let reply = control_request(
+        &canonical,
+        json!({"protocol": 1, "verb": verb.as_str(), "id": 1}),
+        options.control_timeout,
+    )
+    .await?;
+    if reply["ok"] == false {
+        let error = reply["error"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or(DiscoveryError::InvalidReply)?;
+        return Err(DiscoveryError::ControlRefused {
+            code: reply["code"].as_str().map(|s| scrub_peer_text(s, home, 80)),
+            text: scrub_peer_text(error, home, 200),
+        });
+    }
+    reply["result"]
+        .as_object()
+        .map(|_| reply["result"].clone())
+        .ok_or(DiscoveryError::InvalidReply)
+}
+
 /// Discover the gateway for `home` under an explicit policy.
 pub async fn discover_with(
     home: &Path,
@@ -1065,10 +1091,10 @@ pub(crate) async fn control_request(
                 problem: NodeProblem::PeerIsAnotherUser,
             });
         }
-        let mut bytes = if request["verb"] == "identify" {
-            br#"{"protocol":1,"verb":"identify","id":1}"#.to_vec()
-        } else {
-            serde_json::to_vec(&request).map_err(|_| DiscoveryError::InvalidReply)?
+        let mut bytes = match request["verb"].as_str() {
+            Some("identify") => br#"{"protocol":1,"verb":"identify","id":1}"#.to_vec(),
+            Some("active-work") => br#"{"protocol":1,"verb":"active-work","id":1}"#.to_vec(),
+            _ => serde_json::to_vec(&request).map_err(|_| DiscoveryError::InvalidReply)?,
         };
         bytes.push(b'\n');
         socket
@@ -1098,8 +1124,10 @@ pub(crate) async fn control_request(
         }
         let reply: Value =
             serde_json::from_slice(&line).map_err(|_| DiscoveryError::InvalidReply)?;
-        // Discovery can receive a refusal before the gateway has an envelope.
-        if request["verb"] == "identify" && reply["ok"] == false {
+        // Read handlers can refuse before the gateway adds the normal envelope.
+        if matches!(request["verb"].as_str(), Some("identify" | "active-work"))
+            && reply["ok"] == false
+        {
             return Ok(reply);
         }
         if reply["protocol"].as_u64() != Some(1)
@@ -1249,6 +1277,65 @@ async fn run_ensure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn read_queries_use_the_existing_private_exchange() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("gateway.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let server = tokio::spawn(async move {
+            for (index, verb) in ["identify", "active-work", "active-work"]
+                .into_iter()
+                .enumerate()
+            {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = tokio::io::BufReader::new(stream);
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                assert_eq!(
+                    line,
+                    format!("{{\"protocol\":1,\"verb\":\"{verb}\",\"id\":1}}\n")
+                );
+                let reply = if index == 2 {
+                    br#"{"ok":false,"error":"busy"}"#.as_slice()
+                } else if verb == "active-work" {
+                    br#"{"protocol":1,"id":1,"ok":false,"error":"busy"}"#.as_slice()
+                } else {
+                    br#"{"protocol":1,"id":1,"ok":true,"result":{"state":"starting"}}"#.as_slice()
+                };
+                stream.get_mut().write_all(reply).await.unwrap();
+                stream.get_mut().write_all(b"\n").await.unwrap();
+            }
+        });
+        let options = DiscoverOptions {
+            ensure: EnsurePolicy::Never,
+            ..DiscoverOptions::default()
+        };
+        assert_eq!(
+            control_query(home.path(), ReadVerb::Identify, &options)
+                .await
+                .unwrap()["state"],
+            "starting"
+        );
+        for _ in 0..2 {
+            assert!(matches!(
+                control_query(home.path(), ReadVerb::ActiveWork, &options).await,
+                Err(DiscoveryError::ControlRefused { .. })
+            ));
+        }
+        server.await.unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(matches!(
+            control_query(home.path(), ReadVerb::Identify, &options).await,
+            Err(DiscoveryError::UnsafeNode {
+                node: NodeKind::Socket,
+                problem: NodeProblem::OpenToOthers
+            })
+        ));
+    }
 
     fn lookup(pairs: &[(&str, &str)], key: &str) -> Option<String> {
         pairs

@@ -92,6 +92,17 @@ fn toml_blocks(text: &str) -> Vec<String> {
 
 fn default_keys() -> BTreeMap<String, Vec<String>> {
     let rows = [
+        ("doctor_up", &["up", "k"][..]),
+        ("doctor_down", &["down", "j"][..]),
+        ("doctor_toggle", &["enter"][..]),
+        ("doctor_rerun", &["r"][..]),
+        ("doctor_restart", &["shift+r"][..]),
+        ("doctor_close", &["esc", "q"][..]),
+        ("doctor_yes", &["y"][..]),
+        ("doctor_no", &["n"][..]),
+        ("doctor_tab", &["tab"][..]),
+        ("doctor_left", &["left"][..]),
+        ("doctor_right", &["right"][..]),
         ("submit", &["enter"][..]),
         ("newline", &["shift+enter", "alt+enter", "ctrl+j"][..]),
         ("interrupt", &["esc"][..]),

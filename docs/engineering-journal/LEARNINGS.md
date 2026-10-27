@@ -5582,3 +5582,21 @@ the current focus rather than the tester's intended destination.
 
 **Generalizable rule.** Choose the read source, capture time, and input sequence from the state
 being proved; match the specific result marker and disclose harness setup mistakes separately.
+
+## 2026-10-26 — A displayed identity cannot authorize a later restart
+
+**Evidence.** The doctor's report shortens instance ids to eight characters, while
+`DoctorFacts`, `ask_input` and the restart state retain the full instance id. The service
+compares that full value with a fresh `identify` response before it can send the request.
+**Mechanism.** A display prefix is suitable for a person reading a status row, but cannot
+distinguish every instance or protect a confirmation that stayed open during a replacement.
+**Rule.** Build a consequential action from retained typed facts and recheck its full identity;
+never reconstruct its authority from rendered text.
+
+## 2026-10-27 — Redact complete secrets before cutting display text
+
+**Evidence.** The doctor's scrub regressions cover the 39/40-character token boundary,
+a token crossing the display limit, and a shell-quoted path outside the known home.
+**Mechanism.** Cutting first can retain part of a credential; overlooking backtick quotes can
+leave a path untouched. **Rule.** Redact complete token runs before truncation, and treat quote
+wrappers as path boundaries while retaining the quotes themselves.

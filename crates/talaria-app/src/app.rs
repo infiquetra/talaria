@@ -38,6 +38,10 @@ use talaria_core::context::usage::UsageReport;
 use talaria_core::directory::export::ExportFormat;
 use talaria_core::directory::rows::RowKey;
 use talaria_core::directory::state::{PickerEffect, PickerInput, PickerState};
+use talaria_core::doctor::{
+    DoctorEffect, DoctorFacts, DoctorKey, DoctorView, RestartEffect, RestartInput, RestartOutcome,
+    RestartState, ask_input, diagnose, doctor_view_update, restart_update,
+};
 use talaria_core::fleet_attention::{FleetAttentionConfig, FleetScope};
 use talaria_core::fleet_view::FleetViewState;
 use talaria_core::models::{
@@ -184,6 +188,8 @@ pub enum LinkView {
 pub enum UserAction {
     /// Input owned by the settings overlay.
     Settings(talaria_core::settings::SettingsInput),
+    /// A key for the doctor overlay.
+    Doctor(DoctorKey),
     /// A key for the open fleet overlay.
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
@@ -303,6 +309,8 @@ pub enum ToggleContext {
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
     pub settings: Option<talaria_core::settings::SettingsView>,
+    pub doctor: Option<&'a DoctorView>,
+    pub doctor_restart: &'a RestartState,
     pub subagents: Option<&'a crate::subagents::SubagentHub>,
     /// Gateway usage fallback until this session's tree is known.
     pub subagents_usage_active: u32,
@@ -549,6 +557,10 @@ pub struct AppState {
     settings: talaria_core::settings::SettingsState,
     settings_service: Option<Arc<crate::settings::SettingsService>>,
     settings_generation: u64,
+    /// The doctor overlay, while it is open.
+    pub doctor: Option<DoctorView>,
+    /// A restart continues after its overlay closes.
+    pub doctor_restart: RestartState,
     pub models: ModelsState,
     model_service: Option<Arc<crate::models::ModelService>>,
     model_notice_counter: u64,
@@ -766,6 +778,8 @@ impl AppState {
             ),
             settings_service: None,
             settings_generation: 0,
+            doctor: None,
+            doctor_restart: RestartState::Idle,
             models: ModelsState::new(&format!("{launch_id}-model"), Ok(SavedModels::empty())),
             model_service: None,
             model_notice_counter: 0,
@@ -930,6 +944,8 @@ impl AppState {
                 .is_open()
                 .then(|| self.settings.view())
                 .filter(|view| view.profile == self.profile),
+            doctor: self.doctor.as_ref(),
+            doctor_restart: &self.doctor_restart,
             processes_open: self.processes_open,
             state: opened.map(|opened| &opened.state),
             session_id: opened.map(|opened| opened.session_id.as_str()),
@@ -1124,6 +1140,10 @@ pub enum AppMessage {
         service: Option<Arc<crate::settings::SettingsService>>,
         input: talaria_core::settings::SettingsInput,
     },
+    /// A completed doctor check, containing only scrubbed facts.
+    DoctorFacts(DoctorFacts),
+    /// A result or input for the independent gateway restart.
+    DoctorRestart(RestartInput),
     /// A background call's reply, still owned by the session that made it.
     BackgroundDone {
         session_id: SessionId,
@@ -1312,6 +1332,12 @@ pub enum AppEffect {
         service: Option<Arc<crate::settings::SettingsService>>,
         effect: talaria_core::settings::SettingsEffect,
     },
+    DoctorGather,
+    DoctorActiveWork,
+    DoctorPost {
+        old_instance: String,
+    },
+    DoctorProbeAfter(Duration),
     CommitSubagentBatch(talaria_core::subagents::FinishedBatch),
     /// A background call or log message for one session.
     Background {
@@ -1831,6 +1857,104 @@ fn return_prompt(state: &mut AppState, text: String, attachments: bool) -> Vec<A
     effects
 }
 
+fn open_doctor(state: &mut AppState) -> Vec<AppEffect> {
+    if matches!(state.doctor_restart, RestartState::Done(_)) {
+        state.doctor_restart = RestartState::Idle;
+    }
+    state.doctor = Some(DoctorView::new());
+    vec![AppEffect::DoctorGather, AppEffect::Redraw]
+}
+
+fn doctor_key(state: &mut AppState, key: DoctorKey) -> Vec<AppEffect> {
+    let Some(view) = state.doctor.as_mut() else {
+        return Vec::new();
+    };
+    let previous = view.clone();
+    let produced = doctor_view_update(view, &state.doctor_restart, key);
+    let mut effects = Vec::new();
+    if *view != previous {
+        effects.push(AppEffect::Redraw);
+    }
+    for effect in produced {
+        match effect {
+            DoctorEffect::Gather => {
+                if let Some(view) = state.doctor.as_mut() {
+                    view.running = true;
+                }
+                if matches!(state.doctor_restart, RestartState::Done(_)) {
+                    state.doctor_restart = RestartState::Idle;
+                }
+                effects.push(AppEffect::DoctorGather);
+                effects.push(AppEffect::Redraw);
+            }
+            DoctorEffect::AskRestart => {
+                if let Some(facts) = state.doctor.as_ref().and_then(|view| view.facts.as_ref()) {
+                    let input = ask_input(facts);
+                    effects.extend(doctor_restart_input(state, input));
+                }
+            }
+            DoctorEffect::Restart(input) => effects.extend(doctor_restart_input(state, input)),
+            DoctorEffect::Close => {
+                state.doctor = None;
+                effects.push(AppEffect::Redraw);
+            }
+        }
+    }
+    effects
+}
+
+fn doctor_restart_input(state: &mut AppState, input: RestartInput) -> Vec<AppEffect> {
+    let previous = std::mem::replace(&mut state.doctor_restart, RestartState::Idle);
+    let (next, produced) = restart_update(previous.clone(), input);
+    let changed = match (&previous, &next) {
+        (
+            RestartState::Waiting {
+                elapsed: before, ..
+            },
+            RestartState::Waiting { elapsed: after, .. },
+        ) => before.as_secs() != after.as_secs(),
+        _ => previous != next,
+    };
+    state.doctor_restart = next;
+    let mut effects = Vec::new();
+    for effect in produced {
+        match effect {
+            RestartEffect::QueryActiveWork => effects.push(AppEffect::DoctorActiveWork),
+            RestartEffect::Post { old_instance } => {
+                effects.push(AppEffect::DoctorPost { old_instance });
+            }
+            RestartEffect::ProbeAfter(delay) => effects.push(AppEffect::DoctorProbeAfter(delay)),
+            RestartEffect::RerunChecks if state.doctor.is_some() => {
+                if let Some(view) = state.doctor.as_mut() {
+                    view.running = true;
+                }
+                effects.push(AppEffect::DoctorGather);
+            }
+            RestartEffect::Notice(text) if state.doctor.is_none() => {
+                let kind = if matches!(
+                    state.doctor_restart,
+                    RestartState::Done(RestartOutcome::Restarted { .. })
+                ) {
+                    NoticeKind::System
+                } else {
+                    NoticeKind::Error
+                };
+                let text = format!("Doctor: {text}");
+                if state.opened.is_some() {
+                    effects.extend(reduce(state, Event::Notice { kind, text }));
+                } else {
+                    effects.push(notice_lines(&text));
+                }
+            }
+            RestartEffect::RerunChecks | RestartEffect::Notice(_) => {}
+        }
+    }
+    if changed && state.doctor.is_some() {
+        effects.push(AppEffect::Redraw);
+    }
+    effects
+}
+
 /// Apply one message. No input or output: the effects say what to do.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let background_version = state
@@ -1854,7 +1978,12 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             !event.raw.get("session_id").and_then(Value::as_str).is_some_and(|id| !is_open_session(state, id))
                 && !matches!(event.frame.type_name(), Some("todo.updated" | "agent.terminal.output"))
         }
-        AppMessage::Tick { .. } | AppMessage::BackgroundDone { .. } => false,
+        AppMessage::Tick { .. }
+        | AppMessage::BackgroundDone { .. }
+        | AppMessage::DoctorFacts(_)
+        | AppMessage::DoctorRestart(_)
+        | AppMessage::User(UserAction::Doctor(_))
+        | AppMessage::ForegroundKey(UserAction::Doctor(_)) => false,
         AppMessage::Input(key) if !state.pager_open && tasks_key(state, key) => false,
         // A disabled fleet view only commits its notice; nothing on the live screen changes.
         AppMessage::User(UserAction::Submit(text))
@@ -1879,6 +2008,18 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             settings_input(state, input, None)
         }
+        AppMessage::DoctorFacts(facts) => {
+            if let Some(view) = state.doctor.as_mut() {
+                view.report = Some(diagnose(&facts));
+                view.facts = Some(facts);
+                view.running = false;
+                view.selected = view.selected.min(6);
+                vec![AppEffect::Redraw]
+            } else {
+                Vec::new()
+            }
+        }
+        AppMessage::DoctorRestart(input) => doctor_restart_input(state, input),
         AppMessage::BackgroundRecovered { session_id, result } => {
             if is_open_session(state, &session_id) {
                 recovered(state, result)
@@ -2661,6 +2802,9 @@ fn local_effect(
         };
         return settings_input(state, input, Some(typed));
     }
+    if action == LocalAction::Doctor {
+        return open_doctor(state);
+    }
     if action == LocalAction::Fleet {
         return open_fleet_view(state);
     }
@@ -3137,6 +3281,7 @@ fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
         UserAction::Settings(input) => settings_input(state, input, None),
+        UserAction::Doctor(key) => doctor_key(state, key),
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -6745,6 +6890,8 @@ type Deferred = Box<dyn FnOnce() + Send + 'static>;
 /// The executor side of the loop: everything it needs to start a call.
 struct Executor {
     sender: mpsc::UnboundedSender<AppMessage>,
+    /// Set when the restart request returns, before its result reaches the reducer.
+    doctor_posted_at: Arc<Mutex<Option<Instant>>>,
     /// Time zero of the app clock that side work is timed by.
     started: Instant,
     /// Prompts go through one worker, one call at a time, so they reach the gateway in the
@@ -6823,6 +6970,7 @@ impl Executor {
         });
         Self {
             sender,
+            doctor_posted_at: Arc::new(Mutex::new(None)),
             prompts,
             model_files,
             started: Instant::now(),
@@ -7253,6 +7401,45 @@ fn apply<S: Screen>(
                             input,
                         });
                     }
+                });
+            }
+            AppEffect::DoctorGather => {
+                let service = crate::doctor::DoctorService::new(state.hermes_home.clone());
+                let profile = state.profile.clone();
+                executor.send_later(async move {
+                    AppMessage::DoctorFacts(service.gather(&profile).await)
+                });
+            }
+            AppEffect::DoctorActiveWork => {
+                let service = crate::doctor::DoctorService::new(state.hermes_home.clone());
+                executor.send_later(async move {
+                    AppMessage::DoctorRestart(RestartInput::ActiveWork(service.active_work().await))
+                });
+            }
+            AppEffect::DoctorPost { old_instance } => {
+                let service = crate::doctor::DoctorService::new(state.hermes_home.clone());
+                let profile = state.profile.clone();
+                let posted_at = Arc::clone(&executor.doctor_posted_at);
+                executor.send_later(async move {
+                    let result = service.post_restart(&old_instance, &profile).await;
+                    *posted_at.lock().await = Some(Instant::now());
+                    AppMessage::DoctorRestart(RestartInput::Posted(result))
+                });
+            }
+            AppEffect::DoctorProbeAfter(delay) => {
+                let service = crate::doctor::DoctorService::new(state.hermes_home.clone());
+                let posted_at = Arc::clone(&executor.doctor_posted_at);
+                let sender = executor.sender.clone();
+                executor.spawn(async move {
+                    let Some(posted_at) = *posted_at.lock().await else {
+                        return;
+                    };
+                    tokio::time::sleep(delay).await;
+                    let result = service.probe().await;
+                    let _ = sender.send(AppMessage::DoctorRestart(RestartInput::Tick(
+                        posted_at.elapsed(),
+                    )));
+                    let _ = sender.send(AppMessage::DoctorRestart(RestartInput::Probe(result)));
                 });
             }
             AppEffect::CommitSubagentBatch(batch) => screen.commit_subagent_batch(&batch),
@@ -9341,6 +9528,199 @@ impl ReviewLocateJob {
             origin: self.origin,
             info,
         }
+    }
+}
+
+#[cfg(test)]
+mod doctor_loop_tests {
+    use super::*;
+    use talaria_core::doctor::{
+        AttachFacts, CheckId, GatewayFacts, IdentityFacts, Pin, PostResult, ProbeResult,
+        StatusFacts,
+    };
+
+    fn facts() -> DoctorFacts {
+        DoctorFacts {
+            talaria_version: "1.0.0".into(),
+            pin: Pin {
+                tag: hermes_contract::pinned::TAG.into(),
+                commit: hermes_contract::pinned::COMMIT.into(),
+            },
+            profile: "fixture".into(),
+            gateway: GatewayFacts::Ready {
+                instance_id: "instance-full-identity".into(),
+                epoch: 1,
+                launch: None,
+            },
+            identity: Some(IdentityFacts {
+                code_version: None,
+                code_sha: None,
+                capabilities: Vec::new(),
+                served: vec!["default".into(), "fixture".into()],
+                parked: Vec::new(),
+            }),
+            attach: AttachFacts::NotTried,
+            status: StatusFacts::NotTried,
+        }
+    }
+
+    #[test]
+    fn rerun_marks_the_view_busy_before_another_key() {
+        let mut state = AppState::new("doctor-test");
+        open_doctor(&mut state);
+        update(&mut state, AppMessage::DoctorFacts(facts()));
+        let effects = update(
+            &mut state,
+            AppMessage::User(UserAction::Doctor(DoctorKey::Rerun)),
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::DoctorGather))
+        );
+        assert!(state.doctor.as_ref().unwrap().running);
+        let repeated = update(
+            &mut state,
+            AppMessage::User(UserAction::Doctor(DoctorKey::Rerun)),
+        );
+        assert!(
+            !repeated
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::DoctorGather))
+        );
+        let restart = update(
+            &mut state,
+            AppMessage::User(UserAction::Doctor(DoctorKey::Restart)),
+        );
+        assert!(
+            !restart
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::DoctorActiveWork))
+        );
+    }
+
+    #[test]
+    fn opening_gathers_and_facts_preserve_the_row_state_and_full_restart_identity() {
+        let mut state = AppState::new("doctor-test");
+        let effects = update(
+            &mut state,
+            AppMessage::User(UserAction::Submit("/doctor".into())),
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::DoctorGather))
+        );
+        let view = state.doctor.as_mut().unwrap();
+        assert_eq!(view.selected, 0);
+        assert!(view.running);
+        assert!(view.report.is_none());
+        view.selected = 10;
+        view.expanded.insert(CheckId::HermesVersion);
+
+        update(&mut state, AppMessage::DoctorFacts(facts()));
+        let view = state.doctor.as_ref().unwrap();
+        assert_eq!(view.selected, 6);
+        assert!(view.expanded.contains(&CheckId::HermesVersion));
+        assert!(!view.running);
+        assert_eq!(view.report.as_ref().unwrap().checks.len(), 7);
+
+        let effects = update(
+            &mut state,
+            AppMessage::User(UserAction::Doctor(DoctorKey::Restart)),
+        );
+        assert!(matches!(
+            &state.doctor_restart,
+            RestartState::Asking { old_instance, profiles }
+                if old_instance == "instance-full-identity" && profiles == &["default", "fixture"]
+        ));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::DoctorActiveWork))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::DoctorPost { .. }))
+        );
+    }
+
+    #[test]
+    fn a_closed_restart_finishes_as_a_notice_and_reopening_clears_the_outcome() {
+        let snapshot =
+            serde_json::from_str(include_str!("../tests/data/open_approval.json")).unwrap();
+        let mut state = AppState::new("doctor-test");
+        state.opened = Some(OpenedSession::from_snapshot(snapshot));
+        state.doctor = Some(DoctorView::new());
+        state.doctor_restart = RestartState::Requesting {
+            old_instance: "old-instance".into(),
+        };
+        update(
+            &mut state,
+            AppMessage::User(UserAction::Doctor(DoctorKey::Close)),
+        );
+        assert!(state.doctor.is_none());
+        assert!(matches!(
+            state.doctor_restart,
+            RestartState::Requesting { .. }
+        ));
+        update(
+            &mut state,
+            AppMessage::DoctorRestart(RestartInput::Posted(PostResult::Changed)),
+        );
+        assert!(state.opened.as_ref().unwrap().state.cells().iter().any(|cell| {
+            matches!(cell, Cell::Notice(notice)
+                if notice.kind == NoticeKind::Error && notice.text.starts_with("Doctor: The gateway changed"))
+        }));
+        open_doctor(&mut state);
+        assert!(matches!(state.doctor_restart, RestartState::Idle));
+    }
+
+    #[test]
+    fn waiting_survives_reopening_and_redraws_only_when_the_progress_text_changes() {
+        let mut state = AppState::new("doctor-test");
+        state.doctor_restart = RestartState::Waiting {
+            old_instance: "old-instance".into(),
+            elapsed: Duration::from_millis(1100),
+            unknown_request: false,
+        };
+        open_doctor(&mut state);
+        assert!(matches!(state.doctor_restart, RestartState::Waiting { .. }));
+        let same_second = update(
+            &mut state,
+            AppMessage::DoctorRestart(RestartInput::Tick(Duration::from_millis(1900))),
+        );
+        assert!(
+            !same_second
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Redraw))
+        );
+        let next_second = update(
+            &mut state,
+            AppMessage::DoctorRestart(RestartInput::Tick(Duration::from_secs(2))),
+        );
+        assert!(
+            next_second
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Redraw))
+        );
+        let same_instance = update(
+            &mut state,
+            AppMessage::DoctorRestart(RestartInput::Probe(ProbeResult::Ready {
+                instance_id: "old-instance".into(),
+            })),
+        );
+        assert!(
+            same_instance
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::DoctorProbeAfter(_)))
+        );
+        assert!(
+            !same_instance
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Redraw))
+        );
     }
 }
 

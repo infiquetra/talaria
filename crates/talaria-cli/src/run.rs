@@ -154,6 +154,8 @@ enum Overlay {
     Review,
     /// Profile settings.
     Settings,
+    /// The gateway diagnostics and confirmed restart card.
+    Doctor,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -1710,6 +1712,15 @@ impl TuiScreen {
                         );
                     return vec![UserAction::Settings(input)];
                 }
+                if view.doctor.is_some() {
+                    return self
+                        .keymap
+                        .resolve_in(&Key::from(raw), KeyContext::Doctor)
+                        .and_then(talaria_tui::keys::doctor_key)
+                        .map(UserAction::Doctor)
+                        .into_iter()
+                        .collect();
+                }
                 if view.processes_open {
                     return view.state.map_or_else(Vec::new, |state| {
                         vec![UserAction::Processes(self.processes.handle_key(
@@ -1943,6 +1954,9 @@ impl TuiScreen {
                             talaria_core::settings::SettingsKey::Paste(text),
                         ),
                     )];
+                }
+                if view.doctor.is_some() {
+                    return Vec::new();
                 }
                 if view.processes_open {
                     return Vec::new();
@@ -2448,6 +2462,14 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        if let Some(doctor) = view.doctor {
+            self.open_overlay(Overlay::Doctor);
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::doctor_view::draw_doctor(doctor, view.doctor_restart, area, buf);
+            });
+            return;
+        }
+        self.close_overlay(Overlay::Doctor);
         self.sync_agents(view);
         self.apply_transcript(view);
         if let Some(settings) = &view.settings {

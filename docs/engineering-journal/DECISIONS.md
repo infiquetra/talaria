@@ -14,6 +14,26 @@
 
 **Revisit when.** A Hermes release adds schema keys to canonical `config.get` and `config.set`, or adds redaction to `GET /api/config`.
 
+### The doctor confirms a gateway restart by a new instance id
+
+**Decision.** The doctor (issue #254) always asks before restarting. At confirmation it reads
+the gateway identity again and sends nothing if the ready instance changed. An accepted or
+uncertain restart request starts bounded identity polling; only a new ready instance proves
+success. The running-work counts describe the moment the confirmation opened.
+
+**Rationale.** The gateway's action registry disappears with the old process, so an HTTP success
+or an action-status response cannot prove that its replacement became ready. Re-counting work
+at confirmation would require another confirmation whenever the counts changed.
+
+**Accepted read side effect.** Hermes may create its per-install identity file (`install_id`) on the first
+status-page read. The doctor accepts that gateway bookkeeping; it neither reads nor outputs
+the identity, and never writes Hermes configuration or runs an ensure command.
+
+**Rejected.** Treating HTTP success as restart success, polling the old process's action registry,
+or silently restarting a gateway that serves only one profile.
+
+**Revisit when.** Hermes exposes a restart receipt that survives the restart.
+
 ### The phase 3 smoke suite answers only the approval it provoked, and only by denying it
 
 **Decision.** The `needs-you` step of `smoke run --suite phase3` (issue #248) launches one background prompt that asks for `rm -rf ./talaria-smoke-probe` inside the scratch `probe` folder, waits for the fleet to list the request, starts Talaria, opens the fleet view with `alt+a` and types only the digit that the card shows beside `deny`. It never approves, never answers another session's request, and never sends the auto-approve flag, `/permissions` or `/yolo`.
