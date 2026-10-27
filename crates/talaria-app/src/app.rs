@@ -215,6 +215,7 @@ pub enum UserAction {
     Mcp(talaria_core::mcp::McpInput),
     /// Input owned by the memory overlay.
     Memory(talaria_core::memory::MemoryInput),
+    Connectors(talaria_core::connectors::ConnectorsInput),
     /// A key for the open fleet overlay.
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
@@ -334,6 +335,8 @@ pub enum ToggleContext {
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
     pub capabilities: Option<CapView>,
+    pub connectors: Option<talaria_core::connectors::ConnectorsView>,
+    pub connectors_filtering: bool,
     pub settings: Option<talaria_core::settings::SettingsView>,
     pub doctor: Option<&'a DoctorView>,
     pub doctor_restart: &'a RestartState,
@@ -459,6 +462,16 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn sync_cron(&mut self, _view: Option<CronView>, _history_focused: bool) -> bool {
         false
     }
+    fn edit_connector_secret(&mut self, _key: &str) {}
+    fn forget_connector_secrets(&mut self) {}
+    fn connector_secrets(
+        &self,
+        _effect: &talaria_core::connectors::ConnectorsEffect,
+    ) -> Option<BTreeMap<String, zeroize::Zeroizing<String>>> {
+        None
+    }
+    /// The health overlay's final integration consumes this handoff.
+    fn open_connector_doctor(&mut self) {}
     /// Multiplexer pane settings from the screen's startup configuration.
     fn pane_settings(&self) -> PaneSettings {
         PaneSettings::default()
@@ -877,6 +890,11 @@ pub struct AppState {
     pub connectors_open: bool,
     /// Profiles that have agreed to a connectors call in this process.
     pub connectors_consent: crate::connectors::ConnectorsConsent,
+    connectors_service: Option<Arc<crate::connectors::ConnectorsService>>,
+    connectors_generation: u64,
+    connectors_profile: Option<String>,
+    connectors_deadline: Option<Instant>,
+    connectors_reads: BTreeMap<String, u64>,
 }
 
 struct SubmittedAttachments {
@@ -1080,6 +1098,11 @@ impl AppState {
             connectors: talaria_core::connectors::ConnectorsState::new(),
             connectors_open: false,
             connectors_consent: crate::connectors::ConnectorsConsent::default(),
+            connectors_service: None,
+            connectors_generation: 0,
+            connectors_profile: None,
+            connectors_deadline: None,
+            connectors_reads: BTreeMap::new(),
         }
     }
 
@@ -1098,6 +1121,10 @@ impl AppState {
                 .as_ref()
                 .filter(|profile| self.memory_visible && *profile == &self.profile)
                 .map(|_| self.memory.view(Instant::now())),
+            connectors_filtering: self.connectors_open && self.connectors.is_filtering(),
+            connectors: (self.connectors_open
+                && self.connectors_profile.as_ref() == Some(&self.profile))
+            .then(|| talaria_core::connectors::view(&self.connectors, Instant::now())),
             settings: self
                 .settings
                 .is_open()
@@ -1322,6 +1349,13 @@ pub enum AppMessage {
         epoch: u64,
         profile: String,
         service: Arc<crate::cron::CronService>,
+    },
+    Connectors {
+        generation: u64,
+        profile: String,
+        service: Option<Arc<crate::connectors::ConnectorsService>>,
+        read: Option<(String, u64)>,
+        input: talaria_core::connectors::ConnectorsInput,
     },
     Settings {
         generation: u64,
@@ -1563,6 +1597,22 @@ pub enum AppEffect {
         profile: String,
         home: PathBuf,
         client: hermes_client::Client,
+    },
+    Connectors {
+        generation: u64,
+        profile: String,
+        home: PathBuf,
+        client: Option<hermes_client::Client>,
+        service: Option<Arc<crate::connectors::ConnectorsService>>,
+        consent: crate::connectors::ConnectorsConsent,
+        effects: Vec<talaria_core::connectors::ConnectorsEffect>,
+        reads: Vec<Option<(String, u64)>>,
+    },
+    ConnectorLocal(talaria_core::connectors::ConnectorsEffect),
+    ConnectorWake {
+        generation: u64,
+        profile: String,
+        at: Instant,
     },
     Settings {
         generation: u64,
@@ -2483,9 +2533,9 @@ fn doctor_restart_input(state: &mut AppState, input: RestartInput) -> Vec<AppEff
 }
 
 /// Route a global connectors event while the overlay is open. A closed overlay ignores it.
-fn connectors_on_message(state: &mut AppState, message: &AppMessage) {
+fn connectors_on_message(state: &mut AppState, message: &AppMessage) -> Vec<AppEffect> {
     if !state.connectors_open {
-        return;
+        return Vec::new();
     }
     let input = match message {
         AppMessage::Link(LinkEvent::Inbound {
@@ -2503,10 +2553,12 @@ fn connectors_on_message(state: &mut AppState, message: &AppMessage) {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_owned();
-                Some(talaria_core::connectors::ConnectorsInput::ConnectionUpdate {
-                    op_id,
-                    owner_is_account: owner == Some("account"),
-                })
+                Some(
+                    talaria_core::connectors::ConnectorsInput::ConnectionUpdate {
+                        op_id,
+                        owner_is_account: owner == Some("account"),
+                    },
+                )
             }
             Some("platforms.changed") => {
                 Some(talaria_core::connectors::ConnectorsInput::PlatformsChanged)
@@ -2516,15 +2568,22 @@ fn connectors_on_message(state: &mut AppState, message: &AppMessage) {
             }
             _ => None,
         },
+        AppMessage::Link(LinkEvent::State(LinkState::Connected { generation }))
+            if *generation >= 2 =>
+        {
+            state.connectors_service = None;
+            Some(talaria_core::connectors::ConnectorsInput::Reconnected)
+        }
         _ => None,
     };
-    if let Some(input) = input {
-        let _ = talaria_core::connectors::update(&mut state.connectors, input, Instant::now());
-    }
+    input.map_or_else(Vec::new, |input| connectors_input(state, input))
 }
 
-/// An argument prints the usage line. Opening the overlay is not available yet.
-fn connectors_command(open: talaria_core::connectors::ConnectorsOpen, argument: &str) -> Vec<AppEffect> {
+fn connectors_command(
+    state: &mut AppState,
+    open: talaria_core::connectors::ConnectorsOpen,
+    argument: &str,
+) -> Vec<AppEffect> {
     let name = match open {
         talaria_core::connectors::ConnectorsOpen::Tab(
             talaria_core::connectors::ConnectorsTab::Messaging,
@@ -2534,7 +2593,115 @@ fn connectors_command(open: talaria_core::connectors::ConnectorsOpen, argument: 
     if !argument.is_empty() {
         return vec![notice_lines(&format!("Usage: /{name}"))];
     }
-    todo!("connectors stub")
+    if state.connectors.is_busy() {
+        return vec![notice_lines("Waiting for Hermes.")];
+    }
+    state.connectors_generation = state.connectors_generation.wrapping_add(1);
+    state.connectors_profile = Some(state.profile.clone());
+    state.connectors_open = true;
+    state.connectors_service = None;
+    state.connectors_reads.clear();
+    let input = talaria_core::connectors::ConnectorsInput::Open {
+        open,
+        profile: state.profile.clone(),
+        consented: state.connectors_consent.granted(&state.profile),
+    };
+    connectors_input(state, input)
+}
+
+fn connectors_read_key(effect: &talaria_core::connectors::ConnectorsEffect) -> Option<String> {
+    use talaria_core::connectors::ConnectorsEffect as E;
+    Some(match effect {
+        E::ListConnectors => "list".into(),
+        E::LoadCatalog => "catalog".into(),
+        E::LoadAccounts => "accounts".into(),
+        E::LoadPolicy => "policy".into(),
+        E::LoadPlatforms => "platforms".into(),
+        E::LoadPairing => "pairing".into(),
+        E::LoadTools { slug, .. } => format!("tools:{slug}"),
+        E::TestPlatform { id } => format!("test:{id}"),
+        _ => return None,
+    })
+}
+
+fn connectors_input(
+    state: &mut AppState,
+    input: talaria_core::connectors::ConnectorsInput,
+) -> Vec<AppEffect> {
+    use talaria_core::connectors::{ConnectorsEffect as E, ConnectorsInput as I};
+    if state.connectors_profile.as_ref() != Some(&state.profile)
+        || (!state.connectors_open && matches!(input, I::Key(_) | I::Paste(_)))
+    {
+        return Vec::new();
+    }
+    let now = Instant::now();
+    let before = talaria_core::connectors::view(&state.connectors, now);
+    let mut result = Vec::new();
+    let mut remote = Vec::new();
+    for effect in talaria_core::connectors::update(&mut state.connectors, input, now) {
+        match effect {
+            E::GrantConsent => state.connectors_consent.grant(&state.profile),
+            E::Notice(text) => result.push(notice_lines(&text)),
+            E::Close => state.connectors_open = false,
+            effect @ (E::EditSecret { .. }
+            | E::ForgetSecrets
+            | E::OpenUrl(_)
+            | E::CopyText(_)
+            | E::OpenDoctor) => result.push(AppEffect::ConnectorLocal(effect)),
+            effect => remote.push(effect),
+        }
+    }
+    if !remote.is_empty() {
+        // Reserve read versions before the next channel message can arrive. An older
+        // response must not satisfy a save's newly requested read-back.
+        let reads = remote
+            .iter()
+            .map(|effect| {
+                let key = connectors_read_key(effect)?;
+                let version = state.connectors_reads.entry(key.clone()).or_default();
+                *version = version.wrapping_add(1);
+                Some((key, *version))
+            })
+            .collect();
+        result.push(AppEffect::Connectors {
+            generation: state.connectors_generation,
+            profile: state.profile.clone(),
+            home: state.hermes_home.clone(),
+            client: state
+                .service
+                .as_ref()
+                .and_then(|service| service.client())
+                .cloned(),
+            service: state.connectors_service.clone(),
+            consent: state.connectors_consent.clone(),
+            effects: remote,
+            reads,
+        });
+    }
+    let next = talaria_core::connectors::next_deadline(&state.connectors);
+    if next != state.connectors_deadline {
+        state.connectors_deadline = next;
+        if let Some(at) = next {
+            result.push(AppEffect::ConnectorWake {
+                generation: state.connectors_generation,
+                profile: state.profile.clone(),
+                at,
+            });
+        }
+    }
+    if !state.connectors_open && !state.connectors.is_busy() {
+        state.connectors_profile = None;
+        state.connectors_service = None;
+        state.connectors_deadline = None;
+        state.connectors_reads.clear();
+        state.connectors_generation = state.connectors_generation.wrapping_add(1);
+        state.connectors = talaria_core::connectors::ConnectorsState::new();
+        result.push(AppEffect::ConnectorLocal(E::ForgetSecrets));
+    }
+    if before != talaria_core::connectors::view(&state.connectors, now) || !state.connectors_open {
+        result.push(AppEffect::Redraw);
+    }
+    result
 }
 
 /// Apply one message. No input or output: the effects say what to do.
@@ -2544,7 +2711,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         .as_ref()
         .and_then(|_| capabilities_foreground(state));
     cron_sync_profile(state);
-    connectors_on_message(state, &message);
+    let connectors_effects = connectors_on_message(state, &message);
     let background_version = state
         .opened
         .as_ref()
@@ -2569,7 +2736,8 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             !event.raw.get("session_id").and_then(Value::as_str).is_some_and(|id| !is_open_session(state, id))
                 && !matches!(event.frame.type_name(), Some("todo.updated" | "agent.terminal.output"))
         }
-        AppMessage::Tick { .. }
+        AppMessage::Connectors { .. }
+        | AppMessage::Tick { .. }
         | AppMessage::BackgroundDone { .. }
         | AppMessage::DoctorFacts(_)
         | AppMessage::DoctorRestart(_)
@@ -2588,6 +2756,27 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         _ => true,
     };
     let mut effects = match message {
+        AppMessage::Connectors {
+            generation,
+            profile,
+            service,
+            read,
+            input,
+        } => {
+            if generation != state.connectors_generation
+                || profile != state.profile
+                || state.connectors_profile.as_ref() != Some(&profile)
+                || read
+                    .as_ref()
+                    .is_some_and(|(key, version)| state.connectors_reads.get(key) != Some(version))
+            {
+                return Vec::new();
+            }
+            if let Some(service) = service {
+                state.connectors_service = Some(service);
+            }
+            connectors_input(state, input)
+        }
         AppMessage::Capabilities {
             generation,
             service,
@@ -3235,6 +3424,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     {
         effects.push(AppEffect::OfferDraft(text));
     }
+    effects.extend(connectors_effects);
     effects.extend(commit_ready(state));
     if !turn_running(state) {
         for block in state.context_blocks.release() {
@@ -4058,6 +4248,153 @@ fn settings_input(
 }
 
 #[cfg(test)]
+mod connectors_wiring_tests {
+    use super::*;
+    use talaria_core::connectors::{
+        ConnectorsEffect as E, ConnectorsInput as I, ConnectorsKey as K, ConnectorsOpen,
+        ConnectorsTab, Screen as ConnectorScreen,
+    };
+
+    fn state() -> AppState {
+        let mut state = AppState::new("connector-wiring");
+        state.profile = "fixture".into();
+        state
+    }
+
+    #[test]
+    fn connector_consent_draws_before_any_request() {
+        let mut state = state();
+        let effects = connectors_command(
+            &mut state,
+            ConnectorsOpen::Tab(ConnectorsTab::Connectors),
+            "",
+        );
+        assert!(matches!(
+            state.view().connectors.unwrap().screen,
+            ConnectorScreen::Consent { .. }
+        ));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Connectors { .. }))
+        );
+        assert!(!state.connectors_consent.granted("fixture"));
+        let effects = connectors_input(&mut state, I::Key(K::Open));
+        assert!(state.connectors_consent.granted("fixture"));
+        assert!(effects.iter().any(|effect| matches!(effect,
+            AppEffect::Connectors { effects, .. } if effects == &[E::ListConnectors])));
+        let copy = state.working_copy();
+        assert!(copy.connectors_consent.granted("fixture"));
+        assert!(!copy.connectors_consent.granted("default"));
+    }
+
+    #[test]
+    fn messaging_opens_both_reads_and_has_no_idle_wake() {
+        let mut state = state();
+        let effects = connectors_command(
+            &mut state,
+            ConnectorsOpen::Tab(ConnectorsTab::Messaging),
+            "",
+        );
+        assert!(effects.iter().any(|effect| matches!(effect,
+            AppEffect::Connectors { effects, .. } if effects == &[E::LoadPlatforms, E::LoadPairing])));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::ConnectorWake { .. }))
+        );
+        assert!(!state.connectors_consent.granted("fixture"));
+        assert!(connectors_input(&mut state, I::Tick).is_empty());
+    }
+
+    #[test]
+    fn a_closed_overlay_rejects_its_old_reply() {
+        let mut state = state();
+        connectors_command(
+            &mut state,
+            ConnectorsOpen::Tab(ConnectorsTab::Messaging),
+            "",
+        );
+        let generation = state.connectors_generation;
+        connectors_input(&mut state, I::Key(K::Close));
+        assert!(state.view().connectors.is_none());
+        let effects = update(
+            &mut state,
+            AppMessage::Connectors {
+                generation,
+                profile: "fixture".into(),
+                service: None,
+                read: None,
+                input: I::PairingReply(Ok(Default::default())),
+            },
+        );
+        assert!(effects.is_empty());
+        assert!(state.view().connectors.is_none());
+    }
+
+    #[test]
+    fn arguments_show_usage_without_opening_or_sending() {
+        let mut state = state();
+        let effects = connectors_command(
+            &mut state,
+            ConnectorsOpen::Tab(ConnectorsTab::Connectors),
+            "extra",
+        );
+        assert!(state.view().connectors.is_none());
+        assert!(
+            matches!(&effects[..], [AppEffect::CommitLines(lines)] if lines == &["· Usage: /connectors"])
+        );
+    }
+
+    #[test]
+    fn old_platform_read_cannot_finish_a_new_save() {
+        let mut state = state();
+        connectors_command(
+            &mut state,
+            ConnectorsOpen::Tab(ConnectorsTab::Messaging),
+            "",
+        );
+        let platform = || {
+            serde_json::from_value(json!({
+                "id": "signal", "name": "Signal", "enabled": false
+            }))
+            .unwrap()
+        };
+        connectors_input(&mut state, I::PlatformsReply(Ok(vec![platform()])));
+        let old_read = state.connectors_reads["platforms"];
+        connectors_input(&mut state, I::Key(K::Toggle));
+        connectors_input(&mut state, I::Key(K::Confirm));
+        assert!(state.connectors.is_busy());
+        connectors_input(
+            &mut state,
+            I::UpdateReply {
+                id: "signal".into(),
+                reply: Ok(talaria_core::connectors::UpdateReply { hot_served: true }),
+            },
+        );
+        let new_read = state.connectors_reads["platforms"];
+        assert_ne!(old_read, new_read);
+        let deliver = |state: &mut AppState, version| {
+            update(
+                state,
+                AppMessage::Connectors {
+                    generation: 1,
+                    profile: "fixture".into(),
+                    service: None,
+                    read: Some(("platforms".into(), version)),
+                    input: I::PlatformsReply(Ok(vec![platform()])),
+                },
+            )
+        };
+        assert!(deliver(&mut state, old_read).is_empty());
+        assert!(state.connectors.is_busy());
+        // The only accepted read is the one requested after the write completed.
+        deliver(&mut state, new_read);
+        assert!(!state.connectors.is_busy());
+    }
+}
+
+#[cfg(test)]
 mod settings_wiring_tests {
     use super::*;
 
@@ -4201,7 +4538,7 @@ fn local_effect(
         return open_model_roles(state);
     }
     if let LocalAction::Connectors(open) = action {
-        return connectors_command(open, &argument);
+        return connectors_command(state, open, &argument);
     }
     if matches!(
         action,
@@ -4685,6 +5022,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::ModelRoles(input) => model_roles_input(state, input),
         UserAction::Mcp(input) => mcp_input(state, input),
         UserAction::Memory(input) => memory_input(state, input),
+        UserAction::Connectors(input) => connectors_input(state, input),
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -9037,6 +9375,112 @@ fn apply<S: Screen>(
     }
     for effect in update(state, message) {
         match effect {
+            AppEffect::Connectors {
+                generation,
+                profile,
+                home,
+                client,
+                service,
+                consent,
+                effects,
+                reads,
+            } => {
+                let requests: Vec<_> = effects
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, effect)| {
+                        let secrets = screen.connector_secrets(&effect);
+                        (effect, secrets, reads.get(index).cloned().flatten())
+                    })
+                    .collect();
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let service = match (service, client) {
+                        (Some(service), _) => Some(service),
+                        (None, Some(client)) => {
+                            crate::connectors::discover_service(home, &profile, client, consent)
+                                .await
+                        }
+                        (None, None) => None,
+                    };
+                    for (effect, secrets, read) in requests {
+                        let sender = sender.clone();
+                        let service = service.clone();
+                        let profile = profile.clone();
+                        tokio::spawn(async move {
+                            let inputs = if let Some(service) = &service {
+                                service.execute(effect, secrets).await
+                            } else {
+                                crate::connectors::unavailable(effect)
+                            };
+                            for input in inputs {
+                                let _ = sender.send(AppMessage::Connectors {
+                                    generation,
+                                    profile: profile.clone(),
+                                    service: service.clone(),
+                                    read: read.clone(),
+                                    input,
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+            AppEffect::ConnectorWake {
+                generation,
+                profile,
+                at,
+            } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await;
+                    let _ = sender.send(AppMessage::Connectors {
+                        generation,
+                        profile,
+                        service: None,
+                        read: None,
+                        input: talaria_core::connectors::ConnectorsInput::Tick,
+                    });
+                });
+            }
+            AppEffect::ConnectorLocal(effect) => {
+                use talaria_core::connectors::ConnectorsEffect as E;
+                match effect {
+                    E::EditSecret { key } => screen.edit_connector_secret(&key),
+                    E::ForgetSecrets => screen.forget_connector_secrets(),
+                    E::CopyText(text) => screen.copy_provider_text(&text),
+                    E::OpenDoctor => {
+                        let _ = executor
+                            .sender
+                            .send(AppMessage::User(UserAction::Submit("/doctor".into())));
+                    }
+                    E::OpenUrl(url) => {
+                        let sender = executor.sender.clone();
+                        tokio::spawn(async move {
+                            let opened = tokio::task::spawn_blocking(move || {
+                                use std::process::{Command, Stdio};
+                                let argv = crate::providers::opener_argv(&url)?;
+                                Command::new(&argv[0])
+                                    .args(&argv[1..])
+                                    .stdin(Stdio::null())
+                                    .stdout(Stdio::null())
+                                    .stderr(Stdio::null())
+                                    .spawn()
+                                    .and_then(|mut child| child.wait())
+                                    .ok()
+                                    .filter(std::process::ExitStatus::success)
+                            })
+                            .await;
+                            if !matches!(opened, Ok(Some(_))) {
+                                let _ = sender.send(AppMessage::User(UserAction::Notice(
+                                    "Could not open the link. Copy it and open it on a device where you can sign in.".into(),
+                                )));
+                            }
+                        });
+                    }
+                    _ => {}
+                }
+            }
             AppEffect::Capabilities {
                 generation,
                 home,
@@ -10348,6 +10792,13 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         state.memory_service = None;
         state.memory = talaria_core::memory::MemoryState::new();
         state.memory_generation = state.memory_generation.wrapping_add(1);
+        state.connectors_open = false;
+        state.connectors_profile = None;
+        state.connectors_service = None;
+        state.connectors_deadline = None;
+        state.connectors_reads.clear();
+        state.connectors_generation = state.connectors_generation.wrapping_add(1);
+        state.connectors = talaria_core::connectors::ConnectorsState::new();
     }
     state.profile = profile_name;
     let mut commands = CommandService::new(link.client());

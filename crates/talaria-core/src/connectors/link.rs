@@ -17,7 +17,7 @@ impl std::fmt::Debug for Operation {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Operation")
-            .field("op_id", &self.op_id)
+            .field("op_id_len", &self.op_id.len())
             .field("settled", &self.settled)
             .field("targets", &self.targets.len())
             .finish()
@@ -48,8 +48,20 @@ impl std::fmt::Debug for Target {
 }
 
 /// Where a new or repaired account is addressed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum AccountAddress {
     Alias(String),
     Repair { connection_id: String },
+}
+
+impl std::fmt::Debug for AccountAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Alias(value) => f.debug_tuple("Alias").field(&value.len()).finish(),
+            Self::Repair { connection_id } => f
+                .debug_struct("Repair")
+                .field("connection_len", &connection_id.len())
+                .finish(),
+        }
+    }
 }

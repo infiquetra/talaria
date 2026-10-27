@@ -286,6 +286,30 @@ cron_remove = ["ctrl+d"]
 cron_reload = ["ctrl+r"]
 cron_save = ["ctrl+s"]
 cron_open_run = ["o"]
+connectors_next_tab = ["tab"]
+connectors_prev_tab = ["shift+tab"]
+connectors_up = ["up", "k"]
+connectors_down = ["down", "j"]
+connectors_open = ["enter"]
+connectors_toggle = ["space"]
+connectors_filter = ["/"]
+connectors_reload = ["ctrl+r"]
+connectors_add = ["a"]
+connectors_rename = ["r"]
+connectors_reconnect_or_copy = ["c"]
+connectors_remove = ["x"]
+connectors_tools_or_test = ["t"]
+connectors_retired = ["h"]
+connectors_open_link = ["o"]
+connectors_wake = ["w"]
+messaging_clear_field = ["d"]
+messaging_advanced = ["shift+a"]
+messaging_approve = ["p"]
+connectors_save = ["ctrl+s"]
+connectors_doctor = ["shift+r"]
+connectors_confirm = ["y"]
+connectors_cancel = ["n"]
+connectors_close = ["esc"]
 [editor]
 command = ""
 [history]
@@ -351,18 +375,13 @@ hides the dock. Invalid values use the defaults above with one notice. `/agents`
 shows details, E steers, X stops one running child, and Shift+X twice within 3 seconds stops this session's running children. P asks before pausing new spawns for every
 session on the gateway; running children continue. `/agents pause` opens that confirmation; `/agents resume` resumes immediately.
 
-A background session reaches the operator through the same channels as the foreground one: a
-background request that needs an answer, a finished turn and a failed turn all use the `bell`
-and `desktop` lists, and `done_after_seconds` is the shortest finished turn that alerts.
-`fleet_needs_you` and `fleet_finished` choose which background rows may alert: `all` is every
-background row, `watched` is the rows this Talaria has touched (the session it started, one it
-switched away from, one it peeked or answered), and `off` is never. A finished turn of an
-untouched session stays quiet by default, because scheduled runs and other clients finish all
-day. The first seconds after the fleet link comes up stay quiet while the fleet lists its rows,
-so a request that was already waiting does not ring the bell; the counters show what the quiet
-window skipped. One rate limit covers every alert, foreground and background: two alerts less
-than two seconds apart pass only when the second one is more urgent (needs you, then failed,
-then done), and a dropped alert is not repeated later.
+A background session reaches the operator through the same channels as the foreground one: a background request that needs an answer, a finished turn and a failed turn
+all use the `bell` and `desktop` lists, and `done_after_seconds` is the shortest finished turn that alerts. `fleet_needs_you` and `fleet_finished` choose which background
+rows may alert: `all` is every background row, `watched` is the rows this Talaria has touched (the session it started, one it switched away from, one it peeked or
+answered), and `off` is never. A finished turn of an untouched session stays quiet by default, because scheduled runs and other clients finish all day. The first seconds
+after the fleet link comes up stay quiet while the fleet lists its rows, so a request that was already waiting does not ring the bell; the counters show what the quiet
+window skipped. One rate limit covers every alert, foreground and background: two alerts less than two seconds apart pass only when the second one is more urgent (needs
+you, then failed, then done), and a dropped alert is not repeated later.
 
 `[panes]` controls O in `/fleet` and `/agents`: `multiplexer` is `auto`, `herdr`, `tmux`,
 or `off`; auto prefers Herdr. `direction` is `auto`, `right`, or `down`; auto splits right
@@ -389,29 +408,10 @@ an unavailable saved model is dropped. Hermes's profile default never changes.
 
 ## MCP servers
 
-`/mcp` opens the connected profile's Model Context Protocol servers. `/mcp catalogue` browses
-Hermes's catalogue; `/mcp apply` asks Hermes to apply saved changes. Tab switches lists, typing
-filters, Enter opens details or an install confirmation, and Esc clears the filter before closing.
+`/mcp` manages servers and sign-in; see the [terminal guide](terminal-ui.md#mcp-servers).
 
-On Servers, Ctrl+T tests, Ctrl+E enables or disables, Ctrl+K saves a key, Ctrl+O starts browser
-sign-in, Ctrl+D asks before removal, and Ctrl+N adds a remote or local server. Plugin servers are
-read-only here. A local server runs a program on the gateway machine: add only programs you trust.
-Keys and environment values are masked and saved through Hermes's key API, outside server config.
-
-Saving affects new sessions. Ctrl+Y shows Hermes's warning before applying changes to the current
-session; a busy session may need another apply after its turn ends. Ctrl+R refreshes the list
-without applying anything. Removing a server keeps its saved key and sign-in in the profile.
-
-Browser sign-in opens a link only when you press O; C copies it. Over SSH, P accepts the browser's
-loopback callback address when the redirect cannot reach the gateway machine. The detail card
-also gives the command for device sign-in. Talaria shows and copies these commands; it never
-runs them. Catalogue entries that need extra values provide a terminal install command.
-
-The `mcp_*` actions can be rebound under `[keys]`: `mcp_next_tab`, `mcp_prev_tab`, `mcp_reload`,
-`mcp_add`, `mcp_test`, `mcp_toggle`, `mcp_set_key`, `mcp_sign_in`, `mcp_remove`, `mcp_apply`,
-`mcp_save`, `mcp_open_link`, `mcp_copy`, and `mcp_paste_redirect`. These bindings apply only
-inside the MCP screen.
 `/memory-settings` opens memory providers and curator controls; see the [terminal guide](terminal-ui.md#memory-and-curator).
+`/connectors` and `/messaging` manage accounts and chat platforms; see the [terminal guide](terminal-ui.md#connectors-and-messaging).
 
 ## Keys
 

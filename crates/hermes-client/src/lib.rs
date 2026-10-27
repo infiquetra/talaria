@@ -25,9 +25,9 @@ pub mod gateway_api;
 pub mod liveness;
 pub mod mcp_api;
 pub mod memory_api;
+pub mod messaging_api;
 pub mod model_roles_api;
 pub mod providers_api;
-pub mod messaging_api;
 pub mod record;
 pub mod redact;
 pub mod replay;
@@ -54,15 +54,15 @@ pub use discovery::{
     NodeKind, NodeProblem, PointerProblem, ProfileId, ProfileLookupError, ReadVerb, ReportedState,
     ServedProfile, control_query, default_home, discover, discover_with, home_hash,
 };
-pub use model_roles_api::{
-    AssignScope, AssignmentReply, AuxiliaryModels, AuxiliaryTask, EffortField, MainRoute,
-    MoaConfig, MoaPreset, MoaSlot, ModelAssignment, ModelInfo, NamedPreset, RouteFields, StaleAux,
-    assign_model, auxiliary_models, moa_config, model_info, save_moa,
-};
 pub use messaging_api::{
     ApproveReply, ApprovedWire, EnvWire, HomeChannelWire, PairingReply, PendingWire,
     PlatformUpdate, PlatformWire, PlatformsReply, TestReply, UpdateReply, approve_pairing,
     list_pairing, list_platforms, revoke_pairing, test_platform, update_platform,
+};
+pub use model_roles_api::{
+    AssignScope, AssignmentReply, AuxiliaryModels, AuxiliaryTask, EffortField, MainRoute,
+    MoaConfig, MoaPreset, MoaSlot, ModelAssignment, ModelInfo, NamedPreset, RouteFields, StaleAux,
+    assign_model, auxiliary_models, moa_config, model_info, save_moa,
 };
 pub use record::{
     FRAME_LOG_VERSION, GatewayIdentity, RecordError, RecordSummary, Recorder, RecorderOptions,

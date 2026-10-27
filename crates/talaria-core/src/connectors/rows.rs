@@ -46,7 +46,7 @@ impl std::fmt::Debug for ConnectorRow {
 }
 
 /// One catalogue entry.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize)]
 pub struct CatalogRow {
     pub slug: String,
     pub name: String,
@@ -54,6 +54,16 @@ pub struct CatalogRow {
     pub description: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
+}
+
+impl std::fmt::Debug for CatalogRow {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CatalogRow")
+            .field("slug", &self.slug)
+            .field("name_len", &self.name.len())
+            .finish()
+    }
 }
 
 /// The list reply.
@@ -73,6 +83,33 @@ pub struct CatalogReply {
 
 /// First matching label for a connector row.
 pub fn connector_label(row: &ConnectorRow, accounts: &[AccountRow]) -> String {
-    let _ = (row, accounts);
-    todo!("connectors stub")
+    if row.org_locked {
+        return "off by your organization".into();
+    }
+    if !row.enabled {
+        return "off".into();
+    }
+    let count = accounts
+        .iter()
+        .filter(|account| {
+            account.connector == row.connector && account.status == "active" && !account.disabled
+        })
+        .count();
+    if count > 0 {
+        return format!(
+            "connected · {count} account{}",
+            if count == 1 { "" } else { "s" }
+        );
+    }
+    if row.connected {
+        return "connected".into();
+    }
+    match row.connection_status.as_deref() {
+        Some("pending") => "connecting…".into(),
+        Some(status @ ("failed" | "expired" | "revoked" | "inactive")) => {
+            format!("needs repair ({status})")
+        }
+        _ if !row.listed => "not offered".into(),
+        _ => "not connected".into(),
+    }
 }

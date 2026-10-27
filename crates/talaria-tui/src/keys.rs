@@ -62,7 +62,11 @@ use crate::connectors::ConnectorsKey;
 
 static CONNECTORS_BINDINGS: &[(ConnectorsKey, &str, &[&str])] = &[
     (ConnectorsKey::NextTab, "connectors_next_tab", &["tab"]),
-    (ConnectorsKey::PrevTab, "connectors_prev_tab", &["shift+tab"]),
+    (
+        ConnectorsKey::PrevTab,
+        "connectors_prev_tab",
+        &["shift+tab"],
+    ),
     (ConnectorsKey::Up, "connectors_up", &["up", "k"]),
     (ConnectorsKey::Down, "connectors_down", &["down", "j"]),
     (ConnectorsKey::Open, "connectors_open", &["enter"]),
@@ -464,7 +468,15 @@ impl Binding {
                     + index
             }
             Self::Connectors(index) => {
-                Action::ALL.len() + ModelAction::ALL.len() + SETTINGS_BINDINGS.len() + MODEL_ROLES_BINDINGS.len() + ROUTE_PICKER_BINDINGS.len() + CAP_BINDINGS.len() + MEMORY_BINDINGS.len() + CRON_BINDINGS.len() + index
+                Action::ALL.len()
+                    + ModelAction::ALL.len()
+                    + SETTINGS_BINDINGS.len()
+                    + MODEL_ROLES_BINDINGS.len()
+                    + ROUTE_PICKER_BINDINGS.len()
+                    + CAP_BINDINGS.len()
+                    + MEMORY_BINDINGS.len()
+                    + CRON_BINDINGS.len()
+                    + index
             }
         }
     }
@@ -2281,20 +2293,46 @@ impl KeyMap {
     }
 
     /// Resolve a key in the connectors overlay.
-    pub fn resolve_connectors(
-        &self,
-        context: KeyContext,
-        key: &Key,
-    ) -> Option<ConnectorsKey> {
+    pub fn resolve_connectors(&self, context: KeyContext, key: &Key) -> Option<ConnectorsKey> {
         if context != KeyContext::Connectors {
             return None;
         }
-        CONNECTORS_BINDINGS.iter().enumerate().find_map(|(index, (action, _, _))| {
-            self.chords[Binding::Connectors(index).index()]
-                .iter()
-                .any(|chord| chord.matches(key))
-                .then_some(*action)
-        })
+        CONNECTORS_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (action, _, _))| {
+                self.chords[Binding::Connectors(index).index()]
+                    .iter()
+                    .any(|chord| chord.matches(key))
+                    .then_some(*action)
+            })
+    }
+
+    /// Find the current binding labels for a connector action's default chord.
+    #[must_use]
+    pub fn connectors_labels_for_default(&self, label: &str) -> Option<String> {
+        let chord = KeyChord::parse(label, KeyContext::Connectors).ok()?;
+        CONNECTORS_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (_, _, defaults))| {
+                defaults
+                    .iter()
+                    .any(|default| {
+                        KeyChord::parse(default, KeyContext::Connectors)
+                            .ok()
+                            .as_ref()
+                            == Some(&chord)
+                    })
+                    .then(|| {
+                        let labels = self.labels_of(Binding::Connectors(index));
+                        if labels.is_empty() {
+                            "(unbound)".to_string()
+                        } else {
+                            labels
+                        }
+                    })
+            })
     }
 
     /// The labels of one action's chords, for a notice.

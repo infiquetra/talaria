@@ -43,11 +43,20 @@ pub struct AccountView {
 }
 
 /// One account line. `name` is the alias, or the label with an unnamed marker.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AccountLine {
     pub name: String,
     pub status: String,
     pub connection_id: String,
+}
+
+impl std::fmt::Debug for AccountLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountLine")
+            .field("name_len", &self.name.len())
+            .field("connection_len", &self.connection_id.len())
+            .finish()
+    }
 }
 
 /// Why a typed alias cannot be used.
@@ -59,8 +68,37 @@ pub enum AliasProblem {
 
 /// Live accounts, then retired ones when requested.
 pub fn account_view(rows: &[AccountRow], show_retired: bool) -> AccountView {
-    let _ = (rows, show_retired);
-    todo!("connectors stub")
+    let retired = rows.iter().filter(|row| row.disabled).count();
+    let mut sorted: Vec<_> = rows
+        .iter()
+        .filter(|row| show_retired || !row.disabled)
+        .collect();
+    let name = |row: &AccountRow| {
+        row.alias
+            .clone()
+            .unwrap_or_else(|| format!("{} (unnamed)", row.label))
+    };
+    sorted.sort_by(|a, b| {
+        a.disabled
+            .cmp(&b.disabled)
+            .then_with(|| name(a).to_lowercase().cmp(&name(b).to_lowercase()))
+            .then_with(|| a.connection_id.cmp(&b.connection_id))
+    });
+    AccountView {
+        rows: sorted
+            .into_iter()
+            .map(|row| AccountLine {
+                name: super::text::sanitize(&name(row)),
+                status: if row.disabled {
+                    "retired".into()
+                } else {
+                    super::text::sanitize(&row.status)
+                },
+                connection_id: row.connection_id.clone(),
+            })
+            .collect(),
+        retired,
+    }
 }
 
 /// Alias shape and uniqueness for one connector.
@@ -70,6 +108,22 @@ pub fn alias_problem(
     accounts: &[AccountRow],
     own: Option<&str>,
 ) -> Option<AliasProblem> {
-    let _ = (name, connector, accounts, own);
-    todo!("connectors stub")
+    let mut bytes = name.bytes();
+    if name.len() > 32
+        || !bytes
+            .next()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        || !bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Some(AliasProblem::Invalid);
+    }
+    accounts
+        .iter()
+        .any(|row| {
+            row.connector == connector
+                && !row.disabled
+                && row.alias.as_deref() == Some(name)
+                && own != Some(row.connection_id.as_str())
+        })
+        .then_some(AliasProblem::Taken)
 }
