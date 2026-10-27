@@ -1,0 +1,274 @@
+{
+  "hermes_release": "v0.22.4",
+  "rows": [
+    {
+      "id": "C10",
+      "question": 2,
+      "call": "config.set",
+      "transport": "socket",
+      "ticket": {
+        "purpose": "interactive",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "key=skin,value",
+      "outcome": "not-probed",
+      "reason": "write run not yet done by the operator",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "gateway/session_tui_config.py:158-200",
+      "notes": "not sent: write run not yet done by the operator; predicted-effect: applies-now"
+    },
+    {
+      "id": "C19",
+      "question": 5,
+      "call": "PUT /api/config",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "config.display.show_cost,profile=fixture",
+      "outcome": "not-probed",
+      "reason": "write run not yet done by the operator",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_routers/config_env.py:117-156",
+      "notes": "not sent: write run not yet done by the operator; predicted-effect: applies-now"
+    },
+    {
+      "id": "C20",
+      "question": 5,
+      "call": "PUT /api/config/raw",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "profile,yaml_text",
+      "outcome": "ok",
+      "reason": null,
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_routers/config_env.py:157-200",
+      "notes": "not sent: replaces the complete document; predicted-effect: unknown"
+    },
+    {
+      "id": "C32",
+      "question": 9,
+      "call": "POST /api/env/reveal",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "key,profile",
+      "outcome": "not-probed",
+      "reason": "reveals a secret",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_models.py:26-31",
+      "notes": "not sent: reveals a secret"
+    },
+    {
+      "id": "C33",
+      "question": 9,
+      "call": "PUT /api/env",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "key,profile,value",
+      "outcome": "not-probed",
+      "reason": "writes a secret",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_models.py:15-24",
+      "notes": "not sent: writes a secret; optional: api_key, provider_setup; predicted-effect: unknown"
+    },
+    {
+      "id": "C39",
+      "question": 11,
+      "call": "POST /api/model/set",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "model,provider,scope,task",
+      "outcome": "not-probed",
+      "reason": "writes model configuration",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_routers/models.py:376-380",
+      "notes": "not sent: writes model configuration; predicted-effect: next-session"
+    },
+    {
+      "id": "C40",
+      "question": 11,
+      "call": "PUT /api/profiles/{name}/model",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "model,provider",
+      "outcome": "not-probed",
+      "reason": "writes model configuration",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_routers/profiles.py:1051-1063",
+      "notes": "not sent: writes model configuration; predicted-effect: next-session"
+    },
+    {
+      "id": "C45",
+      "question": 13,
+      "call": "profiles.create",
+      "transport": "socket",
+      "ticket": {
+        "purpose": "interactive",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "name",
+      "outcome": "ok",
+      "reason": null,
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "tui_gateway/methods_profiles.py:306-345",
+      "notes": "not sent: creates a profile; optional: clone_all, clone_channels, clone_from, description, mirror_credentials, model, no_alias, no_skills, profile, provider, share_auth, soul; predicted-effect: unknown"
+    },
+    {
+      "id": "C46",
+      "question": 13,
+      "call": "POST /api/profiles",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "name",
+      "outcome": "http:403",
+      "reason": "profile_scope_mismatch",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_models.py:440-458",
+      "notes": "not sent: profile creation is operator only; predicted-effect: unknown"
+    },
+    {
+      "id": "C55",
+      "question": 15,
+      "call": "status",
+      "transport": "control",
+      "ticket": null,
+      "request_shape": "",
+      "outcome": "not-probed",
+      "reason": "control status is not exposed",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "gateway/control_socket.py:189-193",
+      "notes": "not sent: control status is not exposed"
+    },
+    {
+      "id": "C56",
+      "question": 16,
+      "call": "POST /api/gateway/restart",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "profile",
+      "outcome": "not-probed",
+      "reason": "restarts the gateway",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_routers/actions.py:160-166",
+      "notes": "not sent: restarts the gateway; predicted-effect: needs-restart"
+    },
+    {
+      "id": "C57",
+      "question": 16,
+      "call": "POST /api/gateway/start",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "profile",
+      "outcome": "not-probed",
+      "reason": "starts the gateway",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_routers/ops.py:296-322",
+      "notes": "not sent: starts the gateway; predicted-effect: unknown"
+    },
+    {
+      "id": "C58",
+      "question": 16,
+      "call": "POST /api/gateway/stop",
+      "transport": "rest",
+      "ticket": {
+        "purpose": "native-http",
+        "scope": "profile",
+        "profile": "fixture"
+      },
+      "request_shape": "interrupt,profile",
+      "outcome": "not-probed",
+      "reason": "stops the gateway",
+      "result_keys": null,
+      "latency_ms": null,
+      "side_effect": "not-probed",
+      "live_effect": null,
+      "evidence": "static",
+      "source": "hermes_cli/web_routers/ops.py:296-322",
+      "notes": "not sent: stops the gateway; predicted-effect: unknown"
+    }
+  ]
+}
