@@ -1,0 +1,7 @@
+# synthetic
+FAIL Gateway
+Fix: Run `hermes gateway ensure --json` to start the Hermes gateway, then try again.
+exit=1
+no Hermes gateway is running for this home
+Next step: start gateway
+exit=1

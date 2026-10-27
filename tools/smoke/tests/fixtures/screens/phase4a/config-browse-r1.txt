@@ -1,0 +1,5 @@
+# synthetic
+Settings · profile fixture
+general
+agent
+terminal

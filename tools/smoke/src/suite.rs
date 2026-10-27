@@ -14,6 +14,8 @@ pub enum Suite {
     Phase2b,
     /// The phase 3 suite of issue #248: background sessions, the fleet and attach.
     Phase3,
+    /// The configuration screens suite.
+    Phase4a,
 }
 
 impl FromStr for Suite {
@@ -42,6 +44,7 @@ impl Suite {
             Suite::Phase2a => 1800,
             Suite::Phase2b => 1500,
             Suite::Phase3 => 1200,
+            Suite::Phase4a => 300,
         }
     }
 }

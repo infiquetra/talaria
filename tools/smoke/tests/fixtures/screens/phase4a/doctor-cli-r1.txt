@@ -1,0 +1,17 @@
+# synthetic
+ok Talaria
+ok Gateway
+ok Hermes version
+ok Profiles
+ok Attach
+ok Provider
+ok Model
+Result: healthy
+exit=0
+{"format":"talaria-doctor-v1","checks":[1,2,3,4,5,6,7]}
+FAIL Profiles
+the gateway never discovered a profile named nosuchprofile
+skip Attach
+exit=1
+usage error
+exit=2

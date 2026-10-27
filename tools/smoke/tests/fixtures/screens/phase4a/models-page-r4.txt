@@ -1,0 +1,5 @@
+# synthetic
+Model roles - profile fixture
+Subagents
+route: auto
+chain mode: default

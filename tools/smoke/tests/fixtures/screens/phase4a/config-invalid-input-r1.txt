@@ -1,0 +1,4 @@
+# synthetic
+Settings · profile fixture
+display.resume_exchanges
+Enter a whole number.

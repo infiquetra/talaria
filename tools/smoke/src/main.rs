@@ -246,7 +246,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
     // The phase 2a run fixes its seed, so its scratch project, and with it the editor script
     // every launch line names, is known before it starts.
     let seed = match cli.suite {
-        Suite::Phase1 | Suite::Phase3 => None,
+        Suite::Phase1 | Suite::Phase3 | Suite::Phase4a => None,
         Suite::Phase2a | Suite::Phase2b => Some(rand::random::<u64>()),
     };
     let (start_line, resume_line) = match (cli.suite, seed) {
@@ -338,6 +338,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
         }
         Suite::Phase2b => run_smoke_2b(&herdr, &clock, &config, &stop),
         Suite::Phase3 => run_smoke_3(&herdr, &clock, &config, &stop),
+        Suite::Phase4a => unreachable!("suite parser does not yet accept this suite"),
     };
 
     // The scratch project is known now, so the pane text can name it as well.

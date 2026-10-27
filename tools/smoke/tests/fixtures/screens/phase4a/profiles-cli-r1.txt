@@ -1,0 +1,7 @@
+# synthetic
+Profiles
+fixture  served
+default  served
+{"profile":"fixture","state":"served"}
+talaria profiles: no profile named nosuchprofile
+exit=2

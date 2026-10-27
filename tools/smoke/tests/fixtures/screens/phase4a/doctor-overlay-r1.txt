@@ -1,0 +1,12 @@
+# synthetic
+Doctor: 7 ok, 0 warnings, 0 failures
+ok Talaria
+ok Gateway
+ok Hermes version
+running: example
+built for: v0.22.4 (4d043038)
+ok Profiles
+ok Attach
+ok Provider
+ok Model
+Enter expand · Esc close

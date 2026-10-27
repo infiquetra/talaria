@@ -1,0 +1,5 @@
+# synthetic
+Providers · profile fixture
+Keys Accounts Endpoints
+Ollama Cloud  ready · 2 models · key …abcd
+OpenRouter  no key

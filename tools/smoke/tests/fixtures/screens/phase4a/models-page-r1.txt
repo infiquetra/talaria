@@ -1,0 +1,4 @@
+# synthetic
+Model roles - profile fixture
+Main
+minimax-m3.1-flash

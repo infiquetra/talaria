@@ -1,0 +1,5 @@
+# synthetic
+Profiles (2)
+fixture  served
+talaria --profile fixture
+Skills: 1

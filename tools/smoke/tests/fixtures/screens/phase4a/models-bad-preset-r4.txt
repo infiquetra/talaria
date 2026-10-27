@@ -1,0 +1,4 @@
+# synthetic
+Model roles - profile fixture
+Mixture of Agents
+No presets

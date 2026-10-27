@@ -1,0 +1,4 @@
+# synthetic
+Profiles (2)
+Name: Fixture
+A profile named fixture already exists.
