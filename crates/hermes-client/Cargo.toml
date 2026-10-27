@@ -46,3 +46,5 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
 trybuild = "=1.0.121"
+talaria-app.workspace = true
+talaria-core.workspace = true

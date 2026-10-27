@@ -31,6 +31,10 @@ pub const SETTINGS_LINKS: &[SettingsLink] = &[
         label: "Memory and curator",
         action: LocalAction::MemorySettings,
     },
+    SettingsLink {
+        label: "Scheduled jobs",
+        action: LocalAction::Cron,
+    },
 ];
 /// The labels of the settings page's link rows, in order.
 pub const PAGE_ROWS: &[&str] = &[
@@ -40,4 +44,5 @@ pub const PAGE_ROWS: &[&str] = &[
     "MCP servers",
     "Skills, toolsets and plugins",
     "Memory and curator",
+    "Scheduled jobs",
 ];

@@ -5754,3 +5754,14 @@ request that never reaches the server cannot keep the test running forever.
 
 **Rule.** Coordinate paused time with real socket readiness in test support, and bound the driver
 instead of changing production timeouts to accommodate a test runtime.
+
+## 2026-10-27 — Scheduled job requests need a named profile
+
+**Evidence.** At pinned Hermes v0.22.4 (commit `4d04303818b61bf3aa09278af48356315515965b`),
+`hermes_cli/dashboard_auth/native_http.py` rejects `/api/cron/jobs` requests without a profile
+query and checks the supplied profile against the ticket. The same guard does not require that
+query for `/api/cron/delivery-targets`.
+
+**Mechanism.** Job discovery can otherwise scan across profiles, while a native HTTP ticket
+grants access to one profile. **Rule.** Name the ticket's connected profile on every scheduled-job
+route and leave the delivery-target route scoped by the ticket.

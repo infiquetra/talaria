@@ -981,6 +981,8 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "static_assertions",
+ "talaria-app",
+ "talaria-core",
  "tempfile",
  "thiserror 2.0.21",
  "time",

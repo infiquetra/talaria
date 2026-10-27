@@ -38,6 +38,9 @@ use talaria_core::context::breakdown::Breakdown;
 use talaria_core::context::compact::{compact_end, compact_payload, interpret, settle_as};
 use talaria_core::context::tracker::{CompactingLine, ContextTracker, HeldBlocks};
 use talaria_core::context::usage::UsageReport;
+use talaria_core::cron::{
+    self, CronBody, CronEffect, CronInput, CronKey, CronOpen, CronState, CronView,
+};
 use talaria_core::directory::export::ExportFormat;
 use talaria_core::directory::rows::RowKey;
 use talaria_core::directory::state::{PickerEffect, PickerInput, PickerState};
@@ -193,6 +196,7 @@ pub enum LinkView {
 pub enum UserAction {
     /// Input owned by the capabilities overlay.
     Capabilities(Box<CapInput>),
+    Cron(Box<CronInput>),
     /// Input owned by the settings overlay.
     Settings(talaria_core::settings::SettingsInput),
     /// A key for the doctor overlay.
@@ -452,6 +456,9 @@ pub trait Screen: ComposerDeadline + StatusHost {
         false
     }
     fn copy_mcp_text(&mut self, _text: &str) {}
+    fn sync_cron(&mut self, _view: Option<CronView>, _history_focused: bool) -> bool {
+        false
+    }
     /// Multiplexer pane settings from the screen's startup configuration.
     fn pane_settings(&self) -> PaneSettings {
         PaneSettings::default()
@@ -619,6 +626,20 @@ struct BackgroundBinding {
     generation: u64,
 }
 
+#[derive(Default)]
+struct CronBinding {
+    profile: String,
+    generation: u64,
+    epoch: u64,
+    state: Option<CronState>,
+    service: Option<Arc<crate::cron::CronService>>,
+    opening: Option<CronOpen>,
+    initializing: bool,
+    deadline: Option<Instant>,
+    switching_run: bool,
+    first_frame_pending: bool,
+}
+
 pub struct AppState {
     capabilities: Option<CapabilitiesState>,
     capabilities_service: Option<Arc<crate::capabilities::CapabilitiesService>>,
@@ -629,6 +650,7 @@ pub struct AppState {
     memory_profile: Option<String>,
     memory_service: Option<Arc<crate::memory::MemoryService>>,
     memory_generation: u64,
+    cron: CronBinding,
     settings: talaria_core::settings::SettingsState,
     settings_service: Option<Arc<crate::settings::SettingsService>>,
     settings_generation: u64,
@@ -874,6 +896,7 @@ impl AppState {
             memory_profile: None,
             memory_service: None,
             memory_generation: 0,
+            cron: CronBinding::default(),
             settings: talaria_core::settings::SettingsState::new(
                 talaria_core::settings::SETTINGS_LINKS,
             ),
@@ -1279,6 +1302,15 @@ pub enum AppMessage {
         service: Option<Arc<crate::memory::MemoryService>>,
         input: talaria_core::memory::MemoryInput,
     },
+    Cron {
+        tag: crate::cron::CronTag,
+        input: CronInput,
+    },
+    CronPrepared {
+        epoch: u64,
+        profile: String,
+        service: Arc<crate::cron::CronService>,
+    },
     Settings {
         generation: u64,
         profile: String,
@@ -1510,6 +1542,16 @@ pub enum AppEffect {
         effects: Vec<talaria_core::memory::MemoryEffect>,
     },
     CopyMemorySetup(String),
+    Cron(CronEffect),
+    CronNotice(String),
+    CronFrame,
+    PrepareCron {
+        epoch: u64,
+        generation: u64,
+        profile: String,
+        home: PathBuf,
+        client: hermes_client::Client,
+    },
     Settings {
         generation: u64,
         profile: String,
@@ -1808,6 +1850,204 @@ fn profiles_input(state: &mut AppState, input: ProfilesInput) -> Vec<AppEffect> 
         effects.push(AppEffect::Redraw);
     }
     effects
+}
+
+fn cron_sync_profile(state: &mut AppState) {
+    if state.cron.profile == state.profile {
+        return;
+    }
+    let opening = state.cron.opening.take().or_else(|| {
+        state
+            .cron
+            .state
+            .as_ref()
+            .filter(|cron| cron.is_open())
+            .map(|_| CronOpen::List)
+    });
+    state.cron = CronBinding {
+        profile: state.profile.clone(),
+        generation: state.cron.generation.wrapping_add(1),
+        epoch: state.cron.epoch.wrapping_add(1),
+        opening,
+        ..Default::default()
+    };
+}
+
+fn cron_view(state: &AppState) -> Option<CronView> {
+    if let Some(cron) = &state.cron.state {
+        return cron
+            .is_open()
+            .then(|| cron::view(cron, state.wall_s as i64));
+    }
+    state.cron.opening.as_ref()?;
+    Some(CronView {
+        title: format!("Scheduled jobs · profile {}", plain(&state.profile)),
+        banner: None,
+        body: CronBody::Message(if state.link_state == LinkView::Connected {
+            "Loading scheduled jobs…".into()
+        } else {
+            "Not connected to Hermes. Scheduled jobs need the gateway.".into()
+        }),
+        notice: None,
+        question: None,
+        hints: "esc close".into(),
+    })
+}
+
+fn prepare_cron(state: &mut AppState, force: bool) -> Vec<AppEffect> {
+    cron_sync_profile(state);
+    if state.cron.opening.is_none() && state.cron.state.is_none() {
+        return Vec::new();
+    }
+    if state.cron.initializing && !force {
+        return Vec::new();
+    }
+    let Some(client) = state
+        .service
+        .as_ref()
+        .and_then(SessionService::client)
+        .cloned()
+    else {
+        return Vec::new();
+    };
+    state.cron.initializing = true;
+    state.cron.epoch = state.cron.epoch.wrapping_add(1);
+    vec![AppEffect::PrepareCron {
+        epoch: state.cron.epoch,
+        generation: state.cron.generation,
+        profile: state.profile.clone(),
+        home: state.hermes_home.clone(),
+        client,
+    }]
+}
+
+fn cron_input(state: &mut AppState, input: CronInput) -> Vec<AppEffect> {
+    cron_sync_profile(state);
+    if matches!(input, CronInput::Close) {
+        state.cron.deadline = None;
+    }
+    let retry_rest = matches!(
+        input,
+        CronInput::Key(CronKey::Action(cron::CronAction::Reload))
+    ) && state.link_state == LinkView::Connected
+        && state
+            .cron
+            .service
+            .as_ref()
+            .is_some_and(|service| service.rest_status().is_err());
+    if let CronInput::Open(mode) = &input
+        && state.cron.state.is_none()
+    {
+        state.cron.opening = Some(mode.clone());
+        let mut effects = prepare_cron(state, false);
+        effects.push(AppEffect::CronFrame);
+        return effects;
+    }
+    let Some(cron) = &mut state.cron.state else {
+        if matches!(input, CronInput::Close | CronInput::Key(CronKey::Esc)) {
+            state.cron.opening = None;
+        }
+        return vec![AppEffect::CronFrame];
+    };
+    let mut effects = Vec::new();
+    for effect in cron::update(cron, input, Instant::now(), state.wall_s as i64) {
+        match effect {
+            CronEffect::ScheduleTick { after } => {
+                state.cron.deadline = Instant::now().checked_add(after);
+            }
+            CronEffect::CloseOverlay => state.cron.deadline = None,
+            CronEffect::Notice(text) => effects.push(AppEffect::CronNotice(text)),
+            CronEffect::OpenSession { session_id } => {
+                effects.extend(cron_input(state, CronInput::Close));
+                let switch = begin_switch(
+                    state,
+                    RowKey {
+                        profile: state.profile.clone(),
+                        session_id,
+                    },
+                );
+                state.cron.switching_run =
+                    switch.iter().any(|e| matches!(e, AppEffect::Switch { .. }));
+                if state.cron.switching_run {
+                    effects.extend(switch);
+                } else if let Some(text) = last_line(&switch) {
+                    effects.push(AppEffect::CronNotice(text));
+                }
+            }
+            effect => effects.push(AppEffect::Cron(effect)),
+        }
+    }
+    if retry_rest {
+        effects.extend(prepare_cron(state, false));
+    }
+    effects.push(AppEffect::CronFrame);
+    effects
+}
+
+fn open_cron(state: &mut AppState, mode: CronOpen) -> Vec<AppEffect> {
+    cron_sync_profile(state);
+    state.cron.first_frame_pending |= cron_view(state).is_none();
+    cron_input(state, CronInput::Open(mode))
+}
+
+async fn make_cron_service(
+    client: hermes_client::Client,
+    home: PathBuf,
+    profile: String,
+    generation: u64,
+) -> Arc<crate::cron::CronService> {
+    use hermes_client::rest::{NativeHttpMinter, RestClient, RestOptions};
+    let options = hermes_client::DiscoverOptions {
+        ensure: hermes_client::EnsurePolicy::Never,
+        ..Default::default()
+    };
+    let rest = match hermes_client::discover_with(&home, &options).await {
+        Ok(endpoint) => endpoint.resolve_profile(&profile).ok().and_then(|id| {
+            let endpoint = Arc::new(endpoint);
+            RestClient::new(
+                endpoint.api_origin(),
+                Arc::new(NativeHttpMinter::new(home, endpoint.clone(), id)),
+                RestOptions::default(),
+            )
+            .ok()
+        }),
+        Err(_) => None,
+    };
+    Arc::new(crate::cron::CronService::new(
+        client, rest, profile, generation,
+    ))
+}
+
+fn cron_not_connected(effect: CronEffect) -> Option<CronInput> {
+    let reason = "Not connected to Hermes.".to_owned();
+    Some(match effect {
+        CronEffect::List { seq } => CronInput::Listed {
+            seq,
+            result: Err(cron::CallFailure::NotSent(reason)),
+        },
+        CronEffect::Add(_) => CronInput::Added(Err(cron::CallFailure::NotSent(reason))),
+        CronEffect::SetPaused { job_id, .. } => CronInput::PauseSet {
+            job_id,
+            result: Err(cron::CallFailure::NotSent(reason)),
+        },
+        CronEffect::Remove { job_id } => CronInput::Removed {
+            job_id,
+            result: Err(cron::CallFailure::NotSent(reason)),
+        },
+        CronEffect::Trigger { job_id, .. } => CronInput::Triggered {
+            job_id,
+            outcome: cron::TriggerOutcome::Failed(cron::RestFailure::NotSent(reason)),
+        },
+        CronEffect::Runs { job_id, seq } => CronInput::RunsLoaded {
+            job_id,
+            seq,
+            result: Err(cron::RestFailure::NotSent(reason)),
+        },
+        CronEffect::DeliveryTargets => {
+            CronInput::TargetsLoaded(Err(cron::RestFailure::NotSent(reason)))
+        }
+        _ => return None,
+    })
 }
 
 fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
@@ -2236,6 +2476,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         .capabilities
         .as_ref()
         .and_then(|_| capabilities_foreground(state));
+    cron_sync_profile(state);
     let background_version = state
         .opened
         .as_ref()
@@ -2248,6 +2489,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let restored = matches!(&message, AppMessage::Opened { .. });
     let settled = mutation_session(&message);
     let mut redraw = match &message {
+        AppMessage::Cron { .. } | AppMessage::CronPrepared { .. }
+        | AppMessage::User(UserAction::Cron(_))
+        | AppMessage::ForegroundKey(UserAction::Cron(_)) => false,
         AppMessage::PromptDone { events, notices, masked } => {
             !notices.is_empty() || masked.is_some() || events.iter().any(|event| {
                 !matches!(event, Event::Session { frame, .. } if frame.type_name() == Some("todo.updated"))
@@ -2305,6 +2549,49 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 state.memory_service = Some(service);
             }
             memory_input(state, input)
+        }
+        AppMessage::Cron { tag, input } => {
+            if tag.generation != state.cron.generation || tag.profile != state.profile {
+                if let (Some(name), CronInput::Triggered { outcome, .. }) = (tag.run_name, input) {
+                    vec![AppEffect::CronNotice(cron::stale_run_notice(
+                        &name,
+                        &tag.profile,
+                        tag.profile == state.profile,
+                        &outcome,
+                    ))]
+                } else {
+                    Vec::new()
+                }
+            } else {
+                cron_input(state, input)
+            }
+        }
+        AppMessage::CronPrepared {
+            epoch,
+            profile,
+            service,
+        } => {
+            if epoch != state.cron.epoch || profile != state.profile {
+                return Vec::new();
+            }
+            state.cron.initializing = false;
+            let availability = service.rest_status();
+            state.cron.service = Some(service);
+            if let Some(cron) = &mut state.cron.state {
+                cron.set_rest_status(availability);
+            } else {
+                state.cron.state = Some(CronState::new(profile, availability));
+            }
+            let mut effects = cron_input(
+                state,
+                CronInput::Connection {
+                    up: state.link_state == LinkView::Connected,
+                },
+            );
+            if let Some(mode) = state.cron.opening.take() {
+                effects.extend(cron_input(state, CronInput::Open(mode)));
+            }
+            effects
         }
         AppMessage::Settings {
             generation,
@@ -2528,6 +2815,11 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::User(action) => user_action(state, action),
         AppMessage::Link(event) => {
+            if matches!(&event, LinkEvent::Inbound { item: Inbound::Event(event), .. }
+                if event.frame.type_name() == Some("cron.changed"))
+            {
+                return cron_input(state, CronInput::Changed);
+            }
             let mut effects = skin_changed(state, &event);
             if is_session_less_skin(&event) {
                 // A skin equal to the current one draws nothing.
@@ -2541,7 +2833,11 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             effects
         }
         AppMessage::Input(key) => input_key(state, key),
-        AppMessage::Opened { opened, notice } => opened_session(state, opened, notice),
+        AppMessage::Opened { opened, notice } => {
+            let mut effects = opened_session(state, opened, notice);
+            effects.extend(prepare_cron(state, true));
+            effects
+        }
         AppMessage::SubmitDone {
             submission_id,
             outcome,
@@ -2728,7 +3024,17 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             outcome,
             install,
             reason,
-        } => switched(state, outcome, install, reason),
+        } => {
+            if std::mem::take(&mut state.cron.switching_run)
+                && let SwitchOutcome::Failed { text } = &outcome
+            {
+                state.switching = false;
+                state.session_action = false;
+                state.pending_switch = None;
+                return vec![AppEffect::CronNotice(text.clone())];
+            }
+            switched(state, outcome, install, reason)
+        }
         AppMessage::BranchSent { request, outcome } => branch_sent(state, request, outcome),
         AppMessage::Branched { outcome, install } => branched(state, outcome, install),
         AppMessage::Mutated { request, outcome } => mutated(state, request, outcome),
@@ -3775,6 +4081,12 @@ fn local_effect(
             },
         );
     }
+    if action == LocalAction::Cron {
+        return match cron::parse_arguments(&argument) {
+            Ok(mode) => open_cron(state, mode),
+            Err(usage) => vec![notice_lines(&usage)],
+        };
+    }
     if action == LocalAction::Config {
         let input = talaria_core::settings::SettingsInput::Command {
             profile: state.profile.clone(),
@@ -4287,6 +4599,10 @@ fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
         UserAction::Capabilities(input) => capabilities_input(state, *input),
+        UserAction::Cron(input) => match *input {
+            CronInput::Open(mode) => open_cron(state, mode),
+            input => cron_input(state, input),
+        },
         UserAction::Settings(input) => settings_input(state, input, None),
         UserAction::Doctor(key) => doctor_key(state, key),
         UserAction::Profiles(input) => profiles_input(state, input),
@@ -5413,6 +5729,9 @@ fn switched(
         SwitchOutcome::Switched { notice } => {
             let mut effects = vec![AppEffect::CommitLines(vec![notice])];
             if let Some(install) = install {
+                if let Some(target) = target {
+                    state.profile = target.profile;
+                }
                 effects.extend(install_session(state, install));
             }
             effects.extend(close_picker(state));
@@ -5507,6 +5826,7 @@ fn install_session(state: &mut AppState, install: SwitchInstall) -> Vec<AppEffec
         )))));
     }
     effects.extend(opened_session(state, opened, None));
+    effects.extend(prepare_cron(state, true));
     effects
 }
 
@@ -6207,6 +6527,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .max(state.background_generation_base.saturating_add(generation));
             state.link_state = LinkView::Connected;
             let mut effects = vec![AppEffect::ConnectionOpened(generation)];
+            effects.extend(prepare_cron(state, true));
             // A reconnect describes again: the skin may have changed while the link was down.
             if generation >= 2 {
                 effects.push(AppEffect::Describe(generation));
@@ -6245,6 +6566,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
             ));
+            effects.extend(cron_input(state, CronInput::Connection { up: false }));
             effects
         }
         LinkEvent::State(LinkState::Closed) => {
@@ -6255,6 +6577,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
             ));
+            effects.extend(cron_input(state, CronInput::Connection { up: false }));
             effects
         }
         event @ LinkEvent::State(LinkState::Failed { .. }) => {
@@ -6266,6 +6589,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
             ));
+            effects.extend(cron_input(state, CronInput::Connection { up: false }));
             if let Some(text) = link_notice(&event) {
                 effects.push(notice_lines(&text));
             }
@@ -8719,6 +9043,74 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::CopyMemorySetup(text) => screen.copy_provider_text(&text),
+            AppEffect::CronNotice(text) => {
+                state.model_notice_counter = state.model_notice_counter.saturating_add(1);
+                screen.commit_cells(&[Cell::Notice(talaria_core::session::NoticeCell {
+                    id: talaria_core::session::CellId::new(u64::MAX - state.model_notice_counter),
+                    kind: talaria_core::session::NoticeKind::Diagnostic,
+                    text: format!("Scheduled jobs: {text}"),
+                    detail: None,
+                })]);
+            }
+            AppEffect::CronFrame => {
+                let focused = state
+                    .cron
+                    .state
+                    .as_ref()
+                    .is_some_and(CronState::history_focused);
+                redraw |= screen.sync_cron(cron_view(state), focused);
+            }
+            AppEffect::PrepareCron {
+                epoch,
+                generation,
+                profile,
+                home,
+                client,
+            } => {
+                executor.send_later(async move {
+                    let service =
+                        make_cron_service(client, home, profile.clone(), generation).await;
+                    AppMessage::CronPrepared {
+                        epoch,
+                        profile,
+                        service,
+                    }
+                });
+            }
+            AppEffect::Cron(effect) => {
+                let service = state.cron.service.clone();
+                let tag = service.as_ref().map_or_else(
+                    || crate::cron::CronTag {
+                        generation: state.cron.generation,
+                        profile: state.profile.clone(),
+                        run_name: match &effect {
+                            CronEffect::Trigger { name, .. } => Some(name.clone()),
+                            _ => None,
+                        },
+                    },
+                    |service| service.tag_for(&effect),
+                );
+                let sender = executor.sender.clone();
+                let task = async move {
+                    let inputs = match service {
+                        Some(service) => service.execute(effect).await,
+                        None => cron_not_connected(effect).into_iter().collect(),
+                    };
+                    for input in inputs {
+                        let _ = sender.send(AppMessage::Cron {
+                            tag: tag.clone(),
+                            input,
+                        });
+                    }
+                };
+                if state.cron.first_frame_pending {
+                    executor.defer(move || {
+                        tokio::spawn(task);
+                    });
+                } else {
+                    executor.spawn(task);
+                }
+            }
             AppEffect::Settings {
                 generation,
                 profile,
@@ -10756,6 +11148,9 @@ pub async fn run<S: Screen>(
         let provider_deadline = talaria_core::providers::next_deadline(&state.providers);
         let deadline = earliest_of([deadline, provider_deadline]);
         let deadline = earliest_of([deadline, talaria_core::mcp::next_deadline(&state.mcp)]);
+        let non_cron_deadline = deadline;
+        let cron_deadline = state.cron.deadline;
+        let deadline = earliest_of([deadline, cron_deadline]);
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
@@ -10821,7 +11216,12 @@ pub async fn run<S: Screen>(
                 }
                 // A countdown that changed its text arms the next one.
                 state.automation_wake(now);
-                redraw = true;
+                let cron_due = cron_deadline.is_some_and(|due| due <= now);
+                redraw = !cron_due || non_cron_deadline.is_some_and(|due| due <= now);
+                if cron_due {
+                    state.cron.deadline = None;
+                    redraw |= apply(&mut state, AppMessage::User(UserAction::Cron(Box::new(CronInput::Tick))), screen, &executor);
+                }
             }
             Some(()) = async { match terminate.as_mut() { Some(stream) => stream.recv().await, None => std::future::pending().await } } => {
                 break Ending::Signal(143);
@@ -10868,6 +11268,7 @@ pub async fn run<S: Screen>(
             sync_models(&mut state, screen);
             sync_picker(&state, screen);
             screen.draw(&state.view());
+            state.cron.first_frame_pending = false;
             screen.on_tick(Instant::now());
             // The frame is on screen; the work that waited for it may go.
             executor.run_deferred();
@@ -11603,5 +12004,106 @@ mod checklist_command_tests {
         assert_eq!(state.checklist.expanded(), !expanded);
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], AppEffect::Redraw));
+    }
+}
+
+#[cfg(test)]
+mod cron_binding_tests {
+    use super::*;
+
+    fn state() -> AppState {
+        let mut state = AppState::new("cron-test");
+        state.profile = "fixture".into();
+        cron_sync_profile(&mut state);
+        state.cron.state = Some(CronState::new("fixture".into(), Ok(())));
+        state
+    }
+
+    #[test]
+    fn same_profile_keeps_state_and_returning_to_profile_advances_generation() {
+        let mut state = state();
+        open_cron(&mut state, CronOpen::NewJob);
+        let generation = state.cron.generation;
+        cron_sync_profile(&mut state);
+        assert_eq!(state.cron.generation, generation);
+        assert!(matches!(cron_view(&state).unwrap().body, CronBody::Form(_)));
+        state.profile = "other".into();
+        cron_sync_profile(&mut state);
+        state.profile = "fixture".into();
+        cron_sync_profile(&mut state);
+        assert_eq!(state.cron.generation, generation + 2);
+        assert!(state.cron.state.is_none());
+    }
+
+    #[test]
+    fn stale_read_is_dropped_but_trigger_keeps_original_profile_in_notice() {
+        let mut state = state();
+        let generation = state.cron.generation;
+        state.profile = "other".into();
+        let old = crate::cron::CronTag {
+            generation,
+            profile: "fixture".into(),
+            run_name: None,
+        };
+        let effects = update(
+            &mut state,
+            AppMessage::Cron {
+                tag: old.clone(),
+                input: CronInput::Listed {
+                    seq: 1,
+                    result: Ok(cron::ListReply {
+                        jobs: vec![],
+                        warning: None,
+                    }),
+                },
+            },
+        );
+        assert!(effects.is_empty());
+        let effects = update(
+            &mut state,
+            AppMessage::Cron {
+                tag: crate::cron::CronTag {
+                    run_name: Some("digest".into()),
+                    ..old
+                },
+                input: CronInput::Triggered {
+                    job_id: "job".into(),
+                    outcome: cron::TriggerOutcome::Accepted,
+                },
+            },
+        );
+        assert!(
+            matches!(&effects[..], [AppEffect::CronNotice(text)] if text.contains("digest") && text.contains("fixture"))
+        );
+    }
+
+    #[test]
+    fn escape_cancels_opening_before_a_service_is_prepared() {
+        let mut state = AppState::new("cron-opening");
+        open_cron(&mut state, CronOpen::List);
+        assert!(cron_view(&state).is_some());
+        cron_input(&mut state, CronInput::Key(CronKey::Esc));
+        assert!(cron_view(&state).is_none());
+        assert!(state.cron.deadline.is_none());
+    }
+
+    #[test]
+    fn failed_run_switch_uses_a_notice_and_clears_switch_state() {
+        let mut state = state();
+        state.cron.switching_run = true;
+        state.switching = true;
+        state.session_action = true;
+        let effects = update(
+            &mut state,
+            AppMessage::Switched {
+                outcome: SwitchOutcome::Failed {
+                    text: "session missing".into(),
+                },
+                install: None,
+                reason: None,
+            },
+        );
+        assert!(matches!(&effects[..], [AppEffect::CronNotice(text)] if text == "session missing"));
+        assert!(!state.switching && !state.session_action && !state.cron.switching_run);
     }
 }

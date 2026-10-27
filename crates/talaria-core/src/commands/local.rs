@@ -81,6 +81,8 @@ pub enum LocalAction {
     Capabilities,
     /// Open memory and curator settings.
     MemorySettings,
+    /// Manage this profile's scheduled jobs.
+    Cron,
 }
 
 /// One local command.
@@ -355,6 +357,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::MemorySettings,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "cron",
+        aliases: &[],
+        summary: "Manage scheduled jobs for this profile",
+        args_hint: "[list|new]",
+        takes_argument: true,
+        action: LocalAction::Cron,
         tag: "talaria",
     },
 ];

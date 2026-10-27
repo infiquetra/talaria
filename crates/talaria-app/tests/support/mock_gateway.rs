@@ -1831,6 +1831,10 @@ fn plan_request(
     // test's release, so the test can see every list request before any reply.
     // The request itself is already recorded in `seen`; only the reply waits.
     // Harness-only: timing, never content. Other methods always answer.
+    if method == "cron.manage" && matches!(next_behavior(state, method), Behavior::DropAfterFrame) {
+        state.kill_after = true;
+        return;
+    }
     if method == "session.list" && state.sess.hold_lists {
         state.sess.held_lists.push(HeldList {
             id: id.clone(),

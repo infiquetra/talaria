@@ -457,7 +457,8 @@ fn respond(
         || path.starts_with("/api/curator")
         || path.starts_with("/api/actions/"))
         && matching_route.is_some();
-    if has_profile && !allowed_profile && !registered_profile_route {
+    let cron_route = path.starts_with("/api/cron/");
+    if has_profile && !allowed_profile && !registered_profile_route && !cron_route {
         return json_reply(403, json!({"detail":"profile_scope_mismatch"}));
     }
     if let Some((status, detail)) = &switch.failure {
