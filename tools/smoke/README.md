@@ -13,10 +13,10 @@ Run `cargo run -q -p smoke -- run` from a Herdr pane. The options are:
 | `--profile` | The profile the session runs in. |
 | `--model` | The model the session uses. |
 | `--provider` | The provider the model comes from. |
-| `--deadline-secs` | The whole run, in seconds: 300 for `phase1`, 1800 for `phase2a`, and 1500 for `phase2b` unless given. |
+| `--deadline-secs` | The whole run, in seconds: 300 for `phase1`, 1800 for `phase2a`, 1500 for `phase2b`, 1200 for `phase3`, and 900 for `phase4a` and `phase4b` unless given. |
 | `--step-scale` | The scale of the per-step limits. |
 | `--report-dir` | Where the failure report is written. |
-| `--suite` | `phase1` (the default), `phase2a`, or `phase2b`, the suite for session controls. |
+| `--suite` | `phase1` (the default), `phase2a`, `phase2b`, `phase3`, `phase4a`, or `phase4b`. |
 | `--tmux` | The tmux command line the `phase2a` suite pastes through; the default is `tmux`. |
 
 `--step-scale` multiplies the per-step limits only: the shell wait, the startup wait, the reply
@@ -162,6 +162,20 @@ run was interrupted, 2 means preflight failed, and 3 means a step was skipped. S
 `TALARIA_LIVE_REQUIRE=1` turns a skip into a failure. A FAIL names the step and reason and
 includes a scrubbed pane capture; compare its text with the expected screen and check the
 gateway and profile preconditions before classifying the result.
+
+## Phase 4b suite
+
+Run `smoke run --suite phase4b` to check the capabilities and operations overlays,
+their input refusals, and the capabilities and no-gateway command-line output. The suite
+does not save configuration or perform write actions. It needs `jq` on `PATH`, a gateway
+at the pinned Hermes release, and the served `fixture` profile with its provider key. It
+uses provider `ollama-cloud` and model `minimax-m3.1-flash`; other values are refused in
+preflight. Its default deadline is 900 seconds.
+
+Exit 0 means every step passed, 1 means a step failed or the run was interrupted, and 2
+means preflight failed. This suite has no skips. A FAIL names the step and reason and
+includes a scrubbed pane capture; compare it with the expected screen and check the gateway
+and profile preconditions before classifying the result.
 
 ## Reading a failure
 

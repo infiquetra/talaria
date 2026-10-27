@@ -1,0 +1,4 @@
+# synthetic
+MCP servers · profile fixture
+ Servers  [Catalogue]
+ > deepwiki  TransportSpec(type='http')

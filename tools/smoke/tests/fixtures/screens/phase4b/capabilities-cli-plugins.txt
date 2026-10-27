@@ -1,0 +1,4 @@
+# synthetic
+{"profile":"fixture","plugins":[{"name":"fixture-alpha","status":"enabled","source":"bundled"}]}
+true
+exit=0

@@ -16,6 +16,8 @@ pub enum Suite {
     Phase3,
     /// The configuration screens suite.
     Phase4a,
+    /// The capabilities and operations screens suite.
+    Phase4b,
 }
 
 impl FromStr for Suite {
@@ -31,6 +33,7 @@ impl FromStr for Suite {
             "phase2b" => Ok(Suite::Phase2b),
             "phase3" => Ok(Suite::Phase3),
             "phase4a" => Ok(Suite::Phase4a),
+            "phase4b" => Ok(Suite::Phase4b),
             _ => Err(format!("unknown suite '{s}'; use phase1 or phase2a")),
         }
     }
@@ -46,6 +49,7 @@ impl Suite {
             Suite::Phase2b => 1500,
             Suite::Phase3 => 1200,
             Suite::Phase4a => 900,
+            Suite::Phase4b => 900,
         }
     }
 }

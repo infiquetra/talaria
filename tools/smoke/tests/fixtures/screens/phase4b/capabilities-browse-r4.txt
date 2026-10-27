@@ -1,0 +1,6 @@
+# synthetic
+Capabilities · profile fixture
+ Skills  Skill hub  Toolsets  [Plugins 0 installed]
+ > [x] fixture-alpha            1.0.0     bundled
+   [ ] fixture-beta             1.0.0     bundled
+Space on/off · / filter · Esc close

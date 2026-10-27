@@ -1,0 +1,45 @@
+# recorded
+Connectors and messaging · profile fixture
+Connectors   [Messaging]
+
+Connect through a signal-cli REST bridge.
+Docs: <url>
+On: no
+State: off
+Waiting to pair (0)
+Paired (0)
+> signal-cli HTTP URL (SIGNAL_HTTP_URL) · required: not set
+  Signal account number (SIGNAL_ACCOUNT) · required: not set
+  Allowed users (comma-separated) (SIGNAL_ALLOWED_USERS): 0 entries:
+  Allowed group IDs (SIGNAL_GROUP_ALLOWED_USERS): 0 entries:
+  Ignore stories? (true/false) (SIGNAL_IGNORE_STORIES): not set
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Enter edit field · Space on/off · D clear field · Ctrl+S review · T test · Shift+A advanced · Esc back · O help link

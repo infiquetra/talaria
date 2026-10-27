@@ -1755,6 +1755,108 @@ request. The gateway route exists but this release makes no claim through it.
 probe has shown per-session scoping holds — switching without scoping evidence would
 reintroduce the item-12 divergence as a feature.
 
+### Dedicated hook configuration screen (#217)
+
+**Priority.** P3 — hooks remain configurable through the schema-driven `/config` editor and
+`config.yaml`, while no dedicated hook editor was assigned in Phase 4b.
+
+**Evidence.** Phase 4b (#217) parity row "MCP servers, plugins, hooks, sandboxed terminal
+backends" had no child owner for a standalone hook screen; accepted as later work under
+Ruling D-7.
+
+**Worth it when.** Hermes exposes structured hook-management routes beyond raw `config.yaml`
+keys or operators need interactive hook validation inside Talaria.
+
+### Dedicated sandboxed terminal backend screen (#217)
+
+**Priority.** P3 — terminal backend selection (`terminal.backend` and container/SSH settings)
+is already editable in `/config`, and no separate backend wizard was owned in Phase 4b.
+
+**Evidence.** Phase 4b (#217) parity row "MCP servers, plugins, hooks, sandboxed terminal
+backends" left a dedicated backend screen unowned; accepted as later work under Ruling D-7.
+
+**Worth it when.** Hermes adds a backend health/provisioning API or `/config` proves
+insufficient for switching terminal backends.
+
+### Dedicated instruction-files editor (#217)
+
+**Priority.** P3 — workspace instruction files (`AGENTS.md`, `.hermes.md`) are edited as normal
+workspace files, and Phase 4b assigned no overlay for them.
+
+**Evidence.** Phase 4b (#217) parity row "Instruction files and memory" covered memory and
+the skill curator in #258 while leaving instruction-file management unowned; accepted as
+later work under Ruling D-7.
+
+**Worth it when.** Operators want an in-client viewer or template generator for instruction
+files across profiles and workspaces.
+
+### In-client device-code OAuth flow for MCP servers (#256)
+
+**Priority.** P3 — browser PKCE sign-in and manual callback paste relay cover remote OAuth
+servers in #256; device-code sign-in displays the CLI command hint instead.
+
+**Evidence.** #256 (`docs/handoff/2026-10-22-next-steps/units/P4-04.md`) shows the `hermes mcp`
+command when a server requires device-code authentication; accepted as later work under
+#217 Ruling D-7.
+
+**Worth it when.** Hermes exposes a non-interactive device-code polling method over the
+gateway socket or REST API.
+
+### Interactive `tools.configure` form inside `/capabilities` (#257)
+
+**Priority.** P3 — `/capabilities` toggles toolsets on and off via `PUT /api/toolsets/toggle`,
+while per-tool parameters remain in `/config`.
+
+**Evidence.** #257 (`docs/handoff/2026-10-22-next-steps/units/P4-05.md`) forbids calling
+`tools.configure` from the capabilities screen; accepted as later work under #217 Ruling D-7.
+
+**Worth it when.** Toolset-specific configuration schemas are served separately from the main
+`/api/config/schema` surface.
+
+### Per-tool enable and disable toggles on an MCP server (#256)
+
+**Priority.** P3 — `/mcp` displays each server's discovered tool list read-only and supports
+server-level enable/disable toggles.
+
+**Evidence.** #256 (`docs/handoff/2026-10-22-next-steps/units/P4-04.md`) and #217 Ruling D-2
+keep per-tool MCP server selection read-only in v0.7.0; accepted as later work under Ruling D-7.
+
+**Worth it when.** Hermes persists per-tool allow/deny lists per MCP server in profile
+configuration and exposes a write route for them.
+
+### Skill uninstall action in `/capabilities` (#257)
+
+**Priority.** P3 — `/capabilities` supports skill hub install and enable/disable toggles, while
+removing an installed skill directory requires the CLI cleanup command.
+
+**Evidence.** #257 (`docs/handoff/2026-10-22-next-steps/units/P4-05.md`) leaves skill uninstall
+out of the TUI overlay; accepted as later work under #217 Ruling D-7.
+
+**Worth it when.** Operators need to delete hub-installed skills from disk inside `/capabilities`
+rather than toggling them off.
+
+### In-place editing of an existing cron job in `/cron` (#259)
+
+**Priority.** P3 — `/cron` supports listing, adding, pausing, resuming, triggering, viewing
+history, and removing jobs; modifying a job's schedule or prompt uses remove and re-create.
+
+**Evidence.** #259 (`docs/handoff/2026-10-22-next-steps/units/P4-08.md`) specifies remove and
+re-create instead of an in-place edit form; accepted as later work under #217 Ruling D-7.
+
+**Worth it when.** Hermes's `cron.manage` or `/api/cron/jobs` contract supports atomic field
+updates on existing jobs without resetting run history.
+
+### OAuth sign-in flow for external memory providers in `/memory-settings` (#258)
+
+**Priority.** P3 — `/memory-settings` supports API-key and setting configuration for all
+bundled memory providers at Hermes v0.22.4, none of which uses OAuth sign-in.
+
+**Evidence.** #258 (`docs/handoff/2026-10-22-next-steps/units/P4-07.md`) notes that no bundled
+memory provider offers OAuth at v0.22.4; accepted as later work under #217 Ruling D-7.
+
+**Worth it when.** A bundled Hermes memory provider introduces an OAuth login contract on the
+gateway.
+
 ## Maybe
 
 ### ~~Package Talaria as an independently installable distribution~~ — CLOSED 2026-08-08

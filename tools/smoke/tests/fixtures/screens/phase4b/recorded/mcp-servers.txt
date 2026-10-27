@@ -1,0 +1,45 @@
+# recorded
+MCP servers · profile fixture                                                                                                                        [Servers]  Catalogue
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+type to filter
+No MCP servers in profile fixture yet. ctrl+n adds one; tab opens Hermes's catalogue.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+enter details · ctrl+t test · ctrl+e on/off · ctrl+k key · ctrl+o sign in · ctrl+d remove · ctrl+n add · ctrl+y apply

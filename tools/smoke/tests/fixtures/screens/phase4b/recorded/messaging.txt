@@ -1,0 +1,45 @@
+# recorded
+Connectors and messaging · profile fixture
+Connectors   [Messaging]
+
+>   Telegram · off
+    Discord · off
+    Slack · off
+    Mattermost · off
+    Matrix · off
+    WhatsApp · off
+    Signal · off
+    BlueBubbles (iMessage) · off
+    Email · off
+    SMS (Twilio) · off
+    DingTalk · off
+    Feishu / Lark · off
+    Google Chat · off
+    WeCom (group bot) · off
+    WeCom (app) · off
+    Weixin / WeChat (Personal) · off
+    QQ Bot · off
+    Yuanbao (元宝) · off
+    API server · connected
+    Webhooks · off
+    A2A · off
+    Buzz · off
+    iMessage via Photon · off
+    IRC · off
+    LINE · off
+    Microsoft Graph Webhook · off
+    Microsoft Teams · off
+    ntfy · off
+    Raft · off
+    Relay (experimental) · off
+    SimpleX Chat · off
+    WhatsApp Cloud API · off
+
+
+
+
+
+
+
+
+Tab connectors · Enter open · Space on/off · T test · / filter · Ctrl+R refresh · Esc close

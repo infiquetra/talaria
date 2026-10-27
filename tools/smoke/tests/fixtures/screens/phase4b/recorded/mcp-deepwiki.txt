@@ -1,0 +1,45 @@
+# recorded
+MCP servers · profile fixture                                                                                                                        Servers  [Catalogue]
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+filter: deepwiki
+› deepwiki                 remote  Ask questions about any public GitHub repo (Devin's DeepWiki).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+66 servers in Hermes's catalogue
+
+
+enter install · tab servers · ctrl+r reload · esc close

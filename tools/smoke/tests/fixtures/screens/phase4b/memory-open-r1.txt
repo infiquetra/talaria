@@ -1,0 +1,11 @@
+# synthetic
+Memory · profile fixture
+Built-in memory files for this profile; one provider plugin can add to it.
+MEMORY PROVIDER                                                  active: built-in only
+ > ● built-in only     Hermes's own MEMORY.md and USER.md           in use
+BUILT-IN MEMORY
+   Agent memory (MEMORY.md)     1.2 KB
+   User profile (USER.md)       empty
+SKILL CURATOR                                                     active
+   Last run or first check: none yet
+ctrl+r reload · esc close

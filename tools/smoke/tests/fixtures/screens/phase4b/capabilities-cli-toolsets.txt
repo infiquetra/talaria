@@ -1,0 +1,4 @@
+# synthetic
+{"profile":"fixture","toolsets":[{"name":"web","enabled":true,"tools":["search"]}]}
+true
+exit=0

@@ -1,0 +1,45 @@
+# recorded
+Connectors and messaging · profile fixture
+Connectors   [Messaging]
+
+>   Signal · off
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Tab connectors · Enter open · Space on/off · T test · / filter · Ctrl+R refresh · Esc close
