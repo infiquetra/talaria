@@ -368,6 +368,7 @@ async fn errors_are_classified() {
 
     // A dropped call is unknown, never refused and never silent.
     let (gateway, client, _inbound) = MockGateway::start().await;
+    gateway.set_silent("profiles.list", true);
     let (service, _home) = service_with(client);
     let service = Arc::new(service);
     let worker = tokio::spawn({

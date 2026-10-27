@@ -392,6 +392,7 @@ fn describe_after_selection_settles_and_is_cached() {
     let _ = machine.update(ProfilesInput::Refresh, 230);
     let mut parked_gateway = gateway();
     parked_gateway.served.retain(|name| name != "fixture-a");
+    parked_gateway.served.push("fixture-b".to_owned());
     parked_gateway
         .parked
         .push(("fixture-a".to_owned(), "reconcile moved it".to_owned()));
@@ -1053,6 +1054,10 @@ fn configure_description_and_soul() {
     let mut machine = state();
     let _ = machine.update(ProfilesInput::Open, 0);
     full_load(&mut machine, 0, 0);
+    let _ = machine.update(
+        ProfilesInput::Described(0, "default".to_owned(), Err(CallFailure::NotSent)),
+        1,
+    );
 
     // `e` on an undescribed row describes first, then opens the cleaned prefill.
     let effects = machine.update(ProfilesInput::Key(KeyAction::EditDescription), 10);
@@ -1193,6 +1198,17 @@ fn configure_description_and_soul() {
             section: Section::Soul,
             value: "base\nadded\n".to_owned(),
         }]
+    );
+    let _ = machine.update(
+        ProfilesInput::ConfigureAnswered(
+            "default".to_owned(),
+            Section::Soul,
+            Ok(Applied {
+                ok: true,
+                applied: true,
+            }),
+        ),
+        120,
     );
 
     // A changed base keeps the edit and says so; the next `s` reopens it.
@@ -1410,7 +1426,7 @@ fn configure_description_and_soul() {
             .any(|effect| matches!(effect, ProfilesEffect::OpenEditor(_)))
     );
     let _ = machine.update(ProfilesInput::EditorReturned(RawEdit::Unchanged), 370);
-    let _ = machine.update(ProfilesInput::Key(KeyAction::EditSoul), 380);
+    let effects = machine.update(ProfilesInput::Key(KeyAction::EditSoul), 380);
     let mut too_big = description("default");
     too_big.soul = "a".repeat(262_145);
     let generation = describe_gen(&effects, "default");

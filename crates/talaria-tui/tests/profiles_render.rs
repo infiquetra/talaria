@@ -600,7 +600,7 @@ fn hostile_text_cannot_break_the_screen() {
     view.rows[3].next_step = "end \u{202e} start".to_owned();
     view.rows[4].name_cell = "tab\there".to_owned();
     if let Panel::Detail(detail) = &mut view.panel {
-        detail.state_text = "line one\nline two\r\nline three".to_owned();
+        detail.state_text = "line one\nline two\r\nline three ⏊".to_owned();
         detail.lines = vec!["Soul: \x07 bell".to_owned()];
     }
     view.notice = Some("note \x1b]8;;http://example.invalid\x07 link".to_owned());
@@ -697,7 +697,8 @@ fn closing_restores_the_inline_view() {
     const COLS: u16 = 100;
     let (mut term, sink, mut vt) = open_terminal(COLS, ROWS);
     let sections = live_view_sections(2);
-    term.draw_live(&view_of(&sections)).expect("live");
+    let original_view = view_of(&sections);
+    term.draw_live(&original_view).expect("live");
     vt.absorb(&sink);
     let before = vt.rows();
 
@@ -715,6 +716,7 @@ fn closing_restores_the_inline_view() {
     assert_ne!(vt.rows(), before, "the overlay covers the live view");
 
     term.close_overlay().expect("close");
+    term.draw_live(&original_view).expect("repaint inline view");
     vt.absorb(&sink);
     assert!(!vt.alternate());
     assert_eq!(vt.rows(), before, "closing restores every row");

@@ -32,7 +32,8 @@ fn paint(
     cursor: Option<(u16, u16)>,
 ) -> impl FnOnce(Rect, &mut Buffer) -> Option<(u16, u16)> + '_ {
     move |area, buf| {
-        ratatui::widgets::Widget::render(Paragraph::new(text), area, buf);
+        let row = Rect::new(area.x, area.y + cursor.map_or(0, |(_, y)| y), area.width, 1);
+        ratatui::widgets::Widget::render(Paragraph::new(text), row, buf);
         cursor
     }
 }
