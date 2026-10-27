@@ -1,0 +1,3 @@
+```talaria-configure
+{"kind":"proposal","profile":"default","summary":"Enable the bell","changes":[{"op":"set","key":"display.bell_on_complete","value":true}]}
+```

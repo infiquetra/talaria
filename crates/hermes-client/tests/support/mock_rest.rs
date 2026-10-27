@@ -144,6 +144,7 @@ struct State {
     external: Option<ExternalWrite>,
     own_profile: Option<String>,
     drive_paused_clock: bool,
+    allow_toolsets_profile: bool,
 }
 pub struct MockRest {
     address: std::net::SocketAddr,
@@ -176,6 +177,7 @@ impl MockRest {
             external: None,
             own_profile: None,
             drive_paused_clock: false,
+            allow_toolsets_profile: false,
         }));
         let served = state.clone();
         let task = tokio::spawn(async move {
@@ -212,6 +214,10 @@ impl MockRest {
             skills: capability_fixture("rest/skills.json"),
             toolsets: capability_fixture("rest/toolsets.json"),
         });
+        self
+    }
+    pub fn allow_toolsets_profile(self) -> Self {
+        self.state.lock().unwrap().allow_toolsets_profile = true;
         self
     }
     pub async fn requests(&self) -> Vec<RecordedRequest> {
@@ -462,7 +468,7 @@ fn respond(
         || path.starts_with("/api/actions/"))
         && matching_route.is_some();
     let cron_route = path.starts_with("/api/cron/");
-    if has_profile && !allowed_profile && !registered_profile_route && !cron_route {
+    if has_profile && !allowed_profile && !registered_profile_route && !cron_route && !path.starts_with("/api/skills") && !(state.allow_toolsets_profile && request.path == "/api/tools/toolsets?profile=fixture") {
         return json_reply(403, json!({"detail":"profile_scope_mismatch"}));
     }
     if let Some((status, detail)) = &switch.failure {

@@ -47,6 +47,7 @@ pub mod workspace;
 pub mod worktree;
 
 pub mod memory;
+pub mod configure;
 pub mod settings;
 
 pub mod doctor;

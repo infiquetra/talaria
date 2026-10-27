@@ -32,6 +32,9 @@ fn main() -> ExitCode {
             }
         };
     }
+    if talaria_cli::configure_cmd::is_command(&args) {
+        return talaria_cli::configure_cmd::run(&args);
+    }
     if talaria_cli::args::is_attach_command(&args) {
         return talaria_cli::attach_cmd::run(&args);
     }

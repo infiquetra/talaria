@@ -5,6 +5,7 @@ pub mod bg;
 pub mod capabilities_cmd;
 pub mod connectors_wiring;
 pub mod doctor_cmd;
+pub mod configure_cmd;
 pub mod fleet_cmd;
 pub mod mcp_wiring;
 pub mod picker;

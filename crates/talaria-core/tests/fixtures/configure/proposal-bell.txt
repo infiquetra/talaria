@@ -1,0 +1,4 @@
+I can turn on the completion bell.
+```talaria-configure
+{"kind":"proposal","summary":"Enable the bell","changes":[{"op":"set","key":"display.bell_on_complete","value":true}]}
+```

@@ -267,6 +267,8 @@ pub enum KeyContext {
     Cron,
     /// The connectors and messaging overlay.
     Connectors,
+    /// The configuration assistant overlay.
+    Configure,
 }
 
 /// Translate a doctor binding into the domain action.
