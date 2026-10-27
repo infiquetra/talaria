@@ -33,10 +33,7 @@ fn client(origin: &str, minter: Arc<CountingMinter>, get_deadline: Duration) -> 
 
 fn save(url: &str) -> PlatformUpdate {
     let mut env = BTreeMap::new();
-    env.insert(
-        "SIGNAL_HTTP_URL".into(),
-        Zeroizing::new(url.to_owned()),
-    );
+    env.insert("SIGNAL_HTTP_URL".into(), Zeroizing::new(url.to_owned()));
     PlatformUpdate {
         enabled: None,
         env,
@@ -64,9 +61,14 @@ async fn request_shapes() {
         "another profile is refused"
     );
 
-    let saved = update_platform(&rest, "fixture", "signal", &save("https://example.invalid/bridge"))
-        .await
-        .expect("save");
+    let saved = update_platform(
+        &rest,
+        "fixture",
+        "signal",
+        &save("https://example.invalid/bridge"),
+    )
+    .await
+    .expect("save");
     assert!(!saved.hot_served);
     let switched = update_platform(
         &rest,
@@ -82,7 +84,9 @@ async fn request_shapes() {
     .expect("switch");
     assert!(switched.ok);
 
-    let _tested = test_platform(&rest, "fixture", "signal").await.expect("test");
+    let _tested = test_platform(&rest, "fixture", "signal")
+        .await
+        .expect("test");
     let _pairing = list_pairing(&rest, "fixture").await.expect("pairing");
     let _approved = approve_pairing(&rest, "fixture", "telegram", "req-test-1")
         .await
@@ -92,8 +96,15 @@ async fn request_shapes() {
         .expect("revoke");
 
     let requests = server.requests().await;
-    assert_eq!(minter.count(), requests.len(), "one fresh ticket per request");
-    let paths: Vec<&str> = requests.iter().map(|request| request.path.as_str()).collect();
+    assert_eq!(
+        minter.count(),
+        requests.len(),
+        "one fresh ticket per request"
+    );
+    let paths: Vec<&str> = requests
+        .iter()
+        .map(|request| request.path.as_str())
+        .collect();
     assert!(paths.iter().any(|path| path.contains("profile=fixture%20")));
     assert!(paths.contains(&"/api/messaging/platforms?profile=fixture"));
     assert!(paths.contains(&"/api/messaging/platforms/signal?profile=fixture"));
@@ -184,21 +195,40 @@ async fn replies_and_failures() {
     assert!(matches!(missing, Err(RestError::NotFound { .. })));
 
     server
-        .fail_status("PUT", "/api/messaging/platforms/signal?profile=fixture", 409, Some("conflict"))
+        .fail_status(
+            "PUT",
+            "/api/messaging/platforms/signal?profile=fixture",
+            409,
+            Some("conflict"),
+        )
         .await;
-    let conflict = update_platform(&rest, "fixture", "signal", &save("https://example.invalid/x"))
-        .await;
-    assert!(matches!(conflict, Err(RestError::Refused { status: 409, .. })));
+    let conflict = update_platform(
+        &rest,
+        "fixture",
+        "signal",
+        &save("https://example.invalid/x"),
+    )
+    .await;
+    assert!(matches!(
+        conflict,
+        Err(RestError::Refused { status: 409, .. })
+    ));
 
     server
         .fail_status("POST", "/api/pairing/approve", 429, Some("slow down"))
         .await;
     let limited = approve_pairing(&rest, "fixture", "telegram", "req-test-1").await;
-    assert!(matches!(limited, Err(RestError::Refused { status: 429, .. })));
+    assert!(matches!(
+        limited,
+        Err(RestError::Refused { status: 429, .. })
+    ));
 
     server.fail_status("GET", platforms, 500, None).await;
     let server_error = list_platforms(&rest, "fixture").await;
-    assert!(matches!(server_error, Err(RestError::Server { status: 500 })));
+    assert!(matches!(
+        server_error,
+        Err(RestError::Server { status: 500 })
+    ));
 
     let slow = MockRest::start()
         .await

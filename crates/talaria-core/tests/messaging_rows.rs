@@ -50,6 +50,55 @@ fn platform(state: Option<&str>, error: Option<&str>) -> PlatformRow {
 }
 
 #[test]
+fn filtered_platform_opens_with_one_enter_and_unwinds_with_three_escapes() {
+    let clock = Instant::now();
+    let mut state = ready(clock);
+    let _ = update(
+        &mut state,
+        ConnectorsInput::PlatformsReply(Ok(common::platforms().platforms)),
+        clock,
+    );
+    let _ = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Filter),
+        clock,
+    );
+    let _ = update(&mut state, ConnectorsInput::Paste("signal".into()), clock);
+    let _ = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Open), clock);
+    assert!(matches!(
+        view(&state, clock).screen,
+        Screen::PlatformCard { fields, .. }
+            if fields.iter().any(|field| field.key == "SIGNAL_HTTP_URL")
+    ));
+    let _ = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Close),
+        clock,
+    );
+    assert!(matches!(
+        view(&state, clock).screen,
+        Screen::PlatformList { rows, .. } if rows.len() == 1
+    ));
+    let _ = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Close),
+        clock,
+    );
+    assert!(matches!(
+        view(&state, clock).screen,
+        Screen::PlatformList { rows, .. } if rows.len() > 1
+    ));
+    assert!(
+        update(
+            &mut state,
+            ConnectorsInput::Key(ConnectorsKey::Close),
+            clock
+        )
+        .contains(&ConnectorsEffect::Close)
+    );
+}
+
+#[test]
 fn platform_label_table() {
     let cases = [
         (Some("connected"), None, "connected"),
@@ -76,15 +125,29 @@ fn platform_label_table() {
     let mut overlay = ready(clock);
     let mut rows = common::platforms();
     rows.platforms.push(platform(Some("pending_restart"), None));
-    let _ = update(&mut overlay, ConnectorsInput::PlatformsReply(Ok(rows.platforms)), clock);
-    let _ = update(&mut overlay, ConnectorsInput::PairingReply(Ok(common::pairing())), clock);
-    let Screen::PlatformList { rows, restart_line, .. } = view(&overlay, clock).screen else {
+    let _ = update(
+        &mut overlay,
+        ConnectorsInput::PlatformsReply(Ok(rows.platforms)),
+        clock,
+    );
+    let _ = update(
+        &mut overlay,
+        ConnectorsInput::PairingReply(Ok(common::pairing())),
+        clock,
+    );
+    let Screen::PlatformList {
+        rows, restart_line, ..
+    } = view(&overlay, clock).screen
+    else {
         panic!("list");
     };
     assert!(rows.iter().any(|row| row.state.contains("waiting to pair")));
     assert!(restart_line);
     let shown = format!("{rows:?}");
-    assert!(shown.contains("Some changes wait for a gateway restart. R opens the doctor.") || restart_line);
+    assert!(
+        shown.contains("Some changes wait for a gateway restart. R opens the doctor.")
+            || restart_line
+    );
 }
 
 #[test]
@@ -92,24 +155,41 @@ fn card_never_shows_values() {
     let clock = Instant::now();
     let mut state = ready(clock);
     let loaded = common::platforms();
-    let _ = update(&mut state, ConnectorsInput::PlatformsReply(Ok(loaded.platforms)), clock);
+    let _ = update(
+        &mut state,
+        ConnectorsInput::PlatformsReply(Ok(loaded.platforms)),
+        clock,
+    );
     let _ = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Open), clock);
     let Screen::PlatformCard { fields, lines, .. } = view(&state, clock).screen else {
         panic!("card");
     };
-    let secret = fields.iter().find(|field| field.key == "SIGNAL_HTTP_URL").expect("field");
+    let secret = fields
+        .iter()
+        .find(|field| field.key == "SIGNAL_HTTP_URL")
+        .expect("field");
     assert!(matches!(secret.value, FieldValue::Set | FieldValue::NotSet));
     let painted = format!("{fields:?}{lines:?}");
     assert!(!painted.contains("should-not-show"));
     assert!(!painted.contains("redacted_value"));
     assert!(!painted.contains("env_path"));
-    let list = fields.iter().find(|field| field.key == "TELEGRAM_ALLOWED_USERS");
+    let list = fields
+        .iter()
+        .find(|field| field.key == "TELEGRAM_ALLOWED_USERS");
     if let Some(field) = list {
         assert!(matches!(field.value, FieldValue::List(_)));
     }
-    let _ = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Advanced), clock);
+    let _ = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Advanced),
+        clock,
+    );
     let shown = format!("{:?}", view(&state, clock));
-    assert!(shown.contains("more fields") || shown.contains("advanced") || shown.contains("SIGNAL_HTTP_URL"));
+    assert!(
+        shown.contains("more fields")
+            || shown.contains("advanced")
+            || shown.contains("SIGNAL_HTTP_URL")
+    );
 }
 
 #[test]
@@ -121,10 +201,25 @@ fn toggle_confirm_and_texts() {
         ConnectorsInput::PlatformsReply(Ok(common::platforms().platforms)),
         clock,
     );
-    let effects = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Toggle), clock);
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Toggle),
+        clock,
+    );
     assert!(effects.is_empty());
-    let effects = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Confirm), clock);
-    let ConnectorsEffect::UpdatePlatform { enabled, typed_keys, lists, clear_env, .. } = &effects[0] else {
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Confirm),
+        clock,
+    );
+    let ConnectorsEffect::UpdatePlatform {
+        enabled,
+        typed_keys,
+        lists,
+        clear_env,
+        ..
+    } = &effects[0]
+    else {
         panic!("toggle");
     };
     assert!(enabled.is_some());
@@ -152,23 +247,43 @@ fn toggle_confirm_and_texts() {
         },
         clock,
     );
-    assert!(view(&hot, clock).notice.expect("hot").text.contains("The running gateway is connecting"));
+    assert!(
+        view(&hot, clock)
+            .notice
+            .expect("hot")
+            .text
+            .contains("The running gateway is connecting")
+    );
 
     let mut conflict = ready(clock);
     let _ = update(
         &mut conflict,
         ConnectorsInput::UpdateReply {
             id: "signal".into(),
-            reply: Err(ConnectorsFailure::Http { status: 409, detail: Some("multiplex".into()) }),
+            reply: Err(ConnectorsFailure::Http {
+                status: 409,
+                detail: Some("multiplex".into()),
+            }),
         },
         clock,
     );
-    assert_eq!(view(&conflict, clock).notice.expect("409").text, "multiplex");
+    assert_eq!(
+        view(&conflict, clock).notice.expect("409").text,
+        "multiplex"
+    );
 
     let mut doctor = ready(clock);
     let mut platforms = common::platforms();
     platforms.platforms[0].state = Some("pending_restart".into());
-    let _ = update(&mut doctor, ConnectorsInput::PlatformsReply(Ok(platforms.platforms)), clock);
-    let effects = update(&mut doctor, ConnectorsInput::Key(ConnectorsKey::Doctor), clock);
+    let _ = update(
+        &mut doctor,
+        ConnectorsInput::PlatformsReply(Ok(platforms.platforms)),
+        clock,
+    );
+    let effects = update(
+        &mut doctor,
+        ConnectorsInput::Key(ConnectorsKey::Doctor),
+        clock,
+    );
     assert_eq!(effects, vec![ConnectorsEffect::OpenDoctor]);
 }

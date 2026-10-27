@@ -8,9 +8,9 @@ mod common;
 use std::time::Instant;
 
 use talaria_core::connectors::{
-    AccountRow, CatalogRow, ConnectorsEffect, ConnectorsFailure, ConnectorsInput, ConnectorsKey,
-    ConnectorsOpen, ConnectorsState, ConnectorsTab, ConnectorRow, ListReply, Screen, connector_label,
-    update, view,
+    AccountRow, CatalogRow, ConnectorRow, ConnectorsEffect, ConnectorsFailure, ConnectorsInput,
+    ConnectorsKey, ConnectorsOpen, ConnectorsState, ConnectorsTab, ListReply, Screen,
+    connector_label, update, view,
 };
 
 fn now() -> Instant {
@@ -133,7 +133,10 @@ fn connector_label_precedence() {
     assert_eq!(connector_label(&off, &[]), "off");
 
     let one = account("active", false);
-    assert_eq!(connector_label(&row("github"), &[one.clone()]), "connected · 1 account");
+    assert_eq!(
+        connector_label(&row("github"), std::slice::from_ref(&one)),
+        "connected · 1 account"
+    );
     let mut second = one.clone();
     second.connection_id = "conn-test-2".into();
     assert_eq!(
@@ -152,7 +155,10 @@ fn connector_label_precedence() {
     for status in ["failed", "expired", "revoked", "inactive"] {
         let mut repair = row("github");
         repair.connection_status = Some(status.into());
-        assert_eq!(connector_label(&repair, &[]), format!("needs repair ({status})"));
+        assert_eq!(
+            connector_label(&repair, &[]),
+            format!("needs repair ({status})")
+        );
     }
 
     let mut offered = row("github");
@@ -162,18 +168,17 @@ fn connector_label_precedence() {
 
     let mut ignored = account("failed", false);
     ignored.active = true;
-    assert_ne!(connector_label(&row("github"), &[ignored]), "connected · 1 account");
+    assert_ne!(
+        connector_label(&row("github"), &[ignored]),
+        "connected · 1 account"
+    );
 }
 
 #[test]
 fn unavailable_and_gate_refusals() {
     let mut state = ConnectorsState::new();
     let clock = now();
-    let _ = update(
-        &mut state,
-        open(true, ConnectorsTab::Connectors),
-        clock,
-    );
+    let _ = update(&mut state, open(true, ConnectorsTab::Connectors), clock);
     let _ = update(
         &mut state,
         ConnectorsInput::ListReply(Ok(ListReply {
@@ -191,11 +196,31 @@ fn unavailable_and_gate_refusals() {
     assert_eq!(command.as_deref(), Some("hermes -p fixture auth upgrade"));
 
     let cases = [
-        (4031, Some("CONNECTORS_UNAVAILABLE"), "Connectors are not available for profile fixture."),
-        (4032, Some("NEEDS_NOUS_AUTH"), "Sign in to use connectors: hermes -p fixture auth upgrade"),
-        (4030, Some("ORG_ACCESS_DENIED"), "This account cannot manage connectors for this organization."),
-        (5034, Some("CONNECTORS_UNAVAILABLE"), "Hermes could not reach the connector service:"),
-        (-32601, None, "This Hermes does not offer connectors.list. Check the version with /doctor."),
+        (
+            4031,
+            Some("CONNECTORS_UNAVAILABLE"),
+            "Connectors are not available for profile fixture.",
+        ),
+        (
+            4032,
+            Some("NEEDS_NOUS_AUTH"),
+            "Sign in to use connectors: hermes -p fixture auth upgrade",
+        ),
+        (
+            4030,
+            Some("ORG_ACCESS_DENIED"),
+            "This account cannot manage connectors for this organization.",
+        ),
+        (
+            5034,
+            Some("CONNECTORS_UNAVAILABLE"),
+            "Hermes could not reach the connector service:",
+        ),
+        (
+            -32601,
+            None,
+            "This Hermes does not offer connectors.list. Check the version with /doctor.",
+        ),
     ];
     for (code, reason, expect) in cases {
         let mut refused = ConnectorsState::new();
@@ -227,9 +252,18 @@ fn consent_gates_every_call() {
     };
     assert!(text.contains("Hermes creates a free guest identity for it when you continue."));
     assert!(text.contains("fixture"));
-    assert!(consent.footer.iter().any(|(key, label)| key == "enter" && label.contains("continue")));
+    assert!(
+        consent
+            .footer
+            .iter()
+            .any(|(key, label)| key == "enter" && label.contains("continue"))
+    );
 
-    let effects = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Close), clock);
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Close),
+        clock,
+    );
     assert_eq!(effects, vec![ConnectorsEffect::Close]);
 
     let mut again = ConnectorsState::new();
@@ -237,32 +271,56 @@ fn consent_gates_every_call() {
     let effects = update(&mut again, ConnectorsInput::Key(ConnectorsKey::Open), clock);
     assert_eq!(
         effects,
-        vec![ConnectorsEffect::GrantConsent, ConnectorsEffect::ListConnectors]
+        vec![
+            ConnectorsEffect::GrantConsent,
+            ConnectorsEffect::ListConnectors
+        ]
     );
 
     let mut consented = ConnectorsState::new();
     let effects = update(&mut consented, open(true, ConnectorsTab::Connectors), clock);
     assert_eq!(effects, vec![ConnectorsEffect::ListConnectors]);
-    assert!(!matches!(view(&consented, clock).screen, Screen::Consent { .. }));
+    assert!(!matches!(
+        view(&consented, clock).screen,
+        Screen::Consent { .. }
+    ));
 
     let mut messaging = ConnectorsState::new();
     let effects = update(&mut messaging, open(true, ConnectorsTab::Messaging), clock);
     assert_eq!(
         effects,
-        vec![ConnectorsEffect::LoadPlatforms, ConnectorsEffect::LoadPairing]
+        vec![
+            ConnectorsEffect::LoadPlatforms,
+            ConnectorsEffect::LoadPairing
+        ]
     );
-    let effects = update(&mut messaging, ConnectorsInput::Key(ConnectorsKey::NextTab), clock);
+    let effects = update(
+        &mut messaging,
+        ConnectorsInput::Key(ConnectorsKey::NextTab),
+        clock,
+    );
     assert_eq!(effects, vec![ConnectorsEffect::ListConnectors]);
     let _ = update(
         &mut messaging,
         ConnectorsInput::ListReply(Ok(common::list_reply())),
         clock,
     );
-    let effects = update(&mut messaging, ConnectorsInput::Key(ConnectorsKey::PrevTab), clock);
+    let effects = update(
+        &mut messaging,
+        ConnectorsInput::Key(ConnectorsKey::PrevTab),
+        clock,
+    );
     assert_eq!(
         effects,
-        vec![ConnectorsEffect::LoadPlatforms, ConnectorsEffect::LoadPairing]
+        vec![
+            ConnectorsEffect::LoadPlatforms,
+            ConnectorsEffect::LoadPairing
+        ]
     );
-    let effects = update(&mut messaging, ConnectorsInput::Key(ConnectorsKey::NextTab), clock);
+    let effects = update(
+        &mut messaging,
+        ConnectorsInput::Key(ConnectorsKey::NextTab),
+        clock,
+    );
     assert!(effects.is_empty(), "connectors already loaded");
 }

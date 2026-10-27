@@ -32,9 +32,27 @@ fn connect(state: &mut ConnectorsState, clock: Instant) {
         common::open_consented(ConnectorsTab::Connectors),
         clock,
     );
+    let _ = update(
+        state,
+        ConnectorsInput::ListReply(Ok(common::list_reply())),
+        clock,
+    );
+    let _ = update(
+        state,
+        ConnectorsInput::CatalogReply(Ok(common::catalog_reply().connectors)),
+        clock,
+    );
+    let _ = update(state, ConnectorsInput::Key(ConnectorsKey::Open), clock);
     let _ = update(state, ConnectorsInput::Key(ConnectorsKey::Add), clock);
     let _ = update(state, ConnectorsInput::Paste("work".into()), clock);
-    let _ = update(state, ConnectorsInput::Key(ConnectorsKey::Open), clock);
+    let effects = update(state, ConnectorsInput::Key(ConnectorsKey::Open), clock);
+    assert_eq!(
+        effects,
+        vec![ConnectorsEffect::Connect {
+            slug: "github".into(),
+            address: AccountAddress::Alias("work".into()),
+        }]
+    );
 }
 
 #[test]
@@ -53,36 +71,84 @@ fn connect_then_poll_until_connected() {
         ))),
         clock,
     );
-    assert!(!effects.iter().any(|effect| matches!(effect, ConnectorsEffect::PollOperation { .. })));
-    assert!(effects.iter().all(|effect| !matches!(effect, ConnectorsEffect::Connect { .. })));
-    let effects = update(&mut state, ConnectorsInput::Tick, clock + Duration::from_secs(2));
-    assert_eq!(effects, vec![ConnectorsEffect::PollOperation { op_id: "op-test-1".into() }]);
-    let effects = update(&mut state, ConnectorsInput::Tick, clock + Duration::from_secs(4));
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, ConnectorsEffect::PollOperation { .. }))
+    );
+    assert!(
+        effects
+            .iter()
+            .all(|effect| !matches!(effect, ConnectorsEffect::Connect { .. }))
+    );
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Tick,
+        clock + Duration::from_secs(2),
+    );
+    assert_eq!(
+        effects,
+        vec![ConnectorsEffect::PollOperation {
+            op_id: "op-test-1".into()
+        }]
+    );
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Tick,
+        clock + Duration::from_secs(4),
+    );
     assert!(effects.is_empty());
     let replied = clock + Duration::from_secs(5);
     let _ = update(
         &mut state,
         ConnectorsInput::OperationReply {
             op_id: "op-test-1".into(),
-            reply: Ok(operation("initiated", false, None, clock + Duration::from_secs(300))),
+            reply: Ok(operation(
+                "initiated",
+                false,
+                None,
+                clock + Duration::from_secs(300),
+            )),
         },
         replied,
     );
-    let effects = update(&mut state, ConnectorsInput::Tick, replied + Duration::from_secs(2));
-    assert_eq!(effects, vec![ConnectorsEffect::PollOperation { op_id: "op-test-1".into() }]);
-    let _ = update(
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Tick,
+        replied + Duration::from_secs(2),
+    );
+    assert_eq!(
+        effects,
+        vec![ConnectorsEffect::PollOperation {
+            op_id: "op-test-1".into()
+        }]
+    );
+    let effects = update(
         &mut state,
         ConnectorsInput::OperationReply {
             op_id: "op-test-1".into(),
-            reply: Ok(operation("connected", false, None, clock + Duration::from_secs(300))),
+            reply: Ok(operation(
+                "connected",
+                false,
+                None,
+                clock + Duration::from_secs(300),
+            )),
         },
         replied,
     );
     let notice = view(&state, replied).notice.expect("connected").text;
     assert_eq!(notice, "GitHub account work is connected.");
-    let effects = update(&mut state, ConnectorsInput::Tick, replied);
-    assert!(effects.iter().any(|effect| matches!(effect, ConnectorsEffect::LoadAccounts)));
-    assert!(effects.iter().any(|effect| matches!(effect, ConnectorsEffect::ListConnectors)));
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, ConnectorsEffect::LoadAccounts))
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, ConnectorsEffect::ListConnectors))
+    );
+    assert!(update(&mut state, ConnectorsInput::Tick, replied).is_empty());
 }
 
 #[test]
@@ -92,10 +158,18 @@ fn settled_at_once_and_failure_states() {
     connect(&mut settled, clock);
     let _ = update(
         &mut settled,
-        ConnectorsInput::ConnectReply(Ok(operation("initiated", true, None, clock + Duration::from_secs(30)))),
+        ConnectorsInput::ConnectReply(Ok(operation(
+            "initiated",
+            true,
+            None,
+            clock + Duration::from_secs(30),
+        ))),
         clock,
     );
-    assert!(!matches!(view(&settled, clock).screen, Screen::LinkCard { .. }));
+    assert!(!matches!(
+        view(&settled, clock).screen,
+        Screen::LinkCard { .. }
+    ));
     assert_eq!(
         view(&settled, clock).notice.expect("settled").text,
         "GitHub did not connect. Try again."
@@ -106,14 +180,22 @@ fn settled_at_once_and_failure_states() {
     let mut op = operation("failed", false, None, clock + Duration::from_secs(30));
     op.targets[0].detail = Some("the host refused".into());
     let _ = update(&mut failed, ConnectorsInput::ConnectReply(Ok(op)), clock);
-    assert_eq!(view(&failed, clock).notice.expect("detail").text, "the host refused");
+    assert_eq!(
+        view(&failed, clock).notice.expect("detail").text,
+        "the host refused"
+    );
 
     for state_name in ["not_connected", "expired", "skipped"] {
         let mut state = ConnectorsState::new();
         connect(&mut state, clock);
         let _ = update(
             &mut state,
-            ConnectorsInput::ConnectReply(Ok(operation(state_name, false, None, clock + Duration::from_secs(30)))),
+            ConnectorsInput::ConnectReply(Ok(operation(
+                state_name,
+                false,
+                None,
+                clock + Duration::from_secs(30),
+            ))),
             clock,
         );
         assert_eq!(
@@ -134,7 +216,10 @@ fn settled_at_once_and_failure_states() {
         })),
         clock,
     );
-    assert!(matches!(view(&empty, clock).screen, Screen::LinkCard { starting: true, .. }));
+    assert!(matches!(
+        view(&empty, clock).screen,
+        Screen::LinkCard { starting: true, .. }
+    ));
 
     let mut still = ConnectorsState::new();
     connect(&mut still, clock);
@@ -176,8 +261,17 @@ fn poll_errors_retry_or_end() {
         },
         clock,
     );
-    let effects = update(&mut state, ConnectorsInput::Tick, clock + Duration::from_secs(2));
-    assert_eq!(effects, vec![ConnectorsEffect::PollOperation { op_id: "op-test-1".into() }]);
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Tick,
+        clock + Duration::from_secs(2),
+    );
+    assert_eq!(
+        effects,
+        vec![ConnectorsEffect::PollOperation {
+            op_id: "op-test-1".into()
+        }]
+    );
 
     let _ = update(
         &mut state,
@@ -191,8 +285,17 @@ fn poll_errors_retry_or_end() {
         },
         clock,
     );
-    let effects = update(&mut state, ConnectorsInput::Tick, clock + Duration::from_secs(4));
-    assert_eq!(effects, vec![ConnectorsEffect::PollOperation { op_id: "op-test-1".into() }]);
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Tick,
+        clock + Duration::from_secs(4),
+    );
+    assert_eq!(
+        effects,
+        vec![ConnectorsEffect::PollOperation {
+            op_id: "op-test-1".into()
+        }]
+    );
 
     let _ = update(
         &mut state,
@@ -212,7 +315,12 @@ fn poll_errors_retry_or_end() {
     connect(&mut text, clock);
     let _ = update(
         &mut text,
-        ConnectorsInput::ConnectReply(Ok(operation("initiated", false, None, clock + Duration::from_secs(30)))),
+        ConnectorsInput::ConnectReply(Ok(operation(
+            "initiated",
+            false,
+            None,
+            clock + Duration::from_secs(30),
+        ))),
         clock,
     );
     let _ = update(
@@ -227,7 +335,13 @@ fn poll_errors_retry_or_end() {
         },
         clock,
     );
-    assert!(view(&text, clock).notice.expect("4032").text.contains("hermes -p fixture auth upgrade"));
+    assert!(
+        view(&text, clock)
+            .notice
+            .expect("4032")
+            .text
+            .contains("hermes -p fixture auth upgrade")
+    );
 }
 
 #[test]
@@ -240,9 +354,21 @@ fn deadline_and_escape() {
         ConnectorsInput::ConnectReply(Ok(operation("initiated", false, None, clock))),
         clock,
     );
-    let _ = update(&mut state, ConnectorsInput::Tick, clock + Duration::from_secs(2));
-    let effects = update(&mut state, ConnectorsInput::Tick, clock + Duration::from_secs(3));
-    assert!(effects.iter().all(|effect| !matches!(effect, ConnectorsEffect::PollOperation { .. })));
+    let _ = update(
+        &mut state,
+        ConnectorsInput::Tick,
+        clock + Duration::from_secs(2),
+    );
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Tick,
+        clock + Duration::from_secs(3),
+    );
+    assert!(
+        effects
+            .iter()
+            .all(|effect| !matches!(effect, ConnectorsEffect::PollOperation { .. }))
+    );
     assert_eq!(
         view(&state, clock).notice.expect("deadline").text,
         "Stopped waiting: the link expired. The list shows where the account stands."
@@ -260,7 +386,11 @@ fn deadline_and_escape() {
         ))),
         clock,
     );
-    let effects = update(&mut escape, ConnectorsInput::Key(ConnectorsKey::Close), clock);
+    let effects = update(
+        &mut escape,
+        ConnectorsInput::Key(ConnectorsKey::Close),
+        clock,
+    );
     assert!(effects.iter().all(|effect| !matches!(
         effect,
         ConnectorsEffect::PollOperation { .. } | ConnectorsEffect::WakeOperation { .. }
@@ -274,7 +404,8 @@ fn deadline_and_escape() {
 #[test]
 fn open_copy_wake_and_events() {
     common::scrub(common::fixture("connection-update"));
-    let raw: serde_json::Value = serde_json::from_str(common::fixture("connection-update")).expect("event");
+    let raw: serde_json::Value =
+        serde_json::from_str(common::fixture("connection-update")).expect("event");
     assert!(raw.get("connect_url").is_none());
     assert!(raw["targets"][0].get("connect_url").is_none());
     assert!(raw["targets"][0].get("connection_id").is_none());
@@ -292,10 +423,28 @@ fn open_copy_wake_and_events() {
         ))),
         clock,
     );
-    let effects = update(&mut state, ConnectorsInput::Key(ConnectorsKey::OpenLink), clock);
-    assert_eq!(effects, vec![ConnectorsEffect::OpenUrl("https://example.invalid/connect/test".into())]);
-    let effects = update(&mut state, ConnectorsInput::Key(ConnectorsKey::ReconnectOrCopy), clock);
-    assert_eq!(effects, vec![ConnectorsEffect::CopyText("https://example.invalid/connect/test".into())]);
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::OpenLink),
+        clock,
+    );
+    assert_eq!(
+        effects,
+        vec![ConnectorsEffect::OpenUrl(
+            "https://example.invalid/connect/test".into()
+        )]
+    );
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::ReconnectOrCopy),
+        clock,
+    );
+    assert_eq!(
+        effects,
+        vec![ConnectorsEffect::CopyText(
+            "https://example.invalid/connect/test".into()
+        )]
+    );
     assert_eq!(format!("{:?}", effects[0]), "CopyText([link])");
 
     let mut plain = ConnectorsState::new();
@@ -310,7 +459,11 @@ fn open_copy_wake_and_events() {
         ))),
         clock,
     );
-    let effects = update(&mut plain, ConnectorsInput::Key(ConnectorsKey::OpenLink), clock);
+    let effects = update(
+        &mut plain,
+        ConnectorsInput::Key(ConnectorsKey::OpenLink),
+        clock,
+    );
     assert!(effects.is_empty());
     assert_eq!(
         view(&plain, clock).notice.expect("scheme").text,
@@ -318,14 +471,26 @@ fn open_copy_wake_and_events() {
     );
 
     let effects = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Wake), clock);
-    assert_eq!(effects, vec![ConnectorsEffect::WakeOperation { op_id: "op-test-1".into() }]);
-    let _ = update(&mut state, ConnectorsInput::WakeReply(Ok(())), clock);
-    let effects = update(&mut state, ConnectorsInput::Tick, clock);
-    assert!(effects.iter().any(|effect| matches!(effect, ConnectorsEffect::PollOperation { .. })));
+    assert_eq!(
+        effects,
+        vec![ConnectorsEffect::WakeOperation {
+            op_id: "op-test-1".into()
+        }]
+    );
+    let effects = update(&mut state, ConnectorsInput::WakeReply(Ok(())), clock);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, ConnectorsEffect::PollOperation { .. }))
+    );
+    assert!(update(&mut state, ConnectorsInput::Tick, clock).is_empty());
 
     let effects = update(
         &mut state,
-        ConnectorsInput::ConnectionUpdate { op_id: "op-test-1".into(), owner_is_account: true },
+        ConnectorsInput::ConnectionUpdate {
+            op_id: "op-test-1".into(),
+            owner_is_account: true,
+        },
         clock,
     );
     assert!(
@@ -349,19 +514,32 @@ fn open_copy_wake_and_events() {
     );
     let effects = update(
         &mut state,
-        ConnectorsInput::ConnectionUpdate { op_id: "op-test-1".into(), owner_is_account: true },
+        ConnectorsInput::ConnectionUpdate {
+            op_id: "op-test-1".into(),
+            owner_is_account: true,
+        },
         clock,
     );
-    assert!(effects.iter().any(|effect| matches!(effect, ConnectorsEffect::PollOperation { .. })));
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, ConnectorsEffect::PollOperation { .. }))
+    );
     let effects = update(
         &mut state,
-        ConnectorsInput::ConnectionUpdate { op_id: "op-other".into(), owner_is_account: true },
+        ConnectorsInput::ConnectionUpdate {
+            op_id: "op-other".into(),
+            owner_is_account: true,
+        },
         clock,
     );
     assert!(effects.is_empty());
     let effects = update(
         &mut state,
-        ConnectorsInput::ConnectionUpdate { op_id: "op-test-1".into(), owner_is_account: false },
+        ConnectorsInput::ConnectionUpdate {
+            op_id: "op-test-1".into(),
+            owner_is_account: false,
+        },
         clock,
     );
     assert!(effects.is_empty());

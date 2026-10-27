@@ -24,6 +24,11 @@ fn on_card(state: &mut ConnectorsState, rows: Vec<AccountRow>, clock: Instant) {
         ConnectorsInput::ListReply(Ok(common::list_reply())),
         clock,
     );
+    let _ = update(
+        state,
+        ConnectorsInput::CatalogReply(Ok(common::catalog_reply().connectors)),
+        clock,
+    );
     let _ = update(state, ConnectorsInput::AccountsReply(Ok(rows)), clock);
     let _ = update(state, ConnectorsInput::Key(ConnectorsKey::Open), clock);
 }
@@ -68,16 +73,36 @@ fn alias_rules() {
     let live = account(Some("work"), "active", false, "conn-b");
     let retired = account(Some("old"), "active", true, "conn-c");
     let accounts = [live, retired];
-    assert_eq!(alias_problem("", "github", &accounts, None), Some(AliasProblem::Invalid));
     assert_eq!(
-        alias_problem("abcdefghijklmnopqrstuvwxyz0123456", "github", &accounts, None),
+        alias_problem("", "github", &accounts, None),
         Some(AliasProblem::Invalid)
     );
-    assert_eq!(alias_problem("Work", "github", &accounts, None), Some(AliasProblem::Invalid));
-    assert_eq!(alias_problem("-work", "github", &accounts, None), Some(AliasProblem::Invalid));
-    assert_eq!(alias_problem("work", "github", &accounts, None), Some(AliasProblem::Taken));
+    assert_eq!(
+        alias_problem(
+            "abcdefghijklmnopqrstuvwxyz0123456",
+            "github",
+            &accounts,
+            None
+        ),
+        Some(AliasProblem::Invalid)
+    );
+    assert_eq!(
+        alias_problem("Work", "github", &accounts, None),
+        Some(AliasProblem::Invalid)
+    );
+    assert_eq!(
+        alias_problem("-work", "github", &accounts, None),
+        Some(AliasProblem::Invalid)
+    );
+    assert_eq!(
+        alias_problem("work", "github", &accounts, None),
+        Some(AliasProblem::Taken)
+    );
     assert_eq!(alias_problem("old", "github", &accounts, None), None);
-    assert_eq!(alias_problem("work", "github", &accounts, Some("conn-b")), None);
+    assert_eq!(
+        alias_problem("work", "github", &accounts, Some("conn-b")),
+        None
+    );
     assert_eq!(alias_problem("work2", "github", &accounts, None), None);
 }
 
@@ -90,7 +115,11 @@ fn rename_remove_reconnect_effects() {
         vec![account(Some("work"), "failed", false, "conn-b")],
         clock,
     );
-    let prompted = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Rename), clock);
+    let prompted = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Rename),
+        clock,
+    );
     assert!(
         prompted
             .iter()
@@ -127,9 +156,17 @@ fn rename_remove_reconnect_effects() {
         clock,
     );
 
-    let effects = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Remove), clock);
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Remove),
+        clock,
+    );
     assert!(effects.is_empty());
-    let effects = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Confirm), clock);
+    let effects = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Confirm),
+        clock,
+    );
     assert!(matches!(effects[0], ConnectorsEffect::RemoveAccount { .. }));
     let _ = update(
         &mut state,
@@ -149,8 +186,16 @@ fn rename_remove_reconnect_effects() {
         vec![account(None, "failed", false, "conn-a")],
         clock,
     );
-    let _ = update(&mut unnamed, ConnectorsInput::Key(ConnectorsKey::Remove), clock);
-    let _ = update(&mut unnamed, ConnectorsInput::Key(ConnectorsKey::Confirm), clock);
+    let _ = update(
+        &mut unnamed,
+        ConnectorsInput::Key(ConnectorsKey::Remove),
+        clock,
+    );
+    let _ = update(
+        &mut unnamed,
+        ConnectorsInput::Key(ConnectorsKey::Confirm),
+        clock,
+    );
     let _ = update(
         &mut unnamed,
         ConnectorsInput::RemoveReply(Ok(talaria_core::connectors::RemovedReply {
@@ -169,12 +214,18 @@ fn rename_remove_reconnect_effects() {
         vec![account(Some("work"), "failed", false, "conn-b")],
         clock,
     );
-    let effects = update(&mut repair, ConnectorsInput::Key(ConnectorsKey::ReconnectOrCopy), clock);
+    let effects = update(
+        &mut repair,
+        ConnectorsInput::Key(ConnectorsKey::ReconnectOrCopy),
+        clock,
+    );
     assert_eq!(
         effects,
         vec![ConnectorsEffect::Connect {
             slug: "github".into(),
-            address: AccountAddress::Repair { connection_id: "conn-b".into() },
+            address: AccountAddress::Repair {
+                connection_id: "conn-b".into()
+            },
         }]
     );
 
@@ -184,7 +235,11 @@ fn rename_remove_reconnect_effects() {
         vec![account(Some("work"), "active", false, "conn-b")],
         clock,
     );
-    let effects = update(&mut active, ConnectorsInput::Key(ConnectorsKey::ReconnectOrCopy), clock);
+    let effects = update(
+        &mut active,
+        ConnectorsInput::Key(ConnectorsKey::ReconnectOrCopy),
+        clock,
+    );
     assert!(effects.is_empty());
     assert_eq!(
         view(&active, clock).notice.expect("already").text,
@@ -197,8 +252,16 @@ fn rename_remove_reconnect_effects() {
         vec![account(Some("old"), "active", true, "conn-c")],
         clock,
     );
-    let _ = update(&mut retired, ConnectorsInput::Key(ConnectorsKey::Retired), clock);
-    let effects = update(&mut retired, ConnectorsInput::Key(ConnectorsKey::ReconnectOrCopy), clock);
+    let _ = update(
+        &mut retired,
+        ConnectorsInput::Key(ConnectorsKey::Retired),
+        clock,
+    );
+    let effects = update(
+        &mut retired,
+        ConnectorsInput::Key(ConnectorsKey::ReconnectOrCopy),
+        clock,
+    );
     assert!(effects.is_empty());
     assert_eq!(
         view(&retired, clock).notice.expect("retired").text,
@@ -258,7 +321,11 @@ fn account_errors_map_to_text() {
             common::open_consented(ConnectorsTab::Connectors),
             clock,
         );
-        let _ = update(&mut state, ConnectorsInput::RenameReply(Err(failure)), clock);
+        let _ = update(
+            &mut state,
+            ConnectorsInput::RenameReply(Err(failure)),
+            clock,
+        );
         let notice = view(&state, clock).notice.expect("error").text;
         assert_eq!(notice, expect);
     }

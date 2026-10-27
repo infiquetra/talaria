@@ -93,10 +93,7 @@ async fn socket_params_are_exact() {
 
     let catalog = ConnectorsEffect::LoadCatalog;
     let _ = service.execute(catalog, None).await;
-    assert_eq!(
-        gateway.requests("connectors.catalog")[0].params,
-        json!({})
-    );
+    assert_eq!(gateway.requests("connectors.catalog")[0].params, json!({}));
     let connect = ConnectorsEffect::Connect {
         slug: "github".into(),
         address: AccountAddress::Alias("work".into()),
@@ -119,12 +116,8 @@ async fn replies_decode_v0224_shapes() {
     let (gateway, client, _inbound) = MockGateway::start().await;
     let consent = ConnectorsConsent::default();
     consent.grant("fixture");
-    let service = ConnectorsService::new(
-        client,
-        rest_at(&server.origin()),
-        "fixture".into(),
-        consent,
-    );
+    let service =
+        ConnectorsService::new(client, rest_at(&server.origin()), "fixture".into(), consent);
     gateway.push_result(open_connect_result(
         1_800_000_300.9,
         "https://example.invalid/connect/test",
@@ -158,12 +151,8 @@ async fn secrets_reach_only_their_frames() {
         .allow_own_profile_selector("fixture");
     let consent = ConnectorsConsent::default();
     consent.grant("fixture");
-    let service = ConnectorsService::new(
-        client,
-        rest_at(&server.origin()),
-        "fixture".into(),
-        consent,
-    );
+    let service =
+        ConnectorsService::new(client, rest_at(&server.origin()), "fixture".into(), consent);
     let mut secrets = BTreeMap::new();
     secrets.insert(
         "SIGNAL_HTTP_URL".into(),
@@ -302,7 +291,10 @@ async fn dropped_write_is_unknown() {
             closed.execute(effect.clone(), None).await
         };
         assert!(
-            matches!(reply_failure(&effect, &not_sent), ConnectorsFailure::NotSent(_)),
+            matches!(
+                reply_failure(&effect, &not_sent),
+                ConnectorsFailure::NotSent(_)
+            ),
             "never sent"
         );
     }
@@ -336,10 +328,9 @@ fn reply_failure<'a>(
     inputs: &'a [ConnectorsInput],
 ) -> &'a ConnectorsFailure {
     match (effect, inputs.first()) {
-        (
-            ConnectorsEffect::Connect { .. },
-            Some(ConnectorsInput::ConnectReply(Err(failure))),
-        ) => failure,
+        (ConnectorsEffect::Connect { .. }, Some(ConnectorsInput::ConnectReply(Err(failure)))) => {
+            failure
+        }
         (
             ConnectorsEffect::RenameAccount { .. },
             Some(ConnectorsInput::RenameReply(Err(failure))),
@@ -355,7 +346,8 @@ fn reply_failure<'a>(
         (
             ConnectorsEffect::UpdatePlatform { .. },
             Some(ConnectorsInput::UpdateReply {
-                reply: Err(failure), ..
+                reply: Err(failure),
+                ..
             }),
         ) => failure,
         (
@@ -380,14 +372,12 @@ async fn drop_socket_after_send(
     gateway.set_silent(method, true);
     let execute = service.execute(effect, None);
     tokio::pin!(execute);
-    loop {
-        tokio::select! {
-            biased;
-            inputs = &mut execute => return inputs,
-            () = until_seen(gateway, method) => {
-                gateway.kill_connection().await;
-                return execute.await;
-            }
+    tokio::select! {
+        biased;
+        inputs = &mut execute => inputs,
+        () = until_seen(gateway, method) => {
+            gateway.kill_connection().await;
+            execute.await
         }
     }
 }

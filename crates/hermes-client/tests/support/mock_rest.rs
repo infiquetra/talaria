@@ -812,7 +812,10 @@ fn env_keys(body: &Value) -> Vec<String> {
         keys.extend(map.keys().cloned());
     }
     if let Some(rows) = body.get("clear_env").and_then(Value::as_array) {
-        keys.extend(rows.iter().filter_map(|value| value.as_str().map(str::to_owned)));
+        keys.extend(
+            rows.iter()
+                .filter_map(|value| value.as_str().map(str::to_owned)),
+        );
     }
     keys
 }

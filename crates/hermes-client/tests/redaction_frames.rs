@@ -955,14 +955,20 @@ fn connect_link_is_free_text() {
     }}});
     let redacted = redact(&mut redactor(), Dir::In, &frame);
     let text = recorded(&redacted);
-    assert!(!text.contains("ls-sentinel-3b9d"), "link sentinel was recorded");
+    assert!(
+        !text.contains("ls-sentinel-3b9d"),
+        "link sentinel was recorded"
+    );
     assert!(withheld_once(
         &redacted,
         "params.payload.targets.0.connect_url",
         "free-text"
     ));
     assert_eq!(
-        at(&redacted.frame, &["params", "payload", "targets", "0", "connect_url"]),
+        at(
+            &redacted.frame,
+            &["params", "payload", "targets", "0", "connect_url"]
+        ),
         Some(&json!("[redacted]"))
     );
 }

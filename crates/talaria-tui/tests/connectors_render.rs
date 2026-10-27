@@ -49,14 +49,22 @@ fn paint(screen: Screen, cols: u16, rows: u16) -> vt100::Parser {
         for x in 0..cols {
             bytes.extend(buf[(x, y)].symbol().as_bytes());
         }
-        bytes.extend(b"\r\n");
+        if y + 1 < rows {
+            bytes.extend(b"\r\n");
+        }
     }
     parser.process(&bytes);
     parser
 }
 
 fn screen_text(parser: &vt100::Parser, cols: u16) -> String {
-    parser.screen().contents().lines().take(80).collect::<Vec<_>>().join("\n")
+    parser
+        .screen()
+        .contents()
+        .lines()
+        .take(80)
+        .collect::<Vec<_>>()
+        .join("\n")
         + &format!(" cols {cols}")
 }
 
@@ -112,7 +120,10 @@ fn tabs_snapshots() {
             cols,
             rows,
         );
-        assert!(screen_text(&messaging, cols).contains("R opens the doctor") || messaging.screen().contents().contains("restart"));
+        assert!(
+            screen_text(&messaging, cols).contains("R opens the doctor")
+                || messaging.screen().contents().contains("restart")
+        );
     }
 }
 
@@ -142,7 +153,10 @@ fn cards_snapshots() {
             cols,
             rows,
         );
-        assert!(screen_text(&link, cols).contains("remote shell") || link.screen().contents().contains("https://example.invalid"));
+        assert!(
+            screen_text(&link, cols).contains("remote shell")
+                || link.screen().contents().contains("https://example.invalid")
+        );
         let tools = paint(
             Screen::Tools {
                 header: "GitHub tools".into(),

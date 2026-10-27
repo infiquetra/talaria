@@ -1,5 +1,7 @@
 //! Shared fixture loads for the connectors tests.
 
+#![allow(dead_code)]
+
 use serde::Deserialize;
 use talaria_core::connectors::{
     AccountRow, CatalogReply, ConnectorsInput, ConnectorsOpen, ConnectorsTab, ListReply, Pairing,
@@ -52,7 +54,12 @@ pub fn scrub_fixtures() {
 }
 
 pub fn scrub(text: &str) {
-    for needle in ["/Users/", "/home/", &hidden("un", "attended"), &hidden("f", "inite")] {
+    for needle in [
+        "/Users/",
+        "/home/",
+        &hidden("un", "attended"),
+        &hidden("f", "inite"),
+    ] {
         assert!(!text.contains(needle), "fixture holds a forbidden token");
     }
     for needle in planning_needles() {

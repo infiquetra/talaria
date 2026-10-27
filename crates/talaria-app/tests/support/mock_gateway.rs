@@ -1825,7 +1825,10 @@ fn plan_connectors(
         }
         if let Some(change) = map.get("change").and_then(Value::as_object) {
             let change_keys = ["type", "connector", "enabled", "disabled_tools"];
-            if change.keys().any(|key| !change_keys.contains(&key.as_str())) {
+            if change
+                .keys()
+                .any(|key| !change_keys.contains(&key.as_str()))
+            {
                 outgoing.push((
                     None,
                     invalid_params(id, "unknown parameter"),
@@ -2037,6 +2040,9 @@ fn plan_request(
         return;
     }
     if method.starts_with("connectors.") {
+        if state.silent_all || state.silent_methods.contains(method) {
+            return;
+        }
         plan_connectors(method, id, params, outgoing);
         return;
     }
