@@ -77,7 +77,10 @@ fn run_verdict(
             && run.ended_at.is_some_and(|end| end >= run.started_at)
             && run.input_tokens.saturating_add(run.output_tokens) > 0
             && run.model.as_deref() == Some("minimax-m3.1-flash")
-            && run.end_reason.as_deref() == Some("completed")
+            && matches!(
+                run.end_reason.as_deref(),
+                Some("completed" | "cron_complete")
+            )
     }) {
         return Err("no fresh completed agent run used the expected model and tokens".into());
     }
@@ -100,6 +103,15 @@ fn pass_case() -> (VerdictJob, Vec<VerdictRun>) {
             end_reason: Some("completed".into()),
         }],
     )
+}
+
+#[test]
+fn run_verdict_accepts_cron_completion() {
+    let (job, mut runs) = pass_case();
+    runs[0].end_reason = Some("cron_complete".into());
+    assert!(run_verdict(100.0, None, &job, &runs).is_ok());
+    runs[0].end_reason = Some("cron_incomplete_no_output".into());
+    assert!(run_verdict(100.0, None, &job, &runs).is_err());
 }
 
 #[test]
@@ -584,14 +596,10 @@ async fn live_run_now_and_history_on_fixture() {
         },
         &runs,
     );
-    if let Err(reason) = verdict {
-        finish(Err(reason));
-        return;
-    }
     if let Err(error) = manage(client, CronAction::Remove, Some(job_id), None, None).await {
         finish(Err(error));
         return;
     }
     guard.job_id = None;
-    finish(Ok(()));
+    finish(verdict);
 }

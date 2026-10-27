@@ -140,7 +140,7 @@ pub struct PlatformUpdate {
     pub clear_env: Vec<String>,
 }
 
-/// A save answer, with the same safe platform shape as a read.
+/// A save answer identifying the updated platform.
 #[derive(Clone, Default, PartialEq, Deserialize)]
 pub struct UpdateReply {
     #[serde(default, deserialize_with = "null_default")]
@@ -148,7 +148,7 @@ pub struct UpdateReply {
     #[serde(default, deserialize_with = "null_default")]
     pub hot_served: bool,
     #[serde(default)]
-    pub platform: Option<PlatformWire>,
+    pub platform: Option<String>,
 }
 
 /// A platform test answer.

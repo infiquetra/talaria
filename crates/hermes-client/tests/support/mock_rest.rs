@@ -750,7 +750,7 @@ fn messaging_route(method: &str, path: &str, body: &Value) -> Option<(u16, Vec<u
     }
     Some(json_reply(
         200,
-        json!({"ok": true, "platform": platform, "hot_served": false}),
+        json!({"ok": true, "platform": id, "hot_served": false}),
     ))
 }
 
