@@ -3009,6 +3009,9 @@ fn local_effect(
     if action == LocalAction::Review {
         return changes_command(state);
     }
+    if action == LocalAction::ModelRoles {
+        return Vec::new();
+    }
     if matches!(
         action,
         LocalAction::Processes | LocalAction::Bg | LocalAction::Stop
@@ -6338,6 +6341,9 @@ pub fn slash_line(text: &str) -> Slash {
     }
     if let Some(command) = LocalCommandTable::builtin().find(&line.name) {
         if !command.takes_argument && !line.arg.is_empty() {
+            if command.action == LocalAction::ModelRoles {
+                return Slash::Notice("Usage: /models".to_owned());
+            }
             return Slash::Notice(format!("/{} does not take an argument.", line.name));
         }
         return match command.action {

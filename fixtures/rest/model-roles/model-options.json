@@ -1,0 +1,478 @@
+{
+  "body": {
+    "model": "minimax-m3.1-flash",
+    "provider": "ollama-cloud",
+    "providers": [
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Nous Portal",
+        "slug": "nous",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Fireworks AI",
+        "slug": "fireworks",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "OpenRouter",
+        "slug": "openrouter",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "NovitaAI",
+        "slug": "novita",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "LM Studio",
+        "slug": "lmstudio",
+        "source": "canonical"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "claude-fable-5.1",
+          "claude-fable-5",
+          "claude-opus-5-5",
+          "claude-opus-5",
+          "claude-sonnet-5"
+        ],
+        "name": "Anthropic",
+        "slug": "anthropic",
+        "source": "hermes"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "gpt-6.1-sol",
+          "gpt-6.1-sol-900k",
+          "gpt-6-astra",
+          "gpt-6-astra-900k",
+          "gpt-6.1-terra"
+        ],
+        "name": "ChatGPT or Codex Subscription",
+        "slug": "openai-codex",
+        "source": "hermes"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "OpenAI API",
+        "slug": "openai-api",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Qwen Cloud",
+        "slug": "alibaba",
+        "source": "canonical"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "grok-4.6",
+          "grok-4.5",
+          "grok-4.20-0309-reasoning",
+          "grok-4.20-0309-non-reasoning",
+          "grok-4.7"
+        ],
+        "name": "xAI Grok OAuth (SuperGrok / Premium+)",
+        "slug": "xai-oauth",
+        "source": "hermes"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Xiaomi MiMo",
+        "slug": "xiaomi",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Tencent TokenHub",
+        "slug": "tencent-tokenhub",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Tencent TokenPlan",
+        "slug": "tencent-tokenplan",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "NVIDIA NIM",
+        "slug": "nvidia",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "GitHub Copilot",
+        "slug": "copilot",
+        "source": "canonical"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "auto",
+          "claude-sonnet-5.5",
+          "claude-sonnet-5",
+          "claude-fable-5.1",
+          "claude-fable-5"
+        ],
+        "name": "GitHub Copilot ACP",
+        "slug": "copilot-acp",
+        "source": "hermes"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Hugging Face",
+        "slug": "huggingface",
+        "source": "canonical"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "gemini-4-argon",
+          "gemini-flash-latest",
+          "gemini-3.5-flash-lite",
+          "gemini-3.6-flash",
+          "gemini-3.7-flash"
+        ],
+        "name": "Google AI Studio",
+        "slug": "gemini",
+        "source": "built-in"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Google Vertex AI",
+        "slug": "vertex",
+        "source": "canonical"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "deepseek-flash",
+          "deepseek-v4-pro"
+        ],
+        "name": "DeepSeek",
+        "slug": "deepseek",
+        "source": "built-in"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "xAI",
+        "slug": "xai",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Z.AI / GLM",
+        "slug": "zai",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Kimi / Kimi Coding Plan",
+        "slug": "kimi-coding",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Kimi / Moonshot (China)",
+        "slug": "kimi-coding-cn",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "StepFun Step Plan",
+        "slug": "stepfun",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "MiniMax",
+        "slug": "minimax",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "MiniMax (OAuth)",
+        "slug": "minimax-oauth",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "MiniMax (China)",
+        "slug": "minimax-cn",
+        "source": "canonical"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "gpt-oss:20b",
+          "clef:27b",
+          "muse-spark-open",
+          "glm-5.3",
+          "glm-5.2"
+        ],
+        "name": "Ollama Cloud",
+        "slug": "ollama-cloud",
+        "source": "built-in"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Arcee AI",
+        "slug": "arcee",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "GMI Cloud",
+        "slug": "gmi",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Kilo Code",
+        "slug": "kilocode",
+        "source": "canonical"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "kimi-k2.6",
+          "gemini-3-pro",
+          "beam-free",
+          "nemotron-3-ultra-free",
+          "space-bunny-free"
+        ],
+        "name": "OpenCode Zen",
+        "slug": "opencode-zen",
+        "source": "built-in"
+      },
+      {
+        "authenticated": true,
+        "is_user_defined": false,
+        "models": [
+          "beam-free",
+          "kimi-k3.1-pro",
+          "gemini-4-argon",
+          "mimo-v2.6-flash",
+          "deepseek-v4-pro"
+        ],
+        "name": "OpenCode Go",
+        "slug": "opencode-go",
+        "source": "built-in"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "AWS Bedrock",
+        "slug": "bedrock",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Azure Foundry",
+        "slug": "azure-foundry",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Vercel AI Gateway",
+        "slug": "ai-gateway",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Qwen OAuth (Portal)",
+        "slug": "qwen-oauth",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Actual Computer",
+        "slug": "actual",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Alibaba Cloud DashScope (China)",
+        "slug": "alibaba-cn",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Alibaba Cloud (Token Plan)",
+        "slug": "alibaba-token-plan",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Alibaba Cloud (Token Plan, China)",
+        "slug": "alibaba-token-plan-cn",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Alibaba Cloud (Coding Plan)",
+        "slug": "alibaba-coding-plan",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Alibaba Cloud (Coding Plan, China)",
+        "slug": "alibaba-coding-plan-cn",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "CommandCode",
+        "slug": "commandcode",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "CommandCode (Anthropic)",
+        "slug": "commandcode-anthropic",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "custom",
+        "slug": "custom",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "DeepInfra",
+        "slug": "deepinfra",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Meta Model API",
+        "slug": "meta-ai",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Nebius Token Factory",
+        "slug": "nebius-token-factory",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Ramp Router",
+        "slug": "router",
+        "source": "canonical"
+      },
+      {
+        "authenticated": false,
+        "is_user_defined": false,
+        "models": [],
+        "name": "Upstage Solar",
+        "slug": "upstage",
+        "source": "canonical"
+      }
+    ]
+  },
+  "method": "model.options",
+  "path_without_query": "model.options",
+  "status": 200
+}

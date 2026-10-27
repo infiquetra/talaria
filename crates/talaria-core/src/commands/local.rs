@@ -73,6 +73,8 @@ pub enum LocalAction {
     Config,
     /// Open the profiles overlay. Issue #253.
     Profiles,
+    /// Open the profile's model roles page.
+    ModelRoles,
 }
 
 /// One local command.
@@ -313,6 +315,15 @@ const BUILTIN: &[LocalCommand] = &[
         )),
         tag: "talaria",
     },
+    LocalCommand {
+        name: "models",
+        aliases: &[],
+        summary: "Show and change the profile's model roles",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::ModelRoles,
+        tag: "talaria",
+    },
 ];
 
 /// The five rewind commands, in table order. Issue #233.
@@ -467,6 +478,9 @@ pub fn parse(line: &str) -> Result<(LocalAction, String), String> {
         // The review's command keeps the wording its own issue settled.
         if command.action == LocalAction::Review {
             return Err(format!("/{} takes no arguments.", command.name));
+        }
+        if command.action == LocalAction::ModelRoles {
+            return Err("Usage: /models".to_owned());
         }
         return Err(format!("/{} does not take an argument.", command.name));
     }

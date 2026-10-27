@@ -15,6 +15,7 @@ pub mod doctor;
 pub mod fleet;
 pub mod fleet_attention;
 pub mod fleet_view;
+pub mod model_roles;
 pub mod models;
 pub mod mutation;
 pub mod permissions;

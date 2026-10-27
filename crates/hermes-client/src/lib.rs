@@ -21,6 +21,7 @@ pub mod control_verbs;
 pub mod discovery;
 pub mod gateway_api;
 pub mod liveness;
+pub mod model_roles_api;
 pub mod providers_api;
 pub mod record;
 pub mod redact;
@@ -35,6 +36,9 @@ pub use channel::{
     Inbound, InboundEvent, InboundStream, MalformedFrame, MalformedKind, ReplyFrame, RespondError,
     Responder, ServerRequest, decode_frame, write_frame,
 };
+pub use config_api::{
+    ConfigField, ConfigSchema, FieldKind, config_defaults, config_read, config_schema, config_write,
+};
 pub use connect::{
     Closed, ConnectError, ConnectOptions, Connection, ConnectionParts, Handshake, HandshakeError,
     HandshakeOptions, HandshakeTimings, connect, connect_with, format_failure, handshake,
@@ -45,6 +49,11 @@ pub use discovery::{
     NodeKind, NodeProblem, PointerProblem, ProfileId, ProfileLookupError, ReadVerb, ReportedState,
     ServedProfile, control_query, default_home, discover, discover_with, home_hash,
 };
+pub use model_roles_api::{
+    AssignScope, AssignmentReply, AuxiliaryModels, AuxiliaryTask, EffortField, MainRoute,
+    MoaConfig, MoaPreset, MoaSlot, ModelAssignment, ModelInfo, NamedPreset, RouteFields, StaleAux,
+    assign_model, auxiliary_models, moa_config, model_info, save_moa,
+};
 pub use record::{
     FRAME_LOG_VERSION, GatewayIdentity, RecordError, RecordSummary, Recorder, RecorderOptions,
 };
@@ -54,6 +63,9 @@ pub use redact::{
 };
 pub use replay_source::{
     FrameLogHeader, ReplayError, ReplayFrame, ReplayItem, ReplaySource, Speed,
+};
+pub use rest::{
+    Method, NativeHttpMinter, RequestOpts, RestClient, RestError, RestOptions, TicketMinter,
 };
 pub use rpc::{
     APPROVAL_RESPOND_TIMEOUT, CallError, CallOptions, DEFAULT_CALL_TIMEOUT, FrameClass, RpcError,

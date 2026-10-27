@@ -65,6 +65,10 @@ pub enum KeyContext {
     Profiles,
     /// The providers overlay.
     Providers,
+    /// The model roles page.
+    ModelRoles,
+    /// The provider and model picker on that page.
+    RoutePicker,
 }
 
 /// Translate a doctor binding into the domain action.

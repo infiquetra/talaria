@@ -15,4 +15,10 @@ pub const SETTINGS_LINKS: &[SettingsLink] = &[
             crate::providers::ProvidersTab::Keys,
         )),
     },
+    SettingsLink {
+        label: "Model roles",
+        action: LocalAction::ModelRoles,
+    },
 ];
+/// The labels of the settings page's link rows, in order.
+pub const PAGE_ROWS: &[&str] = &["Profiles", "Providers", "Model roles"];

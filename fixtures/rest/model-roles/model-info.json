@@ -1,0 +1,20 @@
+{
+  "body": {
+    "auto_context_length": 1000000,
+    "capabilities": {
+      "context_window": 1000000,
+      "max_output_tokens": 512000,
+      "model_family": "minimax",
+      "supports_reasoning": true,
+      "supports_tools": true,
+      "supports_vision": true
+    },
+    "config_context_length": 0,
+    "effective_context_length": 1000000,
+    "model": "minimax-m3.1-flash",
+    "provider": "ollama-cloud"
+  },
+  "method": "GET",
+  "path_without_query": "/api/model/info",
+  "status": 200
+}
