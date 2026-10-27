@@ -937,6 +937,17 @@ impl<W: io::Write> InlineTerminal<W> {
         })
     }
 
+    /// Render a full-screen frame, then place the terminal cursor where the render
+    /// says: a zero-based `(column, row)` shows it there, `None` hides it. A
+    /// cursor-only move still writes. Issue #253.
+    pub fn draw_overlay_with_cursor(
+        &mut self,
+        render: impl FnOnce(Rect, &mut Buffer) -> Option<(u16, u16)>,
+    ) -> io::Result<FrameStats> {
+        let _ = render;
+        todo!("profiles stub")
+    }
+
     /// Leave the alternate screen, clear the live region, write the lines that waited, and
     /// leave the live region for the caller's next `draw_live` to paint.
     pub fn close_overlay(&mut self) -> io::Result<()> {

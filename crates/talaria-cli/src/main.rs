@@ -29,6 +29,9 @@ fn main() -> ExitCode {
     if talaria_cli::args::is_fleet_command(&args) {
         return ExitCode::from(talaria_cli::fleet_cmd::run(&args));
     }
+    if talaria_cli::args::is_profiles_command(&args) {
+        return talaria_cli::profiles_cmd::run(&args);
+    }
     match talaria_cli::args::Cli::try_parse() {
         Ok(cli) => {
             if cli.bg || cli.worktree || cli.name.is_some() {

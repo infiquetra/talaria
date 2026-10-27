@@ -251,6 +251,21 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("settings_reload", &["ctrl+r"][..]),
         ("settings_help", &["?"][..]),
         ("settings_close", &["esc"][..]),
+        // Issue 253 adds the profiles keys to the documented file.
+        ("profiles_up", &["up"][..]),
+        ("profiles_down", &["down"][..]),
+        ("profiles_page_up", &["pageup"][..]),
+        ("profiles_page_down", &["pagedown"][..]),
+        ("profiles_first", &["home"][..]),
+        ("profiles_last", &["end"][..]),
+        ("profiles_open", &["enter"][..]),
+        ("profiles_filter", &["/"][..]),
+        ("profiles_refresh", &["r"][..]),
+        ("profiles_rescan", &["R"][..]),
+        ("profiles_new", &["n"][..]),
+        ("profiles_description", &["e"][..]),
+        ("profiles_soul", &["s"][..]),
+        ("profiles_back", &["esc"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

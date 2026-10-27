@@ -18,6 +18,7 @@ pub mod fleet_view;
 pub mod models;
 pub mod mutation;
 pub mod permissions;
+pub mod profiles;
 pub mod prompt_history;
 pub mod queue;
 pub mod review;

@@ -677,7 +677,21 @@ impl Composer {
             | Action::DoctorNo
             | Action::DoctorTab
             | Action::DoctorLeft
-            | Action::DoctorRight => {}
+            | Action::DoctorRight
+            | Action::ProfilesUp
+            | Action::ProfilesDown
+            | Action::ProfilesPageUp
+            | Action::ProfilesPageDown
+            | Action::ProfilesFirst
+            | Action::ProfilesLast
+            | Action::ProfilesOpen
+            | Action::ProfilesFilter
+            | Action::ProfilesRefresh
+            | Action::ProfilesRescan
+            | Action::ProfilesNew
+            | Action::ProfilesDescription
+            | Action::ProfilesSoul
+            | Action::ProfilesBack => {}
         }
         false
     }
