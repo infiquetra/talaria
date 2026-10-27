@@ -202,6 +202,8 @@ pub enum UserAction {
     Providers(Box<ProvidersInput>),
     /// Input owned by the model roles page.
     ModelRoles(talaria_core::model_roles::RolesInput),
+    /// Input owned by the MCP overlay, before the composer sees it.
+    Mcp(talaria_core::mcp::McpInput),
     /// A key for the open fleet overlay.
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
@@ -429,6 +431,18 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     fn forget_provider_secret(&mut self) {}
     fn copy_provider_text(&mut self, _text: &str) {}
+    fn sync_mcp(&mut self, _view: Option<&talaria_core::mcp::McpView>) {}
+    fn take_mcp_secret(
+        &mut self,
+        _effect: &talaria_core::mcp::McpEffect,
+    ) -> Option<Zeroizing<String>> {
+        None
+    }
+    fn forget_mcp_secrets(&mut self) {}
+    fn open_mcp_url(&mut self, _url: &str) -> bool {
+        false
+    }
+    fn copy_mcp_text(&mut self, _text: &str) {}
     /// Multiplexer pane settings from the screen's startup configuration.
     fn pane_settings(&self) -> PaneSettings {
         PaneSettings::default()
@@ -616,6 +630,11 @@ pub struct AppState {
     model_roles_profile: String,
     model_roles_service: Option<Arc<crate::model_roles::ModelRolesService>>,
     model_roles_generation: u64,
+    pub mcp: talaria_core::mcp::McpState,
+    mcp_service: Option<Arc<crate::mcp::McpService>>,
+    mcp_binding: u64,
+    mcp_preparing: bool,
+    mcp_waiting: Vec<talaria_core::mcp::McpEffect>,
     pub models: ModelsState,
     model_service: Option<Arc<crate::models::ModelService>>,
     model_notice_counter: u64,
@@ -846,6 +865,11 @@ impl AppState {
             model_roles_profile: String::new(),
             model_roles_service: None,
             model_roles_generation: 0,
+            mcp: talaria_core::mcp::McpState::default(),
+            mcp_service: None,
+            mcp_binding: 0,
+            mcp_preparing: false,
+            mcp_waiting: Vec::new(),
             models: ModelsState::new(&format!("{launch_id}-model"), Ok(SavedModels::empty())),
             model_service: None,
             model_notice_counter: 0,
@@ -1234,6 +1258,14 @@ pub enum AppMessage {
         service: Option<Arc<crate::model_roles::ModelRolesService>>,
         input: talaria_core::model_roles::RolesInput,
     },
+    Mcp {
+        binding: u64,
+        input: talaria_core::mcp::McpInput,
+    },
+    McpBound {
+        binding: u64,
+        result: Result<Arc<crate::mcp::McpService>, String>,
+    },
     /// A background call's reply, still owned by the session that made it.
     BackgroundDone {
         session_id: SessionId,
@@ -1441,6 +1473,9 @@ pub enum AppEffect {
         socket: Option<hermes_client::Client>,
         effects: Vec<talaria_core::model_roles::RolesEffect>,
     },
+    PrepareMcp,
+    CloseMcp(Arc<crate::mcp::McpService>),
+    Mcp(talaria_core::mcp::McpEffect),
     CommitSubagentBatch(talaria_core::subagents::FinishedBatch),
     /// A background call or log message for one session.
     Background {
@@ -2264,6 +2299,50 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::Models(input) => models_input(state, input),
         AppMessage::Profiles(input) => profiles_input(state, input),
+        AppMessage::Mcp { binding, input } => {
+            if binding != state.mcp_binding {
+                return Vec::new();
+            }
+            mcp_input(state, input)
+        }
+        AppMessage::McpBound { binding, result } => {
+            if binding != state.mcp_binding {
+                return Vec::new();
+            }
+            state.mcp_preparing = false;
+            match result {
+                Ok(service) => {
+                    service.reopen();
+                    state.mcp_service = Some(service);
+                    let mut effects: Vec<_> = std::mem::take(&mut state.mcp_waiting)
+                        .into_iter()
+                        .map(AppEffect::Mcp)
+                        .collect();
+                    let connected = state.link_state == LinkView::Connected;
+                    effects.extend(mcp_input(
+                        state,
+                        talaria_core::mcp::McpInput::Connection { connected },
+                    ));
+                    effects
+                }
+                Err(reason) => {
+                    state.mcp_waiting.clear();
+                    let mut effects = mcp_input(
+                        state,
+                        talaria_core::mcp::McpInput::ListLoaded(Err(
+                            talaria_core::mcp::Failure::NotSent(reason.clone()),
+                        )),
+                    );
+                    effects.extend(mcp_input(
+                        state,
+                        talaria_core::mcp::McpInput::CatalogLoaded(Err(
+                            talaria_core::mcp::Failure::NotSent(reason),
+                        )),
+                    ));
+                    effects
+                }
+            }
+        }
         // Stored for the fleet view, fed to the overlay while it is open, and read
         // by the attention hub for the counters, the alerts and the quiet window.
         AppMessage::Fleet(notice) => {
@@ -2638,6 +2717,16 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 effects.push(AppEffect::ReportPane(state.attention.pane()));
             }
         }
+    }
+    let foreground = state
+        .opened
+        .as_ref()
+        .map(|opened| opened.session_id.clone());
+    if previous_session.as_ref().map(|(id, _)| id) != foreground.as_ref() {
+        effects.extend(mcp_input(
+            state,
+            talaria_core::mcp::McpInput::Foreground(foreground),
+        ));
     }
     for activity in crate::comforts::activities_between(
         &snapshot,
@@ -3121,6 +3210,12 @@ fn local_effect(
                 connected: state.link_state == LinkView::Connected,
             },
         );
+    }
+    if matches!(action, LocalAction::Mcp(_)) {
+        return match talaria_core::mcp::parse_mcp_args(&argument) {
+            Ok(open) => open_mcp(state, open),
+            Err(usage) => vec![notice_lines(usage)],
+        };
     }
     if action == LocalAction::Fleet {
         return open_fleet_view(state);
@@ -3609,6 +3704,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         }
         UserAction::Providers(input) => providers_input(state, *input),
         UserAction::ModelRoles(input) => model_roles_input(state, input),
+        UserAction::Mcp(input) => mcp_input(state, input),
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -4788,6 +4884,13 @@ fn install_session(state: &mut AppState, install: SwitchInstall) -> Vec<AppEffec
     } = install;
     let mut effects = Vec::new();
     if link.is_some() {
+        state.mcp_binding = state.mcp_binding.saturating_add(1);
+        state.mcp_preparing = false;
+        state.mcp_waiting.clear();
+        state.mcp = talaria_core::mcp::McpState::default();
+        if let Some(service) = state.mcp_service.take() {
+            effects.push(AppEffect::CloseMcp(service));
+        }
         // A new profile connection starts its own client generation at one.
         state.background_generation_base = state.connection_generation.saturating_add(1);
         state.connection_generation = state
@@ -5531,21 +5634,45 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     ProvidersInput::Connection { connected: true },
                 ));
             }
+            let connected = state.mcp_service.is_some();
+            effects.extend(mcp_input(
+                state,
+                talaria_core::mcp::McpInput::Connection { connected },
+            ));
+            if state.mcp.is_open() && state.mcp_service.is_none() && !state.mcp_preparing {
+                effects.push(AppEffect::PrepareMcp);
+            }
             effects
         }
         LinkEvent::State(LinkState::Reconnecting { .. }) => {
             state.link_state = LinkView::Reconnecting;
-            providers_input(state, ProvidersInput::Connection { connected: false })
+            let mut effects =
+                providers_input(state, ProvidersInput::Connection { connected: false });
+            effects.extend(mcp_input(
+                state,
+                talaria_core::mcp::McpInput::Connection { connected: false },
+            ));
+            effects
         }
         LinkEvent::State(LinkState::Closed) => {
             state.link_state = LinkView::Closed;
-            providers_input(state, ProvidersInput::Connection { connected: false })
+            let mut effects =
+                providers_input(state, ProvidersInput::Connection { connected: false });
+            effects.extend(mcp_input(
+                state,
+                talaria_core::mcp::McpInput::Connection { connected: false },
+            ));
+            effects
         }
         event @ LinkEvent::State(LinkState::Failed { .. }) => {
             state.link_state = LinkView::Failed;
             state.link_failed = true;
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
+            effects.extend(mcp_input(
+                state,
+                talaria_core::mcp::McpInput::Connection { connected: false },
+            ));
             if let Some(text) = link_notice(&event) {
                 effects.push(notice_lines(&text));
             }
@@ -7659,6 +7786,172 @@ fn sync_picker<S: Screen>(state: &AppState, screen: &mut S) {
     }
     screen.sync_picker(state.picker.as_ref());
     screen.sync_fleet(&state.view());
+    let mcp = state
+        .mcp
+        .is_open()
+        .then(|| talaria_core::mcp::view(&state.mcp, Instant::now()));
+    screen.sync_mcp(mcp.as_ref());
+}
+
+fn mcp_input(state: &mut AppState, input: talaria_core::mcp::McpInput) -> Vec<AppEffect> {
+    let prepare = state.mcp.is_open()
+        && state.mcp_service.is_none()
+        && !state.mcp_preparing
+        && state.link_state == LinkView::Connected
+        && matches!(
+            &input,
+            talaria_core::mcp::McpInput::Key(talaria_core::mcp::McpKey::Action(
+                talaria_core::mcp::McpAction::Reload
+            ))
+        );
+    let mut effects: Vec<_> = talaria_core::mcp::update(&mut state.mcp, input, state.attention_at)
+        .into_iter()
+        .map(AppEffect::Mcp)
+        .collect();
+    if prepare {
+        effects.insert(0, AppEffect::PrepareMcp);
+    }
+    effects
+}
+
+fn open_mcp(state: &mut AppState, open: talaria_core::mcp::McpOpen) -> Vec<AppEffect> {
+    if let Some(service) = &state.mcp_service {
+        service.reopen();
+    }
+    let input = talaria_core::mcp::McpInput::Open {
+        open,
+        profile_name: state.profile.clone(),
+        connected: state.mcp_service.is_some() && state.link_state == LinkView::Connected,
+        over_ssh: talaria_core::mcp::over_ssh(|key| std::env::var(key).ok()),
+        foreground: state
+            .opened
+            .as_ref()
+            .map(|opened| opened.session_id.clone()),
+    };
+    let mut effects = mcp_input(state, input);
+    if state.mcp_service.is_none() && !state.mcp_preparing {
+        effects.insert(0, AppEffect::PrepareMcp);
+    }
+    effects
+}
+
+async fn prepare_mcp(
+    client: hermes_client::Client,
+    home: PathBuf,
+    profile: String,
+) -> Result<Arc<crate::mcp::McpService>, String> {
+    use hermes_client::{
+        discovery::{DiscoverOptions, EnsurePolicy},
+        rest::{NativeHttpMinter, RestClient, RestOptions},
+    };
+    let endpoint = hermes_client::discover_with(
+        &home,
+        &DiscoverOptions {
+            ensure: EnsurePolicy::Never,
+            ..DiscoverOptions::default()
+        },
+    )
+    .await
+    .map(Arc::new)
+    .map_err(|_| "Could not find the connected Hermes web interface.".to_owned())?;
+    let resolved = endpoint
+        .resolve_profile(&profile)
+        .map_err(|_| "Hermes no longer serves this profile.".to_owned())?;
+    let rest = RestClient::new(
+        endpoint.api_origin(),
+        Arc::new(NativeHttpMinter::new(home, endpoint.clone(), resolved)),
+        RestOptions::default(),
+    )
+    .map_err(|_| "Could not use the connected Hermes web interface.".to_owned())?;
+    Ok(Arc::new(crate::mcp::McpService::new(client, rest, profile)))
+}
+
+fn start_mcp_prepare(state: &mut AppState, executor: &Executor) {
+    if state.mcp_service.is_some() || state.mcp_preparing {
+        return;
+    }
+    state.mcp_preparing = true;
+    let binding = state.mcp_binding;
+    let client = state
+        .service
+        .as_ref()
+        .and_then(SessionService::client)
+        .cloned();
+    let home = state.hermes_home.clone();
+    let profile = state.profile.clone();
+    executor.send_later(async move {
+        let result = match client {
+            Some(client) => prepare_mcp(client, home, profile).await,
+            None => Err("Not connected to Hermes.".to_owned()),
+        };
+        AppMessage::McpBound { binding, result }
+    });
+}
+
+#[cfg(test)]
+mod mcp_integration_tests {
+    use super::*;
+    use talaria_core::mcp::{McpAction, McpEffect, McpInput, McpKey};
+
+    #[test]
+    fn local_apply_survives_asynchronous_service_preparation() {
+        let mut state = AppState::new("mcp-test");
+        state.profile = "fixture".into();
+        let effects = submit(&mut state, "/mcp apply".into());
+        assert!(state.mcp.is_open());
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::PrepareMcp))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Mcp(McpEffect::Reload { .. })))
+        );
+        let effects = mcp_input(&mut state, McpInput::Connection { connected: true });
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::Mcp(McpEffect::Reload { confirm: false, .. })
+        )));
+    }
+
+    #[test]
+    fn refresh_can_retry_failed_web_client_preparation() {
+        let mut state = AppState::new("mcp-test");
+        state.link_state = LinkView::Connected;
+        submit(&mut state, "/mcp".into());
+        let effects = mcp_input(&mut state, McpInput::Key(McpKey::Action(McpAction::Reload)));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::PrepareMcp))
+        );
+    }
+
+    #[test]
+    fn closing_the_overlay_never_interrupts_the_foreground() {
+        let mut state = AppState::new("mcp-test");
+        submit(&mut state, "/mcp apply".into());
+        let effects = user_action(&mut state, UserAction::Mcp(McpInput::Close));
+        assert!(!state.mcp.is_open());
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Mcp(McpEffect::Close)))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Send(Effect::Interrupt { .. })))
+        );
+        let effects = mcp_input(&mut state, McpInput::Connection { connected: true });
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Mcp(McpEffect::Reload { .. })))
+        );
+    }
 }
 
 async fn profiles_without_client(
@@ -8104,6 +8397,58 @@ fn apply<S: Screen>(
                     });
                 }
             },
+            AppEffect::CloseMcp(service) => {
+                screen.forget_mcp_secrets();
+                screen.sync_mcp(None);
+                executor.spawn(service.closing());
+            }
+            AppEffect::PrepareMcp => {
+                start_mcp_prepare(state, executor);
+            }
+            AppEffect::Mcp(effect) => {
+                use talaria_core::mcp::{McpEffect, McpInput};
+                match effect {
+                    McpEffect::ForgetSecrets => screen.forget_mcp_secrets(),
+                    McpEffect::OpenUrl(url) => {
+                        if !screen.open_mcp_url(&url) {
+                            let _ = executor.sender.send(AppMessage::Mcp {
+                                binding: state.mcp_binding,
+                                input: McpInput::OpenFailed,
+                            });
+                        }
+                    }
+                    McpEffect::CopyText(text) => screen.copy_mcp_text(&text),
+                    McpEffect::Close => {
+                        screen.forget_mcp_secrets();
+                        screen.sync_mcp(None);
+                        if state.mcp.pending_changes() {
+                            screen.commit_lines(vec![
+                                "· MCP changes are saved. /mcp apply uses them in this session."
+                                    .to_owned(),
+                            ]);
+                        }
+                        if let Some(service) = state.mcp_service.clone() {
+                            executor.spawn(service.closing());
+                        }
+                    }
+                    effect => {
+                        if let Some(service) = state.mcp_service.clone() {
+                            let secret = screen.take_mcp_secret(&effect);
+                            let binding = state.mcp_binding;
+                            let sender = executor.sender.clone();
+                            executor.spawn(async move {
+                                for input in service.execute(effect, secret).await {
+                                    let _ = sender.send(AppMessage::Mcp { binding, input });
+                                }
+                            });
+                        } else {
+                            state.mcp_waiting.push(effect);
+                            start_mcp_prepare(state, executor);
+                        }
+                    }
+                }
+                redraw |= state.mcp.is_open();
+            }
             AppEffect::Models(effect) => match effect {
                 ModelsEffect::OpenOverlay | ModelsEffect::CloseOverlay => redraw = true,
                 ModelsEffect::Notice { level, text, .. } => {
@@ -9731,6 +10076,7 @@ pub async fn run<S: Screen>(
         let deadline = earliest_of([deadline, state.automation_deadline]);
         let provider_deadline = talaria_core::providers::next_deadline(&state.providers);
         let deadline = earliest_of([deadline, provider_deadline]);
+        let deadline = earliest_of([deadline, talaria_core::mcp::next_deadline(&state.mcp)]);
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
@@ -9786,6 +10132,13 @@ pub async fn run<S: Screen>(
                 if provider_deadline.is_some_and(|due| due <= now) {
                     let generation = state.provider_generation;
                     let _ = apply(&mut state, AppMessage::Providers { generation, input: ProvidersInput::Tick }, screen, &executor);
+                }
+                if talaria_core::mcp::next_deadline(&state.mcp).is_some_and(|due| due <= now) {
+                    let binding = state.mcp_binding;
+                    let _ = apply(&mut state, AppMessage::Mcp {
+                        binding,
+                        input: talaria_core::mcp::McpInput::Tick,
+                    }, screen, &executor);
                 }
                 // A countdown that changed its text arms the next one.
                 state.automation_wake(now);
@@ -9853,6 +10206,10 @@ pub async fn run<S: Screen>(
     });
     screen.forget_provider_secret();
     let mut outcome = Outcome::default();
+    screen.forget_mcp_secrets();
+    if let Some(service) = state.mcp_service.take() {
+        let _ = tokio::time::timeout(Duration::from_secs(1), service.close()).await;
+    }
     match ending {
         Ending::Quit | Ending::InputClosed => {
             let (detached, code) = if pending.is_some() {

@@ -186,6 +186,61 @@ profiles_new = ["n"]
 profiles_description = ["e"]
 profiles_soul = ["s"]
 profiles_back = ["esc"]
+model_roles_section_main = ["1"]
+model_roles_section_fallbacks = ["2"]
+model_roles_section_helpers = ["3"]
+model_roles_section_subagents = ["4"]
+model_roles_section_moa = ["5"]
+model_roles_next_section = ["tab"]
+model_roles_prev_section = ["shift+tab"]
+model_roles_up = ["up"]
+model_roles_down = ["down"]
+model_roles_home = ["home"]
+model_roles_end = ["end"]
+model_roles_page_up = ["pageup"]
+model_roles_page_down = ["pagedown"]
+model_roles_left = ["left"]
+model_roles_right = ["right"]
+model_roles_enter = ["enter"]
+model_roles_effort = ["e"]
+model_roles_context = ["c"]
+model_roles_inherit = ["i"]
+model_roles_add = ["a"]
+model_roles_remove = ["x", "delete"]
+model_roles_move_up = ["K", "alt+up"]
+model_roles_move_down = ["J", "alt+down"]
+model_roles_toggle = ["space"]
+model_roles_make_default = ["D"]
+model_roles_chain_mode = ["m"]
+model_roles_reset_stale = ["R"]
+model_roles_review = ["ctrl+s"]
+model_roles_discard = ["u"]
+model_roles_reload = ["ctrl+r"]
+model_roles_close = ["esc"]
+model_roles_help = ["?"]
+route_picker_up = ["up"]
+route_picker_down = ["down"]
+route_picker_page_up = ["pageup"]
+route_picker_page_down = ["pagedown"]
+route_picker_home = ["home"]
+route_picker_end = ["end"]
+route_picker_choose = ["enter"]
+route_picker_refresh = ["ctrl+r"]
+route_picker_cancel = ["esc"]
+mcp_next_tab = ["tab"]
+mcp_prev_tab = ["shift+tab"]
+mcp_reload = ["ctrl+r"]
+mcp_add = ["ctrl+n"]
+mcp_test = ["ctrl+t"]
+mcp_toggle = ["ctrl+e"]
+mcp_set_key = ["ctrl+k"]
+mcp_sign_in = ["ctrl+o"]
+mcp_remove = ["ctrl+d"]
+mcp_apply = ["ctrl+y"]
+mcp_save = ["ctrl+s"]
+mcp_open_link = ["o"]
+mcp_copy = ["c"]
+mcp_paste_redirect = ["p"]
 [editor]
 command = ""
 [history]
@@ -297,6 +352,31 @@ saved effort. A malformed file is left untouched and switches them off. `--model
 overrides the saved pair and `--effort` the saved effort; continue and resume ignore saved defaults;
 an unavailable saved model is dropped. Hermes's profile default never changes.
 
+## MCP servers
+
+`/mcp` opens the connected profile's Model Context Protocol servers. `/mcp catalogue` browses
+Hermes's catalogue; `/mcp apply` asks Hermes to apply saved changes. Tab switches lists, typing
+filters, Enter opens details or an install confirmation, and Esc clears the filter before closing.
+
+On Servers, Ctrl+T tests, Ctrl+E enables or disables, Ctrl+K saves a key, Ctrl+O starts browser
+sign-in, Ctrl+D asks before removal, and Ctrl+N adds a remote or local server. Plugin servers are
+read-only here. A local server runs a program on the gateway machine: add only programs you trust.
+Keys and environment values are masked and saved through Hermes's key API, outside server config.
+
+Saving affects new sessions. Ctrl+Y shows Hermes's warning before applying changes to the current
+session; a busy session may need another apply after its turn ends. Ctrl+R refreshes the list
+without applying anything. Removing a server keeps its saved key and sign-in in the profile.
+
+Browser sign-in opens a link only when you press O; C copies it. Over SSH, P accepts the browser's
+loopback callback address when the redirect cannot reach the gateway machine. The detail card
+also gives the command for device sign-in. Talaria shows and copies these commands; it never
+runs them. Catalogue entries that need extra values provide a terminal install command.
+
+The `mcp_*` actions can be rebound under `[keys]`: `mcp_next_tab`, `mcp_prev_tab`, `mcp_reload`,
+`mcp_add`, `mcp_test`, `mcp_toggle`, `mcp_set_key`, `mcp_sign_in`, `mcp_remove`, `mcp_apply`,
+`mcp_save`, `mcp_open_link`, `mcp_copy`, and `mcp_paste_redirect`. These bindings apply only
+inside the MCP screen.
+
 ## Keys
 
 `/config` opens the current Hermes profile's settings. `/config <text>` opens a filter;
@@ -369,7 +449,7 @@ case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrow
 the earlier action keeps it and the other gets a notice. Shift+Enter needs the Kitty keyboard
 protocol, so Ctrl+J and Alt+Enter are the portable newline keys. No default uses F1, F2, Ctrl+B or
 Ctrl+S (macOS, nested Herdr, flow control), except `commit_submit` in the review's commit editor
-and `providers_save` in an endpoint form;
+and `providers_save` in an endpoint form and `mcp_save` in an MCP form;
 binding them works, with a notice.
 
 ## Providers

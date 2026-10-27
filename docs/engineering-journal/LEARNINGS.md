@@ -5681,3 +5681,34 @@ blank padding and empty borders removed; fault injection checks that its target 
 
 **Generalizable rule.** Wait for the data being checked, compare the complete relevant list,
 and distinguish a static explanation from a completed action without relaxing result guards.
+
+## 2026-10-27 — MCP catalogue transport text is not a transport kind
+
+**Evidence.** At the pinned Hermes release, `tui_gateway/methods_tools.py` stringifies a catalogue
+`TransportSpec` and reads an absent `env_keys` attribute as an empty requirement list. Its socket
+install builds the server configuration without collecting missing credentials.
+**Mechanism.** The dataclass text includes a URL and static environment configuration, while the
+catalogue row needs only the `http` or `stdio` discriminator. A successful install does not prove
+the server can authenticate.
+**Rule.** Normalize only the transport discriminator, never display the dataclass text, and offer
+the terminal install command after an installed server's first failed test or sign-in.
+
+## 2026-10-27 — MCP reload has a stricter parameter allowlist
+
+**Evidence.** Pinned `gateway/session_ancillary.py` accepts only `session_id`, `confirm`, `rev`
+and `profile`. The generated request always serializes `always: false`; the exact-object test
+for the typed override requires its absence.
+**Mechanism.** Default-valued generated fields can still violate an independently validated
+handler's allowlist. The first request returns a confirmation warning without reloading anything.
+**Rule.** Use the typed omission override and send confirmation only after the user accepts the
+warning. Refreshing a list must never reload servers.
+
+## 2026-10-27 — Overlay preparation must preserve command intent and poll deadlines
+
+**Evidence.** MCP application integration prepares its profile-bound web client asynchronously.
+An initial apply command therefore reaches the reducer before that service is ready. Sign-in
+polls also have absolute due times while keys continue to arrive.
+**Mechanism.** A refresh cannot reconstruct the earlier apply intent; deadlines based on the last
+input can keep moving into the future during typing.
+**Rule.** Retain an operation's intent until preparation finishes, clear it on close, and anchor
+poll and repaint deadlines to the operation rather than the latest input.

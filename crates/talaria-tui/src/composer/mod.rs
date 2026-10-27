@@ -700,7 +700,21 @@ impl Composer {
             | Action::ProvidersSave
             | Action::ProvidersClearKey
             | Action::ProvidersOpenLink
-            | Action::ProvidersCopy => {}
+            | Action::ProvidersCopy
+            | Action::McpNextTab
+            | Action::McpPrevTab
+            | Action::McpReload
+            | Action::McpAdd
+            | Action::McpTest
+            | Action::McpToggle
+            | Action::McpSetKey
+            | Action::McpSignIn
+            | Action::McpRemove
+            | Action::McpApply
+            | Action::McpSave
+            | Action::McpOpenLink
+            | Action::McpCopy
+            | Action::McpPasteRedirect => {}
         }
         false
     }

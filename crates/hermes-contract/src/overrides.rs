@@ -8,7 +8,9 @@ pub mod reload_mcp {
 
     #[derive(Debug, Clone, Default, serde::Serialize)]
     pub struct Params {
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub confirm: Option<bool>,
     }
 

@@ -668,6 +668,20 @@ pub enum Action {
     ProvidersClearKey,
     ProvidersOpenLink,
     ProvidersCopy,
+    McpNextTab,
+    McpPrevTab,
+    McpReload,
+    McpAdd,
+    McpTest,
+    McpToggle,
+    McpSetKey,
+    McpSignIn,
+    McpRemove,
+    McpApply,
+    McpSave,
+    McpOpenLink,
+    McpCopy,
+    McpPasteRedirect,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -699,7 +713,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 165] = [
+    pub const ALL: [Self; 179] = [
         Self::DoctorUp,
         Self::DoctorDown,
         Self::DoctorToggle,
@@ -865,6 +879,20 @@ impl Action {
         Self::ProvidersClearKey,
         Self::ProvidersOpenLink,
         Self::ProvidersCopy,
+        Self::McpNextTab,
+        Self::McpPrevTab,
+        Self::McpReload,
+        Self::McpAdd,
+        Self::McpTest,
+        Self::McpToggle,
+        Self::McpSetKey,
+        Self::McpSignIn,
+        Self::McpRemove,
+        Self::McpApply,
+        Self::McpSave,
+        Self::McpOpenLink,
+        Self::McpCopy,
+        Self::McpPasteRedirect,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -1036,6 +1064,20 @@ impl Action {
             Self::ProvidersClearKey => "providers_clear_key",
             Self::ProvidersOpenLink => "providers_open_link",
             Self::ProvidersCopy => "providers_copy",
+            Self::McpNextTab => "mcp_next_tab",
+            Self::McpPrevTab => "mcp_prev_tab",
+            Self::McpReload => "mcp_reload",
+            Self::McpAdd => "mcp_add",
+            Self::McpTest => "mcp_test",
+            Self::McpToggle => "mcp_toggle",
+            Self::McpSetKey => "mcp_set_key",
+            Self::McpSignIn => "mcp_sign_in",
+            Self::McpRemove => "mcp_remove",
+            Self::McpApply => "mcp_apply",
+            Self::McpSave => "mcp_save",
+            Self::McpOpenLink => "mcp_open_link",
+            Self::McpCopy => "mcp_copy",
+            Self::McpPasteRedirect => "mcp_paste_redirect",
         }
     }
 
@@ -1215,6 +1257,20 @@ impl Action {
             | Self::ProvidersClearKey
             | Self::ProvidersOpenLink
             | Self::ProvidersCopy => KeyContext::Providers,
+            Self::McpNextTab
+            | Self::McpPrevTab
+            | Self::McpReload
+            | Self::McpAdd
+            | Self::McpTest
+            | Self::McpToggle
+            | Self::McpSetKey
+            | Self::McpSignIn
+            | Self::McpRemove
+            | Self::McpApply
+            | Self::McpSave
+            | Self::McpOpenLink
+            | Self::McpCopy
+            | Self::McpPasteRedirect => KeyContext::Mcp,
         }
     }
 
@@ -1393,6 +1449,20 @@ impl Action {
             Self::ProvidersClearKey => &["ctrl+x"],
             Self::ProvidersOpenLink => &["o"],
             Self::ProvidersCopy => &["c"],
+            Self::McpNextTab => &["tab"],
+            Self::McpPrevTab => &["shift+tab"],
+            Self::McpReload => &["ctrl+r"],
+            Self::McpAdd => &["ctrl+n"],
+            Self::McpTest => &["ctrl+t"],
+            Self::McpToggle => &["ctrl+e"],
+            Self::McpSetKey => &["ctrl+k"],
+            Self::McpSignIn => &["ctrl+o"],
+            Self::McpRemove => &["ctrl+d"],
+            Self::McpApply => &["ctrl+y"],
+            Self::McpSave => &["ctrl+s"],
+            Self::McpOpenLink => &["o"],
+            Self::McpCopy => &["c"],
+            Self::McpPasteRedirect => &["p"],
         }
     }
 }
@@ -2224,7 +2294,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 165);
+        assert_eq!(Action::ALL.len(), 179);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -2331,6 +2401,20 @@ mod tests {
                 | Action::ProvidersClearKey
                 | Action::ProvidersOpenLink
                 | Action::ProvidersCopy => KeyContext::Providers,
+                Action::McpNextTab
+                | Action::McpPrevTab
+                | Action::McpReload
+                | Action::McpAdd
+                | Action::McpTest
+                | Action::McpToggle
+                | Action::McpSetKey
+                | Action::McpSignIn
+                | Action::McpRemove
+                | Action::McpApply
+                | Action::McpSave
+                | Action::McpOpenLink
+                | Action::McpCopy
+                | Action::McpPasteRedirect => KeyContext::Mcp,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -2468,6 +2552,20 @@ mod tests {
                 | Action::ProvidersClearKey
                 | Action::ProvidersOpenLink
                 | Action::ProvidersCopy => KeyContext::Providers,
+                Action::McpNextTab
+                | Action::McpPrevTab
+                | Action::McpReload
+                | Action::McpAdd
+                | Action::McpTest
+                | Action::McpToggle
+                | Action::McpSetKey
+                | Action::McpSignIn
+                | Action::McpRemove
+                | Action::McpApply
+                | Action::McpSave
+                | Action::McpOpenLink
+                | Action::McpCopy
+                | Action::McpPasteRedirect => KeyContext::Mcp,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -2615,10 +2713,11 @@ mod tests {
         for action in Action::ALL {
             for chord in map.chords(action) {
                 let label = chord.label();
-                // The review's commit editor submits with Ctrl+S, as its issue settled; raw mode
-                // turns flow control off, and the key is configurable.
-                let settled = matches!(action, Action::CommitSubmit | Action::ProvidersSave)
-                    && label == "Ctrl+S";
+                // Modal commit and provider/MCP forms save with Ctrl+S; raw mode disables flow control.
+                let settled = matches!(
+                    action,
+                    Action::CommitSubmit | Action::ProvidersSave | Action::McpSave
+                ) && label == "Ctrl+S";
                 assert!(
                     settled || !risky.contains(&label.as_str()),
                     "{label} is bound to {}",
@@ -2752,7 +2851,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 165);
+        assert_eq!(Action::ALL.len(), 179);
     }
 
     #[test]
