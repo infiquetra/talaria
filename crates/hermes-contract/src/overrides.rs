@@ -106,6 +106,42 @@ pub struct TranscriptMessageOverride {
 
 /// Keep a boolean `archived_truncated` and read any other value as absent, so an
 /// unexpected shape never fails the whole transcript row.
+/// A fire error is a string, null, or `{at, detail}`.
+/// Hermes `cron/jobs.py:2323-2330` and `cron/scheduler_gateway_gate.py:48-59`
+/// at tag v0.22.4 store the object form while the published schema says a string.
+pub fn deserialize_last_fire_error<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <Option<serde_json::Value> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(match value {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(text)) => Some(text),
+        Some(serde_json::Value::Object(map)) => map
+            .get("detail")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        Some(_) => None,
+    })
+}
+
+/// `at` and `detail` from a string, an object, or null. A string has no `at`.
+pub fn last_fire_error_parts(value: &serde_json::Value) -> Option<(Option<String>, String)> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(text) => Some((None, text.clone())),
+        serde_json::Value::Object(map) => {
+            let detail = map.get("detail").and_then(serde_json::Value::as_str)?;
+            let at = map
+                .get("at")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            Some((at, detail.to_owned()))
+        }
+        _ => None,
+    }
+}
+
 pub fn deserialize_archived_truncated<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
     D: serde::Deserializer<'de>,

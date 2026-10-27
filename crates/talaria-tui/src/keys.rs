@@ -211,6 +211,8 @@ pub enum KeyContext {
     Capabilities,
     /// The memory and curator screen.
     Memory,
+    /// The scheduled jobs overlay.
+    Cron,
 }
 
 /// Translate a doctor binding into the domain action.

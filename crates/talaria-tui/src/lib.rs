@@ -6,6 +6,7 @@ pub mod checklist;
 pub mod comfort_route;
 pub mod composer;
 pub mod context_view;
+pub mod cron;
 pub mod diff_view;
 pub mod doctor_view;
 pub mod fleet_view;

@@ -10,6 +10,7 @@ pub mod capabilities;
 pub mod checklist;
 pub mod commands;
 pub mod context;
+pub mod cron;
 pub mod diff;
 pub mod directory;
 pub mod doctor;

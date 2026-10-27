@@ -14,6 +14,7 @@ pub mod commands;
 pub mod config;
 pub mod connection;
 pub mod context;
+pub mod cron;
 pub mod directory;
 pub mod failure;
 pub mod fleet;
