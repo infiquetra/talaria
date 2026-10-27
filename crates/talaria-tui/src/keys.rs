@@ -59,6 +59,27 @@ pub enum KeyContext {
     CommitMessage,
     /// The settings screen.
     Settings,
+    /// The doctor overlay.
+    Doctor,
+}
+
+/// Translate a doctor binding into the domain action.
+pub fn doctor_key(action: Action) -> Option<crate::doctor_view::DoctorKey> {
+    use crate::doctor_view::DoctorKey;
+    Some(match action {
+        Action::DoctorUp => DoctorKey::Up,
+        Action::DoctorDown => DoctorKey::Down,
+        Action::DoctorToggle => DoctorKey::Toggle,
+        Action::DoctorRerun => DoctorKey::Rerun,
+        Action::DoctorRestart => DoctorKey::Restart,
+        Action::DoctorClose => DoctorKey::Close,
+        Action::DoctorYes => DoctorKey::Yes,
+        Action::DoctorNo => DoctorKey::No,
+        Action::DoctorTab => DoctorKey::Tab,
+        Action::DoctorLeft => DoctorKey::Left,
+        Action::DoctorRight => DoctorKey::Right,
+        _ => return None,
+    })
 }
 
 /// Model commands use separate contexts without changing composer editing actions.
@@ -177,6 +198,28 @@ impl Binding {
 /// One command a key chord can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Action {
+    /// Move the doctor selection up.
+    DoctorUp,
+    /// Move the doctor selection down.
+    DoctorDown,
+    /// Toggle doctor details or activate a button.
+    DoctorToggle,
+    /// Run the checks again.
+    DoctorRerun,
+    /// Ask to restart the gateway.
+    DoctorRestart,
+    /// Close the doctor or cancel a question.
+    DoctorClose,
+    /// Confirm the restart.
+    DoctorYes,
+    /// Cancel the restart.
+    DoctorNo,
+    /// Toggle the selected confirmation button.
+    DoctorTab,
+    /// Select a confirmation button.
+    DoctorLeft,
+    /// Select a confirmation button.
+    DoctorRight,
     Submit,
     Newline,
     Interrupt,
@@ -446,7 +489,18 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 131] = [
+    pub const ALL: [Self; 142] = [
+        Self::DoctorUp,
+        Self::DoctorDown,
+        Self::DoctorToggle,
+        Self::DoctorRerun,
+        Self::DoctorRestart,
+        Self::DoctorClose,
+        Self::DoctorYes,
+        Self::DoctorNo,
+        Self::DoctorTab,
+        Self::DoctorLeft,
+        Self::DoctorRight,
         Self::Submit,
         Self::Newline,
         Self::Interrupt,
@@ -584,6 +638,17 @@ impl Action {
     #[must_use]
     pub const fn config_name(self) -> &'static str {
         match self {
+            Self::DoctorUp => "doctor_up",
+            Self::DoctorDown => "doctor_down",
+            Self::DoctorToggle => "doctor_toggle",
+            Self::DoctorRerun => "doctor_rerun",
+            Self::DoctorRestart => "doctor_restart",
+            Self::DoctorClose => "doctor_close",
+            Self::DoctorYes => "doctor_yes",
+            Self::DoctorNo => "doctor_no",
+            Self::DoctorTab => "doctor_tab",
+            Self::DoctorLeft => "doctor_left",
+            Self::DoctorRight => "doctor_right",
             Self::Submit => "submit",
             Self::Newline => "newline",
             Self::Interrupt => "interrupt",
@@ -826,6 +891,17 @@ impl Action {
             | Self::FleetNew
             | Self::FleetNewWorktree
             | Self::FleetReview => KeyContext::Fleet,
+            Self::DoctorUp
+            | Self::DoctorDown
+            | Self::DoctorToggle
+            | Self::DoctorRerun
+            | Self::DoctorRestart
+            | Self::DoctorClose
+            | Self::DoctorYes
+            | Self::DoctorNo
+            | Self::DoctorTab
+            | Self::DoctorLeft
+            | Self::DoctorRight => KeyContext::Doctor,
             Self::AgentsUp
             | Self::AgentsDown
             | Self::AgentsTail
@@ -871,6 +947,17 @@ impl Action {
     /// The built-in chords, in display order.
     const fn default_chords(self) -> &'static [&'static str] {
         match self {
+            Self::DoctorUp => &["up", "k"],
+            Self::DoctorDown => &["down", "j"],
+            Self::DoctorToggle => &["enter"],
+            Self::DoctorRerun => &["r"],
+            Self::DoctorRestart => &["shift+r"],
+            Self::DoctorClose => &["esc", "q"],
+            Self::DoctorYes => &["y"],
+            Self::DoctorNo => &["n"],
+            Self::DoctorTab => &["tab"],
+            Self::DoctorLeft => &["left"],
+            Self::DoctorRight => &["right"],
             Self::Submit => &["enter"],
             Self::Newline => &["shift+enter", "alt+enter", "ctrl+j"],
             Self::Interrupt => &["esc"],
@@ -1794,7 +1881,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 131);
+        assert_eq!(Action::ALL.len(), 142);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1894,6 +1981,17 @@ mod tests {
                 | Action::AgentsTop
                 | Action::AgentsBottom
                 | Action::AgentsOpenInPane => KeyContext::Agents,
+                Action::DoctorUp
+                | Action::DoctorDown
+                | Action::DoctorToggle
+                | Action::DoctorRerun
+                | Action::DoctorRestart
+                | Action::DoctorClose
+                | Action::DoctorYes
+                | Action::DoctorNo
+                | Action::DoctorTab
+                | Action::DoctorLeft
+                | Action::DoctorRight => KeyContext::Doctor,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), wanted);
@@ -1997,6 +2095,17 @@ mod tests {
                 | Action::AgentsTop
                 | Action::AgentsBottom
                 | Action::AgentsOpenInPane => KeyContext::Agents,
+                Action::DoctorUp
+                | Action::DoctorDown
+                | Action::DoctorToggle
+                | Action::DoctorRerun
+                | Action::DoctorRestart
+                | Action::DoctorClose
+                | Action::DoctorYes
+                | Action::DoctorNo
+                | Action::DoctorTab
+                | Action::DoctorLeft
+                | Action::DoctorRight => KeyContext::Doctor,
                 _ => KeyContext::Composer,
             };
             assert_eq!(action.context(), context, "{name}");
@@ -2253,7 +2362,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 131);
+        assert_eq!(Action::ALL.len(), 142);
     }
 
     #[test]

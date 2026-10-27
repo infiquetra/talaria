@@ -10,6 +10,9 @@ fn main() -> ExitCode {
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
+    if talaria_cli::args::is_doctor_command(&args) {
+        return ExitCode::from(talaria_cli::doctor_cmd::run(&args));
+    }
     if talaria_cli::args::is_attach_command(&args) {
         return talaria_cli::attach_cmd::run(&args);
     }

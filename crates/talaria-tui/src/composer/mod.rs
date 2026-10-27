@@ -666,7 +666,18 @@ impl Composer {
             | Action::ReviewOpenPr
             | Action::ReviewRefresh
             | Action::CommitSubmit
-            | Action::CommitDraft => {}
+            | Action::CommitDraft
+            | Action::DoctorUp
+            | Action::DoctorDown
+            | Action::DoctorToggle
+            | Action::DoctorRerun
+            | Action::DoctorRestart
+            | Action::DoctorClose
+            | Action::DoctorYes
+            | Action::DoctorNo
+            | Action::DoctorTab
+            | Action::DoctorLeft
+            | Action::DoctorRight => {}
         }
         false
     }

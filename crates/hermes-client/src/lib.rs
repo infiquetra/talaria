@@ -18,6 +18,7 @@ pub mod channel;
 pub mod config_api;
 pub mod connect;
 pub mod discovery;
+pub mod gateway_api;
 pub mod liveness;
 pub mod record;
 pub mod redact;
@@ -39,8 +40,8 @@ pub use connect::{
 };
 pub use discovery::{
     DiscoverOptions, DiscoveryError, Endpoint, EnsureError, EnsurePolicy, ExitKind, GatewayState,
-    NodeKind, NodeProblem, PointerProblem, ProfileId, ProfileLookupError, ReportedState,
-    ServedProfile, default_home, discover, discover_with, home_hash,
+    NodeKind, NodeProblem, PointerProblem, ProfileId, ProfileLookupError, ReadVerb, ReportedState,
+    ServedProfile, control_query, default_home, discover, discover_with, home_hash,
 };
 pub use record::{
     FRAME_LOG_VERSION, GatewayIdentity, RecordError, RecordSummary, Recorder, RecorderOptions,

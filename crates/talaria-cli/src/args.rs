@@ -142,6 +142,11 @@ pub fn is_attach_command(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg == "attach")
 }
 
+/// True when the first argument is the diagnostics command.
+pub fn is_doctor_command(args: &[String]) -> bool {
+    args.first().is_some_and(|arg| arg == "doctor")
+}
+
 pub fn write_usage(error: &clap::Error) -> u8 {
     let (text, code) = render_usage(error);
     match code {

@@ -5,6 +5,17 @@ is fine, and copying this default file changes nothing. There is no repository-l
 
 ```toml
 [keys]
+doctor_up = ["up", "k"]
+doctor_down = ["down", "j"]
+doctor_toggle = ["enter"]
+doctor_rerun = ["r"]
+doctor_restart = ["shift+r"]
+doctor_close = ["esc", "q"]
+doctor_yes = ["y"]
+doctor_no = ["n"]
+doctor_tab = ["tab"]
+doctor_left = ["left"]
+doctor_right = ["right"]
 submit = ["enter"]
 newline = ["shift+enter", "alt+enter", "ctrl+j"]
 interrupt = ["esc"]
@@ -356,6 +367,15 @@ cancels. `/cd` shows the session's folder; `/cd <folder>` moves the session and 
 conversation. `~` is your home, `~name` is refused, and a relative path starts from the session's
 folder. Talaria checks the folder exists; Hermes decides. `/cd` is refused while a turn runs: wait,
 or press Esc.
+
+## Doctor
+
+Use `/doctor` in Talaria or `talaria doctor [--profile NAME] [--json] [--restart [--yes]]`
+to check the gateway. The selected profile defaults to `default` on the command line. A restart
+requires confirmation; `--yes` provides it for scripts. The [JSON format](formats/doctor-v1.md)
+describes the machine-readable report. Exit codes are 0 for success, 1 for a failed check or
+restart, 2 for invalid arguments, 3 when restart confirmation requires a terminal or `--yes`,
+and 4 when confirmation is declined.
 
 ## Coming from 0.6
 

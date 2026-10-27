@@ -10,6 +10,8 @@
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalAction {
+    /// Open the gateway health check.
+    Doctor,
     /// Leave Talaria. The Hermes session keeps running.
     Quit,
     /// Choose the model of the foreground session.
@@ -277,6 +279,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[filter | key=value …]",
         takes_argument: true,
         action: LocalAction::Config,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "doctor",
+        aliases: &[],
+        summary: "Check the link to the Hermes gateway",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Doctor,
         tag: "talaria",
     },
 ];

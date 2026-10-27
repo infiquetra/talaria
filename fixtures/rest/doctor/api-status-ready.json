@@ -1,0 +1,25 @@
+{
+  "config_version": 23,
+  "latest_config_version": 23,
+  "gateway_heartbeat_stale_s": null,
+  "active_agents": 0,
+  "components": {
+    "dashboard": {
+      "status": "ok",
+      "recent_unhandled_errors": 0,
+      "selftest": "ok"
+    },
+    "storage": {
+      "status": "ok"
+    },
+    "platforms": {
+      "status": "ok",
+      "configured": 0,
+      "connected": 0
+    }
+  },
+  "multiplex_standalone_reason": null,
+  "hermes_home": "TEMP_HOME_PLACEHOLDER",
+  "config_path": "TEMP_HOME_PLACEHOLDER/config.yaml",
+  "env_path": "TEMP_HOME_PLACEHOLDER/.env"
+}

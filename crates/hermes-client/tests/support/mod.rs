@@ -197,6 +197,7 @@ pub struct WsSeen {
 
 struct Shared {
     requests: Mutex<Vec<String>>,
+    request_lines: Mutex<Vec<String>>,
     connections: AtomicUsize,
     issued: Mutex<Vec<Issued>>,
     seen: Mutex<Option<WsSeen>>,
@@ -225,6 +226,10 @@ impl AttachMock {
 
     pub fn requests(&self) -> Vec<String> {
         lock(&self.shared.requests).clone()
+    }
+
+    pub fn request_lines(&self) -> Vec<String> {
+        lock(&self.shared.request_lines).clone()
     }
 
     pub fn connections(&self) -> usize {
@@ -258,6 +263,7 @@ where
     install_umask();
     let shared = Arc::new(Shared {
         requests: Mutex::new(Vec::new()),
+        request_lines: Mutex::new(Vec::new()),
         connections: AtomicUsize::new(0),
         issued: Mutex::new(Vec::new()),
         seen: Mutex::new(None),
@@ -334,8 +340,9 @@ async fn handle_control(
     shared: &Shared,
 ) -> std::io::Result<()> {
     let line = read_line(stream, 64 * 1024).await?;
-    if !line.is_empty() {
-        lock(&shared.requests).push(line);
+    if !line.is_empty() && line != "\n" {
+        lock(&shared.request_lines).push(line.clone());
+        lock(&shared.requests).push(line.strip_suffix('\n').unwrap_or(&line).to_owned());
     }
     match reply {
         ControlReply::Silence => std::future::pending::<()>().await,
@@ -402,7 +409,10 @@ async fn read_line(stream: &mut tokio::net::UnixStream, limit: usize) -> std::io
         }
         match stream.read(&mut byte).await {
             Ok(0) | Err(_) => break,
-            Ok(_) if byte[0] == b'\n' => break,
+            Ok(_) if byte[0] == b'\n' => {
+                buf.push(byte[0]);
+                break;
+            }
             Ok(_) => buf.push(byte[0]),
         }
     }
