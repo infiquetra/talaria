@@ -5,6 +5,7 @@ pub mod background;
 pub mod checklist;
 pub mod comfort_route;
 pub mod composer;
+pub mod configure;
 pub mod connectors;
 pub mod context_view;
 pub mod cron;

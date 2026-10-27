@@ -1,0 +1,3 @@
+```talaria-configure
+{"kind":"proposal","summary":"Update settings and services","changes":[{"op":"set","key":"display.bell_on_complete","value":true},{"op":"mcp_add","name":"wiki","preset":"deepwiki"},{"op":"toggle","kind":"skill","name":"notes","enabled":false},{"op":"cron_pause","job_id":"j1"},{"op":"open","screen":"providers","target":"openrouter"}]}
+```

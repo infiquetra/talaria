@@ -53,3 +53,7 @@ workspace = true
 [[bench]]
 name = "settings_filter"
 harness = false
+
+[[bench]]
+name = "configure_brief"
+harness = false

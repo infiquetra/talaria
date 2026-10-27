@@ -15,6 +15,11 @@
 
 #![allow(dead_code)]
 
+#[path = "../../../hermes-client/tests/support/mock_rest.rs"]
+// Standalone gateway tests own a REST mock even when their crate imports one separately.
+#[allow(clippy::duplicate_mod)]
+pub(super) mod configure_rest;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::ops::Deref;
@@ -448,6 +453,7 @@ struct State {
     fleet: FleetTables,
     /// Replies matched by method and params, each used once, before any handler.
     matched_results: Vec<(String, Value, Value)>,
+    method_results: Vec<(String, Value)>,
     /// Process reads default to empty; process mutations and background tasks are opt-in.
     background: BackgroundScript,
     mcp: McpSide,
@@ -629,6 +635,7 @@ fn plan_capabilities(
 struct ScriptedError {
     method: String,
     profile: Option<String>,
+    flag: Option<(String, bool)>,
     code: i64,
     reason: String,
 }
@@ -732,6 +739,7 @@ fn new_shared(
             fleet_non_live_reads: 0,
             fleet: FleetTables::default(),
             matched_results: Vec::new(),
+            method_results: Vec::new(),
             background: BackgroundScript::default(),
             mcp: McpSide::default(),
             drop_after: HashSet::new(),
@@ -785,6 +793,13 @@ impl MockGateway {
     /// Start the mock for this session id and a client attached to it.
     pub async fn start_with_session(session_id: &str) -> (Self, Client, InboundStream) {
         Self::start_with_recorder(session_id, None).await
+    }
+
+    pub async fn start_recorded(
+        session_id: &str,
+        recorder: Option<hermes_client::Recorder>,
+    ) -> (Self, Client, InboundStream) {
+        Self::start_with_recorder(session_id, recorder).await
     }
 
     pub async fn start_with_recorder(
@@ -907,6 +922,24 @@ impl MockGateway {
         lock(&self.shared).scripted_errors.push(ScriptedError {
             method: method.to_owned(),
             profile: profile.map(str::to_owned),
+            flag: None,
+            code,
+            reason: reason.to_owned(),
+        });
+    }
+
+    pub fn script_error_for_flag(
+        &self,
+        method: &str,
+        field: &str,
+        value: bool,
+        code: i64,
+        reason: &str,
+    ) {
+        lock(&self.shared).scripted_errors.push(ScriptedError {
+            method: method.to_owned(),
+            profile: None,
+            flag: Some((field.to_owned(), value)),
             code,
             reason: reason.to_owned(),
         });
@@ -987,6 +1020,12 @@ impl MockGateway {
         lock(&self.shared)
             .matched_results
             .push((method.to_owned(), params, result));
+    }
+
+    pub fn push_method_result(&self, method: &str, result: Value) {
+        lock(&self.shared)
+            .method_results
+            .push((method.to_owned(), result));
     }
 
     /// Give this profile's method no reply while on.
@@ -1605,6 +1644,7 @@ async fn run_socket(
 /// Parameter names a background launch must never send. The frame is still recorded.
 fn note_forbidden(state: &mut State, method: Option<&str>, params: &Value) {
     let banned: &[&str] = match method {
+        Some("session.create") if params.get("toolsets").is_some() => &["title", "cwd_explicit"],
         Some("session.create") => &["title", "hidden", "cwd_explicit"],
         Some("prompt.submit") => &["finite", "unattended"],
         _ => return,
@@ -1988,6 +2028,9 @@ fn plan_request(
                 .profile
                 .as_deref()
                 .is_none_or(|wanted| profile == Some(wanted))
+            && error.flag.as_ref().is_none_or(|(field, value)| {
+                params.get(field).and_then(Value::as_bool) == Some(*value)
+            })
     }) {
         let error = state.scripted_errors.remove(index);
         let text = json!({
@@ -2011,6 +2054,19 @@ fn plan_request(
         let (_, _, result) = state.matched_results.remove(index);
         let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
         outgoing.push((None, text, reply_meta(id, method)));
+        return;
+    }
+    if let Some(index) = state
+        .method_results
+        .iter()
+        .position(|(wanted, _)| wanted == method)
+    {
+        let (_, result) = state.method_results.remove(index);
+        outgoing.push((
+            None,
+            json!({"jsonrpc":"2.0", "id":id, "result":result}).to_string(),
+            reply_meta(id, method),
+        ));
         return;
     }
     // Issue #246: while the hold is on, `session.list` replies wait for the
@@ -2783,6 +2839,24 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
         // A host-scoped connection routes a request naming another served profile to that
         // profile, which drops `profile` before its own key check (Hermes v0.22.4
         // `gateway/session_controls.py:147-168`, `:258-271`), so the key is allowed here.
+        "session.create" if params.get("toolsets").is_some() => (
+            vec![
+                "request_id",
+                "toolsets",
+                "hidden",
+                "ignore_rules",
+                "max_turns",
+            ],
+            vec![
+                "request_id",
+                "toolsets",
+                "hidden",
+                "ignore_rules",
+                "max_turns",
+                "provider",
+                "model",
+            ],
+        ),
         "session.create" => (
             vec!["request_id", "source", "cwd"],
             vec![
@@ -4656,6 +4730,14 @@ fn replay_texts(state: &mut State, frames: &[Value]) -> Vec<(String, Meta)> {
 }
 
 impl MockGateway {
+    /// Set the snapshot used by a configuration session to the proven single tool.
+    pub fn configure_session(&self) {
+        let mut snapshot = recorded_create_snapshot();
+        snapshot["info"]["tools"] = json!({"clarify": ["clarify"]});
+        snapshot["info"]["yolo"] = json!(false);
+        self.set_create_template(snapshot);
+    }
+
     /// Enable finite frames without changing the interactive fixture defaults.
     pub fn configure_headless(&self, scenario: HeadlessScenario) {
         lock(&self.shared).sess.headless = Some(scenario);
@@ -5264,6 +5346,7 @@ struct StandaloneInfo {
     refuse_tickets: Mutex<bool>,
     fleet_profiles: Mutex<Vec<String>>,
     parked_profiles: Mutex<Vec<(String, String)>>,
+    configure_rest_origin: Mutex<Option<String>>,
     doctor: Mutex<DoctorMockState>,
 }
 
@@ -5318,6 +5401,7 @@ pub struct StandaloneGateway {
     info: Arc<StandaloneInfo>,
     runtime: Option<tokio::runtime::Runtime>,
     home: PathBuf,
+    configure_rest: Mutex<Option<configure_rest::MockRest>>,
 }
 
 impl Deref for StandaloneGateway {
@@ -5389,6 +5473,7 @@ impl StandaloneGateway {
                 drop_restart: false,
                 http: Vec::new(),
             }),
+            configure_rest_origin: Mutex::new(None),
         });
         lock(&shared).sess.profile_id = info.home.clone();
         let socket = home.join("gateway.sock");
@@ -5434,6 +5519,7 @@ impl StandaloneGateway {
             info,
             runtime: Some(runtime),
             home,
+            configure_rest: Mutex::new(None),
         }
     }
 
@@ -5456,6 +5542,27 @@ impl StandaloneGateway {
     }
     pub fn fail_capability_http(&self, status: u16) {
         *plain(&self.info.capability_http_failure) = Some(status);
+    }
+
+    /// Route configuration HTTP requests to the existing settings mock on this origin.
+    pub fn enable_configure_rest(&self) {
+        let mut rest = plain(&self.configure_rest);
+        if rest.is_none() {
+            let mock = self.block_on(configure_rest::MockRest::start());
+            *plain(&self.info.configure_rest_origin) = Some(mock.origin());
+            *rest = Some(mock);
+        }
+    }
+
+    /// Return the settings mock's recorded method, target, and body in order.
+    pub fn configure_rest_requests(&self) -> Vec<(String, String, Vec<u8>)> {
+        let rest = plain(&self.configure_rest);
+        rest.as_ref().map_or_else(Vec::new, |mock| {
+            self.block_on(mock.requests())
+                .into_iter()
+                .map(|request| (request.method, request.path, request.body))
+                .collect()
+        })
     }
 
     /// Every control request read, in order.
@@ -5763,6 +5870,37 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
         let shared = Arc::clone(&shared);
         let info = Arc::clone(&info);
         tokio::spawn(async move {
+            let origin = plain(&info.configure_rest_origin).clone();
+            if let Some(origin) = origin {
+                let mut first = [0_u8; 2048];
+                let request = tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        let count = stream.peek(&mut first).await.ok()?;
+                        if count == 0 {
+                            return None;
+                        }
+                        if first[..count].contains(&b'\n') {
+                            return Some(count);
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .ok()
+                .flatten();
+                let Some(count) = request else { return };
+                let line = String::from_utf8_lossy(&first[..count]);
+                let target = line.split_whitespace().nth(1).unwrap_or("");
+                if target.starts_with("/api/config") {
+                    if let Some(address) = origin.strip_prefix("http://")
+                        && let Ok(mut rest) = TcpStream::connect(address).await
+                    {
+                        let mut stream = stream;
+                        let _ = tokio::io::copy_bidirectional(&mut stream, &mut rest).await;
+                    }
+                    return;
+                }
+            }
             let mut bytes = [0u8; 1024];
             let count = match tokio::time::timeout(Duration::from_secs(5), async {
                 loop {

@@ -197,7 +197,7 @@ pub(crate) fn option_text(value: &Value) -> String {
         .map(str::to_owned)
         .unwrap_or_else(|| value.to_string())
 }
-pub(crate) fn lookup<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+pub fn lookup<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     key.split('.')
         .try_fold(value, |value, part| value.get(part))
 }

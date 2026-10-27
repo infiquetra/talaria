@@ -39,6 +39,7 @@ use talaria_core::attachments::CollapseRule;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
 use talaria_core::checklist::ChecklistCommit;
 use talaria_core::commands::PaletteInput;
+use talaria_core::configure::{ConfigureInput, ConfigureKey, Phase as ConfigurePhase};
 use talaria_core::directory::state::{PickerAction, PickerInput, PickerMode, PickerState};
 use talaria_core::fleet::ProfileStatus;
 use talaria_core::fleet_attention::FleetAttentionConfig;
@@ -178,6 +179,8 @@ enum Overlay {
     /// Memory providers, files and curator.
     Memory,
     Connectors,
+    /// The configuration assistant.
+    Configure,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -236,6 +239,8 @@ pub struct TuiScreen {
     terminal: InlineTerminal<Stdout>,
     composer: Composer,
     prompts: PromptStack,
+    configure_prompts: PromptStack,
+    configure_cancel_at: Option<Instant>,
     status: Option<StatusCommandService>,
     external: ExternalDisplay,
     inputs: StatusInputs,
@@ -1623,6 +1628,41 @@ impl TuiScreen {
         );
     }
 
+    fn sync_configure_prompts(&mut self, view: &View<'_>, now: Instant) {
+        let open: Vec<&PromptCell> = view
+            .configure_session
+            .map(|session| session.open_prompts().collect())
+            .unwrap_or_default();
+        let session = open.first().map(|prompt| prompt.key.session_id.as_str());
+        self.configure_prompts.sync(session, &open, &[], true, now);
+    }
+
+    fn configure_prompt_actions(outcome: KeyOutcome) -> Vec<UserAction> {
+        let KeyOutcome::Consumed {
+            intent,
+            interrupt_requested,
+            notice,
+        } = outcome
+        else {
+            return Vec::new();
+        };
+        let mut actions = Vec::new();
+        if let Some(PromptIntent::Clarify { key, answer }) = intent {
+            actions.push(UserAction::Configure(Box::new(
+                ConfigureInput::ClarifyAnswered { key, answer },
+            )));
+        }
+        if interrupt_requested {
+            actions.push(UserAction::Configure(Box::new(ConfigureInput::Key(
+                ConfigureKey::Esc,
+            ))));
+        }
+        if let Some(notice) = notice {
+            actions.push(UserAction::Notice(notice));
+        }
+        actions
+    }
+
     fn prompt_actions(outcome: KeyOutcome) -> Option<Vec<UserAction>> {
         let KeyOutcome::Consumed {
             intent,
@@ -1859,6 +1899,7 @@ impl TuiScreen {
             && view.memory.is_none()
             && view.capabilities.is_none()
             && view.connectors.is_none()
+            && view.configure.is_none()
         {
             match &event {
                 Event::Key(raw) => {
@@ -1896,6 +1937,7 @@ impl TuiScreen {
         }
         if view.profiles.is_none()
             && view.connectors.is_none()
+            && view.configure.is_none()
             && view.settings.is_none()
             && view.doctor.is_none()
             && !self.terminal.is_released()
@@ -1929,6 +1971,77 @@ impl TuiScreen {
             Event::Key(raw) => {
                 if self.terminal.is_released() {
                     return Vec::new();
+                }
+                let key = Key::from(raw);
+                if key.kind == KeyKind::Release {
+                    return Vec::new();
+                }
+                if is_ctrl_c(&key)
+                    && (view.configure.is_some() || self.configure_cancel_at.is_some())
+                {
+                    if key.kind == KeyKind::Repeat {
+                        return Vec::new();
+                    }
+                    if self.configure_cancel_at.is_some_and(|pressed| {
+                        now.saturating_duration_since(pressed) < Duration::from_secs(2)
+                    }) {
+                        self.configure_cancel_at = None;
+                        return vec![
+                            UserAction::Configure(Box::new(ConfigureInput::Quit)),
+                            UserAction::Quit,
+                        ];
+                    }
+                    if view.configure.is_some() {
+                        self.configure_cancel_at = Some(now);
+                        return vec![UserAction::Configure(Box::new(ConfigureInput::Quit))];
+                    }
+                }
+                self.configure_cancel_at = None;
+                if self.mcp_view.is_none()
+                    && view.profiles.is_none()
+                    && view.doctor.is_none()
+                    && let Some(configure) = &view.configure
+                {
+                    if (view.configure_refining && is_escape(&key))
+                        || (configure.phase == ConfigurePhase::Question
+                            && self.keymap.resolve_configure(&key) == Some(ConfigureKey::Esc))
+                    {
+                        return vec![UserAction::Configure(Box::new(ConfigureInput::Key(
+                            ConfigureKey::Esc,
+                        )))];
+                    }
+                    if configure.phase == ConfigurePhase::Question
+                        && self.configure_prompts.section().is_some()
+                    {
+                        let actions = Self::configure_prompt_actions(
+                            self.configure_prompts.handle_key(key, now),
+                        );
+                        if actions.iter().any(|action| {
+                            matches!(action, UserAction::Configure(input)
+                            if matches!(input.as_ref(), ConfigureInput::ClarifyAnswered { .. }))
+                        }) {
+                            self.configure_prompts = PromptStack::new();
+                        }
+                        return actions;
+                    }
+                    let input = if view.configure_refining {
+                        (!key.mods.super_key && !key.mods.other)
+                            .then(|| typed_character(&key))
+                            .flatten()
+                            .map(ConfigureKey::Char)
+                            .or(match key.code {
+                                KeyCode::Enter => Some(ConfigureKey::Enter),
+                                KeyCode::Backspace => Some(ConfigureKey::Backspace),
+                                KeyCode::Esc => Some(ConfigureKey::Esc),
+                                _ => None,
+                            })
+                    } else {
+                        talaria_tui::configure::route_configure(&self.keymap, &key)
+                    };
+                    return input
+                        .map(|key| UserAction::Configure(Box::new(ConfigureInput::Key(key))))
+                        .into_iter()
+                        .collect();
                 }
                 if self.mcp_view.is_none()
                     && view.profiles.is_none()
@@ -2284,6 +2397,29 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(mut text) => {
+                self.configure_cancel_at = None;
+                if self.mcp_view.is_none()
+                    && view.profiles.is_none()
+                    && view.doctor.is_none()
+                    && let Some(configure) = &view.configure
+                {
+                    if self.terminal.is_released() {
+                        return Vec::new();
+                    }
+                    if configure.phase == ConfigurePhase::Question
+                        && self.configure_prompts.section().is_some()
+                    {
+                        return Self::configure_prompt_actions(
+                            self.configure_prompts.handle_paste(&text, now),
+                        );
+                    }
+                    if view.configure_refining {
+                        return vec![UserAction::Configure(Box::new(ConfigureInput::Key(
+                            ConfigureKey::Paste(text),
+                        )))];
+                    }
+                    return Vec::new();
+                }
                 if self.mcp_view.is_none()
                     && view.profiles.is_none()
                     && view.doctor.is_none()
@@ -2834,6 +2970,10 @@ impl Screen for TuiScreen {
     ) -> Option<BTreeMap<String, zeroize::Zeroizing<String>>> {
         self.connectors_wiring.secrets_for(effect)
     }
+    fn configure_model(&self) -> Option<(String, String)> {
+        self.config.configure.clone()
+    }
+
     fn pane_settings(&self) -> talaria_app::panes::PaneSettings {
         self.config.panes.clone()
     }
@@ -3013,6 +3153,7 @@ impl Screen for TuiScreen {
     fn input(&mut self, input: ScreenInput, view: &View<'_>, now: Instant) -> Vec<UserAction> {
         self.sync_agents(view);
         self.sync_prompts(view, now);
+        self.sync_configure_prompts(view, now);
         self.sync_confirmation_focus(now);
         let mut actions = match input {
             ScreenInput::ProfileEdited(result) => {
@@ -3092,6 +3233,30 @@ impl Screen for TuiScreen {
         self.close_overlay(Overlay::Doctor);
         self.sync_agents(view);
         self.apply_transcript(view);
+        self.sync_configure_prompts(view, Instant::now());
+        if let Some(configure) = &view.configure {
+            self.open_overlay(Overlay::Configure);
+            let section = self.configure_prompts.section();
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::configure::draw_configure(configure, area, buf);
+                if configure.phase == ConfigurePhase::Question
+                    && let Some(section) = section
+                {
+                    let room = area.height.saturating_sub(2);
+                    let height = section.height(area.width).min(room);
+                    let card = ratatui::layout::Rect::new(
+                        area.x,
+                        area.y.saturating_add(1),
+                        area.width,
+                        height,
+                    );
+                    ratatui::widgets::Widget::render(ratatui::widgets::Clear, card, buf);
+                    section.render(card, buf);
+                }
+            });
+            return;
+        }
+        self.close_overlay(Overlay::Configure);
         if let Some(connectors) = &view.connectors {
             let mut connectors = connectors.clone();
             if let talaria_core::connectors::Screen::LinkCard { ssh, .. } = &mut connectors.screen {
@@ -4013,6 +4178,8 @@ fn session(
         terminal,
         composer,
         prompts: PromptStack::new(),
+        configure_prompts: PromptStack::new(),
+        configure_cancel_at: None,
         status,
         external: ExternalDisplay::default(),
         inputs: StatusInputs {

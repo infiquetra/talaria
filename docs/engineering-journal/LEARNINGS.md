@@ -5790,3 +5790,11 @@ whole draft store after it returns can erase edits made while the request was in
 
 **Rule.** Track submitted draft versions, clear only the confirmed versions, and separate editor
 buffers from accepted drafts and retry values.
+
+## 2026-10-27 — Configuration proposals need the same boundaries as handwritten edits
+
+**Evidence.** Offline configure tests exercise split credential-shaped text, hidden-session tool inventories, per-key readbacks, and saved cron jobs whose scheduler registration failed. A mock confirmation scenario originally supplied a fresh main model different from its baseline, which correctly triggered the conflict guard before a confirmation could occur.
+
+**Mechanism.** A model proposal is untrusted input, not permission to write. Detect secrets before shortening strings or recording history, keep withholding markers tainted across validation passes, and apply only through the service that owns the mutation. Compare fresh state with the proposal baseline before writing; confirm success from a separate readback. A saved job is already durable even when its scheduling step fails.
+
+**Generalizable rule.** Preserve authorization and freshness checks across adapters, and repair a contradictory test setup instead of bypassing the guard it needs to exercise.

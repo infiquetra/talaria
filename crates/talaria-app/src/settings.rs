@@ -223,7 +223,14 @@ pub fn append_history(
     history: &mut crate::comforts::prompt_history::PromptHistory,
     text: &str,
 ) -> Option<String> {
-    if talaria_core::settings::is_secret_config_line(text) {
+    let configure_secret = text
+        .trim_start()
+        .strip_prefix("/configure")
+        .is_some_and(|request| {
+            request.starts_with(char::is_whitespace)
+                && !hermes_client::scan_for_secrets(request).is_empty()
+        });
+    if talaria_core::settings::is_secret_config_line(text) || configure_secret {
         None
     } else {
         history.append(text)

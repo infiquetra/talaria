@@ -108,6 +108,8 @@ pub struct Config {
     pub panes: crate::panes::PaneSettings,
     /// Subagent poll and dock settings from `[subagents]`. Issue #242.
     pub subagents: crate::subagents::SubagentsConfig,
+    /// Optional provider and model for the configuration assistant.
+    pub configure: Option<(String, String)>,
 }
 
 /// Paste collapse thresholds. Zero turns that rule off.
@@ -253,6 +255,7 @@ impl Default for Config {
             fleet: crate::fleet::FleetConfig::default(),
             panes: crate::panes::PaneSettings::default(),
             subagents: crate::subagents::SubagentsConfig::default(),
+            configure: None,
         }
     }
 }
@@ -308,6 +311,7 @@ pub fn parse(text: &str) -> LoadedConfig {
         "fleet",
         "panes",
         "subagents",
+        "configure",
     ] {
         let Some(value) = table.get(name) else {
             continue;
@@ -328,6 +332,7 @@ pub fn parse(text: &str) -> LoadedConfig {
             "fleet" => config.fleet = read_fleet(section, &mut notices),
             "panes" => config.panes = read_panes(section, &mut notices),
             "subagents" => config.subagents = read_subagents(section, &mut notices),
+            "configure" => config.configure = read_configure(section, &mut notices),
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
@@ -347,6 +352,7 @@ pub fn parse(text: &str) -> LoadedConfig {
                 | "fleet"
                 | "panes"
                 | "subagents"
+                | "configure"
         ) {
             continue;
         }
@@ -382,6 +388,28 @@ fn line_column(text: &str, byte_offset: usize) -> (usize, usize) {
     let line = head.bytes().filter(|byte| *byte == b'\n').count() + 1;
     let column = head.chars().rev().take_while(|c| *c != '\n').count() + 1;
     (line, column)
+}
+
+fn read_configure(section: &Table, notices: &mut Vec<String>) -> Option<(String, String)> {
+    for name in section.keys() {
+        if name != "provider" && name != "model" {
+            notices.push(unknown_setting("configure", name));
+        }
+    }
+    let provider = section.get("provider");
+    let model = section.get("model");
+    match (provider, model) {
+        (None, None) => None,
+        (Some(Value::String(provider)), Some(Value::String(model)))
+            if !provider.trim().is_empty() && !model.trim().is_empty() =>
+        {
+            Some((provider.clone(), model.clone()))
+        }
+        _ => {
+            notices.push("[configure] provider and model must both be non-empty strings; using the next available model.".into());
+            None
+        }
+    }
 }
 
 fn read_keys(section: &Table, notices: &mut Vec<String>) -> BTreeMap<String, Vec<String>> {
@@ -833,6 +861,26 @@ mod tests {
                  settings."
             ),
         }
+    }
+
+    #[test]
+    fn configure_model_requires_a_valid_pair() {
+        let loaded = parse("[configure]\nprovider = 'example'\nmodel = 'model'\n");
+        assert!(loaded.notices.is_empty());
+        assert_eq!(
+            loaded.config.configure,
+            Some(("example".into(), "model".into()))
+        );
+        for text in [
+            "[configure]\nprovider = 'example'\n",
+            "[configure]\nprovider = 4\nmodel = 'model'\n",
+            "[configure]\nprovider = 'example'\nmodel = '  '\n",
+        ] {
+            let loaded = parse(text);
+            assert!(loaded.config.configure.is_none());
+            assert_eq!(loaded.notices.len(), 1);
+        }
+        assert!(parse("[configure]\n").notices.is_empty());
     }
 
     #[test]

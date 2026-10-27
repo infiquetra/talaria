@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::capabilities::{CapTab, KeyAction};
+use crate::configure::ConfigureKey;
 use crate::cron::CronAction;
 use crate::memory::MemoryKey;
 use crate::model_roles::{RolesKey, Section};
@@ -220,6 +221,27 @@ static MEMORY_BINDINGS: [(MemoryKey, &str, &str); 14] = [
     (MemoryKey::Close, "memory_close", "esc"),
 ];
 
+static CONFIGURE_BINDINGS: [(ConfigureKey, &str, &[&str]); 14] = [
+    (ConfigureKey::Up, "configure_up", &["up"]),
+    (ConfigureKey::Down, "configure_down", &["down"]),
+    (ConfigureKey::PageUp, "configure_page_up", &["pageup"]),
+    (ConfigureKey::PageDown, "configure_page_down", &["pagedown"]),
+    (ConfigureKey::Home, "configure_home", &["home"]),
+    (ConfigureKey::End, "configure_end", &["end"]),
+    (ConfigureKey::Space, "configure_toggle", &["space"]),
+    (ConfigureKey::Char('a'), "configure_apply", &["a"]),
+    (ConfigureKey::Char('r'), "configure_refine", &["r"]),
+    (ConfigureKey::Char('d'), "configure_detail", &["d"]),
+    (ConfigureKey::Char('y'), "configure_yes", &["y"]),
+    (ConfigureKey::Char('n'), "configure_no", &["n"]),
+    (
+        ConfigureKey::Char('1'),
+        "configure_open_next",
+        &["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    ),
+    (ConfigureKey::Esc, "configure_close", &["esc"]),
+];
+
 /// Where an action is looked up. Later screens add their own variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
@@ -267,6 +289,8 @@ pub enum KeyContext {
     Cron,
     /// The connectors and messaging overlay.
     Connectors,
+    /// The configuration assistant overlay.
+    Configure,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -409,6 +433,7 @@ enum Binding {
     Memory(usize),
     Cron(usize),
     Connectors(usize),
+    Configure(usize),
 }
 
 impl Binding {
@@ -424,6 +449,7 @@ impl Binding {
             .chain((0..MEMORY_BINDINGS.len()).map(Self::Memory))
             .chain((0..CRON_BINDINGS.len()).map(Self::Cron))
             .chain((0..CONNECTORS_BINDINGS.len()).map(Self::Connectors))
+            .chain((0..CONFIGURE_BINDINGS.len()).map(Self::Configure))
     }
     fn index(self) -> usize {
         match self {
@@ -478,6 +504,18 @@ impl Binding {
                     + CRON_BINDINGS.len()
                     + index
             }
+            Self::Configure(index) => {
+                Action::ALL.len()
+                    + ModelAction::ALL.len()
+                    + SETTINGS_BINDINGS.len()
+                    + MODEL_ROLES_BINDINGS.len()
+                    + ROUTE_PICKER_BINDINGS.len()
+                    + CAP_BINDINGS.len()
+                    + MEMORY_BINDINGS.len()
+                    + CRON_BINDINGS.len()
+                    + CONNECTORS_BINDINGS.len()
+                    + index
+            }
         }
     }
     fn context(self) -> KeyContext {
@@ -491,6 +529,7 @@ impl Binding {
             Self::Memory(_) => KeyContext::Memory,
             Self::Cron(_) => KeyContext::Cron,
             Self::Connectors(_) => KeyContext::Connectors,
+            Self::Configure(_) => KeyContext::Configure,
         }
     }
     fn config_name(self) -> &'static str {
@@ -504,6 +543,7 @@ impl Binding {
             Self::Memory(index) => MEMORY_BINDINGS[index].1,
             Self::Cron(index) => CRON_BINDINGS[index].1,
             Self::Connectors(index) => CONNECTORS_BINDINGS[index].1,
+            Self::Configure(index) => CONFIGURE_BINDINGS[index].1,
         }
     }
     fn from_config_name(name: &str) -> Option<Self> {
@@ -552,6 +592,12 @@ impl Binding {
                     .position(|(_, held, _)| *held == name)
                     .map(Self::Connectors)
             })
+            .or_else(|| {
+                CONFIGURE_BINDINGS
+                    .iter()
+                    .position(|(_, held, _)| *held == name)
+                    .map(Self::Configure)
+            })
     }
     fn default_chords(self) -> &'static [&'static str] {
         match self {
@@ -564,6 +610,7 @@ impl Binding {
             Self::Memory(index) => std::slice::from_ref(&MEMORY_BINDINGS[index].2),
             Self::Cron(index) => std::slice::from_ref(&CRON_BINDINGS[index].2),
             Self::Connectors(index) => CONNECTORS_BINDINGS[index].2,
+            Self::Configure(index) => CONFIGURE_BINDINGS[index].2,
         }
     }
 }
@@ -2194,6 +2241,27 @@ impl KeyMap {
             })
     }
 
+    /// Resolve a configured assistant action.
+    pub fn resolve_configure(&self, key: &Key) -> Option<ConfigureKey> {
+        CONFIGURE_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (action, _, _))| {
+                self.chords[Binding::Configure(index).index()]
+                    .iter()
+                    .position(|chord| chord.matches(key))
+                    .map(|position| {
+                        if index == 12 {
+                            ConfigureKey::Char(
+                                char::from_digit((position + 1) as u32, 10).unwrap_or('1'),
+                            )
+                        } else {
+                            action.clone()
+                        }
+                    })
+            })
+    }
+
     /// The built-in bindings.
     #[must_use]
     pub fn defaults() -> Self {
@@ -2224,7 +2292,8 @@ impl KeyMap {
                 + CAP_BINDINGS.len()
                 + MEMORY_BINDINGS.len()
                 + CRON_BINDINGS.len()
-                + CONNECTORS_BINDINGS.len()];
+                + CONNECTORS_BINDINGS.len()
+                + CONFIGURE_BINDINGS.len()];
         let mut notices = Vec::new();
 
         for (name, texts) in entries {

@@ -46,6 +46,7 @@ pub mod switch;
 pub mod workspace;
 pub mod worktree;
 
+pub mod configure;
 pub mod memory;
 pub mod settings;
 
