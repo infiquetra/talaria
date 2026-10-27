@@ -484,8 +484,12 @@ async fn replies_decode_v0224_shapes() {
             None,
         )
         .await;
+    let expected_auth_url = fixture("oauth-start")["auth_url"]
+        .as_str()
+        .expect("oauth-start auth_url")
+        .to_owned();
     assert!(
-        matches!(input.as_slice(), [McpInput::SignInStarted { name, result: Ok((flow, url)) }] if name == "deepwiki" && flow == "flow-example" && url == "https://example.invalid/authorize")
+        matches!(input.as_slice(), [McpInput::SignInStarted { name, result: Ok((flow, url)) }] if name == "deepwiki" && flow == "flow-example" && url == &expected_auth_url)
     );
     for reply in [
         with_unknown(fixture("oauth-poll")),
@@ -549,13 +553,24 @@ async fn replies_decode_v0224_shapes() {
         [McpInput::CallbackRelayed { result: Err(_), .. }]
     ));
 
+    let mut cancel_start = with_unknown(fixture("oauth-start"));
+    cancel_start["session_id"] = json!("flow-cancel");
+    mock.push_result(cancel_start);
+    let _ = service
+        .execute(
+            McpEffect::StartSignIn {
+                name: "deepwiki".into(),
+            },
+            None,
+        )
+        .await;
     mock.push_result(with_unknown(fixture("oauth-cancel")));
     assert!(
         service
             .execute(
                 McpEffect::CancelSignIn {
                     name: "deepwiki".into(),
-                    flow: "flow-example".into()
+                    flow: "flow-cancel".into()
                 },
                 None
             )
@@ -996,7 +1011,7 @@ async fn closing_cancels_a_waiting_signin() {
                 .await
         })
     };
-    mock.wait_for_request("mcp.servers.oauth.poll", 1).await;
+    mock.wait_for_request("mcp.servers.oauth.poll", 0).await;
     mock.set_silent("mcp.servers.oauth.cancel", true);
     // Leave room for scheduling around the service's one-second shutdown deadline.
     tokio::time::timeout(Duration::from_millis(1100), service.close())
@@ -1004,7 +1019,7 @@ async fn closing_cancels_a_waiting_signin() {
         .expect("closing waits at most one second");
     let cancel = tokio::time::timeout(
         Duration::from_millis(100),
-        mock.wait_for_request("mcp.servers.oauth.cancel", 1),
+        mock.wait_for_request("mcp.servers.oauth.cancel", 0),
     )
     .await
     .expect("cancel must be sent during close");
@@ -1051,7 +1066,7 @@ async fn closing_cancels_a_waiting_signin() {
                 .await
         })
     };
-    mock.wait_for_request("mcp.servers.oauth.start", 1).await;
+    mock.wait_for_request("mcp.servers.oauth.start", 0).await;
     tokio::time::timeout(Duration::from_millis(1100), service.close())
         .await
         .expect("close must not wait indefinitely for a flow id");
@@ -1066,7 +1081,7 @@ async fn closing_cancels_a_waiting_signin() {
         .unwrap();
     let cancelled = tokio::time::timeout(
         Duration::from_secs(1),
-        mock.wait_for_request("mcp.servers.oauth.cancel", 1),
+        mock.wait_for_request("mcp.servers.oauth.cancel", 0),
     )
     .await
     .expect("late flow must be cancelled");

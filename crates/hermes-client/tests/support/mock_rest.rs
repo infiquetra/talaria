@@ -141,6 +141,7 @@ struct State {
     routes: BTreeMap<Route, Handler>,
     managed: BTreeSet<String>,
     external: Option<ExternalWrite>,
+    own_profile: Option<String>,
 }
 pub struct MockRest {
     address: std::net::SocketAddr,
@@ -153,8 +154,9 @@ impl Drop for MockRest {
     }
 }
 impl MockRest {
-    pub fn allow_own_profile_selector(self, _profile: &str) -> Self {
-        todo!("mcp stub")
+    pub fn allow_own_profile_selector(self, profile: &str) -> Self {
+        self.state.lock().unwrap().own_profile = Some(profile.to_owned());
+        self
     }
 
     pub async fn start() -> Self {
@@ -170,6 +172,7 @@ impl MockRest {
             routes: BTreeMap::new(),
             managed: BTreeSet::new(),
             external: None,
+            own_profile: None,
         }));
         let served = state.clone();
         let task = tokio::spawn(async move {
@@ -376,11 +379,14 @@ fn respond(
         return json_reply(401, json!({"detail":"Unauthorized"}));
     }
     let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
-    let has_profile = query_pairs(&request.path)
+    let own_profile = state.own_profile.as_deref();
+    let foreign_query = query_pairs(&request.path)
         .iter()
-        .any(|(name, _)| name == "profile")
-        || body.get("profile").is_some();
-    if has_profile {
+        .any(|(name, value)| name == "profile" && own_profile != Some(value.as_str()));
+    let foreign_body = body
+        .get("profile")
+        .is_some_and(|value| own_profile.is_none() || value.as_str() != own_profile);
+    if foreign_query || foreign_body {
         return json_reply(403, json!({"detail":"profile_scope_mismatch"}));
     }
     if let Some((status, detail)) = &switch.failure {
