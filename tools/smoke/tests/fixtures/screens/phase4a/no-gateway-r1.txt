@@ -1,7 +1,16 @@
-# synthetic
-FAIL Gateway
-Fix: Run `hermes gateway ensure --json` to start the Hermes gateway, then try again.
+# recorded
+Talaria doctor (profile default)
+ok    Talaria         Talaria 0.7.0-dev, built for Hermes v0.22.4 (4d043038)
+FAIL  Gateway         no Hermes gateway is running for this home
+      Fix: Run `hermes gateway ensure --json` to start the Hermes gateway, then try again.
+skip  Hermes version  needs an answer from the gateway
+skip  Capabilities    needs a ready gateway
+skip  Profiles        needs the list of served profiles
+skip  Attach          needs a ready gateway
+skip  Runtime health  needs a ready gateway
+Result: 1 ok, 0 warnings, 1 failure.
+For provider keys, tools and dependencies, run hermes doctor.
 exit=1
-no Hermes gateway is running for this home
-Next step: start gateway
+talaria profiles: no Hermes gateway is running for this home
+Next step: Run `hermes gateway ensure --json` to start the Hermes gateway, then try again.
 exit=1

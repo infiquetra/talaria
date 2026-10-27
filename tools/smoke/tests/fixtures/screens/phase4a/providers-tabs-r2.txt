@@ -1,4 +1,12 @@
-# synthetic
-Providers · profile fixture
-Accounts
-Example  not signed in
+# recorded
+┌Providers · profile fixture────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Keys  [Accounts]  Endpoints                                                                                                                                           │
+│› Nous Portal · not signed in · sign in here                                                                                                                           │
+│  ChatGPT or Codex Subscription · signed in · chatgpt · sign in here                                                                                                   │
+│  Qwen (via Qwen CLI) · not signed in · sign in with hermes auth add qwen-oauth                                                                                        │
+│  MiniMax (OAuth) · not signed in · sign in here                                                                                                                       │
+│  xAI Grok OAuth (SuperGrok / Premium+) · signed in · <home> (auth.json)                                     · sign in here                                     │
+│  GitHub Copilot (ACP) · signed in · <home> · sign in with copilot login                                                                   │
+│  Anthropic Account · not signed in · sign in with hermes auth add anthropic                                                                                           │
+│  Anthropic OAuth: Required Extra Usage Credits to Use Subscription · signed in · <home> · expires in 7 h · sign in with claude setup-token       │
+│enter sign in · ctrl+d sign out · ctrl+r reload · tab next tab                                                                                                         │

@@ -39,8 +39,8 @@ fn check_banner(banner: &str) {
     for (step, reads) in SCREENS {
         for read in *reads {
             let fixture = format!("{step}-{read}.txt");
-            let replacement = format!("# synthetic\n{banner}\n");
-            let script = script_4a(&[(&fixture, "# synthetic\n", &replacement)]);
+            let replacement = format!("# recorded\n{banner}\n");
+            let script = script_4a(&[(&fixture, "# recorded\n", &replacement)]);
             let exec = exec_4a(&script, false, false, 1.0, 900);
             let failed = exec
                 .report

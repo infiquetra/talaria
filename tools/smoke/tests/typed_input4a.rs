@@ -45,7 +45,7 @@ fn screen_events(events: &[Event]) -> &[Event] {
         .iter()
         .enumerate()
         .skip(start)
-        .find_map(|(i, e)| matches!(e, Event::Text(s) if s == "/quit").then_some(i))
+        .find_map(|(i, e)| matches!(e, Event::Run(s) | Event::Text(s) if s == "/quit").then_some(i))
         .expect("quit after screens");
     &events[start..end]
 }

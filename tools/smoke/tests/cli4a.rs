@@ -84,6 +84,7 @@ fn deadline_default_is_900_for_phase4a_and_300_for_phase1() {
     assert_eq!(Suite::Phase1.default_deadline_secs(), 300);
 }
 #[test]
+#[allow(clippy::type_complexity)]
 fn exit_codes_0_1_2_3() {
     let scenarios: &[(&[(&str, &str, &str)], i32, &str)] = &[
         (&[], 0, "SMOKE_RESULT: PASSED (elapsed "),
@@ -95,8 +96,8 @@ fn exit_codes_0_1_2_3() {
         (
             &[(
                 "providers-tabs-r1.txt",
-                "OpenRouter  no key",
-                "OpenRouter  key …abcd",
+                "OpenRouter · OPENROUTER_API_KEY · no key",
+                "OpenRouter · OPENROUTER_API_KEY · key …abcd",
             )],
             3,
             "SMOKE_RESULT: PASSED WITH SKIPS (providers-tabs)",

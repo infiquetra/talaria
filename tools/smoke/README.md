@@ -147,6 +147,22 @@ while that request waits, the report says so; Hermes denies it after 300 s, and 
 probe folder and the output files) is removed at the end unless `--report-dir` is given. The
 sessions the suite started stay in the gateway. Exact screen wording lives in `src/wording3.rs`.
 
+## Phase 4a suite
+
+Run `smoke run --suite phase4a` to check the settings, providers, model roles, profiles,
+and doctor screens, their input refusals, and the profiles and doctor command-line output.
+The suite does not save configuration, submit a key, sign in, create a profile, or restart
+the gateway. It needs `jq` on `PATH`, a gateway at the pinned Hermes release, and a served
+`fixture` profile with its provider key. OpenRouter must have no key for the providers-tab
+check; if it already has one, that check is skipped.
+
+The suite uses the fixture profile, `ollama-cloud`, and `minimax-m3.1-flash`, and has a
+900-second default deadline. Exit 0 means every step passed, 1 means a step failed or the
+run was interrupted, 2 means preflight failed, and 3 means a step was skipped. Setting
+`TALARIA_LIVE_REQUIRE=1` turns a skip into a failure. A FAIL names the step and reason and
+includes a scrubbed pane capture; compare its text with the expected screen and check the
+gateway and profile preconditions before classifying the result.
+
 ## Reading a failure
 
 A failing step prints the screen of the pane it was in and writes the same text, with the

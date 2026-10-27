@@ -31,7 +31,7 @@ fn settings_category_row_found() {
 fn setting_row_parsed_with_value_and_flags() {
     let row = setting_row(&screen("config-browse-r2.txt"), "display.compact").expect("row");
     assert_eq!(row.value, "false");
-    assert!(row.flags.contains(&"default".to_owned()));
+    assert!(row.flags.contains(&"set".to_owned()));
     assert!(row.flags.contains(&"may need a restart".to_owned()));
     for value in ["(not set)", "••••…", "plaintext"] {
         let row = setting_row(
@@ -99,6 +99,11 @@ fn profiles_refusals_found_in_order() {
 }
 #[test]
 fn write_banner_detected() {
+    let hint = "Saved to profile fixture's key file as OPENROUTER_API_KEY.";
+    assert!(!write_banner_found(hint));
+    assert!(write_banner_found(&format!(
+        "{hint}\nSaved the key for OpenRouter."
+    )));
     for text in [
         "Saved the key for OpenRouter.",
         "Not restarted",

@@ -22,6 +22,8 @@ fn live_phase4a_smoke_in_herdr() {
         .output()
         .expect("run smoke");
     let stdout = String::from_utf8_lossy(&out.stdout);
+    print!("{stdout}");
+    eprint!("{}", String::from_utf8_lossy(&out.stderr));
     let result = regex::Regex::new(r"^SMOKE_RESULT: PASSED \(elapsed [0-9]+ s\)$").unwrap();
     assert!(out.status.success() && stdout.lines().any(|line| result.is_match(line)));
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);

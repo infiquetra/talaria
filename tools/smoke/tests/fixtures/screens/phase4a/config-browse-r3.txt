@@ -1,3 +1,42 @@
-# synthetic
+# recorded
 Settings · profile fixture
-delegation.api_key  (not set)
+/ api_key
+  general          > delegation.api_key                  •••••••• (r reveals once)     default  may need a restart
+  agent              auxiliary.vision.api_key            •••••••• (r reveals once)     default  may need a restart
+  terminal           auxiliary.compression.api_key       •••••••• (r reveals once)     default  may need a restart
+  display            auxiliary.skills_hub.api_key        •••••••• (r reveals once)     default  may need a restart
+  delegation         auxiliary.approval.api_key          •••••••• (r reveals once)     default  may need a restart
+  memory             auxiliary.review.api_key            •••••••• (r reveals once)     default  may need a restart
+  compression        auxiliary.mcp.api_key               •••••••• (r reveals once)     default  may need a restart
+  security           auxiliary.title_generation.api_key  •••••••• (r reveals once)     default  may need a restart
+  browser            auxiliary.memory_query_rewrite.ap…  •••••••• (r reveals once)     default  may need a restart
+  voice              auxiliary.tts_audio_tags.api_key    •••••••• (r reveals once)     default  may need a restart
+  tts                auxiliary.voice_chat.api_key        •••••••• (r reveals once)     default  may need a restart
+  stt                auxiliary.triage_specifier.api_key  •••••••• (r reveals once)     default  may need a restart
+  logging            auxiliary.kanban_decomposer.api_k…  •••••••• (r reveals once)     default  may need a restart
+  discord            auxiliary.profile_describer.api_k…  •••••••• (r reveals once)     default  may need a restart
+  auxiliary          auxiliary.goal_judge.api_key        •••••••• (r reveals once)     default  may need a restart
+  attachments        auxiliary.curator.api_key           •••••••• (r reveals once)     default  may need a restart
+  bedrock            auxiliary.monitor.api_key           •••••••• (r reveals once)     default  may need a restart
+  bot_desktop        auxiliary.background_review.api_k…  •••••••• (r reveals once)     default  may need a restart
+  curator            auxiliary.moa_reference.api_key     •••••••• (r reveals once)     default  may need a restart
+  database           auxiliary.moa_aggregator.api_key    •••••••• (r reveals once)     default  may need a restart
+  desktop
+  gateway
+  kanban
+  local_runtime
+  loops
+  lsp
+  matrix
+  mattermost
+  moa
+  model_catalog
+  monitoring
+  openrouter
+  proxy
+  secrets
+  sessions
+  slack
+delegation.api_key · string · Delegation → Api Key · default (not set) · may need a restart · The default model is set on the model roles screen; /model changes this
+session's model. edit in Model roles
+Enter edit · / filter · a review · ? help · Esc close

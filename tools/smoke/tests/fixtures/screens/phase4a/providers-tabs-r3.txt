@@ -1,4 +1,5 @@
-# synthetic
-Providers · profile fixture
-Endpoints
-+ Add an endpoint
+# recorded
+┌Providers · profile fixture────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Keys   Accounts  [Endpoints]                                                                                                                                          │
+│› + Add an endpoint                                                                                                                                                    │
+│Default: minimax-m3.1-flash on ollama-cloud · enter edit · ctrl+d delete · ctrl+r reload · tab next tab                                                                │

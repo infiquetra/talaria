@@ -1,3 +1,41 @@
-# synthetic
+# recorded
 Settings · profile fixture
-display.resume_exchanges
+/ resume_exchanges
+  general          > display.resume_exchanges            10                            default  may need a restart
+  agent
+  terminal
+  display
+  delegation
+  memory
+  compression
+  security
+  browser
+  voice
+  tts
+  stt
+  logging
+  discord
+  auxiliary
+  attachments
+  bedrock
+  bot_desktop
+  curator
+  database
+  desktop
+  gateway
+  kanban
+  local_runtime
+  loops
+  lsp
+  matrix
+  mattermost
+  moa
+  model_catalog
+  monitoring
+  openrouter
+  proxy
+  secrets
+  sessions
+display.resume_exchanges · number · Display → Resume Exchanges · default 10 · may need a restart ·
+Enter a whole number.
+Enter edit · / filter · a review · ? help · Esc close

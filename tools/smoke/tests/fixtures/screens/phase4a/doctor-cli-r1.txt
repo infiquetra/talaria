@@ -1,17 +1,27 @@
-# synthetic
-ok Talaria
-ok Gateway
-ok Hermes version
-ok Profiles
-ok Attach
-ok Provider
-ok Model
-Result: healthy
+# recorded
+Talaria doctor (profile fixture)
+ok    Talaria         Talaria 0.7.0-dev, built for Hermes v0.22.4 (4d043038)
+ok    Gateway         ready · instance b128a2f2 · epoch 3 · started by hand
+ok    Hermes version  0.22.4 (4d043038), the release Talaria was built for
+ok    Capabilities    all 5 capabilities Talaria needs are offered
+ok    Profiles        fixture is served; the gateway serves 2 profiles
+ok    Attach          attached to fixture in 11 ms
+ok    Runtime health  healthy · 0 agents working
+Result: 7 ok, 0 warnings, 0 failures.
+For provider keys, tools and dependencies, run hermes doctor.
 exit=0
-{"format":"talaria-doctor-v1","checks":[1,2,3,4,5,6,7]}
-FAIL Profiles
-the gateway never discovered a profile named nosuchprofile
-skip Attach
+{"checks":[{"details":[],"fix":null,"id":"talaria","severity":"ok","summary":"Talaria 0.7.0-dev, built for Hermes v0.22.4 (4d043038)"},{"details":[],"fix":null,"id":"gateway","severity":"ok","summary":"ready · instance b128a2f2 · epoch 3 · started by hand"},{"details":["running: 0.22.4 at 4d043038","built for: v0.22.4 (4d043038)"],"fix":null,"id":"hermes_version","severity":"ok","summary":"0.22.4 (4d043038), the release Talaria was built for"},{"details":["gateway: durable-admission-v1, event-replay-v1, session-authority-v1","session service: acp-editor-policy-v1, acp-session-mcp-v1, durable-admission-v1, event-replay-v1, local-cli-create-v1","also offered: acp-editor-policy-v1, acp-session-mcp-v1, local-cli-create-v1"],"fix":null,"id":"capabilities","severity":"ok","summary":"all 5 capabilities Talaria needs are offered"},{"details":["served: default, fixture"],"fix":null,"id":"profiles","severity":"ok","summary":"fixture is served; the gateway serves 2 profiles"},{"details":["identify 1 ms · ticket 0 ms · upgrade 2 ms · ready 0 ms · capabilities 4 ms · describe 3 ms"],"fix":null,"id":"attach","severity":"ok","summary":"attached to fixture in 10 ms"},{"details":[],"fix":null,"id":"runtime_health","severity":"ok","summary":"healthy · 0 agents working"}],"format":"talaria-doctor-v1","overall":"ok","profile":"fixture","restart":null,"talaria":{"hermes_commit":"4d04303818b61bf3aa09278af48356315515965b","hermes_tag":"v0.22.4","version":"0.7.0-dev"}}
+Talaria doctor (profile nosuchprofile)
+ok    Talaria         Talaria 0.7.0-dev, built for Hermes v0.22.4 (4d043038)
+ok    Gateway         ready · instance b128a2f2 · epoch 3 · started by hand
+ok    Hermes version  0.22.4 (4d043038), the release Talaria was built for
+ok    Capabilities    all 3 capabilities Talaria needs are offered
+FAIL  Profiles        the gateway never discovered a profile named nosuchprofile
+      Fix: Create the profile, or check the name with hermes profile list.
+skip  Attach          needs the profile to be served
+ok    Runtime health  healthy · 0 agents working
+Result: 5 ok, 0 warnings, 1 failure.
+For provider keys, tools and dependencies, run hermes doctor.
 exit=1
-usage error
+talaria doctor: invalid arguments. Run talaria doctor --help.
 exit=2

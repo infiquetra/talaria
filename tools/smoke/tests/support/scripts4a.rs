@@ -17,13 +17,17 @@ fn fixture(name: &str, replacements: &[(&str, &str, &str)]) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/screens/phase4a")
         .join(name);
-    let mut text = std::fs::read_to_string(path).expect("synthetic screen");
+    let mut text = std::fs::read_to_string(path).expect("recorded screen");
     for (file, before, after) in replacements {
         if *file == name {
+            assert!(
+                text.contains(before),
+                "fault target missing in {name}: {before:?}"
+            );
             text = text.replace(before, after);
         }
     }
-    text.strip_prefix("# synthetic\n")
+    text.strip_prefix("# recorded\n")
         .unwrap_or(&text)
         .to_owned()
 }
@@ -147,7 +151,7 @@ pub fn script_4a(replacements: &[(&str, &str, &str)]) -> ScriptBuilder {
             .second_foreground(&["-bash", "busy"]);
     }
     // The first matching unused rule for each input wins; this list follows the complete
-    // interaction order, including keys that do not change the synthetic screen.
+    // interaction order, including keys that do not change the recorded screen.
     let junk_key = format!("sk-or-v1-{}", "0".repeat(64));
     let events: &[(&str, &str, Option<&str>)] = &[
         ("text", "/config", Some("config-browse-r1.txt")),
@@ -288,15 +292,15 @@ pub fn script_4a(replacements: &[(&str, &str, &str)]) -> ScriptBuilder {
             } else {
                 rule.clear().append(&fixture(name, replacements))
             };
-            if let Some(next) = next_idle(name) {
-                if replacements.iter().any(|(file, _, _)| *file == next) {
-                    rule = rule.then(
-                        StageBuilder::new()
-                            .after_polls(2)
-                            .clear()
-                            .append(&fixture(next, replacements)),
-                    );
-                }
+            if let Some(next) = next_idle(name)
+                && replacements.iter().any(|(file, _, _)| *file == next)
+            {
+                rule = rule.then(
+                    StageBuilder::new()
+                        .after_polls(2)
+                        .clear()
+                        .append(&fixture(next, replacements)),
+                );
             }
         }
         script = script.on_first(rule);

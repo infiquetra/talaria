@@ -145,12 +145,19 @@ fn fails(step: &str, cases: &[(&str, &str, &str, &str)]) {
                 .expect("screen opener");
             let after = &calls[start..];
             let escapes: Vec<usize> = after.iter().enumerate().filter_map(|(i, entry)| matches!(&entry.call, Call::SendKeys { keys, .. } if keys.iter().any(|key| key == "esc")).then_some(i)).collect();
-            let count = if file == "@doctor-close-once" { 2 } else { 4 };
+            let extra = if file == "@doctor-close-once" { 1 } else { 3 };
+            let count = if file == "@doctor-close-once" {
+                2
+            } else if matches!(step, "providers-tabs" | "models-page" | "models-bad-preset") {
+                3
+            } else {
+                4
+            };
             assert!(
                 escapes.len() >= count,
                 "expected source and extra close keys"
             );
-            for position in (escapes.len() - (count - 1))..escapes.len() {
+            for position in (escapes.len() - extra)..escapes.len() {
                 let start = escapes[position] + 1;
                 let end = escapes.get(position + 1).copied().unwrap_or(after.len());
                 let read = after[start..end]
@@ -193,12 +200,12 @@ fn screen_guards(step: &str) {
             "profiles" => "Profiles (2)",
             _ => "Doctor: 7 ok, 0 warnings, 0 failures",
         };
-        let injected = format!("# synthetic\n{title}\n");
+        let injected = format!("# recorded\n{title}\n");
         fails(
             step,
             &[(
                 &file,
-                "# synthetic\n",
+                "# recorded\n",
                 &injected,
                 "the step did not start from an idle composer",
             )],
@@ -307,7 +314,7 @@ pair!(
         ),
         (
             "config-browse-r3.txt",
-            "(not set)",
+            "•••••••• (r reveals once)",
             "plain",
             "delegation.api_key shows plain text, not (not set) or bullets"
         ),
@@ -384,8 +391,8 @@ pair!(
         ),
         (
             "config-secret-refused-r1.txt",
-            "# synthetic\n",
-            "# synthetic\nSettings · profile fixture\n",
+            "# recorded\n",
+            "# recorded\nSettings · profile fixture\n",
             "a settings overlay opened for a secret"
         ),
         (
@@ -437,7 +444,7 @@ pair!(
             "providers-tabs-r2.txt",
             "not signed in",
             "unknown",
-            "the Accounts tab shows no sign-in state on row Example"
+            "the Accounts tab shows no sign-in state on row Nous"
         ),
         (
             "providers-tabs-r3.txt",
@@ -480,7 +487,7 @@ pair!(
         ),
         (
             "providers-key-masked-r4.txt",
-            "OpenRouter  no key",
+            "OpenRouter · OPENROUTER_API_KEY · no key",
             "API key for OpenRouter",
             "the key card did not close on Esc"
         ),
@@ -533,14 +540,14 @@ pair!(
         ),
         (
             "models-page-r4.txt",
-            "route: auto",
+            "Route: follows main model",
             "",
             "Subagents shows no route or no chain mode"
         ),
         (
             "models-page-r5.txt",
-            "No presets",
-            "",
+            include_str!("fixtures/screens/phase4a/models-page-r5.txt"),
+            "Model roles - profile fixture\n",
             "Mixture of Agents shows neither a preset nor the notice"
         ),
     ]
@@ -578,8 +585,8 @@ pair!(
         ),
         (
             "models-bad-preset-r1.txt",
-            "# synthetic\n",
-            "# synthetic\nReview changes to Mixture of Agents\n",
+            "# recorded\n",
+            "# recorded\nReview changes to Mixture of Agents\n",
             "a diff was offered for an incomplete preset"
         ),
         (
@@ -618,7 +625,7 @@ pair!(
     [
         (
             "profiles-list-r1.txt",
-            "Profiles (2)",
+            "Profiles (2 on disk · 2 served)",
             "",
             "profiles header missing"
         ),
@@ -729,19 +736,19 @@ pair!(
         ),
         (
             "doctor-overlay-r1.txt",
-            "ok Provider\n",
+            "ok    Runtime health  healthy · 0 agents working\n",
             "",
             "doctor shows 6 rows, not 7"
         ),
         (
             "doctor-overlay-r1.txt",
-            "Enter expand · Esc close",
+            "↑↓ select · Enter details · r check again · R restart gateway · Esc close",
             "",
             "the key hint line is not the last overlay line"
         ),
         (
             "doctor-overlay-r1.txt",
-            "running: example",
+            "running: 0.22.4 at 4d043038",
             "",
             "\"running:\" detail missing"
         ),
@@ -847,7 +854,7 @@ pair!(
     [
         (
             "profiles-cli-r1.txt",
-            "Profiles\n",
+            "NAME     STATE   MODEL                              NEXT STEP\n",
             "",
             "profiles command printed no header"
         ),
@@ -887,15 +894,15 @@ pair!(
     [
         (
             "doctor-cli-r1.txt",
-            "ok Provider\n",
+            "ok    Runtime health  healthy · 0 agents working\n",
             "",
             "doctor printed 6 rows, not 7"
         ),
         (
             "doctor-cli-r1.txt",
-            "ok Model",
-            "FAIL Model",
-            "doctor row Model is not ok or warn"
+            "ok    Runtime health  healthy · 0 agents working",
+            "FAIL Runtime health",
+            "doctor row Runtime health is not ok or warn"
         ),
         (
             "doctor-cli-r1.txt",
@@ -1032,8 +1039,8 @@ fn a_skip_is_never_a_pass() {
     let exec = exec_4a(
         &script_4a(&[(
             "providers-tabs-r1.txt",
-            "OpenRouter  no key",
-            "OpenRouter  ready · key …abcd",
+            "OpenRouter · OPENROUTER_API_KEY · no key",
+            "OpenRouter · OPENROUTER_API_KEY · ready · key …abcd",
         )]),
         false,
         false,
@@ -1048,8 +1055,8 @@ fn live_require_turns_a_skip_into_a_failure() {
     let exec = exec_4a(
         &script_4a(&[(
             "providers-tabs-r1.txt",
-            "OpenRouter  no key",
-            "OpenRouter  ready · key …abcd",
+            "OpenRouter · OPENROUTER_API_KEY · no key",
+            "OpenRouter · OPENROUTER_API_KEY · ready · key …abcd",
         )]),
         true,
         false,

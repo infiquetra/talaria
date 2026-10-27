@@ -1,7 +1,7 @@
-# synthetic
-Profiles
-fixture  served
-default  served
-{"profile":"fixture","state":"served"}
+# recorded
+NAME     STATE   MODEL                              NEXT STEP
+fixture  served  -                                  talaria --profile fixture
+default  served  minimax-m3.1-flash · ollama-cloud  talaria --profile default
+{"profiles":[{"name":"fixture","state":"served","next_step":"talaria --profile fixture"}],"warnings":[]}
 talaria profiles: no profile named nosuchprofile
 exit=2

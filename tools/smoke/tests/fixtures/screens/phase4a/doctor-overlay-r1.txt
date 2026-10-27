@@ -1,12 +1,13 @@
-# synthetic
+# recorded
 Doctor: 7 ok, 0 warnings, 0 failures
-ok Talaria
-ok Gateway
-ok Hermes version
-running: example
-built for: v0.22.4 (4d043038)
-ok Profiles
-ok Attach
-ok Provider
-ok Model
-Enter expand · Esc close
+ok    Talaria         Talaria 0.7.0-dev, built for Hermes v0.22.4 (4d043038)
+ok    Gateway         ready · instance b128a2f2 · epoch 3 · started by hand
+ok    Hermes version  0.22.4 (4d043038), the release Talaria was built for
+        running: 0.22.4 at 4d043038
+        built for: v0.22.4 (4d043038)
+ok    Capabilities    all 5 capabilities Talaria needs are offered
+ok    Profiles        fixture is served; the gateway serves 2 profiles
+ok    Attach          attached to fixture in 11 ms
+ok    Runtime health  healthy · 0 agents working
+For provider keys, tools and dependencies, run hermes doctor.
+↑↓ select · Enter details · r check again · R restart gateway · Esc close
