@@ -307,6 +307,9 @@ Talaria checks for outside changes first and reads every save back before report
 An outside change asks whether to keep yours or take theirs. A restart label explains when
 a saved value takes effect; most settings may need a gateway restart.
 
+`/models` opens the profile's model roles (main model, fallbacks, helpers, subagents and
+Mixture of Agents presets); see [Model roles](model-roles.md).
+
 The `settings_*` bindings above apply while browsing. `/` focuses the filter; Enter leaves
 it focused on the first matching setting. In an editor, arrows, Home, End, Backspace,
 Delete and Ctrl+U edit text; Enter accepts and Esc cancels. Option lists accept typing to

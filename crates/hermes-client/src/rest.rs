@@ -175,11 +175,22 @@ impl RestClient {
         body: Option<&Value>,
         opts: RequestOpts,
     ) -> Result<Vec<u8>, RestError> {
-        validate_path(path)?;
         let body = body
             .map(serde_json::to_vec)
             .transpose()
             .map_err(|_| RestError::BadBody("invalid request JSON".into()))?;
+        self.request_encoded(method, path, body, opts).await
+    }
+
+    /// Sends a body that is already JSON text, so its object keys keep the caller's order.
+    pub(crate) async fn request_encoded(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+        opts: RequestOpts,
+    ) -> Result<Vec<u8>, RestError> {
+        validate_path(path)?;
         if body
             .as_ref()
             .is_some_and(|bytes| bytes.len() > self.options.max_body)

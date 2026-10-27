@@ -200,6 +200,8 @@ pub enum UserAction {
         page_size: usize,
     },
     Providers(Box<ProvidersInput>),
+    /// Input owned by the model roles page.
+    ModelRoles(talaria_core::model_roles::RolesInput),
     /// A key for the open fleet overlay.
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
@@ -325,6 +327,8 @@ pub struct View<'a> {
     pub profiles: Option<ProfilesView>,
     /// A profiles text field owns printable keys.
     pub profiles_text_focus: bool,
+    /// The model roles page, when it is open for the connection's profile.
+    pub model_roles: Option<talaria_core::model_roles::RolesView>,
     pub subagents: Option<&'a crate::subagents::SubagentHub>,
     /// Gateway usage fallback until this session's tree is known.
     pub subagents_usage_active: u32,
@@ -608,6 +612,10 @@ pub struct AppState {
     provider_generation: u64,
     provider_initializing: bool,
     provider_pending_loads: Vec<ProvidersEffect>,
+    model_roles: Option<talaria_core::model_roles::ModelRolesState>,
+    model_roles_profile: String,
+    model_roles_service: Option<Arc<crate::model_roles::ModelRolesService>>,
+    model_roles_generation: u64,
     pub models: ModelsState,
     model_service: Option<Arc<crate::models::ModelService>>,
     model_notice_counter: u64,
@@ -834,6 +842,10 @@ impl AppState {
             provider_generation: 0,
             provider_initializing: false,
             provider_pending_loads: Vec::new(),
+            model_roles: None,
+            model_roles_profile: String::new(),
+            model_roles_service: None,
+            model_roles_generation: 0,
             models: ModelsState::new(&format!("{launch_id}-model"), Ok(SavedModels::empty())),
             model_service: None,
             model_notice_counter: 0,
@@ -1002,6 +1014,11 @@ impl AppState {
             doctor_restart: &self.doctor_restart,
             profiles: self.profiles.is_open().then(|| self.profiles.view()),
             profiles_text_focus: self.profiles.text_focus(),
+            model_roles: self
+                .model_roles
+                .as_ref()
+                .filter(|_| self.model_roles_profile == self.profile)
+                .map(talaria_core::model_roles::ModelRolesState::view),
             processes_open: self.processes_open,
             state: opened.map(|opened| &opened.state),
             session_id: opened.map(|opened| opened.session_id.as_str()),
@@ -1210,6 +1227,13 @@ pub enum AppMessage {
         generation: u64,
         result: Result<Arc<crate::providers::ProviderService>, talaria_core::providers::Failure>,
     },
+    /// A model roles reply, still owned by the page that asked.
+    ModelRoles {
+        generation: u64,
+        profile: String,
+        service: Option<Arc<crate::model_roles::ModelRolesService>>,
+        input: talaria_core::model_roles::RolesInput,
+    },
     /// A background call's reply, still owned by the session that made it.
     BackgroundDone {
         session_id: SessionId,
@@ -1407,6 +1431,16 @@ pub enum AppEffect {
     /// Run one profiles call or manage its local timers and editor.
     Profiles(ProfilesEffect),
     Providers(ProvidersEffect),
+    /// Model role calls, run together off the event loop.
+    ModelRoles {
+        generation: u64,
+        profile: String,
+        connection_profile: String,
+        home: PathBuf,
+        service: Option<Arc<crate::model_roles::ModelRolesService>>,
+        socket: Option<hermes_client::Client>,
+        effects: Vec<talaria_core::model_roles::RolesEffect>,
+    },
     CommitSubagentBatch(talaria_core::subagents::FinishedBatch),
     /// A background call or log message for one session.
     Background {
@@ -2197,6 +2231,20 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 }
             }
         }
+        AppMessage::ModelRoles {
+            generation,
+            profile,
+            service,
+            input,
+        } => {
+            if generation != state.model_roles_generation || profile != state.model_roles_profile {
+                return Vec::new();
+            }
+            if let Some(service) = service {
+                state.model_roles_service = Some(service);
+            }
+            model_roles_input(state, input)
+        }
         AppMessage::BackgroundRecovered { session_id, result } => {
             if is_open_session(state, &session_id) {
                 recovered(state, result)
@@ -2849,6 +2897,80 @@ fn pane_notice(state: &mut AppState, text: String) -> Vec<AppEffect> {
     }
 }
 
+/// Open the model roles page for the connection's profile.
+fn open_model_roles(state: &mut AppState) -> Vec<AppEffect> {
+    let (page, effects) = talaria_core::model_roles::ModelRolesState::new(state.profile.clone());
+    state.model_roles = Some(page);
+    state.model_roles_profile = state.profile.clone();
+    state.model_roles_service = None;
+    state.model_roles_generation = state.model_roles_generation.wrapping_add(1);
+    let mut result = model_roles_effects(state, effects);
+    result.push(AppEffect::Redraw);
+    result
+}
+
+/// Feed one input to the open page and queue the calls it asks for.
+fn model_roles_input(
+    state: &mut AppState,
+    input: talaria_core::model_roles::RolesInput,
+) -> Vec<AppEffect> {
+    if state.model_roles_profile != state.profile {
+        // The connection moved to another profile: the page belongs to the old one.
+        close_model_roles(state);
+        return vec![AppEffect::Redraw];
+    }
+    let Some(page) = state.model_roles.as_mut() else {
+        return Vec::new();
+    };
+    let effects = page.update(input);
+    let mut result = model_roles_effects(state, effects);
+    result.push(AppEffect::Redraw);
+    result
+}
+
+fn close_model_roles(state: &mut AppState) {
+    state.model_roles = None;
+    state.model_roles_service = None;
+    state.model_roles_generation = state.model_roles_generation.wrapping_add(1);
+}
+
+fn model_roles_effects(
+    state: &mut AppState,
+    effects: Vec<talaria_core::model_roles::RolesEffect>,
+) -> Vec<AppEffect> {
+    use talaria_core::model_roles::RolesEffect;
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, RolesEffect::Close))
+    {
+        close_model_roles(state);
+        return Vec::new();
+    }
+    if effects.is_empty() {
+        return Vec::new();
+    }
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, RolesEffect::LoadAll))
+    {
+        // A reload builds the clients again, so a restarted gateway is found.
+        state.model_roles_service = None;
+    }
+    vec![AppEffect::ModelRoles {
+        generation: state.model_roles_generation,
+        profile: state.model_roles_profile.clone(),
+        connection_profile: state.profile.clone(),
+        home: state.hermes_home.clone(),
+        service: state.model_roles_service.clone(),
+        socket: state
+            .service
+            .as_ref()
+            .and_then(SessionService::client)
+            .cloned(),
+        effects,
+    }]
+}
+
 fn settings_input(
     state: &mut AppState,
     input: talaria_core::settings::SettingsInput,
@@ -3008,6 +3130,9 @@ fn local_effect(
     }
     if action == LocalAction::Review {
         return changes_command(state);
+    }
+    if action == LocalAction::ModelRoles {
+        return open_model_roles(state);
     }
     if matches!(
         action,
@@ -3483,6 +3608,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             vec![AppEffect::Redraw]
         }
         UserAction::Providers(input) => providers_input(state, *input),
+        UserAction::ModelRoles(input) => model_roles_input(state, input),
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -6338,6 +6464,9 @@ pub fn slash_line(text: &str) -> Slash {
     }
     if let Some(command) = LocalCommandTable::builtin().find(&line.name) {
         if !command.takes_argument && !line.arg.is_empty() {
+            if command.action == LocalAction::ModelRoles {
+                return Slash::Notice("Usage: /models".to_owned());
+            }
             return Slash::Notice(format!("/{} does not take an argument.", line.name));
         }
         return match command.action {
@@ -7730,6 +7859,51 @@ fn apply<S: Screen>(
                         let _ = sender.send(AppMessage::Providers {
                             generation,
                             input: ProvidersInput::OpenFailed,
+                        });
+                    }
+                });
+            }
+            AppEffect::ModelRoles {
+                generation,
+                profile,
+                connection_profile,
+                home,
+                service,
+                socket,
+                effects,
+            } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    use talaria_core::model_roles::RolesInput;
+                    let service = match service {
+                        Some(service) => Some(service),
+                        None => {
+                            crate::model_roles::open_service(
+                                home,
+                                profile.clone(),
+                                connection_profile,
+                                socket,
+                            )
+                            .await
+                        }
+                    };
+                    for effect in effects {
+                        let sender = sender.clone();
+                        let profile = profile.clone();
+                        let service = service.clone();
+                        tokio::spawn(async move {
+                            let inputs = match &service {
+                                Some(service) => service.execute(effect).await,
+                                None => vec![RolesInput::NotConnected],
+                            };
+                            for input in inputs {
+                                let _ = sender.send(AppMessage::ModelRoles {
+                                    generation,
+                                    profile: profile.clone(),
+                                    service: service.clone(),
+                                    input,
+                                });
+                            }
                         });
                     }
                 });

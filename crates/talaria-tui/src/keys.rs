@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::model_roles::{RolesKey, Section};
 use crate::settings::SettingsAction;
 use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -30,6 +31,83 @@ static SETTINGS_BINDINGS: [(SettingsAction, &str, &str); 16] = [
     (SettingsAction::Reload, "settings_reload", "ctrl+r"),
     (SettingsAction::Help, "settings_help", "?"),
     (SettingsAction::Close, "settings_close", "esc"),
+];
+
+/// Keys of the model roles page, read while no prompt, input or filter takes raw keys.
+static MODEL_ROLES_BINDINGS: [(RolesKey, &str, &[&str]); 32] = [
+    (
+        RolesKey::Section(Section::Main),
+        "model_roles_section_main",
+        &["1"],
+    ),
+    (
+        RolesKey::Section(Section::Fallbacks),
+        "model_roles_section_fallbacks",
+        &["2"],
+    ),
+    (
+        RolesKey::Section(Section::Helpers),
+        "model_roles_section_helpers",
+        &["3"],
+    ),
+    (
+        RolesKey::Section(Section::Subagents),
+        "model_roles_section_subagents",
+        &["4"],
+    ),
+    (
+        RolesKey::Section(Section::Moa),
+        "model_roles_section_moa",
+        &["5"],
+    ),
+    (RolesKey::NextSection, "model_roles_next_section", &["tab"]),
+    (
+        RolesKey::PrevSection,
+        "model_roles_prev_section",
+        &["shift+tab"],
+    ),
+    (RolesKey::Up, "model_roles_up", &["up"]),
+    (RolesKey::Down, "model_roles_down", &["down"]),
+    (RolesKey::Home, "model_roles_home", &["home"]),
+    (RolesKey::End, "model_roles_end", &["end"]),
+    (RolesKey::PageUp, "model_roles_page_up", &["pageup"]),
+    (RolesKey::PageDown, "model_roles_page_down", &["pagedown"]),
+    (RolesKey::Left, "model_roles_left", &["left"]),
+    (RolesKey::Right, "model_roles_right", &["right"]),
+    (RolesKey::Enter, "model_roles_enter", &["enter"]),
+    (RolesKey::Effort, "model_roles_effort", &["e"]),
+    (RolesKey::Context, "model_roles_context", &["c"]),
+    (RolesKey::Inherit, "model_roles_inherit", &["i"]),
+    (RolesKey::Add, "model_roles_add", &["a"]),
+    (RolesKey::Remove, "model_roles_remove", &["x", "delete"]),
+    (RolesKey::MoveUp, "model_roles_move_up", &["K", "alt+up"]),
+    (
+        RolesKey::MoveDown,
+        "model_roles_move_down",
+        &["J", "alt+down"],
+    ),
+    (RolesKey::Toggle, "model_roles_toggle", &["space"]),
+    (RolesKey::MakeDefault, "model_roles_make_default", &["D"]),
+    (RolesKey::ChainMode, "model_roles_chain_mode", &["m"]),
+    (RolesKey::ResetStale, "model_roles_reset_stale", &["R"]),
+    (RolesKey::Review, "model_roles_review", &["ctrl+s"]),
+    (RolesKey::Discard, "model_roles_discard", &["u"]),
+    (RolesKey::Reload, "model_roles_reload", &["ctrl+r"]),
+    (RolesKey::Escape, "model_roles_close", &["esc"]),
+    (RolesKey::Help, "model_roles_help", &["?"]),
+];
+
+/// Keys of the provider and model picker. Typed text goes to the filter as raw keys.
+static ROUTE_PICKER_BINDINGS: [(RolesKey, &str, &[&str]); 9] = [
+    (RolesKey::Up, "route_picker_up", &["up"]),
+    (RolesKey::Down, "route_picker_down", &["down"]),
+    (RolesKey::PageUp, "route_picker_page_up", &["pageup"]),
+    (RolesKey::PageDown, "route_picker_page_down", &["pagedown"]),
+    (RolesKey::Home, "route_picker_home", &["home"]),
+    (RolesKey::End, "route_picker_end", &["end"]),
+    (RolesKey::Enter, "route_picker_choose", &["enter"]),
+    (RolesKey::Reload, "route_picker_refresh", &["ctrl+r"]),
+    (RolesKey::Escape, "route_picker_cancel", &["esc"]),
 ];
 
 /// Where an action is looked up. Later screens add their own variants.
@@ -65,6 +143,10 @@ pub enum KeyContext {
     Profiles,
     /// The providers overlay.
     Providers,
+    /// The model roles page.
+    ModelRoles,
+    /// The provider and model picker on that page.
+    RoutePicker,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -201,6 +283,8 @@ enum Binding {
     Composer(Action),
     Model(ModelAction),
     Settings(usize),
+    ModelRoles(usize),
+    RoutePicker(usize),
 }
 
 impl Binding {
@@ -210,12 +294,24 @@ impl Binding {
             .map(Self::Composer)
             .chain(ModelAction::ALL.into_iter().map(Self::Model))
             .chain((0..SETTINGS_BINDINGS.len()).map(Self::Settings))
+            .chain((0..MODEL_ROLES_BINDINGS.len()).map(Self::ModelRoles))
+            .chain((0..ROUTE_PICKER_BINDINGS.len()).map(Self::RoutePicker))
     }
     fn index(self) -> usize {
         match self {
             Self::Composer(action) => action.index(),
             Self::Model(action) => Action::ALL.len() + action as usize,
             Self::Settings(index) => Action::ALL.len() + ModelAction::ALL.len() + index,
+            Self::ModelRoles(index) => {
+                Action::ALL.len() + ModelAction::ALL.len() + SETTINGS_BINDINGS.len() + index
+            }
+            Self::RoutePicker(index) => {
+                Action::ALL.len()
+                    + ModelAction::ALL.len()
+                    + SETTINGS_BINDINGS.len()
+                    + MODEL_ROLES_BINDINGS.len()
+                    + index
+            }
         }
     }
     fn context(self) -> KeyContext {
@@ -223,6 +319,8 @@ impl Binding {
             Self::Composer(action) => action.context(),
             Self::Model(action) => action.context(),
             Self::Settings(_) => KeyContext::Settings,
+            Self::ModelRoles(_) => KeyContext::ModelRoles,
+            Self::RoutePicker(_) => KeyContext::RoutePicker,
         }
     }
     fn config_name(self) -> &'static str {
@@ -230,6 +328,8 @@ impl Binding {
             Self::Composer(action) => action.config_name(),
             Self::Model(action) => action.config_name(),
             Self::Settings(index) => SETTINGS_BINDINGS[index].1,
+            Self::ModelRoles(index) => MODEL_ROLES_BINDINGS[index].1,
+            Self::RoutePicker(index) => ROUTE_PICKER_BINDINGS[index].1,
         }
     }
     fn from_config_name(name: &str) -> Option<Self> {
@@ -242,12 +342,26 @@ impl Binding {
                     .position(|(_, held, _)| *held == name)
                     .map(Self::Settings)
             })
+            .or_else(|| {
+                MODEL_ROLES_BINDINGS
+                    .iter()
+                    .position(|(_, held, _)| *held == name)
+                    .map(Self::ModelRoles)
+            })
+            .or_else(|| {
+                ROUTE_PICKER_BINDINGS
+                    .iter()
+                    .position(|(_, held, _)| *held == name)
+                    .map(Self::RoutePicker)
+            })
     }
     fn default_chords(self) -> &'static [&'static str] {
         match self {
             Self::Composer(action) => action.default_chords(),
             Self::Model(action) => action.default_chords(),
             Self::Settings(index) => std::slice::from_ref(&SETTINGS_BINDINGS[index].2),
+            Self::ModelRoles(index) => MODEL_ROLES_BINDINGS[index].2,
+            Self::RoutePicker(index) => ROUTE_PICKER_BINDINGS[index].2,
         }
     }
 }
@@ -1698,6 +1812,29 @@ impl KeyMap {
             })
     }
 
+    /// Resolve a key on the model roles page or its route picker. Typed text never comes
+    /// here: while the page asks for raw keys the caller sends them straight through.
+    #[must_use]
+    pub fn resolve_model_roles(&self, context: KeyContext, key: &Key) -> Option<RolesKey> {
+        let matching = |binding: Binding, action: &RolesKey| {
+            self.chords[binding.index()]
+                .iter()
+                .any(|chord| chord.matches(key))
+                .then(|| action.clone())
+        };
+        match context {
+            KeyContext::ModelRoles => MODEL_ROLES_BINDINGS
+                .iter()
+                .enumerate()
+                .find_map(|(index, (action, _, _))| matching(Binding::ModelRoles(index), action)),
+            KeyContext::RoutePicker => ROUTE_PICKER_BINDINGS
+                .iter()
+                .enumerate()
+                .find_map(|(index, (action, _, _))| matching(Binding::RoutePicker(index), action)),
+            _ => None,
+        }
+    }
+
     /// The built-in bindings.
     #[must_use]
     pub fn defaults() -> Self {
@@ -1719,8 +1856,12 @@ impl KeyMap {
     #[must_use]
     pub fn from_entries(entries: &BTreeMap<String, Vec<String>>) -> (Self, Vec<String>) {
         let mut map = Self::defaults();
-        let mut explicit =
-            [false; Action::ALL.len() + ModelAction::ALL.len() + SETTINGS_BINDINGS.len()];
+        let mut explicit = [false;
+            Action::ALL.len()
+                + ModelAction::ALL.len()
+                + SETTINGS_BINDINGS.len()
+                + MODEL_ROLES_BINDINGS.len()
+                + ROUTE_PICKER_BINDINGS.len()];
         let mut notices = Vec::new();
 
         for (name, texts) in entries {
@@ -2631,6 +2772,78 @@ mod tests {
         assert_eq!(
             map.model_chords(ModelAction::ModelRefresh)[0].label(),
             "Ctrl+R"
+        );
+    }
+
+    #[test]
+    fn model_roles_keys_resolve_in_their_own_contexts() {
+        use crate::model_roles::{RolesKey, Section};
+        let map = KeyMap::defaults();
+        let press = |code, mods| Key::from(KeyEvent::new(code, mods));
+        let roles = |key: &Key| map.resolve_model_roles(KeyContext::ModelRoles, key);
+        assert_eq!(
+            roles(&press(KeyCode::Char('3'), KeyModifiers::NONE)),
+            Some(RolesKey::Section(Section::Helpers))
+        );
+        assert_eq!(
+            roles(&press(KeyCode::Tab, KeyModifiers::NONE)),
+            Some(RolesKey::NextSection)
+        );
+        assert_eq!(
+            roles(&press(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            Some(RolesKey::PrevSection)
+        );
+        assert_eq!(
+            roles(&press(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+            Some(RolesKey::Review)
+        );
+        assert_eq!(
+            roles(&press(KeyCode::Delete, KeyModifiers::NONE)),
+            Some(RolesKey::Remove)
+        );
+        assert_eq!(
+            roles(&press(KeyCode::Up, KeyModifiers::ALT)),
+            Some(RolesKey::MoveUp)
+        );
+        assert_eq!(
+            roles(&press(KeyCode::Char('K'), KeyModifiers::SHIFT)),
+            Some(RolesKey::MoveUp)
+        );
+        assert_eq!(
+            roles(&press(KeyCode::Char('D'), KeyModifiers::SHIFT)),
+            Some(RolesKey::MakeDefault)
+        );
+        assert_eq!(roles(&press(KeyCode::Char('d'), KeyModifiers::NONE)), None);
+        assert_eq!(
+            roles(&press(KeyCode::Char(' '), KeyModifiers::NONE)),
+            Some(RolesKey::Toggle)
+        );
+        let picker = |key: &Key| map.resolve_model_roles(KeyContext::RoutePicker, key);
+        assert_eq!(
+            picker(&press(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(RolesKey::Enter)
+        );
+        assert_eq!(
+            picker(&press(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            Some(RolesKey::Reload)
+        );
+        // Typed letters belong to the filter, and the page keys do not leak in.
+        assert_eq!(picker(&press(KeyCode::Char('e'), KeyModifiers::NONE)), None);
+        assert_eq!(
+            map.resolve_model_roles(
+                KeyContext::Composer,
+                &press(KeyCode::Enter, KeyModifiers::NONE)
+            ),
+            None
+        );
+        let (map, notices) = KeyMap::from_entries(&entries(&[("model_roles_effort", &["f"])]));
+        assert!(notices.is_empty());
+        assert_eq!(
+            map.resolve_model_roles(
+                KeyContext::ModelRoles,
+                &press(KeyCode::Char('f'), KeyModifiers::NONE)
+            ),
+            Some(RolesKey::Effort)
         );
     }
 }

@@ -17,6 +17,7 @@ pub mod live;
 pub mod markdown;
 pub mod mention;
 pub mod model_picker;
+pub mod model_roles;
 pub mod pager;
 pub mod palette;
 pub mod profiles;

@@ -123,6 +123,7 @@ struct Switch {
     drop: bool,
     delay: Duration,
     body: Option<Vec<u8>>,
+    body_status: Option<u16>,
 }
 struct ExternalWrite {
     after: Route,
@@ -243,6 +244,14 @@ impl MockRest {
             .or_default()
             .body = Some(body);
     }
+    /// Replies `status` with `body` verbatim; it replaces an earlier `fail_status`.
+    pub async fn status_body(&self, method: &str, path: &str, status: u16, body: Vec<u8>) {
+        let mut state = self.state.lock().unwrap();
+        let switch = state.switches.entry(route(method, path)).or_default();
+        switch.failure = None;
+        switch.body = Some(body);
+        switch.body_status = Some(status);
+    }
     pub async fn managed_keys(&self, keys: impl IntoIterator<Item = String>) {
         self.state.lock().unwrap().managed = keys.into_iter().collect();
     }
@@ -281,12 +290,24 @@ impl MockRest {
 fn route(method: &str, path: &str) -> Route {
     (method.to_owned(), path.to_owned())
 }
+// A route planted without a query also answers that path with one.
+fn planted_key(state: &State, method: &str, path: &str) -> Route {
+    let full = route(method, path);
+    let bare = route(method, path.split('?').next().unwrap_or(path));
+    if state.switches.contains_key(&full) || state.routes.contains_key(&full) {
+        full
+    } else if state.switches.contains_key(&bare) || state.routes.contains_key(&bare) {
+        bare
+    } else {
+        full
+    }
+}
 
 async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Result<()> {
     let request = read_request(&mut stream).await?;
     let (status, body, switch) = {
         let mut state = state.lock().unwrap();
-        let key = route(&request.method, &request.path);
+        let key = planted_key(&state, &request.method, &request.path);
         if let Some(external) = &mut state.external
             && external.armed
             && external.before == key
@@ -362,7 +383,7 @@ fn respond(
         return json_reply(*status, json!({"detail":detail}));
     }
     if let Some(bytes) = &switch.body {
-        return (200, bytes.clone());
+        return (switch.body_status.unwrap_or(200), bytes.clone());
     }
     if let Some(handler) = state.routes.get(key) {
         let (status, body) = handler(request);

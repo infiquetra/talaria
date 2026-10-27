@@ -1,0 +1,15 @@
+{
+  "body": {
+    "fallback_providers": [
+      {
+        "base_url": "https://endpoint.invalid",
+        "model": "minimax-m3.1-flash",
+        "provider": "opencode-go"
+      }
+    ],
+    "model_context_length": 0
+  },
+  "method": "GET",
+  "path_without_query": "/api/config",
+  "status": 200
+}

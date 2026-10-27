@@ -40,6 +40,10 @@ harness = false
 name = "background_output"
 harness = false
 
+[[bench]]
+name = "model_roles_filter"
+harness = false
+
 [lints]
 workspace = true
 
