@@ -30,6 +30,7 @@ base64.workspace = true
 alacritty_terminal.workspace = true
 crossterm.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
+http.workspace = true
 proptest.workspace = true
 ratatui.workspace = true
 rustix.workspace = true

@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 27] = [
+const NAMES: [&str; 28] = [
     "background-work",
     "attachments-mention-image",
     "plain-answer",
@@ -45,6 +45,7 @@ const NAMES: [&str; 27] = [
     "bg-launch",
     "review-session-info",
     "review-oneshot",
+    "profiles",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -80,6 +81,8 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         "bg-launch" => &[],
         // The review only reads the session and drafts one message; no turn runs.
         "review-session-info" | "review-oneshot" => &[],
+        // The profiles list reads no session and runs no turn.
+        "profiles" => &[],
         _ => &["complete"],
     }
 }
@@ -111,8 +114,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 27,
-        "expected twenty-seven fixtures in fixtures/frames, found {}",
+        files.len() == 28,
+        "expected twenty-eight fixtures in fixtures/frames, found {}",
         files.len()
     );
     NAMES
@@ -191,7 +194,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 27);
+    assert_eq!(fixtures.len(), 28);
 }
 
 #[test]
@@ -458,7 +461,11 @@ fn scenario_evidence_present() {
     for (name, path) in listed_fixtures() {
         let records = records(name, &path);
         let events = inbound_events(&records);
-        assert!(!events.is_empty(), "{name}: no inbound events");
+        // The profiles recording is calls only: it lists and describes, and no
+        // turn runs, so no session event exists to assert on.
+        if name != "profiles" {
+            assert!(!events.is_empty(), "{name}: no inbound events");
+        }
         match name {
             "subagent-control" => {
                 let source = hermes_client::ReplaySource::open(&path).expect("control recording");
@@ -812,6 +819,33 @@ fn scenario_evidence_present() {
                 assert!(
                     calls[0]["params"]["session_id"].is_string(),
                     "{name}: {method} names no session"
+                );
+            }
+            "profiles" => {
+                let lists: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| {
+                        record["dir"] == "out" && record["frame"]["method"] == "profiles.list"
+                    })
+                    .map(|record| &record["frame"])
+                    .collect();
+                assert_eq!(lists.len(), 1, "{name}: one outbound profiles.list");
+                assert_eq!(
+                    lists[0]["params"],
+                    serde_json::json!({"include_sessions": false}),
+                    "{name}: profiles.list params"
+                );
+                let describes: Vec<&Value> = records
+                    .iter()
+                    .filter(|record| {
+                        record["dir"] == "out" && record["frame"]["method"] == "profiles.describe"
+                    })
+                    .map(|record| &record["frame"])
+                    .collect();
+                assert_eq!(describes.len(), 1, "{name}: one outbound profiles.describe");
+                assert!(
+                    describes[0]["params"]["name"].is_string(),
+                    "{name}: profiles.describe names no profile"
                 );
             }
             other => panic!("unlisted fixture {other}"),

@@ -34,6 +34,7 @@ fastrand = "=2.5.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 signal-hook = "=0.4.5"
 serde_json = "=1.0.154"
+similar = "=2.7.0"
 regress = "=0.10.3"
 proptest = "=1.11.0"
 pulldown-cmark = { version = "=0.13.4", default-features = false }

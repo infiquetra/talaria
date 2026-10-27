@@ -6,4 +6,5 @@ pub mod doctor_cmd;
 pub mod fleet_cmd;
 pub mod picker;
 pub mod print;
+pub mod profiles_cmd;
 pub mod run;

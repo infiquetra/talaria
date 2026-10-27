@@ -45,6 +45,9 @@ use talaria_core::fleet_view::{FleetAction, FleetViewInput, FleetViewState, Focu
 use talaria_core::models::{ConfirmKey, PickerKey, PickerRow, PickerView};
 use talaria_core::mutation::Confirmation;
 use talaria_core::permissions::{ApprovalSegmentText, ApprovalTone};
+use talaria_core::profiles::{
+    KeyAction as ProfilesKey, Panel as ProfilesPanel, ProfilesInput, ProfilesView, RawEdit,
+};
 use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::review::{ReviewFocus, ReviewKey, ReviewView};
 use talaria_core::session::{
@@ -79,6 +82,9 @@ use talaria_tui::pager::{
     SearchIndex, SearchInput,
 };
 use talaria_tui::palette::PaletteSection;
+use talaria_tui::profiles::{
+    ProfilesRenderer, cursor_position as profiles_cursor, key_action as profiles_key,
+};
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
 use talaria_tui::review_view::draw_review;
@@ -126,6 +132,8 @@ static PLAIN_CELLS: PlainCellLines = PlainCellLines;
 
 /// One raw input for the screen.
 pub enum ScreenInput {
+    /// The raw soul editor returned; terminal ownership is restored before dispatch.
+    ProfileEdited(RawEdit),
     Terminal(crossterm::event::Event),
     Status(CommandResult),
     Edited(editor::EditResult),
@@ -140,6 +148,8 @@ pub enum ScreenInput {
 enum Overlay {
     /// The live screen, with no overlay.
     Live,
+    /// The profile roster and configuration panels.
+    Profiles,
     /// The model picker.
     Models,
     /// The session picker.
@@ -215,6 +225,7 @@ pub struct TuiScreen {
     /// Terminal rows, for the palette's height cap.
     rows: u16,
     picker: Option<ModelOverlay>,
+    profiles: ProfilesRenderer,
     overlay: Overlay,
     /// The card of the peeked background session, while the fleet overlay shows it.
     peek_prompts: PromptStack,
@@ -1219,6 +1230,9 @@ impl TuiScreen {
 
     /// Show the terminal overlay for one picker, closing the other one.
     fn open_overlay(&mut self, kind: Overlay) {
+        if self.overlay == Overlay::Profiles && kind != Overlay::Profiles {
+            return;
+        }
         if self.overlay == kind {
             return;
         }
@@ -1259,6 +1273,9 @@ impl TuiScreen {
     }
 
     fn sync_agents(&mut self, view: &View<'_>) {
+        if view.profiles.is_some() {
+            return;
+        }
         if view.processes_open {
             return;
         }
@@ -1687,6 +1704,41 @@ impl TuiScreen {
                 if self.terminal.is_released() {
                     return Vec::new();
                 }
+                if let Some(profiles) = &view.profiles {
+                    let key = Key::from(raw);
+                    if key.kind == KeyKind::Release {
+                        return Vec::new();
+                    }
+                    let action = if profiles.confirm.is_some() {
+                        Some(
+                            if !key.mods.ctrl
+                                && !key.mods.alt
+                                && !key.mods.super_key
+                                && key.code == KeyCode::Char('y')
+                            {
+                                ProfilesKey::Char('y')
+                            } else {
+                                ProfilesKey::Back
+                            },
+                        )
+                    } else if matches!(profiles.panel, ProfilesPanel::Review(_))
+                        && key.code == KeyCode::Enter
+                        && !key.mods.ctrl
+                        && !key.mods.alt
+                    {
+                        Some(ProfilesKey::Enter)
+                    } else {
+                        profiles_key(
+                            &self.keymap,
+                            &key,
+                            view.profiles_text_focus
+                                || matches!(profiles.panel, ProfilesPanel::Form(_)),
+                        )
+                    };
+                    return vec![UserAction::Profiles(
+                        action.map_or(ProfilesInput::UnboundKey, ProfilesInput::Key),
+                    )];
+                }
                 if let Some(settings) = &view.settings {
                     let key = Key::from(raw);
                     if key.kind == KeyKind::Release {
@@ -1948,6 +2000,13 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(text) => {
+                if view.profiles.is_some() {
+                    return if self.terminal.is_released() {
+                        Vec::new()
+                    } else {
+                        vec![UserAction::Profiles(ProfilesInput::Paste(text))]
+                    };
+                }
                 if view.settings.is_some() && !self.terminal.is_released() {
                     return vec![UserAction::Settings(
                         talaria_core::settings::SettingsInput::Key(
@@ -2035,7 +2094,14 @@ impl TuiScreen {
             Event::Resize(cols, rows) => {
                 self.rows = rows;
                 let _ = self.terminal.resize(cols, rows);
-                Vec::new()
+                view.profiles
+                    .as_ref()
+                    .map(|profiles| UserAction::ProfilesLayout {
+                        width: cols,
+                        page_size: self.profiles_page_size(profiles),
+                    })
+                    .into_iter()
+                    .collect()
             }
             _ => Vec::new(),
         }
@@ -2319,7 +2385,70 @@ impl Screen for TuiScreen {
         terminal_size().map_or(10, |(_, rows)| usize::from(rows.saturating_sub(3)).max(3))
     }
 
+    fn sync_profiles(&mut self, view: Option<&ProfilesView>) {
+        let Some(view) = view else {
+            self.close_overlay(Overlay::Profiles);
+            return;
+        };
+        self.open_overlay(Overlay::Profiles);
+        let renderer = &mut self.profiles;
+        let _ = self.terminal.draw_overlay_with_cursor(|area, buffer| {
+            renderer.draw(view, area, buffer);
+            profiles_cursor(view, area)
+        });
+    }
+
+    fn profiles_page_size(&self, view: &ProfilesView) -> usize {
+        let (width, height) = self.pane_size();
+        talaria_tui::profiles::list_page_size(view, ratatui::layout::Rect::new(0, 0, width, height))
+    }
+
+    fn edit_profile_soul(&mut self, text: String) -> Option<RawEdit> {
+        let argv = match editor::resolve_editor(
+            Some(&self.config.editor.command),
+            &|key| std::env::var(key).ok(),
+            &executable_on_path,
+        ) {
+            Ok(argv) => argv,
+            Err(editor::EditorError::Parse(reason)) => {
+                return Some(RawEdit::Failed(editor::parse_notice(&reason)));
+            }
+        };
+        if let Err(error) = self.release_terminal() {
+            self.take_terminal();
+            return Some(RawEdit::Failed(format!(
+                "Could not release the terminal ({:?}).",
+                error.kind()
+            )));
+        }
+        let sender = self.sender.clone();
+        let edited = tokio::task::spawn_blocking(move || {
+            match tempfile::Builder::new().prefix("talaria-soul-").tempdir() {
+                Ok(directory) => talaria_app::profiles_editor::edit_text_raw(
+                    &argv,
+                    &text,
+                    directory.path(),
+                    directory.path(),
+                    talaria_app::profiles_editor::MAX_SOUL_BYTES,
+                ),
+                Err(_) => RawEdit::Failed(
+                    "Could not create a private temporary directory; nothing was sent.".to_string(),
+                ),
+            }
+        });
+        tokio::spawn(async move {
+            let result = edited.await.unwrap_or_else(|_| {
+                RawEdit::Failed("The editor stopped unexpectedly; nothing was sent.".to_string())
+            });
+            let _ = sender.send(ScreenInput::ProfileEdited(result));
+        });
+        None
+    }
+
     fn sync_models(&mut self, picker: Option<PickerView<'_>>, confirmation: Option<&Confirmation>) {
+        if self.overlay == Overlay::Profiles {
+            return;
+        }
         match picker {
             Some(view) => {
                 self.open_overlay(Overlay::Models);
@@ -2341,10 +2470,16 @@ impl Screen for TuiScreen {
     }
 
     fn sync_picker(&mut self, picker: Option<&PickerState>) {
+        if self.overlay == Overlay::Profiles {
+            return;
+        }
         self.sync_session_picker(picker);
     }
 
     fn sync_fleet(&mut self, view: &View<'_>) {
+        if view.profiles.is_some() {
+            return;
+        }
         if view.processes_open {
             return;
         }
@@ -2413,6 +2548,11 @@ impl Screen for TuiScreen {
         self.sync_prompts(view, now);
         self.sync_confirmation_focus(now);
         let mut actions = match input {
+            ScreenInput::ProfileEdited(result) => {
+                self.take_terminal();
+                self.draw(view);
+                vec![UserAction::Profiles(ProfilesInput::EditorReturned(result))]
+            }
             ScreenInput::Terminal(event) => self.terminal_input(event, view, now),
             ScreenInput::Status(result) => {
                 self.external.apply(&result);
@@ -2462,6 +2602,11 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        if let Some(profiles) = &view.profiles {
+            self.sync_profiles(Some(profiles));
+            return;
+        }
+        self.close_overlay(Overlay::Profiles);
         if let Some(doctor) = view.doctor {
             self.open_overlay(Overlay::Doctor);
             let _ = self.terminal.draw_overlay(|area, buf| {
@@ -3326,6 +3471,7 @@ fn session(
         reported: (String::new(), 0),
         rows: size.1,
         picker: None,
+        profiles: ProfilesRenderer::default(),
         overlay: Overlay::Live,
         peek_prompts: PromptStack::new(),
         agents: None,

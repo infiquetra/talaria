@@ -314,7 +314,10 @@ fn respond(
 ) -> (u16, Vec<u8>) {
     let json_reply = |status, value: Value| (status, serde_json::to_vec(&value).unwrap());
     let path = request.path.split('?').next().unwrap();
-    let public = matches!(path, "/api/config/schema" | "/api/config/defaults");
+    let public = matches!(
+        path,
+        "/api/config/schema" | "/api/config/defaults" | "/api/status" | "/api/health"
+    );
     let tickets: Vec<_> = request
         .headers
         .iter()

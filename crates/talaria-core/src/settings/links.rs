@@ -4,4 +4,7 @@ pub struct SettingsLink {
     pub label: &'static str,
     pub action: LocalAction,
 }
-pub const SETTINGS_LINKS: &[SettingsLink] = &[];
+pub const SETTINGS_LINKS: &[SettingsLink] = &[SettingsLink {
+    label: "Profiles",
+    action: LocalAction::Profiles,
+}];

@@ -17,6 +17,7 @@
 pub mod channel;
 pub mod config_api;
 pub mod connect;
+pub mod control_verbs;
 pub mod discovery;
 pub mod gateway_api;
 pub mod liveness;

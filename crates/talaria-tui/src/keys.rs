@@ -61,6 +61,8 @@ pub enum KeyContext {
     Settings,
     /// The doctor overlay.
     Doctor,
+    /// The profiles overlay list. Issue #253.
+    Profiles,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -458,6 +460,34 @@ pub enum Action {
     CommitSubmit,
     /// Draft a message with the session's model. Issue #245.
     CommitDraft,
+    /// Move the profiles selection one row up. Issue #253.
+    ProfilesUp,
+    /// Move the profiles selection one row down. Issue #253.
+    ProfilesDown,
+    /// Move the profiles selection one page up. Issue #253.
+    ProfilesPageUp,
+    /// Move the profiles selection one page down. Issue #253.
+    ProfilesPageDown,
+    /// Move the profiles selection to the first row. Issue #253.
+    ProfilesFirst,
+    /// Move the profiles selection to the last row. Issue #253.
+    ProfilesLast,
+    /// Open the profiles detail, or describe now. Issue #253.
+    ProfilesOpen,
+    /// Filter the profiles list. Issue #253.
+    ProfilesFilter,
+    /// Refresh the profiles list. Issue #253.
+    ProfilesRefresh,
+    /// Rescan profiles, after a confirmation. Issue #253.
+    ProfilesRescan,
+    /// Open the create form. Issue #253.
+    ProfilesNew,
+    /// Edit the selected profile's description. Issue #253.
+    ProfilesDescription,
+    /// Edit the selected profile's soul. Issue #253.
+    ProfilesSoul,
+    /// Undo the innermost open thing, or close the overlay. Issue #253.
+    ProfilesBack,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -489,7 +519,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 142] = [
+    pub const ALL: [Self; 156] = [
         Self::DoctorUp,
         Self::DoctorDown,
         Self::DoctorToggle,
@@ -632,6 +662,20 @@ impl Action {
         Self::ReviewRefresh,
         Self::CommitSubmit,
         Self::CommitDraft,
+        Self::ProfilesUp,
+        Self::ProfilesDown,
+        Self::ProfilesPageUp,
+        Self::ProfilesPageDown,
+        Self::ProfilesFirst,
+        Self::ProfilesLast,
+        Self::ProfilesOpen,
+        Self::ProfilesFilter,
+        Self::ProfilesRefresh,
+        Self::ProfilesRescan,
+        Self::ProfilesNew,
+        Self::ProfilesDescription,
+        Self::ProfilesSoul,
+        Self::ProfilesBack,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -780,6 +824,20 @@ impl Action {
             Self::ReviewRefresh => "review_refresh",
             Self::CommitSubmit => "commit_submit",
             Self::CommitDraft => "commit_draft",
+            Self::ProfilesUp => "profiles_up",
+            Self::ProfilesDown => "profiles_down",
+            Self::ProfilesPageUp => "profiles_page_up",
+            Self::ProfilesPageDown => "profiles_page_down",
+            Self::ProfilesFirst => "profiles_first",
+            Self::ProfilesLast => "profiles_last",
+            Self::ProfilesOpen => "profiles_open",
+            Self::ProfilesFilter => "profiles_filter",
+            Self::ProfilesRefresh => "profiles_refresh",
+            Self::ProfilesRescan => "profiles_rescan",
+            Self::ProfilesNew => "profiles_new",
+            Self::ProfilesDescription => "profiles_description",
+            Self::ProfilesSoul => "profiles_soul",
+            Self::ProfilesBack => "profiles_back",
         }
     }
 
@@ -936,6 +994,20 @@ impl Action {
             | Self::ReviewOpenPr
             | Self::ReviewRefresh => KeyContext::Review,
             Self::CommitSubmit | Self::CommitDraft => KeyContext::CommitMessage,
+            Self::ProfilesUp
+            | Self::ProfilesDown
+            | Self::ProfilesPageUp
+            | Self::ProfilesPageDown
+            | Self::ProfilesFirst
+            | Self::ProfilesLast
+            | Self::ProfilesOpen
+            | Self::ProfilesFilter
+            | Self::ProfilesRefresh
+            | Self::ProfilesRescan
+            | Self::ProfilesNew
+            | Self::ProfilesDescription
+            | Self::ProfilesSoul
+            | Self::ProfilesBack => KeyContext::Profiles,
         }
     }
 
@@ -1091,6 +1163,20 @@ impl Action {
             Self::ReviewRefresh => &["r"],
             Self::CommitSubmit => &["ctrl+s"],
             Self::CommitDraft => &["ctrl+d"],
+            Self::ProfilesUp => &["up"],
+            Self::ProfilesDown => &["down"],
+            Self::ProfilesPageUp => &["pageup"],
+            Self::ProfilesPageDown => &["pagedown"],
+            Self::ProfilesFirst => &["home"],
+            Self::ProfilesLast => &["end"],
+            Self::ProfilesOpen => &["enter"],
+            Self::ProfilesFilter => &["/"],
+            Self::ProfilesRefresh => &["r"],
+            Self::ProfilesRescan => &["shift+r"],
+            Self::ProfilesNew => &["n"],
+            Self::ProfilesDescription => &["e"],
+            Self::ProfilesSoul => &["s"],
+            Self::ProfilesBack => &["esc"],
         }
     }
 }
@@ -1881,7 +1967,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 142);
+        assert_eq!(Action::ALL.len(), 156);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -1965,6 +2051,20 @@ mod tests {
                 | Action::ReviewOpenPr
                 | Action::ReviewRefresh => KeyContext::Review,
                 Action::CommitSubmit | Action::CommitDraft => KeyContext::CommitMessage,
+                Action::ProfilesUp
+                | Action::ProfilesDown
+                | Action::ProfilesPageUp
+                | Action::ProfilesPageDown
+                | Action::ProfilesFirst
+                | Action::ProfilesLast
+                | Action::ProfilesOpen
+                | Action::ProfilesFilter
+                | Action::ProfilesRefresh
+                | Action::ProfilesRescan
+                | Action::ProfilesNew
+                | Action::ProfilesDescription
+                | Action::ProfilesSoul
+                | Action::ProfilesBack => KeyContext::Profiles,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -2079,6 +2179,20 @@ mod tests {
                 | Action::ReviewOpenPr
                 | Action::ReviewRefresh => KeyContext::Review,
                 Action::CommitSubmit | Action::CommitDraft => KeyContext::CommitMessage,
+                Action::ProfilesUp
+                | Action::ProfilesDown
+                | Action::ProfilesPageUp
+                | Action::ProfilesPageDown
+                | Action::ProfilesFirst
+                | Action::ProfilesLast
+                | Action::ProfilesOpen
+                | Action::ProfilesFilter
+                | Action::ProfilesRefresh
+                | Action::ProfilesRescan
+                | Action::ProfilesNew
+                | Action::ProfilesDescription
+                | Action::ProfilesSoul
+                | Action::ProfilesBack => KeyContext::Profiles,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -2362,7 +2476,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 142);
+        assert_eq!(Action::ALL.len(), 156);
     }
 
     #[test]

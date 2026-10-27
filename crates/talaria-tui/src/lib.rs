@@ -19,6 +19,7 @@ pub mod mention;
 pub mod model_picker;
 pub mod pager;
 pub mod palette;
+pub mod profiles;
 pub mod prompts;
 pub mod queue;
 pub mod review_view;

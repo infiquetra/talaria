@@ -26,6 +26,8 @@ pub mod mutation;
 pub mod panes;
 pub mod peek;
 pub mod permissions;
+pub mod profiles;
+pub mod profiles_editor;
 pub mod prompts;
 pub mod queue;
 pub mod review;

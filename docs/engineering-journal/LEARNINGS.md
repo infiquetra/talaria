@@ -25,6 +25,28 @@
 **Mechanism.** The canonical authority's `config.get` and `config.set` serve a fixed list of presentation and session keys (`gateway/session_config.py:91-111`, `gateway/session_tui_config.py:45-114`), and refuse anything else before a read or a save. The dashboard routes on the same loopback listener read and deep-merge the whole `config.yaml`, behind a single-use, 30-second `native-http` ticket from the control socket, and do no redaction (`hermes_cli/web_routers/config_env.py:80-156`).
 
 **Generalizable rule.** A protocol method named like the thing you need (`config.get`) is not proof it covers the thing; probe one representative key on each transport before designing a phase on it.
+## 2026-10-26 — Two different parked_profiles fields explain different failures
+
+**Evidence.** At the pinned Hermes v0.22.4 revision, `gateway/run_bootstrap.py` reports
+`identify.parked_profiles` as a name-to-reason map. `hermes_cli/web_routers/status.py` reports
+the same field name as a list of profiles carrying the operator's stopped marker.
+
+**Mechanism.** Runtime parking means the gateway tried and could not serve a profile; the host
+status list means its service was deliberately stopped. Combining the shapes loses that distinction.
+
+**Generalizable rule.** Join profile sources by their semantics and preserve classification precedence.
+
+## 2026-10-26 — SOUL.md line endings are normalized by describe, not by the editor
+
+**Evidence.** At the pinned Hermes revision, `tui_gateway/methods_profiles.py` reads the soul
+with Python text mode and writes configured soul text with `write_text`. Text-mode reads turn
+carriage-return line endings into line feeds; a carriage return sent in a configure call is retained.
+
+**Mechanism.** Composer cleaning would change an edited soul again. The raw profile editor instead
+writes and reads the exact UTF-8 bytes provided to it, and the save guard compares the fresh soul
+against the base that Hermes originally returned.
+
+**Generalizable rule.** Preserve editor bytes at the client boundary and document upstream normalization.
 
 ## 2026-10-26 — Herdr's recent text repeats older lines after Talaria leaves the screen
 

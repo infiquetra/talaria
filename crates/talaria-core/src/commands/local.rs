@@ -70,6 +70,8 @@ pub enum LocalAction {
     Review,
     /// Open the settings screen.
     Config,
+    /// Open the profiles overlay. Issue #253.
+    Profiles,
 }
 
 /// One local command.
@@ -288,6 +290,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::Doctor,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "profiles",
+        aliases: &[],
+        summary: "List Hermes profiles, and why one is not served",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Profiles,
         tag: "talaria",
     },
 ];

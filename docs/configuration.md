@@ -163,6 +163,20 @@ settings_review = ["a"]
 settings_reload = ["ctrl+r"]
 settings_help = ["?"]
 settings_close = ["esc"]
+profiles_up = ["up"]
+profiles_down = ["down"]
+profiles_page_up = ["pageup"]
+profiles_page_down = ["pagedown"]
+profiles_first = ["home"]
+profiles_last = ["end"]
+profiles_open = ["enter"]
+profiles_filter = ["/"]
+profiles_refresh = ["r"]
+profiles_rescan = ["R"]
+profiles_new = ["n"]
+profiles_description = ["e"]
+profiles_soul = ["s"]
+profiles_back = ["esc"]
 [editor]
 command = ""
 [history]
@@ -376,6 +390,31 @@ requires confirmation; `--yes` provides it for scripts. The [JSON format](format
 describes the machine-readable report. Exit codes are 0 for success, 1 for a failed check or
 restart, 2 for invalid arguments, 3 when restart confirmation requires a terminal or `--yes`,
 and 4 when confirmation is declined.
+
+## Profiles
+
+`/profiles` opens the profile list without changing the foreground session. It joins the
+installed profile roster with the gateway's served and parked names and the optional host
+topology. Labels distinguish served, parked, stopped, own gateway, not served, starting, and
+not discovered. Each row gives a next step; Talaria does not run those fix commands.
+The Profiles entry in `/config` opens the same overlay.
+
+`talaria profiles [--json] [--profile fixture] [NAME...]` lists the same states without creating
+a session or starting a gateway. Names are normalized and deduplicated in the order supplied.
+JSON includes a `warnings` array when the roster or host topology is unavailable. A missing
+gateway exits 1; an unknown requested name exits 2 and prints no table or JSON.
+
+The overlay refreshes when opened, on `r`, and after its own writes. `R` requests a rescan only
+after `y` confirms: serving new profiles can also start their messaging bots. `n` creates a
+profile after validation and review, `e` edits its description, and `s` opens its soul in the
+configured external editor. Soul edits are reviewed and checked against a fresh copy before
+saving. A concurrent change keeps the unsaved edit in memory for the next `s`. Model, skills,
+toolsets, and Model Context Protocol servers are shown here without edit controls.
+
+These bindings apply only inside the profiles overlay. Text fields reserve ordinary editing
+keys, Tab, Shift+Tab, and Ctrl+U; Esc leaves the innermost panel before closing the overlay.
+
+The default bindings are included in the `[keys]` table above.
 
 ## Coming from 0.6
 

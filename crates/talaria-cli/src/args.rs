@@ -147,6 +147,11 @@ pub fn is_doctor_command(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg == "doctor")
 }
 
+/// True when the first argument is the profiles command.
+pub fn is_profiles_command(args: &[String]) -> bool {
+    args.first().is_some_and(|arg| arg == "profiles")
+}
+
 pub fn write_usage(error: &clap::Error) -> u8 {
     let (text, code) = render_usage(error);
     match code {
