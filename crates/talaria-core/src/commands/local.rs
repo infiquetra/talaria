@@ -100,15 +100,6 @@ impl LocalCommand {
 /// The one table, in the order the palette lists it.
 const BUILTIN: &[LocalCommand] = &[
     LocalCommand {
-        name: "config",
-        aliases: &[],
-        summary: "Show and change Hermes settings for this profile",
-        args_hint: "[filter | key=value …]",
-        takes_argument: true,
-        action: LocalAction::Config,
-        tag: "talaria",
-    },
-    LocalCommand {
         name: "quit",
         aliases: &["exit"],
         summary: "Leave Talaria; the session keeps running in Hermes",
@@ -277,6 +268,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::Review,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "config",
+        aliases: &[],
+        summary: "Show and change Hermes settings for this profile",
+        args_hint: "[filter | key=value …]",
+        takes_argument: true,
+        action: LocalAction::Config,
         tag: "talaria",
     },
 ];
