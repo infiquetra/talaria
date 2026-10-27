@@ -235,6 +235,7 @@ fn test_results_and_delete() {
         ),
         "{text}"
     );
+    let mut edited = state.clone();
     let effects = step(
         &mut state,
         ProvidersInput::Key(ProvidersKey::Action(ProvidersAction::Save)),
@@ -247,7 +248,7 @@ fn test_results_and_delete() {
     assert_eq!(sent.base_url, "https://example.invalid/resolved");
     assert_eq!(sent.model, "first-model");
     assert_eq!(
-        sent.models.as_ref().map(Vec::as_slice),
+        sent.models.as_deref(),
         Some(["first-model".to_owned(), "second-model".to_owned()].as_slice())
     );
     let _ = step(
@@ -255,10 +256,9 @@ fn test_results_and_delete() {
         ProvidersInput::EndpointSaved(Ok(list_of(vec![]))),
     );
 
-    let _ = step(&mut state, ProvidersInput::Key(ProvidersKey::BackTab));
-    let _ = step(&mut state, ProvidersInput::Key(ProvidersKey::Char('x')));
+    let _ = step(&mut edited, ProvidersInput::Key(ProvidersKey::Char('x')));
     let effects = step(
-        &mut state,
+        &mut edited,
         ProvidersInput::Key(ProvidersKey::Action(ProvidersAction::Save)),
     );
     let sent = effects.iter().find_map(|effect| match effect {

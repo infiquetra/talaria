@@ -262,6 +262,22 @@ impl MockRest {
         });
     }
 }
+impl MockRest {
+    /// Queue one JSON reply for a provider route. A later call replaces it.
+    pub fn script(&self, method: &str, path: &str, status: u16, body: Value) {
+        let key = route(method, path);
+        let mut state = self.state.lock().unwrap();
+        {
+            let switch = state.switches.entry(key.clone()).or_default();
+            switch.failure = None;
+            switch.body = None;
+        }
+        state
+            .routes
+            .insert(key, Arc::new(move |_| (status, body.clone())));
+    }
+}
+
 fn route(method: &str, path: &str) -> Route {
     (method.to_owned(), path.to_owned())
 }

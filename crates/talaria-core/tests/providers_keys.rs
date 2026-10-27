@@ -52,7 +52,7 @@ fn rows_are_primary_provider_password_entries() {
     shared.shared_with = vec![("alibaba".into(), "Alibaba Cloud".into())];
     let mut beta = env("BETA_API_KEY", "beta", "beta cloud", true);
     beta.tail = Some("«redacted:zzzz...abcd»".into());
-    let mut alpha = env("ALPHA_API_KEY", "alpha", "Alpha", false);
+    let alpha = env("ALPHA_API_KEY", "alpha", "Alpha", false);
 
     let _ = load_env(
         &mut state,
@@ -499,6 +499,15 @@ fn save_errors_map_to_text() {
         vec![env("OPENROUTER_API_KEY", "openrouter", "OpenRouter", false)],
     );
     let _ = step(&mut state, ProvidersInput::Key(ProvidersKey::Enter));
+    let _ = step(&mut state, ProvidersInput::SecretSubmitted);
+    let _ = step(
+        &mut state,
+        ProvidersInput::KeyChecked(Ok(KeyCheck {
+            ok: true,
+            reachable: true,
+            message: String::new(),
+        })),
+    );
     let _ = step(&mut state, ProvidersInput::KeySaved(Err(Failure::Unknown)));
     let text = joined(&state);
     assert!(

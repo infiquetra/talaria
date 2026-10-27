@@ -303,11 +303,11 @@ fn test_37_local_table_lists_context_compact_and_usage() {
     }
     assert_eq!(lookup("compact"), lookup("compress"));
     assert_eq!(
-        lookup("cost").map(|entry| entry.action),
+        lookup("cost").map(|entry| entry.action.clone()),
         Some(LocalAction::Usage)
     );
     assert_eq!(
-        lookup("stats").map(|entry| entry.action),
+        lookup("stats").map(|entry| entry.action.clone()),
         Some(LocalAction::Usage)
     );
     assert!(!lookup("context").expect("context").takes_argument);

@@ -22,7 +22,9 @@ fn paint(shown: &ProvidersView, secret_len: usize, cols: u16, rows: u16) -> Stri
         for x in 0..cols {
             line.push_str(buf[(x, y)].symbol());
         }
-        line.push_str("\r\n");
+        if y + 1 < rows {
+            line.push_str("\r\n");
+        }
         screen.feed(line.as_bytes());
     }
     screen.rows().join("\n")

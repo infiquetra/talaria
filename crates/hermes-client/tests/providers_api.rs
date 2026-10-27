@@ -3,8 +3,6 @@
 #[path = "support/mock_rest.rs"]
 mod mock_rest;
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use hermes_client::providers_api::{
@@ -13,23 +11,14 @@ use hermes_client::providers_api::{
     start_oauth, validate_endpoint, validate_provider,
 };
 use hermes_client::rest::{RestClient, RestError, RestOptions, TicketMinter};
-use hermes_client::{Ticket, TicketError};
-use mock_rest::MockRest;
+use mock_rest::{CountingMinter, MockRest};
 use serde_json::{Value, json};
 
 const PROVIDER_KEY: &str = "sk-test-SENTINEL-0123456789abcdef";
 const ENDPOINT_KEY: &str = "sk-test-ENDPOINT-0123456789abcdef";
 
-struct Idle;
-
-impl TicketMinter for Idle {
-    fn mint(&self) -> Pin<Box<dyn Future<Output = Result<Ticket, TicketError>> + Send + '_>> {
-        Box::pin(async { Err(TicketError::NotAuthenticated) })
-    }
-}
-
 fn client(mock: &MockRest) -> RestClient {
-    let minter: Arc<dyn TicketMinter> = Arc::new(Idle);
+    let minter: Arc<dyn TicketMinter> = Arc::new(CountingMinter::default());
     RestClient::new(&mock.origin(), minter, RestOptions::default()).expect("loopback origin")
 }
 
@@ -59,6 +48,33 @@ fn find<'a>(
         .find(|request| request.method == method && request.path == path)
 }
 
+fn header<'a>(request: &'a mock_rest::RecordedRequest, name: &str) -> Option<&'a str> {
+    request
+        .headers
+        .iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.as_str())
+}
+
+fn body_text(request: &mock_rest::RecordedRequest) -> Option<&str> {
+    std::str::from_utf8(&request.body).ok()
+}
+
+fn has_profile(request: &mock_rest::RecordedRequest) -> bool {
+    let query = request.path.split_once('?').map(|(_, query)| query);
+    let in_query = query.is_some_and(|query| {
+        query.split('&').any(|part| {
+            part.split_once('=')
+                .map(|(name, _)| name == "profile")
+                .unwrap_or(false)
+        })
+    });
+    let in_body = serde_json::from_slice::<Value>(&request.body)
+        .ok()
+        .is_some_and(|body| body.get("profile").is_some());
+    in_query || in_body
+}
+
 #[tokio::test]
 async fn requests_match_v0224_shapes() {
     let mock = MockRest::start().await;
@@ -72,7 +88,7 @@ async fn requests_match_v0224_shapes() {
     let _ = validate_endpoint(&rest, &endpoint_body()).await;
     let _ = save_endpoint(&rest, &endpoint_body()).await;
 
-    let requests = mock.requests();
+    let requests = mock.requests().await;
     let env = find(&requests, "GET", "/api/env");
     assert!(env.is_some(), "the env list was not sent: {requests:?}");
     let env_calls: Vec<_> = requests
@@ -81,37 +97,40 @@ async fn requests_match_v0224_shapes() {
         .collect();
     assert_eq!(env_calls.len(), 2, "the env list was not read twice");
     assert!(
-        env_calls.iter().all(|request| request.has_ticket),
+        env_calls
+            .iter()
+            .all(|request| header(request, "x-hermes-gateway-ticket").is_some()),
         "a ticket was missing"
     );
     assert_ne!(
-        env_calls[0].ticket, env_calls[1].ticket,
+        header(env_calls[0], "x-hermes-gateway-ticket"),
+        header(env_calls[1], "x-hermes-gateway-ticket"),
         "the second call reused the ticket"
     );
     assert!(
         env_calls
             .iter()
-            .all(|request| !request.has_origin && !request.has_profile)
+            .all(|request| header(request, "origin").is_none() && !has_profile(request))
     );
     assert!(
         env_calls
             .iter()
-            .all(|request| request.content_type.is_none())
+            .all(|request| header(request, "content-type").is_none())
     );
 
     let check = find(&requests, "POST", "/api/providers/validate").expect("validate was not sent");
-    let body: Value = serde_json::from_str(check.body.as_deref().unwrap_or("{}")).expect("body");
+    let body: Value = serde_json::from_str(body_text(check).unwrap_or("{}")).expect("body");
     assert_eq!(
         body,
         json!({"key": "EXAMPLE_API_KEY", "value": PROVIDER_KEY})
     );
     assert!(body.get("profile").is_none(), "validate carried a profile");
-    assert!(!check.has_origin && !check.has_profile);
-    assert_eq!(check.content_type.as_deref(), Some("application/json"));
+    assert!(header(check, "origin").is_none() && !has_profile(check));
+    assert_eq!(header(check, "content-type"), Some("application/json"));
 
     let start = find(&requests, "POST", "/api/providers/oauth/dev.code/start")
         .expect("sign-in start was not sent");
-    assert_eq!(start.body.as_deref(), Some("{}"));
+    assert_eq!(body_text(start), Some("{}"));
     assert!(
         find(
             &requests,
@@ -309,7 +328,7 @@ async fn http_failures_are_classified() {
 
     let closed = RestClient::new(
         "http://127.0.0.1:9",
-        Arc::new(Idle) as Arc<dyn TicketMinter>,
+        Arc::new(CountingMinter::default()) as Arc<dyn TicketMinter>,
         RestOptions::default(),
     )
     .expect("loopback");
@@ -321,11 +340,12 @@ async fn http_failures_are_classified() {
         "a refused connection was not classified: {connect}"
     );
 
-    mock.delay_after_read(
+    mock.delay(
         "POST",
         "/api/providers/custom-endpoints",
         std::time::Duration::from_secs(31),
-    );
+    )
+    .await;
     let timed = save_endpoint(&rest, &endpoint_body())
         .await
         .expect_err("a late reply should fail");

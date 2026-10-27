@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -49,13 +49,13 @@ fn hermes_home() -> PathBuf {
 }
 
 fn open_rest(
-    home: &PathBuf,
+    home: &Path,
     endpoint: &Arc<Endpoint>,
     profile: &ProfileId,
     origin: &str,
 ) -> Result<RestClient, String> {
     let minter = Arc::new(NativeHttpMinter::new(
-        home.clone(),
+        home.to_path_buf(),
         Arc::clone(endpoint),
         profile.clone(),
     ));

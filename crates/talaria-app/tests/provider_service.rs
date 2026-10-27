@@ -7,15 +7,13 @@ mod mock_gateway;
 mod mock_rest;
 
 use std::collections::BTreeSet;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use hermes_client::rest::{RestClient, RestOptions, TicketMinter};
-use hermes_client::{Recorder, RecorderOptions, Ticket, TicketError, scan_literals};
+use hermes_client::{Recorder, RecorderOptions, scan_literals};
 use mock_gateway::MockGateway;
-use mock_rest::MockRest;
+use mock_rest::{CountingMinter, MockRest};
 use serde_json::{Value, json};
 use talaria_app::providers::{self, ProviderService};
 use talaria_core::providers::{
@@ -27,17 +25,12 @@ const PROVIDER_KEY: &str = "sk-test-SENTINEL-0123456789abcdef";
 const ENDPOINT_KEY: &str = "sk-test-ENDPOINT-0123456789abcdef";
 const NOW: i64 = 1_792_656_000;
 
-struct Idle;
-
-impl TicketMinter for Idle {
-    fn mint(&self) -> Pin<Box<dyn Future<Output = Result<Ticket, TicketError>> + Send + '_>> {
-        Box::pin(async { Err(TicketError::NotAuthenticated) })
-    }
+fn minted() -> Arc<dyn TicketMinter> {
+    Arc::new(CountingMinter::default())
 }
 
 fn rest_client() -> RestClient {
-    let minter: Arc<dyn TicketMinter> = Arc::new(Idle);
-    RestClient::new("http://127.0.0.1:9", minter, RestOptions::default()).expect("loopback")
+    RestClient::new("http://127.0.0.1:9", minted(), RestOptions::default()).expect("loopback")
 }
 
 fn draft(change: ApiKeyChange) -> EndpointDraft {
@@ -69,9 +62,26 @@ fn flag_ok(value: &Value, name: &str) -> bool {
     }
 }
 
+fn key_write_replies(gateway: &MockGateway, slug: &str, name: &str) {
+    // The pinned contract wraps a saved provider row and returns a disconnect flag.
+    gateway.push_matched_result(
+        "model.save_key",
+        json!({"slug": slug, "api_key": PROVIDER_KEY}),
+        json!({"provider": {
+            "slug": slug, "name": name, "authenticated": true, "models": []
+        }}),
+    );
+    gateway.push_matched_result(
+        "model.disconnect",
+        json!({"slug": slug}),
+        json!({"slug": slug, "name": name, "disconnected": true}),
+    );
+}
+
 #[tokio::test]
 async fn socket_calls_are_typed_and_closed() {
     let (gateway, client, _inbound) = MockGateway::start().await;
+    key_write_replies(&gateway, "ollama-cloud", "Ollama Cloud");
     let service = ProviderService::new(client, rest_client(), "fixture".into());
 
     let loaded = service.execute(ProvidersEffect::LoadOptions, None).await;
@@ -142,11 +152,9 @@ async fn socket_calls_are_typed_and_closed() {
 #[tokio::test]
 async fn secret_reaches_only_two_requests() {
     let (gateway, client, _inbound) = MockGateway::start().await;
+    key_write_replies(&gateway, "openrouter", "OpenRouter");
     let mock = MockRest::start().await;
-    let rest = {
-        let minter: Arc<dyn TicketMinter> = Arc::new(Idle);
-        RestClient::new(&mock.origin(), minter, RestOptions::default()).expect("loopback")
-    };
+    let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).expect("loopback");
     let service = ProviderService::new(client, rest, "fixture".into());
     let provider = Zeroizing::new(PROVIDER_KEY.to_owned());
     let endpoint = Zeroizing::new(ENDPOINT_KEY.to_owned());
@@ -191,12 +199,12 @@ async fn secret_reaches_only_two_requests() {
     );
     let validate_bodies = mock
         .requests()
+        .await
         .iter()
         .filter(|request| {
             request.path == "/api/providers/validate"
-                && request
-                    .body
-                    .as_deref()
+                && std::str::from_utf8(&request.body)
+                    .ok()
                     .is_some_and(|body| body.contains(PROVIDER_KEY))
         })
         .count();
@@ -206,11 +214,11 @@ async fn secret_reaches_only_two_requests() {
     );
     let endpoint_bodies = mock
         .requests()
+        .await
         .iter()
         .filter(|request| {
-            request
-                .body
-                .as_deref()
+            std::str::from_utf8(&request.body)
+                .ok()
                 .is_some_and(|body| body.contains(ENDPOINT_KEY))
         })
         .count();
@@ -243,9 +251,10 @@ async fn secret_reaches_only_two_requests() {
         "a key was visible in debug output: {hits:?}"
     );
 
-    let file = tempfile::NamedTempFile::new().expect("temp file");
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let file = directory.path().join("recording.jsonl");
     let recorder = Recorder::create(
-        file.path(),
+        &file,
         RecorderOptions {
             endpoint: "http://127.0.0.1:9".into(),
             ..RecorderOptions::default()
@@ -253,10 +262,16 @@ async fn secret_reaches_only_two_requests() {
     )
     .expect("recorder");
     for frame in gateway.seen() {
-        recorder.record_outbound(frame.connection, &frame.params.to_string());
+        let envelope = json!({
+            "jsonrpc": "2.0",
+            "id": frame.id,
+            "method": frame.method.expect("this fixture only sends requests"),
+            "params": frame.params,
+        });
+        recorder.record_outbound(frame.connection, &envelope.to_string());
     }
     recorder.finish().expect("finish");
-    let recorded = std::fs::read_to_string(file.path()).expect("read recording");
+    let recorded = std::fs::read_to_string(file).expect("read recording");
     let recorded_hits = scan_literals(
         &recorded,
         &[PROVIDER_KEY.to_owned(), ENDPOINT_KEY.to_owned()],
@@ -295,15 +310,13 @@ async fn unknown_outcomes_reload_and_never_resend() {
     );
 
     let mock = MockRest::start().await;
-    mock.delay_after_read(
+    mock.delay(
         "POST",
         "/api/providers/custom-endpoints",
         Duration::from_secs(31),
-    );
-    let rest = {
-        let minter: Arc<dyn TicketMinter> = Arc::new(Idle);
-        RestClient::new(&mock.origin(), minter, RestOptions::default()).expect("loopback")
-    };
+    )
+    .await;
+    let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).expect("loopback");
     let (gateway, client, _inbound) = MockGateway::start().await;
     let service = ProviderService::new(client, rest, "fixture".into());
     let stored = service
@@ -321,6 +334,7 @@ async fn unknown_outcomes_reload_and_never_resend() {
     );
     let writes = mock
         .requests()
+        .await
         .iter()
         .filter(|request| request.path == "/api/providers/custom-endpoints")
         .count();
@@ -345,10 +359,7 @@ async fn closing_cancels_open_sign_ins() {
             "poll_interval": 5
         }),
     );
-    let rest = {
-        let minter: Arc<dyn TicketMinter> = Arc::new(Idle);
-        RestClient::new(&mock.origin(), minter, RestOptions::default()).expect("loopback")
-    };
+    let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).expect("loopback");
     let service = ProviderService::new(client, rest, "fixture".into());
     let started = service
         .execute(
@@ -382,6 +393,7 @@ async fn closing_cancels_open_sign_ins() {
         .await;
     let cancels = mock
         .requests()
+        .await
         .iter()
         .filter(|request| request.method == "DELETE" && request.path.contains("/sessions/"))
         .count();
@@ -406,6 +418,7 @@ async fn closing_cancels_open_sign_ins() {
     );
     assert!(
         mock.requests()
+            .await
             .iter()
             .all(|request| !request.path.contains("/poll/")),
         "a poll for a cancelled session was sent"
