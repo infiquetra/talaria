@@ -4,6 +4,16 @@
 
 ## 2026-10-26
 
+### Proposed, awaiting the operator: configuration travels over dashboard REST, not socket config.get and config.set
+
+**Decision (proposed).** Amend the architecture's configuration section and item 4 of draft ADR-0007: Talaria reads the whole configuration with `GET /api/config?profile=<p>` and writes one setting with `PUT /api/config` (changed keys only), each request with its own fresh `native-http` ticket; it takes the schema and defaults from the public `GET /api/config/schema` and `GET /api/config/defaults`; it keeps socket `config.set` only for the session and display keys Hermes accepts there, and never sends `config.set key=model`. Talaria masks secrets itself. The handoff documents are not edited here; the operator amends them.
+
+**Rationale.** Exploration #249 refuted the handoff's reading "reads values with `config.get`, writes with `config.set`": the socket refuses every schema key (rows C06, C08), while the REST pair covers the whole file and round-trips cleanly (C15, C17, C19). See `docs/analysis/2026-10-26-hermes-configuration-surface.md`.
+
+**Rejected alternatives.** Socket-only configuration (it cannot reach schema keys); `PUT /api/config/raw` (it replaces the whole document and loses Hermes's default-stripping); two writers for the same key (the socket and REST could race on one file).
+
+**Revisit when.** A Hermes release adds schema keys to canonical `config.get` and `config.set`, or adds redaction to `GET /api/config`.
+
 ### The phase 3 smoke suite answers only the approval it provoked, and only by denying it
 
 **Decision.** The `needs-you` step of `smoke run --suite phase3` (issue #248) launches one background prompt that asks for `rm -rf ./talaria-smoke-probe` inside the scratch `probe` folder, waits for the fleet to list the request, starts Talaria, opens the fleet view with `alt+a` and types only the digit that the card shows beside `deny`. It never approves, never answers another session's request, and never sends the auto-approve flag, `/permissions` or `/yolo`.
