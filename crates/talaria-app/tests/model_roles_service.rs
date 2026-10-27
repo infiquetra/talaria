@@ -267,15 +267,27 @@ async fn moa_put_and_422() {
         .execute(RolesEffect::SaveMoa(config.clone()))
         .await;
     let body = body_of(&rig.rest.requests().await, "PUT", "/api/model/moa");
-    let keys: Vec<_> = body.as_object().expect("object").keys().cloned().collect();
+    let keys: std::collections::BTreeSet<_> =
+        body.as_object().expect("object").keys().cloned().collect();
     assert_eq!(
         keys,
-        vec![
+        std::collections::BTreeSet::from([
             "default_preset".to_owned(),
             "active_preset".to_owned(),
             "presets".to_owned()
-        ]
+        ])
     );
+    // A parsed Value sorts its keys, so the order is checked on the bytes sent.
+    let wire = rig
+        .rest
+        .requests()
+        .await
+        .into_iter()
+        .find(|item| item.method == "PUT" && item.path == "/api/model/moa")
+        .map(|item| String::from_utf8_lossy(&item.body).into_owned())
+        .expect("moa request");
+    let at = |key: &str| wire.find(&format!("\"{key}\":")).expect("key sent");
+    assert!(at("default_preset") < at("active_preset") && at("active_preset") < at("presets"));
     assert!(body.get("privacy_filter").is_none());
 
     rig.rest

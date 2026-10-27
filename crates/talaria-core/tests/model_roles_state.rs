@@ -7,7 +7,8 @@ use talaria_core::commands::local::{self, LocalAction};
 use talaria_core::model_roles::{
     ApplyReply, ApplyStep, AssignOutcome, Assignment, AuxSlot, AuxView, DiffLine, EffortChange,
     Loaded, ModalView, ModelRolesState, RawRoles, Read, RolesEffect, RolesError, RolesInfo,
-    RolesInput, RolesKey, RolesView, RouteTriple, Section, StaleSlot, review_lines,
+    RolesInput, RolesKey, RolesView, RouteCatalog, RouteProvider, RouteTriple, Section, StaleSlot,
+    review_lines,
 };
 use talaria_core::settings::{contains_secret_key, is_secret_key};
 
@@ -200,6 +201,23 @@ fn one_pending_section() {
         config_context_length: 0,
         capabilities: Map::new(),
     })));
+    // A pending main-model change: provider "public", model "next", through the picker.
+    state.update(RolesInput::CatalogLoaded(RouteCatalog {
+        providers: vec![RouteProvider {
+            slug: "public".to_owned(),
+            name: "public".to_owned(),
+            models: vec!["old".to_owned(), "next".to_owned()],
+            authenticated: true,
+            is_user_defined: false,
+            api_url: String::new(),
+        }],
+    }));
+    state.update(RolesInput::Key(RolesKey::Enter));
+    state.update(RolesInput::Key(RolesKey::Enter));
+    for letter in "next".chars() {
+        state.update(RolesInput::Key(RolesKey::Char(letter)));
+    }
+    state.update(RolesInput::Key(RolesKey::Enter));
     state.update(RolesInput::Key(RolesKey::Section(Section::Helpers)));
     let blocked = shown(&state);
     assert!(
@@ -421,6 +439,7 @@ fn main_context_and_effort() {
 #[test]
 fn helper_confirm_flow() {
     let mut state = open();
+    pending_three_helpers(&mut state);
     state.update(RolesInput::Applied {
         step: ApplyStep::Helper {
             task: "vision".to_owned(),
@@ -446,6 +465,7 @@ fn helper_confirm_flow() {
     assert!(text.contains("Saved: vision. Not saved: approval, mcp."));
 
     let mut unknown = open();
+    pending_three_helpers(&mut unknown);
     unknown.update(RolesInput::Applied {
         step: ApplyStep::Helper {
             task: "vision".to_owned(),
@@ -476,6 +496,48 @@ fn helper_confirm_flow() {
         ..effort_only
     };
     assert!(matches!(inherit.reasoning_effort, EffortChange::Inherit));
+}
+
+/// Three stale helper pins, reset with `R`, reviewed and sent: vision, approval, mcp.
+fn pending_three_helpers(state: &mut ModelRolesState) {
+    let slots = vec![
+        slot("vision", "other", "x", None),
+        slot("approval", "other", "x", None),
+        slot("mcp", "other", "x", None),
+    ];
+    state.update(RolesInput::Loaded(Loaded::Auxiliary(aux(
+        slots.clone(),
+        "public",
+        "old",
+    ))));
+    state.update(RolesInput::Key(RolesKey::Section(Section::Helpers)));
+    state.update(RolesInput::Key(RolesKey::ResetStale));
+    state.update(RolesInput::Fresh {
+        section: Section::Helpers,
+        reads: vec![Loaded::Auxiliary(aux(slots, "public", "old"))],
+    });
+    state.update(RolesInput::Key(RolesKey::Enter));
+}
+
+#[test]
+fn saved_default_line_on_main() {
+    let mut state = open();
+    state.update(RolesInput::Loaded(Loaded::Info(RolesInfo {
+        model: "glm-5".to_owned(),
+        provider: "ollama-cloud".to_owned(),
+        auto_context_length: 0,
+        config_context_length: 0,
+        capabilities: Map::new(),
+    })));
+    let line = "Talaria starts new sessions with ollama-cloud/minimax-m3.1-flash (your Talaria default), which overrides this.";
+    assert!(!shown(&state).contains(line));
+    state.update(RolesInput::SavedDefault(Some((
+        "ollama-cloud".to_owned(),
+        "minimax-m3.1-flash".to_owned(),
+    ))));
+    assert!(shown(&state).contains(line));
+    state.update(RolesInput::SavedDefault(None));
+    assert!(!shown(&state).contains(line));
 }
 
 #[test]

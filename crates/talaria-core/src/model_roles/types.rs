@@ -279,6 +279,8 @@ pub enum RolesInput {
     CatalogFailed {
         reason: String,
     },
+    /// Talaria's own saved default for this profile, as (provider, model), when one is set.
+    SavedDefault(Option<(String, String)>),
     Key(RolesKey),
     Fresh {
         section: Section,

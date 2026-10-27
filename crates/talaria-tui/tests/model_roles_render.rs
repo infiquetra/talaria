@@ -209,7 +209,7 @@ fn saved_default_line_and_footer() {
             "Sessions already running may keep their current setting.",
         ],
     );
-    let text = screen(&view, 100, 30);
+    let text = screen(&view, 160, 30);
     assert!(text.contains("Talaria starts new sessions with ollama-cloud/minimax-m3.1-flash (your Talaria default), which overrides this."));
     assert!(text.contains("Sessions already running may keep their current setting."));
     assert!(text.contains("Applies to new sessions."));
@@ -281,7 +281,7 @@ fn route_picker_snapshot() {
 
 #[test]
 fn untrusted_text_sanitised() {
-    let hostile = format!("model \u{202E}evil\u{1b}name");
+    let hostile = "model \u{202E}evil\u{1b}name".to_string();
     let view = page(
         Section::Main,
         vec![&format!("Model: {hostile} (via provider)")],

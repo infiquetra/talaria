@@ -783,10 +783,10 @@ fn check_tasks(value: &Value, out: &mut Vec<String>) {
             continue;
         };
         unexpected_keys(map, TASK_KEYS, &format!("tasks[{index}]."), out);
-        if let Some(plugin) = map.get("plugin").and_then(Value::as_str) {
-            if !plugin.starts_with("plugin-") {
-                out.push(format!("tasks[{index}].plugin was not reduced"));
-            }
+        if let Some(plugin) = map.get("plugin").and_then(Value::as_str)
+            && !plugin.starts_with("plugin-")
+        {
+            out.push(format!("tasks[{index}].plugin was not reduced"));
         }
         if let Some(effective) = map.get("effective").and_then(Value::as_object) {
             unexpected_keys(
@@ -873,10 +873,10 @@ fn check_provider_rows(value: &Value, out: &mut Vec<String>) {
         if map.get("slug").and_then(Value::as_str) == Some("moa") {
             out.push(format!("providers[{index}] still lists moa"));
         }
-        if let Some(models) = map.get("models").and_then(Value::as_array) {
-            if models.len() > 5 {
-                out.push(format!("providers[{index}].models kept more than five"));
-            }
+        if let Some(models) = map.get("models").and_then(Value::as_array)
+            && models.len() > 5
+        {
+            out.push(format!("providers[{index}].models kept more than five"));
         }
     }
 }
