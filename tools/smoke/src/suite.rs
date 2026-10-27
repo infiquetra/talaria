@@ -30,6 +30,7 @@ impl FromStr for Suite {
             "phase2a" => Ok(Suite::Phase2a),
             "phase2b" => Ok(Suite::Phase2b),
             "phase3" => Ok(Suite::Phase3),
+            "phase4a" => Ok(Suite::Phase4a),
             _ => Err(format!("unknown suite '{s}'; use phase1 or phase2a")),
         }
     }
@@ -44,7 +45,7 @@ impl Suite {
             Suite::Phase2a => 1800,
             Suite::Phase2b => 1500,
             Suite::Phase3 => 1200,
-            Suite::Phase4a => 300,
+            Suite::Phase4a => 900,
         }
     }
 }

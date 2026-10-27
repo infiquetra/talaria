@@ -5651,3 +5651,25 @@ before asynchronous cancellation, so reopening does not let an old close cancel 
 
 **Rule.** Separate configuration readiness from live credential validation, and bind every
 asynchronous answer or cancellation to the state that created it.
+
+## 2026-10-27 — Capture loaded rows before judging a screen
+
+**Evidence.** The combined settings, providers, model roles, profiles and doctor smoke run
+passed all 17 steps in 59 seconds; the ignored live test independently passed in 59 seconds.
+The first complete passing run measured, in seconds: startup 4.6; plain-answer 5.2;
+config-browse 3.9; config-invalid-input 4.4; config-secret-refused 3.7; providers-tabs 1.6;
+providers-key-masked 3.3; models-page 2.8; models-bad-preset 5.7; profiles-list 2.3;
+profiles-bad-names 4.4; doctor-overlay 2.3; quit 0.4; resume 11.4; profiles-cli 1.4;
+doctor-cli 1.7; no-gateway 0.5. Every measured step stayed within its existing budget.
+Earlier development runs exposed premature reads and differences from the synthetic screens.
+The real recordings confirm masked paste without Enter and preset-list focus after Left.
+
+**Mechanism.** Overlay titles precede loaded rows, provider tabs load independently, and
+profile details can disappear after cancellation while every list row remains unchanged.
+The key card's static destination hint starts with “Saved to profile”; it describes where
+a future save goes. The smoke guard exempts that line and still rejects a separate save
+or restart result on every read. Fixtures retain the captured content with private values,
+blank padding and empty borders removed; fault injection checks that its target still exists.
+
+**Generalizable rule.** Wait for the data being checked, compare the complete relevant list,
+and distinguish a static explanation from a completed action without relaxing result guards.
