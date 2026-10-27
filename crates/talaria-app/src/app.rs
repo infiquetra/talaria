@@ -209,6 +209,8 @@ pub enum UserAction {
     ModelRoles(talaria_core::model_roles::RolesInput),
     /// Input owned by the MCP overlay, before the composer sees it.
     Mcp(talaria_core::mcp::McpInput),
+    /// Input owned by the memory overlay.
+    Memory(talaria_core::memory::MemoryInput),
     /// A key for the open fleet overlay.
     Fleet(talaria_core::fleet_view::FleetViewInput),
     /// The composer's key for the fleet overlay: open it as `/fleet` does.
@@ -337,6 +339,7 @@ pub struct View<'a> {
     pub profiles_text_focus: bool,
     /// The model roles page, when it is open for the connection's profile.
     pub model_roles: Option<talaria_core::model_roles::RolesView>,
+    pub memory: Option<talaria_core::memory::MemoryView>,
     pub subagents: Option<&'a crate::subagents::SubagentHub>,
     /// Gateway usage fallback until this session's tree is known.
     pub subagents_usage_active: u32,
@@ -621,6 +624,11 @@ pub struct AppState {
     capabilities_service: Option<Arc<crate::capabilities::CapabilitiesService>>,
     capabilities_generation: u64,
     capabilities_started: Instant,
+    memory: talaria_core::memory::MemoryState,
+    memory_visible: bool,
+    memory_profile: Option<String>,
+    memory_service: Option<Arc<crate::memory::MemoryService>>,
+    memory_generation: u64,
     settings: talaria_core::settings::SettingsState,
     settings_service: Option<Arc<crate::settings::SettingsService>>,
     settings_generation: u64,
@@ -861,6 +869,11 @@ impl AppState {
             capabilities_service: None,
             capabilities_generation: 0,
             capabilities_started: Instant::now(),
+            memory: talaria_core::memory::MemoryState::new(),
+            memory_visible: false,
+            memory_profile: None,
+            memory_service: None,
+            memory_generation: 0,
             settings: talaria_core::settings::SettingsState::new(
                 talaria_core::settings::SETTINGS_LINKS,
             ),
@@ -1048,6 +1061,11 @@ impl AppState {
                 .as_ref()
                 .filter(|state| state.is_open())
                 .map(CapabilitiesState::view),
+            memory: self
+                .memory_profile
+                .as_ref()
+                .filter(|profile| self.memory_visible && *profile == &self.profile)
+                .map(|_| self.memory.view(Instant::now())),
             settings: self
                 .settings
                 .is_open()
@@ -1254,6 +1272,12 @@ pub enum AppMessage {
         generation: u64,
         service: Option<Arc<crate::capabilities::CapabilitiesService>>,
         input: CapInput,
+    },
+    Memory {
+        generation: u64,
+        profile: String,
+        service: Option<Arc<crate::memory::MemoryService>>,
+        input: talaria_core::memory::MemoryInput,
     },
     Settings {
         generation: u64,
@@ -1478,6 +1502,14 @@ pub enum AppEffect {
         socket: Option<hermes_client::Client>,
         effect: CapEffect,
     },
+    Memory {
+        generation: u64,
+        profile: String,
+        home: PathBuf,
+        service: Option<Arc<crate::memory::MemoryService>>,
+        effects: Vec<talaria_core::memory::MemoryEffect>,
+    },
+    CopyMemorySetup(String),
     Settings {
         generation: u64,
         profile: String,
@@ -2256,6 +2288,23 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 state.capabilities_service = Some(service);
             }
             capabilities_input(state, input)
+        }
+        AppMessage::Memory {
+            generation,
+            profile,
+            service,
+            input,
+        } => {
+            if generation != state.memory_generation
+                || profile != state.profile
+                || state.memory_profile.as_ref() != Some(&profile)
+            {
+                return Vec::new();
+            }
+            if let Some(service) = service {
+                state.memory_service = Some(service);
+            }
+            memory_input(state, input)
         }
         AppMessage::Settings {
             generation,
@@ -3420,6 +3469,177 @@ mod capabilities_wiring_tests {
     }
 }
 
+fn memory_input(state: &mut AppState, input: talaria_core::memory::MemoryInput) -> Vec<AppEffect> {
+    use talaria_core::memory::{MemoryEffect, MemoryInput};
+    if let MemoryInput::Open { profile } = &input {
+        if state.memory.is_busy() {
+            return vec![notice_lines("Waiting for Hermes."), AppEffect::Redraw];
+        }
+        state.memory_generation = state.memory_generation.wrapping_add(1);
+        state.memory_visible = true;
+        state.memory_profile = Some(profile.clone());
+        state.memory_service = None;
+    } else if state.memory_profile.as_ref() != Some(&state.profile)
+        || (matches!(input, MemoryInput::Key(_)) && !state.memory_visible)
+    {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    let mut remote = Vec::new();
+    for effect in state.memory.update(input, Instant::now()) {
+        match effect {
+            MemoryEffect::Notice(text) => result.push(notice_lines(&text)),
+            MemoryEffect::CloseOverlay => {
+                state.memory_visible = false;
+            }
+            MemoryEffect::OpenSettings { profile, filter } => result.extend(settings_input(
+                state,
+                talaria_core::settings::SettingsInput::Open {
+                    profile,
+                    filter: Some(filter.to_owned()),
+                },
+                None,
+            )),
+            MemoryEffect::CopyText(text) => result.push(AppEffect::CopyMemorySetup(text)),
+            effect => remote.push(effect),
+        }
+    }
+    if !remote.is_empty() {
+        result.push(AppEffect::Memory {
+            generation: state.memory_generation,
+            profile: state.profile.clone(),
+            home: state.hermes_home.clone(),
+            service: state.memory_service.clone(),
+            effects: remote,
+        });
+    }
+    if !state.memory_visible && !state.memory.is_busy() {
+        state.memory_profile = None;
+        state.memory_service = None;
+        state.memory_generation = state.memory_generation.wrapping_add(1);
+        state.memory = talaria_core::memory::MemoryState::new();
+    }
+    result.push(AppEffect::Redraw);
+    result
+}
+
+#[cfg(test)]
+mod memory_wiring_tests {
+    use super::*;
+    use talaria_core::memory::{MemoryEffect, MemoryInput, MemoryKey};
+
+    #[test]
+    fn local_memory_command_opens_both_reads_before_replies() {
+        let mut state = AppState::new("memory-open");
+        let effects = local_effect(
+            &mut state,
+            LocalAction::MemorySettings,
+            String::new(),
+            "/memory-settings".into(),
+        );
+        assert!(state.view().memory.is_some());
+        let reads = effects.iter().find_map(|effect| match effect {
+            AppEffect::Memory { effects, .. } => Some(effects),
+            _ => None,
+        });
+        assert!(matches!(
+            reads.map(Vec::as_slice),
+            Some([MemoryEffect::LoadStatus, MemoryEffect::LoadCurator])
+        ));
+    }
+
+    #[test]
+    fn closing_memory_drops_replies_from_the_previous_open() {
+        let mut state = AppState::new("memory-close");
+        let profile = state.profile.clone();
+        memory_input(
+            &mut state,
+            MemoryInput::Open {
+                profile: profile.clone(),
+            },
+        );
+        let generation = state.memory_generation;
+        memory_input(&mut state, MemoryInput::Key(MemoryKey::Close));
+        assert!(state.view().memory.is_none());
+        let effects = update(
+            &mut state,
+            AppMessage::Memory {
+                generation,
+                profile,
+                service: None,
+                input: MemoryInput::NotConnected,
+            },
+        );
+        assert!(effects.is_empty());
+        assert!(state.view().memory.is_none());
+    }
+
+    #[test]
+    fn memory_settings_link_closes_before_opening_filtered_settings() {
+        let mut state = AppState::new("memory-link");
+        let profile = state.profile.clone();
+        memory_input(&mut state, MemoryInput::Open { profile });
+        let effects = memory_input(&mut state, MemoryInput::Key(MemoryKey::Settings));
+        assert!(state.view().memory.is_none());
+        assert!(state.view().settings.is_some());
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Settings { .. }))
+        );
+    }
+
+    #[test]
+    fn hidden_memory_write_keeps_its_readback_and_notice() {
+        use talaria_core::memory::{BuiltinFiles, CuratorView, StatusView, WriteOutcome};
+        let mut state = AppState::new("memory-write");
+        let profile = state.profile.clone();
+        memory_input(&mut state, MemoryInput::Open { profile });
+        memory_input(
+            &mut state,
+            MemoryInput::StatusLoaded(Ok(StatusView {
+                active: String::new(),
+                providers: Vec::new(),
+                builtin_files: BuiltinFiles { memory: 0, user: 0 },
+            })),
+        );
+        let mut curator = CuratorView {
+            enabled: true,
+            paused: false,
+            interval_hours: None,
+            last_run_at: None,
+            min_idle_hours: None,
+            stale_after_days: None,
+            archive_after_days: None,
+        };
+        memory_input(&mut state, MemoryInput::CuratorLoaded(Ok(curator.clone())));
+        for _ in 0..3 {
+            memory_input(&mut state, MemoryInput::Key(MemoryKey::Down));
+        }
+        memory_input(&mut state, MemoryInput::Key(MemoryKey::Pause));
+        let generation = state.memory_generation;
+        memory_input(&mut state, MemoryInput::Key(MemoryKey::Close));
+        assert!(state.view().memory.is_none());
+        assert_eq!(generation, state.memory_generation);
+        let effects = memory_input(
+            &mut state,
+            MemoryInput::PausedSet(WriteOutcome::Ok(serde_json::json!({"paused": true}))),
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AppEffect::Memory { effects, .. } if effects == &[MemoryEffect::LoadCurator]
+        )));
+        curator.paused = true;
+        let effects = memory_input(&mut state, MemoryInput::CuratorLoaded(Ok(curator)));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::CommitLines(_)))
+        );
+        assert!(state.memory_profile.is_none());
+    }
+}
+
 fn settings_input(
     state: &mut AppState,
     input: talaria_core::settings::SettingsInput,
@@ -3546,6 +3766,14 @@ fn local_effect(
 ) -> Vec<AppEffect> {
     if action == LocalAction::Capabilities {
         return capabilities_command(state, &argument);
+    }
+    if action == LocalAction::MemorySettings {
+        return memory_input(
+            state,
+            talaria_core::memory::MemoryInput::Open {
+                profile: state.profile.clone(),
+            },
+        );
     }
     if action == LocalAction::Config {
         let input = talaria_core::settings::SettingsInput::Command {
@@ -4069,6 +4297,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Providers(input) => providers_input(state, *input),
         UserAction::ModelRoles(input) => model_roles_input(state, input),
         UserAction::Mcp(input) => mcp_input(state, input),
+        UserAction::Memory(input) => memory_input(state, input),
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -8450,6 +8679,46 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::Memory {
+                generation,
+                profile,
+                home,
+                service,
+                effects,
+            } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let service = match service {
+                        Some(service) => Some(service),
+                        None => crate::memory::discover_service(home, &profile).await,
+                    };
+                    let Some(service) = service else {
+                        let _ = sender.send(AppMessage::Memory {
+                            generation,
+                            profile,
+                            service: None,
+                            input: talaria_core::memory::MemoryInput::NotConnected,
+                        });
+                        return;
+                    };
+                    for effect in effects {
+                        let sender = sender.clone();
+                        let service = service.clone();
+                        let profile = profile.clone();
+                        tokio::spawn(async move {
+                            for input in service.execute(effect).await {
+                                let _ = sender.send(AppMessage::Memory {
+                                    generation,
+                                    profile: profile.clone(),
+                                    service: Some(service.clone()),
+                                    input,
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+            AppEffect::CopyMemorySetup(text) => screen.copy_provider_text(&text),
             AppEffect::Settings {
                 generation,
                 profile,
@@ -9610,6 +9879,13 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
     state
         .permissions
         .get_or_insert_with(|| PermissionsState::new(profile_name.clone()));
+    if state.profile != profile_name {
+        state.memory_visible = false;
+        state.memory_profile = None;
+        state.memory_service = None;
+        state.memory = talaria_core::memory::MemoryState::new();
+        state.memory_generation = state.memory_generation.wrapping_add(1);
+    }
     state.profile = profile_name;
     let mut commands = CommandService::new(link.client());
     if let Some(mut replies) = commands.take_replies() {

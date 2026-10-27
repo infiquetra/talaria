@@ -1,12 +1,13 @@
 use serde_json::Value;
 use std::fmt;
+use zeroize::Zeroizing;
 
 /// Ephemeral sensitive text; formatting deliberately never exposes its contents.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub struct SecretField(String);
+pub struct SecretField(Zeroizing<String>);
 impl SecretField {
     pub fn new(value: String) -> Self {
-        Self(value)
+        Self(Zeroizing::new(value))
     }
     pub fn expose(&self) -> &str {
         &self.0

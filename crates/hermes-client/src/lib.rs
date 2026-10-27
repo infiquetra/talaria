@@ -23,6 +23,7 @@ pub mod discovery;
 pub mod gateway_api;
 pub mod liveness;
 pub mod mcp_api;
+pub mod memory_api;
 pub mod model_roles_api;
 pub mod providers_api;
 pub mod record;

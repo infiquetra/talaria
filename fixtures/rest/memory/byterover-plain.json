@@ -1,0 +1,62 @@
+{
+  "name": "byterover",
+  "label": "Byterover",
+  "fields": [
+    {
+      "key": "api_key",
+      "label": "Api Key",
+      "kind": "secret",
+      "description": "ByteRover API key (optional, for cloud sync)",
+      "placeholder": "",
+      "required": false,
+      "value": "",
+      "is_set": false,
+      "options": [],
+      "url": "https://app.byterover.dev",
+      "when": null,
+      "minimum": null,
+      "maximum": null,
+      "step": null
+    },
+    {
+      "key": "auto_extract",
+      "label": "Auto Extract",
+      "kind": "select",
+      "description": "Automatically curate completed turns and compression/memory hooks",
+      "placeholder": "",
+      "required": false,
+      "value": "true",
+      "is_set": true,
+      "options": [
+        {
+          "value": "true",
+          "label": "true",
+          "description": ""
+        },
+        {
+          "value": "false",
+          "label": "false",
+          "description": ""
+        }
+      ],
+      "url": "",
+      "when": null,
+      "minimum": null,
+      "maximum": null,
+      "step": null
+    }
+  ],
+  "setup": {
+    "pip_dependencies": [],
+    "python_dependencies_declared": false,
+    "external_dependencies": [
+      {
+        "name": "brv",
+        "install": "curl -fsSL https://byterover.dev/install.sh | sh",
+        "check": "brv --version"
+      }
+    ],
+    "required_env": [],
+    "dependencies_installed": false
+  }
+}

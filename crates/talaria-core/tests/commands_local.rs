@@ -89,11 +89,16 @@ fn local_table_names_are_unique() {
     let table = LocalCommandTable::builtin();
     let mut seen = BTreeSet::new();
     for command in table.iter() {
-        assert!(command.name.chars().all(|ch| ch.is_lowercase()));
+        assert!(
+            command
+                .name
+                .chars()
+                .all(|ch| ch.is_lowercase() || ch == '-')
+        );
         assert!(!command.name.contains('/'));
         assert!(seen.insert(command.name), "repeated name {}", command.name);
         for alias in command.aliases {
-            assert!(alias.chars().all(|ch| ch.is_lowercase()));
+            assert!(alias.chars().all(|ch| ch.is_lowercase() || ch == '-'));
             assert!(!alias.contains('/'));
             assert!(seen.insert(alias), "repeated alias {alias}");
         }

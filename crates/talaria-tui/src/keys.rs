@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::capabilities::{CapTab, KeyAction};
+use crate::memory::MemoryKey;
 use crate::model_roles::{RolesKey, Section};
 use crate::settings::SettingsAction;
 use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers};
@@ -150,6 +151,23 @@ static ROUTE_PICKER_BINDINGS: [(RolesKey, &str, &[&str]); 9] = [
     (RolesKey::Escape, "route_picker_cancel", &["esc"]),
 ];
 
+static MEMORY_BINDINGS: [(MemoryKey, &str, &str); 14] = [
+    (MemoryKey::Up, "memory_up", "up"),
+    (MemoryKey::Down, "memory_down", "down"),
+    (MemoryKey::Open, "memory_open", "enter"),
+    (MemoryKey::Use, "memory_use", "u"),
+    (MemoryKey::Delete, "memory_delete", "d"),
+    (MemoryKey::DeleteBoth, "memory_delete_both", "D"),
+    (MemoryKey::Pause, "memory_pause", "p"),
+    (MemoryKey::Run, "memory_run", "R"),
+    (MemoryKey::Settings, "memory_settings", "s"),
+    (MemoryKey::CuratorSettings, "memory_curator_settings", "k"),
+    (MemoryKey::Reload, "memory_reload", "ctrl+r"),
+    (MemoryKey::Copy, "memory_copy", "c"),
+    (MemoryKey::Save, "memory_save", "ctrl+s"),
+    (MemoryKey::Close, "memory_close", "esc"),
+];
+
 /// Where an action is looked up. Later screens add their own variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
@@ -191,6 +209,8 @@ pub enum KeyContext {
     Mcp,
     /// The capabilities screen.
     Capabilities,
+    /// The memory and curator screen.
+    Memory,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -330,6 +350,7 @@ enum Binding {
     ModelRoles(usize),
     RoutePicker(usize),
     Capabilities(usize),
+    Memory(usize),
 }
 
 impl Binding {
@@ -342,6 +363,7 @@ impl Binding {
             .chain((0..MODEL_ROLES_BINDINGS.len()).map(Self::ModelRoles))
             .chain((0..ROUTE_PICKER_BINDINGS.len()).map(Self::RoutePicker))
             .chain((0..CAP_BINDINGS.len()).map(Self::Capabilities))
+            .chain((0..MEMORY_BINDINGS.len()).map(Self::Memory))
     }
     fn index(self) -> usize {
         match self {
@@ -366,6 +388,15 @@ impl Binding {
                     + ROUTE_PICKER_BINDINGS.len()
                     + index
             }
+            Self::Memory(index) => {
+                Action::ALL.len()
+                    + ModelAction::ALL.len()
+                    + SETTINGS_BINDINGS.len()
+                    + MODEL_ROLES_BINDINGS.len()
+                    + ROUTE_PICKER_BINDINGS.len()
+                    + CAP_BINDINGS.len()
+                    + index
+            }
         }
     }
     fn context(self) -> KeyContext {
@@ -376,6 +407,7 @@ impl Binding {
             Self::ModelRoles(_) => KeyContext::ModelRoles,
             Self::RoutePicker(_) => KeyContext::RoutePicker,
             Self::Capabilities(_) => KeyContext::Capabilities,
+            Self::Memory(_) => KeyContext::Memory,
         }
     }
     fn config_name(self) -> &'static str {
@@ -386,6 +418,7 @@ impl Binding {
             Self::ModelRoles(index) => MODEL_ROLES_BINDINGS[index].1,
             Self::RoutePicker(index) => ROUTE_PICKER_BINDINGS[index].1,
             Self::Capabilities(index) => CAP_BINDINGS[index].1,
+            Self::Memory(index) => MEMORY_BINDINGS[index].1,
         }
     }
     fn from_config_name(name: &str) -> Option<Self> {
@@ -416,6 +449,12 @@ impl Binding {
                     .position(|(_, held, _)| *held == name)
                     .map(Self::Capabilities)
             })
+            .or_else(|| {
+                MEMORY_BINDINGS
+                    .iter()
+                    .position(|(_, held, _)| *held == name)
+                    .map(Self::Memory)
+            })
     }
     fn default_chords(self) -> &'static [&'static str] {
         match self {
@@ -425,6 +464,7 @@ impl Binding {
             Self::ModelRoles(index) => MODEL_ROLES_BINDINGS[index].2,
             Self::RoutePicker(index) => ROUTE_PICKER_BINDINGS[index].2,
             Self::Capabilities(index) => std::slice::from_ref(&CAP_BINDINGS[index].2),
+            Self::Memory(index) => std::slice::from_ref(&MEMORY_BINDINGS[index].2),
         }
     }
 }
@@ -1983,6 +2023,33 @@ impl KeyMap {
         }
     }
 
+    /// Resolve a key in the memory screen.
+    pub fn resolve_memory(&self, key: &Key) -> Option<MemoryKey> {
+        MEMORY_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (action, _, _))| {
+                self.chords[Binding::Memory(index).index()]
+                    .iter()
+                    .any(|chord| chord.matches(key))
+                    .then(|| action.clone())
+            })
+    }
+
+    /// Display labels for the configured memory action.
+    #[must_use]
+    pub fn memory_chords(&self, action: &MemoryKey) -> Vec<String> {
+        MEMORY_BINDINGS
+            .iter()
+            .position(|(held, _, _)| held == action)
+            .map_or_else(Vec::new, |index| {
+                self.chords[Binding::Memory(index).index()]
+                    .iter()
+                    .map(KeyChord::label)
+                    .collect()
+            })
+    }
+
     /// The built-in bindings.
     #[must_use]
     pub fn defaults() -> Self {
@@ -2010,7 +2077,8 @@ impl KeyMap {
                 + SETTINGS_BINDINGS.len()
                 + MODEL_ROLES_BINDINGS.len()
                 + ROUTE_PICKER_BINDINGS.len()
-                + CAP_BINDINGS.len()];
+                + CAP_BINDINGS.len()
+                + MEMORY_BINDINGS.len()];
         let mut notices = Vec::new();
 
         for (name, texts) in entries {

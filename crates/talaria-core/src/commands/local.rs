@@ -79,6 +79,8 @@ pub enum LocalAction {
     Mcp(crate::mcp::McpOpen),
     /// Browse skills, toolsets and plugins.
     Capabilities,
+    /// Open memory and curator settings.
+    MemorySettings,
 }
 
 /// One local command.
@@ -344,6 +346,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[skills|hub|toolsets|plugins]",
         takes_argument: true,
         action: LocalAction::Capabilities,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "memory-settings",
+        aliases: &[],
+        summary: "Memory provider, built-in memory and the skill curator",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::MemorySettings,
         tag: "talaria",
     },
 ];

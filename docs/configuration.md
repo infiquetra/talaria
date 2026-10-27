@@ -265,6 +265,20 @@ capabilities_show_all = ["a"]
 capabilities_refresh = ["r"]
 capabilities_confirm = ["y"]
 capabilities_cancel = ["esc"]
+memory_up = ["up"]
+memory_down = ["down"]
+memory_open = ["enter"]
+memory_use = ["u"]
+memory_delete = ["d"]
+memory_delete_both = ["D"]
+memory_pause = ["p"]
+memory_run = ["R"]
+memory_settings = ["s"]
+memory_curator_settings = ["k"]
+memory_reload = ["ctrl+r"]
+memory_copy = ["c"]
+memory_save = ["ctrl+s"]
+memory_close = ["esc"]
 [editor]
 command = ""
 [history]
@@ -400,6 +414,7 @@ The `mcp_*` actions can be rebound under `[keys]`: `mcp_next_tab`, `mcp_prev_tab
 `mcp_add`, `mcp_test`, `mcp_toggle`, `mcp_set_key`, `mcp_sign_in`, `mcp_remove`, `mcp_apply`,
 `mcp_save`, `mcp_open_link`, `mcp_copy`, and `mcp_paste_redirect`. These bindings apply only
 inside the MCP screen.
+`/memory-settings` opens memory providers and curator controls; see the [terminal guide](terminal-ui.md#memory-and-curator).
 
 ## Keys
 
@@ -524,8 +539,7 @@ the profile's default model selection as it was. Ctrl+D confirms deletion, inclu
 of the endpoint's saved key. An endpoint set directly in model settings is read-only here.
 
 While disconnected, the screen disables changes and reloads when Talaria reconnects. A change
-whose reply was lost is reported as uncertain and the list is reloaded; the change is not
-automatically repeated.
+whose reply was lost is reported as uncertain and the list is reloaded; the change is not automatically repeated.
 
 ## Approvals and working folder
 
@@ -533,8 +547,7 @@ The status line reads `approvals: manual` or `smart` (the profile's mode, bypass
 profile asks for nothing), `off (this session)` (the bypass is on) or `unknown` (a read failed or a
 change was not confirmed). `approvals_toggle` (Shift+Tab) switches only this session's bypass and
 does nothing while the profile's mode is `off`. Talaria rereads both when a session opens, a turn
-ends, after a reconnect and after Hermes's `/yolo` or `/approvals`. A gateway started with `--yolo`
-is not visible: the line may say `manual` while Hermes approves everything.
+ends, after a reconnect and after Hermes's `/yolo` or `/approvals`. A gateway started with `--yolo` is not visible: the line may say `manual` while Hermes approves everything.
 
 ```text
 /permissions                    show this session's setting, the profile's mode and the bypass
@@ -547,8 +560,7 @@ is not visible: the line may say `manual` while Hermes approves everything.
 30 seconds sends it, and any other `/permissions`, the toggle, a session change or a reconnect
 cancels. `/cd` shows the session's folder; `/cd <folder>` moves the session and keeps the
 conversation. `~` is your home, `~name` is refused, and a relative path starts from the session's
-folder. Talaria checks the folder exists; Hermes decides. `/cd` is refused while a turn runs: wait,
-or press Esc.
+folder. Talaria checks the folder exists; Hermes decides. `/cd` is refused while a turn runs: wait, or press Esc.
 
 ## Doctor
 
@@ -556,28 +568,23 @@ Use `/doctor` in Talaria or `talaria doctor [--profile NAME] [--json] [--restart
 to check the gateway. The selected profile defaults to `default` on the command line. A restart
 requires confirmation; `--yes` provides it for scripts. The [JSON format](formats/doctor-v1.md)
 describes the machine-readable report. Exit codes are 0 for success, 1 for a failed check or
-restart, 2 for invalid arguments, 3 when restart confirmation requires a terminal or `--yes`,
-and 4 when confirmation is declined.
+restart, 2 for invalid arguments, 3 when restart confirmation requires a terminal or `--yes`, and 4 when confirmation is declined.
 
 ## Profiles
 
-`/profiles` opens the profile list without changing the foreground session. It joins the
-installed profile roster with the gateway's served and parked names and the optional host
+`/profiles` opens the profile list without changing the foreground session. It joins the installed profile roster with the gateway's served and parked names and the optional host
 topology. Labels distinguish served, parked, stopped, own gateway, not served, starting, and
-not discovered. Each row gives a next step; Talaria does not run those fix commands.
-The Profiles entry in `/config` opens the same overlay.
+not discovered. Each row gives a next step; Talaria does not run those fix commands. The Profiles entry in `/config` opens the same overlay.
 
 `talaria profiles [--json] [--profile fixture] [NAME...]` lists the same states without creating
 a session or starting a gateway. Names are normalized and deduplicated in the order supplied.
-JSON includes a `warnings` array when the roster or host topology is unavailable. A missing
-gateway exits 1; an unknown requested name exits 2 and prints no table or JSON.
+JSON includes a `warnings` array when the roster or host topology is unavailable. A missing gateway exits 1; an unknown requested name exits 2 and prints no table or JSON.
 
 The overlay refreshes when opened, on `r`, and after its own writes. `R` requests a rescan only
 after `y` confirms: serving new profiles can also start their messaging bots. `n` creates a
 profile after validation and review, `e` edits its description, and `s` opens its soul in the
 configured external editor. Soul edits are reviewed and checked against a fresh copy before
-saving. A concurrent change keeps the unsaved edit in memory for the next `s`. Model, skills,
-toolsets, and Model Context Protocol servers are shown here without edit controls.
+saving. A concurrent change keeps the unsaved edit in memory for the next `s`. Model, skills, toolsets, and Model Context Protocol servers are shown here without edit controls.
 
 These bindings apply only inside the profiles overlay. Text fields reserve ordinary editing
 keys, Tab, Shift+Tab, and Ctrl+U; Esc leaves the innermost panel before closing the overlay.
@@ -589,5 +596,4 @@ The default bindings are included in the `[keys]` table above.
 The `profiles` and `connections` tables, 0.6 settings this release does not know, the `[status]`
 column settings and the 0.6 `[keys]` names (`toggle_inspector`, `agents`, `commands`, `models`,
 `profiles`, `config`, `follow`, `replay_*`) are ignored with notices. Remove an `interrupt` line
-set to Ctrl+S, or Esc stops interrupting. The repository file `./.talaria/config.toml` and the 0.6
-`TALARIA_*` overrides are gone.
+set to Ctrl+S, or Esc stops interrupting. The repository file `./.talaria/config.toml` and the 0.6 `TALARIA_*` overrides are gone.

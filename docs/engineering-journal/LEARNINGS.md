@@ -5727,3 +5727,30 @@ polls also have absolute due times while keys continue to arrive.
 input can keep moving into the future during typing.
 **Rule.** Retain an operation's intent until preparation finishes, clear it on close, and anchor
 poll and repaint deadlines to the operation rather than the latest input.
+## 2026-10-27 — Memory saves can store values before refusing activation
+
+**Evidence.** At Hermes commit `4d04303818b61bf3aa09278af48356315515965b`,
+`hermes_cli/web_routers/memory_providers.py` saves plain provider fields before calling the
+readiness check. The memory service mock reproduces a refusal after field persistence; the
+state tests check each returned field and the active provider separately.
+
+**Mechanism.** Readiness and persistence are separate steps, so a refusal does not establish
+that a submitted value remained unchanged. Secret presence also cannot establish that a new
+secret replaced an existing one.
+
+**Rule.** Read state back after a mutation that might have reached the route, and describe only
+the evidence the response supplies.
+
+## 2026-10-27 — Paused clocks and real loopback sockets need coordination
+
+**Evidence.** The memory deadline test initially timed out on a 44-second mock reply despite a
+45-second request deadline. A bounded mock clock driver passed the same deadline check twenty
+times consecutively without changing assertions or production deadlines.
+
+**Mechanism.** Tokio can advance a paused clock to the next timeout while the kernel is still
+making loopback traffic readable. The mock keeps the runtime polling socket readiness and
+advances its configured server delay explicitly. Its driver stops after 200 iterations so a
+request that never reaches the server cannot keep the test running forever.
+
+**Rule.** Coordinate paused time with real socket readiness in test support, and bound the driver
+instead of changing production timeouts to accommodate a test runtime.

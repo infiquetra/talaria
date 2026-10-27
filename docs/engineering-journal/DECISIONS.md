@@ -4329,3 +4329,18 @@ secret-entry protocol that retains these boundaries.
 ### Deferred activation kinds use deterministic map order
 
 **Decision.** Keep deferred activation kinds in a `BTreeMap` and display them in sorted kind order. Keep the workspace JSON feature set unchanged. **Rationale.** Reply object order carries no activation semantics. Enabling global insertion ordering enlarges every JSON value and pushes the existing client error type over the lint size limit. **Revisit when.** The gateway specifies a meaningful activation order.
+
+### Memory writes are checked by reading their resulting state
+
+**Decision.** Memory provider switching, field saves, built-in file deletion and curator pause
+changes read their result back. A connection loss after sending does not trigger a resend.
+Provider activation and deletion require a confirmation with Cancel selected; scheduled curator
+pause and resume are deliberate single actions. Curator runs first check the gateway's current
+process, then follow one process identity with a bounded poll count.
+
+**Rationale.** At the pinned Hermes revision, saving plain provider settings writes visible
+defaults before testing readiness and can return a refusal after persisting data. The action
+runner can replace a running process handle when another run starts. An HTTP response alone
+cannot prove the resulting field values, provider activation, or the identity of a followed run.
+**Rejected.** Trusting submitted values as saved state or retrying uncertain mutations.
+**Revisit when.** Hermes exposes transactional writes and stable per-run action identifiers.
