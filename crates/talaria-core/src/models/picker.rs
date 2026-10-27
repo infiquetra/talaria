@@ -122,6 +122,9 @@ pub enum ModelCommandOrEffort {
 /// What the app should do after one picker step.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModelsEffect {
+    OpenProviders {
+        slug: String,
+    },
     OpenOverlay,
     CloseOverlay,
     LoadOptions {

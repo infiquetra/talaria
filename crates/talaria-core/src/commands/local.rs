@@ -8,10 +8,11 @@
 /// Later units add one variant per command they own, so callers outside this crate keep a
 /// fallback arm.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalAction {
     /// Open the gateway health check.
     Doctor,
+    Providers(crate::providers::OpenTarget),
     /// Leave Talaria. The Hermes session keeps running.
     Quit,
     /// Choose the model of the foreground session.
@@ -75,7 +76,7 @@ pub enum LocalAction {
 }
 
 /// One local command.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalCommand {
     /// Name without a slash, lower-case.
     pub name: &'static str,
@@ -301,6 +302,17 @@ const BUILTIN: &[LocalCommand] = &[
         action: LocalAction::Profiles,
         tag: "talaria",
     },
+    LocalCommand {
+        name: "providers",
+        aliases: &[],
+        summary: "Set up provider keys, accounts and endpoints",
+        args_hint: "[keys|accounts|endpoints]",
+        takes_argument: true,
+        action: LocalAction::Providers(crate::providers::OpenTarget::Tab(
+            crate::providers::ProvidersTab::Keys,
+        )),
+        tag: "talaria",
+    },
 ];
 
 /// The five rewind commands, in table order. Issue #233.
@@ -407,7 +419,7 @@ impl LocalCommandTable {
                 .iter()
                 .chain(LOCAL_COMMANDS)
                 .chain(BACKGROUND_COMMANDS)
-                .copied()
+                .cloned()
                 .collect(),
         }
     }
@@ -458,5 +470,12 @@ pub fn parse(line: &str) -> Result<(LocalAction, String), String> {
         }
         return Err(format!("/{} does not take an argument.", command.name));
     }
-    Ok((command.action, argument.to_owned()))
+    let action = if command.name == "providers" {
+        LocalAction::Providers(
+            crate::providers::parse_providers_args(argument).map_err(str::to_owned)?,
+        )
+    } else {
+        command.action.clone()
+    };
+    Ok((action, argument.to_owned()))
 }

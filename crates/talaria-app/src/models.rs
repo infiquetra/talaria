@@ -107,6 +107,7 @@ impl ModelService {
             }
             ModelsEffect::OpenOverlay
             | ModelsEffect::CloseOverlay
+            | ModelsEffect::OpenProviders { .. }
             | ModelsEffect::Notice { .. } => {
                 return Vec::new();
             }

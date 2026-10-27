@@ -5622,3 +5622,24 @@ a token crossing the display limit, and a shell-quoted path outside the known ho
 **Mechanism.** Cutting first can retain part of a credential; overlooking backtick quotes can
 leave a path untouched. **Rule.** Redact complete token runs before truncation, and treat quote
 wrappers as path boundaries while retaining the quotes themselves.
+## 2026-10-26 — Readiness and key validation answer different questions
+
+**Evidence.** At the pinned Hermes revision, `hermes_cli/inventory.py::_apply_picker_hints`
+marks catalogue placeholders unauthenticated; `tui_gateway/methods_complete.py` forces a
+successful `model.save_key` result authenticated, including a synthetic row with no models.
+Provider reducer tests cover that empty-model result, rejected validation, and replies that
+arrive after a key card closes. The configuration-surface probe for #249 reached
+`model.save_key` and `model.disconnect` through the legacy socket fallback: unknown-provider
+calls returned 4002 and 4005. That establishes route reachability, not a successful key write.
+The real-key operator save remains a separate acceptance
+step; this implementation run did not save a real credential or establish that an already
+running session adopts one.
+
+**Mechanism.** Catalogue readiness describes saved configuration, whereas validation makes a
+separate provider request. The key value stays in a zeroizing terminal field; domain effects
+name a variable or provider and hand execution one owned zeroizing copy. Discarded checks
+cannot authorize a replacement card. A close captures existing sign-in sessions synchronously
+before asynchronous cancellation, so reopening does not let an old close cancel a new flow.
+
+**Rule.** Separate configuration readiness from live credential validation, and bind every
+asynchronous answer or cancellation to the state that created it.

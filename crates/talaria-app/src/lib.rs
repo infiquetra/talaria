@@ -29,6 +29,7 @@ pub mod permissions;
 pub mod profiles;
 pub mod profiles_editor;
 pub mod prompts;
+pub mod providers;
 pub mod queue;
 pub mod review;
 pub mod rewind;

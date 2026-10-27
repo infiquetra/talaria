@@ -21,6 +21,7 @@ pub mod control_verbs;
 pub mod discovery;
 pub mod gateway_api;
 pub mod liveness;
+pub mod providers_api;
 pub mod record;
 pub mod redact;
 pub mod replay;

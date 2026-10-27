@@ -63,6 +63,8 @@ pub enum KeyContext {
     Doctor,
     /// The profiles overlay list. Issue #253.
     Profiles,
+    /// The providers overlay.
+    Providers,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -138,6 +140,59 @@ impl ModelAction {
             Self::ModelFavourite => &["ctrl+f"],
             Self::ModelRefresh => &["ctrl+r"],
         }
+    }
+}
+
+/// The commands offered by the providers overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProvidersAction {
+    NextTab,
+    PrevTab,
+    Reload,
+    Remove,
+    Test,
+    Save,
+    ClearKey,
+    OpenLink,
+    Copy,
+}
+
+impl ProvidersAction {
+    pub const ALL: [Self; 9] = [
+        Self::NextTab,
+        Self::PrevTab,
+        Self::Reload,
+        Self::Remove,
+        Self::Test,
+        Self::Save,
+        Self::ClearKey,
+        Self::OpenLink,
+        Self::Copy,
+    ];
+
+    const fn action(self) -> Action {
+        match self {
+            Self::NextTab => Action::ProvidersNextTab,
+            Self::PrevTab => Action::ProvidersPrevTab,
+            Self::Reload => Action::ProvidersReload,
+            Self::Remove => Action::ProvidersRemove,
+            Self::Test => Action::ProvidersTest,
+            Self::Save => Action::ProvidersSave,
+            Self::ClearKey => Action::ProvidersClearKey,
+            Self::OpenLink => Action::ProvidersOpenLink,
+            Self::Copy => Action::ProvidersCopy,
+        }
+    }
+
+    #[must_use]
+    pub const fn config_name(self) -> &'static str {
+        self.action().config_name()
+    }
+
+    #[must_use]
+    pub const fn default_chord(self) -> &'static str {
+        // Each of these nine actions defines one nonempty default chord list.
+        self.action().default_chords()[0]
     }
 }
 
@@ -488,6 +543,15 @@ pub enum Action {
     ProfilesSoul,
     /// Undo the innermost open thing, or close the overlay. Issue #253.
     ProfilesBack,
+    ProvidersNextTab,
+    ProvidersPrevTab,
+    ProvidersReload,
+    ProvidersRemove,
+    ProvidersTest,
+    ProvidersSave,
+    ProvidersClearKey,
+    ProvidersOpenLink,
+    ProvidersCopy,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -519,7 +583,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 156] = [
+    pub const ALL: [Self; 165] = [
         Self::DoctorUp,
         Self::DoctorDown,
         Self::DoctorToggle,
@@ -676,6 +740,15 @@ impl Action {
         Self::ProfilesDescription,
         Self::ProfilesSoul,
         Self::ProfilesBack,
+        Self::ProvidersNextTab,
+        Self::ProvidersPrevTab,
+        Self::ProvidersReload,
+        Self::ProvidersRemove,
+        Self::ProvidersTest,
+        Self::ProvidersSave,
+        Self::ProvidersClearKey,
+        Self::ProvidersOpenLink,
+        Self::ProvidersCopy,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -838,6 +911,15 @@ impl Action {
             Self::ProfilesDescription => "profiles_description",
             Self::ProfilesSoul => "profiles_soul",
             Self::ProfilesBack => "profiles_back",
+            Self::ProvidersNextTab => "providers_next_tab",
+            Self::ProvidersPrevTab => "providers_prev_tab",
+            Self::ProvidersReload => "providers_reload",
+            Self::ProvidersRemove => "providers_remove",
+            Self::ProvidersTest => "providers_test",
+            Self::ProvidersSave => "providers_save",
+            Self::ProvidersClearKey => "providers_clear_key",
+            Self::ProvidersOpenLink => "providers_open_link",
+            Self::ProvidersCopy => "providers_copy",
         }
     }
 
@@ -1008,6 +1090,15 @@ impl Action {
             | Self::ProfilesDescription
             | Self::ProfilesSoul
             | Self::ProfilesBack => KeyContext::Profiles,
+            Self::ProvidersNextTab
+            | Self::ProvidersPrevTab
+            | Self::ProvidersReload
+            | Self::ProvidersRemove
+            | Self::ProvidersTest
+            | Self::ProvidersSave
+            | Self::ProvidersClearKey
+            | Self::ProvidersOpenLink
+            | Self::ProvidersCopy => KeyContext::Providers,
         }
     }
 
@@ -1177,6 +1268,15 @@ impl Action {
             Self::ProfilesDescription => &["e"],
             Self::ProfilesSoul => &["s"],
             Self::ProfilesBack => &["esc"],
+            Self::ProvidersNextTab => &["tab"],
+            Self::ProvidersPrevTab => &["shift+tab"],
+            Self::ProvidersReload => &["ctrl+r"],
+            Self::ProvidersRemove => &["ctrl+d"],
+            Self::ProvidersTest => &["ctrl+t"],
+            Self::ProvidersSave => &["ctrl+s"],
+            Self::ProvidersClearKey => &["ctrl+x"],
+            Self::ProvidersOpenLink => &["o"],
+            Self::ProvidersCopy => &["c"],
         }
     }
 }
@@ -1811,6 +1911,20 @@ impl KeyMap {
         &self.chords[Binding::Model(action).index()]
     }
 
+    #[must_use]
+    pub fn resolve_providers(&self, key: &Key) -> Option<ProvidersAction> {
+        ProvidersAction::ALL.into_iter().find(|action| {
+            self.providers_chords(*action)
+                .iter()
+                .any(|chord| chord.matches(key))
+        })
+    }
+
+    #[must_use]
+    pub fn providers_chords(&self, action: ProvidersAction) -> &[KeyChord] {
+        self.chords(action.action())
+    }
+
     /// Chords bound to one action, in binding order.
     #[must_use]
     pub fn chords(&self, action: Action) -> &[KeyChord] {
@@ -1967,7 +2081,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 156);
+        assert_eq!(Action::ALL.len(), 165);
         for action in Action::ALL {
             let wanted = match action {
                 Action::CompletionNext
@@ -2065,6 +2179,15 @@ mod tests {
                 | Action::ProfilesDescription
                 | Action::ProfilesSoul
                 | Action::ProfilesBack => KeyContext::Profiles,
+                Action::ProvidersNextTab
+                | Action::ProvidersPrevTab
+                | Action::ProvidersReload
+                | Action::ProvidersRemove
+                | Action::ProvidersTest
+                | Action::ProvidersSave
+                | Action::ProvidersClearKey
+                | Action::ProvidersOpenLink
+                | Action::ProvidersCopy => KeyContext::Providers,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -2193,6 +2316,15 @@ mod tests {
                 | Action::ProfilesDescription
                 | Action::ProfilesSoul
                 | Action::ProfilesBack => KeyContext::Profiles,
+                Action::ProvidersNextTab
+                | Action::ProvidersPrevTab
+                | Action::ProvidersReload
+                | Action::ProvidersRemove
+                | Action::ProvidersTest
+                | Action::ProvidersSave
+                | Action::ProvidersClearKey
+                | Action::ProvidersOpenLink
+                | Action::ProvidersCopy => KeyContext::Providers,
                 Action::AgentsUp
                 | Action::AgentsDown
                 | Action::AgentsTail
@@ -2342,7 +2474,8 @@ mod tests {
                 let label = chord.label();
                 // The review's commit editor submits with Ctrl+S, as its issue settled; raw mode
                 // turns flow control off, and the key is configurable.
-                let settled = action == Action::CommitSubmit && label == "Ctrl+S";
+                let settled = matches!(action, Action::CommitSubmit | Action::ProvidersSave)
+                    && label == "Ctrl+S";
                 assert!(
                     settled || !risky.contains(&label.as_str()),
                     "{label} is bound to {}",
@@ -2476,7 +2609,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 156);
+        assert_eq!(Action::ALL.len(), 165);
     }
 
     #[test]

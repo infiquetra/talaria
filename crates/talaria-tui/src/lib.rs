@@ -21,6 +21,7 @@ pub mod pager;
 pub mod palette;
 pub mod profiles;
 pub mod prompts;
+pub mod providers;
 pub mod queue;
 pub mod review_view;
 pub mod rewind;

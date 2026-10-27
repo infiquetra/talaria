@@ -382,6 +382,8 @@ fn enter_decision_table() {
     let substring = world.apply(&mut state, PaletteInput::Enter);
     assert_eq!(run_line(&substring), Some("/ers"));
     let _ = world.apply(&mut state, draft("/ers", 4));
+    // The local providers command also matches this substring, before catalogue rows.
+    let _ = world.apply(&mut state, PaletteInput::Next);
     let _ = world.apply(&mut state, PaletteInput::Next);
     let moved = world.apply(&mut state, PaletteInput::Enter);
     assert_eq!(replaced(&moved), Some("/version"));
