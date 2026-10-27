@@ -10,6 +10,8 @@
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocalAction {
+    /// Open the gateway health check.
+    Doctor,
     /// Leave Talaria. The Hermes session keeps running.
     Quit,
     /// Choose the model of the foreground session.

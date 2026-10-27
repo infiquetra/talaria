@@ -39,3 +39,5 @@ pub mod workspace;
 pub mod worktree;
 
 pub mod settings;
+
+pub mod doctor;

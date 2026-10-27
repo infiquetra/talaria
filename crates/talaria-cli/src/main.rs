@@ -10,6 +10,26 @@ fn main() -> ExitCode {
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
+    if talaria_cli::args::is_doctor_command(&args) {
+        let values = std::iter::once("talaria doctor").chain(args[1..].iter().map(String::as_str));
+        let cli = match talaria_cli::args::DoctorCli::try_parse_from(values) {
+            Ok(cli) => cli,
+            Err(error) => {
+                let code = if error.use_stderr() { 2 } else { 0 };
+                let _ = error.print();
+                return ExitCode::from(code);
+            }
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let code = runtime.block_on(talaria_cli::doctor_cmd::run_doctor(
+            cli.profile.as_deref(),
+            cli.doctor,
+        ));
+        return ExitCode::from(u8::try_from(code).unwrap_or(99));
+    }
     if talaria_cli::args::is_attach_command(&args) {
         return talaria_cli::attach_cmd::run(&args);
     }

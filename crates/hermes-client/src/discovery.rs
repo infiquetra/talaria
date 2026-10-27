@@ -26,6 +26,29 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadVerb {
+    Identify,
+    ActiveWork,
+}
+
+impl ReadVerb {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Identify => "identify",
+            Self::ActiveWork => "active-work",
+        }
+    }
+}
+
+pub async fn control_query(
+    _home: &Path,
+    _verb: ReadVerb,
+    _options: &DiscoverOptions,
+) -> Result<Value, DiscoveryError> {
+    Err(DiscoveryError::InvalidReply)
+}
+
 /// A gateway Talaria can attach to. Fields stay private so a path cannot leak
 /// through a public field. [`Debug`] prints no path and only the first eight
 /// characters of an id.

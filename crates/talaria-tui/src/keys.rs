@@ -59,6 +59,8 @@ pub enum KeyContext {
     CommitMessage,
     /// The settings screen.
     Settings,
+    /// The gateway health screen.
+    Doctor,
 }
 
 /// Model commands use separate contexts without changing composer editing actions.

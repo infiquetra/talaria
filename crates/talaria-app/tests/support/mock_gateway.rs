@@ -4801,6 +4801,7 @@ struct IssuedTicket {
     value: String,
     profile_id: String,
     scope: String,
+    purpose: String,
     used: bool,
     at: Instant,
 }
@@ -4810,6 +4811,7 @@ struct IssuedTicket {
 pub struct TicketSeen {
     /// `host` or `profile`.
     pub scope: String,
+    pub purpose: String,
     /// The profile id the ticket names.
     pub profile_id: String,
     /// Monotonic stamp taken when the ticket was minted.
@@ -4828,6 +4830,25 @@ struct StandaloneInfo {
     refuse_tickets: Mutex<bool>,
     fleet_profiles: Mutex<Vec<String>>,
     parked_profiles: Mutex<Vec<(String, String)>>,
+    doctor: Mutex<DoctorMockState>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DoctorHttpSeen {
+    pub method: String,
+    pub target: String,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+struct DoctorMockState {
+    state: String,
+    code_sha: String,
+    instance: String,
+    identify_count: usize,
+    new_after: Option<usize>,
+    restart_status: u16,
+    drop_restart: bool,
+    http: Vec<DoctorHttpSeen>,
 }
 
 fn plain<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -4922,6 +4943,16 @@ impl StandaloneGateway {
             refuse_tickets: Mutex::new(false),
             fleet_profiles: Mutex::new(Vec::new()),
             parked_profiles: Mutex::new(Vec::new()),
+            doctor: Mutex::new(DoctorMockState {
+                state: "ready".into(),
+                code_sha: CODE_SHA.into(),
+                instance: INSTANCE_ID.into(),
+                identify_count: 0,
+                new_after: None,
+                restart_status: 200,
+                drop_restart: false,
+                http: Vec::new(),
+            }),
         });
         lock(&shared).sess.profile_id = info.home.clone();
         let socket = home.join("gateway.sock");
@@ -5037,10 +5068,35 @@ impl StandaloneGateway {
             .iter()
             .map(|issued| TicketSeen {
                 scope: issued.scope.clone(),
+                purpose: issued.purpose.clone(),
                 profile_id: issued.profile_id.clone(),
                 at: issued.at,
             })
             .collect()
+    }
+
+    pub fn doctor_set_revision(&self, value: &str) {
+        plain(&self.info.doctor).code_sha = value.to_owned();
+    }
+    pub fn doctor_set_state(&self, value: &str) {
+        plain(&self.info.doctor).state = value.to_owned();
+    }
+    pub fn doctor_set_instance(&self, value: &str) {
+        plain(&self.info.doctor).instance = value.to_owned();
+    }
+    pub fn doctor_new_after(&self, count: usize) {
+        let mut d = plain(&self.info.doctor);
+        d.identify_count = 0;
+        d.new_after = Some(count);
+    }
+    pub fn doctor_restart_status(&self, status: u16) {
+        plain(&self.info.doctor).restart_status = status;
+    }
+    pub fn doctor_drop_restart(&self, value: bool) {
+        plain(&self.info.doctor).drop_restart = value;
+    }
+    pub fn doctor_http_requests(&self) -> Vec<DoctorHttpSeen> {
+        plain(&self.info.doctor).http.clone()
     }
 
     /// Run a future of the in-process mock's async API (`server_request`, `send_event`,
@@ -5131,6 +5187,7 @@ fn identify_result(info: &StandaloneInfo, epoch: u64) -> Value {
     for (name, reason) in plain(&info.parked_profiles).iter() {
         parked.insert(name.clone(), Value::String(reason.clone()));
     }
+    let doctor = plain(&info.doctor);
     json!({
         "protocol": 1,
         "kind": "gateway",
@@ -5140,12 +5197,12 @@ fn identify_result(info: &StandaloneInfo, epoch: u64) -> Value {
         "profile": "default",
         "supervisor": "none",
         "launch_supervisor": "manual",
-        "code_sha": CODE_SHA,
+        "code_sha": doctor.code_sha,
         "code_version": "0.22.4",
-        "instance_id": INSTANCE_ID,
+        "instance_id": doctor.instance,
         "runtime_protocol": 1,
         "authority_epoch": epoch,
-        "state": "ready",
+        "state": doctor.state,
         "api_origin": info.origin,
         "served_profiles": served,
         "parked_profiles": parked,
@@ -5169,12 +5226,25 @@ async fn answer_control(
     });
     let id = request["id"].clone();
     let reply = match verb.as_str() {
-        "identify" => json!({
-            "ok": true,
-            "protocol": 1,
-            "id": id,
-            "result": identify_result(&info, 3),
-        }),
+        "identify" => {
+            {
+                let mut d = plain(&info.doctor);
+                d.identify_count += 1;
+                if d.new_after.is_some_and(|n| d.identify_count >= n) {
+                    d.instance = "22222222222222222222222222222222".into();
+                    d.new_after = None;
+                }
+            }
+            json!({
+                "ok": true,
+                "protocol": 1,
+                "id": id,
+                "result": identify_result(&info, 3),
+            })
+        }
+        "active-work" => {
+            json!({"ok":true,"protocol":1,"id":id,"result":{"active_agents":3,"active_work":[{"kind":"chat","session":"agent:main:x","pid":1},{"kind":"chat","session":"agent:main:y","pid":1},{"kind":"delegation","delegation_id":"d1","goal":"private goal marker","pid":1}],"pid":1}})
+        }
         "session-ticket" => issue_ticket(&info, &request),
         _ => json!({"ok": false, "protocol": 1, "id": id, "error": "unknown verb"}),
     };
@@ -5188,7 +5258,7 @@ fn issue_ticket(info: &StandaloneInfo, request: &Value) -> Value {
     let id = request["id"].clone();
     let params = &request["params"];
     let refuse = |text: &str| json!({"ok": false, "protocol": 1, "id": id, "error": text});
-    if params["instance_id"] != INSTANCE_ID {
+    if params["instance_id"] != plain(&info.doctor).instance {
         return refuse("session-ticket: stale runtime instance");
     }
     let profile = params["profile_id"].as_str().unwrap_or_default();
@@ -5220,6 +5290,7 @@ fn issue_ticket(info: &StandaloneInfo, request: &Value) -> Value {
         value: value.clone(),
         profile_id: profile.to_owned(),
         scope: scope.clone(),
+        purpose: params["purpose"].as_str().unwrap_or("").to_owned(),
         used: false,
         at: Instant::now(),
     });
@@ -5235,7 +5306,7 @@ fn issue_ticket(info: &StandaloneInfo, request: &Value) -> Value {
         "result": {
             "ticket": value,
             "expires_in_seconds": 30,
-            "instance_id": INSTANCE_ID,
+            "instance_id": plain(&info.doctor).instance,
             "profile_id": profile,
             "runtime_protocol": 1,
         },
@@ -5247,10 +5318,36 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
         let Ok((stream, _)) = listener.accept().await else {
             break;
         };
-        plain(&info.websockets).push(Instant::now());
         let shared = Arc::clone(&shared);
         let info = Arc::clone(&info);
-        tokio::spawn(serve_socket(stream, shared, info));
+        tokio::spawn(async move {
+            let mut bytes = [0u8; 1024];
+            let count = match tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let count = stream.peek(&mut bytes).await.unwrap_or(0);
+                    if count == 0 || bytes[..count].contains(&b'\n') || count == bytes.len() {
+                        return count;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            {
+                Ok(count) => count,
+                Err(_) => return,
+            };
+            if count == 0 {
+                return;
+            }
+            let head = String::from_utf8_lossy(&bytes[..count]);
+            if head.starts_with("GET /api/status") || head.starts_with("POST /api/gateway/restart")
+            {
+                doctor_http(stream, info).await;
+            } else {
+                plain(&info.websockets).push(Instant::now());
+                serve_socket(stream, shared, info).await;
+            }
+        });
     }
 }
 
@@ -5641,3 +5738,99 @@ fn fleet_events_since(state: &State, params: &Value) -> Result<Value, String> {
 }
 
 include!("mock_background.rs");
+
+async fn doctor_http(stream: TcpStream, info: Arc<StandaloneInfo>) {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    if reader.read_line(&mut line).await.is_err() {
+        return;
+    }
+    let mut parts = line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_owned();
+    let target = parts.next().unwrap_or("").to_owned();
+    let mut headers = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).await.unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.trim_end().split_once(':') {
+            headers.push((name.to_ascii_lowercase(), value.trim().to_owned()));
+        }
+    }
+    let length = headers
+        .iter()
+        .find(|(k, _)| k == "content-length")
+        .and_then(|(_, v)| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = vec![0u8; length];
+    use tokio::io::AsyncReadExt;
+    if reader.read_exact(&mut body).await.is_err() {
+        return;
+    }
+    let body = String::from_utf8_lossy(&body).into_owned();
+    let found = headers
+        .iter()
+        .filter(|(k, _)| k == "x-hermes-gateway-ticket")
+        .collect::<Vec<_>>();
+    let origins = headers.iter().filter(|(k, _)| k == "origin").count();
+    let status_call = method == "GET";
+    let mut status = if status_call {
+        if found.is_empty() && origins == 0 {
+            200
+        } else {
+            401
+        }
+    } else if found.len() == 1
+        && origins == 0
+        && target == "/api/gateway/restart"
+        && body.is_empty()
+    {
+        let mut issued = plain(&info.tickets);
+        if let Some(entry) = issued
+            .iter_mut()
+            .find(|t| t.value == found[0].1 && !t.used && t.purpose == "native-http")
+        {
+            entry.used = true;
+            plain(&info.doctor).restart_status
+        } else {
+            401
+        }
+    } else {
+        401
+    };
+    let drop_response = {
+        let mut d = plain(&info.doctor);
+        d.http.push(DoctorHttpSeen {
+            method: method.clone(),
+            target: target.clone(),
+            headers: headers.clone(),
+            body,
+        });
+        d.drop_restart && !status_call
+    };
+    if drop_response {
+        return;
+    }
+    let data = if status_call && status == 200 {
+        include_str!("../../../../fixtures/rest/doctor/api-status-ready.json")
+            .replace("TEMP_HOME_PLACEHOLDER", &info.home)
+    } else if status == 200 {
+        json!({"ok":true,"pid":4242,"name":"gateway-restart"}).to_string()
+    } else if status == 503 {
+        json!({"error":"gateway_not_ready","state":"starting"}).to_string()
+    } else if status == 500 {
+        json!({"detail":format!("restart failed at {}",info.home)}).to_string()
+    } else {
+        status = 401;
+        json!({"detail":"Unauthorized"}).to_string()
+    };
+    let mut stream = reader.into_inner();
+    let response = format!(
+        "HTTP/1.1 {} response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status,
+        data.len(),
+        data
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+}
