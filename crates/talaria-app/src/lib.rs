@@ -21,6 +21,7 @@ pub mod fleet_attention;
 pub mod headless;
 pub mod launch;
 pub mod model_roles;
+pub mod mcp;
 pub mod models;
 pub mod models_file;
 pub mod mutation;

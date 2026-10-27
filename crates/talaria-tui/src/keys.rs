@@ -147,6 +147,8 @@ pub enum KeyContext {
     ModelRoles,
     /// The provider and model picker on that page.
     RoutePicker,
+    /// The MCP servers screen.
+    Mcp,
 }
 
 /// Translate a doctor binding into the domain action.

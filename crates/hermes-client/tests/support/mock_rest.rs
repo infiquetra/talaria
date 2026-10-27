@@ -153,6 +153,10 @@ impl Drop for MockRest {
     }
 }
 impl MockRest {
+    pub fn allow_own_profile_selector(self, _profile: &str) -> Self {
+        todo!("mcp stub")
+    }
+
     pub async fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

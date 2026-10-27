@@ -3,6 +3,24 @@
 use crate::methods::canonical::prompt_submit::Params;
 use std::{error::Error, fmt};
 
+pub mod reload_mcp {
+    pub const NAME: &str = "reload.mcp";
+
+    #[derive(Debug, Clone, Default, serde::Serialize)]
+    pub struct Params {
+        pub session_id: Option<String>,
+        pub confirm: Option<bool>,
+    }
+
+    pub struct Marker;
+    impl crate::method::Method for Marker {
+        const NAME: &'static str = NAME;
+        type Params = Params;
+        type Result = crate::schemas::ReloadMcpResult;
+    }
+    impl crate::native::NativeMethod for Marker {}
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OverrideError {
     pub reason: String,

@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "status": "pending",
+  "session_id": "flow-example",
+  "error_message": null,
+  "auth_url": "https://example.invalid/authorize",
+  "tools": null
+}

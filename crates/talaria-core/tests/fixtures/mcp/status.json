@@ -1,0 +1,15 @@
+{
+  "servers": [
+    {
+      "name": "deepwiki",
+      "transport": "http",
+      "tools": 3,
+      "connected": true,
+      "disabled": false,
+      "status": "connected",
+      "source": "config",
+      "plugin": null
+    }
+  ],
+  "checked_at": 1760000000000
+}

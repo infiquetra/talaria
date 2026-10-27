@@ -1,0 +1,13 @@
+{
+  "servers": [
+    {
+      "name": "deepwiki",
+      "description": "Public repository questions",
+      "connector_slug": null,
+      "installed": false,
+      "enabled": false,
+      "requires": [],
+      "transport": "TransportSpec(type='http', command=None, args=[], url='https://example.invalid/mcp', version=None, env={})"
+    }
+  ]
+}

@@ -75,6 +75,8 @@ pub enum LocalAction {
     Profiles,
     /// Open the profile's model roles page.
     ModelRoles,
+    /// Open the MCP servers screen.
+    Mcp(crate::mcp::McpOpen),
 }
 
 /// One local command.
@@ -322,6 +324,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::ModelRoles,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "mcp",
+        aliases: &[],
+        summary: "Manage MCP servers for this profile",
+        args_hint: "[servers | catalogue | apply]",
+        takes_argument: true,
+        action: LocalAction::Mcp(crate::mcp::McpOpen::Tab(crate::mcp::McpTab::Servers)),
         tag: "talaria",
     },
 ];
