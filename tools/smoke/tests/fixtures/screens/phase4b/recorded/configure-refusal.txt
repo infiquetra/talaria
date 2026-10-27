@@ -1,0 +1,6 @@
+# recorded
+· That request contains something that looks like a key or token. Talaria never sends secrets to a model. Add keys with /providers.
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Shift+Enter adds a line.                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ …/talaria-smoke-5hpl8ro9 │ ctx 1%

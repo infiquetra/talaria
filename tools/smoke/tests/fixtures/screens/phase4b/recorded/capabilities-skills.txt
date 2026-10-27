@@ -1,0 +1,45 @@
+# recorded
+Capabilities · profile fixture
+ [Skills 57/57 on]  Skill hub  Toolsets  Plugins
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ apple
+ > [x] apple-notes                   bundled  used 0    Manage Apple Notes via memo CLI: create, search, edit.
+   [x] apple-reminders               bundled  used 0    Apple Reminders via remindctl: add, list, complete.
+   [x] findmy                        bundled  used 0    Track Apple devices/AirTags via FindMy.app on macOS.
+   [x] imessage                      bundled  used 0    Send and receive iMessages/SMS via the imsg CLI on macOS.
+ autonomous-ai-agents
+   [x] claude-code                   bundled  used 0    Delegate coding to Claude Code CLI (features, PRs).
+   [x] codex                         bundled  used 0    Delegate coding to OpenAI Codex CLI (features, PRs).
+   [x] computer-use                  bundled  used 0    Drive the desktop background-first; escalate on signal.
+   [x] hermes-agent                  bundled  used 26   Use, configure, theme, extend, and orchestrate Hermes Agent.
+   [x] opencode                      bundled  used 0    Delegate coding to OpenCode CLI (features, PR review).
+ creative
+   [x] architecture-diagram          bundled  used 0    Dark-themed SVG architecture<path> diagrams as HTML.
+   [x] ascii-video                   bundled  used 0    ASCII video: convert video/audio to colored ASCII MP4/GIF.
+   [x] baoyu-infographic             bundled  used 0    Infographics: 21 layouts x 21 styles (信息图, 可视化).
+   [x] claude-design                 bundled  used 0    Design one-off HTML artifacts (landing, deck, prototype).
+   [x] design-md                     bundled  used 0    Author<path> Google's DESIGN.md token spec files.
+   [x] humanizer                     bundled  used 12   Humanize text: strip AI-isms and add real voice.
+   [x] manim-video                   bundled  used 0    Manim CE animations: 3Blue1Brown math/algo videos.
+   [x] p5js                          bundled  used 0    p5.js sketches: gen art, shaders, interactive, 3D.
+   [x] popular-web-designs           bundled  used 0    54 real design systems (Stripe, Linear, Vercel) as HTML/CSS.
+   [x] songwriting-and-ai-music      bundled  used 4    Songwriting craft and Suno AI music prompts.
+ email
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ apple-notes · apple · bundled · used 0
+ Manage Apple Notes via memo CLI: create, search, edit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Space on/off  Enter read  / filter  Tab next tab  r refresh  Esc close

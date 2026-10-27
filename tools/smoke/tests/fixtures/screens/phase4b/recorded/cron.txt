@@ -1,0 +1,45 @@
+# recorded
+Scheduled jobs · profile fixture
+No scheduled jobs in profile fixture. ctrl+n creates one.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+enter details · Ctrl+N new · Ctrl+T run now · Ctrl+E pause/resume · Ctrl+D remove · Ctrl+R reload · esc close

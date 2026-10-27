@@ -1,0 +1,14 @@
+# recorded
+Memory · profile fixture
+MEMORY PROVIDER  active: built-in only
+> ● built-in only        Hermes's own MEMORY.md and USER.md                                                                                                       in use
+○ byterover            ByteRover — persistent knowledge tree with tiered retrieval via the brv CLI.                                                 not available here
+○ retaindb             RetainDB — cloud memory API with hybrid search and 7 memory types.                                                               needs settings
+BUILT-IN MEMORY
+Agent memory (MEMORY.md)                                                                                                                                       empty
+User profile (USER.md)                                                                                                                                         empty
+SKILL CURATOR
+off
+Runs every 7 days after 2 h idle. Marks unused skills stale after 14 days, archives after 30.
+Last run or first check: 2026-10-24 04:24 UTC
+Enter open · U use · S memory settings · K curator settings · Ctrl+R reload · Esc close

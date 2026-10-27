@@ -1,0 +1,18 @@
+# recorded
+· /memory pending
+No pending memory writes.
+· /curator status
+curator: PAUSED
+  runs:           0
+  last run:       3d ago
+  last summary:   paused in test tenant
+  interval:       every 7d
+  stale after:    14d unused
+  archive after:  30d unused
+  consolidate:    off (prune-only; LLM merge pass opt-in)
+
+no curator-managed skills
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Shift+Enter adds a line.                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ <project>

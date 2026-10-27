@@ -40,10 +40,14 @@ fn phase4b_fixtures_hold_no_paths_or_names() {
     for file in files {
         let text = fs::read_to_string(&file).expect("fixture text");
         let name = file.file_name().expect("fixture name").to_string_lossy();
-        assert!(
-            text.starts_with("# synthetic\n"),
-            "{name}: synthetic header"
-        );
+        if file.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("recorded")) {
+            assert!(text.starts_with("# recorded\n"), "{name}: recorded header");
+        } else {
+            assert!(
+                text.starts_with("# synthetic\n"),
+                "{name}: synthetic header"
+            );
+        }
         assert!(!absolute.is_match(&text), "{name}: absolute path");
         assert!(!windows.is_match(&text), "{name}: platform path");
         assert!(!home.is_match(&text), "{name}: home directory");

@@ -319,6 +319,14 @@ pub fn script_4b(replacements: &[(&str, &str, &str)]) -> ScriptBuilder {
         (r"echo .*HOME", format!("{}\n", std::env::var("HOME").unwrap_or_default())),
         (r"ls -A", if flag("@home-not-empty") { "unexpected\n" } else { "" }.to_owned()),
     ] {
+        let output = if pattern == r"capabilities .*--json" {
+            match serde_json::from_str::<serde_json::Value>(&output) {
+                Ok(value) => format!("{}\n{}\n", output.trim_end(), value["profile"] == "fixture"),
+                Err(_) => output,
+            }
+        } else {
+            output
+        };
         script = script.on_first(RuleBuilder::run(pattern).repeat().append(&format!("{output}SMOKE_EXIT:0\n$ ")));
     }
     script

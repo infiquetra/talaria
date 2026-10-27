@@ -375,3 +375,73 @@ fn idle_screen_requires_composer_and_no_title() {
     assert!(idle_screen(&screen("memory-commands-r2.txt")));
     assert!(idle_screen(&screen("configure-secret-refused-r3.txt")));
 }
+
+#[test]
+fn combined_binary_recordings_preserve_screen_identity_and_read_only_states() {
+    let recorded = |name| screen(&format!("recorded/{name}.txt"));
+    for (name, title) in [
+        ("mcp-servers", MCP_TITLE_FMT),
+        ("mcp-catalogue", MCP_TITLE_FMT),
+        ("mcp-deepwiki", MCP_TITLE_FMT),
+        ("capabilities-skills", CAPABILITIES_TITLE_FMT),
+        ("capabilities-toolsets", CAPABILITIES_TITLE_FMT),
+        ("capabilities-plugins", CAPABILITIES_TITLE_FMT),
+        ("capabilities-bundled", CAPABILITIES_TITLE_FMT),
+        ("memory", MEMORY_TITLE_FMT),
+        ("cron", CRON_TITLE_FMT),
+        ("messaging", MESSAGING_TITLE_FMT),
+        ("messaging-signal", MESSAGING_TITLE_FMT),
+        ("signal-card", MESSAGING_TITLE_FMT),
+    ] {
+        let text = recorded(name);
+        assert!(overlay_title_found(&text, title, "fixture"), "{name}");
+        assert!(!overlay_title_found(&text, title, "default"), "{name}");
+        assert!(!idle_screen(&text), "{name}");
+        assert!(!write_banner_found(&text), "{name}");
+    }
+    assert!(catalogue_rows(&recorded("mcp-catalogue")).len() >= 10);
+    assert_eq!(
+        catalogue_rows(&recorded("mcp-deepwiki"))[0].name,
+        MCP_FILTER
+    );
+    assert_eq!(catalogue_rows(&recorded("mcp-deepwiki")).len(), 1);
+    assert!(!capabilities_categories(&recorded("capabilities-skills")).is_empty());
+    assert!(
+        capabilities_tab_rows(&recorded("capabilities-toolsets"))
+            .iter()
+            .any(|r| r.tools.is_some())
+    );
+    assert!(
+        capabilities_tab_rows(&recorded("capabilities-bundled"))
+            .iter()
+            .any(|r| r.source.as_deref() == Some(CAPABILITIES_BUNDLED))
+    );
+    assert_eq!(memory_sections(&recorded("memory")), MEMORY_SECTIONS);
+    assert!(cron_empty_found(&recorded("cron"), "fixture"));
+    assert!(platform_rows(&recorded("messaging")).len() >= 10);
+    assert_eq!(platform_rows(&recorded("messaging-signal")).len(), 1);
+    assert_eq!(
+        platform_rows(&recorded("messaging-signal"))[0].name,
+        SIGNAL_ROW
+    );
+    assert_eq!(
+        field_state(&recorded("signal-card"), SIGNAL_URL_FIELD),
+        Some(FieldState::NotSet)
+    );
+    assert!(consent_found(&recorded("connectors-consent"), "fixture"));
+    assert!(!consent_found(&recorded("connectors-consent"), "default"));
+    for name in ["idle", "memory-pending", "curator-status"] {
+        assert!(idle_screen(&recorded(name)), "{name}");
+        assert!(!write_banner_found(&recorded(name)), "{name}");
+    }
+    assert!(recorded("memory-pending").contains(MEMORY_PENDING_NONE));
+    assert!(
+        regex::Regex::new(CURATOR_STATUS_RE)
+            .unwrap()
+            .is_match(&recorded("curator-status"))
+    );
+    let refused = recorded("configure-refusal");
+    assert!(refusal_found(&refused, CONFIGURE_SECRET_REFUSAL));
+    assert!(idle_screen(&refused));
+    assert!(!write_banner_found(&refused));
+}

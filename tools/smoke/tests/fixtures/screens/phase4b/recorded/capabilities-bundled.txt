@@ -1,0 +1,45 @@
+# recorded
+Capabilities · profile fixture
+ Skills 57/57 on  Skill hub  Toolsets 19/27 on  [Plugins 0 installed]
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ > [x] a2a-platform                  1.0.0     bundled
+   [x] basic                         1.0.0     bundled
+   [x] bluebubbles-platform          1.0.0     bundled
+   [x] browser-browser-use           1.0.0     bundled
+   [x] browser-browserbase           1.0.0     bundled
+   [x] browser-firecrawl             1.0.0     bundled
+   [x] buzz-platform                 1.0.0     bundled
+   [ ] chronos                       1.0.0     bundled
+   [x] deepinfra                     1.0.0     bundled
+   [x] deepinfra                     1.0.0     bundled
+   [x] dingtalk-platform             1.0.0     bundled
+   [x] discord-platform              1.0.0     bundled
+   [ ] disk-cleanup                  2.0.0     bundled
+   [x] drain                         1.0.0     bundled
+   [x] email-platform                1.0.0     bundled
+   [x] fal                           1.0.0     bundled
+   [x] fal                           1.0.0     bundled
+   [x] feishu-platform               1.0.0     bundled
+   [x] google_chat-platform          1.0.0     bundled
+   [ ] google_meet                   0.2.0     bundled
+   [x] irc-platform                  1.0.0     bundled
+   [x] krea                          1.1.0     bundled
+   [x] line-platform                 1.0.0     bundled
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ A2A (Agent-to-Agent) protocol v1.0 support for Hermes Agent — both directions of the open Linux Foundation standard for inter-agent communication.␊OUTBOUND (client tool
+ s): a2a_discover, a2a_call, a2a_list, a2a_history, and a2a_orchestrate let the agent fetch another agent's Agent Card and send it t…
+ 1.0.0 · bundled
+
+
+
+
+
+
+
+
+
+
+
+
+ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Space on/off  i install  c catalog  x remove  a all  r refresh  Esc close

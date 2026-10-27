@@ -1,0 +1,45 @@
+# recorded
+MCP servers · profile fixture                                                                                                                        Servers  [Catalogue]
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+type to filter
+› airtable                 remote  Bases, tables, and records from your Airtable workspace. · also a connector
+  algolia                  remote  Algolia search: indices, analytics, and settings (read-only).
+  alltrails                remote  AllTrails: find hikes and trails with reviews and ratings.
+  amplitude                remote  Amplitude analytics: charts, dashboards, experiments, flags.
+  asana                    remote  Tasks, projects, and goals from your Asana workspace. · also a connector
+  atlassian                remote  Jira issues and Confluence pages via Atlassian's hosted remote MCP. · also a connector
+  attio                    remote  CRM records, lists, and notes in Attio. · also a connector
+  aws-knowledge            remote  Authoritative AWS docs, API references, and best practices.
+  betterstack              remote  Better Stack: logs, uptime monitors, incidents, and status pages. · also a connector
+  buildkite                remote  CI/CD pipelines, builds, and test results from Buildkite.
+  calendly                 remote  Scheduling links, events, and invitees from Calendly. · also a connector
+  canva                    remote  Create, search, and manage Canva designs. · also a connector
+  circleci                 remote  CircleCI: diagnose build failures, read logs, rerun workflows.
+  clickup                  remote  Tasks, docs, and workspaces in ClickUp.
+  close                    remote  Sales CRM: leads, opportunities, calls, and emails.
+  cloudflare               remote  Full Cloudflare API access via the official remote MCP. · also a connector
+  cloudinary               remote  Upload, search, and transform media assets in Cloudinary.
+  comfy-cloud              remote  Generate images, video, audio, and 3D on Comfy Cloud.
+  context7                 remote  Up-to-date, version-specific library docs and code examples.
+  craft                    remote  Craft: structured docs, tasks, and personal knowledge base.
+  datadog                  remote  Logs, monitors, dashboards, and incidents from Datadog. · also a connector
+  deepwiki                 remote  Ask questions about any public GitHub repo (Devin's DeepWiki).
+  dropbox                  remote  Search, read, and manage files in Dropbox. · also a connector
+  figma                    remote  Official Figma remote MCP — design context, Code Connect, and write-to-canvas via <url> (OAuth). · also a connect…
+  fireflies                remote  Meeting transcripts, summaries, and action items.
+  gamma                    remote  Gamma: generate and edit AI presentations, docs, and sites.
+  gitlab                   remote  GitLab: issues, merge requests, pipelines, and repo context.
+  globalping               remote  Ping, traceroute, DNS, and HTTP tests from global probes.
+  grafana                  remote  Query metrics, logs, dashboards, alerts, and incidents from Grafana Cloud.
+  hugging_face             remote  Models, datasets, Spaces, and papers from the Hugging Face Hub.
+  indeed                   remote  Search jobs and listings on Indeed.
+  intercom                 remote  Conversations, tickets, and customer data from Intercom. · also a connector
+  kiwi                     remote  Kiwi.com flight search: itineraries with direct booking links.
+  klaviyo                  remote  Klaviyo marketing: campaigns, flows, segments, and reporting.
+  linear                   remote  Find, create, and update Linear issues, projects, and comments. · also a connector
+  microsoft-learn          remote  Official Microsoft, Azure, and .NET docs and code samples.
+  miro                     remote  Read and edit Miro boards, diagrams, and frames.
+66 servers in Hermes's catalogue
+
+
+enter install · tab servers · ctrl+r reload · esc close
