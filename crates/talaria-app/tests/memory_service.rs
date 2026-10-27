@@ -1,7 +1,6 @@
 #[path = "../../hermes-client/tests/support/mod.rs"]
 mod gateway_support;
-#[path = "../../hermes-client/tests/support/mock_rest.rs"]
-mod mock_rest;
+use gateway_support::mock_rest;
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
@@ -45,7 +44,8 @@ async fn mock() -> MockRest {
 
 #[tokio::test(start_paused = true)]
 async fn full_flow_against_mock_rest() {
-    let mock = mock().await;
+    let mut mock = mock().await;
+    mock.drive_paused_clock();
     let service = Arc::new(service(&mock, "fixture"));
     assert!(matches!(
         service.execute(MemoryEffect::LoadStatus).await.as_slice(),

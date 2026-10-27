@@ -365,6 +365,20 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("capabilities_refresh", &["r"][..]),
         ("capabilities_confirm", &["y"][..]),
         ("capabilities_cancel", &["esc"][..]),
+        ("memory_up", &["up"][..]),
+        ("memory_down", &["down"][..]),
+        ("memory_open", &["enter"][..]),
+        ("memory_use", &["u"][..]),
+        ("memory_delete", &["d"][..]),
+        ("memory_delete_both", &["D"][..]),
+        ("memory_pause", &["p"][..]),
+        ("memory_run", &["R"][..]),
+        ("memory_settings", &["s"][..]),
+        ("memory_curator_settings", &["k"][..]),
+        ("memory_reload", &["ctrl+r"][..]),
+        ("memory_copy", &["c"][..]),
+        ("memory_save", &["ctrl+s"][..]),
+        ("memory_close", &["esc"][..]),
     ];
     rows.into_iter()
         .map(|(name, chords)| {

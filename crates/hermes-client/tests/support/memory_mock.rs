@@ -158,10 +158,10 @@ fn respond(s: &mut State, request: &RecordedRequest) -> (u16, Value) {
                 } else {
                     provider
                 };
-            if !provider.is_empty() {
-                if let Some(error) = readiness_error(s, &provider) {
-                    return error;
-                }
+            if !provider.is_empty()
+                && let Some(error) = readiness_error(s, &provider)
+            {
+                return error;
             }
             s.status["active"] = json!(provider);
             (200, json!({"ok":true,"active":provider}))
@@ -414,16 +414,15 @@ fn respond(s: &mut State, request: &RecordedRequest) -> (u16, Value) {
                 let field = &mut current[index];
                 let key = field["key"].as_str().unwrap().to_owned();
                 if field["kind"] == "secret" {
-                    if let Some(value) = values.get(&key) {
-                        if value.as_str().is_some_and(|v| !v.trim().is_empty())
-                            && (key == "api_key"
-                                || field
-                                    .get("env_key")
-                                    .and_then(Value::as_str)
-                                    .is_some_and(|v| !v.is_empty()))
-                        {
-                            field["is_set"] = json!(true);
-                        }
+                    if let Some(value) = values.get(&key)
+                        && value.as_str().is_some_and(|v| !v.trim().is_empty())
+                        && (key == "api_key"
+                            || field
+                                .get("env_key")
+                                .and_then(Value::as_str)
+                                .is_some_and(|v| !v.is_empty()))
+                    {
+                        field["is_set"] = json!(true);
                     }
                 } else {
                     let value = values
@@ -475,7 +474,8 @@ fn respond(s: &mut State, request: &RecordedRequest) -> (u16, Value) {
                             .as_f64()
                             .or_else(|| value.as_str().and_then(|s| s.parse::<f64>().ok()));
                         if number.is_none_or(|n| {
-                            !n.is_finite()
+                            n.is_nan()
+                                || n.abs() > f64::MAX
                                 || (field["kind"] == "integer" && n.fract() != 0.0)
                                 || field["minimum"].as_f64().is_some_and(|min| n < min)
                                 || field["maximum"].as_f64().is_some_and(|max| n > max)
@@ -492,17 +492,17 @@ fn respond(s: &mut State, request: &RecordedRequest) -> (u16, Value) {
                 }
             }
             config["fields"] = json!(current);
-            if name == "retaindb" && s.retaindb["fields"][0]["is_set"] == true {
-                if let Some(provider) = s.status["providers"]
+            if name == "retaindb"
+                && s.retaindb["fields"][0]["is_set"] == true
+                && let Some(provider) = s.status["providers"]
                     .as_array_mut()
                     .unwrap()
                     .iter_mut()
                     .find(|p| p["name"] == "retaindb")
-                {
-                    provider["configured"] = json!(true);
-                    provider["available"] = json!(true);
-                    provider["status"] = json!("ready");
-                }
+            {
+                provider["configured"] = json!(true);
+                provider["available"] = json!(true);
+                provider["status"] = json!("ready");
             }
             if let Some(error) = readiness_error(s, name) {
                 return error;

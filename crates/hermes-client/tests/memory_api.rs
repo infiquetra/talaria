@@ -300,7 +300,8 @@ async fn settings_fall_back_to_plain_surface() {
 
 #[tokio::test(start_paused = true)]
 async fn deadlines_per_route() {
-    let mock = routes().await;
+    let mut mock = routes().await;
+    mock.drive_paused_clock();
     let rest = client(&mock);
     mock.delay("GET", "/api/memory", Duration::from_secs(44))
         .await;

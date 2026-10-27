@@ -143,15 +143,20 @@ struct State {
     managed: BTreeSet<String>,
     external: Option<ExternalWrite>,
     own_profile: Option<String>,
+    drive_paused_clock: bool,
 }
 pub struct MockRest {
     address: std::net::SocketAddr,
     state: Arc<Mutex<State>>,
     task: tokio::task::JoinHandle<()>,
+    clock_driver: Option<tokio::task::JoinHandle<()>>,
 }
 impl Drop for MockRest {
     fn drop(&mut self) {
         self.task.abort();
+        if let Some(driver) = &self.clock_driver {
+            driver.abort();
+        }
     }
 }
 impl MockRest {
@@ -175,6 +180,7 @@ impl MockRest {
             managed: BTreeSet::new(),
             external: None,
             own_profile: None,
+            drive_paused_clock: false,
         }));
         let served = state.clone();
         let task = tokio::spawn(async move {
@@ -189,7 +195,19 @@ impl MockRest {
             address,
             state,
             task,
+            clock_driver: None,
         }
+    }
+    pub fn drive_paused_clock(&mut self) {
+        self.state.lock().unwrap().drive_paused_clock = true;
+        // Keep the runtime polling socket readiness instead of auto-advancing to
+        // a request deadline before the loopback connection has been served.
+        self.clock_driver = Some(tokio::spawn(async {
+            for _ in 0..200 {
+                tokio::task::yield_now().await;
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }));
     }
     pub fn origin(&self) -> String {
         format!("http://{}", self.address)
@@ -321,7 +339,7 @@ fn planted_key(state: &State, method: &str, path: &str) -> Route {
 
 async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Result<()> {
     let request = read_request(&mut stream).await?;
-    let (status, body, switch) = {
+    let (status, body, switch, drive_paused_clock) = {
         let mut state = state.lock().unwrap();
         let key = planted_key(&state, &request.method, &request.path);
         if let Some(external) = &mut state.external
@@ -333,7 +351,8 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
             deep_merge(&mut state.raw, &patch);
         }
         state.requests.push(request.clone());
-        let switch_key = if state.switches.contains_key(&key) {
+        // A separately registered query route owns its response timing.
+        let switch_key = if state.switches.contains_key(&key) || state.routes.contains_key(&key) {
             key.clone()
         } else if let Some((base, _)) = request.path.split_once('?') {
             let base_key = route(&request.method, base);
@@ -359,13 +378,17 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
         {
             external.armed = true;
         }
-        (status, body, switch)
+        (status, body, switch, state.drive_paused_clock)
     };
     if switch.drop {
         return Ok(());
     }
     if !switch.delay.is_zero() {
-        tokio::time::sleep(switch.delay).await;
+        let until = tokio::time::Instant::now() + switch.delay;
+        if drive_paused_clock {
+            tokio::time::advance(switch.delay).await;
+        }
+        tokio::time::sleep_until(until).await;
     }
     let head = format!(
         "HTTP/1.1 {status} response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
