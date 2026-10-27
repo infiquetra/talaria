@@ -1,0 +1,59 @@
+{
+  "unrestricted": {
+    "layers": [
+      {
+        "kind": "member",
+        "revision": "01J00000000000000000000000",
+        "body": { "mode": "unrestricted", "connectors": [], "disabled_connectors": [], "tools": {}, "tags": null }
+      }
+    ]
+  },
+  "deny_all": {
+    "layers": [
+      {
+        "kind": "member",
+        "revision": "01J00000000000000000000000",
+        "body": { "mode": "deny-all", "connectors": [], "disabled_connectors": [], "tools": {}, "tags": null }
+      }
+    ]
+  },
+  "allow": {
+    "layers": [
+      {
+        "kind": "member",
+        "revision": "01J00000000000000000000000",
+        "body": { "mode": "allow", "connectors": ["github"], "disabled_connectors": [], "tools": {}, "tags": null }
+      }
+    ]
+  },
+  "deny": {
+    "layers": [
+      {
+        "kind": "member",
+        "revision": "01J00000000000000000000000",
+        "body": { "mode": "deny", "connectors": [], "disabled_connectors": ["github"], "tools": {}, "tags": null }
+      }
+    ]
+  },
+  "no_member": { "layers": [] },
+  "org_lock": {
+    "layers": [
+      {
+        "kind": "member",
+        "revision": "01J00000000000000000000000",
+        "body": { "mode": "allow", "connectors": ["github"], "disabled_connectors": [], "tools": { "github": ["issues"] }, "tags": null }
+      },
+      {
+        "kind": "org",
+        "revision": "01J00000000000000000000001",
+        "body": {
+          "mode": "deny",
+          "connectors": [],
+          "disabled_connectors": ["github"],
+          "tools": { "github": ["pulls"] },
+          "tags": { "disable": ["destructive"], "enable": ["read"] }
+        }
+      }
+    ]
+  }
+}

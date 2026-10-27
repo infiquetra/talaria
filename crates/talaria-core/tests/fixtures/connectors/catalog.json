@@ -1,0 +1,16 @@
+{
+  "connectors": [
+    {
+      "slug": "github",
+      "name": "GitHub",
+      "description": "Code host",
+      "category": "code"
+    },
+    {
+      "slug": "linear",
+      "name": "Linear",
+      "description": "Issues",
+      "category": "work"
+    }
+  ]
+}

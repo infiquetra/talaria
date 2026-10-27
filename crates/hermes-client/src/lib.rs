@@ -25,6 +25,7 @@ pub mod gateway_api;
 pub mod liveness;
 pub mod mcp_api;
 pub mod memory_api;
+pub mod messaging_api;
 pub mod model_roles_api;
 pub mod providers_api;
 pub mod record;
@@ -52,6 +53,11 @@ pub use discovery::{
     DiscoverOptions, DiscoveryError, Endpoint, EnsureError, EnsurePolicy, ExitKind, GatewayState,
     NodeKind, NodeProblem, PointerProblem, ProfileId, ProfileLookupError, ReadVerb, ReportedState,
     ServedProfile, control_query, default_home, discover, discover_with, home_hash,
+};
+pub use messaging_api::{
+    ApproveReply, ApprovedWire, EnvWire, HomeChannelWire, PairingReply, PendingWire,
+    PlatformUpdate, PlatformWire, PlatformsReply, TestReply, UpdateReply, approve_pairing,
+    list_pairing, list_platforms, revoke_pairing, test_platform, update_platform,
 };
 pub use model_roles_api::{
     AssignScope, AssignmentReply, AuxiliaryModels, AuxiliaryTask, EffortField, MainRoute,

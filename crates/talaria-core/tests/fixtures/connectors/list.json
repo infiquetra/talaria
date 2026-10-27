@@ -1,0 +1,13 @@
+{
+  "available": true,
+  "connectors": [
+    {
+      "connector": "github",
+      "enabled": true,
+      "connected": true,
+      "connection_status": "active",
+      "status_reason": null,
+      "gateway_disabled_tools": []
+    }
+  ]
+}

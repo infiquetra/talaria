@@ -1,0 +1,67 @@
+{
+  "gateway_start_command": "hermes gateway run",
+  "platforms": [
+    {
+      "id": "signal",
+      "name": "Signal",
+      "description": "Signal bridge",
+      "docs_url": "https://example.invalid/docs/signal",
+      "enabled": false,
+      "configured": false,
+      "gateway_running": false,
+      "state": "not_configured",
+      "error_code": null,
+      "error_message": null,
+      "updated_at": "2026-10-01T00:00:00Z",
+      "home_channel": null,
+      "ingress_url": null,
+      "env_vars": [
+        {
+          "key": "SIGNAL_HTTP_URL",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "value": null,
+          "description": "Bridge address",
+          "prompt": "Bridge address",
+          "help": "Loopback bridge",
+          "url": "https://example.invalid/docs/signal",
+          "is_password": false,
+          "is_list": false,
+          "advanced": false
+        }
+      ]
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "description": "Telegram bot",
+      "docs_url": "https://example.invalid/docs/telegram",
+      "enabled": true,
+      "configured": true,
+      "gateway_running": true,
+      "state": "connected",
+      "error_code": null,
+      "error_message": null,
+      "updated_at": "2026-10-01T00:00:00Z",
+      "home_channel": { "platform": "telegram", "chat_id": "chat-test-1", "name": "home" },
+      "ingress_url": "https://example.invalid/ingress/telegram",
+      "env_vars": [
+        {
+          "key": "TELEGRAM_ALLOWED_USERS",
+          "required": false,
+          "is_set": true,
+          "redacted_value": null,
+          "value": "alpha, beta",
+          "description": "Allow list",
+          "prompt": "Allowed users",
+          "help": null,
+          "url": null,
+          "is_password": false,
+          "is_list": true,
+          "advanced": false
+        }
+      ]
+    }
+  ]
+}

@@ -13,6 +13,7 @@ pub mod comforts;
 pub mod commands;
 pub mod config;
 pub mod connection;
+pub mod connectors;
 pub mod context;
 pub mod cron;
 pub mod directory;

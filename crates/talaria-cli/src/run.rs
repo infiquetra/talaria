@@ -5,11 +5,12 @@
 //! on the normal screen; then the terminal is set up and `talaria_app::app::run` draws the first
 //! frame before anything touches the network.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, IsTerminal, Stdout};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use zeroize::Zeroize;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
@@ -176,6 +177,7 @@ enum Overlay {
     Capabilities,
     /// Memory providers, files and curator.
     Memory,
+    Connectors,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -266,6 +268,8 @@ pub struct TuiScreen {
     overlay: Overlay,
     mcp_view: Option<talaria_core::mcp::McpView>,
     mcp_wiring: crate::mcp_wiring::McpWiring,
+    connectors_wiring: crate::connectors_wiring::ConnectorsWiring,
+    connectors_ssh: bool,
     /// The card of the peeked background session, while the fleet overlay shows it.
     peek_prompts: PromptStack,
     agents: Option<AgentsPanel>,
@@ -1045,6 +1049,70 @@ fn approvals_segment(segment: &ApprovalSegmentText) -> ApprovalsSegment {
 }
 
 impl TuiScreen {
+    fn connectors_key(
+        &mut self,
+        key: Key,
+        view: &talaria_core::connectors::ConnectorsView,
+        filtering: bool,
+    ) -> Vec<UserAction> {
+        use talaria_core::connectors::{ConnectorsInput, ConnectorsKey as K, Screen as S};
+        if key.kind == KeyKind::Release {
+            return Vec::new();
+        }
+        let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other;
+        if matches!(view.screen, S::SecretEditor { .. }) {
+            let input = match key.code {
+                KeyCode::Enter if plain => self
+                    .connectors_wiring
+                    .accept_secret_edit()
+                    .then_some(ConnectorsInput::Key(K::Open)),
+                KeyCode::Esc if plain => {
+                    self.connectors_wiring.cancel_secret_edit();
+                    Some(ConnectorsInput::Key(K::Close))
+                }
+                _ => self.connectors_wiring.route_secret_key(&key),
+            };
+            return input.map(UserAction::Connectors).into_iter().collect();
+        }
+        let confirming = matches!(view.screen, S::Confirm { .. } | S::Review { .. });
+        let editing = matches!(view.screen, S::Prompt { .. }) || filtering;
+        let action = if confirming {
+            if plain && key.code == KeyCode::Esc {
+                Some(K::Close)
+            } else {
+                self.keymap
+                    .resolve_connectors(KeyContext::Connectors, &key)
+                    .filter(|action| matches!(action, K::Confirm | K::Cancel | K::Close))
+            }
+        } else if editing {
+            match key.code {
+                KeyCode::Char('u')
+                    if key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other =>
+                {
+                    Some(K::ClearField)
+                }
+                KeyCode::Char(ch) if plain => Some(K::Char(ch)),
+                KeyCode::Backspace if plain => Some(K::Backspace),
+                KeyCode::Enter if plain => Some(K::Open),
+                KeyCode::Esc if plain => Some(K::Close),
+                _ => None,
+            }
+        } else {
+            self.keymap
+                .resolve_connectors(KeyContext::Connectors, &key)
+                .filter(|action| {
+                    !matches!(view.screen, S::Consent { .. })
+                        || matches!(
+                            action,
+                            K::Open | K::Close | K::Cancel | K::NextTab | K::PrevTab
+                        )
+                })
+        };
+        action
+            .map(|key| UserAction::Connectors(self.connectors_wiring.route_key(key)))
+            .into_iter()
+            .collect()
+    }
     fn confirmation_takes_keys(&self) -> bool {
         self.overlay == Overlay::Live
             && self.confirmation.is_some()
@@ -1790,6 +1858,7 @@ impl TuiScreen {
             && view.doctor.is_none()
             && view.memory.is_none()
             && view.capabilities.is_none()
+            && view.connectors.is_none()
         {
             match &event {
                 Event::Key(raw) => {
@@ -1826,6 +1895,7 @@ impl TuiScreen {
             }
         }
         if view.profiles.is_none()
+            && view.connectors.is_none()
             && view.settings.is_none()
             && view.doctor.is_none()
             && !self.terminal.is_released()
@@ -1859,6 +1929,17 @@ impl TuiScreen {
             Event::Key(raw) => {
                 if self.terminal.is_released() {
                     return Vec::new();
+                }
+                if self.mcp_view.is_none()
+                    && view.profiles.is_none()
+                    && view.doctor.is_none()
+                    && let Some(connectors) = &view.connectors
+                {
+                    return self.connectors_key(
+                        Key::from(raw),
+                        connectors,
+                        view.connectors_filtering,
+                    );
                 }
                 if let Some(memory) = &view.memory {
                     let key = Key::from(raw);
@@ -2202,7 +2283,27 @@ impl TuiScreen {
                 actions.extend(self.composer_key(key, view, now));
                 actions
             }
-            Event::Paste(text) => {
+            Event::Paste(mut text) => {
+                if self.mcp_view.is_none()
+                    && view.profiles.is_none()
+                    && view.doctor.is_none()
+                    && let Some(connectors) = &view.connectors
+                {
+                    if self.terminal.is_released() {
+                        return Vec::new();
+                    }
+                    let input = if matches!(
+                        connectors.screen,
+                        talaria_core::connectors::Screen::SecretEditor { .. }
+                    ) {
+                        let input = self.connectors_wiring.route_secret_paste(&text);
+                        text.zeroize();
+                        input
+                    } else {
+                        Some(self.connectors_wiring.route_paste(text))
+                    };
+                    return input.map(UserAction::Connectors).into_iter().collect();
+                }
                 if view.memory.is_some() && !self.terminal.is_released() {
                     return vec![UserAction::Memory(talaria_core::memory::MemoryInput::Key(
                         talaria_core::memory::MemoryKey::Paste(text),
@@ -2721,6 +2822,18 @@ impl Screen for TuiScreen {
         self.cron_dirty |= changed;
         changed
     }
+    fn edit_connector_secret(&mut self, key: &str) {
+        self.connectors_wiring.edit_secret(key.to_owned());
+    }
+    fn forget_connector_secrets(&mut self) {
+        self.connectors_wiring.forget();
+    }
+    fn connector_secrets(
+        &self,
+        effect: &talaria_core::connectors::ConnectorsEffect,
+    ) -> Option<BTreeMap<String, zeroize::Zeroizing<String>>> {
+        self.connectors_wiring.secrets_for(effect)
+    }
     fn pane_settings(&self) -> talaria_app::panes::PaneSettings {
         self.config.panes.clone()
     }
@@ -2979,6 +3092,42 @@ impl Screen for TuiScreen {
         self.close_overlay(Overlay::Doctor);
         self.sync_agents(view);
         self.apply_transcript(view);
+        if let Some(connectors) = &view.connectors {
+            let mut connectors = connectors.clone();
+            if let talaria_core::connectors::Screen::LinkCard { ssh, .. } = &mut connectors.screen {
+                *ssh = self.connectors_ssh;
+            }
+            if !matches!(
+                connectors.screen,
+                talaria_core::connectors::Screen::Prompt { .. }
+                    | talaria_core::connectors::Screen::SecretEditor { .. }
+                    | talaria_core::connectors::Screen::Confirm { .. }
+                    | talaria_core::connectors::Screen::Review { .. }
+            ) {
+                for (key, _) in &mut connectors.footer {
+                    if let Some(label) = self.keymap.connectors_labels_for_default(key) {
+                        *key = label;
+                    }
+                }
+            }
+            let lens = self.connectors_wiring.secret_lens();
+            let palette = self.palette;
+            self.open_overlay(Overlay::Connectors);
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::connectors::draw_connectors_with_palette(
+                    &connectors,
+                    &lens,
+                    &palette,
+                    area,
+                    buf,
+                );
+            });
+            return;
+        }
+        if self.overlay == Overlay::Connectors {
+            self.connectors_wiring.forget();
+        }
+        self.close_overlay(Overlay::Connectors);
         if let Some(memory) = &view.memory {
             let mut memory = memory.clone();
             if !memory.editing && memory.confirm.is_none() {
@@ -3897,6 +4046,9 @@ fn session(
         cron_gate: talaria_tui::cron::CronFrameGate::new(),
         cron_history_focused: false,
         cron_dirty: false,
+        connectors_wiring: crate::connectors_wiring::ConnectorsWiring::default(),
+        connectors_ssh: std::env::var_os("SSH_CONNECTION").is_some()
+            || std::env::var_os("SSH_TTY").is_some(),
         peek_prompts: PromptStack::new(),
         agents: None,
         agents_flash: None,

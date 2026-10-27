@@ -58,6 +58,47 @@ static CRON_BINDINGS: [(CronAction, &str, &str); 7] = [
     (CronAction::OpenRun, "cron_open_run", "o"),
 ];
 
+use crate::connectors::ConnectorsKey;
+
+static CONNECTORS_BINDINGS: &[(ConnectorsKey, &str, &[&str])] = &[
+    (ConnectorsKey::NextTab, "connectors_next_tab", &["tab"]),
+    (
+        ConnectorsKey::PrevTab,
+        "connectors_prev_tab",
+        &["shift+tab"],
+    ),
+    (ConnectorsKey::Up, "connectors_up", &["up", "k"]),
+    (ConnectorsKey::Down, "connectors_down", &["down", "j"]),
+    (ConnectorsKey::Open, "connectors_open", &["enter"]),
+    (ConnectorsKey::Toggle, "connectors_toggle", &["space"]),
+    (ConnectorsKey::Filter, "connectors_filter", &["/"]),
+    (ConnectorsKey::Reload, "connectors_reload", &["ctrl+r"]),
+    (ConnectorsKey::Add, "connectors_add", &["a"]),
+    (ConnectorsKey::Rename, "connectors_rename", &["r"]),
+    (
+        ConnectorsKey::ReconnectOrCopy,
+        "connectors_reconnect_or_copy",
+        &["c"],
+    ),
+    (ConnectorsKey::Remove, "connectors_remove", &["x"]),
+    (
+        ConnectorsKey::ToolsOrTest,
+        "connectors_tools_or_test",
+        &["t"],
+    ),
+    (ConnectorsKey::Retired, "connectors_retired", &["h"]),
+    (ConnectorsKey::OpenLink, "connectors_open_link", &["o"]),
+    (ConnectorsKey::Wake, "connectors_wake", &["w"]),
+    (ConnectorsKey::ClearField, "messaging_clear_field", &["d"]),
+    (ConnectorsKey::Advanced, "messaging_advanced", &["shift+a"]),
+    (ConnectorsKey::Approve, "messaging_approve", &["p"]),
+    (ConnectorsKey::Save, "connectors_save", &["ctrl+s"]),
+    (ConnectorsKey::Doctor, "connectors_doctor", &["shift+r"]),
+    (ConnectorsKey::Confirm, "connectors_confirm", &["y"]),
+    (ConnectorsKey::Cancel, "connectors_cancel", &["n"]),
+    (ConnectorsKey::Close, "connectors_close", &["esc"]),
+];
+
 static SETTINGS_BINDINGS: [(SettingsAction, &str, &str); 16] = [
     (SettingsAction::Up, "settings_up", "up"),
     (SettingsAction::Down, "settings_down", "down"),
@@ -224,6 +265,8 @@ pub enum KeyContext {
     Memory,
     /// The scheduled jobs overlay.
     Cron,
+    /// The connectors and messaging overlay.
+    Connectors,
 }
 
 /// Translate a doctor binding into the domain action.
@@ -365,6 +408,7 @@ enum Binding {
     Capabilities(usize),
     Memory(usize),
     Cron(usize),
+    Connectors(usize),
 }
 
 impl Binding {
@@ -379,6 +423,7 @@ impl Binding {
             .chain((0..CAP_BINDINGS.len()).map(Self::Capabilities))
             .chain((0..MEMORY_BINDINGS.len()).map(Self::Memory))
             .chain((0..CRON_BINDINGS.len()).map(Self::Cron))
+            .chain((0..CONNECTORS_BINDINGS.len()).map(Self::Connectors))
     }
     fn index(self) -> usize {
         match self {
@@ -422,6 +467,17 @@ impl Binding {
                     + MEMORY_BINDINGS.len()
                     + index
             }
+            Self::Connectors(index) => {
+                Action::ALL.len()
+                    + ModelAction::ALL.len()
+                    + SETTINGS_BINDINGS.len()
+                    + MODEL_ROLES_BINDINGS.len()
+                    + ROUTE_PICKER_BINDINGS.len()
+                    + CAP_BINDINGS.len()
+                    + MEMORY_BINDINGS.len()
+                    + CRON_BINDINGS.len()
+                    + index
+            }
         }
     }
     fn context(self) -> KeyContext {
@@ -434,6 +490,7 @@ impl Binding {
             Self::Capabilities(_) => KeyContext::Capabilities,
             Self::Memory(_) => KeyContext::Memory,
             Self::Cron(_) => KeyContext::Cron,
+            Self::Connectors(_) => KeyContext::Connectors,
         }
     }
     fn config_name(self) -> &'static str {
@@ -446,6 +503,7 @@ impl Binding {
             Self::Capabilities(index) => CAP_BINDINGS[index].1,
             Self::Memory(index) => MEMORY_BINDINGS[index].1,
             Self::Cron(index) => CRON_BINDINGS[index].1,
+            Self::Connectors(index) => CONNECTORS_BINDINGS[index].1,
         }
     }
     fn from_config_name(name: &str) -> Option<Self> {
@@ -488,6 +546,12 @@ impl Binding {
                     .position(|(_, held, _)| *held == name)
                     .map(Self::Cron)
             })
+            .or_else(|| {
+                CONNECTORS_BINDINGS
+                    .iter()
+                    .position(|(_, held, _)| *held == name)
+                    .map(Self::Connectors)
+            })
     }
     fn default_chords(self) -> &'static [&'static str] {
         match self {
@@ -499,6 +563,7 @@ impl Binding {
             Self::Capabilities(index) => std::slice::from_ref(&CAP_BINDINGS[index].2),
             Self::Memory(index) => std::slice::from_ref(&MEMORY_BINDINGS[index].2),
             Self::Cron(index) => std::slice::from_ref(&CRON_BINDINGS[index].2),
+            Self::Connectors(index) => CONNECTORS_BINDINGS[index].2,
         }
     }
 }
@@ -2158,7 +2223,8 @@ impl KeyMap {
                 + ROUTE_PICKER_BINDINGS.len()
                 + CAP_BINDINGS.len()
                 + MEMORY_BINDINGS.len()
-                + CRON_BINDINGS.len()];
+                + CRON_BINDINGS.len()
+                + CONNECTORS_BINDINGS.len()];
         let mut notices = Vec::new();
 
         for (name, texts) in entries {
@@ -2224,6 +2290,49 @@ impl KeyMap {
 
         notices.extend(map.resolve_conflicts(&explicit));
         (map, notices)
+    }
+
+    /// Resolve a key in the connectors overlay.
+    pub fn resolve_connectors(&self, context: KeyContext, key: &Key) -> Option<ConnectorsKey> {
+        if context != KeyContext::Connectors {
+            return None;
+        }
+        CONNECTORS_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (action, _, _))| {
+                self.chords[Binding::Connectors(index).index()]
+                    .iter()
+                    .any(|chord| chord.matches(key))
+                    .then_some(*action)
+            })
+    }
+
+    /// Find the current binding labels for a connector action's default chord.
+    #[must_use]
+    pub fn connectors_labels_for_default(&self, label: &str) -> Option<String> {
+        let chord = KeyChord::parse(label, KeyContext::Connectors).ok()?;
+        CONNECTORS_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (_, _, defaults))| {
+                defaults
+                    .iter()
+                    .any(|default| {
+                        KeyChord::parse(default, KeyContext::Connectors)
+                            .ok()
+                            .as_ref()
+                            == Some(&chord)
+                    })
+                    .then(|| {
+                        let labels = self.labels_of(Binding::Connectors(index));
+                        if labels.is_empty() {
+                            "(unbound)".to_string()
+                        } else {
+                            labels
+                        }
+                    })
+            })
     }
 
     /// The labels of one action's chords, for a notice.

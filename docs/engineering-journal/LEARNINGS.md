@@ -5765,3 +5765,28 @@ query for `/api/cron/delivery-targets`.
 **Mechanism.** Job discovery can otherwise scan across profiles, while a native HTTP ticket
 grants access to one profile. **Rule.** Name the ticket's connected profile on every scheduled-job
 route and leave the delivery-target route scoped by the ticket.
+
+## 2026-10-27 — A connector read can create an identity
+
+**Evidence.** At Hermes commit `4d04303818b61bf3aa09278af48356315515965b`, account connector
+methods call `ensure_guest_identity()` before performing their work. Merely loading connector
+accounts therefore differs from a passive messaging-platform read.
+
+**Mechanism.** A screen-local consent flag can be lost on reconnect or bypassed by a second
+caller. The app owns one shared, profile-keyed consent registry, and the service checks it
+immediately before every connector socket call.
+
+**Rule.** Gate calls by their actual side effects, share consent across callers, and enforce the
+gate again at the service boundary.
+
+## 2026-10-27 — A successful save must not erase a newer draft
+
+**Evidence.** The connector reducer's regression tests keep a newer secret draft, including an
+editor still open, when an earlier save succeeds. The local editor tests also preserve the
+accepted value for retries while a replacement is being typed.
+
+**Mechanism.** A write result describes the values submitted with that write. Clearing the
+whole draft store after it returns can erase edits made while the request was in flight.
+
+**Rule.** Track submitted draft versions, clear only the confirmed versions, and separate editor
+buffers from accepted drafts and retry values.

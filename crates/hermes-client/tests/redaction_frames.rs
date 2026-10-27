@@ -948,6 +948,32 @@ fn free_text_names_are_withheld_in_any_position() {
 }
 
 #[test]
+fn connect_link_is_free_text() {
+    let link = "https://example.invalid/connect/ls-sentinel-3b9d";
+    let frame = json!({"method": "event", "params": {"type": "connection.update", "payload": {
+        "targets": [{"name": "github", "connect_url": link}]
+    }}});
+    let redacted = redact(&mut redactor(), Dir::In, &frame);
+    let text = recorded(&redacted);
+    assert!(
+        !text.contains("ls-sentinel-3b9d"),
+        "link sentinel was recorded"
+    );
+    assert!(withheld_once(
+        &redacted,
+        "params.payload.targets.0.connect_url",
+        "free-text"
+    ));
+    assert_eq!(
+        at(
+            &redacted.frame,
+            &["params", "payload", "targets", "0", "connect_url"]
+        ),
+        Some(&json!("[redacted]"))
+    );
+}
+
+#[test]
 fn ticket_subprotocol_string_is_withheld_wherever_it_appears() {
     // The ticket travels as a subprotocol, never in a frame; any string that contains the
     // subprotocol name is withheld as a safety net.

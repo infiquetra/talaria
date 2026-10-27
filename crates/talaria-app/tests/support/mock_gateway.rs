@@ -1157,6 +1157,31 @@ impl MockGateway {
         seq
     }
 
+    /// `connection.update` for an account owner. The payload has no link and no connection id.
+    pub async fn send_connection_update(&self, op_id: &str) {
+        self.send_event(
+            "connection.update",
+            json!({
+                "owner": {"type": "account"},
+                "op_id": op_id,
+                "seq": 1,
+                "settled": false,
+                "targets": [{"name": "github", "state": "initiated"}],
+            }),
+        )
+        .await;
+    }
+
+    /// `platforms.changed` with an empty payload.
+    pub async fn send_platforms_changed(&self) {
+        self.send_event("platforms.changed", json!({})).await;
+    }
+
+    /// `pairing.changed` with an empty payload.
+    pub async fn send_pairing_changed(&self) {
+        self.send_event("pairing.changed", json!({})).await;
+    }
+
     /// `skills.changed` with an empty session id and no `seq`. Issue #223.
     pub async fn skills_changed(&self) {
         self.send_event_params(json!({
@@ -1756,6 +1781,167 @@ fn event_text(state: &mut State, type_name: &str, payload: Value) -> String {
     .to_string()
 }
 
+fn plan_connectors(
+    method: &str,
+    id: &Value,
+    params: &Value,
+    outgoing: &mut Vec<(Option<Duration>, String, Meta)>,
+) {
+    let object = params.as_object();
+    let known = [
+        "owner",
+        "connectors",
+        "alias",
+        "reconnect",
+        "connection_id",
+        "op_id",
+        "change",
+        "expected_revision",
+        "slug",
+        "refresh",
+    ];
+    if let Some(map) = object {
+        for key in map.keys() {
+            if !known.contains(&key.as_str()) {
+                outgoing.push((
+                    None,
+                    invalid_params(id, "unknown parameter"),
+                    reply_meta(id, method),
+                ));
+                return;
+            }
+        }
+        if let Some(owner) = map.get("owner").and_then(Value::as_object) {
+            let kind = owner.get("type").and_then(Value::as_str);
+            let extra = owner.keys().any(|key| key != "type");
+            if kind != Some("account") || extra {
+                outgoing.push((
+                    None,
+                    invalid_params(id, "owner must be an account"),
+                    reply_meta(id, method),
+                ));
+                return;
+            }
+        }
+        if let Some(change) = map.get("change").and_then(Value::as_object) {
+            let change_keys = ["type", "connector", "enabled", "disabled_tools"];
+            if change
+                .keys()
+                .any(|key| !change_keys.contains(&key.as_str()))
+            {
+                outgoing.push((
+                    None,
+                    invalid_params(id, "unknown parameter"),
+                    reply_meta(id, method),
+                ));
+                return;
+            }
+        }
+    }
+    let Some(result) = connector_result(method) else {
+        let text = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": "unknown method",
+                "data": {"reason": "unknown_method"},
+            },
+        })
+        .to_string();
+        outgoing.push((None, text, reply_meta(id, method)));
+        return;
+    };
+    let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+    outgoing.push((None, text, reply_meta(id, method)));
+}
+
+fn invalid_params(id: &Value, message: &str) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": 4000,
+            "message": message,
+            "data": {"reason": "INVALID_PARAMS"},
+        },
+    })
+    .to_string()
+}
+
+fn connector_result(method: &str) -> Option<Value> {
+    let account = json!({
+        "connection_id": "conn-test-1",
+        "connector": "github",
+        "status": "active",
+        "status_reason": null,
+        "label": "test-account",
+        "alias": "work",
+        "active": true,
+        "disabled": false
+    });
+    Some(match method {
+        "connectors.list" => json!({
+            "available": true,
+            "connectors": [{
+                "connector": "github",
+                "enabled": true,
+                "connected": true,
+                "connection_status": "active",
+                "status_reason": null,
+                "gateway_disabled_tools": []
+            }]
+        }),
+        "connectors.catalog" => json!({
+            "connectors": [{
+                "slug": "github",
+                "name": "GitHub",
+                "description": "Code host",
+                "category": "development"
+            }]
+        }),
+        "connectors.accounts" => json!({"accounts": [account]}),
+        "connectors.policy.get" => json!({
+            "layers": [{
+                "kind": "member",
+                "revision": "01J00000000000000000000000",
+                "body": {"mode": "deny", "disabled_connectors": [], "tools": {}, "tags": null}
+            }],
+            "effective": {"mode": "deny", "disabled_connectors": [], "tools": {}}
+        }),
+        "connectors.connect" | "connectors.operation.status" => json!({
+            "op_id": "op-test-1",
+            "seq": 1,
+            "deadline_at": 1800000300.0,
+            "settled": false,
+            "targets": [{
+                "name": "github",
+                "kind": "connector",
+                "action": "connect",
+                "state": "initiated",
+                "connect_url": "https://example.invalid/connect/test"
+            }],
+            "status": "initiated",
+            "note": null
+        }),
+        "connectors.operation.wake" => json!({}),
+        "connectors.accounts.rename" => account,
+        "connectors.accounts.remove" => json!({"ok": true, "connection_id": "conn-test-1"}),
+        "connectors.policy.set" => json!({"revision": "01J00000000000000000000000"}),
+        "connectors.tools" => json!({
+            "stale": false,
+            "tools": [{
+                "slug": "issues",
+                "name": "Issues",
+                "facet": "read",
+                "hints": [],
+                "deprecated": false
+            }]
+        }),
+        _ => return None,
+    })
+}
+
 fn reply_meta(id: &Value, method: &str) -> Meta {
     Meta {
         kind: WrittenKind::Reply,
@@ -1851,6 +2037,13 @@ fn plan_request(
         return;
     }
     if plan_capabilities(state, method, id, params, outgoing) {
+        return;
+    }
+    if method.starts_with("connectors.") {
+        if state.silent_all || state.silent_methods.contains(method) {
+            return;
+        }
+        plan_connectors(method, id, params, outgoing);
         return;
     }
     if matches!(

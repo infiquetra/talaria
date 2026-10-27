@@ -26,7 +26,12 @@ const TICKET_PREFIX: &str = "hermes-gateway-ticket.";
 const OPEN_REQUEST_LIMIT: usize = 1_024;
 
 /// Names withheld by exact name at any depth: free text in a snapshot's `info` block.
-const FREE_TEXT: [&str; 3] = ["system_prompt", "credential_hint", "launch_request"];
+const FREE_TEXT: [&str; 4] = [
+    "system_prompt",
+    "credential_hint",
+    "launch_request",
+    "connect_url",
+];
 
 /// Each method and the keys withheld at any depth below its `params`.
 const DENY_SET: &[(&str, &[&str])] = &[
@@ -737,4 +742,32 @@ pub fn local_forbidden_literals() -> Vec<String> {
     add(Some(host));
     add(short);
     literals
+}
+
+#[cfg(test)]
+mod connector_link_tests {
+    use super::{REDACTED, Redactor};
+    use serde_json::json;
+
+    #[test]
+    fn connect_url_is_withheld_by_name_in_replies_and_events() {
+        let link = "https://example.invalid/connect/synthetic-link-value";
+        let frames = [
+            json!({"jsonrpc": "2.0", "id": 1, "result": {"targets": [{"connect_url": link}]}}),
+            json!({"jsonrpc": "2.0", "method": "event", "params": {
+                "type": "connection.update", "payload": {"targets": [{"connect_url": link}]}
+            }}),
+        ];
+        for frame in frames {
+            let redacted = Redactor::new(Vec::new())
+                .expect("empty substitutions")
+                .redact_inbound(&frame.to_string());
+            let encoded = redacted.frame.expect("valid JSON").to_string();
+            assert!(!encoded.contains(link));
+            assert!(encoded.contains(REDACTED));
+            assert!(redacted.redactions.iter().any(|entry| {
+                entry.path.ends_with("connect_url") && entry.reason == "free-text"
+            }));
+        }
+    }
 }

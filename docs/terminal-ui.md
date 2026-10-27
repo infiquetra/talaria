@@ -78,3 +78,64 @@ target. Ctrl+E pauses or resumes the selected job; Ctrl+D asks before removing i
 before running it now; running a paused job also resumes its schedule. Ctrl+R reloads. Esc
 clears the filter or goes back, and asks before discarding a changed form. Run now and history
 need Hermes's dashboard routes. The screen needs a terminal at least 60 columns by 12 rows.
+
+## MCP servers
+
+`/mcp` opens the connected profile's Model Context Protocol servers. `/mcp catalogue` browses
+Hermes's catalogue; `/mcp apply` asks Hermes to apply saved changes. Tab switches lists, typing
+filters, Enter opens details or an install confirmation, and Esc clears the filter before closing.
+
+On Servers, Ctrl+T tests, Ctrl+E enables or disables, Ctrl+K saves a key, Ctrl+O starts browser
+sign-in, Ctrl+D asks before removal, and Ctrl+N adds a remote or local server. Plugin servers are
+read-only here. A local server runs a program on the gateway machine: add only programs you trust.
+Keys and environment values are masked and saved through Hermes's key API, outside server config.
+
+Saving affects new sessions. Ctrl+Y shows Hermes's warning before applying changes to the current
+session; a busy session may need another apply after its turn ends. Ctrl+R refreshes the list
+without applying anything. Removing a server keeps its saved key and sign-in in the profile.
+
+Browser sign-in opens a link only when you press O; C copies it. Over SSH, P accepts the browser's
+loopback callback address when the redirect cannot reach the gateway machine. The detail card
+also gives the command for device sign-in. Talaria shows and copies these commands; it never
+runs them. Catalogue entries that need extra values provide a terminal install command.
+
+The `mcp_*` actions can be rebound under `[keys]`: `mcp_next_tab`, `mcp_prev_tab`, `mcp_reload`,
+`mcp_add`, `mcp_test`, `mcp_toggle`, `mcp_set_key`, `mcp_sign_in`, `mcp_remove`, `mcp_apply`,
+`mcp_save`, `mcp_open_link`, `mcp_copy`, and `mcp_paste_redirect`. These bindings apply only
+inside the MCP screen.
+
+## Connectors and messaging
+
+`/connectors` and `/messaging` open two tabs for the foreground profile. Settings links to the
+same screen through **Connectors and messaging**. `/platforms` keeps Hermes's own meaning.
+
+Connectors use Nous Research's hosted tool gateway. Before the first connector call, Talaria
+asks for consent: continuing may create a free Nous guest identity for a profile without a Nous
+sign-in. Consent lasts for this process and profile, including reconnects. Opening Messaging
+does not grant it. If connectors are unavailable, the screen offers
+`hermes -p <profile> auth upgrade`; Talaria does not sign in for you.
+
+Select a connector and press Enter for its accounts. `a` adds an account, `r` renames, `x` asks
+before removing, and `h` shows retired accounts. A connection link is a credential: `o` opens an
+HTTPS link and `c` copies it only when requested. Escape stops waiting without canceling the
+link. During that wait Talaria polls every two seconds; lists otherwise refresh on changes or
+`Ctrl+R`. Space switches a connector using the member policy layer. Organization and role locks
+remain read-only. `t` opens tools, Space drafts a switch, and `Ctrl+S` shows the changes before
+`y` saves them.
+
+Messaging cards show credential presence as `set` or `not set`; stored previews are never shown.
+Non-list fields use an empty masked editor. Enter keeps a new value; Escape preserves the earlier
+draft. List fields show allowlist identifiers inside the overlay, split pasted lines or commas,
+and remove duplicates. `d` marks a field to clear; `A` shows advanced fields. `Ctrl+S` reviews
+changed keys and `y` saves. Space asks before turning a platform on or off. Saving does not restart
+the gateway; when a restart is needed, `R` opens the doctor. `t` tests the selected platform.
+
+On a waiting pairing row, `p` asks before approval. On a paired row, `x` asks before removing its
+pairing approval. Other access rules may still admit that person. A request without a request ID
+shows the command to run with its pairing code. Pairing names, account labels, and allowlist
+identifiers stay inside the overlay.
+
+One write runs at a time through its read-back. An uncertain result triggers a reload and never
+an automatic resend. Drafts survive a refusal. A successful earlier save leaves newer edits in
+place. Use Tab to switch tabs, `/` to filter, and Escape to close one layer. Editor letters remain
+literal text; confirmation cards accept only their confirm, cancel, and close actions.
