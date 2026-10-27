@@ -152,6 +152,8 @@ enum Overlay {
     Processes,
     /// A review opened with `/changes`.
     Review,
+    /// Profile settings.
+    Settings,
 }
 
 fn background_theme(color: bool) -> BackgroundTheme {
@@ -1533,7 +1535,8 @@ impl TuiScreen {
             ComposerOutcome::Submit(text) => {
                 let mut actions = vec![UserAction::Submit(text.clone())];
                 if should_record_submission(&text, has_session)
-                    && let Some(notice) = self.history.append(&text)
+                    && let Some(notice) =
+                        talaria_app::settings::append_history(&mut self.history, &text)
                 {
                     actions.push(UserAction::Notice(notice));
                 }
@@ -1681,6 +1684,31 @@ impl TuiScreen {
             Event::Key(raw) => {
                 if self.terminal.is_released() {
                     return Vec::new();
+                }
+                if let Some(settings) = &view.settings {
+                    let key = Key::from(raw);
+                    if key.kind == KeyKind::Release {
+                        return Vec::new();
+                    }
+                    if key.mods.ctrl && key.code == KeyCode::Char('z') {
+                        let mut actions = vec![UserAction::Settings(
+                            talaria_core::settings::SettingsInput::HideReveal,
+                        )];
+                        actions.extend(self.start_suspend());
+                        return actions;
+                    }
+                    if is_ctrl_c(&key) {
+                        return vec![
+                            UserAction::Settings(talaria_core::settings::SettingsInput::HideReveal),
+                            UserAction::Interrupt,
+                        ];
+                    }
+                    let input = talaria_tui::settings::route_settings(settings, &self.keymap, &key)
+                        .map_or(
+                            talaria_core::settings::SettingsInput::HideReveal,
+                            talaria_core::settings::SettingsInput::Key,
+                        );
+                    return vec![UserAction::Settings(input)];
                 }
                 if view.processes_open {
                     return view.state.map_or_else(Vec::new, |state| {
@@ -1909,6 +1937,13 @@ impl TuiScreen {
                 actions
             }
             Event::Paste(text) => {
+                if view.settings.is_some() && !self.terminal.is_released() {
+                    return vec![UserAction::Settings(
+                        talaria_core::settings::SettingsInput::Key(
+                            talaria_core::settings::SettingsKey::Paste(text),
+                        ),
+                    )];
+                }
                 if view.processes_open {
                     return Vec::new();
                 }
@@ -2415,6 +2450,16 @@ impl Screen for TuiScreen {
     fn draw(&mut self, view: &View<'_>) {
         self.sync_agents(view);
         self.apply_transcript(view);
+        if let Some(settings) = &view.settings {
+            let mut settings = settings.clone();
+            settings.help = self.keymap.settings_help();
+            self.open_overlay(Overlay::Settings);
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::settings::draw_settings(&settings, area, buf);
+            });
+            return;
+        }
+        self.close_overlay(Overlay::Settings);
         if view.processes_open {
             if self.overlay != Overlay::Processes {
                 if let Some(state) = view.state {
@@ -2759,7 +2804,7 @@ impl Screen for TuiScreen {
     }
 
     fn unrecord_submit(&mut self, text: &str) {
-        self.composer.forget_submitted(text);
+        self.composer.forget_newest_history(text);
     }
 
     fn offer_draft(&mut self, text: &str) {

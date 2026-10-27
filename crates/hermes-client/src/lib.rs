@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 pub mod channel;
+pub mod config_api;
 pub mod connect;
 pub mod discovery;
 pub mod liveness;
@@ -22,6 +23,7 @@ pub mod record;
 pub mod redact;
 pub mod replay;
 pub mod replay_source;
+pub mod rest;
 pub mod rpc;
 pub mod ticket;
 

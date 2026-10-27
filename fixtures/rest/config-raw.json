@@ -1,0 +1,23 @@
+{
+  "display": {
+    "compact": true,
+    "skin": "mono"
+  },
+  "toolsets": [
+    "hermes-cli",
+    "web"
+  ],
+  "agent": {
+    "max_turns": null
+  },
+  "auxiliary": {
+    "vision": {
+      "api_key": "${EXAMPLE_API_KEY}"
+    }
+  },
+  "delegation": {
+    "api_key": "test-secret-value-0000",
+    "base_url": "${EXAMPLE_URL}"
+  },
+  "model_context_length": 0
+}

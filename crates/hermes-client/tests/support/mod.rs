@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+pub mod mock_rest;
 pub mod peer;
 
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};

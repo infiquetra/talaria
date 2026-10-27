@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 hermes-contract.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
@@ -40,3 +41,7 @@ harness = false
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "settings_filter"
+harness = false

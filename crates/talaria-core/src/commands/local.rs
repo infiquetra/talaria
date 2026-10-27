@@ -66,6 +66,8 @@ pub enum LocalAction {
     Stop,
     /// Review the foreground session's folder. Issue #245.
     Review,
+    /// Open the settings screen.
+    Config,
 }
 
 /// One local command.
@@ -266,6 +268,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::Review,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "config",
+        aliases: &[],
+        summary: "Show and change Hermes settings for this profile",
+        args_hint: "[filter | key=value …]",
+        takes_argument: true,
+        action: LocalAction::Config,
         tag: "talaria",
     },
 ];

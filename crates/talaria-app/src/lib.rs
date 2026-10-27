@@ -37,3 +37,5 @@ pub mod subagents;
 pub mod switch;
 pub mod workspace;
 pub mod worktree;
+
+pub mod settings;
