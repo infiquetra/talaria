@@ -1,0 +1,17 @@
+{
+  "op_id": "op-test-1",
+  "seq": 1,
+  "deadline_at": 1800000300.0,
+  "settled": false,
+  "targets": [
+    {
+      "name": "github",
+      "kind": "connector",
+      "action": "connect",
+      "state": "initiated",
+      "connect_url": "https://example.invalid/connect/test"
+    }
+  ],
+  "status": "initiated",
+  "note": null
+}

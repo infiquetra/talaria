@@ -26,7 +26,12 @@ const TICKET_PREFIX: &str = "hermes-gateway-ticket.";
 const OPEN_REQUEST_LIMIT: usize = 1_024;
 
 /// Names withheld by exact name at any depth: free text in a snapshot's `info` block.
-const FREE_TEXT: [&str; 3] = ["system_prompt", "credential_hint", "launch_request"];
+const FREE_TEXT: [&str; 4] = [
+    "system_prompt",
+    "credential_hint",
+    "launch_request",
+    "connect_url",
+];
 
 /// Each method and the keys withheld at any depth below its `params`.
 const DENY_SET: &[(&str, &[&str])] = &[

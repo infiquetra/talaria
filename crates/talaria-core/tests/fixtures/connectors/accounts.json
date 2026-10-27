@@ -1,0 +1,16 @@
+{
+  "accounts": [
+    {
+      "connection_id": "conn-test-1",
+      "connector": "github",
+      "status": "active",
+      "status_reason": null,
+      "label": "test-account",
+      "alias": "work",
+      "active": true,
+      "disabled": false,
+      "created_at": "2026-10-01T00:00:00Z",
+      "updated_at": "2026-10-01T00:00:00Z"
+    }
+  ]
+}

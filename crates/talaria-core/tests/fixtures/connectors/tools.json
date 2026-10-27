@@ -1,0 +1,19 @@
+{
+  "stale": true,
+  "tools": [
+    {
+      "slug": "issues",
+      "name": "Issues",
+      "facet": "read",
+      "hints": ["read"],
+      "deprecated": false
+    },
+    {
+      "slug": "pulls",
+      "name": "Pulls",
+      "facet": "write",
+      "hints": ["write", "destructive"],
+      "deprecated": true
+    }
+  ]
+}

@@ -9,6 +9,7 @@ pub mod background;
 pub mod capabilities;
 pub mod checklist;
 pub mod commands;
+pub mod connectors;
 pub mod context;
 pub mod cron;
 pub mod diff;

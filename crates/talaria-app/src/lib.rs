@@ -12,6 +12,7 @@ pub mod clipboard;
 pub mod comforts;
 pub mod commands;
 pub mod config;
+pub mod connectors;
 pub mod connection;
 pub mod context;
 pub mod cron;

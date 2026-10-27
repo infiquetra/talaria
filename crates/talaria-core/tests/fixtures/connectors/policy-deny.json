@@ -1,0 +1,22 @@
+{
+  "layers": [
+    {
+      "kind": "member",
+      "revision": "01J00000000000000000000000",
+      "body": {
+        "mode": "deny",
+        "disabled_connectors": [],
+        "tools": {},
+        "tags": null
+      }
+    }
+  ],
+  "effective": {
+    "version": 1,
+    "revision": "01J00000000000000000000000",
+    "issued_at_ms": 1,
+    "mode": "deny",
+    "disabled_connectors": [],
+    "tools": {}
+  }
+}

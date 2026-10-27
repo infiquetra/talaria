@@ -1,0 +1,14 @@
+{
+  "owner": { "type": "account" },
+  "op_id": "op-test-1",
+  "seq": 1,
+  "settled": false,
+  "targets": [
+    {
+      "name": "github",
+      "kind": "connector",
+      "action": "connect",
+      "state": "initiated"
+    }
+  ]
+}

@@ -160,11 +160,6 @@ impl Drop for MockRest {
     }
 }
 impl MockRest {
-    pub fn allow_own_profile_selector(self, profile: &str) -> Self {
-        self.state.lock().unwrap().own_profile = Some(profile.to_owned());
-        self
-    }
-
     pub async fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -221,6 +216,12 @@ impl MockRest {
     }
     pub async fn requests(&self) -> Vec<RecordedRequest> {
         self.state.lock().unwrap().requests.clone()
+    }
+    /// Let `profile` select itself. Empty and `current` also pass. Any other name is refused.
+    /// Without this call, every profile selector is refused, as before.
+    pub fn allow_own_profile_selector(self, profile: &str) -> Self {
+        self.state.lock().unwrap().own_profile = Some(profile.to_owned());
+        self
     }
     pub fn with_route<F>(self, method: &str, path: &str, handler: F) -> Self
     where
@@ -442,6 +443,9 @@ fn respond(
                     .is_some_and(|value| value == own || value.is_empty() || value == "current")
             })
     });
+    if state.own_profile.is_some() && has_profile && !allowed_profile {
+        return json_reply(403, json!({"detail":"profile_scope_mismatch"}));
+    }
     let matching_route = state.routes.get(key).or_else(|| {
         state
             .routes
@@ -509,7 +513,14 @@ fn respond(
             deep_merge(&mut state.raw, &patch);
             json_reply(200, json!({"ok":true}))
         }
-        _ => json_reply(404, json!({"detail":"Not Found"})),
+        _ => {
+            if state.own_profile.is_some()
+                && let Some(reply) = messaging_route(request.method.as_str(), path, &body)
+            {
+                return reply;
+            }
+            json_reply(404, json!({"detail":"Not Found"}))
+        }
     }
 }
 
@@ -636,6 +647,174 @@ impl CapabilityLists {
         };
         Some(reply)
     }
+}
+
+fn messaging_route(method: &str, path: &str, body: &Value) -> Option<(u16, Vec<u8>)> {
+    let json_reply = |status, value: Value| (status, serde_json::to_vec(&value).unwrap());
+    let platforms = sample_platforms();
+    if method == "GET" && path == "/api/messaging/platforms" {
+        return Some(json_reply(200, platforms));
+    }
+    if method == "GET" && path == "/api/pairing" {
+        return Some(json_reply(
+            200,
+            json!({
+                "pending": [{
+                    "platform": "telegram",
+                    "request_id": "req-test-1",
+                    "user_id": "user-test-1",
+                    "user_name": "test-user",
+                    "age_minutes": 1
+                }],
+                "approved": [{
+                    "platform": "telegram",
+                    "user_id": "user-test-2",
+                    "user_name": "test-user",
+                    "approved_at": "2026-10-01T00:00:00Z"
+                }]
+            }),
+        ));
+    }
+    if method == "POST" && path == "/api/pairing/approve" {
+        if body.get("platform").and_then(Value::as_str).is_none()
+            || body.get("request_id").and_then(Value::as_str).is_none()
+        {
+            return Some(json_reply(400, json!({"detail":"missing fields"})));
+        }
+        return Some(json_reply(200, json!({"ok": true})));
+    }
+    if method == "POST" && path == "/api/pairing/revoke" {
+        if body.get("platform").and_then(Value::as_str).is_none()
+            || body.get("user_id").and_then(Value::as_str).is_none()
+        {
+            return Some(json_reply(400, json!({"detail":"missing fields"})));
+        }
+        return Some(json_reply(200, json!({"ok": true})));
+    }
+    let (id, test) = platform_target(path)?;
+    let Some(platform) = platforms["platforms"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == id))
+        .cloned()
+    else {
+        return Some(json_reply(
+            404,
+            json!({"detail": format!("Unknown messaging platform: {id}")}),
+        ));
+    };
+    if test {
+        return Some(json_reply(
+            200,
+            json!({"ok": false, "state": "not_configured", "message": "not running"}),
+        ));
+    }
+    if method != "PUT" {
+        return None;
+    }
+    if preview_refused(body) {
+        return Some(json_reply(
+            400,
+            json!({
+                "detail": "Refusing to save a redacted credential preview; re-enter the full secret to replace it."
+            }),
+        ));
+    }
+    let name = platform["name"].as_str().unwrap_or(id);
+    let known = platform["env_vars"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row["key"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for key in env_keys(body) {
+        if !known.iter().any(|known| known == &key) {
+            return Some(json_reply(
+                400,
+                json!({"detail": format!("{key} is not configurable for {name}")}),
+            ));
+        }
+    }
+    Some(json_reply(
+        200,
+        json!({"ok": true, "platform": platform, "hot_served": false}),
+    ))
+}
+
+fn platform_target(path: &str) -> Option<(&str, bool)> {
+    let rest = path.strip_prefix("/api/messaging/platforms/")?;
+    let mut parts = rest.split('/');
+    let id = parts.next()?;
+    if id.is_empty() {
+        return None;
+    }
+    match parts.next() {
+        None => Some((id, false)),
+        Some("test") if parts.next().is_none() => Some((id, true)),
+        _ => None,
+    }
+}
+
+fn sample_platforms() -> Value {
+    json!({
+        "env_path": null,
+        "gateway_start_command": "hermes gateway run",
+        "platforms": [
+            {
+                "id": "signal",
+                "name": "Signal",
+                "description": "Signal bridge",
+                "docs_url": "https://example.invalid/docs/signal",
+                "enabled": false,
+                "state": "not_configured",
+                "env_vars": [{
+                    "key": "SIGNAL_HTTP_URL",
+                    "required": true,
+                    "is_set": false,
+                    "value": null,
+                    "prompt": "Bridge address",
+                    "is_list": false
+                }]
+            },
+            {
+                "id": "telegram",
+                "name": "Telegram",
+                "description": "Telegram bot",
+                "docs_url": "https://example.invalid/docs/telegram",
+                "enabled": true,
+                "state": "connected",
+                "env_vars": [{
+                    "key": "TELEGRAM_ALLOWED_USERS",
+                    "required": false,
+                    "is_set": true,
+                    "value": "alpha, beta",
+                    "prompt": "Allowed users",
+                    "is_list": true
+                }]
+            }
+        ]
+    })
+}
+
+fn preview_refused(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.starts_with("«redacted"),
+        Value::Array(items) => items.iter().any(preview_refused),
+        Value::Object(map) => map.values().any(preview_refused),
+        _ => false,
+    }
+}
+
+fn env_keys(body: &Value) -> Vec<String> {
+    let mut keys = Vec::new();
+    if let Some(map) = body.get("env").and_then(Value::as_object) {
+        keys.extend(map.keys().cloned());
+    }
+    if let Some(rows) = body.get("clear_env").and_then(Value::as_array) {
+        keys.extend(rows.iter().filter_map(|value| value.as_str().map(str::to_owned)));
+    }
+    keys
 }
 fn remove_key(value: &mut Value, key: &str) {
     if let Some((first, rest)) = key.split_once('.') {

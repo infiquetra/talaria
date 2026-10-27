@@ -3,6 +3,8 @@
 //! A local command wins over a Hermes command of the same name: it is listed first, tagged
 //! `talaria`, and running it sends nothing to Hermes.
 
+use crate::connectors::{ConnectorsOpen, ConnectorsTab};
+
 /// What a local command does.
 ///
 /// Later units add one variant per command they own, so callers outside this crate keep a
@@ -83,6 +85,8 @@ pub enum LocalAction {
     MemorySettings,
     /// Manage this profile's scheduled jobs.
     Cron,
+    /// Open the connectors and messaging overlay.
+    Connectors(ConnectorsOpen),
 }
 
 /// One local command.
@@ -366,6 +370,24 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[list|new]",
         takes_argument: true,
         action: LocalAction::Cron,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "connectors",
+        aliases: &[],
+        summary: "Show connector accounts and messaging platforms",
+        args_hint: "",
+        takes_argument: true,
+        action: LocalAction::Connectors(ConnectorsOpen::Tab(ConnectorsTab::Connectors)),
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "messaging",
+        aliases: &[],
+        summary: "Show messaging platforms and connector accounts",
+        args_hint: "",
+        takes_argument: true,
+        action: LocalAction::Connectors(ConnectorsOpen::Tab(ConnectorsTab::Messaging)),
         tag: "talaria",
     },
 ];

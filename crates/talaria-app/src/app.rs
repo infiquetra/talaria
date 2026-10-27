@@ -871,6 +871,12 @@ pub struct AppState {
     review_repos: Vec<PathBuf>,
     /// Seconds since 1970 at app-clock zero, from the latest fleet snapshot.
     fleet_clock: f64,
+    /// The connectors overlay. Closed until a command opens it.
+    pub connectors: talaria_core::connectors::ConnectorsState,
+    /// Whether the connectors overlay is on screen.
+    pub connectors_open: bool,
+    /// Profiles that have agreed to a connectors call in this process.
+    pub connectors_consent: crate::connectors::ConnectorsConsent,
 }
 
 struct SubmittedAttachments {
@@ -1071,6 +1077,9 @@ impl AppState {
             automation: AutomationState::default(),
             automation_ticker: AutomationTicker::default(),
             automation_deadline: None,
+            connectors: talaria_core::connectors::ConnectorsState::new(),
+            connectors_open: false,
+            connectors_consent: crate::connectors::ConnectorsConsent::default(),
         }
     }
 
@@ -1196,6 +1205,9 @@ impl AppState {
         copy.launch_folder = self.launch_folder.clone();
         copy.launch = self.launch.clone();
         copy.sender = self.sender.clone();
+        copy.connectors = self.connectors.clone();
+        copy.connectors_open = self.connectors_open;
+        copy.connectors_consent = self.connectors_consent.clone();
         copy
     }
 
@@ -2470,6 +2482,61 @@ fn doctor_restart_input(state: &mut AppState, input: RestartInput) -> Vec<AppEff
     effects
 }
 
+/// Route a global connectors event while the overlay is open. A closed overlay ignores it.
+fn connectors_on_message(state: &mut AppState, message: &AppMessage) {
+    if !state.connectors_open {
+        return;
+    }
+    let input = match message {
+        AppMessage::Link(LinkEvent::Inbound {
+            item: Inbound::Event(event),
+            ..
+        }) => match event.frame.type_name() {
+            Some("connection.update") => {
+                let payload = event.raw.get("payload");
+                let owner = payload
+                    .and_then(|value| value.get("owner"))
+                    .and_then(|value| value.get("type"))
+                    .and_then(Value::as_str);
+                let op_id = payload
+                    .and_then(|value| value.get("op_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                Some(talaria_core::connectors::ConnectorsInput::ConnectionUpdate {
+                    op_id,
+                    owner_is_account: owner == Some("account"),
+                })
+            }
+            Some("platforms.changed") => {
+                Some(talaria_core::connectors::ConnectorsInput::PlatformsChanged)
+            }
+            Some("pairing.changed") => {
+                Some(talaria_core::connectors::ConnectorsInput::PairingChanged)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(input) = input {
+        let _ = talaria_core::connectors::update(&mut state.connectors, input, Instant::now());
+    }
+}
+
+/// An argument prints the usage line. Opening the overlay is not available yet.
+fn connectors_command(open: talaria_core::connectors::ConnectorsOpen, argument: &str) -> Vec<AppEffect> {
+    let name = match open {
+        talaria_core::connectors::ConnectorsOpen::Tab(
+            talaria_core::connectors::ConnectorsTab::Messaging,
+        ) => "messaging",
+        talaria_core::connectors::ConnectorsOpen::Tab(_) => "connectors",
+    };
+    if !argument.is_empty() {
+        return vec![notice_lines(&format!("Usage: /{name}"))];
+    }
+    todo!("connectors stub")
+}
+
 /// Apply one message. No input or output: the effects say what to do.
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let previous_capabilities_foreground = state
@@ -2477,6 +2544,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         .as_ref()
         .and_then(|_| capabilities_foreground(state));
     cron_sync_profile(state);
+    connectors_on_message(state, &message);
     let background_version = state
         .opened
         .as_ref()
@@ -4131,6 +4199,9 @@ fn local_effect(
     }
     if action == LocalAction::ModelRoles {
         return open_model_roles(state);
+    }
+    if let LocalAction::Connectors(open) = action {
+        return connectors_command(open, &argument);
     }
     if matches!(
         action,

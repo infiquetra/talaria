@@ -1,4 +1,6 @@
 use crate::commands::local::LocalAction;
+use crate::connectors::{ConnectorsOpen, ConnectorsTab};
+
 #[derive(Clone, Debug)]
 pub struct SettingsLink {
     pub label: &'static str,
@@ -35,6 +37,10 @@ pub const SETTINGS_LINKS: &[SettingsLink] = &[
         label: "Scheduled jobs",
         action: LocalAction::Cron,
     },
+    SettingsLink {
+        label: "Connectors and messaging",
+        action: LocalAction::Connectors(ConnectorsOpen::Tab(ConnectorsTab::Connectors)),
+    },
 ];
 /// The labels of the settings page's link rows, in order.
 pub const PAGE_ROWS: &[&str] = &[
@@ -45,4 +51,5 @@ pub const PAGE_ROWS: &[&str] = &[
     "Skills, toolsets and plugins",
     "Memory and curator",
     "Scheduled jobs",
+    "Connectors and messaging",
 ];

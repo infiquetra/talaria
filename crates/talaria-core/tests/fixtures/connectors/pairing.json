@@ -1,0 +1,19 @@
+{
+  "pending": [
+    {
+      "platform": "telegram",
+      "request_id": "req-test-1",
+      "user_id": "user-test-1",
+      "user_name": "pair-pending",
+      "age_minutes": 3
+    }
+  ],
+  "approved": [
+    {
+      "platform": "telegram",
+      "user_id": "user-test-2",
+      "user_name": "pair-approved",
+      "approved_at": "2026-10-01T00:00:00Z"
+    }
+  ]
+}
