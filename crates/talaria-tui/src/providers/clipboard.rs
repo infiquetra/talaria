@@ -4,7 +4,8 @@ pub fn osc52(text: &str) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let bytes = text.as_bytes();
     let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4 + 8);
-    encoded.push_str("\x1b]52;c;");
+    encoded.push(char::from(0x1b));
+    encoded.push_str("]52;c;");
     for chunk in bytes.chunks(3) {
         let a = chunk[0];
         let b = chunk.get(1).copied().unwrap_or(0);
@@ -31,8 +32,9 @@ mod tests {
     use super::osc52;
     #[test]
     fn encodes_clipboard_text() {
-        assert_eq!(osc52("ab"), "\x1b]52;c;YWI=\x07");
-        assert_eq!(osc52("abc"), "\x1b]52;c;YWJj\x07");
-        assert_eq!(osc52(""), "\x1b]52;c;\x07");
+        let prefix = format!("{}]52;c;", char::from(0x1b));
+        assert_eq!(osc52("ab"), format!("{prefix}YWI=\x07"));
+        assert_eq!(osc52("abc"), format!("{prefix}YWJj\x07"));
+        assert_eq!(osc52(""), format!("{prefix}\x07"));
     }
 }
