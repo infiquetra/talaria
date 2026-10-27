@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::capabilities::{CapTab, KeyAction};
+use crate::cron::CronAction;
 use crate::memory::MemoryKey;
 use crate::model_roles::{RolesKey, Section};
 use crate::settings::SettingsAction;
@@ -45,6 +46,16 @@ static CAP_BINDINGS: [(KeyAction, &str, &str); 24] = [
     (KeyAction::Refresh, "capabilities_refresh", "r"),
     (KeyAction::Confirm, "capabilities_confirm", "y"),
     (KeyAction::Cancel, "capabilities_cancel", "esc"),
+];
+
+static CRON_BINDINGS: [(CronAction, &str, &str); 7] = [
+    (CronAction::New, "cron_new", "ctrl+n"),
+    (CronAction::RunNow, "cron_run_now", "ctrl+t"),
+    (CronAction::TogglePause, "cron_toggle_pause", "ctrl+e"),
+    (CronAction::Remove, "cron_remove", "ctrl+d"),
+    (CronAction::Reload, "cron_reload", "ctrl+r"),
+    (CronAction::Save, "cron_save", "ctrl+s"),
+    (CronAction::OpenRun, "cron_open_run", "o"),
 ];
 
 static SETTINGS_BINDINGS: [(SettingsAction, &str, &str); 16] = [
@@ -353,6 +364,7 @@ enum Binding {
     RoutePicker(usize),
     Capabilities(usize),
     Memory(usize),
+    Cron(usize),
 }
 
 impl Binding {
@@ -366,6 +378,7 @@ impl Binding {
             .chain((0..ROUTE_PICKER_BINDINGS.len()).map(Self::RoutePicker))
             .chain((0..CAP_BINDINGS.len()).map(Self::Capabilities))
             .chain((0..MEMORY_BINDINGS.len()).map(Self::Memory))
+            .chain((0..CRON_BINDINGS.len()).map(Self::Cron))
     }
     fn index(self) -> usize {
         match self {
@@ -399,6 +412,16 @@ impl Binding {
                     + CAP_BINDINGS.len()
                     + index
             }
+            Self::Cron(index) => {
+                Action::ALL.len()
+                    + ModelAction::ALL.len()
+                    + SETTINGS_BINDINGS.len()
+                    + MODEL_ROLES_BINDINGS.len()
+                    + ROUTE_PICKER_BINDINGS.len()
+                    + CAP_BINDINGS.len()
+                    + MEMORY_BINDINGS.len()
+                    + index
+            }
         }
     }
     fn context(self) -> KeyContext {
@@ -410,6 +433,7 @@ impl Binding {
             Self::RoutePicker(_) => KeyContext::RoutePicker,
             Self::Capabilities(_) => KeyContext::Capabilities,
             Self::Memory(_) => KeyContext::Memory,
+            Self::Cron(_) => KeyContext::Cron,
         }
     }
     fn config_name(self) -> &'static str {
@@ -421,6 +445,7 @@ impl Binding {
             Self::RoutePicker(index) => ROUTE_PICKER_BINDINGS[index].1,
             Self::Capabilities(index) => CAP_BINDINGS[index].1,
             Self::Memory(index) => MEMORY_BINDINGS[index].1,
+            Self::Cron(index) => CRON_BINDINGS[index].1,
         }
     }
     fn from_config_name(name: &str) -> Option<Self> {
@@ -457,6 +482,12 @@ impl Binding {
                     .position(|(_, held, _)| *held == name)
                     .map(Self::Memory)
             })
+            .or_else(|| {
+                CRON_BINDINGS
+                    .iter()
+                    .position(|(_, held, _)| *held == name)
+                    .map(Self::Cron)
+            })
     }
     fn default_chords(self) -> &'static [&'static str] {
         match self {
@@ -467,6 +498,7 @@ impl Binding {
             Self::RoutePicker(index) => ROUTE_PICKER_BINDINGS[index].2,
             Self::Capabilities(index) => std::slice::from_ref(&CAP_BINDINGS[index].2),
             Self::Memory(index) => std::slice::from_ref(&MEMORY_BINDINGS[index].2),
+            Self::Cron(index) => std::slice::from_ref(&CRON_BINDINGS[index].2),
         }
     }
 }
@@ -1755,6 +1787,26 @@ impl KeyChord {
             *slot = true;
         }
         chord.code = parse_key(key, &mut chord.shift)?;
+        if context == KeyContext::Cron
+            && (matches!(
+                chord.code,
+                KeyCode::Esc
+                    | KeyCode::Enter
+                    | KeyCode::Tab
+                    | KeyCode::Backspace
+                    | KeyCode::Delete
+                    | KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Home
+                    | KeyCode::End
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown
+            ) || (chord.ctrl && matches!(chord.code, KeyCode::Char('c' | 'z'))))
+        {
+            return Err("reserved in scheduled jobs".to_string());
+        }
         if context == KeyContext::Pager && Self::is_pager_reserved(&chord) {
             return Err("reserved in the transcript pager".to_string());
         }
@@ -1948,6 +2000,31 @@ impl KeyMap {
                     .then(|| action.clone())
             })
     }
+    /// Resolve a scheduled jobs action in its overlay.
+    #[must_use]
+    pub fn resolve_cron(&self, context: KeyContext, key: &Key) -> Option<CronAction> {
+        if context != KeyContext::Cron {
+            return None;
+        }
+        CRON_BINDINGS
+            .iter()
+            .enumerate()
+            .find_map(|(index, (action, _, _))| {
+                self.chords[Binding::Cron(index).index()]
+                    .iter()
+                    .any(|chord| chord.matches(key))
+                    .then_some(*action)
+            })
+    }
+
+    /// Display configured chords for a scheduled jobs action.
+    #[must_use]
+    pub fn cron_labels(&self, action: CronAction) -> String {
+        CRON_BINDINGS
+            .iter()
+            .position(|(held, _, _)| *held == action)
+            .map_or_else(String::new, |index| self.labels_of(Binding::Cron(index)))
+    }
     /// Browse actions with the labels of the configured bindings, including unbound actions.
     #[must_use]
     pub fn settings_help(&self) -> Vec<(String, String)> {
@@ -2080,7 +2157,8 @@ impl KeyMap {
                 + MODEL_ROLES_BINDINGS.len()
                 + ROUTE_PICKER_BINDINGS.len()
                 + CAP_BINDINGS.len()
-                + MEMORY_BINDINGS.len()];
+                + MEMORY_BINDINGS.len()
+                + CRON_BINDINGS.len()];
         let mut notices = Vec::new();
 
         for (name, texts) in entries {

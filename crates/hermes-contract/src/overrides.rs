@@ -106,42 +106,6 @@ pub struct TranscriptMessageOverride {
 
 /// Keep a boolean `archived_truncated` and read any other value as absent, so an
 /// unexpected shape never fails the whole transcript row.
-/// A fire error is a string, null, or `{at, detail}`.
-/// Hermes `cron/jobs.py:2323-2330` and `cron/scheduler_gateway_gate.py:48-59`
-/// at tag v0.22.4 store the object form while the published schema says a string.
-pub fn deserialize_last_fire_error<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = <Option<serde_json::Value> as serde::Deserialize>::deserialize(deserializer)?;
-    Ok(match value {
-        None | Some(serde_json::Value::Null) => None,
-        Some(serde_json::Value::String(text)) => Some(text),
-        Some(serde_json::Value::Object(map)) => map
-            .get("detail")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned),
-        Some(_) => None,
-    })
-}
-
-/// `at` and `detail` from a string, an object, or null. A string has no `at`.
-pub fn last_fire_error_parts(value: &serde_json::Value) -> Option<(Option<String>, String)> {
-    match value {
-        serde_json::Value::Null => None,
-        serde_json::Value::String(text) => Some((None, text.clone())),
-        serde_json::Value::Object(map) => {
-            let detail = map.get("detail").and_then(serde_json::Value::as_str)?;
-            let at = map
-                .get("at")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned);
-            Some((at, detail.to_owned()))
-        }
-        _ => None,
-    }
-}
-
 pub fn deserialize_archived_truncated<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -156,4 +120,58 @@ where
 /// Whether Hermes left earlier archived history out before this row.
 pub fn transcript_archived_truncated(message: &crate::schemas::TranscriptMessage) -> Option<bool> {
     message.archived_truncated
+}
+
+/// Hermes records fire failures as objects in `cron/jobs.py:2323-2330` and
+/// `cron/scheduler_gateway_gate.py:48-59` at commit
+/// `4d04303818b61bf3aa09278af48356315515965b`, although the schema says string.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct CronJobRow {
+    pub job_id: String,
+    #[serde(default, deserialize_with = "deserialize_last_fire_error")]
+    pub last_fire_error: Option<FireError>,
+    #[serde(flatten)]
+    pub fields: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FireError {
+    pub at: Option<String>,
+    pub detail: String,
+}
+
+pub fn deserialize_last_fire_error<'de, D>(deserializer: D) -> Result<Option<FireError>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(last_fire_error_parts(&value).map(|(at, detail)| FireError { at, detail }))
+}
+
+/// The typed result boundary for the legacy scheduled-job management method.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct CronManageResult {
+    pub success: Option<bool>,
+    pub jobs: Option<Vec<CronJobRow>>,
+    pub job: Option<CronJobRow>,
+    #[serde(flatten)]
+    pub fields: serde_json::Map<String, serde_json::Value>,
+}
+
+pub fn last_fire_error_parts(value: &serde_json::Value) -> Option<(Option<String>, String)> {
+    match value {
+        serde_json::Value::String(detail) => Some((None, detail.clone())),
+        serde_json::Value::Object(fields) => {
+            let at = fields
+                .get("at")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            let detail = fields
+                .get("detail")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| fields.get("message").and_then(serde_json::Value::as_str))?;
+            Some((at, detail.to_owned()))
+        }
+        _ => None,
+    }
 }

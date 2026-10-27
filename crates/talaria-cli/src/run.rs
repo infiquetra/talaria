@@ -147,6 +147,7 @@ pub enum ScreenInput {
 /// the one overlay the terminal has, so only one of them is open at a time.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Overlay {
+    Cron,
     /// The live screen, with no overlay.
     Live,
     /// The profile roster and configuration panels.
@@ -213,6 +214,10 @@ fn memory_footer_key(label: &str) -> Option<talaria_core::memory::MemoryKey> {
 pub struct TuiScreen {
     providers: crate::providers_wiring::ProvidersWiring,
     providers_view: Option<ProvidersView>,
+    cron: Option<talaria_core::cron::CronView>,
+    cron_gate: talaria_tui::cron::CronFrameGate,
+    cron_history_focused: bool,
+    cron_dirty: bool,
     guard: TerminalGuard,
     input: Option<InputThread>,
     history: PromptHistory,
@@ -326,6 +331,51 @@ impl ModelOverlay {
             selected: self.selected,
             banner: self.banner.as_deref(),
         }
+    }
+}
+
+fn cron_key(
+    keymap: &KeyMap,
+    key: Key,
+    history_focused: bool,
+    question: bool,
+) -> Option<talaria_core::cron::CronKey> {
+    use talaria_core::cron::{CronAction, CronKey};
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other;
+    if plain {
+        let fixed = match key.code {
+            KeyCode::Tab if key.mods.shift => Some(CronKey::BackTab),
+            KeyCode::Tab => Some(CronKey::Tab),
+            KeyCode::Esc => Some(CronKey::Esc),
+            KeyCode::Enter => Some(CronKey::Enter),
+            KeyCode::Backspace => Some(CronKey::Backspace),
+            KeyCode::Delete => Some(CronKey::Delete),
+            KeyCode::Left => Some(CronKey::Left),
+            KeyCode::Right => Some(CronKey::Right),
+            KeyCode::Up => Some(CronKey::Up),
+            KeyCode::Down => Some(CronKey::Down),
+            KeyCode::Home => Some(CronKey::Home),
+            KeyCode::End => Some(CronKey::End),
+            KeyCode::PageUp => Some(CronKey::PageUp),
+            KeyCode::PageDown => Some(CronKey::PageDown),
+            KeyCode::Char(c @ ('y' | 'n')) if question => Some(CronKey::Char(c)),
+            _ => None,
+        };
+        if fixed.is_some() {
+            return fixed;
+        }
+    }
+    if let Some(action) = keymap.resolve_cron(KeyContext::Cron, &key)
+        && (action != CronAction::OpenRun || history_focused)
+    {
+        return Some(CronKey::Action(action));
+    }
+    match key.code {
+        KeyCode::Char(c) if plain && !c.is_control() => Some(CronKey::Char(c)),
+        _ => None,
     }
 }
 
@@ -1733,6 +1783,48 @@ impl TuiScreen {
         prefix: &mut Vec<UserAction>,
     ) -> Vec<UserAction> {
         use crossterm::event::Event;
+        if self.cron.is_some()
+            && !self.terminal.is_released()
+            && self.mcp_view.is_none()
+            && view.profiles.is_none()
+            && view.doctor.is_none()
+            && view.memory.is_none()
+            && view.capabilities.is_none()
+        {
+            match &event {
+                Event::Key(raw) => {
+                    let key = Key::from(*raw);
+                    if key.kind == KeyKind::Release {
+                        return Vec::new();
+                    }
+                    if is_ctrl_c(&key) {
+                        return vec![UserAction::Interrupt];
+                    }
+                    if key.mods.ctrl && key.code == KeyCode::Char('z') {
+                        return self.start_suspend();
+                    }
+                    let question = self
+                        .cron
+                        .as_ref()
+                        .is_some_and(|view| view.question.is_some());
+                    return cron_key(&self.keymap, key, self.cron_history_focused, question)
+                        .map(|key| {
+                            UserAction::Cron(Box::new(talaria_core::cron::CronInput::Key(key)))
+                        })
+                        .into_iter()
+                        .collect();
+                }
+                Event::Paste(text) => {
+                    return vec![UserAction::Cron(Box::new(
+                        talaria_core::cron::CronInput::Key(talaria_core::cron::CronKey::Paste(
+                            text.clone(),
+                        )),
+                    ))];
+                }
+                Event::Resize(_, _) => self.cron_dirty = true,
+                _ => {}
+            }
+        }
         if view.profiles.is_none()
             && view.settings.is_none()
             && view.doctor.is_none()
@@ -2581,6 +2673,54 @@ impl Screen for TuiScreen {
         let _ = self.terminal.copy_to_clipboard(text);
     }
 
+    fn sync_cron(
+        &mut self,
+        mut view: Option<talaria_core::cron::CronView>,
+        history_focused: bool,
+    ) -> bool {
+        use talaria_core::cron::CronAction;
+        if let Some(view) = &mut view {
+            view.hints = view
+                .hints
+                .split(" · ")
+                .map(|hint| {
+                    let Some((key, description)) = hint.split_once(' ') else {
+                        return hint.to_owned();
+                    };
+                    let action = match key {
+                        "ctrl+n" => CronAction::New,
+                        "ctrl+t" => CronAction::RunNow,
+                        "ctrl+e" => CronAction::TogglePause,
+                        "ctrl+d" => CronAction::Remove,
+                        "ctrl+r" => CronAction::Reload,
+                        "ctrl+s" => CronAction::Save,
+                        "o" => CronAction::OpenRun,
+                        _ => return hint.to_owned(),
+                    };
+                    let label = self.keymap.cron_labels(action);
+                    let label = if label.is_empty() {
+                        "unbound".into()
+                    } else {
+                        label
+                    };
+                    format!("{label} {description}")
+                })
+                .collect::<Vec<_>>()
+                .join(" · ");
+        }
+        self.cron_history_focused = history_focused;
+        let changed = match &view {
+            Some(view) => self.cron_gate.needs_draw(view),
+            None => {
+                self.cron_gate = talaria_tui::cron::CronFrameGate::new();
+                self.close_overlay(Overlay::Cron);
+                self.cron.is_some()
+            }
+        };
+        self.cron = view;
+        self.cron_dirty |= changed;
+        changed
+    }
     fn pane_settings(&self) -> talaria_app::panes::PaneSettings {
         self.config.panes.clone()
     }
@@ -2805,6 +2945,7 @@ impl Screen for TuiScreen {
             ScreenInput::Continued => {
                 let _ = self.guard.enter_raw();
                 let _ = self.terminal.reassert_modes();
+                self.cron_dirty = true;
                 Vec::new()
             }
             ScreenInput::ComfortNotice(text) => vec![UserAction::Notice(text)],
@@ -2867,6 +3008,16 @@ impl Screen for TuiScreen {
             return;
         }
         self.close_overlay(Overlay::Capabilities);
+        if let Some(cron) = self.cron.clone() {
+            if self.cron_dirty || self.overlay != Overlay::Cron {
+                self.open_overlay(Overlay::Cron);
+                let _ = self.terminal.draw_overlay(|area, buf| {
+                    talaria_tui::cron::draw_cron(&cron, area, buf);
+                });
+                self.cron_dirty = false;
+            }
+            return;
+        }
         if let Some(settings) = &view.settings {
             let mut settings = settings.clone();
             settings.help = self.keymap.settings_help();
@@ -3742,6 +3893,10 @@ fn session(
         overlay: Overlay::Live,
         mcp_view: None,
         mcp_wiring: crate::mcp_wiring::McpWiring::default(),
+        cron: None,
+        cron_gate: talaria_tui::cron::CronFrameGate::new(),
+        cron_history_focused: false,
+        cron_dirty: false,
         peek_prompts: PromptStack::new(),
         agents: None,
         agents_flash: None,
@@ -3876,6 +4031,41 @@ mod tests {
         ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors,
         ThemeInputs,
     };
+
+    #[test]
+    fn cron_open_run_binding_only_consumes_text_in_history() {
+        use talaria_core::cron::{CronAction, CronKey};
+        let map = KeyMap::defaults();
+        let key = Key::from(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert_eq!(
+            super::cron_key(&map, key, false, false),
+            Some(CronKey::Char('o'))
+        );
+        assert_eq!(
+            super::cron_key(&map, key, true, false),
+            Some(CronKey::Action(CronAction::OpenRun))
+        );
+        let key = Key::from(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(
+            super::cron_key(&map, key, false, false),
+            Some(CronKey::BackTab)
+        );
+        let entries = BTreeMap::from([("cron_open_run".into(), vec!["x".into()])]);
+        let (map, notices) = KeyMap::from_entries(&entries);
+        assert!(notices.is_empty());
+        let key = Key::from(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(
+            super::cron_key(&map, key, false, false),
+            Some(CronKey::Char('x'))
+        );
+        assert_eq!(
+            super::cron_key(&map, key, true, false),
+            Some(CronKey::Action(CronAction::OpenRun))
+        );
+        let entries = BTreeMap::from([("cron_reload".into(), vec!["esc".into()])]);
+        let (_, notices) = KeyMap::from_entries(&entries);
+        assert!(!notices.is_empty());
+    }
 
     #[test]
     fn status_keeps_the_usage_count_until_a_session_tree_is_known() {

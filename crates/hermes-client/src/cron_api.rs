@@ -4,36 +4,67 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::rest::{RequestOpts, RestClient, RestError};
+use crate::rest::{Method, RequestOpts, RestClient, RestError};
 
 pub const TRIGGER_DEADLINE: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub fn trigger_opts() -> RequestOpts {
-    todo!()
+    RequestOpts {
+        ticket: true,
+        deadline: Some(TRIGGER_DEADLINE),
+    }
 }
 
-pub fn encode_component(_text: &str) -> String {
-    todo!()
+pub fn encode_component(text: &str) -> String {
+    use std::fmt::Write;
+    let mut encoded = String::new();
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
 }
 
 pub async fn trigger_job(
-    _rest: &RestClient,
-    _profile: &str,
-    _job_id: &str,
-    _opts: RequestOpts,
+    rest: &RestClient,
+    profile: &str,
+    job_id: &str,
+    opts: RequestOpts,
 ) -> Result<(), RestError> {
-    todo!()
+    let path = format!(
+        "/api/cron/jobs/{}/trigger?profile={}",
+        encode_component(job_id),
+        encode_component(profile)
+    );
+    rest.request(Method::Post, &path, None, opts)
+        .await
+        .map(|_| ())
 }
 
 pub async fn job_runs(
-    _rest: &RestClient,
-    _profile: &str,
-    _job_id: &str,
-    _limit: u32,
+    rest: &RestClient,
+    profile: &str,
+    job_id: &str,
+    limit: u32,
 ) -> Result<Value, RestError> {
-    todo!()
+    let path = format!(
+        "/api/cron/jobs/{}/runs?profile={}&limit={limit}",
+        encode_component(job_id),
+        encode_component(profile)
+    );
+    rest.request(Method::Get, &path, None, RequestOpts::default())
+        .await
 }
 
-pub async fn delivery_targets(_rest: &RestClient) -> Result<Value, RestError> {
-    todo!()
+pub async fn delivery_targets(rest: &RestClient) -> Result<Value, RestError> {
+    rest.request(
+        Method::Get,
+        "/api/cron/delivery-targets",
+        None,
+        RequestOpts::default(),
+    )
+    .await
 }

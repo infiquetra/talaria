@@ -279,6 +279,13 @@ memory_reload = ["ctrl+r"]
 memory_copy = ["c"]
 memory_save = ["ctrl+s"]
 memory_close = ["esc"]
+cron_new = ["ctrl+n"]
+cron_run_now = ["ctrl+t"]
+cron_toggle_pause = ["ctrl+e"]
+cron_remove = ["ctrl+d"]
+cron_reload = ["ctrl+r"]
+cron_save = ["ctrl+s"]
+cron_open_run = ["o"]
 [editor]
 command = ""
 [history]
@@ -324,35 +331,25 @@ focus = false
 
 `[keys] <action>` takes a key or a list; `[]` leaves the action unbound. Ctrl+G edits the draft in
 `editor.command`, `$VISUAL`, `$EDITOR` or a fallback (graphical editors need a wait flag); Ctrl+R
-searches saved prompts; Ctrl+Z suspends to the shell until `fg`. History is kept owner-only in
-`~/.talaria/history.jsonl`; a leading space or over 100,000 characters keeps a prompt in memory
-only, and `[history] save = false` stops reading and writing it. Notification kinds are `needs_you`,
-`done` and `failed`; the bell and desktop lists choose channels separately, and `done` waits for
-`done_after_seconds` (0 to 86400). Inside Herdr, `[herdr] report_state` reports blocked, working or
-idle. `status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees
-only `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark` (`/theme` overrides it for
-one session); `theme.follow_hermes_skin = false` keeps Talaria's colours; `theme.colors` is `auto`,
-`truecolor`, `256`, `16` or `none`. `ui.reduced_motion` stops timed changes except counters, which
-change at most once a second. A paste of `paste_collapse_lines` lines or `paste_collapse_chars`
-characters becomes a label (0 turns that rule off). `TALARIA_THEME` beats `theme.mode`,
-`TALARIA_REDUCED_MOTION` beats `ui.reduced_motion`, and a non-empty `NO_COLOR` turns colour off.
-See [themes](themes.md).
+searches saved prompts; Ctrl+Z suspends to the shell until `fg`. History is kept owner-only in `~/.talaria/history.jsonl`; a leading space or over 100,000 characters
+keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
+lists choose channels separately, and `done` waits for `done_after_seconds` (0 to 86400). Inside Herdr, `[herdr] report_state` reports blocked, working or idle.
+`status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees only `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
+(`/theme` overrides it for one session); `theme.follow_hermes_skin = false` keeps Talaria's colours; `theme.colors` is `auto`, `truecolor`, `256`, `16` or `none`.
+`ui.reduced_motion` stops timed changes except counters, which change at most once a second. A paste of `paste_collapse_lines` lines or `paste_collapse_chars` characters
+becomes a label (0 turns that rule off). `TALARIA_THEME` beats `theme.mode`, `TALARIA_REDUCED_MOTION` beats `ui.reduced_motion`, and a non-empty `NO_COLOR` turns colour
+off. See [themes](themes.md).
 
 `[fleet]` runs the background fleet link of an interactive launch (never `-p`): `enabled = false`
-turns it off. It polls the liveness of profiles with a waiting or working session every
-`hot_poll_ms` (1000 to 10000), every other profile every `cold_poll_ms` (2000 to 30000, spread
-evenly), and rediscovers profiles every `backstop_s` (10 to 300); out-of-range values are clamped
-with one notice. `talaria fleet list` uses the same timings and ignores `enabled`; its JSON is
-[`talaria.fleet.v1`](formats/fleet-list-v1.md).
+turns it off. It polls the liveness of profiles with a waiting or working session every `hot_poll_ms` (1000 to 10000), every other profile every `cold_poll_ms` (2000 to
+30000, spread evenly), and rediscovers profiles every `backstop_s` (10 to 300); out-of-range values are clamped with one notice. `talaria fleet list` uses the same
+timings and ignores `enabled`; its JSON is [`talaria.fleet.v1`](formats/fleet-list-v1.md).
 
 `[subagents]` polls this session's children every `poll_s` seconds (2 to 60) while children
-are live or the agents panel is open. The open transcript polls every `tail_poll_ms`
-milliseconds (1000 to 10000). `dock_rows` (0 to 10) limits rows above the composer; 0 hides
-the dock. Invalid values use the defaults above with one notice. `/agents` and `/tasks`,
-or `agents_panel` (Alt+S), open the panel. Enter reads a transcript, D shows details, E steers,
-X stops one running child, and Shift+X twice within 3 seconds stops this session's running
-children. P asks before pausing new spawns for every session on the gateway; running children
-continue. `/agents pause` opens that confirmation; `/agents resume` resumes immediately.
+are live or the agents panel is open. The open transcript polls every `tail_poll_ms` milliseconds (1000 to 10000). `dock_rows` (0 to 10) limits rows above the composer; 0
+hides the dock. Invalid values use the defaults above with one notice. `/agents` and `/tasks`, or `agents_panel` (Alt+S), open the panel. Enter reads a transcript, D
+shows details, E steers, X stops one running child, and Shift+X twice within 3 seconds stops this session's running children. P asks before pausing new spawns for every
+session on the gateway; running children continue. `/agents pause` opens that confirmation; `/agents resume` resumes immediately.
 
 A background session reaches the operator through the same channels as the foreground one: a
 background request that needs an answer, a finished turn and a failed turn all use the `bell`
@@ -424,6 +421,8 @@ toggles the selected item, and Enter opens its detail. The hub and plugins also 
 installation; review the displayed information and confirm with Y. While typing a filter,
 search or install input, printable keys enter text, Backspace deletes, Enter submits and
 Esc cancels. These input keys stay fixed even if overlay commands are rebound.
+
+`/cron` manages scheduled jobs; see the [terminal guide](terminal-ui.md#scheduled-jobs).
 
 `/config` opens the current Hermes profile's settings. `/config <text>` opens a filter;
 each word must match the setting's key, description or category. Left and Right switch

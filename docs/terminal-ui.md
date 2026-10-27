@@ -64,3 +64,17 @@ decision before leaving. `Ctrl+R` reloads, and Esc closes the innermost editor, 
 Confirmation buttons accept Left, Right, Tab, Enter and Esc; Cancel starts selected. The fourteen
 `memory_*` bindings in the [configuration reference](configuration.md) are rebindable outside editors. Printable keys remain literal editor
 input. A dropped write is read back and never automatically resent.
+
+## Scheduled jobs
+
+`/cron` or `/cron list` opens scheduled jobs for the connected profile; `/cron new` or
+`/cron add` opens the new-job form. The list includes paused jobs. Type to filter, use the
+arrow keys to select a job, and press Enter for its details and recent runs. Tab switches
+between details and run history; `o` opens a selected finished agent run when history has focus.
+
+The `cron_*` bindings in the [configuration reference](configuration.md) apply on this screen. Ctrl+N opens the form and Ctrl+S saves it.
+The form asks for a schedule and prompt, with an optional name and repeat count, and a delivery
+target. Ctrl+E pauses or resumes the selected job; Ctrl+D asks before removing it. Ctrl+T asks
+before running it now; running a paused job also resumes its schedule. Ctrl+R reloads. Esc
+clears the filter or goes back, and asks before discarding a changed form. Run now and history
+need Hermes's dashboard routes. The screen needs a terminal at least 60 columns by 12 rows.
