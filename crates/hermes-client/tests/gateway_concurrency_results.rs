@@ -5,6 +5,7 @@
 
 #[path = "concurrency_probe/mod.rs"]
 mod concurrency_probe;
+mod support;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -1699,10 +1700,10 @@ fn is_commit_id(text: &str) -> bool {
 fn private_names() -> Vec<String> {
     let mut names = Vec::new();
     for key in ["USER", "LOGNAME"] {
-        if let Ok(value) = std::env::var(key) {
-            if !value.is_empty() {
-                names.push(value);
-            }
+        if let Ok(value) = std::env::var(key)
+            && !value.is_empty()
+        {
+            names.push(value);
         }
     }
     if let Ok(list) = std::env::var("TALARIA_PRIVATE_NAMES") {

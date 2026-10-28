@@ -5910,3 +5910,37 @@ remaining byte differences in the protected baseline or restored memory file; th
 model, toolset, curator, connector and messaging read-backs establish their restored values.
 
 **Generalizable rule.** Prove that a snapshot detects a write, then combine scoped file and job-ID comparisons with each owner's restored-value read-back.
+
+## 2026-10-27 — Concurrency probes must separate attachment from durable results
+
+**Evidence.** At the pinned Hermes v0.22.4 source, gateway/session_controls.py's
+create handler resolves a supplied title under the authority's titled-create lock
+before staging a session. Its receipt handler reads the admission ledger and saved
+result without invoking attach; its submission guard requires a subscription on
+that connection. The live concurrency harness consequently omits title, counts
+unique session ids before submitting, and exercises receipt collection separately
+from resume and a new submit. These are source readings; the implementation seat
+has not run the live gateway measurements.
+
+**Mechanism.** A shared title silently collapses parallel creates into one session.
+A durable receipt can survive a disconnected client while that client's right to
+submit still requires a fresh attachment. Treating a receipt as reattachment makes
+recovery appear successful until the next prompt is refused.
+
+**Generalizable rule.** Prove distinct sessions before measuring concurrency, and
+verify result recovery and permission to submit as separate operations.
+
+## 2026-10-27 — Recompute health before selecting concurrency defaults
+
+**Evidence.** The independent gateway concurrency health test changes a record's
+turn-failure count without editing its cached healthy flag. Selecting widths from
+that flag preserves an invalid width; recomputing the seven criteria from the
+measurements returns the last contiguous healthy width. The layout-switch test
+also verifies the selected topology, capped default, memory cost and cited records.
+
+**Mechanism.** Cached verdicts can lag measurements when a result is imported or
+revised. Both the width selection and its recommendation must use the same health
+calculation against the width-one baseline.
+
+**Generalizable rule.** Derive a measurement-based recommendation from the recorded
+measurements and baseline each time it is computed.
