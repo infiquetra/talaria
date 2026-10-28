@@ -1,0 +1,10 @@
+{
+  "session_id": "session",
+  "admission_id": "admission",
+  "seq": 1,
+  "replay_epoch": "epoch",
+  "type": "message.delta",
+  "payload": {
+    "text": "delta"
+  }
+}

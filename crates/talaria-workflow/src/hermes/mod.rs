@@ -1,4 +1,4 @@
-//! Workflow agents bind to ordinary profile-scoped Hermes sessions.
+//! Workflow agents bind to ordinary profile-scoped, durable Hermes sessions.
 pub mod brief;
 pub mod feed;
 pub mod frames;
@@ -10,26 +10,20 @@ pub mod port;
 pub mod usage;
 pub mod validate;
 pub mod wire;
-
-use std::sync::Arc;
-
 pub use crate::journal::*;
 pub use brief::{brief, correction_message};
-pub use feed::{AgentFeedItem, AgentFeedReceiver};
+pub use feed::*;
 pub use frames::{CREATE_KEYS, FrameError, create_params, submit_params};
 pub use launch::{ExplicitLaunch, LaunchDefaults, WorktreeProvider};
 pub use policy::SchemaTurnPolicy;
-pub use port::{
-    HermesPort, PollConfig, PortConfig, PortStats, RpcTimeouts, SessionInfo, SetupError,
-    StopResult, map_wire_error,
-};
+pub use port::*;
+use std::sync::Arc;
 pub use usage::{AgentUsage, call_usage};
 pub use validate::{check_schema, extract_json_candidate, validate_output};
 pub use wire::{
     Cursor, EventFrame, LinkWire, LinkWireFactory, Wire, WireError, WireEvent, WireFactory,
     accept_wire_fixture,
 };
-
 pub fn backend<G: AdmissionGate>(
     journal: Arc<RunJournal>,
     port: HermesPort,

@@ -1,6 +1,5 @@
-//! In-process event feed. Terminal views attach on their own connection.
+//! Lossless in-process event feed; terminal views use their own attachment.
 use hermes_contract::{events::EventFrame, schemas::CanonicalSnapshot};
-
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum AgentFeedItem {
@@ -26,5 +25,4 @@ pub enum AgentFeedItem {
         session_id: String,
     },
 }
-
 pub type AgentFeedReceiver = tokio::sync::mpsc::UnboundedReceiver<AgentFeedItem>;
