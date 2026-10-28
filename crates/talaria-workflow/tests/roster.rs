@@ -106,7 +106,14 @@ fn snapshot_has_no_private_fields() {
     v["providers"][0]["key_env"] = json!("private-key-marker");
     v["providers"][0]["warning"] = json!("private-warning-marker");
     v["providers"][0]["usage"] = json!({"accounts":[{"id":"private-id-marker","label":"private-label-marker","state":"ready"}]});
-    let snap = roster(&v).snapshot_with(&table(), &budget()).to_string();
+    v["providers"][0]["pricing"] = json!({"m-small":{"input":"$3.00","output":"$15.00","free":false}, "m-large":{"input":"?","output":"","free":false}});
+    let snapshot = roster(&v).snapshot_with(&table(), &budget());
+    assert_eq!(
+        snapshot["prices"]["alpha-cloud"]["m-small"]["input"],
+        "$3.00"
+    );
+    assert!(snapshot["prices"]["alpha-cloud"].get("m-large").is_none());
+    let snap = snapshot.to_string();
     for marker in [
         "private-endpoint-marker",
         "private-key-marker",

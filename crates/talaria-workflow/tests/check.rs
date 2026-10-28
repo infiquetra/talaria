@@ -33,4 +33,23 @@ fn tier_problems_and_warnings() {
     let check = check_tiers(&t, &roster(&v), &budget(), now());
     assert!(check.is_ok());
     assert!(check.warnings[0].contains("rate-limited"));
+    let mut v = data();
+    v["providers"][0]["usage"] =
+        json!({"windows":[{"label":"week","scope":"account","used_percent":85,"resets_at":null}]});
+    let check = check_tiers(&t, &roster(&v), &budget(), now());
+    assert!(check.is_ok());
+    assert_eq!(
+        check.warnings,
+        ["tier 'survey': 'alpha-cloud' has 15% of 'week' left"]
+    );
+    let b = talaria_workflow::staffing::RunBudget {
+        tokens: None,
+        money_usd: Some(1.0),
+    };
+    let check = check_tiers(&t, &roster(&data()), &b, now());
+    assert!(check.is_ok());
+    assert_eq!(
+        check.warnings,
+        ["tier 'survey': 'm-small' has no price; the money budget cannot see its cost"]
+    );
 }

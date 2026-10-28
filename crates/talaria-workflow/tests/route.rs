@@ -30,8 +30,33 @@ fn resolution_table() {
     );
     q.tier = Some("missing".into());
     assert!(r.route(&q).unwrap_err().0.contains("tier 'missing'"));
+    let empty = talaria_workflow::staffing::StaffingTable {
+        tiers: Default::default(),
+        ..table()
+    };
+    let no_table = resolver(empty, &data()).with_path("staffing.toml".into());
+    assert_eq!(
+        no_table.route(&q).unwrap_err().0,
+        "tier 'missing' needs a staffing table; create staffing.toml"
+    );
+    let configured = resolver(table(), &data()).with_path("staffing.toml".into());
+    assert_eq!(
+        configured.route(&q).unwrap_err().0,
+        "tier 'missing' is not in staffing.toml (staffing.toml); defined tiers: survey"
+    );
     q.tier = None;
     assert_eq!(r.route(&q).unwrap().source, RouteSource::ProfileDefault);
+    let mut default_table = table();
+    default_table.default_tier = Some("survey".into());
+    assert_eq!(
+        resolver(default_table, &data()).route(&q).unwrap().source,
+        RouteSource::Tier("survey".into())
+    );
+    q.profile = Some("default".into());
+    assert_eq!(
+        r.route(&q).unwrap_err().0,
+        "profile 'default' was not read at run start; name a model and provider, or a tier"
+    );
     q.model = Some("m-small".into());
     q.profile = Some("default".into());
     assert_eq!(
