@@ -5855,3 +5855,35 @@ Only terminal borders are removed when checking an empty composer; draft charact
 
 **Generalizable rule.** Wait within the original deadline, preserve complete secrecy and
 idle predicates, and delimit each command's output before interpreting its rows.
+
+## 2026-10-27 — Live smoke receipts distinguish key dispatches from observed closure
+
+**Evidence.** On candidate `6014d65`, the two phase 4b acceptance smoke runs passed all
+14 steps in 55 s and 54 s, with exit 0, no remaining smoke tab or tmux session,
+`cmp=0` and `croncmp=0`. Step times in seconds, first/second: startup 2.8/2.8;
+plain-answer 5.6/5.6; mcp-browse 2.0/2.0; capabilities-browse 2.0/2.0;
+memory-open 1.1/1.1; memory-commands 21.3/21.3; cron-browse 1.1/1.1;
+messaging-browse 2.4/2.4; connectors-consent 1.1/1.1;
+configure-secret-refused 3.6/3.6; quit 0.7/0.7; resume 9.4/9.1;
+capabilities-cli 1.2/1.2; no-gateway 0.6/0.6.
+
+**Mechanism.** All eight screen steps use visible reads (`vis`), including the inline memory
+commands; none needs recent-history reads (`rec`). Reads wait while profile data is loading.
+The source dispatches two Esc presses during MCP navigation, and one each before teardown
+for capabilities, memory and cron. If an overlay title or consent remains, teardown can
+send up to three additional Esc presses; messaging and connector consent use that
+conditional teardown directly. Successful steps require the overlay to close and the idle
+composer to return; MCP compares normalized before/after reads, and memory's first-Esc
+predicate requires it to close on that first press. The harness did not instrument actual
+conditional loop iterations, so these receipts cannot supply runtime key counts.
+
+The initial and subsequent visible reads reject all 15 ordinary-text write notices:
+`Saved.`, `Saved the key`, `MCP servers reloaded.`, `Installed `, `Removed `, `Deleted `,
+`Cron job '`, `Curator paused`, `Curator resumed`, `Curator running`, `Configured profile`,
+`Pairing approved`, `Renamed to`, `Signed in to` and `Applying `. Neither passing run
+triggered a banner failure. Protected-file byte comparisons and separate cron-ID comparisons
+support the recorded read-only behavior; no installation, consent or credential save was approved.
+
+**Generalizable rule.** Record timings and read sources, distinguish source-defined key
+bounds from observed closure, and check ordinary write notices alongside configuration bytes
+and separately stored job IDs.

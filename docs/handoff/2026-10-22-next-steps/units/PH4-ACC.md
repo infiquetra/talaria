@@ -59,6 +59,8 @@ git switch -c p4-acc-record                                # the record branch s
 
 The record branch holds documentation commits only (AC-6 proves it). After a new candidate (a fix) the branch is rebased onto it. `main` may move during the run: the record is compared with the candidate, never with `main`.
 
+Refreeze provenance, 2026-10-27: PR [#363](https://github.com/infiquetra/talaria/pull/363) fixes [#362](https://github.com/infiquetra/talaria/issues/362), aligning the messaging-update reply and cron live verdict with Hermes v0.22.4. It supersedes candidate `6049693eea301bac93559296ff57816ec97d0092` with `6014d65e58724986d4768faf20b804e73a4b5fcf`; `BASE` remains `2ee5a9e3e9bf459bd00acc037972ded5765bebd6`. All 37 agent rows were rerun on the new candidate and pass. Its single frozen release binary has SHA-256 `ddeb3bb4b05b9d40358168ce6e45a9ec3dbc1269b4edfff3bd03e5b27e2db155` and was not rebuilt during acceptance. The three foundation commits on the record branch remain `2269d4ae`, `12139735`, `04502da5`, in that order; the fourth commit records results. The 30 operator rows remain NOT RUN.
+
 Shell variables do not cross Herdr panes. At freeze the lead writes the common settings to a file next to the worktree, and every pane starts in the worktree root (`--cwd`) and runs `. ../acc.env` first. The file's location is never written in the issue, the record or the evidence.
 
 ```bash
@@ -470,7 +472,7 @@ cargo test -p talaria-app --test mcp_service --test memory_service --test cron_s
 cargo test -p talaria-app --test capabilities_service
 cargo test -p talaria-tui --test mcp_render --test mcp_props --test memory_render --test cron_render --test connectors_render --test configure_render
 cargo test --release -p talaria-tui --test capabilities_render --test capabilities_keys
-cargo test -p talaria-cli --test mcp_wiring --test capabilities_cmd --test configure_cmd
+cargo test -p hermes-client -p talaria-cli --test mcp_wiring --test capabilities_cmd --test configure_cmd
 cargo test -p talaria-cli --test live_cron run_verdict
 ```
 
@@ -492,7 +494,7 @@ PASS: `exit=0`, the FAIL count 0, the PASS count 1 or more; the bench exits 0 an
 ```bash
 TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_mcp -- --ignored --nocapture --test-threads=1 \
   live_reads_on_fixture live_reload_gate_has_no_side_effects > "$X/mcp.txt" 2>&1; echo "mcp exit=$?"
-TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_capabilities -- --ignored --nocapture live_capabilities_read > "$X/cap.txt" 2>&1; echo "cap exit=$?"
+TALARIA_LIVE_REQUIRE=1 cargo test -p hermes-client -p talaria-cli --test live_capabilities -- --ignored --nocapture live_capabilities_read > "$X/cap.txt" 2>&1; echo "cap exit=$?"
 TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-app --test live_memory reads_memory_and_curator_shapes -- --ignored --nocapture > "$X/mem.txt" 2>&1; echo "mem exit=$?"
 TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_cron -- --ignored --nocapture live_reads_on_fixture > "$X/cron.txt" 2>&1; echo "cron exit=$?"
 TALARIA_LIVE_REQUIRE=1 cargo test -p talaria-cli --test live_connectors -- --ignored --nocapture live_messaging_reads_on_fixture > "$X/msg.txt" 2>&1; echo "msg exit=$?"
@@ -518,8 +520,8 @@ cargo run -q -p record-fixture -- scan fixtures/frames
 ! grep -rn 'hermes_client' crates/talaria-core/src/configure/
 SECRET='sk-[A-Za-z0-9]{8,}|sk-or-v1-[0-9a-f]{8,}|Bearer '
 printf '%s\n' 'sk-abcdefgh12345678' | grep -cE "$SECRET"; printf '%s\n' 'sk-or-v1-0000000000' | grep -cE "$SECRET"; printf '%s\n' 'Authorization: Bearer x' | grep -cE "$SECRET"
-! git grep -nE "$SECRET" -- fixtures tools crates
-! git grep -hoE -e '--profile[ =]+"?[A-Za-z0-9_-]+' -- crates tools | sed -E 's/.*[ =]"?//' | grep -vxE 'default|fixture|nosuchprofile|nosuch'
+! git grep -nE "$SECRET" -- fixtures tools crates ':!crates/hermes-client/tests/scan.rs' ':!crates/hermes-contract/vendor/*' ':!crates/talaria-app/tests/support/mock_mcp.rs' ':!crates/talaria-cli/tests/support/model_roles_scrub.rs' ':!crates/talaria-core/src/configure/state.rs' ':!crates/talaria-core/src/mcp/text.rs' ':!crates/talaria-tui/tests/data/todo_frames.jsonl'
+! git grep -hoE -e '--profile[ =]+"?[A-Za-z0-9_-]+' -- crates tools | sed -E 's/.*[ =]"?//' | grep -vxE 'default|fixture|nosuchprofile|nosuch|to|the|needs|fixture-a'
 ```
 
 PASS: the `!` lines print nothing; every other line exits 0. The three positive controls each print 1 before the clean scan counts: the pattern is the same as AC-11's, and `sk-[A-Za-z0-9]{8,}` alone misses `sk-or-v1-...` (the hyphen after `or` ends the match). A control that prints 0 makes the row FAIL whatever the scan shows. The sentinel texts of the source scenarios (`sk-or-v1-talaria-sentinel-0000000000000000`, `tk-sentinel-4f1d`, `ev-sentinel-9a2c`, `uat-sentinel-5e2a`) are not hex strings and match none of the patterns; if a source issue's tests hold them in fixtures, that is allowed by REQ-17. A finding is a FAIL reported on this issue and a new candidate follows. Evidence: for each scan, its label (the first word of the command, or the pattern's purpose such as `no unsafe`) and its result (`clean` or the scrubbed finding lines); for the three positive controls, only the labels `control sk`, `control sk-or-v1` and `control bearer` with their counts (`1`). The control values and the `SECRET=` assignment are never pasted: they hold the very shapes AC-11 forbids anywhere in the evidence.
@@ -615,8 +617,16 @@ Rulings that go with the table:
 2. A row's result follows its Then lines, so an output the Then requires is that row's PASS (P4-04 UAT-3: the second test of the unreachable server fails to connect, "as expected"; P4-05 UAT-3 names a T16 result as FAIL and a stop).
 3. Attempts: where a source scenario allows three attempts, only the last attempt's result is the run's, and the evidence lists each (`Run 1 of 1`, with the attempts inside the block).
 4. P4-04 UAT-5 ends with the operator deleting `MCP_TALARIA_KEYED_API_KEY` and `TALARIA_PROBE_VALUE` from `fixture`'s key file. The operator logs the read-back in the comment: `grep -c -e MCP_TALARIA_KEYED_API_KEY -e TALARIA_PROBE_VALUE "$FH/.env"` prints 0 (a count only).
-5. **P4-07 UAT-6 conflicts with this unit's safety rule, and is reported before the freeze.** The scenario starts Talaria with `HERMES_HOME="$H" "$T"` on an empty folder, without `--no-ensure`, and expects the memory screen to say it is not connected. Without `--no-ensure` that launch runs `hermes gateway ensure`, which would start a gateway and fill `$H`; with `--no-ensure` (REQ-11 change 2) the binary prints `talaria: no Hermes gateway is running for this home` and exits 1 (section 2.2), so the screen is never reached. The row therefore cannot pass as written. The lead reports it on [`P4-07`](https://github.com/infiquetra/talaria/issues/258) in stage 0; the owner either rewrites the scenario to a form the binary supports or states in the issue that the screen cannot be reached without a gateway and replaces the scenario with a test. Until the issue says so, the row is `BLOCKED (not built)` and no candidate is accepted with it. The row is never run without `--no-ensure`.
+5. **P4-07 UAT-6 fails closed at startup and separately tests disconnected state.** The corrected [source scenario](https://github.com/infiquetra/talaria/issues/258) launches `HERMES_HOME="$H" "$T" --no-ensure` in a terminal pane against an empty home. It must print `talaria: no Hermes gateway is running for this home`, a `Next step:` line and `exit=1`, leaving zero entries. The memory screen cannot be reached through that launch. `cargo test -p talaria-core --test memory_state` plus a scratch probe linked against the frozen candidate's core library verifies that `MemoryInput::NotConnected` renders `Not connected to a Hermes gateway, so memory settings cannot be read.` and that `u`, `d` and `p` produce no confirmation or write effect. Redirecting the interactive launch to a non-terminal file tests the terminal guard instead; retain the pane's terminal descriptors. The row is never run without `--no-ensure`.
 6. P4-11 UAT-1 presses `t` (the platform test). Its test of an unset `SIGNAL_HTTP_URL` sends no request to a platform (the scenario expects `not set` and a line starting `Test:`); the smoke step omits `t` (section 9.3) and the scenario row keeps it.
+
+Approved source corrections on this candidate:
+
+- P4-07 UAT-3 follows both empty and non-empty `MEMORY.md` branches. If read 0 shows a size, Delete opens `This cannot be undone.` / `[ Cancel ]  [ Delete ]`, and Enter takes the default Cancel. If read 0 shows `empty`, Delete instead shows `MEMORY.md is already empty.` with no confirmation; the original memory line stays unchanged, and `cargo test -p talaria-core --test memory_state reset_flow_defaults_to_cancel` proves the non-empty default-Cancel flow. In both branches the unavailable provider switch says `Press enter to see what it needs.`, and Ctrl+R preserves the `in use` line. No agent creates file contents to reach the other branch.
+- P4-09 UAT-4 uses `"$T" fleet list --profile fixture` to read the fleet before and after cancellation. The subcommand precedes its profile flag.
+- P4-11 UAT-2 and XF-2, XF-5 and XF-7 compare consent keycaps case-insensitively while quoting the actual rendered text: `Enter continue · Esc back`.
+
+These corrections are authorized by [the command, scan and keycap ruling](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454071208), [the memory reset ruling](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454192680), [the terminal and fleet-order ruling](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454363545), and [the unit selector correction](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454970278). Selecting `hermes-client` alongside `talaria-cli` activates its shared mock's Tokio test utilities under Cargo resolver v2; no manifest or source change is needed. The secret scan exclusions cover scanner fixtures, generated prose and synthetic tokens; the expanded source-profile allowance covers prose and `fixture-a`, without expanding the evidence file's four-name allowlist.
 
 ### 7.3 Cross-feature rows XF-1 to XF-11
 
@@ -638,7 +648,7 @@ Each row: a persona, what seam it covers, steps, a binary pass rule, evidence. S
 - Evidence: V1 and the counts only.
 
 **XF-4: with no gateway the new command-line tools fail plainly and start nothing (negative).** Persona scripter. Covers P4-05 UAT-6 and P4-09 UAT-5's command with P1-12 UAT-5 on one empty Hermes home.
-- Steps: `H=$(mktemp -d)`. `HERMES_HOME="$H" "$T" capabilities skills > "$X/a.txt" 2>&1; echo "exit=$?"`; `HERMES_HOME="$H" "$T" capabilities toolsets --json > "$X/b.txt" 2>&1; echo "exit=$?"`; `HERMES_HOME="$H" "$T" configure --dry-run --json "turn on compact display" > "$X/c.txt" 2>&1; echo "exit=$?"`; `HERMES_HOME="$H" "$T" --no-ensure > "$X/d.txt" 2>&1; echo "exit=$?"` (wait at most 30 s); `ls -A "$H" | wc -l`.
+- Steps: `H=$(mktemp -d)`. `HERMES_HOME="$H" "$T" capabilities skills > "$X/a.txt" 2>&1; echo "exit=$?"`; `HERMES_HOME="$H" "$T" capabilities toolsets --json > "$X/b.txt" 2>&1; echo "exit=$?"`; `HERMES_HOME="$H" "$T" configure --dry-run --json "turn on compact display" > "$X/c.txt" 2>&1; echo "exit=$?"`; run `HERMES_HOME="$H" "$T" --no-ensure` in a pseudo-terminal or throwaway Herdr pane and capture its output and exit code as `$X/d.txt` (wait at most 30 s); `ls -A "$H" | wc -l`. Both descriptors must remain terminals so gateway discovery runs before refusal; direct file redirection would exercise the terminal guard instead.
 - Pass: `a.txt` says no Hermes gateway is running for this home with a `Next step:` line and `exit=1` (P4-05 UAT-6); `b.txt` and `c.txt` each print a line that names the gateway (`grep -ci gateway` is 1 or more), exit non-zero, and hold no `panic` or `RUST_BACKTRACE` and no JSON proposal (`"kind":"proposal"` count 0); `d.txt` holds `talaria: no Hermes gateway is running for this home` and `exit=1`; the folder listing count is 0. The exact text of `b.txt` and `c.txt` is each owner's; the tester quotes it and a text that does not mention the gateway is a FAIL reported to the owner.
 - Evidence: the four outputs (scrubbed) and the count.
 
@@ -654,7 +664,7 @@ Each row: a persona, what seam it covers, steps, a binary pass rule, evidence. S
 
 **XF-7: all six screens fit 80 by 24.** Persona developer. Covers the new overlays (the screens' 80 by 24 rule is the architecture's). Needs `tmux`.
 - Steps: `tmux new-session -d -s accxf7 -x 80 -y 24 -c "$X" "unset HERDR_ENV HERDR_PANE_ID HERDR_BIN_PATH; $T $F"`. Take this session's own idle baseline (a Herdr pane's baseline is another size and never used here): every 2 s for at most 30 s, `tmux capture-pane -p -J -t accxf7 | plain > "$X/xf7-idle-<k>.txt"`, until two captures in a row are identical and the last three non-blank lines contain no overlay title; keep those three lines as `$X/xf7-idle-tail.txt`. No stable capture within 30 s: the row FAILs with `the 80 by 24 screen never settled` and the last capture. For each of `/mcp`, `/capabilities`, `/memory-settings`, `/cron`, `/messaging`, `/connectors` (n = 1 to 6): `tmux send-keys -t accxf7 -l '<command>'`; `tmux send-keys -t accxf7 Enter`; `sleep 3`; `tmux capture-pane -p -J -t accxf7 > "$X/xf7-<n>.txt"`; `tmux send-keys -t accxf7 Escape`; `sleep 1`; `tmux capture-pane -p -J -t accxf7 > "$X/xf7-<n>-closed.txt"`; if the screen's title is still in it, send Escape once more, wait 1 s and capture again. `tmux kill-session -t accxf7`.
-- Pass: for each open capture: it holds the screen's title text (`MCP servers · profile fixture`, `Capabilities · profile fixture`, `Memory · profile fixture`, `Scheduled jobs · profile fixture`, `Connectors and messaging · profile fixture`; for `/connectors` the consent text `enter continue · esc back`), so the top is not clipped; the display-width check `python3 -c 'import sys,unicodedata as u; print(sum(1 for l in sys.stdin.read().split("\n") if sum(2 if u.east_asian_width(c) in "WF" else 0 if u.combining(c) else 1 for c in l.rstrip()) > 80))' < file` prints 0; the last non-blank line is the screen's key hint line, so the bottom is not clipped: it equals the last non-blank line of the same screen's recording under `tools/smoke/tests/fixtures/screens/phase4b/`, or, where the hint is shortened to fit 80 columns, is a non-empty prefix of it that holds `Esc` (the tester quotes both). For each closed capture: no title text of any of the six screens, and its last three non-blank lines (after `plain`) equal `$X/xf7-idle-tail.txt` (the composer rule of section 3, against this session's baseline).
+- Pass: for each open capture: it holds the screen's title text (`MCP servers · profile fixture`, `Capabilities · profile fixture`, `Memory · profile fixture`, `Scheduled jobs · profile fixture`, `Connectors and messaging · profile fixture`; for `/connectors` compare `Enter continue · Esc back` case-insensitively on keycaps), so the top is not clipped; the display-width check `python3 -c 'import sys,unicodedata as u; print(sum(1 for l in sys.stdin.read().split("\n") if sum(2 if u.east_asian_width(c) in "WF" else 0 if u.combining(c) else 1 for c in l.rstrip()) > 80))' < file` prints 0. Compare the actual footer with the last non-blank hint line in the same screen's recording under `tools/smoke/tests/fixtures/screens/phase4b/recorded/`, case-insensitively on keycaps. Either the last non-blank line, after removing a trailing `…`, equals or is a non-empty left prefix of that recorded line, or the footer wraps over the final two non-blank lines and their space-normalized concatenation equals that recorded line. A shortened prefix need not contain Esc: MCP and cron right-clip to 79 columns plus `…`, messaging shows an 80-column left prefix, memory wraps its complete 87-column footer over two lines, and capabilities and consent fit in full. Quote actual and reference hints. These forms follow [the prefix correction](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454509180) and [the wrapped-footer correction](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454576647). For each closed capture: no title text of any of the six screens, and its last three non-blank lines (after `plain`) equal `$X/xf7-idle-tail.txt` (the composer rule of section 3, against this session's baseline).
 - Evidence: the six title lines, the six counts, the six quoted hint lines and the six closed-capture checks.
 
 **XF-8: idle cost after every new screen was used.** Persona developer. Covers the six screens, the idle budget of P1-11 and the zero-idle-bytes rule of the overlays (P4-04 AC-7, P4-11 AC-10).
@@ -745,7 +755,7 @@ The sitting's own order within a group is the order in the table (P4-04 UAT-5 be
 
 ```bash
 TALARIA_PROBE_WRITES=1 cargo test -p talaria-cli --test live_mcp -- --ignored --nocapture --test-threads=1 live_add_test_toggle_remove_on_fixture
-TALARIA_PROBE_WRITES=1 cargo test -p talaria-cli --test live_capabilities -- --ignored --nocapture live_capabilities_write_on_fixture
+TALARIA_PROBE_WRITES=1 cargo test -p hermes-client -p talaria-cli --test live_capabilities -- --ignored --nocapture live_capabilities_write_on_fixture
 TALARIA_PROBE_WRITES=1 cargo test -p talaria-app --test live_memory pause_round_trip_on_fixture -- --ignored --nocapture
 TALARIA_PROBE_WRITES=1 TALARIA_CRON_FREE_ROUTE=1 cargo test -p talaria-cli --test live_cron -- --ignored --nocapture --test-threads=1 \
   live_add_pause_resume_remove_on_fixture live_run_now_and_history_on_fixture
@@ -973,6 +983,8 @@ As P1-13 REQ-12 to REQ-15 (tab closed on every path including SIGINT and SIGTERM
 
 The first live run of the new suite writes a dated entry in `docs/engineering-journal/LEARNINGS.md`: the measured step times, how many teardown Esc presses each overlay needed, which read source each screen step needed (the lagging-read lesson of P1-13), and which write banners were ordinary text. A second entry records what the operator's check taught: which operations needed a tool outside Talaria, if any, and which values did not restore byte for byte.
 
+The first two accepted live receipts did not instrument conditional Esc-loop iterations. Their journal entry therefore records source-defined initial dispatches, the conditional loop bound and successful close predicates, explicitly distinguishing them from unmeasured runtime key counts. It records visible versus recent read sources and all guarded ordinary-text banner strings; it does not reconstruct missing observations. The operator-check entry remains pending with the operator rows.
+
 ## 10. Questions the operator owns, and facts not verified
 
 ### 10.1 The shape of the record
@@ -1007,7 +1019,7 @@ The deadline of 900 s (the sum of the step limits is 630 s) and the XF-8 limits 
 
 ### 10.4 Facts not verified, to check at build time and record
 
-1. P4-07 UAT-6 as written starts Talaria without `--no-ensure` against an empty home and expects a "not connected" screen; this unit's safety rule and P1-12 UAT-5 make that impossible (section 7.2 ruling 5). The owner decides; the lead reports it in stage 0.
+1. P4-07 UAT-6 now follows the corrected owner scenario: a terminal-backed `--no-ensure` launch fails closed on an empty home, while the memory-state suite and frozen-core scratch probe independently verify disconnected rendering and zero confirmation/write effects (section 7.2 ruling 5). Its final run passes.
 2. Whether the phase 2a suite's `palette` step still passes with the phase 4a and phase 4b commands in the palette. PH2A-ACC's text says the check is a subset check; AUTO-9 is where that is proven. If it fails, the failure is a defect of the phase 2a suite's wording or of a child and goes to its owner; this unit edits neither.
 3. That `snap` moves when an MCP server or a skill changes. The MCP list lives in the profile's configuration; installed skills may live in folders that `snap` does not cover. The cron store is settled, not open: it is `cron/jobs.json` under the profile home, outside `snap` (section 2.2), so rows compare `cronids` instead. If one of them does not move `snap`, say so on the issue: the agent rows' `cmp=0` then proves less for that screen, and the source rows' own read-backs carry the proof. Also check in stage 0 that `snap` is stable between two runs a minute apart with nothing changed.
 4. That the `default` profile is served and has a model, so XF-2 can open its screens; and that the screens' titles for `default` follow the pattern of the source scenarios with the name changed (`MCP servers · profile default`). The same for the consent text of `/connectors`.
@@ -1018,6 +1030,22 @@ The deadline of 900 s (the sum of the step limits is 630 s) and the XF-8 limits 
 9. How a platform row and a catalogue row are told apart from other lines (9.8). If rows cannot be told apart, the test author reports it and the lead asks the owner for a row marker.
 10. The restart route and the `hermes config show` facts are verified in [PH4A-ACC](PH4A-ACC.md) section 2.2; recheck them only if `crates/hermes-contract/PINNED` names another release.
 11. The real wording of every constant in 9.5 on the built binary.
+
+Verification recorded for refrozen candidate `6014d65e58724986d4768faf20b804e73a4b5fcf` on 2026-10-27:
+
+- AUTO-9 passes its palette step with both phases' added local commands. AUTO-13 and AUTO-14 pass all 14 new-suite steps in 55 s and 54 s; their measured per-step times and read/teardown details are recorded in the journal. The runtime conditional Esc iteration counts were not instrumented, so only source-defined dispatches and successful close predicates are claimed.
+- The separate at-rest check waited 60 seconds with no acceptance scenario running and returned `cmp=0` and `croncmp=0`. This separately checks protected-file bytes and cron job IDs; it does not show that an MCP or skill mutation changes a top-level snapshot. Those write controls remain operator work, with each source scenario's read-back as its own proof.
+- XF-2 verifies the fixture/default screen titles and consent profile scope. XF-3 reports zero sentinel matches in its captured persistence and non-echo screen checks; absence of a match does not establish that editor keystrokes were recorded. XF-5 reports zero forbidden calls and unchanged configuration and cron IDs. These are the observed read-only guarantees, not write or account acceptance.
+- The smoke readers use the source-defined unknown-command, platform-row and catalogue-row predicates. Passing memory command reads contain the Hermes pending/curator replies and none of the unknown-command or local-memory-overlay text. The source scenario displays the unset Signal test result; no separate measurement of external platform traffic is claimed.
+- P4-09's owner explicitly allows configuration while the foreground session is busy because the configuration session is separate. XF-6 therefore continues to exclude `/configure`; its final assistant-counting check passes for the six read overlays.
+- The contract pin remains Hermes `v0.22.4`, commit `4d04303818b61bf3aa09278af48356315515965b`, so the restart/config-show facts retain the verified release stated in section 2.2. Agent evidence checks the wording it exercises, while operator-only states, mutation visibility and restoration remain pending with the 30 NOT RUN rows.
+- The negative smoke control using `/usr/bin/false` returned `FAIL startup` and exit 1 before any later step. A separate fake-title control passed startup but failed `plain-answer` and exited 1. Both left no smoke tab or tmux session and returned `cmp=0` and `croncmp=0`; neither contacted Hermes.
+
+XF-6 retains its failed first measurement and passing second run under [the unfinished-digit measurement ruling](https://github.com/infiquetra/talaria/issues/262#issuecomment-6457889482). Its counter uses completed assistant-output chunks rather than taking an unfinished digit as the final count; the supplied evidence keeps both receipts without changing the frozen product.
+
+The approved [AUTO-1 isolated-target correction](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454884791), [AUTO-3 package-selection correction](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454970278) and [AUTO-6 scoped scans](https://github.com/infiquetra/talaria/issues/262#issuecomment-6454071208) are applied directly on this refreeze's Run 1 of 1. The prior candidate's failures are not relabeled as runs of the new candidate. AUTO-8 and AUTO-9 retain both runs under [the refrozen-candidate rerun approval](https://github.com/infiquetra/talaria/issues/262#issuecomment-6457839744): the original provider-output and visible-history interactions with frozen harnesses remain disclosed, and the two-row retry passed after Stage 2 released the fixture. This was not a second full seven-suite sequence. The [AC-11 correction](https://github.com/infiquetra/talaria/issues/262#issuecomment-6455664385) uses a boundary-aware credential expression across the acceptance directory, covering generic, GitHub, Slack and bearer shapes, together with the original unanchored scan on this phase's record and evidence files. This avoids interpreting the older record's hyphenated English prose as a key while keeping the new evidence subject to the stricter literal-shape check.
+
+The [closed-record sentinel exception](https://github.com/infiquetra/talaria/issues/262#issuecomment-6455724626) excludes only `docs/acceptance/v0.7.0/phase-4a-evidence.md:2151`, the earlier record's `grep -c` command for its short synthetic sentinel prefix. That file remains untouched. Both unanchored and boundary-aware credential scans must still have zero matches on `phase-4.md` and `phase-4-evidence.md`; no new-record match is exempted.
 
 ## Appendix A: the scenarios of the accepted issues, indexed
 
@@ -1039,10 +1067,10 @@ The six accepted issues' final bodies are the authority; each scenario is rerun 
 | P4-05 UAT-6 | no gateway (negative) | A |
 | P4-07 UAT-1 | the memory screen opens with three sections and closes cleanly | A |
 | P4-07 UAT-2 | Hermes's own /memory and /curator still reach Hermes | A |
-| P4-07 UAT-3 | a cancelled delete and a refused switch change nothing | A |
+| P4-07 UAT-3 | a cancelled delete or empty-file refusal and a refused switch change nothing | A |
 | P4-07 UAT-4 | pause, resume and run the curator on fixture | O |
 | P4-07 UAT-5 | deleting USER.md on fixture empties it and says so | O |
-| P4-07 UAT-6 | with no gateway the screen says so and sends nothing | A (see 7.2 ruling 5) |
+| P4-07 UAT-6 | no-gateway startup fails closed and disconnected state sends nothing | A (see 7.2 ruling 5) |
 | P4-08 UAT-1 | browse the scheduled jobs | A |
 | P4-08 UAT-2 | create, pause, resume and remove a job | O |
 | P4-08 UAT-3 | run a job now and read its history | O |
