@@ -24,6 +24,7 @@ use crate::{
         PriceBook, Roster, RosterError, RunBudget, StaffedLaunch, StaffingResolver, StaffingTable,
         check_tiers, estimate_run_cost, staffing_drift,
     },
+    worktree::GitWorktrees,
 };
 
 pub use super::services::RunnerServices;
@@ -278,7 +279,7 @@ async fn prepare(
         output.diagnostic(e.to_string());
         2
     })?;
-    let cwd = files::absolute(&req.cwd).map_err(|e| {
+    let cwd = fs::canonicalize(&req.cwd).map_err(|e| {
         output.diagnostic(e.to_string());
         2
     })?;
@@ -884,11 +885,18 @@ async fn execute_inner(
     .map_err(|e| e.to_string())?;
     let gate = PausingGate::new(scheduler.clone());
     gate.set_paused(RunControl::pending(&dir).pause.is_some());
+    let original_launch: LaunchFile = files::read_json(&dir.path().join("launch.json"))
+        .map_err(|e| format!("cannot read launch.json: {e}"))?;
+    let worktrees = GitWorktrees::new(
+        dir.path().to_path_buf(),
+        original_launch.cwd,
+        dir.run_id().as_str().into(),
+    );
     let defaults = LaunchDefaults {
         profile: dir.manifest().profile.clone(),
         cwd: launch.cwd.clone(),
         toolsets: Some(Vec::new()),
-        worktrees: None,
+        worktrees: Some(Arc::new(worktrees)),
     };
     let for_config = StaffedLaunch::new(
         StaffingResolver::new(Arc::new(preflight.table.clone()), preflight.roster.clone()),

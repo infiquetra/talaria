@@ -1,27 +1,15 @@
-use crate::{engine::AgentRequest, hermes::WorktreeProvider};
-use std::path::{Path, PathBuf};
+//! Per-call Git worktrees retained until their owner explicitly removes them.
 
-pub struct GitWorktrees;
-pub struct WorktreeInfo {
-    pub call: String,
-    pub path: PathBuf,
-    pub branch: String,
-    pub base_commit: String,
-    pub dirty: bool,
-}
-impl GitWorktrees {
-    pub fn new(_run_dir: PathBuf, _source_cwd: PathBuf, _run_id: String) -> Self {
-        todo!()
-    }
-    pub fn list(&self) -> Vec<WorktreeInfo> {
-        todo!()
-    }
-    pub fn remove(&self, _path: &Path, _force: bool) -> Result<(), String> {
-        todo!()
-    }
-}
+mod git;
+mod provenance;
+
+pub use git::{GitWorktrees, WorktreeInfo};
+
+use crate::{engine::AgentRequest, hermes::WorktreeProvider};
+use std::path::PathBuf;
+
 impl WorktreeProvider for GitWorktrees {
-    fn worktree_for(&self, _request: &AgentRequest) -> Result<PathBuf, String> {
-        todo!()
+    fn worktree_for(&self, request: &AgentRequest) -> Result<PathBuf, String> {
+        self.for_call(&request.call_id.digest, request.call_id.occurrence)
     }
 }

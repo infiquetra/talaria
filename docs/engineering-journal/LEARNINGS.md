@@ -26,6 +26,34 @@
 
 **Generalizable rule.** Exercise the real idle loop, attach bound admissions before assuming they run, and carry the resource's profile through both effects and navigation.
 
+## 2026-10-28 — Worktree provenance and Git output need different recovery rules
+
+**Evidence.** Issue #270's independent `worktree_isolation` red run recorded 15
+constructor-stub failures before implementation. The provider implementation passes
+its creation, retained-edit, branch reattachment, lost-worktree, canonical-path and
+concurrent-creation cases. Supplementary `worktree_recovery` checks apply the collected
+binary patch to another worktree and compare committed, unstaged and untracked bytes.
+The actual resolver also passes the isolated-folder and ordinary-folder checks.
+
+**Mechanism.** A branch can survive its missing worktree folder; its sidecar's original
+base must survive reattachment too. If both branch and folder are gone, a retained
+sidecar distinguishes lost work from a never-created call. A plain directory can
+inherit its parent's Git branch, so ownership must also confirm the worktree root. Trimming
+Git path output can select a sibling repository when the actual folder ends with a
+space; a real-Git regression uses a decoy sibling to prove only the line terminator
+is removed.
+Git common-directory paths
+must be requested in absolute form. Worktree and untracked inventories use NUL
+terminators where supported. The [Git 2.31 worktree manual](https://git-scm.com/docs/git-worktree/2.31.0)
+only defines line porcelain; compatibility parsing checks real Git output and refuses
+ambiguous newline paths rather than pruning from a partial match. A
+`git diff --no-index` exit status of 1 means differences, including a new binary file,
+and is not a failed collection.
+
+**Generalizable rule.** Preserve provenance until the explicit destructive operation
+finishes, and interpret Git exit codes and machine formats per subcommand.
+
+
 ## 2026-10-28 — Probe a held file lock with a separately opened handle
 
 **Evidence.** On macOS with the pinned Rust toolchain, a second independently opened handle

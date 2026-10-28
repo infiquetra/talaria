@@ -71,3 +71,7 @@ required-features = ["hermes-live"]
 
 [[example]]
 name = "progress_dump"
+
+[[example]]
+name = "worktree_agent"
+required-features = ["mock"]
