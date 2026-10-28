@@ -6029,3 +6029,34 @@ blocking marker only while appends await their synced acknowledgements. This als
 watchdog from racing a queued disk batch. The unchanged outage and group-commit tests pass.
 
 Rule: register pending disk work with Tokio, but keep idle channel waits out of its blocking pool.
+
+
+### 2026-10-28 — A receipt read does not establish event ownership
+
+The Hermes binding's offline receipt, replay and stop tests distinguish reading an
+admission from attaching its session. A receipt can seed admission metadata for an
+explicit stop, while only creation or attachment enables its event feed. Reading
+an older admission must also preserve the latest admission used by stop; otherwise
+a concurrent history read can target the wrong generation. The receipt-only stop,
+latest-admission and replay-gap tests exercise these boundaries.
+
+The binding integrates with the real journal's durable start barrier. Offline
+backend drivers must record `AgentStarted`, or forward the engine's event channel,
+before waiting for an agent result. Resume drivers release the previous journal
+and record the new execution's start; they inspect the new transport's frames to
+prove that recovery creates and submits nothing twice.
+
+Rule: keep receipt metadata, subscription ownership and durable engine starts
+explicit, and fence stop against the latest admission's execution generation.
+
+
+### 2026-10-28 — Scope transport boundaries to the engine when adding an adapter
+
+The production Hermes binding requires normal transport dependencies in the
+workflow crate. Its earlier crate-wide transport ban rejected that adapter even
+though the engine imported none of it. The boundary test now checks terminal
+libraries across the whole dependency tree and retains the Hermes import ban in
+the engine, mock backend and dry-run modules. Core layering tests are unchanged.
+
+Rule: when a crate gains an adapter, keep the pure engine's import boundary
+explicit and retain terminal dependency bans across the entire crate.

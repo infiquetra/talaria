@@ -1,0 +1,12 @@
+{
+  "admission_id": "admission",
+  "ref": {
+    "profile_id": "fixture",
+    "session_id": "session"
+  },
+  "sequence": 1,
+  "status": "unknown",
+  "outcome": null,
+  "authority_epoch": 1,
+  "execution_generation": 1
+}

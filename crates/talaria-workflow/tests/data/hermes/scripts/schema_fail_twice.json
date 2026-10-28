@@ -1,0 +1,96 @@
+{
+  "steps": [
+    {
+      "expect": "runtime.describe",
+      "reply": "describe_ok.json"
+    },
+    {
+      "expect": "session.create",
+      "reply": "create_ok.json"
+    },
+    {
+      "expect": "prompt.submit",
+      "reply": "submit_ok.json"
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": {
+        "admission_id": "admission",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session"
+        },
+        "sequence": 1,
+        "status": "terminal",
+        "outcome": "completed",
+        "authority_epoch": 1,
+        "execution_generation": 1,
+        "result": {
+          "final_response": "{}",
+          "completed": true,
+          "failed": false,
+          "turn_exit_reason": "completed",
+          "estimated_cost_usd": 0.2,
+          "cost_status": "estimated",
+          "cost_source": "fixture"
+        },
+        "usage": {
+          "input_tokens": 8,
+          "output_tokens": 2,
+          "total_tokens": 10
+        }
+      }
+    },
+    {
+      "expect": "prompt.submit",
+      "reply": {
+        "admission_id": "correction",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session"
+        },
+        "sequence": 1,
+        "status": "started",
+        "outcome": null,
+        "authority_epoch": 1,
+        "execution_generation": 1
+      }
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": {
+        "admission_id": "correction",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session"
+        },
+        "sequence": 1,
+        "status": "terminal",
+        "outcome": "completed",
+        "authority_epoch": 1,
+        "execution_generation": 1,
+        "result": {
+          "final_response": "{}",
+          "completed": true,
+          "failed": false,
+          "turn_exit_reason": "completed",
+          "estimated_cost_usd": 0.2,
+          "cost_status": "estimated",
+          "cost_source": "fixture"
+        },
+        "usage": {
+          "input_tokens": 8,
+          "output_tokens": 2,
+          "total_tokens": 10
+        }
+      }
+    },
+    {
+      "expect": "session.list",
+      "reply": {
+        "sessions": [],
+        "scope": "live"
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+Your previous final response was rejected by the output contract validator. Validation errors:
+- $.a: first error
+- $.b[0]: second error
+
+Reply with ONLY the corrected JSON object matching the OUTPUT CONTRACT schema from your task context. No prose, no explanations.

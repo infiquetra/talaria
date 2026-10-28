@@ -1,0 +1,27 @@
+Report one finding.
+
+OUTPUT CONTRACT (machine-validated):
+Your FINAL response must be ONLY the JSON value that validates against this JSON Schema — no prose before or after it, no code fence, no explanation. Anything else costs a correction turn and, if it fails again, is handed to the caller unvalidated.
+{
+  "properties": {
+    "file": {
+      "type": "string"
+    },
+    "severity": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "severity"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,58 @@
+{
+  "steps": [
+    {
+      "expect": "runtime.describe",
+      "reply": "describe_ok.json"
+    },
+    {
+      "expect": "session.create",
+      "reply": "create_ok.json"
+    },
+    {
+      "expect": "prompt.submit",
+      "reply": "submit_ok.json"
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": {
+        "admission_id": "admission",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session"
+        },
+        "sequence": 1,
+        "status": "started",
+        "outcome": null,
+        "authority_epoch": 1,
+        "execution_generation": 1
+      },
+      "drop_after": true
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": {
+        "admission_id": "admission",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session"
+        },
+        "sequence": 1,
+        "status": "terminal",
+        "outcome": "completed",
+        "authority_epoch": 1,
+        "execution_generation": 1
+      }
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": "receipt_terminal.json"
+    },
+    {
+      "expect": "session.list",
+      "reply": {
+        "sessions": [],
+        "scope": "live"
+      }
+    }
+  ]
+}

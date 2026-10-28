@@ -1,7 +1,7 @@
 use std::{fs, path::Path, process::Command};
 
 #[test]
-fn no_terminal_or_hermes_dependencies() {
+fn engine_is_independent_and_workflow_has_no_terminal_dependencies() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest_text = fs::read_to_string(root.join("Cargo.toml")).unwrap();
     let manifest: toml::Value = toml::from_str(&manifest_text).unwrap();
@@ -9,13 +9,14 @@ fn no_terminal_or_hermes_dependencies() {
         .get("dependencies")
         .and_then(toml::Value::as_table)
         .unwrap();
-    for forbidden in ["ratatui", "crossterm", "talaria-tui", "hermes-client"] {
+    for forbidden in ["ratatui", "crossterm", "talaria-tui"] {
         assert!(
             !normal.contains_key(forbidden),
             "forbidden normal dependency {forbidden}"
         );
     }
-    let output = Command::new("cargo")
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let output = Command::new(cargo)
         .args([
             "tree",
             "-p",
@@ -34,7 +35,7 @@ fn no_terminal_or_hermes_dependencies() {
         String::from_utf8_lossy(&output.stderr)
     );
     let tree = String::from_utf8(output.stdout).unwrap();
-    for forbidden in ["ratatui", "crossterm", "talaria-tui", "hermes-client"] {
+    for forbidden in ["ratatui", "crossterm", "talaria-tui"] {
         assert!(
             !tree
                 .lines()

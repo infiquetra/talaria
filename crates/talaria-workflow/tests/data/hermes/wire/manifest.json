@@ -1,0 +1,17 @@
+[
+  {
+    "file": "create_ok.json",
+    "method": "session.create",
+    "type": "CanonicalSnapshot"
+  },
+  {
+    "file": "describe_ok.json",
+    "method": "runtime.describe",
+    "type": "RuntimeDescribeResult"
+  },
+  {
+    "file": "event_complete.json",
+    "method": "event",
+    "type": "EventFrame"
+  }
+]
