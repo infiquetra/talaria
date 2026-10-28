@@ -92,7 +92,7 @@ async fn large_payloads_round_trip_and_verify() {
             .all(|line| line.len() < 1024 * 1024)
     );
 
-    let script = source("return await agent('\\n'.repeat(600*1024),{label:'escaped'});");
+    let script = source("return await agent('x' + '\\n'.repeat(600*1024),{label:'escaped'});");
     let mut harness = Harness::new(&script);
     harness.gateway = FakeGateway::new().with_script(vec![rule("escaped", "ok", 1, None)]);
     assert_eq!(result(harness.run(&script).await.outcome), json!("ok"));
