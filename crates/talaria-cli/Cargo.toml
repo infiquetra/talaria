@@ -16,7 +16,8 @@ name = "talaria"
 path = "src/main.rs"
 
 [dependencies]
-talaria-workflow = { path = "../talaria-workflow" }
+talaria-workflow.workspace = true
+serde.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 hermes-client.workspace = true

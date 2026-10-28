@@ -299,6 +299,7 @@ async fn every_allowed_transition_round_trips() {
         vec![skipped()],
         vec![failed()],
         vec![intent(0), failed()],
+        vec![intent(0), skipped()],
         vec![intent(0), bound(), failed()],
         vec![intent(0), bound(), turn(0), failed()],
         vec![intent(0), bound(), turn(0), admitted(), failed()],
@@ -342,6 +343,7 @@ async fn every_allowed_transition_round_trips() {
     let invalid = vec![
         vec![admitted()],
         vec![intent(0), admitted()],
+        vec![intent(0), bound(), skipped()],
         vec![intent(0), bound(), intent(0)],
         vec![intent(0), bound(), turn(0), turn(1)],
         vec![intent(0), bound(), turn(0), admitted(), turn(1)],

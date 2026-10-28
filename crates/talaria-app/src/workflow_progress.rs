@@ -186,23 +186,35 @@ async fn perform(
 ) -> Vec<ProgressInput> {
     if let ProgressEffect::WriteControl(id, request) = effect {
         let dir = dir.clone();
-        let result = tokio::task::spawn_blocking(move || match request {
-            ControlRequest::Pause => RunControl::request_pause(&dir, at_ms),
-            ControlRequest::Resume => RunControl::request_resume(&dir),
-            ControlRequest::Stop => RunControl::request_stop(&dir, at_ms),
-            ControlRequest::Restart { key } => RunControl::request_restart(&dir, &key, at_ms),
+        let result = tokio::task::spawn_blocking(move || {
+            let outcome = match request {
+                ControlRequest::Pause => RunControl::request_pause(&dir, at_ms),
+                ControlRequest::Resume => RunControl::request_resume(&dir),
+                ControlRequest::Stop => RunControl::request_stop(&dir, at_ms),
+                ControlRequest::Restart { key } => RunControl::request_restart(&dir, &key, at_ms),
+            };
+            (outcome, RunControl::pending(&dir))
         })
         .await;
-        let outcome = match result {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(e)) => ControlOutcome::Refused {
-                reason: e.to_string(),
-            },
-            Err(_) => ControlOutcome::Refused {
-                reason: "control request task failed".into(),
-            },
+        let (outcome, controls) = match result {
+            Ok((outcome, controls)) => (
+                outcome.unwrap_or_else(|e| ControlOutcome::Refused {
+                    reason: e.to_string(),
+                }),
+                Some(controls),
+            ),
+            Err(_) => (
+                ControlOutcome::Refused {
+                    reason: "control request task failed".into(),
+                },
+                None,
+            ),
         };
-        return vec![ProgressInput::ControlDone(id, outcome)];
+        let mut inputs = vec![ProgressInput::ControlDone(id, outcome)];
+        if let Some(controls) = controls {
+            inputs.push(ProgressInput::Controls(controls));
+        }
+        return inputs;
     }
     let session = match &effect {
         ProgressEffect::Attach { session_id }
@@ -407,6 +419,7 @@ fn failure(error: CallError) -> GatewayFailure {
 /// One state per run survives closing the overlay. No discovery is performed here.
 #[derive(Default)]
 pub struct ProgressViews {
+    pub picker: Option<talaria_workflow::runner::ProgressPicker>,
     pub states: HashMap<PathBuf, ProgressState>,
     pub active: Option<PathBuf>,
     pub offsets: HashMap<PathBuf, u64>,
@@ -414,6 +427,19 @@ pub struct ProgressViews {
     pub last_poll_ms: u64,
     pub profiles: HashMap<PathBuf, String>,
     pub scoped: std::collections::HashSet<PathBuf>,
+    pub last_tick_ms: u64,
+}
+impl ProgressViews {
+    pub(crate) fn next_tick_ms(&self) -> Option<u64> {
+        let view = self.states.get(self.active.as_ref()?)?;
+        view.error
+            .is_none()
+            .then_some(self.last_tick_ms.max(self.last_poll_ms).saturating_add(250))
+    }
+}
+
+pub(crate) fn load_picker() -> talaria_workflow::runner::ProgressPicker {
+    talaria_workflow::runner::ProgressPicker::load(&talaria_workflow::runner::runs_dir(None))
 }
 pub struct OpenedRun {
     pub path: PathBuf,

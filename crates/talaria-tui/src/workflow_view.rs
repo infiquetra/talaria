@@ -32,6 +32,59 @@ impl Default for WorkflowTheme {
 }
 pub struct WorkflowView;
 impl WorkflowView {
+    pub fn render_picker(
+        area: Rect,
+        buf: &mut ratatui::buffer::Buffer,
+        picker: &talaria_workflow::runner::ProgressPicker,
+        theme: &WorkflowTheme,
+    ) {
+        let block = Block::bordered().title("Workflows").style(theme.normal);
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if let Some(message) = picker.empty_message() {
+            Paragraph::new(message)
+                .style(theme.muted)
+                .render(inner, buf);
+            return;
+        }
+        let room = inner.height.saturating_sub(1) as usize;
+        let start = picker
+            .selected_index()
+            .saturating_sub(room.saturating_sub(1));
+        for (i, row) in picker.rows().iter().enumerate().skip(start).take(room) {
+            let text = format!(
+                "{}  {}  {}  agents {}/{}  parked {}  tokens {}  money {}{}",
+                row.run_id,
+                row.name,
+                row.status.as_str(),
+                row.agents_finished,
+                row.agents_total_known,
+                row.parked,
+                row.tokens_spent
+                    .map_or_else(|| "-".into(), |n| n.to_string()),
+                row.money_spent_usd
+                    .map_or_else(|| "-".into(), |n| format!("{n:.4}")),
+                row.warning
+                    .as_ref()
+                    .map_or_else(String::new, |w| format!("  {w}")),
+            );
+            Paragraph::new(sanitize(&text).into_owned())
+                .style(if i == picker.selected_index() {
+                    theme.selected
+                } else {
+                    theme.normal
+                })
+                .render(
+                    Rect::new(inner.x, inner.y + (i - start) as u16, inner.width, 1),
+                    buf,
+                );
+        }
+        if inner.height > 0 {
+            Paragraph::new("↑↓ select · enter open · esc close")
+                .style(theme.muted)
+                .render(Rect::new(inner.x, inner.bottom() - 1, inner.width, 1), buf);
+        }
+    }
     pub fn draw(frame: &mut Frame, area: Rect, state: &ProgressState, theme: &WorkflowTheme) {
         Self::render(area, frame.buffer_mut(), state, theme);
     }
@@ -190,6 +243,20 @@ impl WorkflowView {
     }
 }
 pub use talaria_workflow::progress::text::run_line;
+
+pub fn picker_key_input(map: &crate::keys::KeyMap, key: crate::keys::Key) -> Option<ProgressKey> {
+    use crate::keys::{Action, KeyContext, KeyKind};
+    if key.kind == KeyKind::Release {
+        return None;
+    }
+    match map.resolve(&key, KeyContext::WorkflowProgress)? {
+        Action::ProgressUp => Some(ProgressKey::Up),
+        Action::ProgressDown => Some(ProgressKey::Down),
+        Action::OpenAgent => Some(ProgressKey::OpenAgent),
+        Action::CloseView => Some(ProgressKey::CloseView),
+        _ => None,
+    }
+}
 fn node_line(s: &ProgressState, node: &NodeKey) -> String {
     match node {
         NodeKey::Run => run_line(s),

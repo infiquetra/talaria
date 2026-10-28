@@ -3110,6 +3110,7 @@ dependencies = [
  "proptest",
  "ratatui",
  "rustix",
+ "serde",
  "serde_json",
  "shell-words",
  "talaria-app",

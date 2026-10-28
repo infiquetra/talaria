@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-28 — Waiting work and an answered pause need durable evidence
+
+**Evidence.** Offline runner regressions reproduce a missing completed-replay recording, invisible parallel waiters, and a false unanswered pause after ten seconds. CLI regressions cover replay with an empty gateway home and the plain discovery failure. The runner regression holds pause for twelve seconds, lets its active call settle, and checks both queued cancellation and unchanged gateway submission counts.
+
+**Mechanism.** A call intent now precedes the admission wait, with one scheduler poll preserving queue registration order before asynchronous journal writes. The journal grammar permits a zero-turn skip after an intent, while still refusing a skip after session creation. This is a necessary journal-layer exception: the runner cannot expose waiting work by duplicating the durable backend's intent. On stop, the runner closes admission, cancels and awaits the engine, then drains prior intent writes and finishes only calls still waiting before gateway work. Periodic journal log heartbeats prove that the live control loop is holding its gate. The view confirms a pause after one quiet second, including when newly queued intents were written after the pause request. Completed replay creates and finishes the requested recorder without constructing gateway services, retaining exclusive-file creation. Missing-profile discovery errors retain their cause and add a gateway-not-found explanation. The live control fixture counts longer so interruption has an active turn to target; QA owns its live rerun.
+
+**Generalizable rule.** Persist waiting work before blocking, distinguish local cancellation from uncertain external effects, and make control acknowledgements observable even when no work completes.
+
 ## 2026-10-28 — Journal completion can win a pending interrupt
 
 **Evidence.** `progress_live::journal_settlement_reports_whether_completion_beat_pending_interrupt` fails against the previous reducer: a completed call arriving before the interrupt acknowledgment displays the stopped footer. The regression also checks that an interrupted failure retains the stopped footer.
@@ -17,6 +25,7 @@
 **Mechanism.** Reducer ticks alone do not schedule the application loop. An open, healthy workflow view now arms a 250 ms deadline, initialized on open/reopen and advanced even while a disk poll is pending. Unchanged workflow ticks do not draw. A session-bound queued admission attaches and retries hydration after a pending snapshot, with one resume in flight per session; an unbound queued call does not attach. Workflow I/O resolves the manifest profile and keeps its own profile-scoped connection and event stream, independent of foreground link changes. Opening a workflow session also carries that profile into the normal session switch. Discovery failure retains the injected client seam; profile resolution, ticket and handshake failures remain visible. The pinned client exposes endpoint/profile ticket minting and `connect`/`handshake` plus `Client::start`, rather than a client-label argument or `Client::connect`.
 
 **Generalizable rule.** Exercise the real idle loop, attach bound admissions before assuming they run, and carry the resource's profile through both effects and navigation.
+
 ## 2026-10-28 — Probe a held file lock with a separately opened handle
 
 **Evidence.** On macOS with the pinned Rust toolchain, a second independently opened handle
@@ -6165,3 +6174,30 @@ the engine, mock backend and dry-run modules. Core layering tests are unchanged.
 
 Rule: when a crate gains an adapter, keep the pure engine's import boundary
 explicit and retain terminal dependency bans across the entire crate.
+
+## 2026-10-28 — Process handoffs must preserve serialized recorder fields and ownership
+
+**Evidence.** The runner's recording handoff test initially failed because it looked for the
+Rust field `t_ms`; the recorder serializes that field as `tMs`. With the serialized spelling,
+the real recorder writes a parent and child stream with one header, increasing sequences,
+and nondecreasing timestamps. The child-lifecycle test also checks that startup retains a
+process-id marker naming the child itself, and exit removes only that owned marker.
+
+**Mechanism.** The child uses the existing recorder and connect hook. An append writer joins
+its stream to the completed parent segment; it does not implement transport or redaction.
+Final workflow counts likewise come from the synced journal `run_finished` record: the
+journal's `summary()` returns a replay view rather than the persisted finish-count schema.
+
+**Generalizable rule.** Verify process handoffs against serialized bytes and durable ownership,
+not internal field names or a file's mere existence.
+
+## 2026-10-28 — Dropping an orchestration future must also stop its engine thread
+
+**Evidence.** The integrated runner recovery tests initially found the journal still locked
+after cancelling the runner future. The engine runs on its own thread, so aborting the
+application-channel relay did not cancel that thread or release its journal backend. The
+runner now cancels the engine and aborts the event forwarder when its task owner drops;
+resume allows a bounded interval for that release before reporting an active writer.
+
+**Rule.** Cancellation ownership must cover worker threads and channel forwarders as well as
+the future that waits for their results.

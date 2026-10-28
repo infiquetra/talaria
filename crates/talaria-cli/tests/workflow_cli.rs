@@ -637,3 +637,72 @@ fn progress_detach_keeps_runner_alive() {
     let ended = terminal.wait_exit(Duration::from_secs(5));
     assert!(!ended.timed_out);
 }
+
+#[test]
+fn completed_replay_records_only_a_header_with_no_gateway() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "foreground-wire.json")
+            .args([
+                "workflow",
+                "run",
+                "--json",
+                "--profile",
+                "fixture",
+                "--runs-dir",
+            ])
+            .arg(&runs)
+            .arg(fixture("scripts/slow.js")),
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let finished: Value = text(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["event"] == "run_finished")
+        .unwrap();
+    let record = temp.path().join("replay.jsonl");
+    let replay = output(
+        command(temp.path(), "foreground-wire.json")
+            .env_remove("TALARIA_WORKFLOW_MOCK")
+            .args(["workflow", "resume", "--json", "--record"])
+            .arg(&record)
+            .arg("--runs-dir")
+            .arg(&runs)
+            .arg(finished["run_id"].as_str().unwrap()),
+    );
+    assert!(replay.status.success(), "{}", text(&replay.stderr));
+    let rows: Vec<Value> = fs::read_to_string(&record)
+        .expect("replay recording missing")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["kind"], "header");
+    assert_eq!(
+        fs::read_dir(temp.path().join("empty-hermes"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn empty_gateway_home_reports_one_plain_gateway_not_found_line() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let out = output(
+        command(temp.path(), "foreground-wire.json")
+            .env_remove("TALARIA_WORKFLOW_MOCK")
+            .args(["workflow", "run", "--runs-dir"])
+            .arg(&runs)
+            .arg(fixture("scripts/slow.js")),
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
+    let error = text(&out.stderr);
+    assert_eq!(error.lines().count(), 1, "{error}");
+    assert!(error.contains("gateway not found"), "{error}");
+    assert!(!error.contains('\u{1b}'));
+    assert!(!runs.exists());
+}

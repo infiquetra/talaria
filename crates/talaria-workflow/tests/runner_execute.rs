@@ -814,7 +814,7 @@ fn pause_blocks_new_admissions() {
         1
     );
     assert!(
-        !records(&folder)
+        records(&folder)
             .iter()
             .any(|r| r["t"] == "call_intent" && r["label"] == "second")
     );
@@ -1170,7 +1170,7 @@ fn progress_control_files_match_view() {
         wait_for(|| records(&folder).iter().any(|r| r["t"] == "call_finished"));
         thread::sleep(Duration::from_millis(350));
         assert!(
-            !records(&folder)
+            records(&folder)
                 .iter()
                 .any(|r| r["t"] == "call_intent" && r["label"] == "second")
         );
@@ -1297,4 +1297,166 @@ fn progress_control_files_match_view() {
                 .all(|s| !s.contains(&key))
         );
     }
+}
+
+#[test]
+fn completed_replay_initializes_recording_without_gateway_frames() {
+    let h = Harness::new("return await agent('review', {label:'review'});");
+    let (first, _) = Worker::start(Start::New(h.request()), services(&h.wire, true)).finish();
+    assert_eq!(first.code, 0);
+    let frames = h.wire.frames().len();
+    let target = first.run_id.unwrap();
+    let record = h.root.join("replay.jsonl");
+    let mut req = h.resume(&target);
+    req.record = Some(record.clone());
+    let (exit, events) = Worker::start(Start::Resume(req), services(&h.wire, false)).finish();
+    assert_eq!(exit.code, 0);
+    assert!(events.iter().any(|e| e["event"] == "run_finished"));
+    let bytes = fs::read(&record).expect("completed replay must create its recording");
+    let rows: Vec<Value> = String::from_utf8(bytes.clone())
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["kind"], "header");
+    assert_eq!(h.wire.frames().len(), frames);
+    let mut req = h.resume(&target);
+    req.record = Some(record.clone());
+    let (exit, _) = Worker::start(Start::Resume(req), services(&h.wire, false)).finish();
+    assert_eq!(exit.code, 1, "replay must refuse to overwrite a recording");
+    assert_eq!(fs::read(record).unwrap(), bytes);
+}
+
+#[test]
+fn parallel_waiters_are_queued_and_cancelled_by_stop() {
+    let h = Harness::new(
+        "return await parallel([() => agent('hold first',{label:'first'}), () => agent('second',{label:'second'}), () => agent('third',{label:'third'}), () => agent('fourth',{label:'fourth'})]);",
+    );
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| {
+        records(&folder)
+            .iter()
+            .filter(|r| r["t"] == "call_intent")
+            .count()
+            == 4
+    });
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
+    let (_, view, _) = progress_view(&folder);
+    assert_eq!(
+        view.progress
+            .agents
+            .iter()
+            .filter(|a| a.state == AgentState::Queued)
+            .count(),
+        3
+    );
+    assert_eq!(
+        view.progress
+            .agents
+            .iter()
+            .filter(|a| a.state == AgentState::Running)
+            .count(),
+        1
+    );
+    let queued: Vec<_> = view
+        .progress
+        .agents
+        .iter()
+        .filter(|a| a.state == AgentState::Queued)
+        .map(|a| a.key.clone())
+        .collect();
+    let stop = request_stop(&h.runs, folder.to_str().unwrap(), Duration::from_secs(5));
+    assert_eq!(stop, StopExit::Stopped);
+    let (exit, _) = worker.finish();
+    assert_eq!(exit.code, 3);
+    let rows = records(&folder);
+    for key in queued {
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r["t"] == "call_intent" && r["key"] == key)
+                .count(),
+            1
+        );
+        assert!(rows.iter().any(|r| r["t"] == "call_finished"
+            && r["key"] == key
+            && r["outcome"]["kind"] == "failed"
+            && r["outcome"]["reason"] == "cancelled before admission"));
+        assert_eq!(count_for(&h.wire.frames(), "session.create", &key), 0);
+        assert_eq!(count_for(&h.wire.frames(), "prompt.submit", &key), 0);
+    }
+    let saved: Value =
+        serde_json::from_slice(&fs::read(folder.join("outcome.json")).unwrap()).unwrap();
+    assert_eq!(saved["reason"], "stopped");
+}
+
+#[test]
+fn paused_runner_heartbeats_keep_the_view_answered() {
+    let h = Harness::new(
+        "await agent('hold first',{label:'first'}); return await parallel([() => agent('second',{label:'second'}), () => agent('third',{label:'third'}), () => agent('fourth',{label:'fourth'})]);",
+    );
+    let worker = Worker::start(Start::New(h.request()), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
+    let (dir, mut view, mut offset) = progress_view(&folder);
+    write_pause(&folder);
+    let start = Instant::now();
+    let until = start + Duration::from_secs(12);
+    let mut released = false;
+    while Instant::now() < until {
+        if !released && start.elapsed() >= Duration::from_millis(400) {
+            h.wire.release("hold first");
+            released = true;
+            wait_for(|| {
+                records(&folder)
+                    .iter()
+                    .filter(|r| r["t"] == "call_intent")
+                    .count()
+                    == 4
+            });
+        }
+        update(
+            &mut view,
+            ProgressInput::Clock {
+                now_ms: now_ms() as i64,
+            },
+        );
+        poll_view(&dir, &mut view, &mut offset);
+        update(&mut view, ProgressInput::Tick);
+        assert!(
+            !view
+                .footer
+                .as_deref()
+                .is_some_and(|f| f.contains("no runner answered"))
+        );
+        thread::sleep(Duration::from_millis(250));
+    }
+    assert_eq!(view.run_suffix.as_deref(), Some("paused"));
+    assert_eq!(
+        view.progress
+            .agents
+            .iter()
+            .filter(|a| a.state == AgentState::Queued)
+            .count(),
+        3
+    );
+    let heartbeats: Vec<_> = records(&folder)
+        .into_iter()
+        .filter(|r| r["t"] == "engine" && r["event"]["message"] == "runner: admission gate paused")
+        .collect();
+    assert!(heartbeats.len() >= 5, "{heartbeats:?}");
+    assert_eq!(
+        h.wire
+            .frames()
+            .iter()
+            .filter(|f| f.method == "prompt.submit")
+            .count(),
+        1
+    );
+    fs::remove_file(folder.join("control/pause.json")).unwrap();
+    h.wire.release("hold first");
+    assert_eq!(worker.finish().0.code, 0);
+    let rows = records(&folder);
+    assert_eq!(rows.iter().filter(|r| r["t"] == "call_intent").count(), 4);
 }
