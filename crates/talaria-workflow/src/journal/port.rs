@@ -151,6 +151,15 @@ pub trait AdmissionGate: Send + Sync + 'static {
         reason: GateReason,
     ) -> BoxFuture<'static, GateDecision>;
     fn budget(&self) -> BudgetSnapshot;
+    fn retry_after_failure(
+        &self,
+        _request: &AgentRequest,
+        _launch: &ResolvedLaunch,
+        _last: &SettledTurn,
+        _attempt: u32,
+    ) -> bool {
+        false
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GateReason {

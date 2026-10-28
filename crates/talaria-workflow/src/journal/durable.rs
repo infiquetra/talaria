@@ -15,6 +15,7 @@ struct Inner<P, T, L, G> {
     resolver: L,
     gate: G,
     retry: RetryPolicy,
+    retried: std::sync::Mutex<std::collections::BTreeSet<String>>,
 }
 impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate>
     JournaledBackend<P, T, L, G>
@@ -36,6 +37,7 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate>
                 resolver,
                 gate,
                 retry,
+                retried: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             }),
         }
     }
@@ -177,10 +179,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             let failed_resume = (h.execution != self.journal.execution() || restart_requested)
                 && matches!(
                     h.last().map(|r| &r.record),
-                    Some(Record::CallFinished {
-                        outcome: CallOutcome::Failed { .. },
-                        ..
-                    })
+                    Some(
+                        Record::CallFinished {
+                            outcome: CallOutcome::Failed { .. },
+                            ..
+                        } | Record::CallRetryFinished { .. }
+                    )
                 );
             let fresh = h.last().is_none() || next_attempt.is_some() || failed_resume;
             let attempt = if let Some(a) = next_attempt.take() {
@@ -588,6 +592,32 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     let turns = h.turns(self.journal.dir().path())?;
                     match self.policy.after_turn(&request, &turns) {
                         NextStep::Finish(outcome) => {
+                            if matches!(outcome, AgentOutcome::Failed { .. })
+                                && !self.retried.lock().map_err(io_error)?.contains(&key)
+                            {
+                                drop(permit.take());
+                                if let Some(last) = turns.last()
+                                    && self
+                                        .gate
+                                        .retry_after_failure(&request, &launch, last, attempt)
+                                {
+                                    self.journal
+                                        .append(Record::CallRetryFinished {
+                                            key: key.clone(),
+                                            attempt,
+                                            outcome: CallOutcome::from_agent(outcome.clone()),
+                                            turns: turns.len() as u32,
+                                        })
+                                        .await?;
+                                    self.retried.lock().map_err(io_error)?.insert(key.clone());
+                                    next_attempt = Some(
+                                        attempt
+                                            .checked_add(1)
+                                            .ok_or_else(|| io_error("attempt overflow"))?,
+                                    );
+                                    continue;
+                                }
+                            }
                             return self
                                 .finish_call(&key, attempt, turns.len() as u32, outcome)
                                 .await;
@@ -659,8 +689,12 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 "turn_exit_reason",
                 "model",
                 "provider",
+                "failure_reason",
             ] {
                 if let Some(v) = result.get(field) {
+                    if field == "failure_reason" && !v.is_string() {
+                        continue;
+                    }
                     meta.insert(
                         field.into(),
                         match v {

@@ -487,6 +487,26 @@ fn is_start(r: &Record) -> bool {
     )
 }
 fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), JournalError> {
+    // Retry finishes obey precisely the failed-finish grammar.
+    if let Record::CallRetryFinished {
+        key,
+        attempt,
+        outcome,
+        turns,
+    } = next
+    {
+        return validate_transition(
+            h,
+            &Record::CallFinished {
+                key: key.clone(),
+                attempt: *attempt,
+                outcome: outcome.clone(),
+                turns: *turns,
+            },
+            line,
+        );
+    }
+
     let Some(last) = h.last() else { return Ok(()) };
     let a = h.attempt();
     let next_a = next.identity().map_or(a, |(_, a)| a);
@@ -496,10 +516,11 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
             Record::CallFinished {
                 outcome: CallOutcome::Failed { .. },
                 ..
-            } | Record::CallResolved {
-                resolution: Resolution::Rerun | Resolution::Abort,
-                ..
-            }
+            } | Record::CallRetryFinished { .. }
+                | Record::CallResolved {
+                    resolution: Resolution::Rerun | Resolution::Abort,
+                    ..
+                }
         );
         if due && a.checked_add(1) == Some(next_a) && is_start(next) {
             return Ok(());

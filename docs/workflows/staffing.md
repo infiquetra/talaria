@@ -144,8 +144,5 @@ cargo run -p talaria-workflow --features hermes-live --example staffed_run -- \
 `staffed_run` uses the run-folder constructor, which creates a run-ID folder
 under the supplied `--run-dir` parent. It prints scheduler events as JSON lines
 and finishes with spend, money text and the actual run path. Warnings and drift
-go to stderr. Both examples support `--help`; neither configures Hermes. Their
-real gateway execution requires the upstream engine, journal and Hermes binding.
-The staffing retry amendment is shipped alongside this pre-stage as
-[`journal-amendment.patch`](../../crates/talaria-workflow/src/schedule/journal-amendment.patch)
-for application to the upstream journal before building the integrated stack.
+go to stderr. Both examples support `--help`; neither configures Hermes. The staffing retry hook and version-1 retry record are integrated into the
+journal backend.
