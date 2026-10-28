@@ -6252,3 +6252,44 @@ locks remain held; a crash can then be resolved by comparing the published hashe
 
 **Generalizable rule.** Put recoverable staging under an explicitly excluded scan path and
 hold the writer locks until both publication and its ownership record agree.
+
+## 2026-10-28 — Observe terminal transitions before sending more input
+
+A successful quit marker does not prove the terminal has returned to its shell.
+The workflow smoke extension checks both foreground process state and a visible
+shell prompt in the resumed pane before it runs CLI checks in the first pane.
+The independent resume-shell-missing case keeps an exit marker but withholds the
+shell, and must fail before any CLI command. Each command also isolates newly
+appended output so old successful results cannot satisfy a later check.
+
+An Esc dismissal is sent once and observed up to three times. Retrying the key
+instead can advance a later view; the independent stuck-overlay case caught this
+in the first implementation without any assertion change.
+
+Rule: retry observations before sending another dismissal key, positively observe
+the shell after quitting, and judge commands only from their completed output.
+
+## 2026-10-28 — Check new fixtures against every existing privacy scanner
+
+A root placeholder followed by several path components passed the new workflow
+fixture scan but triggered thirteen suffix matches in the older shared scan.
+The fixture author replaced complete folder prefixes with opaque placeholders;
+the fake reconstructs real paths only at runtime. Both scanners then passed
+without changing their assertions or detection rules.
+
+Rule: use whole-folder placeholders in public fixtures and run every existing
+privacy scanner when adding a fixture family.
+
+## 2026-10-28 — Drive smoke predicates with the integrated binary's actual screen family
+
+The Stage 0 binary captures show that the empty run picker has an unprofiled boxed title,
+while a run's progress view has the profiled title. The legacy keyboard mode offers Alt+Enter;
+the active-work count is in the status line. A stopped-gateway launch uses the runner's
+`gateway not found` diagnostic. Replacing the synthetic examples with scrubbed pseudo-terminal
+and command captures exposed three screen-test failures before the new suite's parsers changed.
+Both composer hints remain accepted, active work still blocks idle checks, and earlier suites
+and their tests remain byte-identical. The loopback gateway used recorded contract frames;
+these fixtures make no live-acceptance claim.
+
+Rule: record each actual screen family before writing smoke predicates, and keep terminal
+protocol variants and wrapper exit markers explicit.

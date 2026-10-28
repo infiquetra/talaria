@@ -36,6 +36,7 @@ impl FromStr for Suite {
             "phase3" => Ok(Suite::Phase3),
             "phase4a" => Ok(Suite::Phase4a),
             "phase4b" => Ok(Suite::Phase4b),
+            "phase5" => Ok(Suite::Phase5),
             _ => Err(format!("unknown suite '{s}'; use phase1 or phase2a")),
         }
     }
@@ -52,7 +53,7 @@ impl Suite {
             Suite::Phase3 => 1200,
             Suite::Phase4a => 900,
             Suite::Phase4b => 900,
-            Suite::Phase5 => panic!("not implemented"),
+            Suite::Phase5 => 600,
         }
     }
 }

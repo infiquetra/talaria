@@ -54,7 +54,7 @@ struct Cli {
     #[arg(long, global = true, default_value = "ollama-cloud")]
     provider: String,
     /// The whole run, in seconds [default: 300 for phase1, 1800 for phase2a, 1500 for phase2b,
-    /// 1200 for phase3, 900 for phase4a and phase4b].
+    /// 1200 for phase3, 900 for phase4a and phase4b, 600 for phase5].
     #[arg(long, global = true)]
     deadline_secs: Option<u64>,
     /// The scale of the per-step limits; the deadline and the quiet periods stay.
@@ -63,7 +63,7 @@ struct Cli {
     /// Where the failure report is written.
     #[arg(long, global = true)]
     report_dir: Option<PathBuf>,
-    /// Which suite runs: phase1, phase2a, phase2b, phase3, phase4a, or phase4b.
+    /// Which suite runs: phase1, phase2a, phase2b, phase3, phase4a, phase4b, or phase5.
     #[arg(long, global = true, default_value = "phase1")]
     suite: Suite,
     /// The tmux command line the phase2a suite pastes through.
@@ -93,7 +93,7 @@ fn main() -> ExitCode {
 /// The preflight, the run and the printing.
 fn run(cli: &Cli) -> Result<u8, String> {
     let suite = cli.suite;
-    if matches!(suite, Suite::Phase4a | Suite::Phase4b) {
+    if matches!(suite, Suite::Phase4a | Suite::Phase4b | Suite::Phase5) {
         let jq_found = std::env::var_os("PATH").is_some_and(|path| {
             std::env::split_paths(&path).any(|dir| {
                 let jq = dir.join("jq");
@@ -103,6 +103,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
         if !jq_found {
             return Err(match suite {
                 Suite::Phase4a => "the phase4a suite needs jq on the PATH to parse the doctor and profiles JSON; install jq and run it again",
+                Suite::Phase5 => "the phase5 suite needs jq on the PATH to parse the workflow roster JSON; install jq and run it again",
                 _ => "the phase4b suite needs jq on the PATH to parse the capabilities JSON; install jq and run it again",
             }.to_owned());
         }
@@ -114,6 +115,8 @@ fn run(cli: &Cli) -> Result<u8, String> {
                 "the {} suite checks texts that name profile fixture, model minimax-m3.1-flash and provider ollama-cloud; run it without --profile, --model and --provider",
                 if suite == Suite::Phase4a {
                     "phase4a"
+                } else if suite == Suite::Phase5 {
+                    "phase5"
                 } else {
                     "phase4b"
                 }
@@ -274,9 +277,8 @@ fn run(cli: &Cli) -> Result<u8, String> {
     // The phase 2a run fixes its seed, so its scratch project, and with it the editor script
     // every launch line names, is known before it starts.
     let seed = match cli.suite {
-        Suite::Phase1 | Suite::Phase3 | Suite::Phase4a | Suite::Phase4b => None,
+        Suite::Phase1 | Suite::Phase3 | Suite::Phase4a | Suite::Phase4b | Suite::Phase5 => None,
         Suite::Phase2a | Suite::Phase2b => Some(rand::random::<u64>()),
-        Suite::Phase5 => panic!("not implemented"),
     };
     let (start_line, resume_line) = match (cli.suite, seed) {
         (Suite::Phase2a, Some(seed)) => {
@@ -319,7 +321,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
         Some(dir) => dir.clone(),
         None => temp_root.join(format!("smoke-report-{}", run_id())),
     };
-    if !matches!(suite, Suite::Phase4a | Suite::Phase4b) {
+    if !matches!(suite, Suite::Phase4a | Suite::Phase4b | Suite::Phase5) {
         let _ = std::fs::create_dir_all(&report_dir);
     }
 
@@ -334,7 +336,10 @@ fn run(cli: &Cli) -> Result<u8, String> {
         ),
         step_scale: cli.step_scale,
         // Phase 3 keeps its scratch only when --report-dir asks for the captures.
-        report_dir: if matches!(suite, Suite::Phase3 | Suite::Phase4a | Suite::Phase4b) {
+        report_dir: if matches!(
+            suite,
+            Suite::Phase3 | Suite::Phase4a | Suite::Phase4b | Suite::Phase5
+        ) {
             cli.report_dir.clone()
         } else {
             Some(report_dir.clone())
@@ -348,7 +353,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
     flag::register(SIGINT, Arc::clone(&stop)).map_err(|error| error.to_string())?;
     flag::register(SIGTERM, Arc::clone(&stop)).map_err(|error| error.to_string())?;
 
-    let binary_label = if matches!(suite, Suite::Phase4a | Suite::Phase4b) {
+    let binary_label = if matches!(suite, Suite::Phase4a | Suite::Phase4b | Suite::Phase5) {
         "<binary>".to_owned()
     } else {
         scrubber.scrub(&config.talaria.display().to_string())
@@ -380,7 +385,17 @@ fn run(cli: &Cli) -> Result<u8, String> {
             },
             &stop,
         ),
-        Suite::Phase5 => panic!("not implemented"),
+        Suite::Phase5 => smoke::run_smoke_5(
+            &herdr,
+            &clock,
+            &config,
+            &smoke::Phase5Config {
+                profile: cli.profile.clone(),
+                model: cli.model.clone(),
+                provider: cli.provider.clone(),
+            },
+            &stop,
+        ),
         Suite::Phase4b => smoke::suite4b::run_smoke_4b(
             &herdr,
             &clock,
@@ -401,7 +416,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
         &std::env::temp_dir(),
     );
     let public_text = |text: &str| {
-        if matches!(suite, Suite::Phase4a | Suite::Phase4b) {
+        if matches!(suite, Suite::Phase4a | Suite::Phase4b | Suite::Phase5) {
             late.scrub(&text.replace(&config.talaria.to_string_lossy().to_string(), "<binary>"))
         } else {
             late.scrub(text)
@@ -427,7 +442,8 @@ fn run(cli: &Cli) -> Result<u8, String> {
             text.push_str(&public_text(line));
             text.push('\n');
         }
-        if !matches!(suite, Suite::Phase4a | Suite::Phase4b) || !report.interrupted {
+        if !matches!(suite, Suite::Phase4a | Suite::Phase4b | Suite::Phase5) || !report.interrupted
+        {
             let _ = std::fs::create_dir_all(&report_dir);
             let _ = std::fs::write(&path, text);
             println!("report: {}", late.scrub(&path.display().to_string()));

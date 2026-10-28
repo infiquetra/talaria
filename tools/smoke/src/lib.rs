@@ -61,6 +61,7 @@ pub use steps3::{
     run_smoke_3,
 };
 pub use suite::Suite;
+pub use suite5::{Phase5Config, run_smoke_5};
 pub use terminal::{HerdrCli, NewTab, PaneId, ReadSource, TabId, TermError, Terminal};
 pub use tmux::{Paster, TmuxCli, TmuxGuard};
 pub use wording2b::{
