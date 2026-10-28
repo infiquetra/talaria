@@ -5855,3 +5855,58 @@ Only terminal borders are removed when checking an empty composer; draft charact
 
 **Generalizable rule.** Wait within the original deadline, preserve complete secrecy and
 idle predicates, and delimit each command's output before interpreting its rows.
+
+## 2026-10-27 — Live smoke receipts distinguish key dispatches from observed closure
+
+**Evidence.** On candidate `6014d65`, the two phase 4b acceptance smoke runs passed all
+14 steps in 55 s and 54 s, with exit 0, no remaining smoke tab or tmux session,
+`cmp=0` and `croncmp=0`. Step times in seconds, first/second: startup 2.8/2.8;
+plain-answer 5.6/5.6; mcp-browse 2.0/2.0; capabilities-browse 2.0/2.0;
+memory-open 1.1/1.1; memory-commands 21.3/21.3; cron-browse 1.1/1.1;
+messaging-browse 2.4/2.4; connectors-consent 1.1/1.1;
+configure-secret-refused 3.6/3.6; quit 0.7/0.7; resume 9.4/9.1;
+capabilities-cli 1.2/1.2; no-gateway 0.6/0.6.
+
+**Mechanism.** All eight screen steps use visible reads (`vis`), including the inline memory
+commands; none needs recent-history reads (`rec`). Reads wait while profile data is loading.
+The source dispatches two Esc presses during MCP navigation, and one each before teardown
+for capabilities, memory and cron. If an overlay title or consent remains, teardown can
+send up to three additional Esc presses; messaging and connector consent use that
+conditional teardown directly. Successful steps require the overlay to close and the idle
+composer to return; MCP compares normalized before/after reads, and memory's first-Esc
+predicate requires it to close on that first press. The harness did not instrument actual
+conditional loop iterations, so these receipts cannot supply runtime key counts.
+
+The initial and subsequent visible reads reject all 15 ordinary-text write notices:
+`Saved.`, `Saved the key`, `MCP servers reloaded.`, `Installed `, `Removed `, `Deleted `,
+`Cron job '`, `Curator paused`, `Curator resumed`, `Curator running`, `Configured profile`,
+`Pairing approved`, `Renamed to`, `Signed in to` and `Applying `. Neither passing run
+triggered a banner failure. Protected-file byte comparisons and separate cron-ID comparisons
+support the recorded read-only behavior; no installation, consent or credential save was approved.
+
+**Generalizable rule.** Record timings and read sources, distinguish source-defined key
+bounds from observed closure, and check ordinary write notices alongside configuration bytes
+and separately stored job IDs.
+
+## 2026-10-27 — Operator restoration needs both file controls and owner read-backs
+
+**Evidence.** The operator confirmed all 30 remaining rows on candidate `6014d65`
+in [the acceptance comment](https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665).
+The provider key, MCP server, main model and cron job were configured inside Talaria;
+the two shell-history audits returned 0. The first key save changed the protected-file
+snapshot (`cmp=1`), and final restoration returned `cmp=0` and `croncmp=0`.
+Read-backs showed no OpenRouter key, no MCP servers, the original main model and no cron jobs.
+All seven opted-in live write commands passed against Hermes v0.22.4 with no skipped test.
+
+**Mechanism.** The user-memory file is `memories/USER.md` under the profile home, so the
+top-level snapshot does not cover its deletion. The operator backed up that file, observed
+only USER.md become empty, restored the original state and compared it separately (`cmp=0`).
+Cron jobs also live outside the top-level snapshot; their IDs need the separate `cronids`
+comparison. OAuth used a browser and, over SSH, a pasted callback. Outside the five-row
+in-app check, cleanup used the Hermes skill-uninstall command, removed temporary key-file
+entries and restored the memory backup. Those operations are explicit parts of the receipt,
+not evidence that every task can be completed inside Talaria. The operator reported no
+remaining byte differences in the protected baseline or restored memory file; the individual
+model, toolset, curator, connector and messaging read-backs establish their restored values.
+
+**Generalizable rule.** Prove that a snapshot detects a write, then combine scoped file and job-ID comparisons with each owner's restored-value read-back.
