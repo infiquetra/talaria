@@ -7,3 +7,6 @@ pub mod hermes;
 pub mod journal;
 #[cfg(feature = "mock")]
 pub mod mock;
+
+pub mod schedule;
+pub mod staffing;

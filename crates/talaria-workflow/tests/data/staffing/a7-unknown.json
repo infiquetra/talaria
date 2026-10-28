@@ -1,0 +1,28 @@
+{
+  "_comment": "ModelOptionsResult and ModelOptionProvider availability fields",
+  "model": "m-small",
+  "provider": "alpha-cloud",
+  "providers": [
+    {
+      "slug": "alpha-cloud",
+      "name": "Alpha",
+      "authenticated": true,
+      "models": [
+        "m-small",
+        "m-large"
+      ],
+      "usage": {
+        "accounts": [
+          {
+            "state": "limited",
+            "resets_at": null
+          },
+          {
+            "state": "limited",
+            "resets_at": null
+          }
+        ]
+      }
+    }
+  ]
+}

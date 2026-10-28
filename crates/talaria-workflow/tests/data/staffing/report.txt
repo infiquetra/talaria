@@ -1,0 +1,13 @@
+Roster for profile fixture at 2026-10-22 16:00 UTC
+
+Providers (signed in)
+  ollama-cloud   12 models   ready
+  example-cloud   8 models   limited until 16:30 UTC
+
+Tiers
+  survey   minimax-m3.1-flash on ollama-cloud            unknown       ok
+  judge    big-model on example-cloud (effort high)     $3.00/$15.00  warning: rate-limited until 16:30 UTC
+
+Limits: 10 agents at once; per provider: ollama-cloud 4
+Budget: none
+Estimate: no estimate without a token budget; tier prices: survey unknown, judge $3.00/$15.00 per million tokens

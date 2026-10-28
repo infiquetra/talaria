@@ -15,6 +15,9 @@ fake-gateway = []
 hermes-live = []
 
 [dependencies]
+toml.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
 futures-util.workspace = true
 hermes-client.workspace = true
 hermes-contract.workspace = true
@@ -55,3 +58,11 @@ required-features = ["mock", "fake-gateway"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "roster"
+required-features = ["hermes-live"]
+
+[[example]]
+name = "staffed_run"
+required-features = ["hermes-live"]

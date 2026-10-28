@@ -1,0 +1,8 @@
+version = 1
+
+[tiers.survey]
+model = "minimax-m3.1-flash"
+provider = "ollama-cloud"
+
+[limits]
+max_in_flight = 10

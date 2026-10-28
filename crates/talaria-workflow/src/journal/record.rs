@@ -65,9 +65,27 @@ pub struct FinishSummary {
     pub parked: usize,
     pub unfinished: usize,
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "t", rename_all = "snake_case")]
-pub enum Record {
+// Keep public constructors compatible while the wire format grows optional fields.
+macro_rules! records {
+    ($($variant:ident { $($(#[$attribute:meta])* $field:ident: $ty:ty),* $(,)? }),* $(,)?) => {
+        #[derive(Clone, Debug, PartialEq)]
+        pub enum Record { $($variant { $($field: $ty),* }),* }
+        #[derive(Serialize, Deserialize)]
+        #[serde(tag = "t", rename_all = "snake_case")]
+        enum RecordWire { $($variant { $($(#[$attribute])* $field: $ty),* }),* }
+        impl From<Record> for RecordWire {
+            fn from(record: Record) -> Self { match record {
+                $(Record::$variant { $($field),* } => Self::$variant { $($field),* }),*
+            } }
+        }
+        impl From<RecordWire> for Record {
+            fn from(record: RecordWire) -> Self { match record {
+                $(RecordWire::$variant { $($field),* } => Self::$variant { $($field),* }),*
+            } }
+        }
+    };
+}
+records! {
     RunStarted {
         run_id: String,
         script_sha256: String,
@@ -158,6 +176,62 @@ pub enum Record {
         outcome: RunOutcomeKind,
         summary: FinishSummary,
     },
+    CallRetryFinished { key: String, attempt: u32, outcome: CallOutcome, turns: u32 },
+}
+impl Serialize for Record {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if let Self::CallRetryFinished {
+            key,
+            attempt,
+            outcome,
+            turns,
+        } = self
+        {
+            #[derive(Serialize)]
+            struct RetryFinish<'a> {
+                t: &'static str,
+                key: &'a str,
+                attempt: u32,
+                outcome: &'a CallOutcome,
+                turns: u32,
+                retry: bool,
+            }
+            return RetryFinish {
+                t: "call_finished",
+                key,
+                attempt: *attempt,
+                outcome,
+                turns: *turns,
+                retry: true,
+            }
+            .serialize(serializer);
+        }
+        RecordWire::from(self.clone()).serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for Record {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut value = Value::deserialize(deserializer)?;
+        if value["t"] == "call_retry_finished" {
+            return Err(serde::de::Error::custom("unknown record type"));
+        }
+        if value["t"] == "call_finished" && value.get("retry").is_some() {
+            let retry = value["retry"]
+                .as_bool()
+                .ok_or_else(|| serde::de::Error::custom("retry must be a boolean"))?;
+            if retry {
+                value["t"] = Value::String("call_retry_finished".into());
+            }
+        }
+        if value["t"] == "call_retry_finished"
+            && !matches!(value["outcome"]["kind"].as_str(), Some("failed"))
+        {
+            return Err(serde::de::Error::custom("a retry finish must fail"));
+        }
+        serde_json::from_value::<RecordWire>(value)
+            .map(Into::into)
+            .map_err(serde::de::Error::custom)
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -178,7 +252,7 @@ impl Record {
             Self::TurnSettled { .. } => "turn_settled",
             Self::CallAttention { .. } => "call_attention",
             Self::CallResolved { .. } => "call_resolved",
-            Self::CallFinished { .. } => "call_finished",
+            Self::CallFinished { .. } | Self::CallRetryFinished { .. } => "call_finished",
             Self::RunFinished { .. } => "run_finished",
         }
     }
@@ -191,7 +265,8 @@ impl Record {
             | Self::TurnSettled { key, attempt, .. }
             | Self::CallAttention { key, attempt, .. }
             | Self::CallResolved { key, attempt, .. }
-            | Self::CallFinished { key, attempt, .. } => Some((key, *attempt)),
+            | Self::CallFinished { key, attempt, .. }
+            | Self::CallRetryFinished { key, attempt, .. } => Some((key, *attempt)),
             _ => None,
         }
     }
@@ -231,6 +306,9 @@ impl Record {
                 ..
             } => *turns <= 2 && value.is_some() != value_ref.is_some(),
             Self::CallFinished { turns, .. } => *turns <= 2,
+            Self::CallRetryFinished { outcome, turns, .. } => {
+                *turns <= 2 && matches!(outcome, CallOutcome::Failed { .. })
+            }
             _ => true,
         };
         if !valid {
