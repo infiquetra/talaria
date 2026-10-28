@@ -13,7 +13,7 @@ fn screen(name: &str) -> String {
 
 #[test]
 fn overlay_title_found_with_profile() {
-    let text = screen("workflows-empty.txt");
+    let text = "Workflows · profile fixture\n".to_owned();
     assert!(overlay_title_found(
         &text,
         "Workflows · profile <name>",
@@ -38,6 +38,11 @@ fn overlay_title_found_with_profile() {
 
 #[test]
 fn workflows_empty() {
+    assert!(overlay_title_found(
+        &screen("workflows-empty.txt"),
+        "Workflows",
+        "fixture"
+    ));
     assert_eq!(
         WORKFLOWS_EMPTY,
         "no runs yet — talaria workflow run starts one"
@@ -123,5 +128,19 @@ fn idle_screen() {
     assert!(!smoke::screen5::idle_screen(&screen("busy.txt")));
     assert!(!smoke::screen5::idle_screen(
         "Talaria · profile fixture\n> unsent draft"
+    ));
+}
+
+#[test]
+fn recorded_composer_hints_and_active_status() {
+    assert!(smoke::screen5::idle_screen(
+        "> Type a message. Enter sends, Alt+Enter adds a line."
+    ));
+    assert!(smoke::screen5::idle_screen(
+        "> Type a message. Enter sends, Shift+Enter adds a line."
+    ));
+    assert!(!smoke::screen5::idle_screen("> unsent draft"));
+    assert!(!smoke::screen5::idle_screen(
+        "> Type a message. Enter sends, Alt+Enter adds a line.\n model │ 1 working"
     ));
 }

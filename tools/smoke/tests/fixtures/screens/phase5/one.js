@@ -2,7 +2,7 @@ export const meta = { name: "one", description: "One-agent smoke fixture" };
 return await agent("Reply with one word.", {
   tier: "survey",
   label: "one",
-  toolsets: [],
+  toolsets: ["todo"],
   schema: {
     type: "object",
     required: ["word"],

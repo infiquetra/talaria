@@ -1,4 +1,13 @@
-# synthetic
+# recorded
+· Ultracode is off for this session. Skill: not found in profile fixture.
+> Reply with one word.
 <token>
+The user asks a simple arithmetic question and wants only the number. The system prompt says never call tools to
+count/compute sums — write directly.
+
+1234 + 4321 = <token>.
+Resume this session with:
+  talaria --resume stored-1 --profile fixture
+
 SMOKE_EXIT:0
-$
+sh-3.2$

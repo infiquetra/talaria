@@ -33,6 +33,7 @@ pub fn fixture(name: &str) -> String {
         .join(name);
     let text = std::fs::read_to_string(path).expect("synthetic fixture");
     text.strip_prefix("# synthetic\n")
+        .or_else(|| text.strip_prefix("# recorded\n"))
         .unwrap_or(&text)
         .to_owned()
 }
@@ -68,7 +69,7 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
         status.push_str("∴ thinking\n");
     }
     if has("toggle-on") {
-        status.push_str("ultracode\n");
+        status.push_str("model │ ultracode │ approvals: manual\n");
     }
 
     let start = if has("startup-exit-1") {
@@ -212,14 +213,15 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
         install_again = install_again.replace("unchanged", "created");
     }
     if has("install-missing-one") {
-        install = install.replace("created <scratch>/config/workflows/research.js\n", "");
+        install = install.replace("created <workflows>/research.js\n", "");
     }
     if has("install-again-missing-one") {
-        install_again =
-            install_again.replace("unchanged <scratch>/config/workflows/research.js\n", "");
+        install_again = install_again.replace("unchanged <workflows>/research.js\n", "");
     }
     if has("builtins-list-bad") {
-        list_builtins = list_builtins.replace("review-branch: installed", "review-branch: absent");
+        let changed = list_builtins.replacen("installed: installed", "installed: absent", 1);
+        assert_ne!(changed, list_builtins, "recorded installed marker");
+        list_builtins = changed;
     }
     if has("check-bad") {
         check = check
@@ -242,10 +244,7 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
         gateway = gateway.replace("exit=1", "exit=0");
     }
     if has("gateway-missing-line") {
-        gateway = gateway.replace(
-            "talaria: no Hermes gateway is running for this home",
-            "other failure",
-        );
+        gateway = gateway.replace("gateway not found", "other failure");
     }
     let mut last_list = fixture("list.txt");
     if has("gateway-list-fails") {
@@ -289,6 +288,18 @@ pub fn script_5(modes: &[&str]) -> ScriptBuilder {
             }
             let value = serde_json::to_string(&value)
                 .unwrap()
+                .replace("<config>", "$1")
+                .replace("<runs>", "$1/runs")
+                .replace("<workflows>", "$1/workflows")
+                .replace("<drafts>", "$1/drafts")
+                .replace("<review-workflow>", "$1/workflows/review-branch.js")
+                .replace("<review-branch-workflow>", "$1/workflows/review-branch.js")
+                .replace("<research-workflow>", "$1/workflows/research.js")
+                .replace(
+                    "<fix-failing-tests-workflow>",
+                    "$1/workflows/fix-failing-tests.js",
+                )
+                .replace("<ultracode-workflow>", "$1/workflows/ultracode.js")
                 .replace("<scratch>/config", "$1");
             format!("{value}\nexit=0\n")
         };

@@ -1,4 +1,6 @@
-# synthetic
-Talaria · profile fixture
-Ultracode is off for this session. Skill: not found in profile fixture.
->
+# recorded
+· Ultracode is off for this session. Skill: not found in profile fixture.
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Alt+Enter adds a line.                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ ~

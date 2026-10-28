@@ -1,4 +1,7 @@
-# synthetic
-Talaria · profile fixture
-∴ thinking
->
+# recorded
+· Ultracode is off for this session. Skill: not found in profile fixture.
+> Reply with one word.
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Alt+Enter adds a line.                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ ~ │ 1 working

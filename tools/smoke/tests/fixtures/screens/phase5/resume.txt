@@ -1,5 +1,8 @@
-# synthetic
+# recorded
+── Resumed: Reply with one word. ──
+> Reply with one word.
 <token>
-Talaria · profile fixture
-minimax-m3.1-flash
->
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Alt+Enter adds a line.                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ ~

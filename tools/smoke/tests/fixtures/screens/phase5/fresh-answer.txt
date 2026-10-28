@@ -1,2 +1,14 @@
-# synthetic
-agent: <token>
+# recorded
+── Resumed: Reply with one word. ──
+> Reply with one word.
+<prior-token>
+> Reply with another word.
+<token>
+The user asks a simple arithmetic question and wants only the number. The system prompt says never call tools to
+count/compute sums — write directly.
+
+1234 + 4321 = <token>.
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Alt+Enter adds a line.                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ <worktree> │ ctx 1%
