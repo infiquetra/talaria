@@ -14,3 +14,5 @@ pub mod profiles_cmd;
 pub mod providers_wiring;
 pub mod run;
 pub mod workflow;
+pub mod workflow_roster;
+pub mod workflow_skill;

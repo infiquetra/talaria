@@ -69,7 +69,7 @@ pub enum TurnState {
 /// The seven tones of the command contract, in this order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
-    /// Workflow accent.
+    /// The workflow accent.
     Accent,
     /// The terminal's own foreground.
     Text,
@@ -107,11 +107,13 @@ impl Tone {
 #[derive(Clone, Copy, Debug)]
 pub struct StatusPalette {
     styles: [Style; 7],
+    accent: Style,
 }
 
 impl Default for StatusPalette {
     fn default() -> Self {
         Self {
+            accent: Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             styles: [
                 Style::new(),
                 Style::new().add_modifier(Modifier::DIM),
@@ -128,12 +130,24 @@ impl Default for StatusPalette {
 impl StatusPalette {
     /// The style of one tone.
     pub fn style(&self, tone: Tone) -> Style {
-        self.styles[tone_index(tone)]
+        if tone == Tone::Accent {
+            self.accent
+        } else {
+            self.styles[tone_index(tone)]
+        }
+    }
+
+    pub fn with_accent(mut self, accent: Style) -> Self {
+        self.accent = accent;
+        self
     }
 
     /// Styles in `Tone` order.
     pub fn from_styles(styles: [Style; 7]) -> Self {
-        Self { styles }
+        Self {
+            styles,
+            accent: styles[0],
+        }
     }
 }
 

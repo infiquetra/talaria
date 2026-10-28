@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 talaria-workflow.workspace = true
 serde.workspace = true
+chrono.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 hermes-client.workspace = true

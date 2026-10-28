@@ -1008,6 +1008,7 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         .subagents
         .and_then(|hub| hub.foreground_key().and_then(|key| hub.known_counts(key)));
     StatusInputs {
+        ultracode: view.ultracode,
         connection: match view.link {
             LinkView::Connecting => Connection::Connecting,
             LinkView::Connected => Connection::Connected,
@@ -4055,7 +4056,11 @@ fn print_outcome(outcome: &Outcome) {
     eprint!("{}", outcome.stderr);
 }
 
-pub fn run(mut launch: Launch) -> ExitCode {
+pub fn run(launch: Launch) -> ExitCode {
+    run_with_ultracode(launch, false)
+}
+
+pub fn run_with_ultracode(mut launch: Launch, ultracode: bool) -> ExitCode {
     match launch.folder.canonicalize() {
         Ok(folder) if folder.is_dir() => launch.folder = folder,
         _ => return fail(&failure::folder_unreadable()),
@@ -4079,6 +4084,7 @@ pub fn run(mut launch: Launch) -> ExitCode {
     let env = EnvView::from_process();
     notices.extend(detect::env_notices(&env));
     let settings = ThemeSettings {
+        ultracode,
         mode: loaded.config.theme.mode,
         look: Look {
             follow_hermes_skin: loaded.config.theme.follow_hermes_skin,
@@ -4146,6 +4152,7 @@ pub fn run(mut launch: Launch) -> ExitCode {
 
 /// The theme settings read before the terminal is set up.
 struct ThemeSettings {
+    ultracode: bool,
     env: EnvView,
     mode: ThemeMode,
     look: Look,
@@ -4300,7 +4307,13 @@ fn session(
     .map_err(TerminalError::Io)?;
     suspend::catch_interrupts_while_released().map_err(TerminalError::Io)?;
     screen.input = spawn_input(move |event| sender.send(ScreenInput::Terminal(event)).is_ok());
-    let outcome = runtime.block_on(app::run(launch, setup, &mut screen, receiver));
+    let outcome = runtime.block_on(app::run_with_ultracode(
+        launch,
+        setup,
+        &mut screen,
+        receiver,
+        settings.ultracode,
+    ));
     screen.restore();
     drop(screen.input.take());
     drop(screen);

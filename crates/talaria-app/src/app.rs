@@ -417,6 +417,7 @@ pub struct View<'a> {
     pub pr_labels: BTreeMap<RowKey, talaria_core::review::PrLabel>,
     /// The background counters the status line shows.
     pub fleet_counts: StatusCounts,
+    pub ultracode: bool,
 }
 
 impl View<'_> {
@@ -666,6 +667,8 @@ struct CronBinding {
 
 pub struct AppState {
     pub workflow_views: crate::workflow_progress::ProgressViews,
+    pub ultracode: crate::ultracode::UltracodeService,
+    ultracode_requests: std::collections::HashMap<SessionId, u64>,
     configure: Option<talaria_core::configure::ConfigureState>,
     configure_service: Option<Arc<crate::configure::Service>>,
     configure_generation: u64,
@@ -1040,6 +1043,8 @@ impl AppState {
             masked: Vec::new(),
             draft: String::new(),
             palette: PaletteState::closed(),
+            ultracode: crate::ultracode::UltracodeService::default(),
+            ultracode_requests: std::collections::HashMap::new(),
             commands: CommandsState::default(),
             local: LocalCommandTable::builtin(),
             picker: None,
@@ -1251,6 +1256,12 @@ impl AppState {
                     .collect()
             }),
             fleet_counts: self.status_counts,
+            ultracode: self.ultracode.status_input(
+                self.opened
+                    .as_ref()
+                    .map(|s| SessionId::new(s.session_id.clone()))
+                    .as_ref(),
+            ),
         }
     }
 
@@ -1390,6 +1401,18 @@ pub enum AppMessage {
     WorkflowProgress {
         run: PathBuf,
         input: talaria_workflow::progress::live::ProgressInput,
+    },
+    UltracodeCatalog {
+        request_id: u64,
+        session: SessionId,
+        profile: String,
+        command: talaria_core::ultracode::UltracodeCommand,
+        result: Result<talaria_core::commands::CommandCatalog, String>,
+    },
+    UltracodeDone {
+        session: SessionId,
+        original_text: String,
+        outcome: Result<Value, talaria_core::commands::ErrorView>,
     },
     Configure {
         generation: u64,
@@ -1837,6 +1860,11 @@ pub enum AppEffect {
     /// Describe again after a reconnect of this generation.
     Describe(u64),
     Quit,
+    /// Read the workflow catalogue or run its skill command off the loop.
+    Ultracode {
+        action: crate::ultracode::Action,
+        request_id: u64,
+    },
     /// Run a Hermes slash command (`slash.exec`) in the background.
     RunCommand {
         session_id: String,
@@ -3301,6 +3329,41 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Commands(CommandReply::Palette(input)) => {
             let (effects, _) = palette(state, input);
             effects
+        }
+        AppMessage::UltracodeCatalog {
+            request_id,
+            session,
+            profile,
+            command,
+            result,
+        } => {
+            if state.ultracode_requests.get(&session).copied() != Some(request_id) {
+                return Vec::new();
+            }
+            let actions = state
+                .ultracode
+                .on_catalog_reply(&session, &profile, command, result);
+            if is_foreground(state, session.as_str()) {
+                ultracode_actions(state, actions)
+            } else {
+                Vec::new()
+            }
+        }
+        AppMessage::UltracodeDone {
+            session,
+            original_text,
+            outcome,
+        } => {
+            if is_foreground(state, session.as_str()) {
+                let actions = state
+                    .ultracode
+                    .on_command_outcome(&session, &original_text, outcome);
+                ultracode_actions(state, actions)
+            } else {
+                vec![notice_lines(
+                    "The workflow reply belongs to another session; nothing was sent.",
+                )]
+            }
         }
         AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
         AppMessage::ContextDone { block } => context_done(state, block),
@@ -4808,6 +4871,26 @@ fn local_effect(
     if action == LocalAction::Workflows {
         return workflow_command(state, &argument);
     }
+    if action == LocalAction::Ultracode {
+        let session = state
+            .opened
+            .as_ref()
+            .map(|s| SessionId::new(s.session_id.clone()));
+        if let Some(session) = &session {
+            let request = state.ultracode_requests.entry(session.clone()).or_default();
+            *request = request.wrapping_add(1);
+        }
+        let profile = state.profile.clone();
+        let foreground = session
+            .as_ref()
+            .map(|session| crate::ultracode::Foreground {
+                session,
+                profile: &profile,
+            });
+        let actions = state.ultracode.handle_local_command(&argument, foreground);
+        return ultracode_actions(state, actions);
+    }
+
     if action == LocalAction::Configure {
         return configure_command(state, argument, typed);
     }
@@ -5792,6 +5875,62 @@ fn commands_follow(state: &mut AppState, input: CommandsInput) -> Vec<AppEffect>
         return Vec::new();
     }
     commands_input(state, input)
+}
+
+/// Apply workflow routing through the existing session events and effects.
+fn ultracode_actions(
+    state: &mut AppState,
+    actions: Vec<crate::ultracode::Action>,
+) -> Vec<AppEffect> {
+    apply_ultracode(state, actions, true)
+}
+
+fn apply_ultracode(
+    state: &mut AppState,
+    actions: Vec<crate::ultracode::Action>,
+    clear_composer: bool,
+) -> Vec<AppEffect> {
+    use crate::ultracode::Action;
+    let mut effects = vec![];
+    for action in actions {
+        match action {
+            Action::Notice(text) => effects.push(notice_lines(&text)),
+            Action::SubmitCommand { text, display, .. } => {
+                let submission_id = state.next_submission_id();
+                effects.extend(reduce(
+                    state,
+                    Event::SubmitCommand {
+                        text,
+                        display,
+                        submission_id,
+                    },
+                ));
+            }
+            Action::RestoreComposer(text) => effects.extend(load_draft(state, text)),
+            Action::Changed => effects.push(AppEffect::Redraw),
+            action @ Action::RunCommand { .. } => {
+                if clear_composer {
+                    clear_submitted_draft(state);
+                }
+                effects.push(AppEffect::Ultracode {
+                    action,
+                    request_id: 0,
+                });
+            }
+            action @ Action::FetchCatalog { .. } => {
+                let request_id = match &action {
+                    Action::FetchCatalog { session, .. } => state
+                        .ultracode_requests
+                        .get(session)
+                        .copied()
+                        .unwrap_or_default(),
+                    _ => 0,
+                };
+                effects.push(AppEffect::Ultracode { action, request_id });
+            }
+        }
+    }
+    effects
 }
 
 /// Apply a finished command's outcome: notices into the transcript, a directive's prompt
@@ -7056,6 +7195,17 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
         Slash::Nothing => return Vec::new(),
         Slash::NotSlash => {}
     }
+    if let Some(session) = state
+        .opened
+        .as_ref()
+        .filter(|_| !state.session_gone)
+        .map(|s| SessionId::new(s.session_id.clone()))
+    {
+        state.ultracode.bind(&session, &state.profile);
+        if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
+            return ultracode_actions(state, actions);
+        }
+    }
     submit_prose(state, text)
 }
 
@@ -7823,6 +7973,24 @@ fn opened_session(
         PermissionsInput::SessionOpened { session_id },
     ));
     while let Some(text) = state.held.pop_front() {
+        if let Some(session) = state
+            .opened
+            .as_ref()
+            .map(|opened| SessionId::new(opened.session_id.clone()))
+        {
+            state.ultracode.bind(&session, &state.profile);
+            if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
+                if state
+                    .held_attachments
+                    .front()
+                    .is_some_and(|payload| payload.expanded.display == text)
+                {
+                    state.held_attachments.pop_front();
+                }
+                effects.extend(apply_ultracode(state, actions, false));
+                continue;
+            }
+        }
         if state
             .held_attachments
             .front()
@@ -8577,6 +8745,33 @@ mod attachment_tests {
             },
         });
         state
+    }
+
+    #[test]
+    fn cold_start_routes_held_workflows_without_clearing_the_next_draft() {
+        let mut state = AppState::new("cold-start");
+        state.ultracode = crate::ultracode::UltracodeService::new(true);
+        let initial = submit(&mut state, "review the parser".into());
+        assert!(
+            !initial
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Send(_)))
+        );
+        assert_eq!(state.held.len(), 1);
+        state.draft = "next draft".into();
+        state.caret = state.draft.len();
+        let session = opened().opened.take().unwrap();
+        let effects = opened_session(&mut state, session, None);
+        assert!(effects.iter().any(|effect|matches!(effect,AppEffect::Ultracode{action:crate::ultracode::Action::RunCommand{command_line,..},..} if command_line=="/talaria-workflows review the parser")));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Send(Effect::SendPrompt { .. })))
+        );
+        assert_eq!(state.draft, "next draft");
+        assert_eq!(state.caret, 10);
+        assert!(state.held.is_empty());
+        assert!(state.held_attachments.is_empty());
     }
 
     fn image(state: &mut AppState, path: &str) -> String {
@@ -10861,6 +11056,52 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::Quit => state.quitting = true,
+            AppEffect::Ultracode { action, request_id } => match action {
+                crate::ultracode::Action::FetchCatalog {
+                    session,
+                    profile,
+                    command,
+                } => {
+                    let client = state.service.as_ref().and_then(|s| s.client()).cloned();
+                    executor.send_later(async move {
+                        let result = match client {
+                            Some(client) => {
+                                crate::commands::fresh_workflow_catalog(&client, session.as_str())
+                                    .await
+                            }
+                            None => Err("not connected".into()),
+                        };
+                        AppMessage::UltracodeCatalog {
+                            request_id,
+                            session,
+                            profile,
+                            command,
+                            result,
+                        }
+                    });
+                }
+                crate::ultracode::Action::RunCommand {
+                    session,
+                    original_text,
+                    command_line,
+                } => {
+                    let runner = state.command_service.as_ref().map(|s| s.runner(None));
+                    executor.send_later(async move {
+                        let outcome = match runner {
+                            Some(runner) => {
+                                runner.workflow_raw(session.as_str(), &command_line).await
+                            }
+                            None => Err(talaria_core::commands::ErrorView::NotConnected),
+                        };
+                        AppMessage::UltracodeDone {
+                            session,
+                            original_text,
+                            outcome,
+                        }
+                    });
+                }
+                _ => {}
+            },
             AppEffect::RunCommand { session_id, typed } => {
                 let Some(commands) = &state.command_service else {
                     continue;
@@ -12138,7 +12379,17 @@ pub async fn run<S: Screen>(
     screen: &mut S,
     inputs: mpsc::UnboundedReceiver<S::Input>,
 ) -> Outcome {
-    Box::pin(run_inner(launch, setup, screen, inputs)).await
+    Box::pin(run_inner(launch, setup, screen, inputs, false)).await
+}
+
+pub async fn run_with_ultracode<S: Screen>(
+    launch: Launch,
+    setup: RunSetup,
+    screen: &mut S,
+    inputs: mpsc::UnboundedReceiver<S::Input>,
+    default_on: bool,
+) -> Outcome {
+    Box::pin(run_inner(launch, setup, screen, inputs, default_on)).await
 }
 
 async fn run_inner<S: Screen>(
@@ -12146,8 +12397,10 @@ async fn run_inner<S: Screen>(
     mut setup: RunSetup,
     screen: &mut S,
     mut inputs: mpsc::UnboundedReceiver<S::Input>,
+    default_ultracode: bool,
 ) -> Outcome {
     let mut state = AppState::new_boxed(setup.launch_id.clone());
+    state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
     state.models = ModelsState::new(
         &format!("{}-model", setup.launch_id),
         crate::config::load_models(),

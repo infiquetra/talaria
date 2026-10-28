@@ -109,6 +109,7 @@ const TUI: &str = "TUI";
 /// Browse order, aliases, and the warning strings. Issue #223.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandCatalog {
+    dispatch_collisions: HashSet<String>,
     entries: Vec<CatalogEntry>,
     categories: Vec<String>,
     canon: HashMap<String, String>,
@@ -329,7 +330,23 @@ impl CommandCatalog {
             .iter()
             .map(|(alias, target)| (key(alias), target.clone()))
             .collect();
+        let mut dispatch_collisions: HashSet<String> = result
+            .categories
+            .iter()
+            .filter(|category| matches!(category.name.as_str(), USER_COMMANDS | PLUGIN_COMMANDS))
+            .flat_map(|category| category.pairs.iter().filter_map(|pair| pair.first()))
+            .map(|name| key(name))
+            .collect();
+        dispatch_collisions.extend(result.plugin_commands.keys().map(|name| key(name)));
+        dispatch_collisions.extend(
+            result
+                .canon
+                .iter()
+                .filter(|(alias, target)| key(alias) != key(target))
+                .map(|(alias, _)| key(alias)),
+        );
         Self {
+            dispatch_collisions,
             entries,
             categories,
             canon,
@@ -338,6 +355,11 @@ impl CommandCatalog {
             index,
             known,
         }
+    }
+
+    /// Whether a quick command, plugin, or alias takes this name before a skill.
+    pub fn has_dispatch_collision(&self, name: &str) -> bool {
+        self.dispatch_collisions.contains(&key(name))
     }
 
     /// Entries in browse order.

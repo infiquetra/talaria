@@ -233,6 +233,20 @@ impl CommandRunner {
         }
     }
 
+    /// Keep the raw directive until workflow routing has verified its type and name.
+    pub async fn workflow_raw(&self, session_id: &str, typed: &str) -> Result<Value, ErrorView> {
+        let params = slash_exec::Params {
+            command: typed.trim_start_matches('/').to_owned(),
+            profile: None,
+            session_id: session_id.to_owned(),
+        };
+        let params = serde_json::to_value(params).map_err(|_| ErrorView::LocalBug)?;
+        self.client
+            .call_raw(slash_exec::NAME, params, CallOptions::default())
+            .await
+            .map_err(error_view)
+    }
+
     async fn run_once(
         &mut self,
         session_id: &str,
@@ -603,5 +617,17 @@ pub fn outcome_actions(outcome: CommandOutcome, typed: &str) -> Vec<AppAction> {
         }
         // A runner follows aliases itself, so a re-run never reaches the loop.
         CommandOutcome::Rerun { .. } | CommandOutcome::Nothing => Vec::new(),
+    }
+}
+
+/// Read a fresh catalogue without altering the palette cache.
+pub async fn fresh_workflow_catalog(
+    client: &Client,
+    session_id: &str,
+) -> Result<CommandCatalog, String> {
+    match fetch(client, 0, Some(session_id.to_owned())).await {
+        CommandsInput::CatalogArrived { result, .. } => Ok(CommandCatalog::from_result(&result)),
+        CommandsInput::CatalogFailed { reason, .. } => Err(reason),
+        _ => Err("the catalogue was not returned".into()),
     }
 }

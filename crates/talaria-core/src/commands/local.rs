@@ -14,6 +14,8 @@ use crate::connectors::{ConnectorsOpen, ConnectorsTab};
 pub enum LocalAction {
     /// View a journaled workflow run.
     Workflows,
+    /// Route substantive prompts through the workflow skill.
+    Ultracode,
     /// Open the gateway health check.
     Doctor,
     Providers(crate::providers::OpenTarget),
@@ -410,6 +412,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "<run-folder>",
         takes_argument: true,
         action: LocalAction::Workflows,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "ultracode",
+        aliases: &[],
+        summary: "Route substantive prompts through workflow agents",
+        args_hint: "[on|off|status]",
+        takes_argument: true,
+        action: LocalAction::Ultracode,
         tag: "talaria",
     },
 ];

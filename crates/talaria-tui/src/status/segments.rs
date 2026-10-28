@@ -41,7 +41,7 @@ pub struct TokenUsage {
 /// Everything the line shows, handed over by the caller.
 #[derive(Clone, Debug, Default)]
 pub struct StatusInputs {
-    /// Whether workflow mode is enabled for the foreground session.
+    /// Workflow routing is enabled for the foreground session.
     pub ultracode: bool,
     /// The attach state of the link.
     pub connection: Connection,
@@ -114,7 +114,7 @@ pub struct ExternalSegment {
 /// The segments of the status line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Segment {
-    /// Workflow mode.
+    /// Workflow routing for this session.
     Ultracode,
     /// The attach state.
     Connection,
@@ -160,10 +160,9 @@ impl Segment {
         Segment::Ultracode,
     ];
 
-    /// 1 is dropped last, 12 first.
+    /// Smaller priorities are retained longer.
     pub fn priority(self) -> u8 {
         match self {
-            Segment::Ultracode => 13,
             Segment::Connection => 1,
             Segment::NeedsYou => 2,
             Segment::Approvals => 3,
@@ -176,15 +175,16 @@ impl Segment {
             Segment::Cost => 10,
             Segment::PullRequest => 11,
             Segment::External => 12,
+            Segment::Ultracode => 13,
         }
     }
 
     /// Left to right position, 0 first.
     pub fn position(self) -> u8 {
         match self {
-            Segment::Ultracode => 3,
-            Segment::Connection => 1,
-            Segment::Model => 2,
+            Segment::Connection => 0,
+            Segment::Model => 1,
+            Segment::Ultracode => 2,
             Segment::Approvals => 3,
             Segment::Folder => 4,
             Segment::Context => 5,
@@ -243,6 +243,11 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     let mut pieces: Vec<(Segment, String, Tone)> = Vec::new();
     add(&mut pieces, Segment::Connection, connection_segment(inputs));
     add(&mut pieces, Segment::Model, model_segment(inputs));
+    add(
+        &mut pieces,
+        Segment::Ultracode,
+        inputs.ultracode.then(|| ("ultracode".into(), Tone::Accent)),
+    );
     add(&mut pieces, Segment::Approvals, approvals_segment(inputs));
     add(&mut pieces, Segment::Folder, folder_segment(inputs));
     add(&mut pieces, Segment::Context, context_segment(inputs));
