@@ -34,6 +34,7 @@ thiserror.workspace = true
 getrandom.workspace = true
 
 [dev-dependencies]
+tracing-subscriber = { version = "=0.3.23", features = ["fmt"] }
 talaria-workflow = { path = ".", features = ["mock", "fake-gateway"] }
 hermes-client.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

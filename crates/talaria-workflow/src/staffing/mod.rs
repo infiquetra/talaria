@@ -283,3 +283,82 @@ impl RosterReport {
 pub fn display_safe(_text: &str) -> String {
     todo!()
 }
+
+pub trait RosterSource: Send + Sync + 'static {
+    fn fetch(
+        &self,
+        profile: &str,
+    ) -> futures_util::future::BoxFuture<'static, Result<serde_json::Value, RosterError>>;
+}
+pub trait Clock: Send + Sync + 'static {
+    fn now(&self) -> chrono::DateTime<chrono::Utc>;
+}
+#[derive(Clone)]
+pub struct ManualClock;
+impl ManualClock {
+    pub fn new(_now: chrono::DateTime<chrono::Utc>) -> Self {
+        todo!()
+    }
+    pub fn set(&self, _now: chrono::DateTime<chrono::Utc>) {
+        todo!()
+    }
+    pub fn advance(&self, _by: chrono::Duration) {
+        todo!()
+    }
+}
+impl Clock for ManualClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        todo!()
+    }
+}
+#[derive(Clone)]
+pub struct FixtureRosterSource;
+impl FixtureRosterSource {
+    pub fn new() -> Self {
+        todo!()
+    }
+    pub fn with_clock(_clock: std::sync::Arc<dyn Clock>) -> Self {
+        todo!()
+    }
+    pub fn push(&self, _profile: &str, _answer: Result<serde_json::Value, RosterError>) {
+        todo!()
+    }
+    pub fn fetches(&self) -> Vec<(String, chrono::DateTime<chrono::Utc>)> {
+        todo!()
+    }
+}
+impl RosterSource for FixtureRosterSource {
+    fn fetch(
+        &self,
+        _profile: &str,
+    ) -> futures_util::future::BoxFuture<'static, Result<serde_json::Value, RosterError>> {
+        todo!()
+    }
+}
+#[derive(Clone)]
+pub struct RosterCache;
+impl RosterCache {
+    pub fn new(
+        _source: std::sync::Arc<dyn RosterSource>,
+        _clock: std::sync::Arc<dyn Clock>,
+        _interval: std::time::Duration,
+    ) -> Self {
+        todo!()
+    }
+    pub async fn load(&self, _profile: &str) -> Result<std::sync::Arc<Roster>, RosterError> {
+        todo!()
+    }
+    pub async fn get_or_load(&self, _profile: &str) -> Result<std::sync::Arc<Roster>, RosterError> {
+        todo!()
+    }
+    pub async fn refresh(
+        &self,
+        _profile: &str,
+        _force: bool,
+    ) -> Result<std::sync::Arc<Roster>, RosterError> {
+        todo!()
+    }
+    pub fn cached(&self, _profile: &str) -> Option<std::sync::Arc<Roster>> {
+        todo!()
+    }
+}
