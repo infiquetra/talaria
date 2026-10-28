@@ -1498,52 +1498,79 @@ Cron job IDs before / after cleanup: croncmp=0
 
 ## P4-04 UAT-2
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Opened `/mcp` -> `Tab` (Catalogue) -> filtered `deepwiki` -> `Enter`, `Enter`:
+  - Row ended `· test ok, 3 tools` and notice read `deepwiki works: 3 tools`.
+  - Pressed `Ctrl+Y` (`Reloading MCP refreshes every chat of this profile.`), then `y` (`MCP servers reloaded.`).
+  - Closed overlay (`Esc`) and sent `Use the deepwiki tools to say in one sentence what the GitHub repository NousResearch/hermes-agent is.` (Attempt 1 of 1): transcript showed `mcp_deepwiki_read_wiki_structure` tool call and one-sentence reply.
+  - Opened `/mcp`, selected `deepwiki`, pressed `Ctrl+D`, `y`, `Ctrl+Y`, `y`: `deepwiki` row removed and `No MCP servers in profile fixture yet.` restored.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-04 UAT-3
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Opened `/mcp` (Servers tab, initial list empty), pressed `Ctrl+N`, typed Name `bad name!`, pressed `Ctrl+S`:
+  - Read 1 showed `Use 1 to 64 letters, digits, dot, dash or underscore.` under Name and added nothing.
+- Replaced Name with `talaria-unreachable`, Kind `remote`, URL `http://<loopback>/mcp`, Authentication `none`, pressed `Ctrl+S`, waited:
+  - Read 2 showed selected `talaria-unreachable` row ending `· test failed` and notice `talaria-unreachable did not connect: Connection refused`.
+- Pressed `Ctrl+D`, `y`: `Removed talaria-unreachable.`; server list read-back matched the starting empty list.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-04 UAT-4
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- With an OAuth catalogue entry installed in `fixture` showing `needs sign-in`:
+  - Pressed `Ctrl+O`: card displayed `https://...` authorization URL and countdown `4:59`; pressed `Esc` -> notice read `Sign-in cancelled.` and row stayed `needs sign-in`.
+  - Pressed `Ctrl+O`, then `o`, approved in browser: within `2.8 s` (`1` poll, `<= 2` polls) banner read `Signed in to linear: 6 tools.` and row updated to `ready · 6 tools`.
+  - Removed the entry afterwards (`Ctrl+D`, `y`, `Ctrl+Y`, `y`) and verified `/mcp` returned to `No MCP servers in profile fixture yet.`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-04 UAT-5
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Launched `"$T" $F --record "$X/uat5.rec" 2> "$X/uat5.err"`, opened `/mcp`, added remote `talaria-keyed` (`http://<loopback>/mcp`, `API key`, token `<typed-secret>`) and local `talaria-local` (`python3`, `-c "print(1)"`, `TALARIA_PROBE_VALUE` = `<typed-secret>`), and opened both detail cards:
+  - Detail cards showed `API key header (values hidden)` and `TALARIA_PROBE_VALUE (values hidden)`; no screen showed either sentinel; both connection tests failed as expected.
+  - `grep -c` of the two sentinel literals on `"$FH/config.yaml"` printed `0`; `grep -c -e MCP_TALARIA_KEYED_API_KEY -e TALARIA_PROBE_VALUE "$FH/config.yaml"` printed `2`; `grep -c` of the sentinels on `uat5.rec` and `uat5.err` printed `0` and `0`.
+  - Removed both servers in `/mcp` (`Ctrl+D`, `y`), cleaned `MCP_TALARIA_KEYED_API_KEY` and `TALARIA_PROBE_VALUE` from `"$FH/.env"`, and verified `grep -c -e MCP_TALARIA_KEYED_API_KEY -e TALARIA_PROBE_VALUE "$FH/.env"` printed `0`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-04 UAT-6
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- In an SSH session without port forwarding and with the OAuth entry in `needs sign-in`:
+  - Pressed `Ctrl+O`: card displayed the SSH callback hint (`On another machine? Copy the localhost callback URL after approving and press p to paste it (port <port>).`).
+  - Approved in browser on the client machine, copied the failed `http://<loopback>/callback?code=...` address, pressed `p`, pasted (masked as bullets), and pressed `Enter`: within `2.1 s` (`1` poll, `<= 2` polls) banner read `Signed in to linear: 6 tools.`.
+  - Removed the entry (`Ctrl+D`, `y`, `Ctrl+Y`, `y`) and verified `/mcp` returned to `No MCP servers in profile fixture yet.`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-05 UAT-1
@@ -1837,32 +1864,47 @@ Cron job IDs before / after cleanup: croncmp=0
 
 ## P4-05 UAT-2
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Opened `/capabilities` on `fixture` (Skills tab), selected enabled skill `github-code-review`, pressed `Space` twice, then pressed `3` (Toolsets tab), selected enabled toolset `web`, and pressed `Space` twice:
+  - Skill reads showed `[…]`, then `Turned skill github-code-review off for profile fixture. Takes effect on the next session.` (`[ ]`), then `Turned skill github-code-review on for profile fixture. Takes effect on the next session.` (`[x]`).
+  - Toolset reads showed `[…]`, then `Turned toolset web off for profile fixture. Takes effect on the next session.` (`[ ]`), then `Turned toolset web on for profile fixture. Takes effect on the next session.` (`[x]`), with no unknown-outcome warning (`T12`).
+  - Ran `"$T" capabilities skills --json --profile fixture | jq -c '.skills[] | select(.name=="github-code-review") | {name, enabled}'` -> `{"name":"github-code-review","enabled":true}`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-05 UAT-3
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Opened `/capabilities` on `fixture`, pressed `2` (Hub tab), typed `/`, `one-three-one`, `Enter`, selected `official/communication/one-three-one-rule`, pressed `Enter`, pressed `i`, then `y`:
+  - Hub tab showed `Page 1 of`; search listed `one-three-one-rule`; preview showed `SKILL.md`; `i` showed scan summary `Scanned one-three-one-rule for profile fixture: 0 critical, 0 high, 0 medium, 0 low findings. Install? (y/n)`.
+  - Pressed `y`: banner showed `Installing one-three-one-rule…`, then after `1.4 s` `Installed one-three-one-rule into profile fixture. This session: reload or start a new session to use it.`.
+  - Pressed `1`, `/`, `one-three`: Skills tab listed `[x] one-three-one-rule · hub`.
+  - Cleaned up with `hermes -p fixture skills uninstall one-three-one-rule` and verified `one-three-one-rule` is absent from Skills tab read-back.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-05 UAT-4
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Opened `/capabilities` on `fixture`, pressed `4` (Plugins tab), pressed `c` (catalog), read, pressed `Esc`, pressed `i`, typed `memory-hygiene`, pressed `Enter`, then `y`, and after install pressed `x`, then `y`:
+  - `c` listed catalog plugins including `memory-hygiene`; `i` showed confirmation with repository URL and 7-character commit prefix; `y` showed `Installed plugin memory-hygiene.` and row marked `yours`.
+  - Pressing `x` showed `Remove plugin memory-hygiene from profile fixture? (y/n)`; pressing `y` showed `Removed plugin memory-hygiene.` and restored the empty Plugins tab (`You have not installed any plugins in profile fixture.`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-05 UAT-5
@@ -2681,22 +2723,34 @@ Cron job IDs before / after cleanup: croncmp=0
 
 ## P4-07 UAT-4
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Noted `fixture` skill list (`58 of 58 on`) and enabled curator (`active`) for the scenario, opened `/memory-settings` on `fixture`, moved cursor to the `SKILL CURATOR` row:
+  - Pressed `p` (`read 1`): notice read `Curator paused for profile fixture.` and state showed `paused`.
+  - Pressed `p` (`read 2`): notice read `Curator resumed for profile fixture.` and state showed `active`.
+  - Pressed `R`, `Right`, `Enter` (`read 3`): screen showed `Curator running · 2s` followed by `Curator run finished.` after `3.1 s` (`0` skills archived).
+  - Restored curator state to `off` (`fixture` baseline) and verified `/capabilities` Skills tab read-back (`58 of 58 on`, `0` skills needed `curator restore`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-07 UAT-5
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Backed up `"$FH/memories/USER.md"` outside the repository, seeded a non-empty throwaway `USER.md` (`24 B`) in `fixture`, and opened `/memory-settings`:
+  - `read 0`: `User profile (USER.md)` showed `24 B` and `Agent memory (MEMORY.md)` showed `empty`.
+  - Selected `User profile (USER.md)`, pressed `d`, `Right`, `Enter` (`read 1`): notice read `Deleted USER.md for profile fixture.`, `User profile (USER.md)` read `empty`, and `Agent memory (MEMORY.md)` remained `empty`.
+  - Pressed `d` again (`read 2`): notice read `USER.md is already empty.` with no confirmation modal.
+  - Restored original `USER.md` state from backup (`cmp=0`) and verified read-back in `/memory-settings`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-07 UAT-6
@@ -2834,52 +2888,79 @@ Cron job IDs before / after cleanup: croncmp=0
 
 ## P4-08 UAT-2
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Opened `/cron` on `fixture`, pressed `Ctrl+N`, entered Name `talaria-uat-yearly`, `Tab`, Schedule `0 3 1 1 *`, `Tab`, Prompt `Reply with the single word ok.`, and pressed `Ctrl+S`:
+  - Read 1: notice read `Cron job 'talaria-uat-yearly' created.` and row showed `talaria-uat-yearly · 0 3 1 1 * · next in 65d…`.
+  - Selected row, pressed `Ctrl+E` (Read 2): row showed `paused` (`Paused talaria-uat-yearly.`).
+  - Pressed `Ctrl+E` (Read 3): row showed `next in 65d…` (`Resumed talaria-uat-yearly.`).
+  - Pressed `Ctrl+D`, `y` (Read 4): notice read `Removed talaria-uat-yearly.` and list showed `No scheduled jobs in profile fixture. ctrl+n creates one.`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-08 UAT-3
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- In `/cron` on `fixture`, created `talaria-uat-run` (`0 3 1 1 *`, `Reply with the single word ok.`), selected it, pressed `Ctrl+T` (Read 1), pressed `y` (Read 2), waited `3.8 s` for completion notice (Read 3), pressed `Enter` (Read 4), then removed the job (`Ctrl+D`, `y`):
+  - Read 1: confirmation named `talaria-uat-run`, `fixture`, `this profile's cron model`, and `local`.
+  - Read 2 (immediate): row showed `running now (started here)`.
+  - Read 3 (`3.8 s`): notice read `Ran talaria-uat-run: finished ok.`.
+  - Read 4: `Recent runs` showed `finished · local · ollama-cloud/minimax-m3.1-flash · 138 tok · ok`.
+  - Removed `talaria-uat-run` and verified `/cron` is empty (`croncmp=0`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-08 UAT-4
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- In `/cron` on `fixture` (starting list empty), pressed `Ctrl+N`, `Tab`, typed Schedule `blue moon`, pressed `Ctrl+S` (Read 1); pressed `Tab`, typed Prompt `x`, pressed `Ctrl+S` (Read 2); pressed `Esc`, `y`:
+  - Read 1: showed `Prompt: required.` and sent nothing.
+  - Read 2: showed `Hermes did not create the job: Invalid schedule 'blue moon'. Use:` followed by the five schedule example lines, with the form still open.
+  - After `Esc`, `y`: `/cron` list matched the starting empty list (`No scheduled jobs in profile fixture.`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-08 UAT-5
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Created `talaria-uat-paused` (`0 3 1 1 *`, `Reply with the single word ok.`) and paused it (`Ctrl+E` -> `paused`):
+  - Pressed `Ctrl+T` (Read 1): confirmation read `talaria-uat-paused is paused. Running it now also resumes its schedule (Hermes does this). Run and resume?`.
+  - Pressed `n`, waited `10 s`, pressed `Ctrl+R` (Read 2): row still read `paused` with `last run: never`.
+  - Removed `talaria-uat-paused` (`Ctrl+D`, `y`) and verified `/cron` returned to empty (`croncmp=0`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-08 UAT-6
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Created `talaria-uat-detail` (`0 3 1 1 *`, `Reply with the single word ok.`), selected its row, pressed `Enter`, waited `3 s`, and read:
+  - Detail card displayed job ID `8f4c1a90e2b1`, schedule `0 3 1 1 *`, `local`, and `Recent runs` reading `No runs yet.`.
+  - Pressed `Esc` twice, removed `talaria-uat-detail` (`Ctrl+D`, `y`), and verified `/cron` returned to empty (`croncmp=0`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-11 UAT-1
@@ -3131,62 +3212,91 @@ Cron job IDs before / after cleanup: croncmp=0
 
 ## P4-11 UAT-3
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Launched `"$T" $F --record "$X/p411-uat3.rec" 2> "$X/p411-uat3.err"`, opened `/messaging`, filtered `/signal`, opened the Signal card (`SIGNAL_HTTP_URL: not set`):
+  - Selected `SIGNAL_HTTP_URL`, pressed `Enter`, typed `«redacted:abcd...wxyz»`, `Enter`, `Ctrl+S`, `y` (Read 1): screen showed `Refusing to save a redacted credential preview. Enter the full value or press d to clear it.`.
+  - Pressed `Enter`, typed `http://<loopback>/<typed-secret>`, `Enter`, `Ctrl+S` (Read 2: review showed `SIGNAL_HTTP_URL: new value (hidden)`), pressed `y` (Read 3: field showed `set`, Signal remained `off`, and banner read `Saved. Restart the gateway from /doctor when you want messaging changes to take effect.`).
+  - Pressed `d`, `Ctrl+S`, `y` (Read 4): field returned to `not set`; no screen showed the sentinel; `grep -c` of the sentinel over `p411-uat3.rec` and `p411-uat3.err` printed `0` and `0`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-11 UAT-4
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- With `fixture` signed in to Nous and `--record "$X/p411-uat4.rec"` active, opened `/connectors`, accepted consent (`Enter`), and opened the `github` connector card:
+  - Pressed `a`, typed `<redacted>`, pressed `Enter` (Read 1): card displayed `https://...` connect link and countdown `4:59`.
+  - Pressed `o` and completed sign-in: within `2.4 s` (`1` poll, `<= 2` polls) banner read `github account <redacted> is connected.` (Read 2).
+  - Pressed `r`, typed `<redacted>`, pressed `Enter` (Read 3): banner read `Renamed to <redacted>.`.
+  - Pressed `x`, `y` (Read 4): account removed (`0` connected accounts), and `grep -c '"connect_url":"https' "$X/p411-uat4.rec"` printed `0`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-11 UAT-5
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- In the connector card on `fixture`:
+  - Pressed `a`, named `<redacted>`, pressed `Enter` (countdown started at `4:59`), pressed `Esc` without opening the link (Read 1): notice read `Stopped waiting. The link still works until it expires.`.
+  - Repeated and waited out the countdown (Read 2): notice read `Stopped waiting: the link expired.`, with no connected account `<redacted>`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-11 UAT-6
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- In the connected connector's card on `fixture`, pressed `t` (Tools), selected a `write` tool, pressed `Space`, `Ctrl+S` (Read 1: review listed `on → off`), pressed `y` (Read 2: tool showed `off`), then repeated to restore it to `on` (Read 3: tool showed `on`).
+- In `/messaging`, opened the connected platform card with a waiting pairing row `<redacted>`, pressed `p`, `y` (Read 4: banner read `Pairing approved on telegram.` and row moved under `Paired (1)`), then selected the paired row and pressed `x`, `y` (Read 5: banner read `Pairing approval removed.` and `Paired (0)` restored). Removed the temporary connector account and Nous session afterwards so `fixture` returned to baseline.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-09 UAT-1
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Recorded baseline `shasum -a 256 "$FH/config.yaml"` (`<digest retained privately>`, with `display.bell_on_complete: false`):
+  - Submitted `/configure ring the terminal bell when a reply finishes` (Attempt 1 of 1, review opened in `3.9 s`): title showed `Configure · profile fixture · ollama-cloud/minimax-m3.1-flash` with selected row `[x] set display.bell_on_complete: false → true · may need a restart`.
+  - Pressed `a` (`Apply 1 change(s) to profile fixture? y apply · n back`), then `y`, then `Enter`: summary read `Configured profile fixture: 1 applied, 0 failed, 0 unknown, 0 not attempted.` and transcript kept the `/configure` notice.
+  - Submitted `/configure stop ringing the bell when a reply finishes` (`a`, `y`, `Enter`): summary read `Configured profile fixture: 1 applied, 0 failed, 0 unknown, 0 not attempted.`.
+  - Checked `/config bell`: `display.bell_on_complete` showed `false`; `shasum -a 256 "$FH/config.yaml"` matched `<digest retained privately>` (`cmp=0`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-09 UAT-2
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- From an idle session on `fixture` (`deepwiki` not installed):
+  - Submitted `/configure add the deepwiki MCP server from Hermes's catalogue` (Attempt 1 of 1): review showed `[x] add MCP server deepwiki (from Hermes's catalogue)`.
+  - Pressed `a`, `y`: done screen marked `✓ add MCP server deepwiki` with `new sessions; /mcp apply reloads this one`; pressed `Enter`.
+  - Opened `/mcp`: `deepwiki` was listed; selected `deepwiki`, pressed `Ctrl+D`, `y`, `Esc`: `deepwiki` removed and `/mcp` returned to `No MCP servers in profile fixture yet.`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## P4-09 UAT-3
@@ -4595,90 +4705,163 @@ Cron job IDs before / after cleanup: croncmp=0
 
 ## XF-9
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- In `"$T" $F`, opened `/cron`, pressed `Ctrl+N`, created `talaria-uat-xf` (`0 3 1 1 *`, `Reply with the single word ok.`), pressed `Ctrl+S`, and closed `/cron` (`Esc`):
+  - Submitted `/configure pause the scheduled job talaria-uat-xf` (`V1`, Attempt 1 of 1): review listed exactly one selected row `[x] pause cron job talaria-uat-xf` and no other change.
+  - Pressed `a`, `y` (`V2`): summary read `Configured profile fixture: 1 applied, 0 failed, 0 unknown, 0 not attempted.`; pressed `Enter`.
+  - Opened `/cron` (`V3`): `talaria-uat-xf` row showed `paused`.
+  - Selected `talaria-uat-xf`, pressed `Ctrl+E` (`V4`): row showed `next in 65d…`.
+  - Pressed `Ctrl+D`, `y` (`V5`): notice read `Removed talaria-uat-xf.` and no `talaria-uat-xf` row remained (`croncmp=0`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## XF-10
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Checked `/capabilities` -> `3` (Toolsets tab) on `fixture`: noted `web` toolset `on` (`[x]`), then closed `/capabilities` (`Esc`):
+  - Submitted `/configure turn off the web toolset` (`V1`, Attempt 1 of 1): review listed `[x] disable toolset web` and no other change.
+  - Pressed `a`, `y` (`V2`): summary read `Configured profile fixture: 1 applied, 0 failed, 0 unknown, 0 not attempted.`; pressed `Enter`.
+  - Opened `/capabilities` -> `3` (`V3`): `web` toolset showed `off` (`[ ]`).
+  - Pressed `Space` on `web` (`V4`): `web` toolset returned to `on` (`[x]`, `Turned toolset web on for profile fixture.`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## XF-11
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Opened two panes (`PA` and `PB`) running `"$T" $F` at idle composers:
+  - In `PA`: `/mcp` -> `Tab` -> `deepwiki` -> `Enter`, `Enter` -> `deepwiki · test ok, 3 tools`; pressed `Ctrl+Y` (`R1`: `Reloading MCP refreshes every chat of this profile.`), then `y` (`R2`: `MCP servers reloaded. This session's tools change from its next turn.`), then `Esc`.
+  - In `PB`: submitted `/mcp apply` (`R3`: `Reloading MCP refreshes every chat of this profile.`), pressed `y` (`R4`: `MCP servers reloaded. This session's tools change from its next turn.`), then `Esc`.
+  - In `PB`: sent `Use the deepwiki tools to say in one sentence what the GitHub repository NousResearch/hermes-agent is.` (Attempt 1 of 1): `PB`'s transcript showed tool call `mcp_deepwiki_read_wiki_structure({"repoName": "NousResearch/hermes-agent"})` and a one-sentence response.
+  - Cleanup in `PA`: `/mcp` -> selected `deepwiki` -> `Ctrl+D`, `y`, `Ctrl+Y`, `y` (`R5`: `No MCP servers in profile fixture yet.`); in `PB`: `/mcp apply`, `y`, `Esc`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## OPC-1
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- In `P1` (`"$T" $F`), opened `/providers` (Keys tab), typed `openrouter`, pressed `Enter` (`API key for OpenRouter`), and pasted the operator's OpenRouter key:
+  - `R1` (before `Enter`): card displayed `••••••••••••••••••••••••••••••••••••••••…` (40 bullets followed by `…`), with zero raw key characters visible.
+  - `R2` (after `Enter`, closed in `1.1 s <= 5 s`): banner showed `Saved the key for OpenRouter.` and the OpenRouter row read `ready · 318 models · key …<last4>`.
+  - Digest control in `PS`: `snap > "$X/mid.sum"; cmp "$X/sitting-before.sum" "$X/mid.sum"; echo "cmp=$?"` printed `cmp=1`.
+  - `grep -c` of the key's first eight characters over the `rec` read of `P1` printed `0`.
+
+Restored read-back (OPC-5): Removed the key for OpenRouter.; OpenRouter · no key; key-prefix match counts in transcript and configuration: 0, 0.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## OPC-2
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Returned to the idle composer (`Esc` twice), submitted `/mcp`, pressed `Tab` (Catalogue), typed `deepwiki`, pressed `Enter`, `Enter`, and waited:
+  - `R1`: `deepwiki` row ended `· test ok, 3 tools` (`n = 3 > 0`) and notice line read `deepwiki works: 3 tools (read_wiki_structure, read_wiki_contents, ask_question).`.
+  - Pressed `Ctrl+Y` (`R2`): confirmation read `Reloading MCP refreshes every chat of this profile.`.
+  - Pressed `y` (`R3`): banner read `MCP servers reloaded. This session's tools change from its next turn.`. Returned to composer (`Esc`).
+
+Restored read-back (OPC-5): Removed deepwiki.; MCP servers reloaded.; No MCP servers in profile fixture yet.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## OPC-3
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- From the idle composer, opened `/models`, pressed `Enter` on `Main`, typed `openrouter`, pressed `Enter`, selected `openrouter/qwen/qwen3-coder:free`, pressed `Ctrl+S` (`R1`), pressed `Enter` (`R2`), and returned to the composer:
+  - `R1`: review diff showed `model.provider: "ollama-cloud" → "openrouter"` and `model.default: "minimax-m3.1-flash" → "qwen/qwen3-coder:free"`.
+  - `R2`: banner read `Saved model roles for profile fixture. Applies to new sessions.` and `Main` showed `qwen/qwen3-coder:free · openrouter`.
+- Submitted `/quit` and launched `"$T" --no-ensure --profile fixture`:
+  - `R3`: status line showed `qwen/qwen3-coder:free │ approvals: manual`.
+  - `R4` (Attempt 1 of 1): sent `Use the deepwiki tools to say in one sentence what the GitHub repository NousResearch/hermes-agent is.` -> transcript showed tool call `mcp_deepwiki_read_wiki_structure({"repoName": "NousResearch/hermes-agent"})` and a one-sentence summary of Hermes Agent. Submitted `/quit`.
+
+Restored read-back (OPC-5): Main: minimax-m3.1-flash (via ollama-cloud).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## OPC-4
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Launched `"$T" $F`, opened `/cron`, pressed `Ctrl+N`, entered Name `talaria-opc-job`, `Tab`, Schedule `0 3 1 1 *`, `Tab`, Prompt `Reply with the single word ok.`, and pressed `Ctrl+S` (`R1`):
+  - `R1`: notice read `Cron job 'talaria-opc-job' created.` and row showed `talaria-opc-job · 0 3 1 1 * · next in 65d…`.
+- Selected `talaria-opc-job`, pressed `Ctrl+T` (`R2`), pressed `y`, waited `4.2 s` (`<= 5m`) for completion notice (`R3`), pressed `Enter` (`R4`), and returned to composer:
+  - `R2`: confirmation named `talaria-opc-job`, `fixture`, `this profile's cron model`, and `local`.
+  - Immediately after `y`: row read `running now (started here)`.
+  - `R3` (`4.2 s` after `y`): notice read `Ran talaria-opc-job: finished ok.`.
+  - `R4`: detail card `Recent runs` showed `finished · local · ollama-cloud/minimax-m3.1-flash · 142 tok · ok`.
+
+Restored read-back (OPC-5): Removed talaria-opc-job.; No scheduled jobs in profile fixture. ctrl+n creates one.; croncmp=0.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```
 
 ## OPC-5
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- **Part A (History Audit):** Ran the `OPC-AUDIT` awk check in both `PS` and `P1`'s shell before any other command; both printed `0`. I opened no editor or configuration file and ran no `hermes` command during `OPC-1` to `OPC-4`.
+- **Part B (Write Control):** `cmp "$X/sitting-before.sum" "$X/mid.sum"` printed `cmp=1`.
+- **Part C (Restore Inside Talaria & Read-Back):**
+  - `/cron` -> selected `talaria-opc-job` -> `Ctrl+D`, `y` -> `Removed talaria-opc-job.`; read-back showed `No scheduled jobs in profile fixture. ctrl+n creates one.` (`cronids` matched `sitting-cron.txt`, `croncmp=0`).
+  - `/mcp` -> selected `deepwiki` -> `Ctrl+D`, `y`, `Ctrl+Y`, `y` -> `Removed deepwiki.` and `MCP servers reloaded.`; read-back showed `No MCP servers in profile fixture yet.`.
+  - `/models` -> restored `Main` to `minimax-m3.1-flash` on `ollama-cloud` -> `Ctrl+S`, `Enter` -> read-back showed `Main: minimax-m3.1-flash (via ollama-cloud)`.
+  - `/providers` -> selected `OpenRouter` -> `Ctrl+D`, `y` -> `Removed the key for OpenRouter.`; read-back showed `OpenRouter · no key`.
+  - `grep -c` of the key's first eight characters over the `rec` read of `P1` and over `"$FH/config.yaml"` printed `0` and `0`.
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
+The baseline had no cron jobs; its pre-sitting snapshot and cron-ID list were captured before OPC-START. The first key save changed the snapshot (cmp=1); final restoration matched it (cmp=0, croncmp=0).
 ```
 
 ## OP-1
 
-Candidate: 6014d65. Runner: operator. Date: 2026-10-27.
+Candidate: 6014d65. Runner: operator. Run 1 of 1. Date: 2026-10-27. Operator comment: https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665.
 
-Result: NOT RUN. Reserved for the operator sitting.
+Result: PASS.
 
 ```text
-NOT RUN: operator scenario remains pending.
+- Executed all seven live write suites sequentially in `<worktree>` against `HERMES_HOME=<home>` with `TALARIA_LIVE_REQUIRE=1` and the required opt-in variables, then unset the variables:
+  1. `TALARIA_PROBE_WRITES=1 cargo test -p talaria-cli --test live_mcp -- --ignored --nocapture --test-threads=1 live_add_test_toggle_remove_on_fixture` -> `LIVE_MCP_RESULT: PASSED` (`exit=0`).
+  2. `TALARIA_PROBE_WRITES=1 cargo test -p hermes-client -p talaria-cli --test live_capabilities -- --ignored --nocapture live_capabilities_write_on_fixture` -> `LIVE_CAPABILITIES_WRITE: PASSED` (`exit=0`).
+  3. `TALARIA_PROBE_WRITES=1 cargo test -p talaria-app --test live_memory pause_round_trip_on_fixture -- --ignored --nocapture` -> `LIVE_MEMORY_WRITE_RESULT: PASSED` (`exit=0`).
+  4. `TALARIA_PROBE_WRITES=1 TALARIA_CRON_FREE_ROUTE=1 cargo test -p talaria-cli --test live_cron -- --ignored --nocapture --test-threads=1 live_add_pause_resume_remove_on_fixture live_run_now_and_history_on_fixture` -> `LIVE_CRON_CHANGED: not seen`, `LIVE_CRON_RESULT: PASSED` (twice, `exit=0`).
+  5. `TALARIA_PROBE_CONNECTORS=1 cargo test -p talaria-cli --test live_connectors -- --ignored --nocapture live_connectors_gate_on_fixture` -> `LIVE_CONNECTORS_RESULT: PASSED` (`exit=0`).
+  6. `TALARIA_PROBE_WRITES=1 cargo test -p talaria-cli --test live_connectors -- --ignored --nocapture live_messaging_write_round_trip` -> `LIVE_CONNECTORS_RESULT: PASSED` (`exit=0`).
+  7. `TALARIA_PROBE_WRITES=1 cargo test -p talaria-cli --test live_configure -- --ignored --nocapture live_apply_round_trip_on_fixture` -> `LIVE_CONFIGURE_RESULT: PASSED` (`exit=0`).
+- Zero `SKIPPED` lines across all seven commands; all modified settings, MCP entries, skills/toolsets, curator state, cron jobs, connectors/messaging fields, and `/configure` values were restored and verified on read-back (`cmp=0`, `croncmp=0`).
+
+Operator final sitting restoration: protected top-level fixture files cmp=0; cron job IDs croncmp=0. Read-backs and cleanup are reported in the operator comment.
 ```

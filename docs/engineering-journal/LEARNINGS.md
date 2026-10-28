@@ -5887,3 +5887,26 @@ support the recorded read-only behavior; no installation, consent or credential 
 **Generalizable rule.** Record timings and read sources, distinguish source-defined key
 bounds from observed closure, and check ordinary write notices alongside configuration bytes
 and separately stored job IDs.
+
+## 2026-10-27 — Operator restoration needs both file controls and owner read-backs
+
+**Evidence.** The operator confirmed all 30 remaining rows on candidate `6014d65`
+in [the acceptance comment](https://github.com/infiquetra/talaria/issues/262#issuecomment-6458572665).
+The provider key, MCP server, main model and cron job were configured inside Talaria;
+the two shell-history audits returned 0. The first key save changed the protected-file
+snapshot (`cmp=1`), and final restoration returned `cmp=0` and `croncmp=0`.
+Read-backs showed no OpenRouter key, no MCP servers, the original main model and no cron jobs.
+All seven opted-in live write commands passed against Hermes v0.22.4 with no skipped test.
+
+**Mechanism.** The user-memory file is `memories/USER.md` under the profile home, so the
+top-level snapshot does not cover its deletion. The operator backed up that file, observed
+only USER.md become empty, restored the original state and compared it separately (`cmp=0`).
+Cron jobs also live outside the top-level snapshot; their IDs need the separate `cronids`
+comparison. OAuth used a browser and, over SSH, a pasted callback. Outside the five-row
+in-app check, cleanup used the Hermes skill-uninstall command, removed temporary key-file
+entries and restored the memory backup. Those operations are explicit parts of the receipt,
+not evidence that every task can be completed inside Talaria. The operator reported no
+remaining byte differences in the protected baseline or restored memory file; the individual
+model, toolset, curator, connector and messaging read-backs establish their restored values.
+
+**Generalizable rule.** Prove that a snapshot detects a write, then combine scoped file and job-ID comparisons with each owner's restored-value read-back.
