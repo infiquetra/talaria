@@ -2861,6 +2861,8 @@ name = "talaria-workflow"
 version = "0.7.0-dev"
 dependencies = [
  "futures",
+ "futures-util",
+ "hermes-client",
  "hex",
  "proptest",
  "rquickjs",

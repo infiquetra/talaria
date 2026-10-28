@@ -11,8 +11,10 @@ publish.workspace = true
 [features]
 default = []
 mock = []
+fake-gateway = []
 
 [dependencies]
+futures-util.workspace = true
 rquickjs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -24,6 +26,7 @@ hex.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+hermes-client.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 proptest.workspace = true
 toml.workspace = true

@@ -1,0 +1,1 @@
+{"v":1,"seq":8,"at_ms":0,"t":"turn_settled","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","attempt":0,"turn":0,"admission_id":"admission","outcome":"completed","final_text":"ok","result_meta":{"completed":true},"usage":{"total_tokens":3}}

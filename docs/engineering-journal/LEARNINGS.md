@@ -5999,3 +5999,13 @@ been reported for the engine integration review.
 
 **Generalizable rule.** Probe whether resource limits can be caught before promising that
 native exhaustion always ends a run, even when uncaught-exhaustion tests pass.
+
+## 2026-10-27 — Generate valid time-ordered run IDs in property tests
+
+**Evidence.** A run ID encodes 128 bits (48 for time and 80 random bits) in 26
+base32 characters, which have room for 130 bits. Consequently its first character
+can encode only values 0 through 7; choosing from the full alphabet there can
+produce a value outside the run ID's range.
+
+**Generalizable rule.** When generating valid run IDs for property tests, draw
+only 0 through 7 for the first character and the full alphabet for the rest.
