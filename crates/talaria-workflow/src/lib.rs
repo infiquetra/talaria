@@ -14,4 +14,5 @@ pub mod staffing;
 
 pub mod worktree;
 
+/// Embedded workflows and installation of ordinary editable copies.
 pub mod builtins;

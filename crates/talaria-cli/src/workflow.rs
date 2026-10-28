@@ -17,6 +17,9 @@ use talaria_workflow::{
 
 use crate::args::{neutralise, required_path, required_text};
 
+#[path = "workflow_builtins.rs"]
+pub mod builtins;
+
 #[derive(Clone, Debug, Parser)]
 #[command(name="talaria workflow",bin_name="talaria workflow",color=ColorChoice::Never,about="Run, resume, list, stop, and resolve durable workflow runs")]
 pub struct WorkflowArgs {
@@ -25,6 +28,7 @@ pub struct WorkflowArgs {
 }
 #[derive(Clone, Debug, Subcommand)]
 pub enum WorkflowCommand {
+    Builtins(builtins::BuiltinArgs),
     Run(RunArgs),
     Resume(ResumeArgs),
     List(ListArgs),
@@ -540,6 +544,7 @@ pub async fn run(args: WorkflowArgs) -> u8 {
             if renderer.failed { 1 } else { exit_code(exit) }
         }
         WorkflowCommand::Run(args) => run_command(args).await,
+        WorkflowCommand::Builtins(args) => builtins::execute(args),
     }
 }
 async fn run_command(args: RunArgs) -> u8 {
@@ -586,6 +591,10 @@ async fn run_command(args: RunArgs) -> u8 {
     let workflows_dir = match absolute(runner::workflows_dir(args.workflows_dir.as_deref())) {
         Ok(dir) => dir,
         Err(e) => return fail(e, 2),
+    };
+    let script = match resolve_run_script(&script.to_string_lossy(), &workflows_dir) {
+        Ok(path) => path,
+        Err((message, code)) => return fail(message, code),
     };
     let mut extra = Vec::new();
     for (flag, value) in [
@@ -689,5 +698,36 @@ pub fn entry(args: &[String]) -> u8 {
     {
         Ok(runtime) => runtime.block_on(run(args)),
         Err(e) => fail(e, 1),
+    }
+}
+
+/// Resolve names before runner preflight; an edited installed script always wins.
+pub fn resolve_run_script(arg: &str, dir: &std::path::Path) -> Result<PathBuf, (String, u8)> {
+    use talaria_workflow::builtins::{InstallMode, ScriptArg, install, resolve_script_arg};
+    match resolve_script_arg(arg, dir).map_err(|e| (e, 2))? {
+        ScriptArg::Path(path) | ScriptArg::Named { path, .. } => Ok(path),
+        ScriptArg::MissingBuiltin { name, path } => {
+            install(dir, InstallMode::MissingOnly).map_err(|e| {
+                (
+                    format!(
+                        "could not install built-in workflows into {}: {e}",
+                        dir.display()
+                    ),
+                    1,
+                )
+            })?;
+            eprintln!("installed built-in workflows into {}", dir.display());
+            match resolve_script_arg(arg, dir) {
+                Ok(ScriptArg::Named { path, .. }) => Ok(path),
+                _ => Err((
+                    format!(
+                        "built-in workflow '{name}' is still missing from {}: {} is not a regular file",
+                        dir.display(),
+                        path.display()
+                    ),
+                    1,
+                )),
+            }
+        }
     }
 }
