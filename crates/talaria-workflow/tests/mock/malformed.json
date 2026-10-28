@@ -1,0 +1,1 @@
+{"rules":[{"match":{"prompt_equals":"x"},"outcome":{"text":"ok","failed":"bad"}}]}

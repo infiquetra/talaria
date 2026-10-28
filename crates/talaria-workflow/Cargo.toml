@@ -8,5 +8,35 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+mock = []
+
+[dependencies]
+rquickjs.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+proptest.workspace = true
+toml.workspace = true
+tempfile.workspace = true
+
+[[example]]
+name = "dry_run"
+required-features = ["mock"]
+
+[[bench]]
+name = "workflow_engine"
+harness = false
+required-features = ["mock"]
+
 [lints]
 workspace = true

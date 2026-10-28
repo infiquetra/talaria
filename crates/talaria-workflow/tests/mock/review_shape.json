@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {"match": {"prompt_contains": "correctness"}, "outcome": {"object": {"findings": [{"id": "F1", "claim": "off-by-one in the retry loop"}]}}, "delay_ms": 300},
+    {"match": {"prompt_contains": "security"}, "outcome": {"object": {"findings": [{"id": "F2", "claim": "token written to the log"}]}}, "delay_ms": 200},
+    {"match": {"prompt_contains": "simplicity"}, "outcome": {"object": {"findings": []}}, "delay_ms": 100},
+    {"match": {"prompt_contains": "Verify finding F1"}, "outcome": {"object": {"real": true}}},
+    {"match": {"prompt_contains": "Verify finding F2"}, "outcome": {"object": {"real": false}}},
+    {"match": {"prompt_contains": "Summarise"}, "outcome": {"text": "one confirmed finding"}}
+  ]
+}

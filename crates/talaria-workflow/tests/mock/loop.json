@@ -1,0 +1,6 @@
+{"rules":[
+  {"match":{"prompt_contains":"round 1"},"outcome":{"object":{"new":["t1"]}}},
+  {"match":{"prompt_contains":"round 2"},"outcome":{"object":{"new":["t2"]}}},
+  {"match":{"prompt_contains":"round 3"},"outcome":{"object":{"new":[]}}},
+  {"match":{"prompt_contains":"round 4"},"outcome":{"object":{"new":[]}}}
+]}
