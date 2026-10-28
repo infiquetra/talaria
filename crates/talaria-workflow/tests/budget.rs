@@ -13,8 +13,8 @@ async fn budget_reads_backend_snapshot() {
     assert_eq!(
         result(outcome),
         json!([
-            [3000, 0, 3000, 2.5, 0.0, 2.5],
-            [3000, 1000, 2000, 2.5, 0.5, 2.0]
+            [3000, 0, 3000, 2.5, 0, 2.5],
+            [3000, 1000, 2000, 2.5, 0.5, 2]
         ])
     );
     let (outcome, _) = run("return [budget.total, budget.remaining() === Infinity, budget.money.total, budget.money.remaining() === Infinity];", default_backend()).await;
