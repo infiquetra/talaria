@@ -69,6 +69,7 @@ async fn request_shapes() {
     )
     .await
     .expect("save");
+    assert_eq!(saved.platform.as_deref(), Some("signal"));
     assert!(!saved.hot_served);
     let switched = update_platform(
         &rest,
@@ -83,6 +84,7 @@ async fn request_shapes() {
     .await
     .expect("switch");
     assert!(switched.ok);
+    assert_eq!(switched.platform.as_deref(), Some("signal"));
 
     let _tested = test_platform(&rest, "fixture", "signal")
         .await

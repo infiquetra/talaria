@@ -2,6 +2,27 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-27 — Live mutation replies and scheduled runs use distinct completion shapes
+
+**Evidence.** Issue #362, Hermes v0.22.4 at the pinned revision. The handler in
+`hermes_cli/web_routers/messaging.py` returns
+`{"ok": true, "platform": "signal", "hot_served": false}` from
+`PUT /api/messaging/platforms/{id}`. Live scheduled runs record
+`end_reason = "cron_complete"` in the `state.db` sessions table, as booked by
+`cron/scheduler.py`. The messaging request-shape test now checks the returned platform
+identifier, and the cron verdict regression accepts this completion reason while rejecting
+`cron_incomplete_no_output`.
+
+**Mechanism.** The messaging decoder and its mock both treated the mutation's platform field
+as a read object, so the mock hid a live string-to-object deserialization failure. The cron
+verdict accepted only the generic `completed` reason and rejected a successful scheduler
+completion. Reporting that failure before awaiting job removal left cleanup to a drop guard
+that joins a second runtime's thread while the client still depends on the test runtime for
+transport. The probe now awaits removal on the active runtime and disarms its guard before
+reporting either verdict.
+
+**Generalizable rule.** Match each mutation reply and subsystem completion value to its actual wire shape, and finish asynchronous probe cleanup before reporting a failing verdict.
+
 ## 2026-10-27 — Phase 4a smoke and acceptance runs: step timings, key-card input, and read-only effort hydration
 
 **Evidence.** Issue #255 (`PH4A-ACC`, candidate `8b2fe42b1a93a412ca81536cd2ec0ddcd0346977`), `tools/smoke/src/steps4a.rs` and `docs/acceptance/v0.7.0/phase-4a-evidence.md`. Across the two back-to-back live runs (`AUTO-12` elapsed `42 s`, `AUTO-13` elapsed `39 s`, both well under the `900 s` deadline), all 17 steps passed with `cmp=0` on the `fixture` profile's configuration and key files (`startup` 1.3 s, `plain-answer` 3.8 s, `config-browse` 2.5 s, `config-invalid-input` 1.8 s, `config-secret-refused` 3.2 s, `providers-tabs` 1.6 s, `providers-key-masked` 1.7 s, `models-page` 2.4 s, `models-bad-preset` 2.8 s, `profiles-list` 1.9 s, `profiles-bad-names` 2.1 s, `doctor-overlay` 1.4 s, `quit` 1.1 s, `resume` 7.4 s, `profiles-cli` 1.2 s, `doctor-cli` 1.8 s, `no-gateway` 1.1 s). `herdr pane send-text` delivered the dummy key directly into the `/providers` key card without requiring bracketed paste, and each screen overlay closed back to the idle composer within 1–2 `Esc` presses using the `visible` read source (with `recent-unwrapped` used for the CLI steps 15–17). In Stage 3 (`P4-02 UAT-3`), replacing the `ollama-cloud` key inside `/providers` updated the profile's key file (`Saved the key for Ollama Cloud.`, `ready · 24 models · key …6291`) and answered a fresh session prompt without opening any configuration file.
@@ -145,7 +166,7 @@ against the base that Hermes originally returned.
 
 ## 2026-10-26 — info.cwd and symlinked folders
 
-**Evidence.** Issue #241's specification (fact 25): `gateway/session_policy.py:432-434` keeps the create-time `cwd` string unresolved and `gateway/session_local.py:415` copies it into the snapshot's `info.cwd`. On macOS a temporary folder under `/var` is a link to `/private/var`, so a string comparison of the folder sent and the folder reported can fail for the same directory. `compare_cwd` in `crates/talaria-app/src/bg/service.rs` canonicalises both sides. Live test 52 (`live_bg_worktree_isolates_edits`, 2026-10-26, Hermes v0.22.4) printed `<tmp>/repo/.worktrees/talaria-live-probe` for both the folder sent and `info.cwd`, under macOS's `/private/var/folders/...` form: the launch canonicalises its folder before sending it, so Hermes echoes the canonical string.
+**Evidence.** Issue #241's specification (fact 25): `gateway/session_policy.py:432-434` keeps the create-time `cwd` string unresolved and `gateway/session_local.py:415` copies it into the snapshot's `info.cwd`. On macOS a temporary folder under `/var` is a link to `<path>`, so a string comparison of the folder sent and the folder reported can fail for the same directory. `compare_cwd` in `crates/talaria-app/src/bg/service.rs` canonicalises both sides. Live test 52 (`live_bg_worktree_isolates_edits`, 2026-10-26, Hermes v0.22.4) printed `<tmp>/repo/.worktrees/talaria-live-probe` for both the folder sent and `info.cwd`, under macOS's `<path>` form: the launch canonicalises its folder before sending it, so Hermes echoes the canonical string.
 
 **Mechanism.** The folder check fails closed (a mismatch abandons the launch before the prompt is sent), so it must not mistake one directory reached two ways for two directories. Separately, a create whose reply is lost twice may still have made a session Talaria never learned the id of; closing the connection detaches it without an end reason, and it stays listed as an empty idle session.
 
@@ -3971,7 +3992,7 @@ Stable, not transient — six further renders did not correct it. The recovery e
 
 **Author.** v0.1 milestone-2, unit U8 (blocking prompts), fourth adversarial round
 
-**Evidence.** `defang`'s translation table covered `range(0x00, 0x20)` plus `0x7F` and nothing else. A command containing U+202E RIGHT-TO-LEFT OVERRIDE survived unmodified into `CommandPanel.rows`, into `export_screenshot()`, and into the transcript's arrival entry; a U+200B ZERO WIDTH SPACE inside `rm -rf /home/build` was invisible on screen and counted as zero cells by `chop_cells`, so the wrap's column arithmetic disagreed with what the terminal draws.
+**Evidence.** `defang`'s translation table covered `range(0x00, 0x20)` plus `0x7F` and nothing else. A command containing U+202E RIGHT-TO-LEFT OVERRIDE survived unmodified into `CommandPanel.rows`, into `export_screenshot()`, and into the transcript's arrival entry; a U+200B ZERO WIDTH SPACE inside `rm -rf <path>` was invisible on screen and counted as zero cells by `chop_cells`, so the wrap's column arithmetic disagreed with what the terminal draws.
 
 **State precisely what is reproduced and what is not.** That the characters survive unmodified is reproducible and is now pinned. That a real terminal *reorders* the glyphs is not demonstrable through `export_screenshot()`, because an SVG screenshot performs no bidi reordering — the assertion is about the bytes reaching the renderer, not about the picture a terminal would draw from them.
 
