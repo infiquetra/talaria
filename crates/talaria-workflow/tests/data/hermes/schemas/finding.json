@@ -1,0 +1,23 @@
+{
+  "properties": {
+    "file": {
+      "type": "string"
+    },
+    "severity": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "severity"
+  ],
+  "type": "object"
+}

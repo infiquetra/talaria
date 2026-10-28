@@ -1,0 +1,27 @@
+{
+  "steps": [
+    {
+      "expect": "runtime.describe",
+      "reply": "describe_ok.json"
+    },
+    {
+      "expect": "session.create",
+      "reply": "create_ok.json"
+    },
+    {
+      "expect": "prompt.submit",
+      "reply": "submit_ok.json"
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": "receipt_terminal.json"
+    },
+    {
+      "expect": "session.list",
+      "reply": {
+        "sessions": [],
+        "scope": "live"
+      }
+    }
+  ]
+}

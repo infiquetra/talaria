@@ -1,0 +1,19 @@
+{
+  "authority_epoch": 1,
+  "execution_generation": 1,
+  "info": {
+    "desktop_protocol": "none",
+    "cwd": "/work/proj"
+  },
+  "last_sequence": 0,
+  "message_count": 0,
+  "messages": [],
+  "pending": [],
+  "prompts": [],
+  "replay_epoch": "epoch",
+  "revision": 1,
+  "running": false,
+  "session_id": "session",
+  "stored_session_id": "stored",
+  "subscription_id": "sub"
+}

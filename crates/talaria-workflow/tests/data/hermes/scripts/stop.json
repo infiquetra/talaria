@@ -1,0 +1,622 @@
+{
+  "steps": [
+    {
+      "expect": "runtime.describe",
+      "reply": "describe_ok.json"
+    },
+    {
+      "expect": "session.create",
+      "reply": "create_ok.json"
+    },
+    {
+      "expect": "prompt.submit",
+      "reply": {
+        "admission_id": "admission",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session"
+        },
+        "sequence": 1,
+        "status": "queued",
+        "outcome": null,
+        "authority_epoch": 1,
+        "execution_generation": 1
+      }
+    },
+    {
+      "expect": "prompt.cancel",
+      "reply": {
+        "admission_id": "admission",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session"
+        },
+        "sequence": 1,
+        "status": "terminal",
+        "outcome": "cancelled",
+        "authority_epoch": 1,
+        "execution_generation": 1
+      }
+    }
+  ],
+  "cases": [
+    "terminal-not-running",
+    "unknown-status",
+    "started-interrupt-sent",
+    "started-stale-reread-terminal",
+    "started-stale-reread-other-generation",
+    "started-stale-reread-same-generation",
+    "queued-cancel-cancelled",
+    "queued-cancel-other-outcome",
+    "queued-cancel-became-started",
+    "queued-stale-reread-started",
+    "queued-stale-reread-terminal",
+    "queued-still-unknown",
+    "transport-unknown"
+  ],
+  "scenarios": [
+    {
+      "name": "terminal-not-running",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "terminal",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          }
+        ]
+      },
+      "result": "NotRunning"
+    },
+    {
+      "name": "unknown-status",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "unknown",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          }
+        ]
+      },
+      "result": "Unknown"
+    },
+    {
+      "name": "started-interrupt-sent",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "session.interrupt",
+            "reply": "interrupt_ok.json"
+          }
+        ]
+      },
+      "result": "Sent"
+    },
+    {
+      "name": "started-stale-reread-terminal",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "session.interrupt",
+            "reply": {
+              "error": {
+                "code": 4001,
+                "message": "stale_generation",
+                "data": {
+                  "reason": "stale_generation"
+                }
+              }
+            }
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "terminal",
+              "outcome": "completed",
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          }
+        ]
+      },
+      "result": "NotRunning"
+    },
+    {
+      "name": "started-stale-reread-other-generation",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "session.interrupt",
+            "reply": {
+              "error": {
+                "code": 4001,
+                "message": "stale_generation",
+                "data": {
+                  "reason": "stale_generation"
+                }
+              }
+            }
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 2
+            }
+          }
+        ]
+      },
+      "result": "NotRunning"
+    },
+    {
+      "name": "started-stale-reread-same-generation",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "session.interrupt",
+            "reply": {
+              "error": {
+                "code": 4001,
+                "message": "stale_generation",
+                "data": {
+                  "reason": "stale_generation"
+                }
+              }
+            }
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          }
+        ]
+      },
+      "result": "Unknown"
+    },
+    {
+      "name": "queued-cancel-cancelled",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "queued",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "prompt.cancel",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "terminal",
+              "outcome": "cancelled",
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          }
+        ]
+      },
+      "result": "Sent"
+    },
+    {
+      "name": "queued-cancel-other-outcome",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "queued",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "prompt.cancel",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "terminal",
+              "outcome": "completed",
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          }
+        ]
+      },
+      "result": "NotRunning"
+    },
+    {
+      "name": "queued-cancel-became-started",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "queued",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "prompt.cancel",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "session.interrupt",
+            "reply": "interrupt_ok.json"
+          }
+        ]
+      },
+      "result": "Sent"
+    },
+    {
+      "name": "queued-stale-reread-started",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "queued",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "prompt.cancel",
+            "reply": {
+              "error": {
+                "code": 4001,
+                "message": "stale_generation",
+                "data": {
+                  "reason": "stale_generation"
+                }
+              }
+            }
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "session.interrupt",
+            "reply": "interrupt_ok.json"
+          }
+        ]
+      },
+      "result": "Sent"
+    },
+    {
+      "name": "queued-stale-reread-terminal",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "queued",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "prompt.cancel",
+            "reply": {
+              "error": {
+                "code": 4001,
+                "message": "stale_generation",
+                "data": {
+                  "reason": "stale_generation"
+                }
+              }
+            }
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "terminal",
+              "outcome": "completed",
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          }
+        ]
+      },
+      "result": "NotRunning"
+    },
+    {
+      "name": "queued-still-unknown",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "queued",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "prompt.cancel",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "unknown",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          }
+        ]
+      },
+      "result": "Unknown"
+    },
+    {
+      "name": "transport-unknown",
+      "script": {
+        "steps": [
+          {
+            "expect": "runtime.describe",
+            "reply": "describe_ok.json"
+          },
+          {
+            "expect": "prompt.receipt",
+            "reply": {
+              "admission_id": "admission",
+              "ref": {
+                "profile_id": "fixture",
+                "session_id": "session"
+              },
+              "sequence": 1,
+              "status": "started",
+              "outcome": null,
+              "authority_epoch": 1,
+              "execution_generation": 1
+            }
+          },
+          {
+            "expect": "session.interrupt",
+            "reply": {},
+            "close_before_reply": true
+          }
+        ]
+      },
+      "result": "Unknown"
+    }
+  ]
+}

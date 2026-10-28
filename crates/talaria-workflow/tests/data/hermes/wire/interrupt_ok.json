@@ -1,0 +1,11 @@
+{
+  "ref": {
+    "profile_id": "fixture",
+    "session_id": "session"
+  },
+  "instance_id": "instance",
+  "authority_epoch": 1,
+  "revision": 1,
+  "execution_generation": 1,
+  "execution_state": "running"
+}

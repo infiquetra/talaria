@@ -12,9 +12,12 @@ publish.workspace = true
 default = []
 mock = []
 fake-gateway = []
+hermes-live = []
 
 [dependencies]
 futures-util.workspace = true
+hermes-client.workspace = true
+hermes-contract.workspace = true
 rquickjs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

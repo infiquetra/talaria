@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "expect": "runtime.describe",
+      "reply": {
+        "instance_id": "instance",
+        "profile_id": "fixture",
+        "authority_epoch": 1,
+        "capabilities": [],
+        "session_create": {
+          "sources": [],
+          "parameters": []
+        }
+      }
+    }
+  ]
+}
