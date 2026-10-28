@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 28] = [
+const NAMES: [&str; 29] = [
     "background-work",
     "attachments-mention-image",
     "plain-answer",
@@ -46,6 +46,7 @@ const NAMES: [&str; 28] = [
     "review-session-info",
     "review-oneshot",
     "profiles",
+    "p5-04-model-options",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -82,7 +83,7 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         // The review only reads the session and drafts one message; no turn runs.
         "review-session-info" | "review-oneshot" => &[],
         // The profiles list reads no session and runs no turn.
-        "profiles" => &[],
+        "profiles" | "p5-04-model-options" => &[],
         _ => &["complete"],
     }
 }
@@ -194,7 +195,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 28);
+    assert_eq!(fixtures.len(), 29);
 }
 
 #[test]
@@ -847,6 +848,18 @@ fn scenario_evidence_present() {
                     describes[0]["params"]["name"].is_string(),
                     "{name}: profiles.describe names no profile"
                 );
+            }
+            "p5-04-model-options" => {
+                let request = records
+                    .iter()
+                    .find(|row| row["dir"] == "out" && row["frame"]["method"] == "model.options")
+                    .expect("roster request");
+                assert_eq!(request["frame"]["params"], serde_json::json!({}));
+                let response = records
+                    .iter()
+                    .find(|row| row["dir"] == "in" && row["frame"]["id"] == request["frame"]["id"])
+                    .expect("roster response");
+                assert!(response["frame"]["result"]["providers"].is_array());
             }
             other => panic!("unlisted fixture {other}"),
         }
