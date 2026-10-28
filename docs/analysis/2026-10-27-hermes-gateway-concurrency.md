@@ -1,115 +1,104 @@
-# Gateway concurrency measurement — implementation handoff
+# Hermes gateway concurrency measurement
 
-The probe implementation is ready for offline review and fixture-gateway execution.
-No live gateway measurements were run by the implementation seat.
-The results file contains the complete 17-record matrix, with every record explicitly unmeasured.
-There is **no healthy width**, so the default concurrency, topology, memory estimate and cited runs are all null.
-The final evidence gate remains unsatisfied until the measurement owner supplies live results, including the shared width-one control and both recovery series.
+On the measured fixture gateway, all 312 loopback turns in series A completed at widths up to 20 on both connection layouts. The contiguous healthy width was 1 on the shared layout and none on the per-session layout, because foreground latency exceeded the rule at shared width 5 and at the per-session control. The computed recommendation is a shared connection, `max_in_flight = 1`, and approximately 1.1 MB per session, citing A-shared-1. Ten dropped-client admissions and twenty detached admissions returned saved results, and a resumed turn completed. The tool probe recorded zero matching tool executions despite ten completed turns, so its tool criterion failed and needs investigation.
 
 ## Scope and provenance
 
-Hermes release: **v0.22.4**, commit **4d04303818b61bf3aa09278af48356315515965b**.
-Machine class: not measured; the measurement owner must record it without a host name.
-Execution mode: `unknown`; the operator must report `in-process` or `managed-worker` before interpreting results.
-The draft record identity `00000000`, dated 2026-10-27 at Talaria `a498e28dc052`, denotes unmeasured placeholders only.
-Each live invocation replaces those identities with its own random run id, date and Talaria commit.
-No width cap or configuration change was made by the implementation seat.
-No sessions were created by this seat; QA must report the sessions remaining in `fixture` after execution.
+Hermes v0.22.4, commit `4d04303818b61bf3aa09278af48356315515965b`; Talaria probe commit `9a935b425a98`. Machine class: Apple M2 Ultra, 128 GiB memory. Execution mode: `unknown` (operator could not confirm managed-worker setting); child-process observations do not establish the configuration. No width cap, gateway restart or configuration change was made. Runs were dated 2026-10-28 UTC: A `dfd8956a`, B `a01684ae`, C `ab3e8d55`, D `ebc51101`, E `ac680e0f`. The probes created 160 distinct session rows in `fixture`; they detached subscriptions but did not delete sessions. The real-model run was performed at the operator's direction and imported from its recorded lines.
 
-## Static readings
+## Static readings and live verdicts
 
-The table distinguishes a source reading from a measured outcome. The source revision above was inspected for titled creates, hidden-session acceptance, subscription authorization, receipts, event replay, settlement status, and the loopback streaming shape. None of the following is claimed as a live finding yet.
+| Reading | Verdict and evidence |
+| --- | --- |
+| S1 — executor | Canonical turns overlapped, but the provider peak did not reach widths 10–20 in A; this measurement does not establish the executor's internal implementation. |
+| S2 — admission | A admitted all distinct sessions and turns through 20 on both layouts. This does not establish behavior under a configured cap. |
+| S3 — retention | E returned 20 saved results after detach and a 60-second wait, with a successful resume and next turn; longer retention and eviction are unmeasured. |
+| S4 — cache | RSS after cleanup stayed within 20% of each before sample; the cache pressure policy itself was not tested. |
+| S5 — execution policy | Execution mode is unknown; B was accepted. Child process counts do not prove policy selection. |
+| S6 and S6a — launch fields | The descriptor gate and hidden loopback creates succeeded; 104 distinct sessions were created in A. |
+| S6b — title reuse | Source reading only; the probes omit title. |
+| S7 — admission | All A submissions returned admissions, with queued status; completion was observed for every turn. |
+| S8 — receipts | D retrieved ten saved results on a fresh connection without attaching. |
+| S8a — detach | E refused submission after detach; resume and an additional turn succeeded. |
+| S9 — event ordering | A had no repeats, decreases or unresolved gaps; some gaps were repaired. This is bounded by the probe's event tracking. |
+| S9a — replay | D reported no replay truncation; A reported no unresolved gaps. |
+| S10 — completion and tools | A completions were observed once per admission. C recorded zero matching tool executions; B recorded no rate-limit keys. |
+| S11 — process identity | Process-tree sampling succeeded for each live record. |
+| S12 — loopback provider | A control completed all three turns and classified three turn requests. Unexpected routes were counted; their contents were not retained. |
+| S13 — todo arguments | Not verified: C's matching execution count was zero, despite completed turns and two provider turn requests per session. |
 
-| Reading | Live verdict | Evidence still needed |
+## Measurements
+
+A values are three repetitions; latency columns are milliseconds. Peak is the minimum provider overlap across repetitions. RSS is before / peak / after in MB. Failure numbers refer to the unit's health criteria.
+
+| Record | Completed | Start p95 | Foreground p95 / max | Provider peak | RSS | Health failures |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| A-shared-1 | 3/3 | 49 | 34 / 47 | 1 | 501.6 / 502.7 / 502.5 | none |
+| A-shared-5 | 15/15 | 617 | 74 / 212 | 5 | 502.5 / 503.7 / 503.3 | 3 |
+| A-shared-10 | 30/30 | 2709 | 428 / 964 | 3 | 503.3 / 506.9 / 504.5 | 2, 3 |
+| A-shared-16 | 48/48 | 3261 | 435 / 827 | 4 | 504.5 / 508.1 / 507.7 | 2, 3 |
+| A-shared-20 | 60/60 | 3315 | 356 / 678 | 5 | 507.7 / 511.3 / 510.0 | 2, 3 |
+| A-per-session-1 | 3/3 | 51 | 27 / 305 | 1 | 510.0 / 510.2 / 510.1 | 3 |
+| A-per-session-5 | 15/15 | 272 | 47 / 156 | 5 | 510.1 / 511.3 / 510.9 | none |
+| A-per-session-10 | 30/30 | 1127 | 332 / 653 | 6 | 510.9 / 512.6 / 514.0 | 2, 3 |
+| A-per-session-16 | 48/48 | 2516 | 681 / 1107 | 4 | 514.0 / 519.8 / 519.3 | 2, 3 |
+| A-per-session-20 | 60/60 | 2235 | 485 / 1079 | 5 | 519.4 / 529.3 / 528.6 | 2, 3 |
+
+Highest contiguous healthy widths: shared 1; per-session none. The latter's width 5 was healthy individually but its width-1 control was not. This refutes the assumed healthy width 10 under the specified rule on this machine; it does not establish a universal gateway limit. CPU estimates and the full event and resource counts are in the results. CPU estimates omit short-lived processes absent from endpoint samples.
+
+| B record | Completed / failed | Health failures | Observation |
+| --- | --- | --- | --- |
+| B-shared-1 | 1 / 0 | none | real provider |
+| B-shared-5 | 5 / 0 | none | real provider |
+| B-shared-10 | 9 / 1 | 1, 2, 3 | one `error`, kind `unknown`; no rate-limit keys observed |
+| B-shared-16 | not run | — | stopped after an unhealthy width |
+
+The single B error's cause is unknown; it is not evidence of a gateway fault or a rate limit. Series B used the free model and the operator-authorized quota.
+
+| Record | Outcome | Health failures |
 | --- | --- | --- |
-| S1 — turn executor | Not tested | Canonical-turn overlap and provider peaks in A |
-| S2 — admission cap | Not tested | Distinct sessions and refusal counts across A widths |
-| S3 — canonical retention | Not tested | E receipts and resume; positive eviction evidence if any |
-| S4 — cache pressure | Not tested | Process-tree samples before, during and after cleanup |
-| S5 — execution policy | Not tested | Operator execution-mode answer and B support |
-| S6 — create launch fields | Not tested | First A create and its snapshot |
-| S6a — descriptor omits hidden | Not tested | Runtime descriptor and successful hidden create |
-| S6b — titled creates reuse sessions | Not tested | Static source confirms title lookup; probes deliberately omit title |
-| S7 — durable admission reply | Not tested | Submit statuses and admission identifiers |
-| S8 — receipts without attachment | Not tested | D receipts on a fresh connection |
-| S8a — detach authorization | Not tested | E refusal, resume and extra turn |
-| S9 — event ordering | Not tested | Per-session epoch, sequence and completion counts |
-| S9a — replay ranges | Not tested | Gap repair and D replay truncation |
-| S10 — completion and tool events | Not tested | A completions, C tool counts and B rate-limit key names |
-| S11 — gateway process identity | Not tested | Identify pid and sampler availability |
-| S12 — custom loopback provider | Not tested | Width-one classification check and live completion |
-| S13 — todo tool arguments | Not tested | Exactly one todo_list execution per C session |
+| C-shared-10 | 10 turns completed; 0 matching tool executions | 7 |
+| D-shared-10 | 10 terminal receipts with results; 0 unknown, unresolved or replay truncations | none |
+| E-shared-20 | 20 terminal receipts with results; submit after detach refused; resume and next turn succeeded | 2, 3 |
 
-## Series and current results
+D's receipt p95 was 16,528 ms and resume p95 170 ms. E's receipt p95 was 48 ms, resume 243 ms and next turn 721 ms. E showed no positive eviction evidence within the observation period. The largest measured A event rate was 293 events/s at A-per-session-20; this is a peak sample, not a guaranteed upper bound. C's recorded tool count may reflect either execution or observation behavior and must be investigated before asserting the tool failed to run.
 
-| Series | Topology | Widths | Repetitions | Current evidence |
-| --- | --- | --- | --- | --- |
-| A | shared | 1, 5, 10, 16, 20 | 3 | Not run: live evidence pending |
-| A | per-session | 1, 5, 10, 16, 20 | 3 | Not run: live evidence pending |
-| B | shared | 1, 5, 10, 16 | 1 | Not run: operator execution pending |
-| C | shared | 10 | 1 | Not run: live evidence pending |
-| D | shared | 10 | 1 | Not run: live recovery evidence pending |
-| E | shared | 20 | 1 plus retention check | Not run: live recovery evidence pending |
+## Recommendations and dependent work
 
-Highest healthy shared width: none. Highest healthy per-session width: none.
-Recommendations: `default_max_in_flight = null`, `topology = null`, `memory_mb_per_session = null`, `cited_runs = null`.
-This is an absence of measurements, not a refutation of the assumed width or durable recovery.
-The draft is not a completed phase gate and must not be merged as a finished measurement finding.
-
-## Child issue edits after measurement
-
-These are the concrete edits presently needed; measured numbers must replace the pending statements before dependent planning begins.
+`recommendations` computes `default_max_in_flight = 1`, `topology = shared`, `memory_mb_per_session = 1.099999999999966` (about 1.1), and `cited_runs = [A-shared-1]`. The estimate uses the peak minus before sample at width 1; it is not a production capacity forecast. No topology met the contiguous health rule at 10; the decision to adopt or revisit this default awaits the operator.
 
 ### #264 — Script engine
 
-No change to the engine interface or its absence of a concurrency bound. Keep the start gate closed until the finding is complete.
+Keep concurrency control in the runner rather than the script engine; pass the measured scheduler limit through its interface.
 
 ### #265 — Journal and resume
 
-State that prompt.receipt retrieves saved results without attaching, and session.resume is required before submitting another prompt. Preserve unknown outcomes without resubmission. Confirm these rules from D and E before finalizing the issue.
+Persist admissions and recover results by receipt after reconnect, preserving unknown outcomes. D and E support recovery without gateway restart; attach with `session.resume` before another submit.
 
 ### #266 — Hermes binding
 
-Require a unique request_id, source tool, hidden true and an explicit model/provider; omit title and all automatic-approval fields. Gate on the descriptor's launch fields, while checking hidden against the contract. Leave connection topology pending the comparison of A shared and per-session results.
+Use the measured shared connection and cite A-shared-1. Use distinct request identifiers, hidden tool sessions and explicit model/provider, omit title, and enforce the descriptor gate. D and E support receipt-before-resume recovery.
 
 ### #267 — Staffing and scheduling
 
-Replace the assumed default with the measured recommendation and its cited records. Until measurements exist, record no healthy width and leave the default and memory estimate undecided; do not invent a fallback of one.
+Set the proposed default to 1 and budget approximately 1.1 MB per session from A-shared-1; only the operator may raise it. Re-measure on the intended deployment before extrapolating.
 
 ### #268 — Progress view
 
-Leave the coalescing interval pending measured peak_events_per_s. Require replay repair for gaps and treat an epoch change alone as normal.
+Handle replay repair and epoch changes; size coalescing with the observed peak of 293 events/s from A-per-session-20 while allowing higher bursts.
 
 ### #269 — Runner lifecycle
 
-Require receipt collection after reconnect, followed by session.resume before further submission. Leave any extra recovery steps pending D and E.
+Collect receipts after reconnect, then resume before new submissions. D and E did not show a recovery failure without restart.
 
 ### #271 — Built-in workflows
 
-Leave fan-out caps pending the scheduler's measured default. Do not raise them from the draft fixture.
+Use the scheduler's proposed fan-out default of 1 until an operator approves a different measured value.
 
 ### #273 — Phase acceptance
 
-Keep the concurrency acceptance width pending the recommendation. No healthy width keeps this gate closed; do not substitute a successful compile for live evidence.
+Use the measured shared width 1 for the proposed acceptance baseline and obtain the operator's decision on the failed width-10 assumption.
 
-## Re-running
+## Re-running and open questions
 
-Run from the repository root using the pinned Rust toolchain. Use the operator-owned gateway serving `fixture`; never start, restart or reconfigure it from the probe. The fixture gateway port is owned by QA. Set `TALARIA_PROBE_EXECUTION_MODE` to the operator-reported mode. Only the operator may lower `TALARIA_PROBE_MAX_WIDTH` from 20.
-
-```bash
-cargo test -p hermes-client --test gateway_concurrency_results
-TALARIA_LIVE_REQUIRE=1 cargo test -p hermes-client --test live_gateway_concurrency -- --ignored --nocapture probe_series_a_stub_provider
-TALARIA_LIVE_REQUIRE=1 cargo test -p hermes-client --test live_gateway_concurrency -- --ignored --nocapture probe_series_c_tool_turns
-TALARIA_LIVE_REQUIRE=1 cargo test -p hermes-client --test live_gateway_concurrency -- --ignored --nocapture probe_series_d_reattach_after_drop
-TALARIA_LIVE_REQUIRE=1 cargo test -p hermes-client --test live_gateway_concurrency -- --ignored --nocapture probe_series_e_detached_retention
-```
-
-The operator runs `probe_series_b_free_model` separately or supplies its RECORD lines through `TALARIA_PROBE_IMPORT` and the ignored `import_operator_records` test. Results merge by id under an exclusive lock in the Cargo test temporary directory's gateway-concurrency/results.json. Copy the completed result file to fixtures/gateway-concurrency/results.json and rerun the offline evidence gate. Keep the run identities and dates in this finding, with each measured table, resource estimates and recovery totals. CPU time is an estimate over processes present in both endpoint samples and misses short-lived children.
-
-## Operator questions and completion work
-
-Record the machine class and execution mode, whether B is supported or waived, and any operator width cap. QA must supply A, C, D and E measurements, record cleanup, and replace the pending table and verdicts with supported findings. If recovery fails without a restart or no topology is healthy at ten, record a proposed decision awaiting the operator. Post the child issue finding links only after the completed pull request merges.
-
-## Offline implementation verification
-
-The independent suite passes 14 of its 15 required checks. The sole failure is `results_meet_the_evidence_gate`, because the committed records remain unmeasured; this check was preserved unchanged. All 21 supplemental engine checks pass. The copied live test target passes its offline checks with all six gateway/import measurements ignored. These outcomes verify the helper API and record structure without claiming a live concurrency or recovery result.
+Use the pinned toolchain and the operator-owned gateway serving `fixture`; do not start, restart or reconfigure it. Run the ignored live tests for A, C, D and E with `TALARIA_LIVE_REQUIRE=1`; the operator controls the quota-consuming B run and import. Records merge by id in the Cargo test temporary directory. Copy the results into the fixture and run the offline results suite and privacy checks. The operator should confirm execution mode, decide whether to adopt the width-1 recommendation, and investigate the C tool observation and B's unknown error. The 60-second retention window does not establish behavior after a gateway restart or longer detach.

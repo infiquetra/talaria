@@ -5944,3 +5944,17 @@ calculation against the width-one baseline.
 
 **Generalizable rule.** Derive a measurement-based recommendation from the recorded
 measurements and baseline each time it is computed.
+
+## 2026-10-28 — Healthy width depends on the entire measured prefix
+
+**Evidence.** The live gateway measurement found per-session width 5 healthy, while its
+width-1 control exceeded the foreground maximum; shared width 1 was healthy but width 5
+exceeded foreground p95. All A turns completed. D recovered ten saved results after a
+connection drop, and E refused a detached submit before a successful resume and next turn.
+
+**Mechanism.** A successful isolated width does not prove the lower widths meet the same
+latency and delivery criteria. A saved receipt is durable result evidence but does not grant
+an attachment for a new submission.
+
+**Generalizable rule.** Select a contiguous healthy width and verify receipt recovery and
+reattachment independently.

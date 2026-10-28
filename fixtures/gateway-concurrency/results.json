@@ -1,641 +1,1843 @@
 {
-  "hermes_release": "v0.22.4",
   "execution_mode": "unknown",
+  "hermes_release": "v0.22.4",
+  "recommendations": {
+    "cited_runs": [
+      "A-shared-1"
+    ],
+    "default_max_in_flight": 1,
+    "memory_mb_per_session": 1.099999999999966,
+    "topology": "shared"
+  },
   "runs": [
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 2248,
+      "create_ms": {
+        "max": 625,
+        "n": 1,
+        "p50": 625,
+        "p95": 625
+      },
+      "create_refused": 0,
+      "distinct_sessions": 1,
+      "events": {
+        "complete_per_admission": 3,
+        "epoch_changes": 0,
+        "observed": 100,
+        "peak_events_per_s": 49,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [],
+      "first_delta_ms": {
+        "max": 213,
+        "n": 3,
+        "p50": 166,
+        "p95": 213
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 47,
+        "n": 136,
+        "p50": 12,
+        "p95": 34
+      },
+      "healthy": true,
       "id": "A-shared-1",
-      "series": "A",
-      "topology": "shared",
-      "width": 1,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 3,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": []
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 1,
+        "turn_requests": 3,
+        "turn_requests_peak_min": 1,
+        "unexpected_routes": 11
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 0,
+        "cpu_s_estimate": 0.8,
+        "rss_mb": {
+          "after": 502.5,
+          "before": 501.6,
+          "peak": 502.7
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 49,
+        "n": 3,
+        "p50": 31,
+        "p95": 49
+      },
+      "submit_ms": {
+        "max": 24,
+        "n": 3,
+        "p50": 17,
+        "p95": 24
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 797,
+        "n": 3,
+        "p50": 732,
+        "p95": 797
+      },
+      "turns_completed": 3,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 1
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 4972,
+      "create_ms": {
+        "max": 1103,
+        "n": 5,
+        "p50": 714,
+        "p95": 1103
+      },
+      "create_refused": 0,
+      "distinct_sessions": 5,
+      "events": {
+        "complete_per_admission": 15,
+        "epoch_changes": 0,
+        "observed": 476,
+        "peak_events_per_s": 139,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        3
+      ],
+      "first_delta_ms": {
+        "max": 939,
+        "n": 15,
+        "p50": 754,
+        "p95": 939
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 212,
+        "n": 143,
+        "p50": 13,
+        "p95": 74
+      },
+      "healthy": false,
       "id": "A-shared-5",
-      "series": "A",
-      "topology": "shared",
-      "width": 5,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 15,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 5,
+        "turn_requests": 15,
+        "turn_requests_peak_min": 5,
+        "unexpected_routes": 27
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 0,
+        "cpu_s_estimate": 3.6,
+        "rss_mb": {
+          "after": 503.3,
+          "before": 502.5,
+          "peak": 503.7
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 617,
+        "n": 15,
+        "p50": 292,
+        "p95": 617
+      },
+      "submit_ms": {
+        "max": 443,
+        "n": 15,
+        "p50": 162,
+        "p95": 443
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 1739,
+        "n": 15,
+        "p50": 1555,
+        "p95": 1739
+      },
+      "turns_completed": 15,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 5
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 12407,
+      "create_ms": {
+        "max": 5230,
+        "n": 10,
+        "p50": 2952,
+        "p95": 5230
+      },
+      "create_refused": 0,
+      "distinct_sessions": 10,
+      "events": {
+        "complete_per_admission": 30,
+        "epoch_changes": 0,
+        "observed": 964,
+        "peak_events_per_s": 153,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        2,
+        3
+      ],
+      "first_delta_ms": {
+        "max": 4431,
+        "n": 30,
+        "p50": 1974,
+        "p95": 4177
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 964,
+        "n": 165,
+        "p50": 21,
+        "p95": 428
+      },
+      "healthy": false,
       "id": "A-shared-10",
-      "series": "A",
-      "topology": "shared",
-      "width": 10,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 30,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 10,
+        "turn_requests": 30,
+        "turn_requests_peak_min": 3,
+        "unexpected_routes": 47
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 1,
+        "cpu_s_estimate": 7.4,
+        "rss_mb": {
+          "after": 504.5,
+          "before": 503.3,
+          "peak": 506.9
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 3471,
+        "n": 30,
+        "p50": 927,
+        "p95": 2709
+      },
+      "submit_ms": {
+        "max": 2264,
+        "n": 30,
+        "p50": 578,
+        "p95": 2046
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 5210,
+        "n": 30,
+        "p50": 3258,
+        "p95": 5041
+      },
+      "turns_completed": 30,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 10
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 13876,
+      "create_ms": {
+        "max": 3213,
+        "n": 16,
+        "p50": 1732,
+        "p95": 3213
+      },
+      "create_refused": 0,
+      "distinct_sessions": 16,
+      "events": {
+        "complete_per_admission": 48,
+        "epoch_changes": 0,
+        "observed": 1530,
+        "peak_events_per_s": 185,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 1,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        2,
+        3
+      ],
+      "first_delta_ms": {
+        "max": 4322,
+        "n": 48,
+        "p50": 1868,
+        "p95": 4207
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 827,
+        "n": 165,
+        "p50": 31,
+        "p95": 435
+      },
+      "healthy": false,
       "id": "A-shared-16",
-      "series": "A",
-      "topology": "shared",
-      "width": 16,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 48,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 17,
+        "turn_requests": 48,
+        "turn_requests_peak_min": 4,
+        "unexpected_routes": 73
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 1,
+        "cpu_s_estimate": 11.2,
+        "rss_mb": {
+          "after": 507.7,
+          "before": 504.5,
+          "peak": 508.1
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 3753,
+        "n": 48,
+        "p50": 977,
+        "p95": 3261
+      },
+      "submit_ms": {
+        "max": 2945,
+        "n": 48,
+        "p50": 672,
+        "p95": 2613
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 4879,
+        "n": 48,
+        "p50": 3169,
+        "p95": 4799
+      },
+      "turns_completed": 48,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 16
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 13622,
+      "create_ms": {
+        "max": 4313,
+        "n": 20,
+        "p50": 2470,
+        "p95": 4117
+      },
+      "create_refused": 0,
+      "distinct_sessions": 20,
+      "events": {
+        "complete_per_admission": 60,
+        "epoch_changes": 0,
+        "observed": 1906,
+        "peak_events_per_s": 220,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        2,
+        3
+      ],
+      "first_delta_ms": {
+        "max": 4783,
+        "n": 60,
+        "p50": 2140,
+        "p95": 4390
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 678,
+        "n": 167,
+        "p50": 14,
+        "p95": 356
+      },
+      "healthy": false,
       "id": "A-shared-20",
-      "series": "A",
-      "topology": "shared",
-      "width": 20,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 60,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 20,
+        "turn_requests": 60,
+        "turn_requests_peak_min": 5,
+        "unexpected_routes": 87
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 1,
+        "cpu_s_estimate": 13.1,
+        "rss_mb": {
+          "after": 510.0,
+          "before": 507.7,
+          "peak": 511.3
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 3969,
+        "n": 60,
+        "p50": 1227,
+        "p95": 3315
+      },
+      "submit_ms": {
+        "max": 3709,
+        "n": 60,
+        "p50": 878,
+        "p95": 3036
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 5373,
+        "n": 60,
+        "p50": 3020,
+        "p95": 4900
+      },
+      "turns_completed": 60,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 20
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 2582,
+      "create_ms": {
+        "max": 873,
+        "n": 1,
+        "p50": 873,
+        "p95": 873
+      },
+      "create_refused": 0,
+      "distinct_sessions": 1,
+      "events": {
+        "complete_per_admission": 3,
+        "epoch_changes": 0,
+        "observed": 100,
+        "peak_events_per_s": 51,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        3
+      ],
+      "first_delta_ms": {
+        "max": 624,
+        "n": 3,
+        "p50": 163,
+        "p95": 624
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 305,
+        "n": 137,
+        "p50": 11,
+        "p95": 27
+      },
+      "healthy": false,
       "id": "A-per-session-1",
-      "series": "A",
-      "topology": "per-session",
-      "width": 1,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 3,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 1,
+        "turn_requests": 3,
+        "turn_requests_peak_min": 1,
+        "unexpected_routes": 11
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 0,
+        "cpu_s_estimate": 1.1,
+        "rss_mb": {
+          "after": 510.1,
+          "before": 510.0,
+          "peak": 510.2
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 51,
+        "n": 3,
+        "p50": 32,
+        "p95": 51
+      },
+      "submit_ms": {
+        "max": 30,
+        "n": 3,
+        "p50": 18,
+        "p95": 30
+      },
+      "timeouts": 0,
+      "topology": "per-session",
+      "turn_ms": {
+        "max": 1202,
+        "n": 3,
+        "p50": 730,
+        "p95": 1202
+      },
+      "turns_completed": 3,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 1
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 4125,
+      "create_ms": {
+        "max": 1231,
+        "n": 5,
+        "p50": 1196,
+        "p95": 1231
+      },
+      "create_refused": 0,
+      "distinct_sessions": 5,
+      "events": {
+        "complete_per_admission": 15,
+        "epoch_changes": 0,
+        "observed": 493,
+        "peak_events_per_s": 152,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 2,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [],
+      "first_delta_ms": {
+        "max": 732,
+        "n": 15,
+        "p50": 524,
+        "p95": 732
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 156,
+        "n": 142,
+        "p50": 11,
+        "p95": 47
+      },
+      "healthy": true,
       "id": "A-per-session-5",
-      "series": "A",
-      "topology": "per-session",
-      "width": 5,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 15,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 7,
+        "turn_requests": 15,
+        "turn_requests_peak_min": 5,
+        "unexpected_routes": 29
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 0,
+        "cpu_s_estimate": 3.4,
+        "rss_mb": {
+          "after": 510.9,
+          "before": 510.1,
+          "peak": 511.3
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 272,
+        "n": 15,
+        "p50": 166,
+        "p95": 272
+      },
+      "submit_ms": {
+        "max": 175,
+        "n": 15,
+        "p50": 82,
+        "p95": 175
+      },
+      "timeouts": 0,
+      "topology": "per-session",
+      "turn_ms": {
+        "max": 1631,
+        "n": 15,
+        "p50": 1206,
+        "p95": 1631
+      },
+      "turns_completed": 15,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 5
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 8176,
+      "create_ms": {
+        "max": 2080,
+        "n": 10,
+        "p50": 1586,
+        "p95": 2080
+      },
+      "create_refused": 0,
+      "distinct_sessions": 10,
+      "events": {
+        "complete_per_admission": 30,
+        "epoch_changes": 0,
+        "observed": 1018,
+        "peak_events_per_s": 237,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 1,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        2,
+        3
+      ],
+      "first_delta_ms": {
+        "max": 1983,
+        "n": 30,
+        "p50": 1384,
+        "p95": 1974
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 653,
+        "n": 152,
+        "p50": 18,
+        "p95": 332
+      },
+      "healthy": false,
       "id": "A-per-session-10",
-      "series": "A",
-      "topology": "per-session",
-      "width": 10,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 30,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 11,
+        "turn_requests": 30,
+        "turn_requests_peak_min": 6,
+        "unexpected_routes": 47
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 0,
+        "cpu_s_estimate": 7.0,
+        "rss_mb": {
+          "after": 514.0,
+          "before": 510.9,
+          "peak": 512.6
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 1308,
+        "n": 30,
+        "p50": 520,
+        "p95": 1127
+      },
+      "submit_ms": {
+        "max": 639,
+        "n": 30,
+        "p50": 217,
+        "p95": 596
+      },
+      "timeouts": 0,
+      "topology": "per-session",
+      "turn_ms": {
+        "max": 2815,
+        "n": 30,
+        "p50": 2281,
+        "p95": 2778
+      },
+      "turns_completed": 30,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 10
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 15894,
+      "create_ms": {
+        "max": 2953,
+        "n": 16,
+        "p50": 2580,
+        "p95": 2953
+      },
+      "create_refused": 0,
+      "distinct_sessions": 16,
+      "events": {
+        "complete_per_admission": 48,
+        "epoch_changes": 0,
+        "observed": 1636,
+        "peak_events_per_s": 205,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 2,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        2,
+        3
+      ],
+      "first_delta_ms": {
+        "max": 5058,
+        "n": 48,
+        "p50": 2622,
+        "p95": 4802
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 1107,
+        "n": 166,
+        "p50": 28,
+        "p95": 681
+      },
+      "healthy": false,
       "id": "A-per-session-16",
-      "series": "A",
-      "topology": "per-session",
-      "width": 16,
-      "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 48,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "provider": {
+        "aux_requests": 18,
+        "turn_requests": 48,
+        "turn_requests_peak_min": 4,
+        "unexpected_routes": 71
+      },
+      "recovery": null,
+      "repetitions": 3,
+      "resources": {
+        "children_peak": 2,
+        "cpu_s_estimate": 11.5,
+        "rss_mb": {
+          "after": 519.3,
+          "before": 514.0,
+          "peak": 519.8
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 2718,
+        "n": 48,
+        "p50": 1165,
+        "p95": 2516
+      },
+      "submit_ms": {
+        "max": 1840,
+        "n": 48,
+        "p50": 689,
+        "p95": 1709
+      },
+      "timeouts": 0,
+      "topology": "per-session",
+      "turn_ms": {
+        "max": 6067,
+        "n": 48,
+        "p50": 4318,
+        "p95": 5899
+      },
+      "turns_completed": 48,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 16
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 11464,
+      "create_ms": {
+        "max": 4212,
+        "n": 20,
+        "p50": 4097,
+        "p95": 4203
+      },
+      "create_refused": 0,
+      "distinct_sessions": 20,
+      "events": {
+        "complete_per_admission": 60,
+        "epoch_changes": 0,
+        "observed": 2070,
+        "peak_events_per_s": 293,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 3,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        2,
+        3
+      ],
+      "first_delta_ms": {
+        "max": 3759,
+        "n": 60,
+        "p50": 1869,
+        "p95": 3423
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 1079,
+        "n": 161,
+        "p50": 14,
+        "p95": 485
+      },
+      "healthy": false,
       "id": "A-per-session-20",
-      "series": "A",
-      "topology": "per-session",
-      "width": 20,
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 60,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": null
+      },
+      "provider": {
+        "aux_requests": 23,
+        "turn_requests": 60,
+        "turn_requests_peak_min": 5,
+        "unexpected_routes": 87
+      },
+      "recovery": null,
       "repetitions": 3,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "resources": {
+        "children_peak": 1,
+        "cpu_s_estimate": 13.8,
+        "rss_mb": {
+          "after": 528.6,
+          "before": 519.4,
+          "peak": 529.3
+        },
+        "sampler_bad_lines": 0
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "dfd8956a",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "A",
+      "start_delay_ms": {
+        "max": 2502,
+        "n": 60,
+        "p50": 732,
+        "p95": 2235
+      },
+      "submit_ms": {
+        "max": 1906,
+        "n": 60,
+        "p50": 287,
+        "p95": 1515
+      },
+      "timeouts": 0,
+      "topology": "per-session",
+      "turn_ms": {
+        "max": 4337,
+        "n": 60,
+        "p50": 3066,
+        "p95": 4068
+      },
+      "turns_completed": 60,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 20
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 1787,
+      "create_ms": {
+        "max": 431,
+        "n": 1,
+        "p50": 431,
+        "p95": 431
+      },
+      "create_refused": 0,
+      "distinct_sessions": 1,
+      "events": {
+        "complete_per_admission": 1,
+        "epoch_changes": 0,
+        "observed": 17,
+        "peak_events_per_s": 10,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [],
+      "first_delta_ms": {
+        "max": 1344,
+        "n": 1,
+        "p50": 1344,
+        "p95": 1344
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 133,
+        "n": 135,
+        "p50": 16,
+        "p95": 39
+      },
+      "healthy": true,
       "id": "B-shared-1",
-      "series": "B",
-      "topology": "shared",
-      "width": 1,
-      "repetitions": 1,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 1,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": [],
+        "tool_executions": null,
+        "tool_names": []
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
-    },
-    {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
       "provider": null,
       "recovery": null,
-      "observations": null,
-      "healthy": null,
-      "id": "B-shared-5",
-      "series": "B",
-      "topology": "shared",
-      "width": 5,
       "repetitions": 1,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "resources": {
+        "children_peak": 0,
+        "cpu_s_estimate": 0.5,
+        "rss_mb": {
+          "after": 530.7,
+          "before": 530.5,
+          "peak": 530.8
+        },
+        "sampler_bad_lines": 0
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "a01684ae",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "B",
+      "start_delay_ms": {
+        "max": 36,
+        "n": 1,
+        "p50": 36,
+        "p95": 36
+      },
+      "submit_ms": {
+        "max": 12,
+        "n": 1,
+        "p50": 12,
+        "p95": 12
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 1787,
+        "n": 1,
+        "p50": 1787,
+        "p95": 1787
+      },
+      "turns_completed": 1,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "provider",
+          "reason": "external provider"
+        },
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 1
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "admissions_unknown": 0,
+      "batch_wall_ms": 4433,
+      "create_ms": {
+        "max": 2117,
+        "n": 10,
+        "p50": 1054,
+        "p95": 2117
+      },
+      "create_refused": 0,
+      "distinct_sessions": 10,
+      "events": {
+        "complete_per_admission": 10,
+        "epoch_changes": 0,
+        "observed": 130,
+        "peak_events_per_s": 46,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        1,
+        2,
+        3
+      ],
+      "first_delta_ms": {
+        "max": 4128,
+        "n": 9,
+        "p50": 3034,
+        "p95": 4128
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 498,
+        "n": 144,
+        "p50": 22,
+        "p95": 62
+      },
+      "healthy": false,
       "id": "B-shared-10",
-      "series": "B",
-      "topology": "shared",
-      "width": 10,
-      "repetitions": 1,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 10,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [
+          {
+            "kind": "unknown",
+            "status": "error"
+          }
+        ],
+        "rate_limit_keys": [],
+        "tool_executions": null,
+        "tool_names": null
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
-    },
-    {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
       "provider": null,
       "recovery": null,
-      "observations": null,
+      "repetitions": 1,
+      "resources": {
+        "children_peak": 0,
+        "cpu_s_estimate": 2.9,
+        "rss_mb": {
+          "after": 533.1,
+          "before": 531.1,
+          "peak": 534.3
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "a01684ae",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "B",
+      "start_delay_ms": {
+        "max": 1669,
+        "n": 10,
+        "p50": 441,
+        "p95": 1669
+      },
+      "submit_ms": {
+        "max": 1295,
+        "n": 10,
+        "p50": 234,
+        "p95": 1295
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 4429,
+        "n": 10,
+        "p50": 4074,
+        "p95": 4429
+      },
+      "turns_completed": 9,
+      "turns_failed": 1,
+      "unavailable": [
+        {
+          "field": "provider",
+          "reason": "external provider"
+        },
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 10
+    },
+    {
+      "admissions_unknown": null,
+      "batch_wall_ms": null,
+      "create_ms": null,
+      "create_refused": null,
+      "distinct_sessions": null,
+      "events": null,
+      "evidence": "not-run",
+      "failed_criteria": [],
+      "first_delta_ms": null,
+      "foreground_errors": null,
+      "foreground_rtt_ms": null,
       "healthy": null,
       "id": "B-shared-16",
+      "notes": "stopped after an unhealthy width",
+      "observations": null,
+      "provider": null,
+      "recovery": null,
+      "repetitions": 1,
+      "resources": null,
+      "rpc_errors": null,
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "a01684ae",
+        "talaria_commit": "9a935b425a98"
+      },
       "series": "B",
-      "topology": "shared",
-      "width": 16,
-      "repetitions": 1,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
-      },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
-    },
-    {
-      "create_ms": null,
-      "submit_ms": null,
       "start_delay_ms": null,
-      "first_delta_ms": null,
+      "submit_ms": null,
+      "timeouts": null,
+      "topology": "shared",
       "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
       "turns_completed": null,
       "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
+      "unavailable": [],
+      "width": 16
+    },
+    {
+      "admissions_unknown": 0,
+      "batch_wall_ms": 2135,
+      "create_ms": {
+        "max": 797,
+        "n": 5,
+        "p50": 528,
+        "p95": 797
+      },
+      "create_refused": 0,
+      "distinct_sessions": 5,
+      "events": {
+        "complete_per_admission": 5,
+        "epoch_changes": 0,
+        "observed": 71,
+        "peak_events_per_s": 41,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [],
+      "first_delta_ms": {
+        "max": 1827,
+        "n": 5,
+        "p50": 1509,
+        "p95": 1827
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 119,
+        "n": 137,
+        "p50": 12,
+        "p95": 39
+      },
+      "healthy": true,
+      "id": "B-shared-5",
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 5,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": [],
+        "tool_executions": null,
+        "tool_names": null
+      },
       "provider": null,
       "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "repetitions": 1,
+      "resources": {
+        "children_peak": 1,
+        "cpu_s_estimate": 1.3,
+        "rss_mb": {
+          "after": 531.1,
+          "before": 530.7,
+          "peak": 534.4
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "a01684ae",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "B",
+      "start_delay_ms": {
+        "max": 265,
+        "n": 5,
+        "p50": 119,
+        "p95": 265
+      },
+      "submit_ms": {
+        "max": 135,
+        "n": 5,
+        "p50": 73,
+        "p95": 135
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 2133,
+        "n": 5,
+        "p50": 2051,
+        "p95": 2133
+      },
+      "turns_completed": 5,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "provider",
+          "reason": "external provider"
+        },
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 5
+    },
+    {
+      "admissions_unknown": 0,
+      "batch_wall_ms": 2970,
+      "create_ms": {
+        "max": 2196,
+        "n": 10,
+        "p50": 1310,
+        "p95": 2196
+      },
+      "create_refused": 0,
+      "distinct_sessions": 10,
+      "events": {
+        "complete_per_admission": 10,
+        "epoch_changes": 0,
+        "observed": 376,
+        "peak_events_per_s": 290,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 3,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        7
+      ],
+      "first_delta_ms": {
+        "max": 1965,
+        "n": 10,
+        "p50": 1622,
+        "p95": 1965
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 229,
+        "n": 141,
+        "p50": 14,
+        "p95": 42
+      },
+      "healthy": false,
       "id": "C-shared-10",
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 10,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": 0,
+        "tool_names": []
+      },
+      "provider": {
+        "aux_requests": 10,
+        "turn_requests": 20,
+        "turn_requests_peak_min": 10,
+        "unexpected_routes": 34
+      },
+      "recovery": null,
+      "repetitions": 1,
+      "resources": {
+        "children_peak": 1,
+        "cpu_s_estimate": 3.1,
+        "rss_mb": {
+          "after": 528.9,
+          "before": 528.6,
+          "peak": 532.2
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "ab3e8d55",
+        "talaria_commit": "9a935b425a98"
+      },
       "series": "C",
-      "topology": "shared",
-      "width": 10,
-      "repetitions": 1,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "start_delay_ms": {
+        "max": 1028,
+        "n": 10,
+        "p50": 302,
+        "p95": 1028
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "submit_ms": {
+        "max": 726,
+        "n": 10,
+        "p50": 191,
+        "p95": 726
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 2970,
+        "n": 10,
+        "p50": 2911,
+        "p95": 2970
+      },
+      "turns_completed": 10,
+      "turns_failed": 0,
+      "unavailable": [
+        {
+          "field": "recovery",
+          "reason": "not applicable"
+        }
+      ],
+      "width": 10
     },
     {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
-      "turn_ms": null,
-      "foreground_rtt_ms": null,
+      "admissions_unknown": 0,
       "batch_wall_ms": null,
-      "turns_completed": null,
-      "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
+      "create_ms": {
+        "max": 1714,
+        "n": 10,
+        "p50": 934,
+        "p95": 1714
+      },
+      "create_refused": 0,
+      "distinct_sessions": 10,
+      "events": {
+        "complete_per_admission": null,
+        "epoch_changes": 0,
+        "observed": 52,
+        "peak_events_per_s": 41,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 0,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [],
+      "first_delta_ms": null,
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 242,
+        "n": 182,
+        "p50": 12,
+        "p95": 46
+      },
+      "healthy": true,
       "id": "D-shared-10",
-      "series": "D",
-      "topology": "shared",
-      "width": 10,
-      "repetitions": 1,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 10,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": []
       },
-      "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
-    },
-    {
-      "create_ms": null,
-      "submit_ms": null,
-      "start_delay_ms": null,
-      "first_delta_ms": null,
+      "provider": {
+        "aux_requests": 10,
+        "turn_requests": 10,
+        "turn_requests_peak_min": 10,
+        "unexpected_routes": 36
+      },
+      "recovery": {
+        "eviction_evidence": null,
+        "next_turn_ms": null,
+        "receipt_ms": {
+          "max": 16528,
+          "n": 10,
+          "p50": 15377,
+          "p95": 16528
+        },
+        "replay_truncated": 0,
+        "resume_ms": {
+          "max": 170,
+          "n": 10,
+          "p50": 127,
+          "p95": 170
+        },
+        "submit_after_detach_refused": null,
+        "terminal_with_result": 10,
+        "terminal_without_result": 0,
+        "unknown": 0,
+        "unresolved": 0
+      },
+      "repetitions": 1,
+      "resources": {
+        "children_peak": 1,
+        "cpu_s_estimate": 4.9,
+        "rss_mb": {
+          "after": 529.6,
+          "before": 528.9,
+          "peak": 530.7
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "ebc51101",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "D",
+      "start_delay_ms": {
+        "max": 859,
+        "n": 10,
+        "p50": 234,
+        "p95": 859
+      },
+      "submit_ms": {
+        "max": 740,
+        "n": 10,
+        "p50": 119,
+        "p95": 740
+      },
+      "timeouts": 0,
+      "topology": "shared",
       "turn_ms": null,
-      "foreground_rtt_ms": null,
-      "batch_wall_ms": null,
       "turns_completed": null,
       "turns_failed": null,
-      "admissions_unknown": null,
-      "create_refused": null,
-      "timeouts": null,
-      "foreground_errors": null,
-      "distinct_sessions": null,
-      "rpc_errors": null,
-      "events": null,
-      "resources": null,
-      "provider": null,
-      "recovery": null,
-      "observations": null,
-      "healthy": null,
-      "id": "E-shared-20",
-      "series": "E",
-      "topology": "shared",
-      "width": 20,
-      "repetitions": 1,
-      "evidence": "not-run",
-      "run": {
-        "run_id": "00000000",
-        "talaria_commit": "a498e28dc052",
-        "date": "2026-10-27"
+      "unavailable": [
+        {
+          "field": "turn_ms",
+          "reason": "connection dropped by design"
+        },
+        {
+          "field": "batch_wall_ms",
+          "reason": "connection dropped by design"
+        },
+        {
+          "field": "turns_completed",
+          "reason": "connection dropped by design"
+        },
+        {
+          "field": "turns_failed",
+          "reason": "connection dropped by design"
+        },
+        {
+          "field": "complete_per_admission",
+          "reason": "connection dropped by design"
+        },
+        {
+          "field": "first_delta_ms",
+          "reason": "no samples"
+        }
+      ],
+      "width": 10
+    },
+    {
+      "admissions_unknown": 0,
+      "batch_wall_ms": 4423,
+      "create_ms": {
+        "max": 2952,
+        "n": 20,
+        "p50": 1550,
+        "p95": 2825
       },
+      "create_refused": 0,
+      "distinct_sessions": 20,
+      "events": {
+        "complete_per_admission": 20,
+        "epoch_changes": 0,
+        "observed": 645,
+        "peak_events_per_s": 198,
+        "replay_gaps": 0,
+        "seq_decreases": 0,
+        "seq_gaps": 3,
+        "seq_repeats": 0,
+        "unresolved_gaps": 0
+      },
+      "evidence": "live",
+      "failed_criteria": [
+        2,
+        3
+      ],
+      "first_delta_ms": {
+        "max": 3803,
+        "n": 20,
+        "p50": 2050,
+        "p95": 3636
+      },
+      "foreground_errors": 0,
+      "foreground_rtt_ms": {
+        "max": 385,
+        "n": 268,
+        "p50": 14,
+        "p95": 41
+      },
+      "healthy": false,
+      "id": "E-shared-20",
+      "notes": "",
+      "observations": {
+        "admission_statuses": {
+          "queued": 20,
+          "started": 0,
+          "terminal": 0,
+          "unknown": 0
+        },
+        "failure_examples": [],
+        "rate_limit_keys": null,
+        "tool_executions": null,
+        "tool_names": []
+      },
+      "provider": {
+        "aux_requests": 20,
+        "turn_requests": 21,
+        "turn_requests_peak_min": 7,
+        "unexpected_routes": 49
+      },
+      "recovery": {
+        "eviction_evidence": null,
+        "next_turn_ms": 721,
+        "receipt_ms": {
+          "max": 50,
+          "n": 20,
+          "p50": 25,
+          "p95": 48
+        },
+        "replay_truncated": 0,
+        "resume_ms": {
+          "max": 243,
+          "n": 1,
+          "p50": 243,
+          "p95": 243
+        },
+        "submit_after_detach_refused": true,
+        "terminal_with_result": 20,
+        "terminal_without_result": 0,
+        "unknown": 0,
+        "unresolved": 0
+      },
+      "repetitions": 1,
+      "resources": {
+        "children_peak": 1,
+        "cpu_s_estimate": 7.9,
+        "rss_mb": {
+          "after": 530.5,
+          "before": 529.6,
+          "peak": 533.4
+        },
+        "sampler_bad_lines": 0
+      },
+      "rpc_errors": {},
+      "run": {
+        "date": "2026-10-28",
+        "run_id": "ac680e0f",
+        "talaria_commit": "9a935b425a98"
+      },
+      "series": "E",
+      "start_delay_ms": {
+        "max": 3074,
+        "n": 20,
+        "p50": 976,
+        "p95": 2904
+      },
+      "submit_ms": {
+        "max": 2776,
+        "n": 20,
+        "p50": 773,
+        "p95": 2547
+      },
+      "timeouts": 0,
+      "topology": "shared",
+      "turn_ms": {
+        "max": 4424,
+        "n": 20,
+        "p50": 3205,
+        "p95": 4107
+      },
+      "turns_completed": 20,
+      "turns_failed": 0,
       "unavailable": [],
-      "failed_criteria": [],
-      "notes": "stopped: live evidence pending"
+      "width": 20
     }
-  ],
-  "recommendations": {
-    "default_max_in_flight": null,
-    "topology": null,
-    "memory_mb_per_session": null,
-    "cited_runs": null
-  }
+  ]
 }
