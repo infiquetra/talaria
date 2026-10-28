@@ -36,3 +36,5 @@ pub mod settings;
 pub mod side;
 pub mod subagents;
 pub mod workspace;
+
+pub mod ultracode;

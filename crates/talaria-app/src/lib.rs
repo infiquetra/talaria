@@ -52,3 +52,5 @@ pub mod memory;
 pub mod settings;
 
 pub mod doctor;
+
+pub mod ultracode;

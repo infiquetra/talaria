@@ -41,6 +41,7 @@ fn fake_home() -> String {
 /// The worked example of the specification.
 fn full() -> StatusInputs {
     StatusInputs {
+        ultracode: false,
         connection: Connection::Connected,
         model: Some("opus-5.5".to_string()),
         reasoning_effort: Some("high".to_string()),

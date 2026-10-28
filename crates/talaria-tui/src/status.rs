@@ -69,6 +69,8 @@ pub enum TurnState {
 /// The seven tones of the command contract, in this order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
+    /// Workflow accent.
+    Accent,
     /// The terminal's own foreground.
     Text,
     /// Dim: the default of every plain segment.
@@ -137,6 +139,7 @@ impl StatusPalette {
 
 fn tone_index(tone: Tone) -> usize {
     match tone {
+        Tone::Accent => 0,
         Tone::Text => 0,
         Tone::Muted => 1,
         Tone::Separator => 2,

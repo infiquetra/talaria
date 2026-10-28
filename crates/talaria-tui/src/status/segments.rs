@@ -41,6 +41,8 @@ pub struct TokenUsage {
 /// Everything the line shows, handed over by the caller.
 #[derive(Clone, Debug, Default)]
 pub struct StatusInputs {
+    /// Whether workflow mode is enabled for the foreground session.
+    pub ultracode: bool,
     /// The attach state of the link.
     pub connection: Connection,
     /// The model in use, with its provider path.
@@ -112,6 +114,8 @@ pub struct ExternalSegment {
 /// The segments of the status line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Segment {
+    /// Workflow mode.
+    Ultracode,
     /// The attach state.
     Connection,
     /// Prompts waiting for the operator.
@@ -140,7 +144,7 @@ pub enum Segment {
 
 impl Segment {
     /// Every segment, from the one dropped last to the one dropped first.
-    pub const ALL: [Segment; 12] = [
+    pub const ALL: [Segment; 13] = [
         Segment::Connection,
         Segment::NeedsYou,
         Segment::Approvals,
@@ -153,11 +157,13 @@ impl Segment {
         Segment::Cost,
         Segment::PullRequest,
         Segment::External,
+        Segment::Ultracode,
     ];
 
     /// 1 is dropped last, 12 first.
     pub fn priority(self) -> u8 {
         match self {
+            Segment::Ultracode => 13,
             Segment::Connection => 1,
             Segment::NeedsYou => 2,
             Segment::Approvals => 3,
@@ -176,6 +182,7 @@ impl Segment {
     /// Left to right position, 0 first.
     pub fn position(self) -> u8 {
         match self {
+            Segment::Ultracode => 3,
             Segment::Connection => 1,
             Segment::Model => 2,
             Segment::Approvals => 3,
