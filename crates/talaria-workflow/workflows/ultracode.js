@@ -1,0 +1,3 @@
+export const meta = {"name": "ultracode", "description": "Understand the code, compare independent designs, implement the chosen one test-first in a worktree, then review it with review-branch.", "whenToUse": "Use this workflow for the stated task.", "phases": [{"title": "Understand", "detail": "Perform this phase."}, {"title": "Design", "detail": "Perform this phase."}, {"title": "Choose", "detail": "Perform this phase."}, {"title": "Implement", "detail": "Perform this phase."}, {"title": "Review", "detail": "Perform this phase."}]};
+const DEFAULT_TIERS = {"scout": "survey", "designers": ["judge"], "chooser": "judge", "implementer": "builder"};
+throw new Error("not implemented");

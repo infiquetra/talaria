@@ -1,0 +1,3 @@
+export const meta = {"name": "research", "description": "Answer a question from web, documentation and code sources, reading the most cited ones and removing claims no read source supports.", "whenToUse": "Use this workflow for the stated task.", "phases": [{"title": "Plan", "detail": "Perform this phase."}, {"title": "Sweep", "detail": "Perform this phase."}, {"title": "Read", "detail": "Perform this phase."}, {"title": "Synthesize", "detail": "Perform this phase."}]};
+const DEFAULT_TIERS = {"planner": "survey", "web-searcher": "survey", "code-searcher": "survey", "web-reader": "survey", "code-reader": "survey", "synthesizer": "judge"};
+throw new Error("not implemented");

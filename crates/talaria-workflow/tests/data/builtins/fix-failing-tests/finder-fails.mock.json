@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "find"
+      },
+      "outcome": {
+        "failed": "failure"
+      }
+    }
+  ]
+}

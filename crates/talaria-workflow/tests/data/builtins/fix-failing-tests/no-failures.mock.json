@@ -1,0 +1,18 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "find"
+      },
+      "outcome": {
+        "object": {
+          "test_command": "python3 -m unittest",
+          "exit_code": 0,
+          "failing": [],
+          "total_failing": 0,
+          "output_tail": "ok"
+        }
+      }
+    }
+  ]
+}

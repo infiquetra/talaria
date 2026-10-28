@@ -1,0 +1,67 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "find"
+      },
+      "outcome": {
+        "object": {
+          "test_command": "python3 -m unittest",
+          "exit_code": 1,
+          "failing": [
+            {
+              "id": "test_00",
+              "run_one": "python3 -m unittest test_00"
+            },
+            {
+              "id": "test_01",
+              "run_one": "python3 -m unittest test_01"
+            }
+          ],
+          "total_failing": 2,
+          "output_tail": "failure"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "fix 1: test_00"
+      },
+      "outcome": {
+        "object": {
+          "status": "fixed",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "summary": "Fixed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "fix 2: test_01"
+      },
+      "outcome": {
+        "object": {
+          "status": "not-fixed",
+          "commit": null,
+          "summary": "Not fixed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify 1: test_00"
+      },
+      "outcome": {
+        "object": {
+          "fast_forwarded": true,
+          "target_passed": true,
+          "suite_completed": true,
+          "suite_exit_code": 1,
+          "still_failing": [
+            "test_01"
+          ]
+        }
+      }
+    }
+  ]
+}

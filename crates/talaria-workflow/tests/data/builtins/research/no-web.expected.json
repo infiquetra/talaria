@@ -1,0 +1,44 @@
+{
+  "status": "answered",
+  "question": "What is present?",
+  "answer": "A fact",
+  "claims": [
+    {
+      "text": "A fact",
+      "sources": [
+        "a.py:1"
+      ]
+    }
+  ],
+  "removed_claims": [
+    {
+      "text": "B fact",
+      "sources": [
+        "b.py:1"
+      ],
+      "reason": "cites a source that was not read"
+    }
+  ],
+  "open_questions": [],
+  "sources_read": [
+    {
+      "location": "a.py:1",
+      "kind": "code",
+      "accessible": true,
+      "summary": "A fact",
+      "supports": [
+        "A fact"
+      ],
+      "contradicts": []
+    }
+  ],
+  "sources_unread": [
+    {
+      "location": "b.py:1",
+      "kind": "code"
+    }
+  ],
+  "unavailable": [
+    "web"
+  ]
+}

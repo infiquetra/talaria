@@ -1,0 +1,80 @@
+{
+  "status": "implemented",
+  "task": "Implement the feature",
+  "design": {
+    "title": "Plan",
+    "rationale": "Simple",
+    "plan": [
+      "Edit"
+    ],
+    "tests": [
+      "Run tests"
+    ]
+  },
+  "proposals": [
+    "Plan",
+    "Alternative",
+    "Third"
+  ],
+  "implementation": {
+    "status": "done",
+    "branch": "fixture",
+    "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "files_changed": [
+      "calc.py"
+    ],
+    "tests_run": [
+      {
+        "command": "python3 -m unittest",
+        "exit_code": 0
+      }
+    ],
+    "summary": "Done",
+    "blocker": null
+  },
+  "review": {
+    "status": "reviewed",
+    "base_ref": "main",
+    "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "checkout_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "files_reviewed": 1,
+    "truncated": false,
+    "lenses": [
+      "correctness",
+      "security",
+      "simplicity"
+    ],
+    "confirmed": [
+      {
+        "id": "correctness-1",
+        "lens": "correctness",
+        "file": "calc.py",
+        "line": 1,
+        "severity": "high",
+        "title": "Wrong calculation",
+        "detail": "The result is wrong",
+        "suggestion": "Fix it",
+        "verdict": "confirmed",
+        "reason": "The code is wrong",
+        "evidence": [
+          "calc.py:1"
+        ]
+      }
+    ],
+    "uncertain": [],
+    "refuted": [],
+    "not_verified": [],
+    "reviewers_failed": [],
+    "summary": "One confirmed finding",
+    "ranked": [
+      "correctness-1"
+    ],
+    "themes": [
+      "correctness"
+    ]
+  },
+  "review_error": null,
+  "next_steps": "Nothing was merged or pushed. Review the implementer's branch with git log -p aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, then merge it if you accept it."
+}

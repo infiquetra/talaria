@@ -1,0 +1,3 @@
+export const meta = {"name": "review-branch", "description": "Review a branch with one reviewer per lens, try to refute each finding, and return one ranked report.", "whenToUse": "Use this workflow for the stated task.", "phases": [{"title": "Collect", "detail": "Perform this phase."}, {"title": "Review", "detail": "Perform this phase."}, {"title": "Verify", "detail": "Perform this phase."}, {"title": "Synthesize", "detail": "Perform this phase."}]};
+const DEFAULT_TIERS = {"collector": "survey", "reviewers": ["reviewer-1", "reviewer-2", "reviewer-3"], "verifier": "judge", "synthesizer": "judge"};
+throw new Error("not implemented");

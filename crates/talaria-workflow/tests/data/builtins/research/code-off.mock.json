@@ -1,0 +1,29 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "plan"
+      },
+      "outcome": {
+        "object": {
+          "web_queries": [
+            "search"
+          ],
+          "code_queries": [],
+          "doc_queries": []
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "search: web 1"
+      },
+      "outcome": {
+        "object": {
+          "available": false,
+          "sources": []
+        }
+      }
+    }
+  ]
+}

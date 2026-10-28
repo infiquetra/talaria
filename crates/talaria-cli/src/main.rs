@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 mod bench_replay;
+mod workflow_builtins;
 
 fn main() -> ExitCode {
     let started = std::time::Instant::now();
@@ -10,6 +11,11 @@ fn main() -> ExitCode {
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
+    if args.first().is_some_and(|arg| arg == "workflow")
+        && args.get(1).is_some_and(|arg| arg == "builtins")
+    {
+        return workflow_builtins::run(&args[2..]);
+    }
     if talaria_cli::args::is_workflow_command(&args) {
         return ExitCode::from(talaria_cli::workflow::entry(&args));
     }

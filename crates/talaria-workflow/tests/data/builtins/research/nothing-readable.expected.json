@@ -1,0 +1,20 @@
+{
+  "status": "no-sources",
+  "question": "What is present?",
+  "answer": null,
+  "claims": [],
+  "removed_claims": [],
+  "open_questions": [],
+  "sources_read": [
+    {
+      "location": "calc.py:1",
+      "kind": "code",
+      "accessible": false,
+      "summary": "Cannot read",
+      "supports": [],
+      "contradicts": []
+    }
+  ],
+  "sources_unread": [],
+  "unavailable": []
+}

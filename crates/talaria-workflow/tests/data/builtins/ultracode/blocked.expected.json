@@ -1,0 +1,32 @@
+{
+  "status": "blocked",
+  "task": "Implement the feature",
+  "design": {
+    "title": "Plan",
+    "rationale": "Simple",
+    "plan": [
+      "Edit"
+    ],
+    "tests": [
+      "Run tests"
+    ]
+  },
+  "proposals": [
+    "Plan",
+    "Alternative",
+    "Third"
+  ],
+  "implementation": {
+    "status": "blocked",
+    "branch": null,
+    "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "commit": null,
+    "files_changed": [],
+    "tests_run": [],
+    "summary": "Blocked",
+    "blocker": "Cannot proceed"
+  },
+  "review": null,
+  "review_error": null,
+  "next_steps": "Nothing was merged or pushed. The implementer produced no reviewable commit."
+}

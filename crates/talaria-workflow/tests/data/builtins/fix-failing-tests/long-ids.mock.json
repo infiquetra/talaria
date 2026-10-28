@@ -1,0 +1,83 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "find"
+      },
+      "outcome": {
+        "object": {
+          "test_command": "python3 -m unittest",
+          "exit_code": 1,
+          "failing": [
+            {
+              "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa",
+              "run_one": "python3 -m unittest xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa"
+            },
+            {
+              "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb",
+              "run_one": "python3 -m unittest xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb"
+            }
+          ],
+          "total_failing": 2,
+          "output_tail": "failure"
+        }
+      }
+    },
+    {
+      "match": {
+        "prompt_contains": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxa",
+        "phase": "Fix"
+      },
+      "outcome": {
+        "object": {
+          "status": "fixed",
+          "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "summary": "Fixed"
+        }
+      }
+    },
+    {
+      "match": {
+        "prompt_contains": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "phase": "Verify"
+      },
+      "outcome": {
+        "object": {
+          "fast_forwarded": true,
+          "target_passed": true,
+          "suite_completed": true,
+          "suite_exit_code": 0,
+          "still_failing": []
+        }
+      }
+    },
+    {
+      "match": {
+        "prompt_contains": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb",
+        "phase": "Fix"
+      },
+      "outcome": {
+        "object": {
+          "status": "fixed",
+          "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "summary": "Fixed"
+        }
+      }
+    },
+    {
+      "match": {
+        "prompt_contains": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "phase": "Verify"
+      },
+      "outcome": {
+        "object": {
+          "fast_forwarded": true,
+          "target_passed": true,
+          "suite_completed": true,
+          "suite_exit_code": 0,
+          "still_failing": []
+        }
+      }
+    }
+  ]
+}

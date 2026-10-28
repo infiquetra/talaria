@@ -1,0 +1,18 @@
+[tiers.survey]
+model = "minimax-m3.1-flash"
+provider = "ollama-cloud"
+[tiers.builder]
+model = "minimax-m3.1-flash"
+provider = "ollama-cloud"
+[tiers.judge]
+model = "minimax-m3.1-flash"
+provider = "ollama-cloud"
+[tiers.reviewer-1]
+model = "minimax-m3.1-flash"
+provider = "ollama-cloud"
+[tiers.reviewer-2]
+model = "minimax-m3.1-flash"
+provider = "ollama-cloud"
+[tiers.reviewer-3]
+model = "minimax-m3.1-flash"
+provider = "ollama-cloud"

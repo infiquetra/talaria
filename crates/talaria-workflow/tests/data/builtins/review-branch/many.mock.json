@@ -1,0 +1,611 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "collect"
+      },
+      "outcome": {
+        "object": {
+          "base_ref": "main",
+          "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "checkout_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "files": [
+            {
+              "path": "calc.py",
+              "status": "modified"
+            }
+          ],
+          "diff": "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x\n+y\n",
+          "truncated": false,
+          "context": []
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "review: correctness"
+      },
+      "outcome": {
+        "object": {
+          "findings": [
+            {
+              "file": "correctness00.py",
+              "line": 1,
+              "severity": "low",
+              "title": "Issue 00",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness01.py",
+              "line": 2,
+              "severity": "low",
+              "title": "Issue 01",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness02.py",
+              "line": 3,
+              "severity": "low",
+              "title": "Issue 02",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness03.py",
+              "line": 4,
+              "severity": "low",
+              "title": "Issue 03",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness04.py",
+              "line": 5,
+              "severity": "low",
+              "title": "Issue 04",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness05.py",
+              "line": 6,
+              "severity": "low",
+              "title": "Issue 05",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness06.py",
+              "line": 7,
+              "severity": "low",
+              "title": "Issue 06",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness07.py",
+              "line": 8,
+              "severity": "low",
+              "title": "Issue 07",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness08.py",
+              "line": 9,
+              "severity": "low",
+              "title": "Issue 08",
+              "detail": "Example"
+            },
+            {
+              "file": "correctness09.py",
+              "line": 10,
+              "severity": "low",
+              "title": "Issue 09",
+              "detail": "Example"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "review: security"
+      },
+      "outcome": {
+        "object": {
+          "findings": [
+            {
+              "file": "security00.py",
+              "line": 1,
+              "severity": "high",
+              "title": "Issue 00",
+              "detail": "Example"
+            },
+            {
+              "file": "security01.py",
+              "line": 2,
+              "severity": "high",
+              "title": "Issue 01",
+              "detail": "Example"
+            },
+            {
+              "file": "security02.py",
+              "line": 3,
+              "severity": "high",
+              "title": "Issue 02",
+              "detail": "Example"
+            },
+            {
+              "file": "security03.py",
+              "line": 4,
+              "severity": "high",
+              "title": "Issue 03",
+              "detail": "Example"
+            },
+            {
+              "file": "security04.py",
+              "line": 5,
+              "severity": "high",
+              "title": "Issue 04",
+              "detail": "Example"
+            },
+            {
+              "file": "security05.py",
+              "line": 6,
+              "severity": "high",
+              "title": "Issue 05",
+              "detail": "Example"
+            },
+            {
+              "file": "security06.py",
+              "line": 7,
+              "severity": "high",
+              "title": "Issue 06",
+              "detail": "Example"
+            },
+            {
+              "file": "security07.py",
+              "line": 8,
+              "severity": "high",
+              "title": "Issue 07",
+              "detail": "Example"
+            },
+            {
+              "file": "security08.py",
+              "line": 9,
+              "severity": "high",
+              "title": "Issue 08",
+              "detail": "Example"
+            },
+            {
+              "file": "security09.py",
+              "line": 10,
+              "severity": "high",
+              "title": "Issue 09",
+              "detail": "Example"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "review: simplicity"
+      },
+      "outcome": {
+        "object": {
+          "findings": [
+            {
+              "file": "simplicity00.py",
+              "line": 1,
+              "severity": "low",
+              "title": "Issue 00",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity01.py",
+              "line": 2,
+              "severity": "low",
+              "title": "Issue 01",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity02.py",
+              "line": 3,
+              "severity": "low",
+              "title": "Issue 02",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity03.py",
+              "line": 4,
+              "severity": "low",
+              "title": "Issue 03",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity04.py",
+              "line": 5,
+              "severity": "low",
+              "title": "Issue 04",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity05.py",
+              "line": 6,
+              "severity": "low",
+              "title": "Issue 05",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity06.py",
+              "line": 7,
+              "severity": "low",
+              "title": "Issue 06",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity07.py",
+              "line": 8,
+              "severity": "low",
+              "title": "Issue 07",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity08.py",
+              "line": 9,
+              "severity": "low",
+              "title": "Issue 08",
+              "detail": "Example"
+            },
+            {
+              "file": "simplicity09.py",
+              "line": 10,
+              "severity": "low",
+              "title": "Issue 09",
+              "detail": "Example"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-1"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-2"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-3"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-4"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-5"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-6"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-7"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-8"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-9"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-10"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-1"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-2"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-3"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-4"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-5"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-6"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-7"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-8"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-9"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: security-10"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-1"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-2"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-3"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-4"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-5"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-6"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-7"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-8"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-9"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: simplicity-10"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "confirmed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "synthesize"
+      },
+      "outcome": {
+        "object": {
+          "summary": "done",
+          "ranked": [],
+          "themes": []
+        }
+      }
+    }
+  ]
+}
