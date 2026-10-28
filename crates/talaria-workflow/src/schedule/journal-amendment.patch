@@ -1,0 +1,269 @@
+--- a/crates/talaria-workflow/src/journal/durable.rs
++++ b/crates/talaria-workflow/src/journal/durable.rs
+@@ -15,6 +15,7 @@
+     resolver: L,
+     gate: G,
+     retry: RetryPolicy,
++    retried: std::sync::Mutex<std::collections::BTreeSet<String>>,
+ }
+ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate>
+     JournaledBackend<P, T, L, G>
+@@ -36,6 +37,7 @@
+                 resolver,
+                 gate,
+                 retry,
++                retried: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+             }),
+         }
+     }
+@@ -177,10 +179,12 @@
+             let failed_resume = (h.execution != self.journal.execution() || restart_requested)
+                 && matches!(
+                     h.last().map(|r| &r.record),
+-                    Some(Record::CallFinished {
+-                        outcome: CallOutcome::Failed { .. },
+-                        ..
+-                    })
++                    Some(
++                        Record::CallFinished {
++                            outcome: CallOutcome::Failed { .. },
++                            ..
++                        } | Record::CallRetryFinished { .. }
++                    )
+                 );
+             let fresh = h.last().is_none() || next_attempt.is_some() || failed_resume;
+             let attempt = if let Some(a) = next_attempt.take() {
+@@ -588,6 +592,32 @@
+                     let turns = h.turns(self.journal.dir().path())?;
+                     match self.policy.after_turn(&request, &turns) {
+                         NextStep::Finish(outcome) => {
++                            if matches!(outcome, AgentOutcome::Failed { .. })
++                                && !self.retried.lock().map_err(io_error)?.contains(&key)
++                            {
++                                drop(permit.take());
++                                if let Some(last) = turns.last()
++                                    && self
++                                        .gate
++                                        .retry_after_failure(&request, &launch, last, attempt)
++                                {
++                                    self.journal
++                                        .append(Record::CallRetryFinished {
++                                            key: key.clone(),
++                                            attempt,
++                                            outcome: CallOutcome::from_agent(outcome.clone()),
++                                            turns: turns.len() as u32,
++                                        })
++                                        .await?;
++                                    self.retried.lock().map_err(io_error)?.insert(key.clone());
++                                    next_attempt = Some(
++                                        attempt
++                                            .checked_add(1)
++                                            .ok_or_else(|| io_error("attempt overflow"))?,
++                                    );
++                                    continue;
++                                }
++                            }
+                             return self
+                                 .finish_call(&key, attempt, turns.len() as u32, outcome)
+                                 .await;
+@@ -659,8 +689,12 @@
+                 "turn_exit_reason",
+                 "model",
+                 "provider",
++                "failure_reason",
+             ] {
+                 if let Some(v) = result.get(field) {
++                    if field == "failure_reason" && !v.is_string() {
++                        continue;
++                    }
+                     meta.insert(
+                         field.into(),
+                         match v {
+--- a/crates/talaria-workflow/src/journal/port.rs
++++ b/crates/talaria-workflow/src/journal/port.rs
+@@ -151,6 +151,15 @@
+         reason: GateReason,
+     ) -> BoxFuture<'static, GateDecision>;
+     fn budget(&self) -> BudgetSnapshot;
++    fn retry_after_failure(
++        &self,
++        _request: &AgentRequest,
++        _launch: &ResolvedLaunch,
++        _last: &SettledTurn,
++        _attempt: u32,
++    ) -> bool {
++        false
++    }
+ }
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum GateReason {
+--- a/crates/talaria-workflow/src/journal/record.rs
++++ b/crates/talaria-workflow/src/journal/record.rs
+@@ -65,9 +65,27 @@
+     pub parked: usize,
+     pub unfinished: usize,
+ }
+-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+-#[serde(tag = "t", rename_all = "snake_case")]
+-pub enum Record {
++// Keep public constructors compatible while the wire format grows optional fields.
++macro_rules! records {
++    ($($variant:ident { $($(#[$attribute:meta])* $field:ident: $ty:ty),* $(,)? }),* $(,)?) => {
++        #[derive(Clone, Debug, PartialEq)]
++        pub enum Record { $($variant { $($field: $ty),* }),* }
++        #[derive(Serialize, Deserialize)]
++        #[serde(tag = "t", rename_all = "snake_case")]
++        enum RecordWire { $($variant { $($(#[$attribute])* $field: $ty),* }),* }
++        impl From<Record> for RecordWire {
++            fn from(record: Record) -> Self { match record {
++                $(Record::$variant { $($field),* } => Self::$variant { $($field),* }),*
++            } }
++        }
++        impl From<RecordWire> for Record {
++            fn from(record: RecordWire) -> Self { match record {
++                $(RecordWire::$variant { $($field),* } => Self::$variant { $($field),* }),*
++            } }
++        }
++    };
++}
++records! {
+     RunStarted {
+         run_id: String,
+         script_sha256: String,
+@@ -158,6 +176,62 @@
+         outcome: RunOutcomeKind,
+         summary: FinishSummary,
+     },
++    CallRetryFinished { key: String, attempt: u32, outcome: CallOutcome, turns: u32 },
++}
++impl Serialize for Record {
++    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
++        if let Self::CallRetryFinished {
++            key,
++            attempt,
++            outcome,
++            turns,
++        } = self
++        {
++            #[derive(Serialize)]
++            struct RetryFinish<'a> {
++                t: &'static str,
++                key: &'a str,
++                attempt: u32,
++                outcome: &'a CallOutcome,
++                turns: u32,
++                retry: bool,
++            }
++            return RetryFinish {
++                t: "call_finished",
++                key,
++                attempt: *attempt,
++                outcome,
++                turns: *turns,
++                retry: true,
++            }
++            .serialize(serializer);
++        }
++        RecordWire::from(self.clone()).serialize(serializer)
++    }
++}
++impl<'de> Deserialize<'de> for Record {
++    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
++        let mut value = Value::deserialize(deserializer)?;
++        if value["t"] == "call_retry_finished" {
++            return Err(serde::de::Error::custom("unknown record type"));
++        }
++        if value["t"] == "call_finished" && value.get("retry").is_some() {
++            let retry = value["retry"]
++                .as_bool()
++                .ok_or_else(|| serde::de::Error::custom("retry must be a boolean"))?;
++            if retry {
++                value["t"] = Value::String("call_retry_finished".into());
++            }
++        }
++        if value["t"] == "call_retry_finished"
++            && !matches!(value["outcome"]["kind"].as_str(), Some("failed"))
++        {
++            return Err(serde::de::Error::custom("a retry finish must fail"));
++        }
++        serde_json::from_value::<RecordWire>(value)
++            .map(Into::into)
++            .map_err(serde::de::Error::custom)
++    }
+ }
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "snake_case")]
+@@ -178,7 +252,7 @@
+             Self::TurnSettled { .. } => "turn_settled",
+             Self::CallAttention { .. } => "call_attention",
+             Self::CallResolved { .. } => "call_resolved",
+-            Self::CallFinished { .. } => "call_finished",
++            Self::CallFinished { .. } | Self::CallRetryFinished { .. } => "call_finished",
+             Self::RunFinished { .. } => "run_finished",
+         }
+     }
+@@ -191,7 +265,8 @@
+             | Self::TurnSettled { key, attempt, .. }
+             | Self::CallAttention { key, attempt, .. }
+             | Self::CallResolved { key, attempt, .. }
+-            | Self::CallFinished { key, attempt, .. } => Some((key, *attempt)),
++            | Self::CallFinished { key, attempt, .. }
++            | Self::CallRetryFinished { key, attempt, .. } => Some((key, *attempt)),
+             _ => None,
+         }
+     }
+@@ -231,6 +306,9 @@
+                 ..
+             } => *turns <= 2 && value.is_some() != value_ref.is_some(),
+             Self::CallFinished { turns, .. } => *turns <= 2,
++            Self::CallRetryFinished { outcome, turns, .. } => {
++                *turns <= 2 && matches!(outcome, CallOutcome::Failed { .. })
++            }
+             _ => true,
+         };
+         if !valid {
+--- a/crates/talaria-workflow/src/journal/replay.rs
++++ b/crates/talaria-workflow/src/journal/replay.rs
+@@ -487,6 +487,26 @@
+     )
+ }
+ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), JournalError> {
++    // Retry finishes obey precisely the failed-finish grammar.
++    if let Record::CallRetryFinished {
++        key,
++        attempt,
++        outcome,
++        turns,
++    } = next
++    {
++        return validate_transition(
++            h,
++            &Record::CallFinished {
++                key: key.clone(),
++                attempt: *attempt,
++                outcome: outcome.clone(),
++                turns: *turns,
++            },
++            line,
++        );
++    }
++
+     let Some(last) = h.last() else { return Ok(()) };
+     let a = h.attempt();
+     let next_a = next.identity().map_or(a, |(_, a)| a);
+@@ -496,10 +516,11 @@
+             Record::CallFinished {
+                 outcome: CallOutcome::Failed { .. },
+                 ..
+-            } | Record::CallResolved {
+-                resolution: Resolution::Rerun | Resolution::Abort,
+-                ..
+-            }
++            } | Record::CallRetryFinished { .. }
++                | Record::CallResolved {
++                    resolution: Resolution::Rerun | Resolution::Abort,
++                    ..
++                }
+         );
+         if due && a.checked_add(1) == Some(next_a) && is_start(next) {
+             return Ok(());
