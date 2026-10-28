@@ -6009,3 +6009,23 @@ produce a value outside the run ID's range.
 
 **Generalizable rule.** When generating valid run IDs for property tests, draw
 only 0 through 7 for the first character and the full alphabet for the rest.
+
+### 2026-10-27 — A durable operator answer also needs a consumption barrier
+
+A `call_resolved` append wakes backend futures before the polling task has necessarily deleted the
+answer file. An immediate resume could consequently meet the poller's short-lived reference to the
+old journal and report a locked run. The operator-answer tests reproduced this while exercising abort
+followed immediately by resume. The journal now tracks consumption in progress and wakes resolution
+waiters again after deletion; reopening and repeating a resolved RPC remains safe across crashes.
+
+Rule: sync the answer before acting, and complete answer-file consumption before releasing its waiter.
+
+### 2026-10-28 — Idle disk writers must let virtual clocks advance
+
+The independent outage test waits through ten virtual minutes of healthy inference. An idle receive
+loop inside a permanent `spawn_blocking` task prevents Tokio's paused clock from advancing. The writer
+now receives on a dedicated thread, offloads each disk batch through `spawn_blocking`, and keeps one
+blocking marker only while appends await their synced acknowledgements. This also prevents a virtual
+watchdog from racing a queued disk batch. The unchanged outage and group-commit tests pass.
+
+Rule: register pending disk work with Tokio, but keep idle channel waits out of its blocking pool.

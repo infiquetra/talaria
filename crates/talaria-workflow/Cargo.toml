@@ -25,6 +25,8 @@ sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 
+getrandom.workspace = true
+
 [dev-dependencies]
 talaria-workflow = { path = ".", features = ["mock", "fake-gateway"] }
 hermes-client.workspace = true
@@ -41,6 +43,10 @@ required-features = ["mock"]
 name = "workflow_engine"
 harness = false
 required-features = ["mock"]
+
+[[example]]
+name = "journal_resume"
+required-features = ["mock", "fake-gateway"]
 
 [lints]
 workspace = true
