@@ -2,7 +2,7 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected nineteen fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected thirty-one fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch and the three queue recordings, covered by their own replay tests.
 
@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 29] = [
+const NAMES: [&str; 28] = [
     "background-work",
     "attachments-mention-image",
     "plain-answer",
@@ -46,7 +46,6 @@ const NAMES: [&str; 29] = [
     "review-session-info",
     "review-oneshot",
     "profiles",
-    "p5-04-model-options",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -83,7 +82,7 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         // The review only reads the session and drafts one message; no turn runs.
         "review-session-info" | "review-oneshot" => &[],
         // The profiles list reads no session and runs no turn.
-        "profiles" | "p5-04-model-options" => &[],
+        "profiles" => &[],
         _ => &["complete"],
     }
 }
@@ -115,10 +114,14 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 30,
-        "expected thirty fixtures in fixtures/frames, found {}",
+        files.len() == 31,
+        "expected thirty-one fixtures in fixtures/frames, found {}",
         files.len()
     );
+    // The progress journal has its own reader; the idempotency capture has its own checks.
+    assert!(files.contains(&fixtures_dir().join("p5-04-model-options.jsonl")));
+    assert!(files.contains(&fixtures_dir().join("p5-05-progress.jsonl")));
+    assert!(files.contains(&fixtures_dir().join("p5-02-idempotency.jsonl")));
     NAMES
         .iter()
         .map(|name| {
@@ -195,7 +198,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 29);
+    assert_eq!(fixtures.len(), 28);
 }
 
 #[test]
@@ -848,18 +851,6 @@ fn scenario_evidence_present() {
                     describes[0]["params"]["name"].is_string(),
                     "{name}: profiles.describe names no profile"
                 );
-            }
-            "p5-04-model-options" => {
-                let request = records
-                    .iter()
-                    .find(|row| row["dir"] == "out" && row["frame"]["method"] == "model.options")
-                    .expect("roster request");
-                assert_eq!(request["frame"]["params"], serde_json::json!({}));
-                let response = records
-                    .iter()
-                    .find(|row| row["dir"] == "in" && row["frame"]["id"] == request["frame"]["id"])
-                    .expect("roster response");
-                assert!(response["frame"]["result"]["providers"].is_array());
             }
             other => panic!("unlisted fixture {other}"),
         }

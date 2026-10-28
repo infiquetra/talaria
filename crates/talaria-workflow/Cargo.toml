@@ -18,6 +18,8 @@ hermes-live = []
 toml.workspace = true
 tracing-subscriber.workspace = true
 chrono.workspace = true
+talaria-core.workspace = true
+tempfile.workspace = true
 futures-util.workspace = true
 hermes-client.workspace = true
 hermes-contract.workspace = true
@@ -66,3 +68,6 @@ required-features = ["hermes-live"]
 [[example]]
 name = "staffed_run"
 required-features = ["hermes-live"]
+
+[[example]]
+name = "progress_dump"

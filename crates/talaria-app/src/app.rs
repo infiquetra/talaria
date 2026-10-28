@@ -194,6 +194,7 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    Workflow(talaria_workflow::progress::live::ProgressKey),
     /// Input owned by the configuration assistant overlay.
     Configure(Box<talaria_core::configure::ConfigureInput>),
     /// Input owned by the capabilities overlay.
@@ -336,6 +337,7 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub workflow_progress: Option<&'a talaria_workflow::progress::live::ProgressState>,
     pub configure: Option<talaria_core::configure::ConfigureView>,
     pub configure_refining: bool,
     pub configure_session: Option<&'a SessionState>,
@@ -662,6 +664,7 @@ struct CronBinding {
 }
 
 pub struct AppState {
+    pub workflow_views: crate::workflow_progress::ProgressViews,
     configure: Option<talaria_core::configure::ConfigureState>,
     configure_service: Option<Arc<crate::configure::Service>>,
     configure_generation: u64,
@@ -1093,6 +1096,7 @@ impl AppState {
             pending: None,
             command_service: None,
             subagents: None,
+            workflow_views: crate::workflow_progress::ProgressViews::default(),
             subagents_usage_active: 0,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
             caret: 0,
@@ -1220,6 +1224,11 @@ impl AppState {
             picker: self.picker.as_ref(),
             fleet: self.fleet.as_ref(),
             peek: self.peek_frame.as_ref(),
+            workflow_progress: self
+                .workflow_views
+                .active
+                .as_ref()
+                .and_then(|p| self.workflow_views.states.get(p)),
             subagents: self.subagents.as_ref(),
             subagents_usage_active: self.subagents_usage_active,
             fleet_snapshot: self.fleet_snapshot.as_deref(),
@@ -1369,6 +1378,16 @@ pub enum TranscriptAction {
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
+    WorkflowOpened(Result<crate::workflow_progress::OpenedRun, String>),
+    WorkflowScoped(PathBuf),
+    WorkflowPolled {
+        run: PathBuf,
+        result: Result<crate::workflow_progress::PollBatch, String>,
+    },
+    WorkflowProgress {
+        run: PathBuf,
+        input: talaria_workflow::progress::live::ProgressInput,
+    },
     Configure {
         generation: u64,
         service: Option<Arc<crate::configure::Service>>,
@@ -1617,6 +1636,25 @@ pub struct SwitchInstall {
 /// What the executor does after one update. Ranges index the open session's cells.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
+    WorkflowPrompt {
+        run: PathBuf,
+        key: String,
+        attempt: u32,
+        turn: u32,
+        reference: talaria_workflow::progress::BlobRef,
+    },
+    WorkflowOpen(PathBuf),
+    WorkflowPoll {
+        run: PathBuf,
+        offset: u64,
+        last_seq: u64,
+    },
+    WorkflowExecute {
+        run: PathBuf,
+        effects: Vec<talaria_workflow::progress::live::ProgressEffect>,
+        keys: std::collections::HashMap<String, String>,
+        at_ms: i64,
+    },
     Configure {
         generation: u64,
         profile: String,
@@ -2778,7 +2816,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
     let restored = matches!(&message, AppMessage::Opened { .. });
     let settled = mutation_session(&message);
     let mut redraw = match &message {
-        AppMessage::Cron { .. } | AppMessage::CronPrepared { .. }
+        AppMessage::WorkflowScoped(_) | AppMessage::WorkflowProgress { .. } | AppMessage::WorkflowPolled { .. } | AppMessage::WorkflowOpened(_) | AppMessage::User(UserAction::Workflow(_)) | AppMessage::ForegroundKey(UserAction::Workflow(_)) | AppMessage::Cron { .. } | AppMessage::CronPrepared { .. }
         | AppMessage::User(UserAction::Cron(_))
         | AppMessage::ForegroundKey(UserAction::Cron(_)) => false,
         AppMessage::PromptDone { events, notices, masked } => {
@@ -3149,7 +3187,8 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             {
                 return cron_input(state, CronInput::Changed);
             }
-            let mut effects = skin_changed(state, &event);
+            let mut effects = workflow_link(state, &event);
+            effects.extend(skin_changed(state, &event));
             if is_session_less_skin(&event) {
                 // A skin equal to the current one draws nothing.
                 if effects.is_empty() {
@@ -3214,6 +3253,13 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
+        AppMessage::WorkflowScoped(run) => {
+            state.workflow_views.scoped.insert(run);
+            vec![]
+        }
+        AppMessage::WorkflowProgress { run, input } => workflow_input(state, run, input),
+        AppMessage::WorkflowOpened(result) => workflow_opened(state, result),
+        AppMessage::WorkflowPolled { run, result } => workflow_polled(state, run, result),
         AppMessage::Recovered(result) => recovered(state, result),
         AppMessage::Rewind(input) => rewind_input(state, input),
         AppMessage::Subagents(message) => {
@@ -3258,6 +3304,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Tick { now_ms } => {
             state.now_ms = now_ms;
             let mut effects = review_tick(state);
+            effects.extend(workflow_tick(state));
             if state
                 .configure_tick_at
                 .is_some_and(|at| Instant::now() >= at)
@@ -4750,6 +4797,9 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Workflows {
+        return workflow_command(state, &argument);
+    }
     if action == LocalAction::Configure {
         return configure_command(state, argument, typed);
     }
@@ -5303,6 +5353,16 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Mcp(input) => mcp_input(state, input),
         UserAction::Memory(input) => memory_input(state, input),
         UserAction::Connectors(input) => connectors_input(state, input),
+        UserAction::Workflow(key) => {
+            let Some(run) = state.workflow_views.active.clone() else {
+                return vec![];
+            };
+            workflow_input(
+                state,
+                run,
+                talaria_workflow::progress::live::ProgressInput::Key(key),
+            )
+        }
         UserAction::ToggleAgents => {
             let key = foreground_row(state);
             if let Some(hub) = state.subagents.as_mut() {
@@ -9054,6 +9114,7 @@ struct Executor {
     side: Arc<Mutex<DirectoryService>>,
     /// Whether the side connection is open.
     side_open: Arc<AtomicBool>,
+    workflow_connections: Arc<crate::workflow_progress::WorkflowConnections>,
     /// Work that waits for the next frame, so the overlay is on screen first.
     deferred: std::sync::Mutex<Vec<Deferred>>,
 }
@@ -9128,6 +9189,7 @@ impl Executor {
             started: Instant::now(),
             side: Arc::new(Mutex::new(DirectoryService::new())),
             side_open: Arc::new(AtomicBool::new(false)),
+            workflow_connections: Arc::default(),
             deferred: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -9415,6 +9477,18 @@ fn background_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     }
     let due = background::next_deadline(opened.state.background(), executor.now_ms())?;
     executor.started.checked_add(Duration::from_millis(due))
+}
+
+/// An open workflow keeps consuming journal and control changes even without input.
+fn workflow_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
+    let run = state.workflow_views.active.as_ref()?;
+    let view = state.workflow_views.states.get(run)?;
+    if view.error.is_some() {
+        return None;
+    }
+    executor.started.checked_add(Duration::from_millis(
+        state.workflow_views.last_poll_ms.saturating_add(250),
+    ))
 }
 
 /// When the side-tasks section next changes, while anything is pending.
@@ -10219,6 +10293,86 @@ fn apply<S: Screen>(
                         }
                     });
                 });
+            }
+            AppEffect::WorkflowPrompt {
+                run,
+                key,
+                attempt,
+                turn,
+                reference,
+            } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let path = run.clone();
+                    let text = tokio::task::spawn_blocking(move || {
+                        talaria_workflow::journal::RunDir::open(&path)
+                            .ok()
+                            .and_then(|dir| {
+                                talaria_workflow::progress::load_text(&dir, &reference).ok()
+                            })
+                            .map(|s| s.lines().next().unwrap_or_default().to_string())
+                            .unwrap_or_else(|| "(prompt unavailable — journal blob missing)".into())
+                    })
+                    .await
+                    .unwrap_or_else(|_| "(prompt unavailable — journal blob missing)".into());
+                    let _ = sender.send(AppMessage::WorkflowProgress {
+                        run,
+                        input: talaria_workflow::progress::ProgressInput::PromptLoadedFor {
+                            key,
+                            attempt,
+                            turn,
+                            text,
+                        },
+                    });
+                });
+            }
+            AppEffect::WorkflowOpen(path) => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        crate::workflow_progress::open_run(path)
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("workflow view task failed".into()));
+                    let _ = sender.send(AppMessage::WorkflowOpened(result));
+                });
+            }
+            AppEffect::WorkflowPoll {
+                run,
+                offset,
+                last_seq,
+            } => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let path = run.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        crate::workflow_progress::poll_run(&path, offset, last_seq)
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("workflow view task failed".into()));
+                    let _ = sender.send(AppMessage::WorkflowPolled { run, result });
+                });
+            }
+            AppEffect::WorkflowExecute {
+                run,
+                effects,
+                keys,
+                at_ms,
+            } => {
+                let client = state.service.as_ref().and_then(|s| s.client()).cloned();
+                crate::workflow_progress::spawn_effects(
+                    run,
+                    crate::workflow_progress::WorkflowConnection {
+                        home: state.hermes_home.clone(),
+                        foreground_profile: state.profile.clone(),
+                        fallback: client,
+                        cache: executor.workflow_connections.clone(),
+                    },
+                    executor.sender.clone(),
+                    effects,
+                    keys,
+                    at_ms,
+                );
             }
             AppEffect::CommitSubagentBatch(batch) => screen.commit_subagent_batch(&batch),
             AppEffect::Background {
@@ -12067,6 +12221,7 @@ async fn run_inner<S: Screen>(
         state.now_ms = executor.now_ms();
         let side_due = side_wake(&state, &executor);
         let background_due = background_wake(&state, &executor);
+        let workflow_due = workflow_wake(&state, &executor);
         let deadline = earliest_of([
             screen.next_tick(),
             screen.next_wake(now),
@@ -12094,6 +12249,8 @@ async fn run_inner<S: Screen>(
         let non_cron_deadline = deadline;
         let cron_deadline = state.cron.deadline;
         let deadline = earliest_of([deadline, cron_deadline]);
+        let other_deadline = deadline;
+        let deadline = earliest_of([deadline, workflow_due]);
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
@@ -12135,9 +12292,9 @@ async fn run_inner<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
-                if side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
+                if side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
-                    let _ = apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
+                    redraw |= apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
                 if let Some((text, caret)) = screen.draft_snapshot()
                     && (text != state.draft || caret != state.caret) {
@@ -12160,7 +12317,8 @@ async fn run_inner<S: Screen>(
                 // A countdown that changed its text arms the next one.
                 state.automation_wake(now);
                 let cron_due = cron_deadline.is_some_and(|due| due <= now);
-                redraw = !cron_due || non_cron_deadline.is_some_and(|due| due <= now);
+                redraw |= other_deadline.is_some_and(|due| due <= now)
+                    && (!cron_due || non_cron_deadline.is_some_and(|due| due <= now));
                 if cron_due {
                     state.cron.deadline = None;
                     redraw |= apply(&mut state, AppMessage::User(UserAction::Cron(Box::new(CronInput::Tick))), screen, &executor);
@@ -13048,5 +13206,389 @@ mod cron_binding_tests {
         );
         assert!(matches!(&effects[..], [AppEffect::CronNotice(text)] if text == "session missing"));
         assert!(!state.switching && !state.session_action && !state.cron.switching_run);
+    }
+}
+
+fn workflow_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    if argument.trim().is_empty() {
+        return vec![notice_lines(
+            "/workflows requires a run-folder argument until run discovery is available",
+        )];
+    }
+    let run = PathBuf::from(argument.trim());
+    if state.workflow_views.states.contains_key(&run) {
+        state.workflow_views.active = Some(run.clone());
+        state.workflow_views.last_poll_ms = state.now_ms;
+        return workflow_input(
+            state,
+            run,
+            talaria_workflow::progress::ProgressInput::Reopen {
+                connected: state.link_state == LinkView::Connected,
+            },
+        );
+    }
+    vec![AppEffect::WorkflowOpen(run)]
+}
+fn workflow_opened(
+    state: &mut AppState,
+    result: Result<crate::workflow_progress::OpenedRun, String>,
+) -> Vec<AppEffect> {
+    match result {
+        Ok(opened) => {
+            let run = opened.path;
+            state
+                .workflow_views
+                .profiles
+                .insert(run.clone(), opened.profile);
+            let mut view = opened.state;
+            view.now_ms = (state.wall_s * 1000.0) as i64;
+            view.opened_at_ms = view.now_ms;
+            view.last_journal_seen_ms = view.now_ms;
+            state
+                .workflow_views
+                .offsets
+                .insert(run.clone(), opened.offset);
+            state.workflow_views.states.insert(run.clone(), view);
+            state.workflow_views.active = Some(run.clone());
+            state.workflow_views.last_poll_ms = state.now_ms;
+            let mut effects = workflow_input(
+                state,
+                run,
+                talaria_workflow::progress::live::ProgressInput::Connected(
+                    state.link_state == LinkView::Connected,
+                ),
+            );
+            effects.push(AppEffect::Redraw);
+            effects
+        }
+        Err(reason) => vec![notice_lines(&reason)],
+    }
+}
+fn workflow_polled(
+    state: &mut AppState,
+    run: PathBuf,
+    result: Result<crate::workflow_progress::PollBatch, String>,
+) -> Vec<AppEffect> {
+    state.workflow_views.polling.remove(&run);
+    match result {
+        Ok(batch) => {
+            state
+                .workflow_views
+                .offsets
+                .insert(run.clone(), batch.offset);
+            let mut effects = workflow_input(
+                state,
+                run.clone(),
+                talaria_workflow::progress::live::ProgressInput::Journal(batch.lines),
+            );
+            effects.extend(workflow_input(
+                state,
+                run,
+                talaria_workflow::progress::live::ProgressInput::Controls(batch.controls),
+            ));
+            effects
+        }
+        Err(reason) => workflow_input(
+            state,
+            run,
+            talaria_workflow::progress::live::ProgressInput::Error(reason),
+        ),
+    }
+}
+fn workflow_tick(state: &mut AppState) -> Vec<AppEffect> {
+    let Some(run) = state.workflow_views.active.clone() else {
+        return vec![];
+    };
+    if state
+        .workflow_views
+        .states
+        .get(&run)
+        .is_some_and(|view| view.error.is_some())
+    {
+        return vec![];
+    }
+    let mut effects = workflow_input(
+        state,
+        run.clone(),
+        talaria_workflow::progress::live::ProgressInput::Clock {
+            now_ms: (state.wall_s * 1000.0) as i64,
+        },
+    );
+    state.workflow_views.last_poll_ms = state.now_ms;
+    if state.workflow_views.polling.insert(run.clone()) {
+        effects.push(AppEffect::WorkflowPoll {
+            offset: state.workflow_views.offsets.get(&run).copied().unwrap_or(0),
+            last_seq: state
+                .workflow_views
+                .states
+                .get(&run)
+                .map_or(0, |view| view.progress.last_seq),
+            run,
+        });
+    }
+    effects
+}
+fn workflow_input(
+    state: &mut AppState,
+    run: PathBuf,
+    input: talaria_workflow::progress::live::ProgressInput,
+) -> Vec<AppEffect> {
+    let poll_after = matches!(
+        &input,
+        talaria_workflow::progress::live::ProgressInput::GatewayResponse { .. }
+            | talaria_workflow::progress::live::ProgressInput::StopReceipt { .. }
+    );
+    let Some(view) = state.workflow_views.states.get_mut(&run) else {
+        return vec![];
+    };
+    let previous = view.revision;
+    let mut effects = vec![];
+    if matches!(&input, talaria_workflow::progress::ProgressInput::Key(_)) {
+        effects.extend(talaria_workflow::progress::update(
+            view,
+            talaria_workflow::progress::ProgressInput::Clock {
+                now_ms: (state.wall_s * 1000.0) as i64,
+            },
+        ));
+    }
+    effects.extend(talaria_workflow::progress::live::update(view, input));
+    let keys = view
+        .progress
+        .agents
+        .iter()
+        .flat_map(|a| {
+            [a.session_id.clone(), a.stored_session_id.clone()]
+                .into_iter()
+                .flatten()
+                .map(|s| (s, a.key.clone()))
+        })
+        .collect();
+    let mut result = vec![];
+    if !effects.is_empty()
+        || (!view.connected
+            && view.error.is_none()
+            && !view.closed
+            && state
+                .workflow_views
+                .profiles
+                .get(&run)
+                .is_some_and(|p| !p.is_empty() && p != &state.profile))
+    {
+        result.push(AppEffect::WorkflowExecute {
+            run: run.clone(),
+            effects,
+            keys,
+            at_ms: view.now_ms,
+        });
+    }
+    if let Some(key) = view.selected_agent_key().map(str::to_owned) {
+        if let Some(a) = view.progress.agent(&key) {
+            let identity = (key.clone(), a.attempt, a.turn);
+            if view.prompt_identity.as_ref() != Some(&identity) {
+                view.prompt_first_line = None;
+                if let Some(reference) = a.prompt_ref.clone() {
+                    result.push(AppEffect::WorkflowPrompt {
+                        run: run.clone(),
+                        key,
+                        attempt: a.attempt,
+                        turn: a.turn,
+                        reference,
+                    });
+                }
+                view.prompt_identity = Some(identity);
+            }
+        }
+    } else {
+        view.prompt_identity = None;
+        view.prompt_first_line = None;
+    }
+    let opened = view.opened_session.take();
+    let closed = view.closed;
+    if view.revision != previous {
+        result.push(AppEffect::Redraw);
+    }
+    if poll_after && state.workflow_views.polling.insert(run.clone()) {
+        result.push(AppEffect::WorkflowPoll {
+            run: run.clone(),
+            offset: state.workflow_views.offsets.get(&run).copied().unwrap_or(0),
+            last_seq: view.progress.last_seq,
+        });
+    }
+    if closed && state.workflow_views.active.as_ref() == Some(&run) {
+        state.workflow_views.active = None;
+    }
+    if let Some(session) = opened {
+        let profile = state
+            .workflow_views
+            .profiles
+            .get(&run)
+            .filter(|p| !p.is_empty())
+            .cloned()
+            .unwrap_or_else(|| state.profile.clone());
+        if profile == state.profile {
+            result.extend(resume_command(state, &session));
+        } else {
+            result.extend(begin_switch(
+                state,
+                RowKey {
+                    profile,
+                    session_id: session,
+                },
+            ));
+        }
+    }
+    result
+}
+
+fn workflow_link(state: &mut AppState, event: &LinkEvent) -> Vec<AppEffect> {
+    use talaria_workflow::progress::live::ProgressInput as I;
+    let runs: Vec<_> = state.workflow_views.states.keys().cloned().collect();
+    let mut effects = vec![];
+    for run in runs {
+        if state.workflow_views.scoped.contains(&run) {
+            continue;
+        }
+        match event {
+            LinkEvent::State(status) => effects.extend(workflow_input(
+                state,
+                run,
+                I::Connected(matches!(status, LinkState::Connected { .. })),
+            )),
+            LinkEvent::Inbound {
+                item: Inbound::Event(event),
+                ..
+            } => {
+                if let Some(session) = &event.frame.session_id
+                    && state
+                        .workflow_views
+                        .states
+                        .get_mut(&run)
+                        .is_some_and(|v| v.progress.for_session_mut(session).is_some())
+                {
+                    if let Some(generation) = event.frame.execution_generation {
+                        effects.extend(workflow_input(
+                            state,
+                            run.clone(),
+                            I::Generation {
+                                session_id: session.clone(),
+                                generation,
+                            },
+                        ));
+                    }
+                    let input = if let Some(subagent) =
+                        talaria_core::subagents::SubagentEvent::from_notification(
+                            &event.frame.notification,
+                        ) {
+                        I::Subagent {
+                            session_id: session.clone(),
+                            event: subagent,
+                        }
+                    } else {
+                        I::Gateway {
+                            session_id: session.clone(),
+                            event: event.frame.notification.clone(),
+                        }
+                    };
+                    effects.extend(workflow_input(state, run, input));
+                }
+            }
+            LinkEvent::Gap(gap) => effects.extend(workflow_input(
+                state,
+                run,
+                I::ReplayGap {
+                    session_id: gap.session_id.clone(),
+                },
+            )),
+            _ => {}
+        }
+    }
+    effects
+}
+
+#[cfg(test)]
+mod workflow_wake_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn idle_workflow_has_a_deadline_and_opening_or_reopening_rearms_it() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let executor = Executor::new(tx);
+        let mut state = AppState::new("workflow-wake");
+        assert!(workflow_wake(&state, &executor).is_none());
+        let run = PathBuf::from("idle-run");
+        let manifest = serde_json::from_value(serde_json::json!({
+            "v":1,"run_id":"01JB2X9Q4M8Z7K3T5V6W8Y0A1C", "created_at_ms":1000,
+            "workflow":{"name":"review-branch","script_sha256":"a".repeat(64)},
+            "args":null,"started_at_ms":1,"seed":4242,"profile":"fixture",
+            "on_unknown":"wait","talaria_version":"0.7.0-dev", "hermes":{},
+            "roster":{},"approval_policy":{}
+        }))
+        .unwrap();
+        let opened = crate::workflow_progress::OpenedRun {
+            path: run.clone(),
+            profile: "fixture".into(),
+            state: talaria_workflow::progress::live::ProgressState::blank(&manifest),
+            offset: 0,
+        };
+        state.now_ms = 700;
+        workflow_opened(&mut state, Ok(opened));
+        assert_eq!(state.workflow_views.last_poll_ms, 700);
+        assert_eq!(
+            workflow_wake(&state, &executor),
+            Some(executor.started + Duration::from_millis(950))
+        );
+        state.now_ms = 950;
+        assert!(
+            workflow_tick(&mut state)
+                .iter()
+                .any(|e| matches!(e, AppEffect::WorkflowPoll { .. }))
+        );
+        assert_eq!(
+            workflow_wake(&state, &executor),
+            Some(executor.started + Duration::from_millis(1200))
+        );
+        // An in-flight disk poll must not leave an overdue timer spinning the loop.
+        state.now_ms = 1200;
+        workflow_tick(&mut state);
+        assert_eq!(
+            workflow_wake(&state, &executor),
+            Some(executor.started + Duration::from_millis(1450))
+        );
+        state.workflow_views.active = None;
+        assert!(workflow_wake(&state, &executor).is_none());
+        state.now_ms = 2000;
+        workflow_command(&mut state, "idle-run");
+        assert_eq!(state.workflow_views.last_poll_ms, 2000);
+        let opened = workflow_input(
+            &mut state,
+            run.clone(),
+            talaria_workflow::progress::live::ProgressInput::Opened("fixture-session".into()),
+        );
+        assert!(opened.iter().any(|e| matches!(e, AppEffect::Switch {key} if key.profile == "fixture" && key.session_id == "fixture-session")));
+        state.workflow_views.states.get_mut(&run).unwrap().connected = true;
+        state.workflow_views.scoped.insert(run.clone());
+        workflow_link(&mut state, &LinkEvent::State(LinkState::Closed));
+        assert!(
+            state.workflow_views.states[&run].connected,
+            "foreground disconnect must not disable a scoped workflow link"
+        );
+        state.workflow_views.scoped.clear();
+        workflow_link(&mut state, &LinkEvent::State(LinkState::Closed));
+        assert!(
+            !state.workflow_views.states[&run].connected,
+            "fallback views still follow the foreground link"
+        );
+        let failed = workflow_input(
+            &mut state,
+            run.clone(),
+            talaria_workflow::progress::live::ProgressInput::Error("corrupt".into()),
+        );
+        assert!(
+            !failed
+                .iter()
+                .any(|e| matches!(e, AppEffect::WorkflowExecute { .. })),
+            "connection failure must not start another connection loop"
+        );
+        assert!(workflow_wake(&state, &executor).is_none());
     }
 }

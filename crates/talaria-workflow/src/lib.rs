@@ -8,5 +8,6 @@ pub mod journal;
 #[cfg(feature = "mock")]
 pub mod mock;
 
+pub mod progress;
 pub mod schedule;
 pub mod staffing;

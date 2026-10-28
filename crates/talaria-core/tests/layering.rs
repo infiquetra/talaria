@@ -374,6 +374,22 @@ fn talaria_workflow_never_reaches_talaria_tui() {
 }
 
 #[test]
+fn workflow_progress_edges_are_present() {
+    let graph = workspace_graph(&cargo_metadata(&workspace_root()));
+    for (from, to) in [
+        ("talaria-workflow", "hermes-contract"),
+        ("talaria-workflow", "talaria-core"),
+        ("talaria-app", "talaria-workflow"),
+        ("talaria-tui", "talaria-workflow"),
+    ] {
+        assert!(
+            graph.path(from, to).is_some(),
+            "missing dependency {from} -> {to}"
+        );
+    }
+}
+
+#[test]
 fn every_crate_inherits_the_workspace_settings() {
     // Text, not a TOML parser: cargo metadata does not report lint settings or whether a key was
     // inherited, and a toml dependency would be a new pin outside this unit's dependency set.

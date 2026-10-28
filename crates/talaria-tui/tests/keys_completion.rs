@@ -12,7 +12,7 @@ fn labels(map: &KeyMap, action: Action) -> Vec<String> {
 fn completion_actions_parse_and_coexist() {
     let (map, notices) = KeyMap::from_entries(&BTreeMap::new());
     assert!(notices.is_empty(), "{notices:?}");
-    assert_eq!(Action::ALL.len(), 179);
+    assert_eq!(Action::ALL.len(), 192);
     for name in [
         "completion_next",
         "completion_prev",

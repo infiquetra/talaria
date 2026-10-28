@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+talaria-workflow.workspace = true
 talaria-core.workspace = true
 # Issue #242: the subagent panel returns the hub's control type.
 talaria-app.workspace = true
