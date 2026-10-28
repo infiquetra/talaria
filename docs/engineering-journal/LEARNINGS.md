@@ -2,6 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+
+## 2026-10-28 — Workflow session totals need attempt-local cost deltas
+
+**Evidence.** Hermes v0.22.4 at the contract pin exports the agent's running
+session cost through `agent/turn_usage.py:239-252` and
+`gateway/run_turn_runner.py:1318-1346`. The scheduler's real-journal tests fold
+$0.01 then $0.02 as $0.02, $0.03 then $0.01 as $0.04, and a new attempt from
+zero. They also price `0.0` with `unknown` from the original snapshot and restore
+that same spend after the live roster's price changes.
+
+**Mechanism.** Adding every session reading counts earlier turns again. A lower
+reading signals a rebuilt agent; an unknown reading is not a known zero and must
+leave the last known counter unchanged. Frozen prices make resumed journal folds
+stable. The retry hook and journal fold also share settlement identities so one
+rate-limit record cannot halve a lane twice.
+
+**Generalizable rule.** Fold cumulative counters by attempt-local deltas, preserve
+unknown readings explicitly, and replay durable accounting against frozen prices.
+
 ## 2026-10-27 — Live mutation replies and scheduled runs use distinct completion shapes
 
 **Evidence.** Issue #362, Hermes v0.22.4 at the pinned revision. The handler in

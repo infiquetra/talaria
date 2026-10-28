@@ -15,7 +15,9 @@ fake-gateway = []
 hermes-live = []
 
 [dependencies]
-chrono = { version = "=0.4.45", features = ["serde"] }
+toml.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
 futures-util.workspace = true
 hermes-client.workspace = true
 hermes-contract.workspace = true
@@ -34,7 +36,6 @@ thiserror.workspace = true
 getrandom.workspace = true
 
 [dev-dependencies]
-tracing-subscriber = { version = "=0.3.23", features = ["fmt"] }
 talaria-workflow = { path = ".", features = ["mock", "fake-gateway"] }
 hermes-client.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
@@ -57,3 +58,11 @@ required-features = ["mock", "fake-gateway"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "roster"
+required-features = ["hermes-live"]
+
+[[example]]
+name = "staffed_run"
+required-features = ["hermes-live"]
