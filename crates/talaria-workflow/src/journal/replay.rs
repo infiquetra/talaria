@@ -537,7 +537,16 @@ fn validate_transition(h: &CallHistory, next: &Record, line: u64) -> Result<(), 
     let attention = matches!(next, Record::CallAttention { .. });
     let allowed = match &last.record {
         Record::CallIntent { .. } => {
-            matches!(next, Record::SessionBound { .. }) || attention || failed
+            matches!(
+                next,
+                Record::SessionBound { .. }
+                    | Record::CallFinished {
+                        outcome: CallOutcome::Skipped,
+                        turns: 0,
+                        ..
+                    }
+            ) || attention
+                || failed
         }
         Record::SessionBound { .. } => {
             matches!(next, Record::TurnIntent { turn: 0, .. }) || attention || failed

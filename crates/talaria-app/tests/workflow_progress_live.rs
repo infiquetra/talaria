@@ -34,7 +34,7 @@ const RELEASE: &str = "0.22.4";
 const KEY_FINISHED: &str = "11111111111111111111111111111111";
 const KEY_RUNNING: &str = "88888888888888888888888888888888";
 const MARKER: &str = "live-steer-marker";
-const PROMPT: &str = "Use the search tool once for the word workflow. Then count from 1 to 200, one number per line, and do not finish early.";
+const PROMPT: &str = "Use the search tool in separate sequential steps for the words workflow, runner, journal, and progress (one search tool call per step). After all searches finish, count from 1 to 2000, one number per line.";
 
 struct Gateway {
     client: Client,
@@ -661,7 +661,9 @@ async fn steer_stop_and_open_against_gateway() {
             .unwrap_or("missing")
     );
 
-    let steer_text = format!("On your next line print exactly {MARKER} and then continue.");
+    let steer_text = format!(
+        "Print exactly {MARKER} right now, and then use the search tool in four more separate steps (for session, admission, receipt, and schedule) before finishing."
+    );
     assert!(live::update(&mut state, ProgressInput::Key(ProgressKey::Steer)).is_empty());
     assert_eq!(state.steer_input.as_deref(), Some(""));
     for ch in steer_text.chars() {

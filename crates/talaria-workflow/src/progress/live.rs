@@ -1069,7 +1069,7 @@ fn tick(s: &mut ProgressState) -> Vec<ProgressEffect> {
                 && runner_recent
                 && s.progress
                     .last_intent_ms
-                    .is_none_or(|at| at <= request.at_ms)
+                    .is_none_or(|at| at <= s.now_ms.saturating_sub(1000))
                 && s.run_suffix.as_deref() != Some("paused")
             {
                 s.run_suffix = Some("paused".into());

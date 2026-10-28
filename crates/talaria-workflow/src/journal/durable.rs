@@ -16,6 +16,7 @@ struct Inner<P, T, L, G> {
     gate: G,
     retry: RetryPolicy,
     retried: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    queued: std::sync::Mutex<std::collections::BTreeSet<(String, u32)>>,
 }
 impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate>
     JournaledBackend<P, T, L, G>
@@ -38,8 +39,38 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate>
                 gate,
                 retry,
                 retried: std::sync::Mutex::new(std::collections::BTreeSet::new()),
+                queued: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             }),
         }
+    }
+    /// Settle calls whose admission gate was cancelled before any gateway work.
+    pub(crate) async fn cancel_queued(&self) -> Result<(), JournalError> {
+        // A writer barrier drains intent writes submitted before engine cancellation.
+        self.inner
+            .journal
+            .record_engine_event(&crate::engine::EngineEvent::Log {
+                message: "runner: cancelling queued calls".into(),
+                workflow_path: vec![],
+            })
+            .await?;
+        let queued = self.inner.queued.lock().map_err(io_error)?.clone();
+        for (key, attempt) in queued {
+            let history = self.inner.journal.history(&key)?;
+            if matches!(history.last().map(|r| &r.record), Some(Record::CallIntent { attempt: stored, .. }) if *stored == attempt)
+            {
+                self.inner
+                    .finish_call(
+                        &key,
+                        attempt,
+                        0,
+                        AgentOutcome::Failed {
+                            reason: "cancelled before admission".into(),
+                        },
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
     }
 }
 impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> AgentBackend
@@ -197,19 +228,14 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 old_attempt
             };
             if fresh {
-                permit = match self
-                    .gate
-                    .acquire(&request, &launch, GateReason::Fresh)
-                    .await
-                {
-                    GateDecision::Proceed(p) => Some(p),
-                    GateDecision::Skip => {
-                        return self
-                            .finish_call(&key, attempt, 0, AgentOutcome::Skipped)
-                            .await;
-                    }
-                    GateDecision::Abort { reason } => return Ok(AgentOutcome::Abort { reason }),
-                };
+                // Register in scheduler order before asynchronous journal writes can reorder calls.
+                let mut admission = self.gate.acquire(&request, &launch, GateReason::Fresh);
+                let ready = futures::poll!(&mut admission);
+                // Keep intent durable while the admission gate holds the call.
+                self.queued
+                    .lock()
+                    .map_err(io_error)?
+                    .insert((key.clone(), attempt));
                 let record = Record::CallIntent {
                     key: key.clone(),
                     attempt,
@@ -236,6 +262,23 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                     Err(e) => return Err(e),
                     Ok(_) => {}
                 }
+                let decision = match ready {
+                    std::task::Poll::Ready(decision) => decision,
+                    std::task::Poll::Pending => admission.await,
+                };
+                self.queued
+                    .lock()
+                    .map_err(io_error)?
+                    .remove(&(key.clone(), attempt));
+                permit = match decision {
+                    GateDecision::Proceed(p) => Some(p),
+                    GateDecision::Skip => {
+                        return self
+                            .finish_call(&key, attempt, 0, AgentOutcome::Skipped)
+                            .await;
+                    }
+                    GateDecision::Abort { reason } => return Ok(AgentOutcome::Abort { reason }),
+                };
                 continue;
             }
             let Some(last) = h.last() else {

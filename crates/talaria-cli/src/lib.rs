@@ -13,3 +13,4 @@ pub mod print;
 pub mod profiles_cmd;
 pub mod providers_wiring;
 pub mod run;
+pub mod workflow;

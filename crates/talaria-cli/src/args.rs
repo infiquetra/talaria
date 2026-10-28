@@ -152,6 +152,10 @@ pub fn is_profiles_command(args: &[String]) -> bool {
     args.first().is_some_and(|arg| arg == "profiles")
 }
 
+pub fn is_workflow_command(args: &[String]) -> bool {
+    args.first().is_some_and(|arg| arg == "workflow")
+}
+
 pub fn write_usage(error: &clap::Error) -> u8 {
     let (text, code) = render_usage(error);
     match code {

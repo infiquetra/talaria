@@ -1,7 +1,10 @@
-//! Live reducer. Picker tests skip until runner discovery is linked.
+//! Live reducer and run-picker discovery.
 
 #[path = "support/lines.rs"]
 mod lines;
+#[path = "runner_support/mod.rs"]
+#[allow(dead_code)]
+mod runner_folders;
 
 use hermes_contract::events::Notification;
 use hermes_contract::schemas::{SessionUsagePayload, SubagentEventPayload, ToolStartPayload};
@@ -88,7 +91,42 @@ fn approval_settled(prompt_id: &str) -> Notification {
 
 #[test]
 fn picker_renders_discovery_rows_unchanged() {
-    eprintln!("SKIPPED: runner discovery is not linked");
+    use talaria_workflow::runner::{ProgressPicker, RunStatus, discover_runs};
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let older = runner_folders::id(41);
+    let newer = runner_folders::id(42);
+    runner_folders::folder(
+        &runs,
+        &older,
+        1_000,
+        &[
+            runner_folders::started(&older),
+            runner_folders::finished("completed"),
+        ],
+    );
+    runner_folders::folder(
+        &runs,
+        &newer,
+        2_000,
+        &[
+            runner_folders::started(&newer),
+            runner_folders::finished("failed"),
+        ],
+    );
+    let discovered = discover_runs(&runs);
+    assert_eq!(discovered.len(), 2);
+    assert_eq!(
+        (&discovered[0].run_id, discovered[0].status),
+        (&newer, RunStatus::Failed)
+    );
+    assert_eq!(
+        (&discovered[1].run_id, discovered[1].status),
+        (&older, RunStatus::Completed)
+    );
+    let picker = ProgressPicker::load(&runs);
+    assert_eq!(picker.rows(), discovered.as_slice());
+    assert_eq!(picker.empty_message(), None);
 }
 
 #[test]
@@ -534,5 +572,58 @@ fn filter_keeps_needs_you_ancestors() {
 
 #[test]
 fn picker_agrees_with_runner_discovery() {
-    eprintln!("SKIPPED: runner discovery is not linked");
+    use talaria_workflow::runner::{ProgressPicker, RunStatus, discover_runs};
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    assert!(discover_runs(&runs).is_empty());
+    let empty = ProgressPicker::load(&runs);
+    assert!(empty.rows().is_empty());
+    assert_eq!(
+        empty.empty_message(),
+        Some("no runs yet — talaria workflow run starts one")
+    );
+    assert!(!runs.exists());
+
+    let finished = runner_folders::id(10);
+    let interrupted = runner_folders::id(11);
+    runner_folders::folder(
+        &runs,
+        &finished,
+        1_000,
+        &[
+            runner_folders::started(&finished),
+            runner_folders::finished("completed"),
+        ],
+    );
+    runner_folders::folder(
+        &runs,
+        &interrupted,
+        2_000,
+        &[runner_folders::started(&interrupted)],
+    );
+    let broken = runs.join(runner_folders::id(12));
+    std::fs::create_dir(&broken).unwrap();
+    std::fs::write(broken.join("manifest.json"), b"not-json").unwrap();
+    let discovered = discover_runs(&runs);
+    assert_eq!(discovered.len(), 3);
+    assert!(
+        discovered
+            .iter()
+            .any(|row| row.run_id == interrupted && row.status == RunStatus::Interrupted)
+    );
+    assert!(
+        discovered
+            .iter()
+            .any(|row| row.run_id == finished && row.status == RunStatus::Completed)
+    );
+    assert!(
+        discovered
+            .iter()
+            .any(|row| row.run_dir == broken.to_string_lossy()
+                && row.status == RunStatus::Unreadable
+                && row.warning.is_some())
+    );
+    let picker = ProgressPicker::load(&runs);
+    assert_eq!(picker.rows(), discovered.as_slice());
+    assert_eq!(picker.empty_message(), None);
 }

@@ -1,0 +1,231 @@
+{
+  "steps": [
+    {
+      "expect": "runtime.describe",
+      "reply": {
+        "instance_id": "instance",
+        "profile_id": "fixture",
+        "authority_epoch": 1,
+        "capabilities": [
+          "durable-admission-v1",
+          "event-replay-v1"
+        ],
+        "session_create": {
+          "sources": [
+            "tool"
+          ],
+          "parameters": [
+            "request_id",
+            "source",
+            "model",
+            "provider",
+            "reasoning",
+            "cwd",
+            "cwd_explicit",
+            "toolsets",
+            "skills",
+            "max_turns"
+          ]
+        }
+      }
+    },
+    {
+      "expect": "runtime.describe",
+      "reply": {
+        "instance_id": "instance",
+        "profile_id": "fixture",
+        "authority_epoch": 1,
+        "capabilities": [
+          "durable-admission-v1",
+          "event-replay-v1"
+        ],
+        "session_create": {
+          "sources": [
+            "tool"
+          ],
+          "parameters": [
+            "request_id",
+            "source",
+            "model",
+            "provider",
+            "reasoning",
+            "cwd",
+            "cwd_explicit",
+            "toolsets",
+            "skills",
+            "max_turns"
+          ]
+        }
+      }
+    },
+    {
+      "expect": "session.create",
+      "reply": {
+        "session_id": "session-1",
+        "stored_session_id": "session-1",
+        "messages": [],
+        "message_count": 0,
+        "running": false,
+        "authority_epoch": 1,
+        "replay_epoch": "epoch",
+        "last_sequence": 0,
+        "subscription_id": "subscription",
+        "revision": 1,
+        "execution_generation": 1,
+        "pending": [],
+        "prompts": [],
+        "info": {
+          "desktop_protocol": "hermes-gateway-v1",
+          "source": "tool",
+          "model": "scripted-model",
+          "provider": "scripted",
+          "reasoning_effort": "high"
+        }
+      }
+    },
+    {
+      "expect": "prompt.submit",
+      "reply": {
+        "admission_id": "admission-1",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session-1"
+        },
+        "sequence": 1,
+        "status": "started",
+        "outcome": null,
+        "authority_epoch": 1,
+        "execution_generation": 1
+      }
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": {
+        "admission_id": "admission-1",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session-1"
+        },
+        "sequence": 1,
+        "status": "terminal",
+        "outcome": "completed",
+        "authority_epoch": 1,
+        "execution_generation": 1,
+        "result": {
+          "final_response": "READY",
+          "completed": true,
+          "failed": false,
+          "turn_exit_reason": "completed",
+          "estimated_cost_usd": 0.2,
+          "cost_status": "estimated",
+          "cost_source": "fixture"
+        },
+        "usage": {
+          "input_tokens": 8,
+          "output_tokens": 2,
+          "total_tokens": 10
+        }
+      }
+    },
+    {
+      "expect": "session.create",
+      "reply": {
+        "session_id": "session-2",
+        "stored_session_id": "session-2",
+        "messages": [],
+        "message_count": 0,
+        "running": false,
+        "authority_epoch": 1,
+        "replay_epoch": "epoch",
+        "last_sequence": 0,
+        "subscription_id": "subscription",
+        "revision": 1,
+        "execution_generation": 1,
+        "pending": [],
+        "prompts": [],
+        "info": {
+          "desktop_protocol": "hermes-gateway-v1",
+          "source": "tool",
+          "model": "scripted-model",
+          "provider": "scripted",
+          "reasoning_effort": "high"
+        }
+      }
+    },
+    {
+      "expect": "prompt.submit",
+      "reply": {
+        "admission_id": "admission-2",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session-2"
+        },
+        "sequence": 1,
+        "status": "started",
+        "outcome": null,
+        "authority_epoch": 1,
+        "execution_generation": 1
+      }
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": {
+        "admission_id": "admission-2",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session-2"
+        },
+        "sequence": 1,
+        "status": "started",
+        "outcome": null,
+        "authority_epoch": 1,
+        "execution_generation": 1
+      },
+      "barrier": "stop"
+    },
+    {
+      "expect": "session.interrupt",
+      "reply": {
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session-2"
+        },
+        "instance_id": "instance",
+        "authority_epoch": 1,
+        "revision": 1,
+        "execution_generation": 1,
+        "execution_state": "running"
+      },
+      "barrier": "stop"
+    },
+    {
+      "expect": "prompt.receipt",
+      "reply": {
+        "admission_id": "admission-2",
+        "ref": {
+          "profile_id": "fixture",
+          "session_id": "session-2"
+        },
+        "sequence": 1,
+        "status": "terminal",
+        "outcome": "cancelled",
+        "authority_epoch": 1,
+        "execution_generation": 1,
+        "result": {
+          "final_response": "READY",
+          "completed": false,
+          "failed": true,
+          "turn_exit_reason": "cancelled",
+          "estimated_cost_usd": 0.2,
+          "cost_status": "estimated",
+          "cost_source": "fixture"
+        },
+        "usage": {
+          "input_tokens": 8,
+          "output_tokens": 2,
+          "total_tokens": 10
+        }
+      }
+    }
+  ]
+}

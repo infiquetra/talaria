@@ -338,6 +338,7 @@ pub enum ToggleContext {
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
     pub workflow_progress: Option<&'a talaria_workflow::progress::live::ProgressState>,
+    pub workflow_picker: Option<&'a talaria_workflow::runner::ProgressPicker>,
     pub configure: Option<talaria_core::configure::ConfigureView>,
     pub configure_refining: bool,
     pub configure_session: Option<&'a SessionState>,
@@ -1229,6 +1230,7 @@ impl AppState {
                 .active
                 .as_ref()
                 .and_then(|p| self.workflow_views.states.get(p)),
+            workflow_picker: self.workflow_views.picker.as_ref(),
             subagents: self.subagents.as_ref(),
             subagents_usage_active: self.subagents_usage_active,
             fleet_snapshot: self.fleet_snapshot.as_deref(),
@@ -1378,6 +1380,7 @@ pub enum TranscriptAction {
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
+    WorkflowDiscovered(talaria_workflow::runner::ProgressPicker),
     WorkflowOpened(Result<crate::workflow_progress::OpenedRun, String>),
     WorkflowScoped(PathBuf),
     WorkflowPolled {
@@ -1644,6 +1647,7 @@ pub enum AppEffect {
         reference: talaria_workflow::progress::BlobRef,
     },
     WorkflowOpen(PathBuf),
+    WorkflowDiscover,
     WorkflowPoll {
         run: PathBuf,
         offset: u64,
@@ -3258,6 +3262,10 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             vec![]
         }
         AppMessage::WorkflowProgress { run, input } => workflow_input(state, run, input),
+        AppMessage::WorkflowDiscovered(picker) => {
+            state.workflow_views.picker = Some(picker);
+            vec![AppEffect::Redraw]
+        }
         AppMessage::WorkflowOpened(result) => workflow_opened(state, result),
         AppMessage::WorkflowPolled { run, result } => workflow_polled(state, run, result),
         AppMessage::Recovered(result) => recovered(state, result),
@@ -5354,6 +5362,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Memory(input) => memory_input(state, input),
         UserAction::Connectors(input) => connectors_input(state, input),
         UserAction::Workflow(key) => {
+            if state.workflow_views.picker.is_some() {
+                return workflow_picker_input(state, key);
+            }
             let Some(run) = state.workflow_views.active.clone() else {
                 return vec![];
             };
@@ -9481,14 +9492,10 @@ fn background_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
 
 /// An open workflow keeps consuming journal and control changes even without input.
 fn workflow_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
-    let run = state.workflow_views.active.as_ref()?;
-    let view = state.workflow_views.states.get(run)?;
-    if view.error.is_some() {
-        return None;
-    }
-    executor.started.checked_add(Duration::from_millis(
-        state.workflow_views.last_poll_ms.saturating_add(250),
-    ))
+    state
+        .workflow_views
+        .next_tick_ms()
+        .and_then(|ms| executor.started.checked_add(Duration::from_millis(ms)))
 }
 
 /// When the side-tasks section next changes, while anything is pending.
@@ -10324,6 +10331,16 @@ fn apply<S: Screen>(
                             text,
                         },
                     });
+                });
+            }
+            AppEffect::WorkflowDiscover => {
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    if let Ok(picker) =
+                        tokio::task::spawn_blocking(crate::workflow_progress::load_picker).await
+                    {
+                        let _ = sender.send(AppMessage::WorkflowDiscovered(picker));
+                    }
                 });
             }
             AppEffect::WorkflowOpen(path) => {
@@ -13211,10 +13228,10 @@ mod cron_binding_tests {
 
 fn workflow_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     if argument.trim().is_empty() {
-        return vec![notice_lines(
-            "/workflows requires a run-folder argument until run discovery is available",
-        )];
+        state.workflow_views.active = None;
+        return vec![AppEffect::WorkflowDiscover];
     }
+    state.workflow_views.picker = None;
     let run = PathBuf::from(argument.trim());
     if state.workflow_views.states.contains_key(&run) {
         state.workflow_views.active = Some(run.clone());
@@ -13228,6 +13245,30 @@ fn workflow_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
         );
     }
     vec![AppEffect::WorkflowOpen(run)]
+}
+fn workflow_picker_input(
+    state: &mut AppState,
+    key: talaria_workflow::progress::live::ProgressKey,
+) -> Vec<AppEffect> {
+    use talaria_workflow::progress::live::ProgressKey;
+    let Some(picker) = state.workflow_views.picker.as_mut() else {
+        return vec![];
+    };
+    match key {
+        ProgressKey::Up | ProgressKey::Down => {
+            picker.move_selection(key == ProgressKey::Down);
+        }
+        ProgressKey::OpenAgent | ProgressKey::Enter => {
+            let Some(row) = picker.selected() else {
+                return vec![];
+            };
+            let run = row.run_dir.clone();
+            return workflow_command(state, &run);
+        }
+        ProgressKey::CloseView => state.workflow_views.picker = None,
+        _ => return vec![],
+    }
+    vec![AppEffect::Redraw]
 }
 fn workflow_opened(
     state: &mut AppState,
@@ -13296,6 +13337,7 @@ fn workflow_polled(
     }
 }
 fn workflow_tick(state: &mut AppState) -> Vec<AppEffect> {
+    state.workflow_views.last_tick_ms = state.now_ms;
     let Some(run) = state.workflow_views.active.clone() else {
         return vec![];
     };

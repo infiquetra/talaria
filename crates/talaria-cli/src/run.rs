@@ -2192,6 +2192,15 @@ impl TuiScreen {
                 if let Some(fleet) = view.fleet {
                     return self.fleet_key(Key::from(raw), fleet, view, now);
                 }
+                if view.workflow_picker.is_some() {
+                    return talaria_tui::workflow_view::picker_key_input(
+                        &self.keymap,
+                        Key::from(raw),
+                    )
+                    .map(UserAction::Workflow)
+                    .into_iter()
+                    .collect();
+                }
                 if let Some(progress) = view.workflow_progress {
                     return talaria_tui::workflow_view::key_input(
                         &self.keymap,
@@ -3236,6 +3245,14 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        if let Some(picker) = view.workflow_picker {
+            self.open_overlay(Overlay::WorkflowProgress);
+            let theme = talaria_tui::workflow_view::WorkflowTheme::default();
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::workflow_view::WorkflowView::render_picker(area, buf, picker, &theme)
+            });
+            return;
+        }
         if let Some(progress) = view.workflow_progress {
             self.open_overlay(Overlay::WorkflowProgress);
             let theme = talaria_tui::workflow_view::WorkflowTheme::default();
