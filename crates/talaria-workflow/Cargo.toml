@@ -15,6 +15,7 @@ fake-gateway = []
 hermes-live = []
 
 [dependencies]
+chrono = { version = "=0.4.45", features = ["serde"] }
 futures-util.workspace = true
 hermes-client.workspace = true
 hermes-contract.workspace = true
