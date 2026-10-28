@@ -1,0 +1,26 @@
+{
+  "status": "none-fixed",
+  "test_command": "python3 -m unittest",
+  "exit_code": 1,
+  "excerpt": null,
+  "failing_total": 1,
+  "baseline": [
+    "test_00"
+  ],
+  "attempted": [
+    {
+      "id": "test_00",
+      "label": "fix 1: test_00",
+      "run_one": "python3 -m unittest test_00",
+      "status": "not-fixed",
+      "reason": "fixer reported fixed without a commit",
+      "branch": null,
+      "commit": null,
+      "files_changed": [],
+      "test_edited": false,
+      "summary": "invalid"
+    }
+  ],
+  "not_attempted": [],
+  "next_steps": "Nothing was merged or pushed. Review each verified fix with git log -p on its branch, then merge the ones you accept."
+}

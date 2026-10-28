@@ -1,0 +1,1 @@
+{"rules":[{"match":{"label":"collect"},"outcome":{"object":{"base_ref":"main","merge_base":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","head_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","checkout_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","files":[],"diff":"","truncated":false,"context":[]}}}]}

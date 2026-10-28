@@ -1,0 +1,85 @@
+{
+  "status": "none-fixed",
+  "test_command": "python3 -m unittest",
+  "exit_code": 1,
+  "excerpt": null,
+  "failing_total": 8,
+  "baseline": [
+    "test_00",
+    "test_01",
+    "test_02",
+    "test_03",
+    "test_04",
+    "test_05",
+    "test_06",
+    "test_07"
+  ],
+  "attempted": [
+    {
+      "id": "test_00",
+      "label": "fix 1: test_00",
+      "run_one": "python3 -m unittest test_00",
+      "status": "not-fixed",
+      "reason": "fixer could not fix the test",
+      "branch": null,
+      "commit": null,
+      "files_changed": [],
+      "test_edited": false,
+      "summary": "could not fix"
+    },
+    {
+      "id": "test_01",
+      "label": "fix 2: test_01",
+      "run_one": "python3 -m unittest test_01",
+      "status": "not-fixed",
+      "reason": "fixer could not fix the test",
+      "branch": null,
+      "commit": null,
+      "files_changed": [],
+      "test_edited": false,
+      "summary": "could not fix"
+    },
+    {
+      "id": "test_02",
+      "label": "fix 3: test_02",
+      "run_one": "python3 -m unittest test_02",
+      "status": "not-fixed",
+      "reason": "fixer could not fix the test",
+      "branch": null,
+      "commit": null,
+      "files_changed": [],
+      "test_edited": false,
+      "summary": "could not fix"
+    },
+    {
+      "id": "test_03",
+      "label": "fix 4: test_03",
+      "run_one": "python3 -m unittest test_03",
+      "status": "not-fixed",
+      "reason": "fixer could not fix the test",
+      "branch": null,
+      "commit": null,
+      "files_changed": [],
+      "test_edited": false,
+      "summary": "could not fix"
+    },
+    {
+      "id": "test_04",
+      "label": "fix 5: test_04",
+      "run_one": "python3 -m unittest test_04",
+      "status": "not-fixed",
+      "reason": "fixer could not fix the test",
+      "branch": null,
+      "commit": null,
+      "files_changed": [],
+      "test_edited": false,
+      "summary": "could not fix"
+    }
+  ],
+  "not_attempted": [
+    "test_05",
+    "test_06",
+    "test_07"
+  ],
+  "next_steps": "Nothing was merged or pushed. Review each verified fix with git log -p on its branch, then merge the ones you accept."
+}

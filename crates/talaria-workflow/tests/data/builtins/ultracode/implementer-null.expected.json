@@ -1,0 +1,23 @@
+{
+  "status": "blocked",
+  "task": "Implement the feature",
+  "design": {
+    "title": "Plan",
+    "rationale": "Simple",
+    "plan": [
+      "Edit"
+    ],
+    "tests": [
+      "Run tests"
+    ]
+  },
+  "proposals": [
+    "Plan",
+    "Alternative",
+    "Third"
+  ],
+  "implementation": null,
+  "review": null,
+  "review_error": null,
+  "next_steps": "Nothing was merged or pushed. The implementer produced no reviewable commit."
+}

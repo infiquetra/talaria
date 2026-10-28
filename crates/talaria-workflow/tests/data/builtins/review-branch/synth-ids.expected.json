@@ -1,0 +1,56 @@
+{
+  "status": "reviewed",
+  "base_ref": "main",
+  "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "checkout_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "files_reviewed": 1,
+  "truncated": false,
+  "lenses": [
+    "correctness",
+    "security",
+    "simplicity"
+  ],
+  "confirmed": [
+    {
+      "id": "correctness-1",
+      "lens": "correctness",
+      "file": "calc.py",
+      "line": 1,
+      "severity": "high",
+      "title": "Wrong calculation",
+      "detail": "The result is wrong",
+      "suggestion": "Fix it",
+      "verdict": "confirmed",
+      "reason": "The code is wrong",
+      "evidence": [
+        "calc.py:1"
+      ]
+    },
+    {
+      "id": "security-1",
+      "lens": "security",
+      "file": "calc.py",
+      "line": 2,
+      "severity": "medium",
+      "title": "Risk",
+      "detail": "A risk",
+      "suggestion": null,
+      "verdict": "confirmed",
+      "reason": "Risk exists",
+      "evidence": []
+    }
+  ],
+  "uncertain": [],
+  "refuted": [],
+  "not_verified": [],
+  "reviewers_failed": [],
+  "summary": "One confirmed finding",
+  "ranked": [
+    "security-1",
+    "correctness-1"
+  ],
+  "themes": [
+    "correctness"
+  ]
+}

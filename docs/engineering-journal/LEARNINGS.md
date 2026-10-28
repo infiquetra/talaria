@@ -6229,3 +6229,16 @@ resume allows a bounded interval for that release before reporting an active wri
 
 **Rule.** Cancellation ownership must cover worker threads and channel forwarders as well as
 the future that waits for their results.
+
+## 2026-10-28 — Reviews must carry the reviewed revision's file text
+
+Workflow worktrees start at the operator's committed HEAD, even when a review
+names a different head or follows an implementation made in another worktree.
+Reading the reviewer's checkout can therefore miss newly added files and judge
+stale code. The built-in collector pins the reviewed commit and supplies capped
+`git show` context; reviewers and verifiers receive an explicit revision warning.
+The independent other-revision and ultracode child fixtures check this handoff,
+and replay tests confirm the same report without backend calls.
+
+Rule: when a worktree's checkout differs from the revision being evaluated, carry
+that revision's evidence explicitly and identify which local files are stale.

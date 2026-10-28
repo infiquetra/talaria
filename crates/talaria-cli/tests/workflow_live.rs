@@ -232,3 +232,6 @@ async fn live_detached_review_run() {
         0
     );
 }
+
+#[path = "workflow_builtins_live.rs"]
+mod builtins_contract;

@@ -1,0 +1,17 @@
+{
+  "default": {
+    "failed": "failure"
+  },
+  "rules": [
+    {
+      "match": {
+        "label": "understand"
+      },
+      "outcome": {
+        "object": {
+          "summary": "Example code"
+        }
+      }
+    }
+  ]
+}

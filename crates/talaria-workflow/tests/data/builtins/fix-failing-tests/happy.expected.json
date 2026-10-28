@@ -1,0 +1,39 @@
+{
+  "status": "partial",
+  "test_command": "python3 -m unittest",
+  "exit_code": 1,
+  "excerpt": null,
+  "failing_total": 2,
+  "baseline": [
+    "test_00",
+    "test_01"
+  ],
+  "attempted": [
+    {
+      "id": "test_00",
+      "label": "fix 1: test_00",
+      "run_one": "python3 -m unittest test_00",
+      "status": "verified",
+      "reason": null,
+      "branch": null,
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "files_changed": [],
+      "test_edited": false,
+      "summary": "Fixed"
+    },
+    {
+      "id": "test_01",
+      "label": "fix 2: test_01",
+      "run_one": "python3 -m unittest test_01",
+      "status": "not-fixed",
+      "reason": "fixer could not fix the test",
+      "branch": null,
+      "commit": null,
+      "files_changed": [],
+      "test_edited": false,
+      "summary": "Not fixed"
+    }
+  ],
+  "not_attempted": [],
+  "next_steps": "Nothing was merged or pushed. Review each verified fix with git log -p on its branch, then merge the ones you accept."
+}

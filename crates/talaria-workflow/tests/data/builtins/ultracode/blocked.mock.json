@@ -1,0 +1,183 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "understand"
+      },
+      "outcome": {
+        "object": {
+          "summary": "Example code"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "design 1"
+      },
+      "outcome": {
+        "object": {
+          "title": "Plan",
+          "approach": "Update",
+          "steps": [
+            "Edit"
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "design 2"
+      },
+      "outcome": {
+        "object": {
+          "title": "Alternative",
+          "approach": "Change",
+          "steps": [
+            "Edit"
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "design 3"
+      },
+      "outcome": {
+        "object": {
+          "title": "Third",
+          "approach": "Improve",
+          "steps": [
+            "Edit"
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "choose"
+      },
+      "outcome": {
+        "object": {
+          "chosen": 0,
+          "rationale": "Simple",
+          "plan": [
+            "Edit"
+          ],
+          "tests": [
+            "Run tests"
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "implement"
+      },
+      "outcome": {
+        "object": {
+          "status": "blocked",
+          "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "commit": null,
+          "summary": "Blocked",
+          "blocker": "Cannot proceed"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "collect"
+      },
+      "outcome": {
+        "object": {
+          "base_ref": "main",
+          "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "checkout_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "files": [
+            {
+              "path": "calc.py",
+              "status": "modified"
+            }
+          ],
+          "diff": "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x\n+y\n",
+          "truncated": false,
+          "context": [
+            {
+              "path": "calc.py",
+              "text": "ADDED_AT_HEAD"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "review: correctness"
+      },
+      "outcome": {
+        "object": {
+          "findings": [
+            {
+              "file": "calc.py",
+              "line": 1,
+              "severity": "high",
+              "title": "Wrong calculation",
+              "detail": "The result is wrong",
+              "suggestion": "Fix it"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "review: security"
+      },
+      "outcome": {
+        "object": {
+          "findings": []
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "review: simplicity"
+      },
+      "outcome": {
+        "object": {
+          "findings": []
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "verify: correctness-1"
+      },
+      "outcome": {
+        "object": {
+          "verdict": "confirmed",
+          "reason": "The code is wrong",
+          "evidence": [
+            "calc.py:1"
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "synthesize"
+      },
+      "outcome": {
+        "object": {
+          "summary": "One confirmed finding",
+          "ranked": [
+            "correctness-1"
+          ],
+          "themes": [
+            "correctness"
+          ]
+        }
+      }
+    }
+  ]
+}

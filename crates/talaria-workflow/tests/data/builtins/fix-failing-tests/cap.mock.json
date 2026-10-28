@@ -1,0 +1,111 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "find"
+      },
+      "outcome": {
+        "object": {
+          "test_command": "python3 -m unittest",
+          "exit_code": 1,
+          "failing": [
+            {
+              "id": "test_00",
+              "run_one": "python3 -m unittest test_00"
+            },
+            {
+              "id": "test_01",
+              "run_one": "python3 -m unittest test_01"
+            },
+            {
+              "id": "test_02",
+              "run_one": "python3 -m unittest test_02"
+            },
+            {
+              "id": "test_03",
+              "run_one": "python3 -m unittest test_03"
+            },
+            {
+              "id": "test_04",
+              "run_one": "python3 -m unittest test_04"
+            },
+            {
+              "id": "test_05",
+              "run_one": "python3 -m unittest test_05"
+            },
+            {
+              "id": "test_06",
+              "run_one": "python3 -m unittest test_06"
+            },
+            {
+              "id": "test_07",
+              "run_one": "python3 -m unittest test_07"
+            }
+          ],
+          "total_failing": 8,
+          "output_tail": "failure"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "fix 1: test_00"
+      },
+      "outcome": {
+        "object": {
+          "status": "not-fixed",
+          "commit": null,
+          "summary": "could not fix"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "fix 2: test_01"
+      },
+      "outcome": {
+        "object": {
+          "status": "not-fixed",
+          "commit": null,
+          "summary": "could not fix"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "fix 3: test_02"
+      },
+      "outcome": {
+        "object": {
+          "status": "not-fixed",
+          "commit": null,
+          "summary": "could not fix"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "fix 4: test_03"
+      },
+      "outcome": {
+        "object": {
+          "status": "not-fixed",
+          "commit": null,
+          "summary": "could not fix"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "fix 5: test_04"
+      },
+      "outcome": {
+        "object": {
+          "status": "not-fixed",
+          "commit": null,
+          "summary": "could not fix"
+        }
+      }
+    }
+  ]
+}

@@ -706,3 +706,6 @@ fn empty_gateway_home_reports_one_plain_gateway_not_found_line() {
     assert!(!error.contains('\u{1b}'));
     assert!(!runs.exists());
 }
+
+#[path = "workflow_builtins_cli.rs"]
+mod builtins_contract;

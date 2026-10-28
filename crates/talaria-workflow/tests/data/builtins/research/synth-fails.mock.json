@@ -1,0 +1,54 @@
+{
+  "rules": [
+    {
+      "match": {
+        "label": "plan"
+      },
+      "outcome": {
+        "object": {
+          "web_queries": [],
+          "code_queries": [
+            "search"
+          ],
+          "doc_queries": []
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "search: code"
+      },
+      "outcome": {
+        "object": {
+          "available": true,
+          "sources": [
+            {
+              "kind": "code",
+              "location": "calc.py:1",
+              "claim": "A fact"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "read: 1"
+      },
+      "outcome": {
+        "object": {
+          "accessible": true,
+          "summary": "A fact"
+        }
+      }
+    },
+    {
+      "match": {
+        "label": "synthesize"
+      },
+      "outcome": {
+        "failed": "failed"
+      }
+    }
+  ]
+}

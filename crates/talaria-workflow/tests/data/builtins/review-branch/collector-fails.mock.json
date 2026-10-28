@@ -1,0 +1,1 @@
+{"rules":[{"match":{"label":"collect"},"outcome":{"failed":"collector failed"}}]}
