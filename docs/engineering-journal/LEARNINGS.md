@@ -5968,3 +5968,34 @@ added terminal dependency.
 
 **Generalizable rule.** Use `toml::from_str` for complete TOML documents and reserve a
 value parser for standalone values.
+
+## 2026-10-27 — Drain JavaScript between individual workflow outcomes
+
+**Evidence.** The workflow replay reproduction prepares two pipeline items in the opposite
+order, then issues identical choice calls with different occurrence results. Delivering one
+outcome and draining QuickJS jobs before the next preserves the original result assignment;
+the replay test reuses all six outcomes with zero backend requests. The concurrency test
+still reaches five in-flight calls and finishes at 500 ms of paused Tokio time.
+
+**Mechanism.** Host functions enqueue owned commands and create JavaScript promises. The
+runner alone admits calls, polls backend futures in invocation order, and settles one promise
+per turn. The runtime's interrupt flag must also be checked when initial evaluation returns
+an exception: a synchronous loop can interrupt before the controller is returned. QuickJS
+0.14 reports stack exhaustion as `Maximum call stack size exceeded`; the engine normalizes
+that to include `stack overflow` while retaining the original message.
+
+**Generalizable rule.** Make completion delivery an explicit loop step, and inspect stopping
+flags on every path out of the JavaScript runtime, including initial evaluation.
+
+## 2026-10-27 — QuickJS resource exceptions differ from interrupts
+
+**Evidence.** The bundled QuickJS source in `rquickjs-sys` 0.14.0 implements
+`JS_ThrowOutOfMemory` with an ordinary internal error and `JS_ThrowStackOverflow` with an
+ordinary range error. A dry-run probe wrapping recursive overflow in `try/catch` completes
+with `["caught","RangeError","Maximum call stack size exceeded"]`. The 43-test suite covers
+uncaught exhaustion and passes, but does not cover this distinction. The safe `rquickjs` API
+offers an uncatchable interrupt handler, but no native resource-exception hook; the gap has
+been reported for the engine integration review.
+
+**Generalizable rule.** Probe whether resource limits can be caught before promising that
+native exhaustion always ends a run, even when uncaught-exhaustion tests pass.
