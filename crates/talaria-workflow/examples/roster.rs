@@ -76,6 +76,9 @@ async fn run() -> Result<i32, Box<dyn std::error::Error>> {
     } else {
         print!("{}", report.to_text());
     }
+    for problem in &report.check.problems {
+        eprintln!("{problem}");
+    }
     for warning in &report.check.warnings {
         eprintln!("{warning}");
     }
