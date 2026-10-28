@@ -245,6 +245,7 @@ static CONFIGURE_BINDINGS: [(ConfigureKey, &str, &[&str]); 14] = [
 /// Where an action is looked up. Later screens add their own variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
+    WorkflowProgress,
     /// The draft box at the bottom of the screen.
     Composer,
     /// An open completion list: the slash palette or the `@` list. Issue #223.
@@ -618,6 +619,20 @@ impl Binding {
 /// One command a key chord can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Action {
+    ProgressUp,
+    ProgressDown,
+    ProgressLeft,
+    ProgressRight,
+    OpenAgent,
+    Steer,
+    StopAgent,
+    RestartAgent,
+    PauseRun,
+    StopRun,
+    CycleFilter,
+    CloseView,
+    ProgressConfirm,
+
     /// Move the doctor selection up.
     DoctorUp,
     /// Move the doctor selection down.
@@ -960,7 +975,20 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 179] = [
+    pub const ALL: [Self; 192] = [
+        Self::ProgressUp,
+        Self::ProgressDown,
+        Self::ProgressLeft,
+        Self::ProgressRight,
+        Self::OpenAgent,
+        Self::Steer,
+        Self::StopAgent,
+        Self::RestartAgent,
+        Self::PauseRun,
+        Self::StopRun,
+        Self::CycleFilter,
+        Self::CloseView,
+        Self::ProgressConfirm,
         Self::DoctorUp,
         Self::DoctorDown,
         Self::DoctorToggle,
@@ -1146,6 +1174,20 @@ impl Action {
     #[must_use]
     pub const fn config_name(self) -> &'static str {
         match self {
+            Self::ProgressUp => "workflow_up",
+            Self::ProgressDown => "workflow_down",
+            Self::ProgressLeft => "workflow_collapse",
+            Self::ProgressRight => "workflow_expand",
+            Self::OpenAgent => "workflow_open",
+            Self::Steer => "workflow_steer",
+            Self::StopAgent => "workflow_stop_agent",
+            Self::RestartAgent => "workflow_restart",
+            Self::PauseRun => "workflow_pause",
+            Self::StopRun => "workflow_stop_run",
+            Self::CycleFilter => "workflow_filter",
+            Self::CloseView => "workflow_close",
+            Self::ProgressConfirm => "workflow_confirm",
+
             Self::DoctorUp => "doctor_up",
             Self::DoctorDown => "doctor_down",
             Self::DoctorToggle => "doctor_toggle",
@@ -1340,6 +1382,19 @@ impl Action {
     #[must_use]
     pub const fn context(self) -> KeyContext {
         match self {
+            Self::ProgressUp
+            | Self::ProgressDown
+            | Self::ProgressLeft
+            | Self::ProgressRight
+            | Self::OpenAgent
+            | Self::Steer
+            | Self::StopAgent
+            | Self::RestartAgent
+            | Self::PauseRun
+            | Self::StopRun
+            | Self::CycleFilter
+            | Self::CloseView
+            | Self::ProgressConfirm => KeyContext::WorkflowProgress,
             Self::CompletionNext
             | Self::CompletionPrev
             | Self::CompletionAccept
@@ -1529,6 +1584,20 @@ impl Action {
     /// The built-in chords, in display order.
     const fn default_chords(self) -> &'static [&'static str] {
         match self {
+            Self::ProgressUp => &["up"],
+            Self::ProgressDown => &["down"],
+            Self::ProgressLeft => &["left"],
+            Self::ProgressRight => &["right"],
+            Self::OpenAgent => &["enter"],
+            Self::Steer => &["s"],
+            Self::StopAgent => &["x"],
+            Self::RestartAgent => &["r"],
+            Self::PauseRun => &["p"],
+            Self::StopRun => &["shift+x"],
+            Self::CycleFilter => &["f"],
+            Self::CloseView => &["esc"],
+            Self::ProgressConfirm => &["y"],
+
             Self::DoctorUp => &["up", "k"],
             Self::DoctorDown => &["down", "j"],
             Self::DoctorToggle => &["enter"],
@@ -2697,9 +2766,22 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 179);
+        assert_eq!(Action::ALL.len(), 192);
         for action in Action::ALL {
             let wanted = match action {
+                Action::ProgressUp
+                | Action::ProgressDown
+                | Action::ProgressLeft
+                | Action::ProgressRight
+                | Action::OpenAgent
+                | Action::Steer
+                | Action::StopAgent
+                | Action::RestartAgent
+                | Action::PauseRun
+                | Action::StopRun
+                | Action::CycleFilter
+                | Action::CloseView
+                | Action::ProgressConfirm => KeyContext::WorkflowProgress,
                 Action::CompletionNext
                 | Action::CompletionPrev
                 | Action::CompletionAccept
@@ -2851,6 +2933,19 @@ mod tests {
             let name = action.config_name();
             assert_eq!(Action::from_config_name(name), Some(action), "{name}");
             let context = match action {
+                Action::ProgressUp
+                | Action::ProgressDown
+                | Action::ProgressLeft
+                | Action::ProgressRight
+                | Action::OpenAgent
+                | Action::Steer
+                | Action::StopAgent
+                | Action::RestartAgent
+                | Action::PauseRun
+                | Action::StopRun
+                | Action::CycleFilter
+                | Action::CloseView
+                | Action::ProgressConfirm => KeyContext::WorkflowProgress,
                 Action::CompletionNext
                 | Action::CompletionPrev
                 | Action::CompletionAccept
@@ -3254,7 +3349,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 179);
+        assert_eq!(Action::ALL.len(), 192);
     }
 
     #[test]

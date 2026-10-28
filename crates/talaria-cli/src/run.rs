@@ -149,6 +149,7 @@ pub enum ScreenInput {
 /// the one overlay the terminal has, so only one of them is open at a time.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Overlay {
+    WorkflowProgress,
     Cron,
     /// The live screen, with no overlay.
     Live,
@@ -2191,6 +2192,16 @@ impl TuiScreen {
                 if let Some(fleet) = view.fleet {
                     return self.fleet_key(Key::from(raw), fleet, view, now);
                 }
+                if let Some(progress) = view.workflow_progress {
+                    return talaria_tui::workflow_view::key_input(
+                        &self.keymap,
+                        Key::from(raw),
+                        progress,
+                    )
+                    .map(UserAction::Workflow)
+                    .into_iter()
+                    .collect();
+                }
                 if self.overlay == Overlay::Agents {
                     return self.agents_key(Key::from(raw), view);
                 }
@@ -2509,6 +2520,20 @@ impl TuiScreen {
                         }
                         _ => Vec::new(),
                     };
+                }
+                if let Some(progress) = view.workflow_progress {
+                    if progress.steer_input.is_some() {
+                        return text
+                            .chars()
+                            .filter(|c| !c.is_control())
+                            .map(|c| {
+                                UserAction::Workflow(talaria_tui::workflow_view::ProgressKey::Char(
+                                    c,
+                                ))
+                            })
+                            .collect();
+                    }
+                    return vec![];
                 }
                 if self.overlay == Overlay::Agents {
                     if let Some(panel) = &mut self.agents
@@ -3211,6 +3236,16 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        if let Some(progress) = view.workflow_progress {
+            self.open_overlay(Overlay::WorkflowProgress);
+            let theme = talaria_tui::workflow_view::WorkflowTheme::default();
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::workflow_view::WorkflowView::render(area, buf, progress, &theme)
+            });
+            return;
+        }
+        self.close_overlay(Overlay::WorkflowProgress);
+
         if let Some(mcp) = &self.mcp_view {
             let wiring = &self.mcp_wiring;
             let _ = self.terminal.draw_overlay(|area, buf| {

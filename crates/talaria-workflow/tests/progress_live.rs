@@ -7,7 +7,7 @@ use hermes_contract::events::Notification;
 use hermes_contract::schemas::{SessionUsagePayload, SubagentEventPayload, ToolStartPayload};
 use serde_json::json;
 use talaria_core::subagents::{SubagentEvent, SubagentEventKind};
-use talaria_workflow::journal::RecordLine;
+use talaria_workflow::journal::{CallOutcome, Record, RecordLine};
 use talaria_workflow::progress::live::{
     GatewayFailure, NodeKey, ProgressInput, ProgressKey, ProgressState, update,
 };
@@ -259,6 +259,11 @@ fn waiting_badge_follows_approval_lifecycle() {
 
 fn effect_fields(effect: &ProgressEffect) -> (String, i64, String) {
     match effect {
+        ProgressEffect::CheckStopped {
+            session_id,
+            admission_id,
+            ..
+        } => (session_id.clone(), 0, admission_id.clone()),
         ProgressEffect::Attach { session_id } => (session_id.clone(), 0, String::new()),
         ProgressEffect::AttachAndReconcile { session_id } => (session_id.clone(), 0, String::new()),
         ProgressEffect::Steer {
@@ -339,6 +344,64 @@ fn steer_and_stop_effects_carry_exact_calls() {
             .state,
         AgentState::Stopping
     );
+}
+
+#[test]
+fn journal_settlement_reports_whether_completion_beat_pending_interrupt() {
+    for completed in [true, false] {
+        let rows = lines::live_running(lines::KEY_RUNNING, "sess-running", 7);
+        let mut state = seeded(&rows);
+        state.select_agent(lines::KEY_RUNNING);
+        assert!(matches!(
+            update(&mut state, ProgressInput::Key(ProgressKey::StopAgent)).as_slice(),
+            [ProgressEffect::Interrupt { generation: 7, .. }]
+        ));
+        assert_eq!(
+            state.progress().agent(lines::KEY_RUNNING).unwrap().state,
+            AgentState::Stopping
+        );
+
+        // The journal can settle before the interrupt RPC acknowledges.
+        update(
+            &mut state,
+            ProgressInput::Journal(vec![RecordLine {
+                v: 1,
+                seq: rows.last().unwrap().seq + 1,
+                at_ms: 9_000,
+                record: Record::CallFinished {
+                    key: lines::KEY_RUNNING.into(),
+                    attempt: 0,
+                    turns: 1,
+                    outcome: if completed {
+                        CallOutcome::Completed {
+                            value: Some(json!("done")),
+                            value_ref: None,
+                        }
+                    } else {
+                        CallOutcome::Failed {
+                            reason: "interrupted".into(),
+                        }
+                    },
+                },
+            }]),
+        );
+        assert_eq!(
+            state.progress().agent(lines::KEY_RUNNING).unwrap().state,
+            if completed {
+                AgentState::Done
+            } else {
+                AgentState::Failed
+            }
+        );
+        assert_eq!(
+            state.footer.as_deref(),
+            Some(if completed {
+                "finished before stop"
+            } else {
+                "stopped — restart (r) runs it again"
+            })
+        );
+    }
 }
 
 fn stale_failure() -> GatewayFailure {

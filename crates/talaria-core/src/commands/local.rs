@@ -12,6 +12,8 @@ use crate::connectors::{ConnectorsOpen, ConnectorsTab};
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalAction {
+    /// View a journaled workflow run.
+    Workflows,
     /// Open the gateway health check.
     Doctor,
     Providers(crate::providers::OpenTarget),
@@ -399,6 +401,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "<what you want to change>",
         takes_argument: true,
         action: LocalAction::Configure,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "workflows",
+        aliases: &[],
+        summary: "Watch and control a workflow run",
+        args_hint: "<run-folder>",
+        takes_argument: true,
+        action: LocalAction::Workflows,
         tag: "talaria",
     },
 ];

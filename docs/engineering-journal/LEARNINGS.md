@@ -2,6 +2,84 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-28 — Journal completion can win a pending interrupt
+
+**Evidence.** `progress_live::journal_settlement_reports_whether_completion_beat_pending_interrupt` fails against the previous reducer: a completed call arriving before the interrupt acknowledgment displays the stopped footer. The regression also checks that an interrupted failure retains the stopped footer.
+
+**Mechanism.** Journal settlement now checks the terminal state and completed outcome before choosing the footer, matching receipt settlement. A completed call says `finished before stop`. The interactive harness prompt also keeps sequential searches and counting after the steered filename so QA can interrupt an active turn; that prompt change still needs a live QA drive.
+
+**Generalizable rule.** Report the settled outcome, rather than inferring success from the control that was requested.
+
+## 2026-10-28 — A journal poll needs its own interactive wakeup and profile
+
+**Evidence.** QA's live workflow drive found an idle overlay missing pause, resume and abort updates, queued admissions refusing steer, and default-profile launches returning `not_found` for fixture sessions. `workflow_progress_settlement::idle_interactive_loop_consumes_journal_without_keypresses_or_animation` reproduces the missing wakeup with screen timers disabled; removing the workflow deadline makes it time out. `progress_races::bound_queued_admission_attaches_until_a_resume_observes_running` fails when attachment excludes queued rows. Local mock gateway connection tests verify the fixture profile ticket, reuse, inbound forwarding, discovery fallback and ticket-refusal handling.
+
+**Mechanism.** Reducer ticks alone do not schedule the application loop. An open, healthy workflow view now arms a 250 ms deadline, initialized on open/reopen and advanced even while a disk poll is pending. Unchanged workflow ticks do not draw. A session-bound queued admission attaches and retries hydration after a pending snapshot, with one resume in flight per session; an unbound queued call does not attach. Workflow I/O resolves the manifest profile and keeps its own profile-scoped connection and event stream, independent of foreground link changes. Opening a workflow session also carries that profile into the normal session switch. Discovery failure retains the injected client seam; profile resolution, ticket and handshake failures remain visible. The pinned client exposes endpoint/profile ticket minting and `connect`/`handshake` plus `Client::start`, rather than a client-label argument or `Client::connect`.
+
+**Generalizable rule.** Exercise the real idle loop, attach bound admissions before assuming they run, and carry the resource's profile through both effects and navigation.
+
+## 2026-10-28 — A queued steer acknowledgement is not delivery
+
+**Evidence.** `crates/talaria-app/tests/workflow_progress_live.rs`, `steer_stop_and_open_against_gateway`.
+
+**Mechanism.** The ignored live test used to return after an empty local poll when the live requirement was set. It now connects only when the gateway release, the fixture profile, the signed-in provider, and the model are present, and otherwise it skips or panics before any success line. Steer is accepted only after the row says the text is queued, and the pass waits until a later agent event or receipt contains the steer token. Stop shows stopping, and the stopped sentence appears only after the journal records the interrupted turn and a failed call. Open resumes the existing session and must leave the turn-intent count unchanged. The gateway does not write that journal; the test writer records the settlement after the live receipt.
+
+**Generalizable rule.** A live control passes only when later output, the journal settlement, or an unchanged journal shows the effect, not when the acknowledgement arrives.
+
+## 2026-10-28 — An unfinished live check must not pass
+
+**Evidence.** `crates/talaria-app/tests/workflow_progress_live.rs`, `steer_stop_and_open_against_gateway`.
+
+**Mechanism.** The ignored live test had no connection and no steer, stop, or open checks. When the live requirement was set, it opened an empty local journal, polled it once, and returned. That poll succeeds without a gateway, so the requirement would have counted as a pass. The interim required mode stopped before any journal poll and said the live checks were absent; the subsequent full harness replaces that guard.
+
+**Generalizable rule.** A required live test fails closed until it performs the live checks it names.
+
+## 2026-10-28 — A missing record tag is reported only after earlier fields
+
+**Evidence.** `crates/talaria-workflow/tests/progress_tree.rs`, `tail_holds_torn_bytes_and_refuses_corrupt`.
+
+**Mechanism.** The journal reader deserializes version, sequence, and timestamp before the record tag. A finished line that has only version and sequence fails on the missing timestamp, so the missing tag is never the reason. The torn prefix now carries the timestamp and still has no newline, so the tail holds it. Closing that prefix leaves the tag absent, the reader rejects line 2, and the file bytes stay exactly what was written.
+
+**Generalizable rule.** A probe for a missing later field has to include every earlier required field.
+
+## 2026-10-28 — A completed call stores exactly one result
+
+**Evidence.** `crates/talaria-workflow/tests/support/lines.rs` (`completed`), `fixtures/frames/p5-05-progress.jsonl`, and the `JournalReader::read_from` check in `crates/talaria-workflow/tests/progress_tree.rs`.
+
+**Mechanism.** A completed call is valid only when the turn count is at most two and exactly one of the inline value and the blob reference is present. Writing both as absent serializes a completed object with no result, and the journal reader rejects that line as an invalid payload. The support helper and the recorded journal now store a concrete value and leave the blob reference empty. The replay helper imports the line module from the test crate instead of declaring the same file a second time.
+
+**Generalizable rule.** A completed journal call stores one result, either inline or by reference, and a support file is declared once.
+
+## 2026-10-28 — A progress journal is not a live gateway connection
+
+**Evidence.** Workflow progress tests in `crates/talaria-workflow/tests/progress_live.rs`, `progress_tree.rs`, and `crates/talaria-tui/tests/workflow_view.rs`.
+
+**Mechanism.** Live fixtures send an explicit connected input before replay-gap and steer effects. The steer acceptance sentence follows a queued gateway acknowledgement, and stop is issued only after that acknowledgement. A stale generation is a gateway failure on a control already sent: the first failure attaches, an attached generation retries that control once, and the second failure disables the row. A run-started record has no agent key, so the tail projection has zero agents. Full-width screen rows need a carriage return before the line feed, and painting the same revision twice is not a second frame. An empty journal draws the starting sentence.
+
+**Generalizable rule.** Assert the acknowledgement the gateway actually returns, and do not invent a row or a frame the inputs did not produce.
+
+## 2026-10-28 — Background attachment cannot stand in for a control retry
+
+An offline reducer regression reproduced a second steer when an unrelated
+attachment completed while the first steer awaited acknowledgement. Tracking
+ready, refreshing, calling and settling separately prevents the duplicate;
+`progress_races` pins the same boundary for steer and interrupt. Only an
+attachment explicitly requested to refresh a pending control can retry it.
+
+Rule: correlate asynchronous replies with the operation phase that requested them.
+
+## 2026-10-27 — Workflow usage snapshots have two wire encodings and one cumulative scope
+
+**Evidence.** At pinned Hermes revision `4d04303818b61bf3aa09278af48356315515965b`,
+`gateway/session_usage.py` projects `session.usage` with `total_tokens`,
+`prompt_tokens` and `completion_tokens`, while `tui_usage` exposes `total`,
+`prompt` and `completion` for `message.complete.usage`. Both are session totals.
+Journal `turn_settled.usage` is a per-admission receipt; its `session_cost` is
+already a session total. The progress projection retains each admission once
+and subtracts settled tokens for that session from any cumulative live value.
+
+**Generalizable rule.** Normalize each event's own generated token fields, then
+combine cumulative and settled scopes with a remainder, never by adding totals.
 
 ## 2026-10-28 — Workflow session totals need attempt-local cost deltas
 

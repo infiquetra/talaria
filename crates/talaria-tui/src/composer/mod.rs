@@ -532,6 +532,7 @@ impl Composer {
     /// An editing or caret action. True when history changed the draft.
     fn edit(&mut self, action: Action) -> bool {
         match action {
+            Action::ProgressUp | Action::ProgressDown | Action::ProgressLeft | Action::ProgressRight | Action::OpenAgent | Action::Steer | Action::StopAgent | Action::RestartAgent | Action::PauseRun | Action::StopRun | Action::CycleFilter | Action::CloseView | Action::ProgressConfirm => {},
             Action::MoveLeft => self.draft.move_left(),
             Action::MoveRight => self.draft.move_right(),
             Action::MoveUp => return self.move_up(),

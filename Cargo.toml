@@ -78,6 +78,7 @@ hermes-client = { path = "crates/hermes-client" }
 talaria-core = { path = "crates/talaria-core" }
 talaria-app = { path = "crates/talaria-app" }
 talaria-tui = { path = "crates/talaria-tui" }
+talaria-workflow = { path = "crates/talaria-workflow" }
 
 chrono = { version = "=0.4.45", features = ["serde"] }
 tracing-subscriber = { version = "=0.3.23", features = ["fmt"] }
