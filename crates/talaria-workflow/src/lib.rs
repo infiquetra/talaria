@@ -11,3 +11,5 @@ pub mod progress;
 pub mod runner;
 pub mod schedule;
 pub mod staffing;
+
+pub mod worktree;
