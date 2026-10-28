@@ -276,6 +276,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
     let seed = match cli.suite {
         Suite::Phase1 | Suite::Phase3 | Suite::Phase4a | Suite::Phase4b => None,
         Suite::Phase2a | Suite::Phase2b => Some(rand::random::<u64>()),
+        Suite::Phase5 => panic!("not implemented"),
     };
     let (start_line, resume_line) = match (cli.suite, seed) {
         (Suite::Phase2a, Some(seed)) => {
@@ -379,6 +380,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
             },
             &stop,
         ),
+        Suite::Phase5 => panic!("not implemented"),
         Suite::Phase4b => smoke::suite4b::run_smoke_4b(
             &herdr,
             &clock,

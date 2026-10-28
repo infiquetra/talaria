@@ -1,0 +1,4 @@
+# synthetic
+<token>
+SMOKE_EXIT:0
+$

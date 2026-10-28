@@ -1,0 +1,6 @@
+# synthetic
+fix-failing-tests: installed
+research: installed
+review-branch: installed
+ultracode: installed
+exit=0

@@ -18,6 +18,8 @@ pub enum Suite {
     Phase4a,
     /// The capabilities and operations screens suite.
     Phase4b,
+    /// The workflow smoke suite.
+    Phase5,
 }
 
 impl FromStr for Suite {
@@ -50,6 +52,7 @@ impl Suite {
             Suite::Phase3 => 1200,
             Suite::Phase4a => 900,
             Suite::Phase4b => 900,
+            Suite::Phase5 => panic!("not implemented"),
         }
     }
 }

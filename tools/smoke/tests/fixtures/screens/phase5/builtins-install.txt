@@ -1,0 +1,7 @@
+# synthetic
+created folder <scratch>/config/workflows
+created <scratch>/config/workflows/fix-failing-tests.js
+created <scratch>/config/workflows/research.js
+created <scratch>/config/workflows/review-branch.js
+created <scratch>/config/workflows/ultracode.js
+exit=0

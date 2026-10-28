@@ -1,0 +1,1 @@
+{"version":1,"report":{"providers":[],"tiers":[]},"paths":{"talaria_home":"<scratch>/config","runs_dir":"<scratch>/config/runs","workflows_dir":"<scratch>/config/workflows","drafts_dir":"<scratch>/config/drafts"},"workflows":[{"name":"review-branch","path":"<scratch>/config/workflows/review-branch.js"}]}
