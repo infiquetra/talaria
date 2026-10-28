@@ -18,13 +18,18 @@ fn pr_segment_priority() {
         "just before External on the line"
     );
     for segment in Segment::ALL {
-        if segment != Segment::External && segment != Segment::PullRequest {
+        if segment != Segment::External
+            && segment != Segment::PullRequest
+            && segment != Segment::Ultracode
+        {
             assert!(
                 segment.priority() < Segment::PullRequest.priority(),
                 "{segment:?} drops after the pull request"
             );
         }
     }
+    assert!(Segment::Ultracode.priority() > Segment::External.priority());
+    assert_eq!(Segment::ALL.last(), Some(&Segment::Ultracode));
     let adjacent = Segment::ALL
         .windows(2)
         .any(|pair| pair == [Segment::PullRequest, Segment::External]);

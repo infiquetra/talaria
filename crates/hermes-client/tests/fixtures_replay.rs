@@ -2,7 +2,7 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected thirty-one fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected thirty-two fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch and the three queue recordings, covered by their own replay tests.
 
@@ -17,7 +17,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 28] = [
+const NAMES: [&str; 29] = [
     "background-work",
     "attachments-mention-image",
     "plain-answer",
@@ -46,6 +46,7 @@ const NAMES: [&str; 28] = [
     "review-session-info",
     "review-oneshot",
     "profiles",
+    "p5-09-ultracode-skill",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -114,8 +115,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 31,
-        "expected thirty-one fixtures in fixtures/frames, found {}",
+        files.len() == 32,
+        "expected thirty-two fixtures in fixtures/frames, found {}",
         files.len()
     );
     // The progress journal has its own reader; the idempotency capture has its own checks.
@@ -198,7 +199,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 28);
+    assert_eq!(fixtures.len(), 29);
 }
 
 #[test]
@@ -218,9 +219,17 @@ fn each_has_v3_header_and_gapless_seq() {
             header["subprotocols"].is_array(),
             "{name}: header has no subprotocols list"
         );
+        let scenario = header["scenario"].as_str();
+        let expected = if name == "p5-09-ultracode-skill"
+            && scenario == Some("p5-09-ultracode-skill-synthetic")
+        {
+            "p5-09-ultracode-skill-synthetic"
+        } else {
+            name
+        };
         assert_eq!(
-            header["scenario"].as_str(),
-            Some(name),
+            scenario,
+            Some(expected),
             "{name}: header scenario does not match the file name"
         );
         let wanted: Vec<&str> = expected_statuses(name).to_vec();
@@ -823,6 +832,33 @@ fn scenario_evidence_present() {
                 assert!(
                     calls[0]["params"]["session_id"].is_string(),
                     "{name}: {method} names no session"
+                );
+            }
+            "p5-09-ultracode-skill" => {
+                let slash = records
+                    .iter()
+                    .find(|r| r["dir"] == "out" && r["frame"]["method"] == "slash.exec")
+                    .expect("skill slash request");
+                assert_eq!(
+                    slash["frame"]["params"]["command"],
+                    "talaria-workflows What is 2 + 2? Answer in one word."
+                );
+                let result = records
+                    .iter()
+                    .find(|r| r["dir"] == "in" && r["frame"]["result"]["type"] == "skill")
+                    .expect("skill reply");
+                assert_eq!(result["frame"]["result"]["name"], "talaria-workflows");
+                let submit = records
+                    .iter()
+                    .find(|r| r["dir"] == "out" && r["frame"]["method"] == "prompt.submit")
+                    .expect("skill submission");
+                assert_eq!(
+                    submit["frame"]["params"]["text"],
+                    result["frame"]["result"]["message"]
+                );
+                assert_eq!(
+                    result["frame"]["result"]["display"],
+                    "/talaria-workflows What is 2 + 2? Answer in one word."
                 );
             }
             "profiles" => {

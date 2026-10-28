@@ -28,6 +28,8 @@ pub struct WorkflowArgs {
 }
 #[derive(Clone, Debug, Subcommand)]
 pub enum WorkflowCommand {
+    Skill(crate::workflow_skill::SkillArgs),
+    Roster(crate::workflow_roster::RosterArgs),
     Builtins(builtins::BuiltinArgs),
     Run(RunArgs),
     Resume(ResumeArgs),
@@ -447,6 +449,8 @@ impl Renderer {
 
 pub async fn run(args: WorkflowArgs) -> u8 {
     match args.command {
+        WorkflowCommand::Skill(args) => crate::workflow_skill::execute(args).await,
+        WorkflowCommand::Roster(args) => crate::workflow_roster::execute(args).await,
         WorkflowCommand::List(args) => {
             let dir = match absolute(runner::runs_dir(args.runs_dir.as_deref())) {
                 Ok(dir) => dir,

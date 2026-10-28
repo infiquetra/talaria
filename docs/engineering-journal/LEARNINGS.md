@@ -6242,3 +6242,13 @@ and replay tests confirm the same report without backend calls.
 
 Rule: when a worktree's checkout differs from the revision being evaluated, carry
 that revision's evidence explicitly and identify which local files are stale.
+## 2026-10-28 — A skill update must remain undiscoverable until publication
+
+**Evidence.** The pinned Hermes [command scanner](https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/agent/skill_commands.py#L422) and [skill-index walker](https://github.com/NousResearch/hermes-agent/blob/4d04303818b61bf3aa09278af48356315515965b/agent/skill_utils.py#L22) both exclude
+`.locks`; the command scanner also rescans when a profile's skill-folder signature changes.
+The installer therefore stages its new and rollback copies below `skills/.locks/`, keeping
+only the published target visible. The install record is saved while both target and record
+locks remain held; a crash can then be resolved by comparing the published hashes with the record.
+
+**Generalizable rule.** Put recoverable staging under an explicitly excluded scan path and
+hold the writer locks until both publication and its ownership record agree.

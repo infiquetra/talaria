@@ -3100,6 +3100,7 @@ dependencies = [
 name = "talaria-cli"
 version = "0.7.0-dev"
 dependencies = [
+ "chrono",
  "clap",
  "crossterm",
  "futures-util",

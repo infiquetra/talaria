@@ -16,3 +16,7 @@ pub mod worktree;
 
 /// Embedded workflows and installation of ordinary editable copies.
 pub mod builtins;
+
+pub mod roster_envelope;
+pub use roster_envelope as roster_cli;
+pub mod skill;

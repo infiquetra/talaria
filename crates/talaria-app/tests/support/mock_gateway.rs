@@ -3325,6 +3325,15 @@ fn slash_result(method: &str, params: &Value, turn_running: bool) -> Value {
                     "display": "/plan write a haiku about rain",
                     "notice": "Planning: write a haiku about rain"
                 })
+            } else if name == "talaria-workflows" {
+                let rows = include_str!("../../../../fixtures/frames/p5-09-ultracode-skill.jsonl");
+                rows.lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .find_map(|row| {
+                        let result = &row["frame"]["result"];
+                        (result["type"] == "skill").then(|| result.clone())
+                    })
+                    .expect("synthetic skill reply")
             } else if name == "fixture-skill-1" {
                 json!({
                     "type": "skill",

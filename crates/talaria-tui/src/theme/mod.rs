@@ -220,7 +220,8 @@ pub fn resolve(inputs: &ThemeInputs<'_>) -> Theme {
         tone(Tone::Warning, "status warning"),
         tone(Tone::Error, "status error"),
         tone(Tone::Attention, "status attention"),
-    ]);
+    ])
+    .with_accent(tone(Tone::Accent, "accent"));
     theme.report = report;
     theme
 }
@@ -317,6 +318,7 @@ fn strip_colours(theme: &mut Theme) {
         *style = bare(*style);
     }
     let palette = &theme.status;
+    let accent = bare(palette.style(Tone::Accent));
     theme.status = StatusPalette::from_styles(
         [
             Tone::Text,
@@ -328,7 +330,8 @@ fn strip_colours(theme: &mut Theme) {
             Tone::Attention,
         ]
         .map(|tone| bare(palette.style(tone))),
-    );
+    )
+    .with_accent(accent);
     theme.composer = ComposerStyle {
         border: bare(theme.composer.border),
         marker: bare(theme.composer.marker),
