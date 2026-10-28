@@ -529,6 +529,12 @@ fn progress_detach_keeps_runner_alive() {
         "{}",
         terminal.screen_text()
     );
+    wait_for(|| {
+        gateway
+            .requests("session.create")
+            .iter()
+            .any(|frame| frame.params["source"] != "tool")
+    });
     let creates = gateway.requests("session.create").len();
     let submits = gateway.requests("prompt.submit").len();
     terminal_submit(&mut terminal, "/workflows");
@@ -622,6 +628,11 @@ fn progress_detach_keeps_runner_alive() {
         terminal.screen_text()
     );
     terminal.type_keys("\x1b");
+    assert!(
+        terminal.wait_for_text("Type a message", Duration::from_secs(10)),
+        "{}",
+        terminal.screen_text()
+    );
     terminal_submit(&mut terminal, "/quit");
     let ended = terminal.wait_exit(Duration::from_secs(5));
     assert!(!ended.timed_out);

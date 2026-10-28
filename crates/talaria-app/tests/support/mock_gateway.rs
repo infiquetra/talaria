@@ -2839,6 +2839,21 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
         // A host-scoped connection routes a request naming another served profile to that
         // profile, which drops `profile` before its own key check (Hermes v0.22.4
         // `gateway/session_controls.py:147-168`, `:258-271`), so the key is allowed here.
+        "session.create" if params.get("source").and_then(Value::as_str) == Some("tool") => (
+            vec!["request_id", "source", "model", "provider", "toolsets"],
+            vec![
+                "request_id",
+                "source",
+                "model",
+                "provider",
+                "reasoning",
+                "cwd",
+                "cwd_explicit",
+                "toolsets",
+                "skills",
+                "max_turns",
+            ],
+        ),
         "session.create" if params.get("toolsets").is_some() => (
             vec![
                 "request_id",
