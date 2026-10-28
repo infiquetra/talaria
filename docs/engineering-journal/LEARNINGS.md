@@ -6048,3 +6048,15 @@ prove that recovery creates and submits nothing twice.
 
 Rule: keep receipt metadata, subscription ownership and durable engine starts
 explicit, and fence stop against the latest admission's execution generation.
+
+
+### 2026-10-28 — Scope transport boundaries to the engine when adding an adapter
+
+The production Hermes binding requires normal transport dependencies in the
+workflow crate. Its earlier crate-wide transport ban rejected that adapter even
+though the engine imported none of it. The boundary test now checks terminal
+libraries across the whole dependency tree and retains the Hermes import ban in
+the engine, mock backend and dry-run modules. Core layering tests are unchanged.
+
+Rule: when a crate gains an adapter, keep the pure engine's import boundary
+explicit and retain terminal dependency bans across the entire crate.
