@@ -1460,3 +1460,97 @@ fn paused_runner_heartbeats_keep_the_view_answered() {
     let rows = records(&folder);
     assert_eq!(rows.iter().filter(|r| r["t"] == "call_intent").count(), 4);
 }
+
+fn init_repository(path: &Path) {
+    fs::create_dir_all(path).unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git fixture setup failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(&["init", "-b", "main"]);
+    fs::write(path.join("tracked"), "initial").unwrap();
+    run(&["add", "tracked"]);
+    run(&[
+        "-c",
+        "user.name=fixture",
+        "-c",
+        "user.email=fixture",
+        "commit",
+        "-m",
+        "fixture",
+    ]);
+}
+fn common_dir(path: &Path) -> PathBuf {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    PathBuf::from(String::from_utf8(out.stdout).unwrap().trim())
+        .canonicalize()
+        .unwrap()
+}
+#[test]
+fn runner_installs_worktree_provider() {
+    let h = Harness::new(
+        "const a=await agent('first',{label:'first',tier:'first',toolsets:['file'],isolation:'worktree'}); const b=await agent('hold second',{label:'second',tier:'second',toolsets:['file'],isolation:'worktree'}); const c=await agent('third',{label:'third',tier:'first',toolsets:['file'],isolation:'worktree'}); return [a,b,c];",
+    );
+    let repo = h.root.join("source-repo");
+    let other = h.root.join("other-repo");
+    init_repository(&repo);
+    init_repository(&other);
+    let mut request = h.request();
+    request.cwd = repo.clone().canonicalize().unwrap();
+    let worker = Worker::start(Start::New(request), services(&h.wire, true));
+    let folder = run_folder(&worker);
+    wait_for(|| {
+        h.wire.frames().iter().any(|f| f.method == "session.create")
+            || worker.events().iter().any(|e| e["event"] == "run_finished")
+    });
+    let initial = h.wire.frames();
+    let first = initial
+        .iter()
+        .find(|f| f.method == "session.create")
+        .expect("new run did not create isolated session; worktree provider missing");
+    let first_cwd = PathBuf::from(first.params["cwd"].as_str().expect("session cwd"));
+    assert!(first_cwd.starts_with(folder.join("worktrees").canonicalize().unwrap()));
+    assert_eq!(common_dir(&first_cwd), common_dir(&repo));
+    assert_ne!(first_cwd, repo);
+    wait_for(|| {
+        let rows = records(&folder);
+        rows.iter()
+            .find(|r| r["t"] == "call_intent" && r["label"] == "second")
+            .is_some_and(|intent| {
+                rows.iter()
+                    .any(|r| r["t"] == "turn_admitted" && r["key"] == intent["key"])
+            })
+    });
+    worker.kill();
+    h.wire.release("hold second");
+    let run_id = folder.file_name().unwrap().to_string_lossy().into_owned();
+    let mut resume = h.resume(&run_id);
+    resume.cwd = Some(other.clone().canonicalize().unwrap());
+    let before = h.wire.frames().len();
+    let (exit, _) = Worker::start(Start::Resume(resume), services(&h.wire, true)).finish();
+    assert_eq!(exit.code, 0, "resume failed: {exit:?}");
+    let after = h.wire.frames();
+    let third = after[before..]
+        .iter()
+        .find(|f| f.method == "session.create")
+        .expect("resume did not create third isolated session");
+    let resumed_cwd = PathBuf::from(third.params["cwd"].as_str().expect("resumed session cwd"));
+    assert!(resumed_cwd.starts_with(folder.join("worktrees").canonicalize().unwrap()));
+    assert_eq!(common_dir(&resumed_cwd), common_dir(&repo));
+    assert_ne!(common_dir(&resumed_cwd), common_dir(&other));
+}
