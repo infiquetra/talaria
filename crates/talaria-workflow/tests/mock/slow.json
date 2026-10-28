@@ -1,0 +1,1 @@
+{"rules":[{"match":{"prompt_contains":"slow"},"outcome":{"text":"ok"},"delay_ms":30000}]}

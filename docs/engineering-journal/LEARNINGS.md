@@ -5958,3 +5958,13 @@ an attachment for a new submission.
 
 **Generalizable rule.** Select a contiguous healthy width and verify receipt recovery and
 reattachment independently.
+
+## 2026-10-27 — Parse TOML manifests as documents
+
+**Evidence.** With `toml` 1.1.8, parsing a complete Cargo manifest using
+`str::parse::<toml::Value>()` rejected its first table; `toml::from_str::<toml::Value>()`
+accepted the same manifest, and the dependency boundary test then caught a deliberately
+added terminal dependency.
+
+**Generalizable rule.** Use `toml::from_str` for complete TOML documents and reserve a
+value parser for standalone values.
