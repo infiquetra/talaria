@@ -2861,12 +2861,16 @@ name = "talaria-workflow"
 version = "0.7.0-dev"
 dependencies = [
  "futures",
+ "futures-util",
+ "getrandom 0.3.4",
+ "hermes-client",
  "hex",
  "proptest",
  "rquickjs",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "talaria-workflow",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
