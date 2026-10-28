@@ -4344,3 +4344,13 @@ runner can replace a running process handle when another run starts. An HTTP res
 cannot prove the resulting field values, provider activation, or the identity of a followed run.
 **Rejected.** Trusting submitted values as saved state or retrying uncertain mutations.
 **Revisit when.** Hermes exposes transactional writes and stable per-run action identifiers.
+
+## 2026-10-28 — Workflow concurrency default proposed, awaiting the operator
+
+**Decision.** Proposed, awaiting the operator: use a shared connection and a default
+`max_in_flight` of 1, with approximately 1.1 MB per session from A-shared-1.
+**Rationale.** Neither topology met the contiguous health rule at width 10 in the live
+fixture measurement. Shared width 1 met it; per-session width 1 failed foreground latency.
+**Revisit when.** The operator approves the default or a new measurement on the intended
+machine supports another value. The C tool observation and the real-provider error also
+need investigation before drawing broader conclusions.
