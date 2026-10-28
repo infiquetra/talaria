@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod driver;
 mod engine;
-mod runner;
 use crate::support;
 pub use engine::ProviderScript;
 
@@ -212,19 +212,19 @@ impl RecordWriter {
 }
 
 pub async fn run_series_a() -> Vec<Value> {
-    runner::series("A").await
+    driver::series("A").await
 }
 pub async fn run_series_b() -> Vec<Value> {
-    runner::series("B").await
+    driver::series("B").await
 }
 pub async fn run_series_c() -> Vec<Value> {
-    runner::series("C").await
+    driver::series("C").await
 }
 pub async fn run_series_d() -> Vec<Value> {
-    runner::series("D").await
+    driver::series("D").await
 }
 pub async fn run_series_e() -> Vec<Value> {
-    runner::series("E").await
+    driver::series("E").await
 }
 pub fn import_operator_lines(text: &str) -> Result<Vec<Value>, String> {
     let records: Vec<Value> = text
@@ -243,9 +243,9 @@ pub fn import_operator_lines(text: &str) -> Result<Vec<Value>, String> {
     }
     for record in &records {
         engine::merge_record(
-            &runner::results_path(),
+            &driver::results_path(),
             engine::RELEASE,
-            &runner::execution_mode(),
+            &driver::execution_mode(),
             record,
         )?;
     }

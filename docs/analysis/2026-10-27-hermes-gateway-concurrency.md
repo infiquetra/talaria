@@ -69,7 +69,7 @@ D's receipt p95 was 16,528 ms and resume p95 170 ms. E's receipt p95 was 48 ms, 
 
 ### #264 — Script engine
 
-Keep concurrency control in the runner rather than the script engine; pass the measured scheduler limit through its interface.
+Keep concurrency control in the lifecycle host rather than the script engine; pass the measured scheduler limit through its interface.
 
 ### #265 — Journal and resume
 
