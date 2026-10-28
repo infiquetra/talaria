@@ -200,3 +200,39 @@ requested 25-second sleep; read the captured tool output before classifying that
 Every private path and name in the printed text, in the report and in the report path is
 replaced by a placeholder: the scratch project, the temporary directory, the home directory, the
 login name and the gateway home.
+
+## Workflow smoke suite
+
+`cargo run -p smoke -- run --suite phase5 --talaria <binary>` checks the workflow
+screens and CLI in a Herdr pane. It has ten fail-fast steps: startup, plain-answer,
+workflows-empty, ultracode-status, quit, resume, builtins-cli, roster-cli, list-cli,
+and no-gateway. The default deadline is 600 seconds; the per-step limits total
+410 seconds. `--step-scale` scales polling budgets while paste guards and quiet
+periods keep their duration. The default suite remains `phase1`.
+
+Run from Herdr with `jq` on PATH and the built binary available. This suite requires
+profile `fixture`, model `minimax-m3.1-flash`, and provider `ollama-cloud`; other
+values and missing `jq` fail preflight with exit 2 before creating artifacts. The
+profile must be served by the pinned Hermes gateway with the operator's provider
+credentials, and must satisfy the status screen's no-installed-skill precondition.
+The suite never installs a Hermes skill or changes the profile to meet it.
+
+Only the plain answer and the fresh answer after resume start model turns. Both
+interactive launches use `--no-ensure`. The empty workflows view must close with
+Esc; `/ultracode status` must leave the toggle off without starting a turn. Resume
+must show the old token, answer a new token, quit successfully and return to a
+positively observed shell before any CLI command runs.
+
+The CLI steps install built-ins twice, list them, reject missing reviewer tiers,
+validate the roster JSON with `jq` and check every required path stays in the scratch
+configuration, check an empty runs list in text and JSON, and verify a valid workflow
+fails before creating a run when given an empty Hermes home. That home applies only
+to the one failing run command. Commands set both `TALARIA_CONFIG_DIR` and
+`TALARIA_RUNS_DIR` inside the scratch folder. Suite data writes stay there; the tab
+and scratch tree are removed on success, failure and interruption. Failure reports
+use the existing scrubbed report mechanism and optional `--report-dir`.
+
+Every step must pass; there are no skips, including when `TALARIA_LIVE_REQUIRE` is
+set. Offline tests replay scrubbed screens captured from the integrated binary through a fake terminal. They never invoke
+the real gateway. The ignored `live_smoke5` test is for the later candidate's live
+acceptance run; parser fixtures and smoke output are not acceptance evidence.

@@ -1,0 +1,13 @@
+# recorded
+collector: tier 'survey' -> ollama-cloud/minimax-m3.1-flash
+reviewers[0]: tier 'reviewer-1' is not defined in <staffing>
+reviewers[1]: tier 'reviewer-2' is not defined in <staffing>
+reviewers[2]: tier 'reviewer-3' is not defined in <staffing>
+verifier: tier 'judge' -> ollama-cloud/minimax-m3.1-flash
+synthesizer: tier 'judge' -> ollama-cloud/minimax-m3.1-flash
+collector uses file, terminal in a worktree
+reviewers uses file in a worktree
+verifier uses file in a worktree
+synthesizer uses todo
+missing tiers: reviewer-1, reviewer-2, reviewer-3; define them in <staffing>
+exit=2

@@ -9,6 +9,7 @@ pub mod screen2b;
 pub mod screen3;
 pub mod screen4a;
 pub mod screen4b;
+pub mod screen5;
 pub mod scrub;
 pub mod steps;
 pub mod steps2a;
@@ -16,9 +17,11 @@ pub mod steps2b;
 pub mod steps3;
 pub mod steps4a;
 pub mod steps4b;
+pub mod steps5;
 pub mod suite;
 pub mod suite4a;
 pub mod suite4b;
+pub mod suite5;
 pub mod terminal;
 pub mod tmux;
 pub mod wording;
@@ -26,6 +29,7 @@ pub mod wording2b;
 pub mod wording3;
 pub mod wording4a;
 pub mod wording4b;
+pub mod wording5;
 
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use config::{Phase2aConfig, SmokeConfig, launch_line, launch_line_env};
@@ -57,6 +61,7 @@ pub use steps3::{
     run_smoke_3,
 };
 pub use suite::Suite;
+pub use suite5::{Phase5Config, run_smoke_5};
 pub use terminal::{HerdrCli, NewTab, PaneId, ReadSource, TabId, TermError, Terminal};
 pub use tmux::{Paster, TmuxCli, TmuxGuard};
 pub use wording2b::{
