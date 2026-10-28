@@ -17,6 +17,14 @@
 **Mechanism.** Reducer ticks alone do not schedule the application loop. An open, healthy workflow view now arms a 250 ms deadline, initialized on open/reopen and advanced even while a disk poll is pending. Unchanged workflow ticks do not draw. A session-bound queued admission attaches and retries hydration after a pending snapshot, with one resume in flight per session; an unbound queued call does not attach. Workflow I/O resolves the manifest profile and keeps its own profile-scoped connection and event stream, independent of foreground link changes. Opening a workflow session also carries that profile into the normal session switch. Discovery failure retains the injected client seam; profile resolution, ticket and handshake failures remain visible. The pinned client exposes endpoint/profile ticket minting and `connect`/`handshake` plus `Client::start`, rather than a client-label argument or `Client::connect`.
 
 **Generalizable rule.** Exercise the real idle loop, attach bound admissions before assuming they run, and carry the resource's profile through both effects and navigation.
+## 2026-10-28 — Probe a held file lock with a separately opened handle
+
+**Evidence.** On macOS with the pinned Rust toolchain, a second independently opened handle
+for a file returned `WouldBlock` from `try_lock` while the first handle held the lock. Dropping
+the first handle let the second acquire it immediately.
+
+**Generalizable rule.** Exercise both the held and released states with separately opened
+handles when testing file-only run discovery, and verify the same behavior on each supported platform.
 
 ## 2026-10-28 — A queued steer acknowledgement is not delivery
 

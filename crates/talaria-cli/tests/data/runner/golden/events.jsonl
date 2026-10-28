@@ -1,0 +1,4 @@
+{"event":"run_started","run_id":"<RUN_ID>","run_dir":"<RUN_DIR>"}
+{"event":"phase","title":"Review"}
+{"event":"log","message":"hello"}
+{"event":"run_finished","run_id":"<RUN_ID>","outcome":"completed","result":{"ok":true},"spend":{"tokens":0,"money_usd":null,"money_source":"none"}}

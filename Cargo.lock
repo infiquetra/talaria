@@ -3115,6 +3115,7 @@ dependencies = [
  "talaria-app",
  "talaria-core",
  "talaria-tui",
+ "talaria-workflow",
  "tempfile",
  "time",
  "tokio",

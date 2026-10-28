@@ -1,0 +1,2 @@
+<RUN_ID>  fixture  completed  agents 0/0  tokens -  money -  <TIME>  {runs_dir}/<RUN_ID>
+<RUN_ID>  fixture  failed  agents 0/0  tokens -  money -  <TIME>  {runs_dir}/<RUN_ID>

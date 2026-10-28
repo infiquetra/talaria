@@ -1,0 +1,1 @@
+{"v":1,"run_id":"00000000000000000000000001","created_at_ms":1000,"workflow":{"name":"fixture","script_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"args":null,"started_at_ms":1000,"seed":7,"profile":"fixture","on_unknown":"wait","talaria_version":"0.7.0","hermes":{},"roster":{},"approval_policy":{}}
