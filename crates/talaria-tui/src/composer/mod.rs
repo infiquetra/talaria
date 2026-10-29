@@ -4,10 +4,12 @@ mod buffer;
 pub mod paste_burst;
 pub mod recall;
 mod render;
+mod vim;
 pub mod wrap;
 
 pub use buffer::clean_text;
 pub use render::ComposerSection;
+pub use vim::{VimMode, VimState, byte_of_cluster};
 
 use std::time::{Duration, Instant};
 
@@ -91,6 +93,7 @@ pub struct Composer {
     highlights: Vec<(std::ops::Range<usize>, ratatui::style::Style)>,
     highlight_revision: u64,
     last_history_recall: bool,
+    vim_on: bool,
 }
 
 impl Composer {
@@ -120,11 +123,65 @@ impl Composer {
             highlights: Vec::new(),
             highlight_revision: 0,
             last_history_recall: false,
+            vim_on: false,
         }
+    }
+
+    /// An empty draft, with vim on or off from startup.
+    #[must_use]
+    pub fn from_startup(keymap: KeyMap, history: Vec<String>, vim: bool) -> Self {
+        let mut composer = Self::with_history(keymap, history);
+        if vim {
+            composer.set_vim_enabled(true);
+        }
+        composer
+    }
+
+    /// Whether vim editing is on.
+    #[must_use]
+    pub fn vim_enabled(&self) -> bool {
+        self.vim_on
+    }
+
+    /// Turn vim on (normal) or off. The command tables are not applied yet.
+    pub fn set_vim_enabled(&mut self, on: bool) {
+        self.vim_on = on;
+    }
+
+    /// The vim mode, or nothing when vim is off or the mode machine is absent.
+    #[must_use]
+    pub fn vim_mode(&self) -> Option<VimMode> {
+        None
+    }
+
+    /// Pending vim state. Nothing until the mode machine exists.
+    #[must_use]
+    pub fn vim_state(&self) -> Option<&VimState> {
+        None
+    }
+
+    /// The one kill buffer span.
+    #[must_use]
+    pub fn kill_buffer(&self) -> &str {
+        self.draft.kill_text()
+    }
+
+    /// Whether the kill buffer was filled by a linewise vim operator.
+    #[must_use]
+    pub fn kill_linewise(&self) -> bool {
+        false
+    }
+
+    /// Put the caret on a cluster boundary.
+    pub fn set_caret(&mut self, byte: usize) {
+        self.draft.set_caret(byte);
     }
 
     /// Apply one key.
     pub fn handle_key(&mut self, key: Key, ctx: ComposerContext, now: Instant) -> ComposerOutcome {
+        if self.vim_on {
+            vim::editing_unavailable();
+        }
         self.last_history_recall = false;
         if key.kind == KeyKind::Release {
             return ComposerOutcome::Unchanged;
@@ -722,7 +779,8 @@ impl Composer {
             | Action::McpSave
             | Action::McpOpenLink
             | Action::McpCopy
-            | Action::McpPasteRedirect => {}
+            | Action::McpPasteRedirect
+            | Action::ToggleVim => {}
         }
         false
     }

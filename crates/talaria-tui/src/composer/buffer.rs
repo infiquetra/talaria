@@ -161,6 +161,12 @@ impl Draft {
         self.caret
     }
 
+    /// The latest killed or yanked span.
+    #[must_use]
+    pub(crate) fn kill_text(&self) -> &str {
+        &self.kill
+    }
+
     /// Changes each time the text changes.
     pub(crate) fn revision(&self) -> u64 {
         self.revision

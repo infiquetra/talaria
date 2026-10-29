@@ -1,4 +1,4 @@
-//! Composer demo: `--running`, `--config <file>`, `--history <a|b>`.
+//! Composer demo: `--running`, `--config <file>`, `--history <a|b>`, `--vim`.
 //!
 //! It draws the composer as the live region and commits one line per result: `NOTICE: ...`,
 //! `SUBMITTED lines=N chars=M text="..."`, `PASTE-EVENT chars=M`, `INTERRUPT` and
@@ -28,6 +28,7 @@ struct Options {
     running: bool,
     config: Option<PathBuf>,
     history: Vec<String>,
+    vim: bool,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -35,11 +36,13 @@ fn parse_options() -> Result<Options, String> {
         running: false,
         config: None,
         history: Vec::new(),
+        vim: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--running" => options.running = true,
+            "--vim" => options.vim = true,
             "--config" => {
                 let path = args.next().ok_or("--config needs a file")?;
                 options.config = Some(PathBuf::from(path));
@@ -55,6 +58,15 @@ fn parse_options() -> Result<Options, String> {
 }
 
 /// Loader notices first, then the key map's.
+/// Whether startup asked for vim. The command tables are not applied yet, so this stays off.
+fn startup_vim(options: &Options) -> bool {
+    let from_file = options.config.as_ref().is_some_and(|path| {
+        talaria_app::config::composer_starts_with_vim(&talaria_app::config::load_file(path).config)
+    });
+    let _requested = options.vim || from_file;
+    false
+}
+
 fn keymap_and_notices(options: &Options) -> (KeyMap, Vec<String>) {
     let Some(path) = &options.config else {
         return (KeyMap::defaults(), Vec::new());
@@ -115,6 +127,7 @@ fn report(
 fn run(terminal: &mut InlineTerminal<Stdout>, options: &Options, keyboard: bool) -> io::Result<()> {
     let (keymap, notices) = keymap_and_notices(options);
     let mut composer = Composer::with_history(keymap, options.history.clone());
+    let _ = startup_vim(options);
     composer.set_keyboard_enhancement(keyboard);
     for notice in notices {
         commit(terminal, format!("NOTICE: {notice}"))?;

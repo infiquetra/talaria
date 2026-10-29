@@ -62,7 +62,7 @@ use talaria_tui::background::{BackgroundSection, BackgroundTheme, ProcessesView}
 use talaria_tui::checklist::{
     ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS, SHORT_TERMINAL_ROWS, committed_block_lines,
 };
-use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome, clean_text};
+use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome, VimMode, clean_text};
 use talaria_tui::context_view::{
     CompactingSection, ContextStyle, compact_block, context_block, error_block, notice_block,
     prebuild_block, usage_block,
@@ -2312,6 +2312,16 @@ impl TuiScreen {
                 } else {
                     talaria_tui::comfort_route::Focus::Composer
                 };
+                if config::vim_redo_claim(
+                    action == Some(Action::HistorySearch),
+                    focus == talaria_tui::comfort_route::Focus::Composer,
+                    matches!(
+                        self.composer.vim_mode(),
+                        Some(VimMode::Normal | VimMode::Visual | VimMode::VisualLine)
+                    ),
+                ) {
+                    return self.composer_key(key, view, now);
+                }
                 let route = talaria_tui::comfort_route::route(action, focus);
                 if route == talaria_tui::comfort_route::Route::Suspend {
                     let _ = self.composer.handle_key(
@@ -4282,7 +4292,11 @@ fn session(
     );
     let mut setup = setup;
     setup.notices.extend(history_notice);
-    let mut composer = Composer::with_history(keymap.clone(), history.composer_seed());
+    let mut composer = Composer::from_startup(
+        keymap.clone(),
+        history.composer_seed(),
+        config::composer_starts_with_vim(&config),
+    );
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     composer.set_style(theme.composer);
     let mut screen = TuiScreen {

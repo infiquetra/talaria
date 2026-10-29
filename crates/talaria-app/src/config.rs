@@ -119,6 +119,8 @@ pub struct ComposerConfig {
     pub paste_collapse_lines: usize,
     /// Character count that collapses a paste. The default is 2,000.
     pub paste_collapse_chars: usize,
+    /// Start the composer with vim editing. The default is off.
+    pub vim: bool,
 }
 
 /// Status command text and how often it runs.
@@ -265,6 +267,7 @@ impl Default for ComposerConfig {
         Self {
             paste_collapse_lines: DEFAULT_PASTE_COLLAPSE_LINES,
             paste_collapse_chars: DEFAULT_PASTE_COLLAPSE_CHARS,
+            vim: false,
         }
     }
 }
@@ -550,6 +553,15 @@ fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
 fn read_composer(section: &Table, notices: &mut Vec<String>) -> ComposerConfig {
     let mut composer = ComposerConfig::default();
     for (name, value) in section {
+        if name == "vim" {
+            if value.as_bool().is_none() {
+                notices.push(
+                    "composer.vim in ~/.talaria/config.toml must be true or false; using false."
+                        .into(),
+                );
+            }
+            continue;
+        }
         let fallback = match name.as_str() {
             "paste_collapse_lines" => DEFAULT_PASTE_COLLAPSE_LINES,
             "paste_collapse_chars" => DEFAULT_PASTE_COLLAPSE_CHARS,
@@ -573,6 +585,25 @@ fn read_composer(section: &Table, notices: &mut Vec<String>) -> ComposerConfig {
         }
     }
     composer
+}
+
+/// Whether startup should open the composer with vim on.
+#[must_use]
+pub fn composer_starts_with_vim(config: &Config) -> bool {
+    config.composer.vim
+}
+
+/// Whether a history-search key is redo for a focused vim composer.
+///
+/// The command tables are not applied yet, so this never claims the key.
+#[must_use]
+pub fn vim_redo_claim(
+    history_search: bool,
+    composer_focused: bool,
+    vim_normal_or_visual: bool,
+) -> bool {
+    let _ = (history_search, composer_focused, vim_normal_or_visual);
+    false
 }
 
 fn read_subagents(section: &Table, notices: &mut Vec<String>) -> crate::subagents::SubagentsConfig {
