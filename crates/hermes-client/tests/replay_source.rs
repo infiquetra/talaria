@@ -87,6 +87,70 @@ fn write_log(lines: &[String], final_newline: bool) -> (TempDir, PathBuf) {
     (dir, path)
 }
 
+#[tokio::test]
+async fn loss_records_are_exposed_without_becoming_frames_or_truncation() {
+    let frames: Vec<Value> = include_str!("../../../fixtures/frames/plain-answer.jsonl")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|record| record["kind"] == "frame" && record["dir"] == "in")
+        .map(|record| record["frame"].clone())
+        .take(2)
+        .collect();
+    assert_eq!(frames.len(), 2);
+    let lines = vec![
+        header(),
+        json!({"kind":"dropped","seq":1,"tMs":3,"count":2}).to_string(),
+        inbound(2, 4, 1, frames[0].clone()),
+        json!({"kind":"dropped","seq":3,"tMs":5,"count":100}).to_string(),
+        inbound(4, 6, 1, frames[1].clone()),
+        json!({"kind":"dropped","seq":5,"tMs":7,"count":7}).to_string(),
+    ];
+    let (_dir, path) = write_log(&lines, true);
+    let source = ReplaySource::open(&path).expect("lossy recording");
+    assert!(!source.truncated());
+    assert_eq!(source.dropped_frames(), 109);
+    let records: Vec<_> = source
+        .loss_records()
+        .iter()
+        .map(|record| (record.seq, record.t_ms, record.count))
+        .collect();
+    assert_eq!(records, [(1, 3, 2), (3, 5, 100), (5, 7, 7)]);
+    let (sent, items) = collect(&source).await;
+    assert_eq!((sent, items.len()), (2, 2));
+
+    let (_dir, path) = write_log(&[header()], true);
+    let complete = ReplaySource::open(&path).expect("complete recording");
+    assert_eq!(complete.dropped_frames(), 0);
+    assert!(complete.loss_records().is_empty());
+}
+
+#[test]
+fn malformed_or_overflowing_loss_counts_are_rejected() {
+    for record in [
+        json!({"kind":"dropped","seq":1,"tMs":0}),
+        json!({"kind":"dropped","seq":1,"tMs":0,"count":"many"}),
+        json!({"kind":"dropped","seq":1,"count":1}),
+    ] {
+        let (_dir, path) = write_log(&[header(), record.to_string()], true);
+        assert_eq!(
+            ReplaySource::open(&path).unwrap_err(),
+            ReplayError::Corrupt { line: 2 }
+        );
+    }
+    let (_dir, path) = write_log(
+        &[
+            header(),
+            json!({"kind":"dropped","seq":1,"tMs":0,"count":u64::MAX}).to_string(),
+            json!({"kind":"dropped","seq":2,"tMs":1,"count":1}).to_string(),
+        ],
+        true,
+    );
+    assert_eq!(
+        ReplaySource::open(&path).unwrap_err(),
+        ReplayError::Corrupt { line: 3 }
+    );
+}
+
 /// One word for what the shared decode function made of a frame. It never prints frame text.
 fn summarize(decoded: &Decoded) -> String {
     match decoded {

@@ -989,6 +989,47 @@ fn queue_view(view: &View<'_>) -> Option<QueueView> {
         .map(|state| state.queue.view(view.turn_running()))
 }
 
+fn queue_draft_intent(composer: &Composer, bound: Option<Action>) -> Option<QueueIntent> {
+    let draft = composer.text().to_owned();
+    let intent = match bound {
+        Some(Action::ComposerSendNow) if !draft.trim().is_empty() => {
+            QueueIntent::SendDraftNow(draft)
+        }
+        Some(Action::ComposerSteer) if !draft.trim().is_empty() => QueueIntent::SteerText(draft),
+        _ => return None,
+    };
+    Some(intent)
+}
+
+fn clear_queue_draft(
+    composer: &mut Composer,
+    reported: &mut (String, usize),
+    text: &str,
+) -> Option<(String, usize)> {
+    if composer.text() != text {
+        return None;
+    }
+    composer.clear();
+    reported_snapshot(composer, reported)
+}
+
+fn connectors_editor_key(key: Key) -> Option<talaria_core::connectors::ConnectorsKey> {
+    use talaria_core::connectors::ConnectorsKey as K;
+    let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other;
+    match key.code {
+        KeyCode::Char('u')
+            if key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other =>
+        {
+            Some(K::ClearField)
+        }
+        KeyCode::Char(ch) if plain => Some(K::Char(ch)),
+        KeyCode::Backspace if plain => Some(K::Backspace),
+        KeyCode::Enter if plain => Some(K::Open),
+        KeyCode::Esc if plain => Some(K::Close),
+        _ => None,
+    }
+}
+
 fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
     let open = view.state.map_or(0, |state| state.open_prompts().count());
     let context_percent = if view.context_hidden {
@@ -1092,18 +1133,7 @@ impl TuiScreen {
                     .filter(|action| matches!(action, K::Confirm | K::Cancel | K::Close))
             }
         } else if editing {
-            match key.code {
-                KeyCode::Char('u')
-                    if key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other =>
-                {
-                    Some(K::ClearField)
-                }
-                KeyCode::Char(ch) if plain => Some(K::Char(ch)),
-                KeyCode::Backspace if plain => Some(K::Backspace),
-                KeyCode::Enter if plain => Some(K::Open),
-                KeyCode::Esc if plain => Some(K::Close),
-                _ => None,
-            }
+            connectors_editor_key(key)
         } else {
             self.keymap
                 .resolve_connectors(KeyContext::Connectors, &key)
@@ -1814,17 +1844,7 @@ impl TuiScreen {
         if matches!(bound, Some(Action::ComposerSendNow | Action::ComposerSteer)) {
             prefix.extend(flush_draft_actions(&mut self.composer, Instant::now()));
         }
-        let draft = self.composer.text().to_string();
-        let intent = match bound {
-            Some(Action::ComposerSendNow) if !draft.trim().is_empty() => {
-                QueueIntent::SendDraftNow(draft)
-            }
-            Some(Action::ComposerSteer) if !draft.trim().is_empty() => {
-                QueueIntent::SteerText(draft)
-            }
-            _ => return None,
-        };
-        self.composer.clear();
+        let intent = queue_draft_intent(&self.composer, bound)?;
         Some(vec![UserAction::Queue(intent)])
     }
 
@@ -3763,6 +3783,12 @@ impl Screen for TuiScreen {
         }
     }
 
+    fn clear_submitted_draft(&mut self, text: &str) -> Option<(String, usize)> {
+        let snapshot = clear_queue_draft(&mut self.composer, &mut self.reported, text)?;
+        self.sync_title();
+        Some(snapshot)
+    }
+
     fn load_draft(&mut self, text: &str) {
         self.composer.load(text.to_string());
         self.reported = (self.composer.text().to_owned(), self.composer.caret());
@@ -4415,6 +4441,80 @@ mod tests {
         ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors,
         ThemeInputs,
     };
+
+    #[test]
+    fn busy_queue_shortcuts_keep_text_and_caret() {
+        use talaria_core::queue::QueueIntent;
+        use talaria_tui::keys::Action;
+        for action in [Action::ComposerSendNow, Action::ComposerSteer] {
+            let mut composer = Composer::new(KeyMap::defaults());
+            composer.load("draft text".into());
+            let left = Key::from(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+            let _ =
+                composer.handle_key(left, ComposerContext { turn_running: true }, Instant::now());
+            let caret = composer.caret();
+            assert!(caret < composer.text().len());
+            let intent = super::queue_draft_intent(&composer, Some(action)).unwrap();
+            assert!(
+                matches!(intent, QueueIntent::SendDraftNow(ref text) | QueueIntent::SteerText(ref text) if text == "draft text")
+            );
+            assert_eq!((composer.text(), composer.caret()), ("draft text", caret));
+            let mut reported = ("draft text".to_owned(), caret);
+            assert!(
+                super::clear_queue_draft(&mut composer, &mut reported, "older draft").is_none()
+            );
+            assert_eq!((composer.text(), composer.caret()), ("draft text", caret));
+            assert_eq!(
+                super::clear_queue_draft(&mut composer, &mut reported, "draft text"),
+                Some((String::new(), 0))
+            );
+            assert!(composer.text().is_empty());
+        }
+    }
+
+    #[test]
+    fn control_u_routes_to_the_active_connector_filter() {
+        use talaria_core::connectors::{
+            CatalogRow, ConnectorsInput, ConnectorsKey, ConnectorsOpen, ConnectorsState,
+            ConnectorsTab, Screen, update, view,
+        };
+        let now = Instant::now();
+        let mut state = ConnectorsState::new();
+        let _ = update(
+            &mut state,
+            ConnectorsInput::Open {
+                open: ConnectorsOpen::Tab(ConnectorsTab::Connectors),
+                profile: "fixture".into(),
+                consented: true,
+            },
+            now,
+        );
+        let rows = ["github", "linear"]
+            .into_iter()
+            .map(|name| CatalogRow {
+                slug: name.into(),
+                name: name.into(),
+                description: None,
+                category: None,
+            })
+            .collect();
+        let _ = update(&mut state, ConnectorsInput::CatalogReply(Ok(rows)), now);
+        let _ = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Filter), now);
+        let _ = update(&mut state, ConnectorsInput::Paste("gi".into()), now);
+        let key = Key::from(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        let routed = super::connectors_editor_key(key).expect("ctrl+u binding");
+        let _ = update(&mut state, ConnectorsInput::Key(routed), now);
+        let Screen::ConnectorList {
+            rows,
+            filter,
+            selected,
+        } = view(&state, now).screen
+        else {
+            panic!("connector list")
+        };
+        assert_eq!(filter.as_deref(), Some(""));
+        assert_eq!((rows.len(), selected), (2, 0));
+    }
 
     #[test]
     fn cron_open_run_binding_only_consumes_text_in_history() {

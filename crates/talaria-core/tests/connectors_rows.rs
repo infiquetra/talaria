@@ -38,6 +38,51 @@ fn row(slug: &str) -> ConnectorRow {
     }
 }
 
+#[test]
+fn clear_field_resets_active_filter_and_selection() {
+    let clock = now();
+    let mut state = ConnectorsState::new();
+    let _ = update(&mut state, open(true, ConnectorsTab::Connectors), clock);
+    let _ = update(
+        &mut state,
+        ConnectorsInput::ListReply(Ok(common::list_reply())),
+        clock,
+    );
+    let _ = update(
+        &mut state,
+        ConnectorsInput::CatalogReply(Ok(common::catalog_reply().connectors)),
+        clock,
+    );
+    let _ = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::Filter),
+        clock,
+    );
+    let _ = update(&mut state, ConnectorsInput::Paste("gi".into()), clock);
+    let Screen::ConnectorList { rows, filter, .. } = view(&state, clock).screen else {
+        panic!("list")
+    };
+    assert_eq!(filter.as_deref(), Some("gi"));
+    assert_eq!(rows.len(), 1);
+    let _ = update(
+        &mut state,
+        ConnectorsInput::Key(ConnectorsKey::ClearField),
+        clock,
+    );
+    let Screen::ConnectorList {
+        rows,
+        filter,
+        selected,
+        ..
+    } = view(&state, clock).screen
+    else {
+        panic!("list")
+    };
+    assert_eq!(filter.as_deref(), Some(""));
+    assert_eq!(rows.len(), 2);
+    assert_eq!(selected, 0);
+}
+
 fn account(status: &str, disabled: bool) -> AccountRow {
     AccountRow {
         connection_id: "conn-test-1".into(),

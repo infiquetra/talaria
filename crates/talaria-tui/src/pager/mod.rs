@@ -440,9 +440,7 @@ impl Pager {
             x: area.x,
             y: row,
             width: area.width,
-            height: area
-                .height
-                .saturating_sub(1 + u16::try_from(banners.len()).unwrap_or(0)),
+            height: body,
         };
         self.draw_body(body_area, buf, ctx, render, &theme);
         self.draw_footer(area, buf, ctx, &theme);
@@ -598,6 +596,9 @@ impl Pager {
             width: area.width,
             height: 1,
         };
+        for x in footer.x..footer.x + footer.width {
+            buf[(x, row)].reset();
+        }
         buf.set_style(footer, theme.footer);
         let right = self.right_part(ctx);
         let right_width = right.width();

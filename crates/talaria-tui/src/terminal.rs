@@ -826,12 +826,13 @@ impl<W: io::Write> InlineTerminal<W> {
         let wrapped = self.wrapped_extra(cols);
         if rows < self.rows {
             let height_pushed = (self.rows - rows).saturating_sub(below);
-            let pushed = height_pushed.saturating_add(wrapped);
             if let Some(scrolled) = &mut self.scrolled {
                 *scrolled = scrolled.saturating_add(u32::from(height_pushed));
             }
-            self.spilled = self.spilled.saturating_add(pushed.saturating_sub(self.top));
-            self.top -= self.top.min(pushed);
+            self.spilled = self
+                .spilled
+                .saturating_add(height_pushed.saturating_sub(self.top));
+            self.top -= self.top.min(height_pushed);
             self.cursor -= self.cursor.min(height_pushed);
         } else {
             let grown = rows - self.rows;
@@ -848,6 +849,10 @@ impl<W: io::Write> InlineTerminal<W> {
             self.top += pulled - recovered;
             self.cursor += pulled;
         }
+        self.spilled = self
+            .spilled
+            .saturating_add(wrapped.saturating_sub(self.top));
+        self.top -= self.top.min(wrapped);
         self.cursor = self.cursor.min(rows.saturating_sub(1));
         self.cols = cols;
         self.rows = rows;
@@ -1091,7 +1096,7 @@ impl<W: io::Write> InlineTerminal<W> {
 
     /// Extra rows the last drawn live frame wraps into when the screen narrows to `cols`.
     fn wrapped_extra(&self, cols: u16) -> u16 {
-        if cols == 0 || cols >= self.cols || self.overlay.is_some() {
+        if cols == 0 || cols >= self.cols {
             return 0;
         }
         let area = self.previous.area;

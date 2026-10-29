@@ -273,18 +273,21 @@ impl Renderer<'_> {
                 )
             };
             let indent = " ".repeat(wrap::columns(&[Span::raw(marker.as_str())]));
-            let lines = self.sequence(
+            let mut lines = self.sequence(
                 item,
                 width.saturating_sub(indent.len()).max(1),
                 depth + 1,
                 if loose { Spacing::Item } else { Spacing::Tight },
             );
+            if lines.is_empty() {
+                lines.push(Line::default());
+            }
             result.extend(prefix(
                 lines,
                 &marker,
                 &indent,
                 self.style(Style::default()),
-                false,
+                true,
             ));
         }
         result

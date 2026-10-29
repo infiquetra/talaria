@@ -576,19 +576,24 @@ fn confirmation(state: &ConnectorsState, kind: ConfirmKind) -> String {
             "Discard changes to {}?",
             platform.map_or("", |row| row.name.as_str())
         ),
-        ConfirmKind::TogglePlatform => platform.map_or_else(String::new, |platform| {
-            format!(
-                "Turn {} {} for profile {}?{}",
-                platform.name,
-                if platform.enabled { "off" } else { "on" },
-                state.profile,
-                if platform.enabled {
-                    " Hermes stops answering there."
-                } else {
-                    ""
-                }
-            )
-        }),
+        ConfirmKind::TogglePlatform => {
+            state
+                .pending_toggle
+                .as_ref()
+                .map_or_else(String::new, |pending| {
+                    format!(
+                        "Turn {} {} for profile {}?{}",
+                        pending.name,
+                        if pending.enabled { "on" } else { "off" },
+                        state.profile,
+                        if !pending.enabled {
+                            " Hermes stops answering there."
+                        } else {
+                            ""
+                        }
+                    )
+                })
+        }
         ConfirmKind::RemoveAccount => {
             let slug = if let Pane::Connector(slug) = &state.pane {
                 slug.as_str()

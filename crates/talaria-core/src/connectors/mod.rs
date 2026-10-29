@@ -219,6 +219,7 @@ pub struct ConnectorsState {
     write: Option<WriteKind>,
     filter: String,
     prompt: Option<Prompt>,
+    pending_toggle: Option<PendingToggle>,
     pane: Pane,
     closed: bool,
     opened_tab: ConnectorsTab,
@@ -266,6 +267,13 @@ pub struct ConnectorsState {
     copy_command: Option<String>,
     restart_notice: bool,
     gateway_start_command: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PendingToggle {
+    id: String,
+    name: String,
+    enabled: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -317,6 +325,7 @@ impl ConnectorsState {
             write: None,
             filter: String::new(),
             prompt: None,
+            pending_toggle: None,
             pane: Pane::List,
             closed: false,
             opened_tab: ConnectorsTab::Connectors,

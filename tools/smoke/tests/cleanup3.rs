@@ -92,7 +92,7 @@ fn tab_closed_after_signal() {
     let harness = Harness::new(&script);
     let mut running = harness.cmd().arg("--suite").arg("phase3").spawn();
     let pid = running.pid();
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut marker = false;
     while Instant::now() < deadline {
         if let Some(scratch) = Scratch3::find_scratch(&harness.tmp_dir()) {

@@ -60,6 +60,17 @@ pub fn run(args: BenchReplayArgs) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if source.dropped_frames() > 0 {
+        eprintln!(
+            "talaria: recording is incomplete: {} dropped frames",
+            source.dropped_frames()
+        );
+        return ExitCode::from(2);
+    }
+    if source.truncated() {
+        eprintln!("talaria: recording is incomplete: truncated final record");
+        return ExitCode::from(2);
+    }
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         eprintln!("talaria: --bench-replay needs a terminal");
         return ExitCode::from(2);
