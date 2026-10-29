@@ -771,6 +771,15 @@ fn stop_confirms_settlement() {
                 .iter()
                 .any(|r| r["t"] == "run_finished" && r["outcome"] == "aborted")
         );
+        if !unconfirmed {
+            assert_eq!(
+                records(&folder)
+                    .iter()
+                    .filter(|r| r["t"] == "turn_settled")
+                    .count(),
+                2
+            );
+        }
         let frames = h.wire.frames();
         assert_eq!(
             frames
@@ -1244,6 +1253,15 @@ fn progress_control_files_match_view() {
                 .iter()
                 .any(|r| r["t"] == "run_finished" && r["outcome"] == "aborted")
         );
+        if !unconfirmed {
+            assert_eq!(
+                records(&folder)
+                    .iter()
+                    .filter(|r| r["t"] == "turn_settled")
+                    .count(),
+                2
+            );
+        }
         assert!(!folder.join("control/stop.json").exists());
         assert!(
             h.wire

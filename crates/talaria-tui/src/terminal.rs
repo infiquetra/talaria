@@ -1365,9 +1365,33 @@ impl Drop for InputThread {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         self.resume();
-        if let Some(handle) = self.handle.take() {
+        let deadline = Instant::now() + Duration::from_millis(100);
+        while !self.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if self.is_finished()
+            && let Some(handle) = self.handle.take()
+        {
             let _ = handle.join();
         }
+    }
+}
+
+fn stdin_hung_up() -> bool {
+    let stdin = io::stdin();
+    if !stdin.is_terminal() {
+        return true;
+    }
+    let fd = stdin.as_fd();
+    let timeout = timespec(Duration::ZERO);
+    let mut fds = [PollFd::new(&fd, PollFlags::IN)];
+    match poll(&mut fds, Some(&timeout)) {
+        Ok(0) => false,
+        Ok(_) => fds[0]
+            .revents()
+            .intersects(PollFlags::HUP | PollFlags::ERR | PollFlags::NVAL),
+        Err(Errno::INTR) => false,
+        Err(_) => true,
     }
 }
 
@@ -1397,6 +1421,9 @@ where
                     continue;
                 }
                 acknowledged.store(false, Ordering::SeqCst);
+                if stdin_hung_up() {
+                    break;
+                }
                 match crossterm::event::poll(INPUT_POLL) {
                     Ok(true) => match crossterm::event::read() {
                         Ok(event) => {

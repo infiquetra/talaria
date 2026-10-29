@@ -133,7 +133,10 @@ pub(crate) fn probe_lock(dir: &Path) -> io::Result<LockProbe> {
         Err(e) => return Err(e),
     };
     match file.try_lock() {
-        Ok(()) => Ok(LockProbe::Free(Some(file))),
+        Ok(()) => {
+            let _ = file.unlock();
+            Ok(LockProbe::Free(Some(file)))
+        }
         Err(fs::TryLockError::WouldBlock) => Ok(LockProbe::Held),
         Err(fs::TryLockError::Error(e)) => Err(e),
     }

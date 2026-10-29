@@ -250,6 +250,8 @@ pub fn answer_parked(
 #[derive(Clone, Debug)]
 pub(crate) struct StopTarget {
     pub key: String,
+    pub attempt: u32,
+    pub turn: u32,
     pub profile: String,
     pub session_id: String,
     pub admission_id: String,
@@ -281,11 +283,14 @@ pub(crate) fn stop_targets(records: &[RecordLine]) -> Result<Vec<StopTarget>, se
             }
             Some("turn_admitted") => {
                 let identity = (key, attempt);
+                let turn = r["turn"].as_u64().unwrap_or_default() as u32;
                 if let (Some(profile), Some(session_id)) =
                     (profiles.get(&identity), sessions.get(&identity))
                 {
                     let target = StopTarget {
                         key: identity.0.clone(),
+                        attempt: identity.1 as u32,
+                        turn,
                         profile: profile.clone(),
                         session_id: session_id.clone(),
                         admission_id: r["admission_id"].as_str().unwrap_or_default().to_owned(),

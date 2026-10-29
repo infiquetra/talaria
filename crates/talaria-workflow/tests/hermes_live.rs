@@ -138,14 +138,16 @@ fn capture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn recorder_for(name: &str) -> (hermes_client::Recorder, PathBuf) {
-    let path = capture_path(name);
+fn recorder_for(name: &str, scratch: &Path) -> (hermes_client::Recorder, PathBuf) {
+    let path = if std::env::var("TALARIA_RECORD_FIXTURE").as_deref() == Ok("1") {
+        capture_path(name)
+    } else {
+        scratch.join(name)
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
-    if path.exists() {
-        std::fs::remove_file(&path).unwrap();
-    }
+    let _ = std::fs::remove_file(&path);
     let options = hermes_client::RecorderOptions {
         endpoint: "ws://fixture.invalid/api/ws".into(),
         subprotocols: vec!["hermes-gateway-v1".into()],
@@ -273,7 +275,7 @@ async fn prepare(
     let journal = Arc::new(journal);
     let (recorder, capture) = match capture_name {
         Some(name) => {
-            let (recorder, path) = recorder_for(name);
+            let (recorder, path) = recorder_for(name, runs.path());
             (Some(recorder), Some(path))
         }
         None => (None, None),

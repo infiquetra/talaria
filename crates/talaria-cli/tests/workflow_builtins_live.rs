@@ -142,12 +142,12 @@ fn run_live(name: &str, mode: &str) {
             .collect();
         assert!(!verified.is_empty(), "positive fixture must verify a fix");
         for (i, item) in verified.iter().enumerate() {
-            let branch = item["branch"].as_str().unwrap();
+            let commit = item["commit"].as_str().unwrap();
             let checkout = temp.path().join(format!("verified-{i}"));
             let add = Command::new("git")
                 .args(["worktree", "add", "--detach"])
                 .arg(&checkout)
-                .arg(branch)
+                .arg(commit)
                 .current_dir(&repo)
                 .output()
                 .unwrap();

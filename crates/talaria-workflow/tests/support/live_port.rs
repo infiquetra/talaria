@@ -183,6 +183,7 @@ impl Capture {
                 .join("frames")
                 .join(name);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let _ = std::fs::remove_file(&path);
             let output = Recorder::create(&path, options()).unwrap();
             for frames in parts.values() {
                 for row in frames {

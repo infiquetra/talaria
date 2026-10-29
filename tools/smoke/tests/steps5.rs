@@ -350,3 +350,16 @@ fn live_require_does_not_change_a_phase5_result() {
         assert_ne!(normal.report.exit_code(), 3);
     }
 }
+
+#[test]
+fn startup_passes_with_custom_shell_prompt() {
+    let script = script_5(&[])
+        .first_initial("user:  workspace ")
+        .first_foreground(&["-zsh"]);
+    let exec = exec_5(&script, false, false, 1.0, 600);
+    assert!(
+        exec.passed("startup"),
+        "custom shell prompt without trailing $/%%/# must still pass startup: {}",
+        exec.lines()
+    );
+}

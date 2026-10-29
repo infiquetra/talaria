@@ -6293,3 +6293,35 @@ these fixtures make no live-acceptance claim.
 
 Rule: record each actual screen family before writing smoke predicates, and keep terminal
 protocol variants and wrapper exit markers explicit.
+
+## 2026-10-28 — A call recorded only as `call_intent` before a crash has not yet acquired a scheduler permit
+
+**Evidence.** `DurableBackend::resume_unfinished` in `crates/talaria-workflow/src/journal/durable.rs` and `resumed_call_intent_respects_max_in_flight` in `crates/talaria-workflow/tests/scheduler_composed.rs`. Issue #421.
+
+**Mechanism.** `DurableBackend::fresh` writes `Record::CallIntent` before awaiting `gate.acquire(..., GateReason::Fresh)` so a crash while queued still leaves an auditable call intent in `journal.jsonl`. When a runner crashes while calls are waiting at the gate, those calls have `CallHistory { intent: Some(...), last: Record::CallIntent }` and no `TurnDispatched` record. Resuming them with `GateReason::Reattach` bypassed `max_in_flight` because `Reattach` is reserved for turns already running on the gateway. Yielding once on resumed executions before new calls write `CallIntent` and acquiring `GateReason::Fresh` for `Record::CallIntent` entries restores the configured concurrency bound.
+
+**Generalizable rule.** Reserve `GateReason::Reattach` for work already running on the remote authority; a crash before `TurnDispatched` must re-enter the scheduler queue as `GateReason::Fresh`.
+
+## 2026-10-28 — Stopping an active run must append `turn_settled` when `settle_stop` observes a terminal receipt
+
+**Evidence.** `settle_stop` in `crates/talaria-workflow/src/runner/execute.rs` and `stop_confirms_settlement` in `crates/talaria-workflow/tests/runner_execute.rs`. Issue #421.
+
+**Mechanism.** When `stop` interrupts an active run, `run_once` cancels the engine task and runs `settle_stop` to send `turn.interrupt` and poll `port.receipt` until each dispatched admission reaches `AdmissionState::Terminal`. Because the engine task and its `DurableBackend::reattach` loop were already aborted before `settle_stop` polled the receipt, nobody appended `Record::TurnSettled` before `Record::RunFinished` (`outcome: Aborted`). Sharing `settled_record` between `DurableBackend` and `settle_stop` writes the terminal `Record::TurnSettled` record into the journal before `RunFinished`.
+
+**Generalizable rule.** When shutdown takes over turn settlement from a cancelled worker, the shutdown path must write the same durable settlement record before closing the journal.
+
+## 2026-10-28 — Terminal hangup can wedge `crossterm`'s reader thread on EOF unless polling checks for `HUP` and bounds `join`
+
+**Evidence.** `InputThread::drop` and `spawn_input` in `crates/talaria-tui/src/terminal.rs`. Issue #421.
+
+**Mechanism.** When a pseudo-terminal master closes, the application's `SIGHUP` handler exits the event loop and drops `InputThread`. Inside `crossterm 0.28.1`, `UnixInternalEventSource::try_read` loops `while let Ok(read_count) = self.tty.read(...)` without breaking on `Ok(0)`, so an EOF wake on a revoked terminal can spin at 100% CPU inside `crossterm::event::poll` while `InputThread::drop` blocks indefinitely in `handle.join()`. Checking `poll` for `PollFlags::HUP | PollFlags::ERR | PollFlags::NVAL` before each `crossterm::event::poll` call and bounding `InputThread::drop`'s wait before detaching allow the process to exit cleanly on terminal loss.
+
+**Generalizable rule.** Guard blocking third-party terminal readers against revoked descriptors and bound shutdown joins when the process is already exiting.
+
+## 2026-10-28 — Advisory `flock` locks survive across concurrent test `fork` calls until explicitly unlocked
+
+**Evidence.** `probe_lock` in `crates/talaria-workflow/src/runner/runs.rs`, `RunJournal::drop` in `crates/talaria-workflow/src/journal/store.rs`, and `crates/talaria-workflow/tests/runner_runs.rs`. Issue #421.
+
+**Mechanism.** BSD/POSIX `flock` locks are associated with the underlying kernel file description, not a single process or descriptor. When another test thread spawns a child subprocess (`Command::spawn`) while a test holds an `flock` on `run.lock`, the child inherits the open descriptor and keeps the lock alive until the child exits, even after the parent drops its `File`. Calling `file.unlock()` explicitly in `probe_lock`, `RunJournal::drop`, and lock-probing tests releases the kernel lock immediately regardless of concurrent descriptor inheritance.
+
+**Generalizable rule.** Explicitly `unlock()` advisory file locks before dropping the descriptor whenever other threads in the process may spawn child processes.

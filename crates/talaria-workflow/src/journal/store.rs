@@ -560,6 +560,7 @@ impl Drop for RunJournal {
         {
             task.abort();
         }
+        let _ = self._lock.unlock();
     }
 }
 

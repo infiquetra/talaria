@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const DEFAULT_MAX_IN_FLIGHT: u32 = 10;
+pub const DEFAULT_MAX_IN_FLIGHT: u32 = 1;
 pub fn talaria_home() -> Option<PathBuf> {
     std::env::var_os("TALARIA_CONFIG_DIR")
         .filter(|s| !s.is_empty())
@@ -129,7 +129,7 @@ version = 1                     # optional; only 1 is accepted
 # effort = "high"
 #
 [limits]
-max_in_flight = 10              # 1..=64; default 10
+max_in_flight = 1               # 1..=64; default 1
 
 # [providers.ollama-cloud]        # optional per-provider width
 # max_in_flight = 4               # 1..=64; default: the global value
