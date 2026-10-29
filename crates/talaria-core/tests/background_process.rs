@@ -1,9 +1,4 @@
-//! Process acceptance checks reuse the original independently authored suites.
-
-#[path = "background_model.rs"]
-mod model;
-#[path = "background_output.rs"]
-mod output;
+//! Process completion signals and foreground tool refresh.
 
 use talaria_core::background::{
     BackgroundEffect, BackgroundEvent, BackgroundSignal, BackgroundWork, ListedProcess, ProcessId,

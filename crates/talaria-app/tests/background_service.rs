@@ -1,8 +1,3 @@
-//! Service acceptance checks reuse the original independently authored suite.
-
-#[path = "background_wire.rs"]
-mod wire;
-
 use hermes_client::liveness::{LinkEvent, LinkState};
 use talaria_app::app::{AppEffect, AppMessage, AppState, UserAction, update};
 use talaria_app::sessions::{OpenError, OpenedSession, SessionInfoSummary};
