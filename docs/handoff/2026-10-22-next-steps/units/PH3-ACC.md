@@ -473,9 +473,9 @@ cargo test -p hermes-client --test fixture_scan
 cargo test -p talaria-core --test subagent_tree --test subagent_batch --test commands_local_agents
 cargo test -p talaria-app --test subagent_wire
 cargo test -p talaria-tui --test subagent_view
-cargo test -p talaria-core --test background_process --test background_props --test background_bg --test background_commands --test background_clock
-cargo test -p talaria-tui --test background_render
-cargo test -p talaria-app --test background_service
+cargo test -p talaria-core --test background_process --test background_output --test background_model --test background_bg --test background_schedule --test background_clock
+cargo test -p talaria-tui --test background_view
+cargo test -p talaria-app --test background_service --test background_wire
 cargo test -p talaria-core --test fleet_attention --test alert_gate
 cargo test -p talaria-tui --test status_fleet_segments --test status_line --test attention_keys --test fleet_alert_bytes --test keymap_doc
 cargo test -p talaria-app --test attention_fleet --test config_fleet_attention --test config_doc

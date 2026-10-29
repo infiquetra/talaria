@@ -6336,11 +6336,12 @@ protocol variants and wrapper exit markers explicit.
 
 ## 2026-10-29 — Cargo discovers imported integration suites independently
 
-The background property, command and render wrappers imported complete test files that Cargo
-already discovered as integration targets; the process wrapper imported two such files alongside
-two unique cases. Compiler-collected inventories identify 40 repeated registrations across these
-imports. Keep the original output, model, schedule and view targets and the two local process
-cases; both output properties retain their 256-case budgets. No shared helper extraction is needed.
+Background, builtin registry and live workflow wrappers imported complete test files that Cargo
+already discovered as integration targets. Compiler-collected inventories identify 55 repeated
+registrations, including two ignored live fixtures. Keep the original suites and the unique process,
+service and detached workflow cases; both output properties retain their 256-case budgets and live
+ignore policies stay unchanged. Bounded acceptance commands must select the canonical targets.
+No shared helper extraction is needed; ignored copies provide no default test-execution saving.
 
 Rule: compare crate, original source case and configuration before removing a wrapper, and preserve
 unique cases and per-property budgets rather than treating registration counts as generated cases.
