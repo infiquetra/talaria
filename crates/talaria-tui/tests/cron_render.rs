@@ -59,6 +59,116 @@ fn row(name: &str, state: &str) -> RowView {
 }
 
 #[test]
+fn focused_delivery_target_is_visible_in_a_short_form() {
+    let mut form = FormView {
+        fields: vec![
+            FieldView {
+                field: FormField::Name,
+                label: "Name".into(),
+                value: "job".into(),
+                hint: None,
+                error: None,
+            },
+            FieldView {
+                field: FormField::Deliver,
+                label: "Deliver".into(),
+                value: String::new(),
+                hint: None,
+                error: None,
+            },
+        ],
+        focus: FormField::Deliver,
+        targets: (0..8)
+            .map(|index| (format!("destination-{index}"), true))
+            .collect(),
+        deliver_index: 0,
+        status: vec![],
+        locked: false,
+        cursor: None,
+    };
+    for selected in 0..form.targets.len() {
+        form.deliver_index = selected;
+        let shown = CronView {
+            title: "Scheduled jobs".into(),
+            banner: None,
+            body: CronBody::Form(form.clone()),
+            notice: None,
+            question: None,
+            hints: "ctrl+s save · esc cancel".into(),
+        };
+        let screen = paint(&shown, 60, 12);
+        assert!(
+            screen.contains(&format!("> destination-{selected}")),
+            "{screen}"
+        );
+        assert!(screen.contains("ctrl+s save"), "{screen}");
+    }
+}
+
+#[test]
+fn run_details_show_later_metadata_and_multiline_preview_when_scrolled() {
+    let mut detail = DetailView {
+        fields: vec![],
+        runs: RunsView::Empty,
+        run_card: Some(vec![
+            ("Id".into(), vec!["finished".into()]),
+            ("Source".into(), vec!["cron".into()]),
+            ("Started".into(), vec!["before".into()]),
+            ("Ended".into(), vec!["after".into()]),
+            ("Duration".into(), vec!["1m".into()]),
+            ("Model".into(), vec!["example".into()]),
+            ("Messages".into(), vec!["1".into()]),
+            ("Tool calls".into(), vec!["0".into()]),
+            ("Tokens".into(), vec!["100/2".into()]),
+            ("End reason".into(), vec!["completed".into()]),
+            ("Title".into(), vec!["daily digest".into()]),
+            (
+                "Preview".into(),
+                vec!["first line".into(), "last line".into()],
+            ),
+        ]),
+        focus: CardFocus::History,
+        fields_scroll: 0,
+        run_scroll: 0,
+    };
+    detail.run_scroll = 12;
+    for (cols, rows) in [(60, 12), (80, 24)] {
+        let shown = CronView {
+            title: "Scheduled jobs".into(),
+            banner: None,
+            body: CronBody::Detail(detail.clone()),
+            notice: None,
+            question: None,
+            hints: "esc back".into(),
+        };
+        let screen = paint(&shown, cols, rows);
+        for text in [
+            "End reason: completed",
+            "Title: daily digest",
+            "Preview: first line",
+            "last line",
+            "esc back",
+        ] {
+            assert!(screen.contains(text), "{screen}");
+        }
+    }
+    detail.run_scroll = usize::MAX;
+    let shown = CronView {
+        title: "Scheduled jobs".into(),
+        banner: None,
+        body: CronBody::Detail(detail),
+        notice: None,
+        question: None,
+        hints: "esc back".into(),
+    };
+    let enlarged = paint(&shown, 80, 24);
+    assert!(
+        enlarged.contains("Id: finished") && enlarged.contains("last line"),
+        "{enlarged}"
+    );
+}
+
+#[test]
 fn list_snapshots() {
     let loading = CronView {
         title: "Scheduled jobs · profile fixture".into(),
@@ -126,6 +236,7 @@ fn card_and_form_snapshots() {
             run_card: None,
             focus: CardFocus::History,
             fields_scroll: 0,
+            run_scroll: 0,
         }),
         notice: None,
         question: None,

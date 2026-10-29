@@ -112,14 +112,13 @@ pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: 
         if Line::from(title.as_str()).width() > usize::from(width.saturating_sub(2)) {
             lines.insert(0, title.clone());
         }
-        let body_width = usize::from(width.saturating_sub(2)).max(1);
+        let body_width = width.saturating_sub(2).max(1);
         let body_height: usize = lines
             .iter()
             .map(|line| {
-                Line::from(line.as_str())
-                    .width()
-                    .max(1)
-                    .div_ceil(body_width)
+                Paragraph::new(line.as_str())
+                    .wrap(Wrap { trim: false })
+                    .line_count(body_width)
             })
             .sum();
         let height = inner.height.min(
@@ -147,8 +146,26 @@ pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: 
                 content.width,
                 content.height.saturating_sub(1),
             );
+            let scroll = if is_form {
+                lines
+                    .iter()
+                    .position(|line| line.starts_with("› "))
+                    .map_or(0, |selected| {
+                        let count = |line: &String| {
+                            Paragraph::new(line.as_str())
+                                .wrap(Wrap { trim: false })
+                                .line_count(body.width)
+                        };
+                        let start: usize = lines[..selected].iter().map(count).sum();
+                        let end = start + count(&lines[selected]);
+                        end.saturating_sub(usize::from(body.height)).min(start)
+                    })
+            } else {
+                0
+            };
             Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
                 .wrap(Wrap { trim: false })
+                .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0))
                 .render(body, buf);
             Paragraph::new(safe(&card.footer)).render(
                 Rect::new(content.x, content.bottom() - 1, content.width, 1),

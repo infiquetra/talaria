@@ -10,6 +10,7 @@ use talaria_core::cron::{FormField, FormView};
 pub(super) fn draw(view: &FormView, area: Rect, buf: &mut Buffer) {
     let mut lines: Vec<(String, Style)> = Vec::new();
     let mut cursor = None;
+    let mut focused = 0;
     for field in &view.fields {
         let style = if field.field == view.focus {
             Style::default()
@@ -19,6 +20,9 @@ pub(super) fn draw(view: &FormView, area: Rect, buf: &mut Buffer) {
             Style::default()
         };
         let first_row = lines.len();
+        if field.field == view.focus {
+            focused = first_row;
+        }
         if field.field == view.focus
             && let Some((line, column)) = view.cursor
         {
@@ -44,6 +48,9 @@ pub(super) fn draw(view: &FormView, area: Rect, buf: &mut Buffer) {
         ));
         lines.extend(values.map(|value| (format!("  {value}"), style)));
         if field.field == FormField::Deliver {
+            if field.field == view.focus && !view.targets.is_empty() {
+                focused = lines.len() + view.deliver_index.min(view.targets.len() - 1);
+            }
             for (index, (target, selectable)) in view.targets.iter().enumerate() {
                 lines.push((
                     format!(
@@ -70,17 +77,11 @@ pub(super) fn draw(view: &FormView, area: Rect, buf: &mut Buffer) {
     for status in &view.status {
         lines.push((status.clone(), Style::default().fg(Color::Yellow)));
     }
-    let focused = view
-        .fields
-        .iter()
-        .take_while(|field| field.field != view.focus)
-        .map(|field| {
-            field.value.split('\n').count()
-                + usize::from(field.hint.is_some())
-                + usize::from(field.error.is_some())
-        })
-        .sum::<usize>();
-    let focus_row = cursor.map_or(focused, |(row, _)| row);
+    let focus_row = if view.focus == FormField::Deliver {
+        focused
+    } else {
+        cursor.map_or(focused, |(row, _)| row)
+    };
     let start = focus_row.saturating_sub(usize::from(area.height).saturating_sub(2));
     for (row, (line, style)) in lines
         .iter()

@@ -257,43 +257,144 @@ fn left_until(end: Instant) -> Option<Duration> {
         .filter(|left| !left.is_zero())
 }
 
-/// Read a probe reply from `fd` until the marker or `deadline`. Never writes.
-///
-/// The descriptor is read directly, never through the buffered standard input, so no byte typed
-/// after the reply is held back from the key reader. Without a marker by the deadline, input is
-/// discarded until it has been quiet for 50 ms (at most 250 ms more), which takes most late
-/// replies. End of file stops at once.
-pub fn read_probe_reply(fd: impl AsFd, deadline: Duration) -> io::Result<ProbeReply> {
+/// Separate only recognized probe replies from terminal input.
+fn split_probe_input(bytes: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut replies = Vec::new();
+    let mut input = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let rest = &bytes[at..];
+        // An unfinished private probe reply must not become composer text after a timeout.
+        if rest.starts_with(b"\x1b[?") {
+            match scan_sequence(&rest[2..]) {
+                Scan::Incomplete => break,
+                Scan::Invalid => {
+                    if let Some(next) = rest[2..].iter().position(|byte| *byte == 0x1b) {
+                        at += 2 + next;
+                        continue;
+                    }
+                }
+                Scan::Complete(_) => {}
+            }
+        }
+        if rest.starts_with(b"\x1b]10;") || rest.starts_with(b"\x1b]11;") {
+            match osc_reply(rest) {
+                Osc::Incomplete => break,
+                Osc::Broken(len) => {
+                    at += len;
+                    continue;
+                }
+                Osc::Complete(_) => {}
+            }
+        }
+        let length = if rest.starts_with(b"\x1b[") {
+            match scan_sequence(&rest[2..]) {
+                Scan::Complete(sequence)
+                    if matches!(
+                        (sequence.private, sequence.dollar, sequence.final_byte),
+                        (false, false, b'R') if sequence.params.len() == 2
+                    ) || matches!(
+                        (sequence.private, sequence.dollar, sequence.final_byte),
+                        (true, false, b'u') | (_, false, b'c')
+                    ) || matches!(
+                        (sequence.private, sequence.dollar, sequence.final_byte),
+                        (true, true, b'y') if sequence.params.first() == Some(&2026)
+                    ) =>
+                {
+                    Some(2 + sequence.len)
+                }
+                _ => None,
+            }
+        } else if rest.starts_with(b"\x1b]") {
+            match osc_reply(rest) {
+                Osc::Complete(len)
+                    if crate::theme::detect::parse_osc_color(&rest[..len])
+                        .is_some_and(|(index, _)| index == 10 || index == 11) =>
+                {
+                    Some(len)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(len) = length {
+            replies.extend_from_slice(&rest[..len]);
+            at += len;
+        } else {
+            input.push(bytes[at]);
+            at += 1;
+        }
+    }
+    (replies, input)
+}
+
+/// Read replies and return any ordinary input consumed before the end marker.
+/// Bytes after the marker remain in the descriptor for the normal key reader.
+pub fn read_probe_reply_with_input(
+    fd: impl AsFd,
+    deadline: Duration,
+) -> io::Result<(ProbeReply, Vec<u8>)> {
     let fd = fd.as_fd();
     let end = Instant::now() + deadline;
-    let mut reply = Vec::new();
-    let mut chunk = [0u8; 256];
+    let mut bytes = Vec::new();
+    let mut last_escape = None;
+    let mut chunk = [0u8; 1];
+    let mut complete = false;
     while let Some(left) = left_until(end) {
         if !wait_readable(fd, left)? {
             continue;
         }
         match read_some(fd, &mut chunk)? {
-            Some(0) => return Ok(ProbeReply::default()),
-            Some(count) => reply.extend_from_slice(&chunk[..count]),
+            Some(0) => break,
+            Some(_) => {
+                bytes.push(chunk[0]);
+                if chunk[0] == 0x1b {
+                    last_escape = Some(bytes.len() - 1);
+                }
+            }
             None => continue,
         }
-        let (parsed, complete) = parse_probe_reply(&reply);
-        if complete {
-            return Ok(parsed);
-        }
-    }
-
-    let drain_end = Instant::now() + DRAIN_LIMIT;
-    while let Some(left) = left_until(drain_end) {
-        if !wait_readable(fd, left.min(DRAIN_QUIET))? {
-            break;
-        }
-        if read_some(fd, &mut chunk)? == Some(0) {
+        if chunk[0] == b'c'
+            && let Some(start) = last_escape
+            && bytes[start..].starts_with(b"\x1b[")
+            && let Scan::Complete(sequence) = scan_sequence(&bytes[start + 2..])
+            && !sequence.dollar
+            && sequence.final_byte == b'c'
+        {
+            complete = true;
             break;
         }
     }
-    Ok(ProbeReply::default())
+    if !complete {
+        let drain_end = Instant::now() + DRAIN_LIMIT;
+        while let Some(left) = left_until(drain_end) {
+            if !wait_readable(fd, left.min(DRAIN_QUIET))? {
+                break;
+            }
+            match read_some(fd, &mut chunk)? {
+                Some(0) => break,
+                Some(_) => bytes.push(chunk[0]),
+                None => {}
+            }
+        }
+    }
+    let (replies, input) = split_probe_input(&bytes);
+    let reply = if complete {
+        parse_probe_reply(&replies).0
+    } else {
+        ProbeReply::default()
+    };
+    Ok((reply, input))
 }
+
+/// Read the probe answers, discarding ordinary input. Use `read_probe_reply_with_input` when
+/// the input will be handed to a key reader.
+pub fn read_probe_reply(fd: impl AsFd, deadline: Duration) -> io::Result<ProbeReply> {
+    read_probe_reply_with_input(fd, deadline).map(|(reply, _)| reply)
+}
+
+static PROBE_INPUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
 /// Write the probe query and read the reply.
 ///
@@ -310,7 +411,13 @@ pub fn probe_startup(deadline: Duration) -> Result<ProbeReply, TerminalError> {
         .write_all(PROBE_QUERY)
         .and_then(|()| stdout.flush())
         .map_err(TerminalError::Io)?;
-    read_probe_reply(&stdin, deadline).map_err(TerminalError::Io)
+    let (reply, input) =
+        read_probe_reply_with_input(&stdin, deadline).map_err(TerminalError::Io)?;
+    PROBE_INPUT
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .extend(input);
+    Ok(reply)
 }
 
 /// The terminal size as (columns, rows).
@@ -1395,6 +1502,272 @@ fn stdin_hung_up() -> bool {
     }
 }
 
+fn buffered_input_needs_more(bytes: &[u8]) -> bool {
+    let starts = bytes
+        .windows(6)
+        .filter(|part| *part == b"\x1b[200~")
+        .count();
+    let ends = bytes
+        .windows(6)
+        .filter(|part| *part == b"\x1b[201~")
+        .count();
+    if starts > ends {
+        return true;
+    }
+    if std::str::from_utf8(bytes).is_err_and(|error| error.error_len().is_none()) {
+        return true;
+    }
+    let Some(start) = bytes.iter().rposition(|byte| *byte == 0x1b) else {
+        return false;
+    };
+    let tail = &bytes[start..];
+    tail == b"\x1b"
+        || (tail.starts_with(b"\x1b[")
+            && !tail[2..].iter().any(|byte| (0x40..=0x7e).contains(byte)))
+        || (tail.starts_with(b"\x1bO") && tail.len() < 3)
+}
+
+fn probe_event(event: termwiz::input::InputEvent) -> Option<crossterm::event::Event> {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use termwiz::input::{InputEvent, KeyCode as InputCode, Modifiers};
+    match event {
+        InputEvent::Paste(text) => Some(Event::Paste(text)),
+        InputEvent::Key(key) => {
+            let mut modifiers = KeyModifiers::NONE;
+            for (source, target) in [
+                (Modifiers::SHIFT, KeyModifiers::SHIFT),
+                (Modifiers::ALT, KeyModifiers::ALT),
+                (Modifiers::CTRL, KeyModifiers::CONTROL),
+                (Modifiers::SUPER, KeyModifiers::SUPER),
+            ] {
+                if key.modifiers.contains(source) {
+                    modifiers |= target;
+                }
+            }
+            let code = match key.key {
+                InputCode::Char(ch) => {
+                    if ch.is_uppercase() && modifiers.is_empty() {
+                        modifiers |= KeyModifiers::SHIFT;
+                    }
+                    KeyCode::Char(ch)
+                }
+                InputCode::Backspace => KeyCode::Backspace,
+                InputCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => KeyCode::BackTab,
+                InputCode::Tab => KeyCode::Tab,
+                InputCode::Enter => KeyCode::Enter,
+                InputCode::Escape => KeyCode::Esc,
+                InputCode::LeftArrow | InputCode::ApplicationLeftArrow => KeyCode::Left,
+                InputCode::RightArrow | InputCode::ApplicationRightArrow => KeyCode::Right,
+                InputCode::UpArrow | InputCode::ApplicationUpArrow => KeyCode::Up,
+                InputCode::DownArrow | InputCode::ApplicationDownArrow => KeyCode::Down,
+                InputCode::PageUp | InputCode::KeyPadPageUp => KeyCode::PageUp,
+                InputCode::PageDown | InputCode::KeyPadPageDown => KeyCode::PageDown,
+                InputCode::Home | InputCode::KeyPadHome => KeyCode::Home,
+                InputCode::End | InputCode::KeyPadEnd => KeyCode::End,
+                InputCode::Insert => KeyCode::Insert,
+                InputCode::Delete => KeyCode::Delete,
+                InputCode::Function(number) => KeyCode::F(number),
+                _ => return None,
+            };
+            Some(Event::Key(KeyEvent::new(code, modifiers)))
+        }
+        _ => None,
+    }
+}
+
+/// Decode CSI-u keys, including Unicode and key release events that the fallback parser does
+/// not handle. Ordinary input is otherwise decoded by the same streaming fallback parser.
+fn enhanced_probe_key(sequence: &[u8]) -> Option<crossterm::event::Event> {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    let text = std::str::from_utf8(sequence.strip_prefix(b"\x1b[")?.strip_suffix(b"u")?).ok()?;
+    let mut parts = text.split(';');
+    let mut codes = parts.next()?.split(':');
+    let number = codes.next()?.parse::<u32>().ok()?;
+    let mut flags = parts.next().unwrap_or("1").split(':');
+    let mask = flags.next()?.parse::<u8>().ok()?.saturating_sub(1);
+    let kind = match flags.next().unwrap_or("1") {
+        "2" => KeyEventKind::Repeat,
+        "3" => KeyEventKind::Release,
+        _ => KeyEventKind::Press,
+    };
+    let mut modifiers = KeyModifiers::NONE;
+    for (bit, flag) in [
+        (1, KeyModifiers::SHIFT),
+        (2, KeyModifiers::ALT),
+        (4, KeyModifiers::CONTROL),
+        (8, KeyModifiers::SUPER),
+        (16, KeyModifiers::HYPER),
+        (32, KeyModifiers::META),
+    ] {
+        if mask & bit != 0 {
+            modifiers |= flag;
+        }
+    }
+    let mut state = KeyEventState::NONE;
+    if mask & 64 != 0 {
+        state |= KeyEventState::CAPS_LOCK;
+    }
+    if mask & 128 != 0 {
+        state |= KeyEventState::NUM_LOCK;
+    }
+    if (57399..=57427).contains(&number) {
+        state |= KeyEventState::KEYPAD;
+    }
+    let mut code = match number {
+        27 => KeyCode::Esc,
+        13 => KeyCode::Enter,
+        9 if modifiers.contains(KeyModifiers::SHIFT) => KeyCode::BackTab,
+        9 => KeyCode::Tab,
+        127 => KeyCode::Backspace,
+        57358 => KeyCode::CapsLock,
+        57359 => KeyCode::ScrollLock,
+        57360 => KeyCode::NumLock,
+        57361 => KeyCode::PrintScreen,
+        57362 => KeyCode::Pause,
+        57363 => KeyCode::Menu,
+        57376..=57398 => KeyCode::F((number - 57363) as u8),
+        57399..=57408 => KeyCode::Char(char::from_digit(number - 57399, 10)?),
+        57409 => KeyCode::Char('.'),
+        57410 => KeyCode::Char('/'),
+        57411 => KeyCode::Char('*'),
+        57412 => KeyCode::Char('-'),
+        57413 => KeyCode::Char('+'),
+        57414 => KeyCode::Enter,
+        57415 => KeyCode::Char('='),
+        57416 => KeyCode::Char(','),
+        57417 => KeyCode::Left,
+        57418 => KeyCode::Right,
+        57419 => KeyCode::Up,
+        57420 => KeyCode::Down,
+        57421 => KeyCode::PageUp,
+        57422 => KeyCode::PageDown,
+        57423 => KeyCode::Home,
+        57424 => KeyCode::End,
+        57425 => KeyCode::Insert,
+        57426 => KeyCode::Delete,
+        57427 => KeyCode::KeypadBegin,
+        _ => KeyCode::Char(char::from_u32(number)?),
+    };
+    if modifiers.contains(KeyModifiers::SHIFT)
+        && let Some(shifted) = codes
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .and_then(char::from_u32)
+    {
+        code = KeyCode::Char(shifted);
+        modifiers.remove(KeyModifiers::SHIFT);
+    }
+    Some(Event::Key(KeyEvent::new_with_kind_and_state(
+        code, modifiers, kind, state,
+    )))
+}
+
+fn decode_probe_events(input: &[u8]) -> Vec<crossterm::event::Event> {
+    let mut parser = termwiz::input::InputParser::new();
+    let mut events = Vec::new();
+    let mut start = 0;
+    let mut at = 0;
+    let mut pasting = false;
+    while at < input.len() {
+        if input[at..].starts_with(b"\x1b[200~") {
+            pasting = true;
+            at += 6;
+            continue;
+        }
+        if input[at..].starts_with(b"\x1b[201~") {
+            pasting = false;
+            at += 6;
+            continue;
+        }
+        if !pasting
+            && input[at..].starts_with(b"\x1b[")
+            && let Some(end) = input[at + 2..]
+                .iter()
+                .position(|byte| (0x40..=0x7e).contains(byte))
+                .map(|end| at + 2 + end)
+            && input[end] == b'u'
+            && let Some(event) = enhanced_probe_key(&input[at..=end])
+        {
+            events.extend(
+                parser
+                    .parse_as_vec(&input[start..at], false)
+                    .into_iter()
+                    .filter_map(probe_event),
+            );
+            events.push(event);
+            at = end + 1;
+            start = at;
+        } else {
+            at += 1;
+        }
+    }
+    events.extend(
+        parser
+            .parse_as_vec(&input[start..], false)
+            .into_iter()
+            .filter_map(probe_event),
+    );
+    events
+}
+
+#[cfg(test)]
+mod probe_input_tests {
+    use super::decode_probe_events;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    #[test]
+    fn buffered_keys_keep_modifiers_kinds_and_literal_paste() {
+        let events = decode_probe_events(b"\x1b[233;5u\x1b[97;1:3u\x1b[200~\x1b[233u\x1b[201~");
+        assert_eq!(
+            events,
+            vec![
+                Event::Key(KeyEvent::new(KeyCode::Char('é'), KeyModifiers::CONTROL)),
+                Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Char('a'),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Release
+                )),
+                Event::Paste("\x1b[233u".into()),
+            ]
+        );
+    }
+}
+
+fn take_probe_events(stop: &AtomicBool, paused: &AtomicBool) -> Vec<crossterm::event::Event> {
+    let mut input =
+        std::mem::take(&mut *PROBE_INPUT.lock().unwrap_or_else(PoisonError::into_inner));
+    if input.is_empty() {
+        return Vec::new();
+    }
+    let stdin = io::stdin();
+    while buffered_input_needs_more(&input)
+        && !stop.load(Ordering::SeqCst)
+        && !paused.load(Ordering::SeqCst)
+    {
+        match wait_readable(stdin.as_fd(), INPUT_POLL) {
+            Ok(true) => {
+                let mut byte = [0u8; 1];
+                match read_some(stdin.as_fd(), &mut byte) {
+                    Ok(Some(1)) => input.push(byte[0]),
+                    Ok(None) => {}
+                    _ => break,
+                }
+            }
+            Ok(false) if input.last() == Some(&0x1b) => break,
+            Ok(false) => {}
+            Err(_) => break,
+        }
+    }
+    if paused.load(Ordering::SeqCst) {
+        PROBE_INPUT
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .splice(0..0, input);
+        return Vec::new();
+    }
+    decode_probe_events(&input)
+}
+
 /// Start the key reader. `None` when standard input is not a terminal. The closure
 /// returns false to stop the thread.
 pub fn spawn_input<F>(mut forward: F) -> Option<InputThread>
@@ -1421,6 +1794,12 @@ where
                     continue;
                 }
                 acknowledged.store(false, Ordering::SeqCst);
+                for event in take_probe_events(&stop, &paused) {
+                    if !forward(event) {
+                        finished.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                }
                 if stdin_hung_up() {
                     break;
                 }

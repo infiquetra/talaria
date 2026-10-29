@@ -85,6 +85,143 @@ fn open_card(jobs: Vec<JobRow>) -> CronState {
 }
 
 #[test]
+fn open_run_details_respond_to_scrolling() {
+    let job = support::job("a1b2c3d4e5f6", "daily digest", "scheduled");
+    let mut state = open_card(vec![job.clone()]);
+    let mut runs = fixture_runs();
+    runs[1].preview = Some(format!("{}\nlast preview line", "界".repeat(100)));
+    update(
+        &mut state,
+        CronInput::RunsLoaded {
+            job_id: job.job_id,
+            seq: 2,
+            result: Ok(runs),
+        },
+        support::clock(),
+        support::WALL,
+    );
+    for key in [CronKey::Tab, CronKey::Down, CronKey::Enter] {
+        update(
+            &mut state,
+            CronInput::Key(key),
+            support::clock(),
+            support::WALL,
+        );
+    }
+    let before = view(&state, support::WALL);
+    assert!(matches!(&before.body, CronBody::Detail(card) if card.run_card.is_some()));
+    let CronBody::Detail(card) = &before.body else {
+        panic!("detail")
+    };
+    let preview = &card
+        .run_card
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|(name, _)| name == "Preview")
+        .unwrap()
+        .1;
+    assert_eq!(preview.last().unwrap(), "last preview line");
+    assert_eq!(preview[..preview.len() - 1].concat(), "界".repeat(100));
+    update(
+        &mut state,
+        CronInput::Key(CronKey::Down),
+        support::clock(),
+        support::WALL,
+    );
+    let current = view(&state, support::WALL);
+    assert_ne!(current, before);
+    let CronBody::Detail(card) = current.body else {
+        panic!("detail")
+    };
+    assert_eq!(card.run_scroll, 1);
+    update(
+        &mut state,
+        CronInput::Key(CronKey::PageDown),
+        support::clock(),
+        support::WALL,
+    );
+    let CronBody::Detail(card) = view(&state, support::WALL).body else {
+        panic!("detail")
+    };
+    assert!(card.run_scroll > 1);
+    update(
+        &mut state,
+        CronInput::Key(CronKey::PageUp),
+        support::clock(),
+        support::WALL,
+    );
+    let CronBody::Detail(card) = view(&state, support::WALL).body else {
+        panic!("detail")
+    };
+    assert!(card.run_scroll < 2);
+    update(
+        &mut state,
+        CronInput::Key(CronKey::End),
+        support::clock(),
+        support::WALL,
+    );
+    let CronBody::Detail(end) = view(&state, support::WALL).body else {
+        panic!("detail")
+    };
+    assert!(end.run_scroll > 0);
+    let effects = update(
+        &mut state,
+        CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::Reload)),
+        support::clock(),
+        support::WALL,
+    );
+    let seq = effects
+        .iter()
+        .find_map(|effect| match effect {
+            CronEffect::Runs { seq, .. } => Some(*seq),
+            _ => None,
+        })
+        .expect("refresh requests the open history");
+    update(
+        &mut state,
+        CronInput::RunsLoaded {
+            job_id: "a1b2c3d4e5f6".into(),
+            seq,
+            result: Ok(fixture_runs()),
+        },
+        support::clock(),
+        support::WALL,
+    );
+    let CronBody::Detail(refreshed) = view(&state, support::WALL).body else {
+        panic!("detail")
+    };
+    let count: usize = refreshed
+        .run_card
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|(_, lines)| lines.len().max(1))
+        .sum();
+    assert!(refreshed.run_scroll < count);
+    update(
+        &mut state,
+        CronInput::Key(CronKey::Up),
+        support::clock(),
+        support::WALL,
+    );
+    let CronBody::Detail(after_up) = view(&state, support::WALL).body else {
+        panic!("detail")
+    };
+    assert_eq!(after_up.run_scroll, count - 2);
+    update(
+        &mut state,
+        CronInput::Key(CronKey::Home),
+        support::clock(),
+        support::WALL,
+    );
+    let CronBody::Detail(home) = view(&state, support::WALL).body else {
+        panic!("detail")
+    };
+    assert_eq!(home.run_scroll, 0);
+}
+
+#[test]
 fn run_rows_from_v0224_reply() {
     let runs = fixture_runs();
     assert_eq!(runs.len(), 6);

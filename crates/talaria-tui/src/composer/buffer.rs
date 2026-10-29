@@ -137,7 +137,7 @@ fn position_at(text: &str, row: &Row, column: usize, last_row: bool) -> usize {
 pub struct Draft {
     text: String,
     caret: usize,
-    preferred_col: usize,
+    preferred_col: Option<usize>,
     kill: String,
     revision: u64,
 }
@@ -225,28 +225,16 @@ impl Draft {
     /// Put the caret at a byte offset, on a boundary.
     pub(crate) fn set_caret(&mut self, at: usize) {
         self.caret = snap(&self.text, at);
-        self.preferred_col = self.current_column(None);
+        self.preferred_col = None;
     }
 
     fn edited(&mut self) {
         self.revision += 1;
-        self.preferred_col = self.current_column(None);
+        self.preferred_col = None;
     }
 
-    fn current_column(&self, rows: Option<&[Row]>) -> usize {
-        let logical;
-        let rows = match rows {
-            Some(rows) => rows,
-            None => {
-                logical = logical_rows(&self.text);
-                &logical
-            }
-        };
-        if rows.is_empty() {
-            return 0;
-        }
-        let row = &rows[row_of(rows, self.caret)];
-        column_in(&self.text, row, self.caret)
+    pub(crate) fn reset_preferred_column(&mut self) {
+        self.preferred_col = None;
     }
 
     fn remove(&mut self, from: usize, to: usize) -> String {
@@ -329,7 +317,10 @@ impl Draft {
             return false;
         }
         let last = row - 1 == rows.len() - 1;
-        self.caret = position_at(&self.text, &rows[row - 1], self.preferred_col, last);
+        let column = *self
+            .preferred_col
+            .get_or_insert_with(|| column_in(&self.text, &rows[row], self.caret));
+        self.caret = position_at(&self.text, &rows[row - 1], column, last);
         true
     }
 
@@ -340,7 +331,10 @@ impl Draft {
             return false;
         }
         let last = row + 1 == rows.len() - 1;
-        self.caret = position_at(&self.text, &rows[row + 1], self.preferred_col, last);
+        let column = *self
+            .preferred_col
+            .get_or_insert_with(|| column_in(&self.text, &rows[row], self.caret));
+        self.caret = position_at(&self.text, &rows[row + 1], column, last);
         true
     }
 

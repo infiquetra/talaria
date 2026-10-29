@@ -110,6 +110,7 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
         return;
     }
     let mut lines = Vec::new();
+    let mut editor = None;
     if let Some(confirm) = &view.confirm {
         lines.extend(confirm.lines.iter().map(|s| clean(s)));
         lines.push(String::new());
@@ -143,6 +144,14 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
         for field in &card.fields {
             let width = usize::from(area.width);
             let label_width = (width / 3).min(28);
+            if view.editing && field.selected {
+                editor = Some((
+                    lines.len(),
+                    label_width + 4,
+                    field.value.clone(),
+                    field.cursor.unwrap_or_else(|| field.value.chars().count()),
+                ));
+            }
             lines.push(format!(
                 "{} {}{} {}",
                 if field.selected { ">" } else { " " },
@@ -158,7 +167,6 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
         if let Some(banner) = &view.banner {
             lines.push(clean(banner));
         }
-        lines.push(footer(view));
     } else {
         lines.push(clean(&view.title));
         if let Some(banner) = &view.banner {
@@ -203,7 +211,6 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
             lines.push(format!("Curator running · {} s", follow.elapsed_s));
             lines.extend(follow.lines.iter().map(|s| clean(s)));
         }
-        lines.push(footer(view));
     }
     // Keep the selected row reachable when a provider or its settings exceed the viewport.
     let selected = if view.confirm.is_none() {
@@ -217,27 +224,47 @@ pub fn draw_memory(view: &MemoryView, area: Rect, buf: &mut Buffer) {
         let wrapped_rows: usize = lines[..row]
             .iter()
             .map(|line| {
-                if Line::from(line.as_str()).width() <= usize::from(area.width) {
-                    return 1;
-                }
-                let scratch_area = Rect::new(0, 0, area.width, area.height);
-                let mut scratch = Buffer::empty(scratch_area);
                 Paragraph::new(line.as_str())
                     .wrap(Wrap { trim: true })
-                    .render(scratch_area, &mut scratch);
-                (0..area.height)
-                    .rev()
-                    .find(|&y| (0..area.width).any(|x| scratch[(x, y)].symbol() != " "))
-                    .map_or(1, |y| usize::from(y) + 1)
+                    .line_count(area.width)
             })
             .sum();
         wrapped_rows.saturating_sub(usize::from(area.height).saturating_sub(3))
     });
+    let editor_row = editor.as_ref().map(|(row, _, _, _)| {
+        lines[..*row]
+            .iter()
+            .map(|line| {
+                Paragraph::new(line.as_str())
+                    .wrap(Wrap { trim: true })
+                    .line_count(area.width)
+            })
+            .sum::<usize>()
+    });
     let text: Vec<Line<'static>> = lines.into_iter().map(Line::from).collect();
+    let body = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
     Paragraph::new(text)
         .wrap(Wrap { trim: true })
         .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0))
-        .render(area, buf);
+        .render(body, buf);
+    if let (Some((_, x, value, cursor)), Some(row)) = (editor, editor_row)
+        && let Some(y) = row.checked_sub(scroll)
+        && y < usize::from(body.height)
+        && x < usize::from(area.width)
+    {
+        crate::editor::draw(
+            &value,
+            cursor,
+            Rect::new(
+                area.x + x as u16,
+                area.y + y as u16,
+                area.width - x as u16,
+                1,
+            ),
+            buf,
+        );
+    }
+    Paragraph::new(footer(view)).render(Rect::new(area.x, area.bottom() - 1, area.width, 1), buf);
 }
 
 fn footer(view: &MemoryView) -> String {

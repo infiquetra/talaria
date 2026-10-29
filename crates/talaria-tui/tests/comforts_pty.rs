@@ -50,6 +50,51 @@ fn ctrl_g_edits_and_returns() {
 }
 
 #[test]
+fn reacquire_probe_keeps_input_before_and_after_its_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = editor_config(dir.path(), "true");
+    let history = dir.path().join("history.jsonl");
+    let Some(mut demo) = Demo::open(&args_for(&config, &history)) else {
+        return;
+    };
+    demo.wait_for_frame(Duration::from_secs(5));
+    assert!(demo.write(&[CTRL_G]));
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(3) {
+        if demo
+            .output
+            .lock()
+            .unwrap()
+            .windows(4)
+            .filter(|bytes| *bytes == b"\x1b[6n")
+            .count()
+            >= 2
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        demo.output
+            .lock()
+            .unwrap()
+            .windows(4)
+            .filter(|bytes| *bytes == b"\x1b[6n")
+            .count()
+            >= 2,
+        "{}",
+        demo.snapshot()
+    );
+    let writer = demo.writer.as_mut().unwrap();
+    writer.write_all(b"hel\x1b[?62;22clo").unwrap();
+    writer.flush().unwrap();
+    thread::sleep(Duration::from_millis(200));
+    assert!(demo.write(&[ENTER]));
+    let output = demo.collect(Duration::from_secs(2));
+    assert!(output.contains("SUBMITTED text=\"hello\""), "{output}");
+}
+
+#[test]
 fn ctrl_c_in_editor_keeps_talaria() {
     let dir = tempfile::tempdir().unwrap();
     let config = editor_config(dir.path(), "sh -c \\\"sleep 30\\\"");

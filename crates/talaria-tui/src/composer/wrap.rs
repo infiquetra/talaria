@@ -1,7 +1,19 @@
 //! Display-width wrapping. The caller has already reserved the caret cell.
 
+use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
+
+/// The representation used by both layout and drawing. An expanding replacement is a single
+/// visible cell so even a long escaped grapheme fits on a narrow row.
+pub(crate) fn display_cluster(cluster: &str) -> Cow<'_, str> {
+    let clean = crate::history::sanitize(cluster);
+    if UnicodeWidthStr::width(clean.as_ref()) > UnicodeWidthStr::width(cluster) {
+        Cow::Borrowed("�")
+    } else {
+        clean
+    }
+}
 
 /// One visual row. `end` does not include a following line break.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,7 +101,7 @@ pub fn cluster_width(cluster: &str) -> usize {
     if cluster == "\t" {
         4
     } else {
-        UnicodeWidthStr::width(cluster)
+        UnicodeWidthStr::width(display_cluster(cluster).as_ref())
     }
 }
 

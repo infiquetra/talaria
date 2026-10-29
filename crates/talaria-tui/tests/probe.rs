@@ -13,7 +13,9 @@ use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::write;
 use rustix::pipe::pipe;
 use support::probe;
-use talaria_tui::terminal::{ProbeReply, parse_probe_reply, read_probe_reply};
+use talaria_tui::terminal::{
+    ProbeReply, parse_probe_reply, read_probe_reply, read_probe_reply_with_input,
+};
 
 /// Cursor report for row 24, column 1, which is (0, 23) when 0-based.
 const CURSOR_BOTTOM_LEFT: &[u8] = b"\x1b[24;1R";
@@ -178,6 +180,36 @@ fn has_bytes_waiting(fd: &OwnedFd) -> bool {
     };
     poll(&mut fds, Some(&zero)).expect("poll the pipe");
     fds[0].revents().contains(PollFlags::IN)
+}
+
+#[test]
+fn ordinary_input_survives_probe_replies_and_late_replies() {
+    let (read_end, write_end) = pipe().unwrap();
+    write_all(&write_end, b"hello\x1b[24;1R\x1b[A\x1b[?62;22cworld");
+    let (reply, before) =
+        read_probe_reply_with_input(&read_end, Duration::from_millis(200)).unwrap();
+    assert_eq!(reply.cursor, Some((0, 23)));
+    assert_eq!(before, b"hello\x1b[A");
+    let mut after = [0; 5];
+    assert_eq!(rustix::io::read(&read_end, &mut after).unwrap(), 5);
+    assert_eq!(&after, b"world");
+
+    let (read_end, write_end) = pipe().unwrap();
+    write_all(&write_end, b"one\x1b[?1utwo");
+    let (reply, input) = read_probe_reply_with_input(&read_end, Duration::from_millis(5)).unwrap();
+    assert_eq!(reply, ProbeReply::default());
+    assert_eq!(input, b"onetwo");
+
+    let (read_end, write_end) = pipe().unwrap();
+    write_all(&write_end, b"typed\x1b[?62;22");
+    let (reply, input) = read_probe_reply_with_input(&read_end, Duration::from_millis(5)).unwrap();
+    assert_eq!(reply, ProbeReply::default());
+    assert_eq!(input, b"typed");
+
+    let (read_end, write_end) = pipe().unwrap();
+    write_all(&write_end, b"typed\x1b[?62;\x1b[?62c");
+    let (_, input) = read_probe_reply_with_input(&read_end, Duration::from_millis(50)).unwrap();
+    assert_eq!(input, b"typed");
 }
 
 #[test]
