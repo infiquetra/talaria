@@ -2,7 +2,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use talaria_core::session::Cell;
 
-use crate::automation::{AutomationTheme, hermes_command_lines};
+use crate::automation::{AutomationTheme, hermes_command_lines_with_options};
 use crate::history::{CellLines, PlainCellLines};
 
 use super::{MarkdownOptions, MarkdownTheme, render_markdown};
@@ -25,7 +25,17 @@ impl CellLines for MarkdownCellLines {
             Cell::Assistant(cell) => (&cell.text, Style::default()),
             Cell::Reasoning(cell) => (&cell.text, Style::default().add_modifier(Modifier::DIM)),
             Cell::HermesCommand(cell) => {
-                return hermes_command_lines(cell, width, &AutomationTheme::default());
+                return hermes_command_lines_with_options(
+                    cell,
+                    width,
+                    &AutomationTheme::default(),
+                    &MarkdownOptions {
+                        width,
+                        color: self.color,
+                        theme: self.theme.clone(),
+                        base_style: Style::default(),
+                    },
+                );
             }
             _ => return PlainCellLines.lines(cell, width),
         };

@@ -561,6 +561,17 @@ pub(super) fn update(
     now: Instant,
 ) -> Vec<ConnectorsEffect> {
     match input {
+        ConnectorsInput::ReviewScroll(offset) => {
+            if matches!(
+                state.prompt,
+                Some(Prompt::Confirm(
+                    ConfirmKind::SaveTools | ConfirmKind::SavePlatform
+                ))
+            ) {
+                state.review_scroll = offset;
+            }
+            Vec::new()
+        }
         ConnectorsInput::Open {
             open: ConnectorsOpen::Tab(tab),
             profile,
@@ -1603,6 +1614,7 @@ fn open_link(state: &mut ConnectorsState) -> Vec<ConnectorsEffect> {
 }
 
 fn save_review(state: &mut ConnectorsState) -> Vec<ConnectorsEffect> {
+    state.review_scroll = 0;
     match &state.pane {
         Pane::Tools(slug) => {
             let slug = slug.clone();
@@ -1746,6 +1758,24 @@ fn prompt_key(state: &mut ConnectorsState, key: ConnectorsKey) -> Vec<Connectors
         return Vec::new();
     }
     if matches!(state.prompt, Some(Prompt::Confirm(_))) {
+        if matches!(
+            state.prompt,
+            Some(Prompt::Confirm(
+                ConfirmKind::SaveTools | ConfirmKind::SavePlatform
+            ))
+        ) {
+            match key {
+                ConnectorsKey::Up => {
+                    state.review_scroll = state.review_scroll.saturating_sub(1);
+                    return Vec::new();
+                }
+                ConnectorsKey::Down => {
+                    state.review_scroll = state.review_scroll.saturating_add(1);
+                    return Vec::new();
+                }
+                _ => {}
+            }
+        }
         if key == ConnectorsKey::Confirm {
             return confirm(state);
         }

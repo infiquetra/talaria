@@ -235,6 +235,7 @@ pub struct ConnectorsState {
     notice: Option<Line>,
     selected: usize,
     card_selected: usize,
+    review_scroll: usize,
     show_retired: bool,
     advanced: bool,
     filtering: bool,
@@ -341,6 +342,7 @@ impl ConnectorsState {
             notice: None,
             selected: 0,
             card_selected: 0,
+            review_scroll: 0,
             show_retired: false,
             advanced: false,
             filtering: false,
@@ -400,6 +402,8 @@ pub enum ConnectorsInput {
         consented: bool,
     },
     Key(ConnectorsKey),
+    /// A viewport-relative review position computed by the presentation layer.
+    ReviewScroll(usize),
     Paste(String),
     ListReply(Result<ListReply, ConnectorsFailure>),
     CatalogReply(Result<Vec<CatalogRow>, ConnectorsFailure>),
@@ -459,6 +463,9 @@ impl std::fmt::Debug for ConnectorsInput {
                 .field("consented", consented)
                 .finish(),
             Self::Key(key) => formatter.debug_tuple("Key").field(key).finish(),
+            Self::ReviewScroll(offset) => {
+                formatter.debug_tuple("ReviewScroll").field(offset).finish()
+            }
             Self::Paste(text) => formatter
                 .debug_struct("Paste")
                 .field("len", &text.len())
@@ -707,6 +714,7 @@ pub struct ConnectorsView {
     pub screen: Screen,
     pub notice: Option<Line>,
     pub footer: Vec<(String, String)>,
+    pub review_scroll: usize,
 }
 
 /// One painted line.

@@ -66,6 +66,8 @@ pub enum SettingsInput {
     Loaded(SettingsSnapshot),
     LoadFailed(FailReason),
     Key(SettingsKey),
+    /// A viewport-relative position computed by the presentation layer.
+    ReviewScroll(usize),
     Fresh(Value),
     FreshFailed(FailReason),
     Written(WriteResult),
@@ -146,6 +148,8 @@ pub enum EditKey {
     Right,
     Up,
     Down,
+    PageUp,
+    PageDown,
     Home,
     End,
     Backspace,
@@ -184,6 +188,7 @@ pub struct SettingsView {
     pub detail: String,
     pub footer: String,
     pub review_rows: Vec<ReviewRow>,
+    pub review_scroll: usize,
     pub conflict_rows: Vec<Conflict>,
     pub filter: String,
     pub editor: Option<SettingsEditorView>,
@@ -228,6 +233,7 @@ pub struct SettingsState {
     filter_focus: bool,
     filter_caret: usize,
     cursor: usize,
+    review_scroll: usize,
     category: usize,
     banner: Vec<String>,
     editor: Option<Editor>,
@@ -372,6 +378,7 @@ impl SettingsState {
             filter_focus: false,
             filter_caret: 0,
             cursor: 0,
+            review_scroll: 0,
             category: 0,
             banner: Vec::new(),
             editor: None,
@@ -481,6 +488,12 @@ impl SettingsState {
                 self.reveal = None;
                 self.key(key)
             }
+            SettingsInput::ReviewScroll(offset) => {
+                if matches!(self.screen, Screen::Reviewing | Screen::Conflict) {
+                    self.review_scroll = offset;
+                }
+                Vec::new()
+            }
             SettingsInput::Fresh(value) if self.screen == Screen::Checking => {
                 let Some(snapshot) = self.snapshot.as_mut() else {
                     return Vec::new();
@@ -507,6 +520,7 @@ impl SettingsState {
                     self.write()
                 } else {
                     self.screen = Screen::Conflict;
+                    self.review_scroll = 0;
                     Vec::new()
                 }
             }
@@ -690,6 +704,7 @@ impl SettingsState {
                 self.pend(key, value);
             }
             self.screen = Screen::Reviewing;
+            self.review_scroll = 0;
         } else {
             self.screen = Screen::Browsing;
             self.banner = errors;
@@ -906,6 +921,26 @@ impl SettingsState {
         }
         if self.screen == Screen::Reviewing {
             return match key {
+                SettingsKey::Edit(EditKey::Up) => {
+                    self.review_scroll = self.review_scroll.saturating_sub(1);
+                    Vec::new()
+                }
+                SettingsKey::Edit(EditKey::Down) => {
+                    self.review_scroll = self.review_scroll.saturating_add(1);
+                    Vec::new()
+                }
+                SettingsKey::Edit(EditKey::PageUp) => {
+                    self.review_scroll = self.review_scroll.saturating_sub(5);
+                    Vec::new()
+                }
+                SettingsKey::Edit(EditKey::PageDown) => {
+                    self.review_scroll = self.review_scroll.saturating_add(5);
+                    Vec::new()
+                }
+                SettingsKey::Edit(EditKey::Home) => {
+                    self.review_scroll = 0;
+                    Vec::new()
+                }
                 SettingsKey::Char('y') | SettingsKey::Edit(EditKey::Enter) => {
                     if self.pending.is_empty() {
                         self.screen = Screen::Browsing;
@@ -928,8 +963,29 @@ impl SettingsState {
         }
         if self.screen == Screen::Conflict {
             return match key {
+                SettingsKey::Edit(EditKey::Up) => {
+                    self.review_scroll = self.review_scroll.saturating_sub(1);
+                    Vec::new()
+                }
+                SettingsKey::Edit(EditKey::Down) => {
+                    self.review_scroll = self.review_scroll.saturating_add(1);
+                    Vec::new()
+                }
+                SettingsKey::Edit(EditKey::PageUp) => {
+                    self.review_scroll = self.review_scroll.saturating_sub(5);
+                    Vec::new()
+                }
+                SettingsKey::Edit(EditKey::PageDown) => {
+                    self.review_scroll = self.review_scroll.saturating_add(5);
+                    Vec::new()
+                }
+                SettingsKey::Edit(EditKey::Home) => {
+                    self.review_scroll = 0;
+                    Vec::new()
+                }
                 SettingsKey::Edit(EditKey::Esc) => {
                     self.screen = Screen::Reviewing;
+                    self.review_scroll = 0;
                     Vec::new()
                 }
                 SettingsKey::Char('o' | 't') => {
@@ -1065,6 +1121,7 @@ impl SettingsState {
                     self.banner = vec!["No changes to review.".into()]
                 } else if !self.unverified {
                     self.screen = Screen::Reviewing;
+                    self.review_scroll = 0;
                 }
             }
             SettingsAction::Reveal => return self.reveal_selected(),
@@ -1283,6 +1340,7 @@ impl SettingsState {
             categories,
             category,
             cursor: self.cursor,
+            review_scroll: self.review_scroll,
             banner: self.banner.clone(),
             filter: self.filter.clone(),
             choice_cursor: self.choice_cursor,

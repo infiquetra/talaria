@@ -163,6 +163,8 @@ struct Typing {
     matches: Vec<Match>,
     /// The current match of the suspended search.
     current: Option<usize>,
+    /// Keep the selected search occurrence visible through a layout change.
+    locate_match: bool,
 }
 
 /// View state for one opening of the transcript.
@@ -194,6 +196,8 @@ pub struct Pager {
     matches: Vec<Match>,
     /// The current match of the active search.
     current: Option<usize>,
+    /// Keep the selected search occurrence visible through a layout change.
+    locate_match: bool,
     /// The rendered lines of the cells that are final.
     doc: Document,
 }
@@ -217,9 +221,11 @@ impl Pager {
             last_confirmed: None,
             matches: Vec::new(),
             current: None,
+            locate_match: false,
             doc: Document::new(),
         };
-        pager.snap_to_bottom(ctx);
+        pager.snap_to_bottom(ctx, &PLAIN);
+        pager.doc.clear();
         pager
     }
 
@@ -228,7 +234,20 @@ impl Pager {
         &mut self,
         action: PagerAction,
         ctx: &PagerContext<'_>,
+        index: &mut SearchIndex,
+    ) -> PagerOutcome {
+        let result = self.handle_action_with_renderer(action, ctx, index, &PLAIN);
+        self.doc.clear();
+        result
+    }
+
+    /// Apply a key using the same renderer that draws the transcript.
+    pub fn handle_action_with_renderer(
+        &mut self,
+        action: PagerAction,
+        ctx: &PagerContext<'_>,
         _index: &mut SearchIndex,
+        render: &dyn CellLines,
     ) -> PagerOutcome {
         if self.typing.is_some() {
             return match action {
@@ -252,20 +271,22 @@ impl Pager {
                     PagerOutcome::Close
                 }
             }
-            PagerAction::LineUp => self.scroll_up(ctx, 1),
-            PagerAction::LineDown => self.scroll_down(ctx, 1),
-            PagerAction::PageUp => self.scroll_up(ctx, self.page_size(ctx)),
-            PagerAction::PageDown => self.scroll_down(ctx, self.page_size(ctx)),
-            PagerAction::HalfPageUp => self.scroll_up(ctx, self.half_page_size(ctx)),
-            PagerAction::HalfPageDown => self.scroll_down(ctx, self.half_page_size(ctx)),
+            PagerAction::LineUp => self.scroll_up(ctx, 1, render),
+            PagerAction::LineDown => self.scroll_down(ctx, 1, render),
+            PagerAction::PageUp => self.scroll_up(ctx, self.page_size(ctx), render),
+            PagerAction::PageDown => self.scroll_down(ctx, self.page_size(ctx), render),
+            PagerAction::HalfPageUp => self.scroll_up(ctx, self.half_page_size(ctx), render),
+            PagerAction::HalfPageDown => self.scroll_down(ctx, self.half_page_size(ctx), render),
             PagerAction::Top => {
+                self.locate_match = false;
                 self.cell_index = 0;
                 self.line_in_cell = 0;
-                self.follow = self.document_fits(ctx);
+                self.follow = self.document_fits(ctx, render);
                 PagerOutcome::Stay { redraw: true }
             }
             PagerAction::Bottom => {
-                self.snap_to_bottom(ctx);
+                self.locate_match = false;
+                self.snap_to_bottom(ctx, render);
                 self.follow = true;
                 self.new_output = false;
                 PagerOutcome::Stay { redraw: true }
@@ -383,16 +404,20 @@ impl Pager {
         } else if !self.follow {
             self.new_output = true;
         }
-        if self.follow {
-            self.snap_to_bottom(ctx);
-        }
         self.rerun_search(ctx, index);
     }
 
     /// The terminal size changed. The top cell stays.
     pub fn resize(&mut self, cols: u16, rows: u16) {
-        self.cols = cols;
-        self.rows = rows;
+        if (self.cols, self.rows) != (cols, rows) {
+            self.cols = cols;
+            self.rows = rows;
+            self.doc.clear();
+        }
+    }
+
+    /// Forget rendered cells after the application changes the renderer's theme or options.
+    pub fn invalidate_rendering(&mut self) {
         self.doc.clear();
     }
 
@@ -412,8 +437,7 @@ impl Pager {
     ) {
         let theme = PagerTheme::default();
         // The overlay always draws at the newest size, so the pager takes that size.
-        self.cols = area.width;
-        self.rows = area.height;
+        self.resize(area.width, area.height);
         let cols = area.width;
         let banners = self.banners(ctx);
         let body = area
@@ -427,7 +451,22 @@ impl Pager {
 
         // A following view sits at the end of the session, whatever size the screen is now.
         if self.follow {
-            self.snap_to_bottom(ctx);
+            let own = self.internal_render(render);
+            let (cell, line) =
+                self.doc
+                    .rendered_bottom_snap(ctx.cells, body, cols, self.details, render, &own);
+            self.cell_index = cell;
+            self.line_in_cell = line;
+        } else if self.locate_match {
+            self.locate_rendered_match(ctx, render, usize::from(body));
+        }
+        if let Some(cell) = ctx.cells.get(self.cell_index) {
+            let own = self.internal_render(render);
+            let len = self
+                .doc
+                .cell_lines(cell, self.cell_index, cols, self.details, render, &own)
+                .len();
+            self.line_in_cell = self.line_in_cell.min(len.saturating_sub(1));
         }
         self.draw_header(area, buf, ctx, &theme);
         let mut row = area.y + 1;
@@ -533,38 +572,67 @@ impl Pager {
             if refresh {
                 let mut occurrence = None;
                 let mut gutter = false;
+                let first = self.matches.partition_point(|item| item.cell_index < cell);
+                let last = self.matches.partition_point(|item| item.cell_index <= cell);
+                let user_hits = match current_cell {
+                    Cell::User(user) if query.is_some() => {
+                        user_match_positions(&user.text, &lines, &self.matches[first..last])
+                    }
+                    _ => None,
+                };
                 if let Some(found) = current
                     && found.cell_index == cell
                 {
-                    let hits = rendered_hits(&lines, query.as_ref());
-                    let in_cell = self.matches.partition_point(|item| item.cell_index <= cell)
-                        - self.matches.partition_point(|item| item.cell_index < cell);
-                    if hits.total == in_cell && found.ordinal_in_cell < hits.total {
-                        let mut left = found.ordinal_in_cell;
-                        for occurrences in &hits.per_line {
-                            if left < occurrences.len() {
-                                occurrence = Some(occurrences[left]);
-                                break;
-                            }
-                            left -= occurrences.len();
-                        }
+                    if let Some(positions) = &user_hits {
+                        gutter = positions
+                            .first_rows
+                            .get(found.ordinal_in_cell)
+                            .copied()
+                            .flatten()
+                            .is_none();
                     } else {
-                        gutter = true;
+                        let hits = rendered_hits(&lines, query.as_ref());
+                        if hits.total == last - first && found.ordinal_in_cell < hits.total {
+                            let mut left = found.ordinal_in_cell;
+                            for (row, occurrences) in hits.per_line.iter().enumerate() {
+                                if left < occurrences.len() {
+                                    occurrence = Some((row, occurrences[left].0));
+                                    break;
+                                }
+                                left -= occurrences.len();
+                            }
+                        } else {
+                            gutter = true;
+                        }
                     }
                 }
                 cached = Some(CachedCellHits {
                     cell,
                     occurrence,
                     gutter,
+                    user_hits,
                 });
             }
             let paint = cached.as_ref().expect("the cell was just cached");
-            let current_offset = paint.occurrence.map(|pair| pair.0);
+            let current_offset = paint
+                .occurrence
+                .filter(|(row, _)| *row == line)
+                .map(|(_, column)| column);
             let marked = paint.gutter && line == 0;
             let drawn = &lines[line];
-            let painted = match &query {
-                Some(query) => highlight_line(drawn, query, current_offset, theme),
-                None => drawn.clone(),
+            let painted = match (&query, &paint.user_hits) {
+                (Some(_), Some(positions)) => {
+                    let ordinal = current
+                        .filter(|found| found.cell_index == cell)
+                        .map(|found| found.ordinal_in_cell);
+                    let fragments = positions.rows[line]
+                        .iter()
+                        .map(|&(start, length, hit)| (start, length, ordinal == Some(hit)))
+                        .collect::<Vec<_>>();
+                    search::highlight_fragments(drawn, &fragments, theme)
+                }
+                (Some(query), None) => highlight_line(drawn, query, current_offset, theme),
+                (None, _) => drawn.clone(),
             };
             if marked {
                 buf.set_stringn(area.x, row, "\u{25b8}", 1, theme.gutter_mark);
@@ -723,6 +791,7 @@ impl Pager {
             confirmed: self.confirmed.clone(),
             matches: self.matches.clone(),
             current: self.current,
+            locate_match: self.locate_match,
         });
         self.notice = None;
     }
@@ -738,6 +807,7 @@ impl Pager {
         self.confirmed = typing.confirmed;
         self.matches = typing.matches;
         self.current = typing.current;
+        self.locate_match = typing.locate_match;
     }
 
     /// Confirm the query being typed.
@@ -812,10 +882,80 @@ impl Pager {
         let Some(found) = self.matches.get(position).copied() else {
             return;
         };
-        self.cell_index = found.cell_index;
-        self.line_in_cell = 0;
+        if self.cell_index != found.cell_index {
+            self.cell_index = found.cell_index;
+            self.line_in_cell = 0;
+        }
+        self.locate_match = true;
         self.follow = false;
         let _ = ctx;
+    }
+
+    /// Find the selected raw occurrence in the lines that are actually drawn.
+    fn locate_rendered_match(
+        &mut self,
+        ctx: &PagerContext<'_>,
+        render: &dyn CellLines,
+        height: usize,
+    ) {
+        let Some(found) = self
+            .current
+            .and_then(|index| self.matches.get(index))
+            .copied()
+        else {
+            return;
+        };
+        let Some(cell) = ctx.cells.get(found.cell_index) else {
+            return;
+        };
+        let own = self.internal_render(render);
+        let lines = self.doc.cell_lines(
+            cell,
+            found.cell_index,
+            self.cols,
+            self.details,
+            render,
+            &own,
+        );
+        let first = self
+            .matches
+            .partition_point(|item| item.cell_index < found.cell_index);
+        let last = self
+            .matches
+            .partition_point(|item| item.cell_index <= found.cell_index);
+        let user_hits = match cell {
+            Cell::User(user) => {
+                user_match_positions(&user.text, &lines, &self.matches[first..last])
+            }
+            _ => None,
+        };
+        let hits = rendered_hits(&lines, self.active_query().as_ref());
+        let in_cell = last - first;
+        let mut ordinal = found.ordinal_in_cell;
+        let mut target = 0;
+        if let Some(positions) = user_hits {
+            target = positions
+                .first_rows
+                .get(found.ordinal_in_cell)
+                .copied()
+                .flatten()
+                .unwrap_or(0);
+        } else if hits.total == in_cell {
+            for (row, occurrences) in hits.per_line.iter().enumerate() {
+                if ordinal < occurrences.len() {
+                    target = row;
+                    break;
+                }
+                ordinal -= occurrences.len();
+            }
+        }
+        if self.cell_index != found.cell_index
+            || target < self.line_in_cell
+            || target >= self.line_in_cell.saturating_add(height)
+        {
+            self.cell_index = found.cell_index;
+            self.line_in_cell = target;
+        }
     }
 
     /// Move to the next or the previous match.
@@ -848,6 +988,7 @@ impl Pager {
 
     /// Move to the previous or the next message the person sent.
     fn jump_to_prompt(&mut self, ctx: &PagerContext<'_>, forward: bool) -> PagerOutcome {
+        self.locate_match = false;
         let target = if forward {
             ctx.cells
                 .iter()
@@ -887,8 +1028,14 @@ impl Pager {
     }
 
     /// Move the view up by a number of lines.
-    fn scroll_up(&mut self, ctx: &PagerContext<'_>, lines: usize) -> PagerOutcome {
-        let (cell, line) = self.anchor_up(ctx, lines);
+    fn scroll_up(
+        &mut self,
+        ctx: &PagerContext<'_>,
+        lines: usize,
+        render: &dyn CellLines,
+    ) -> PagerOutcome {
+        self.locate_match = false;
+        let (cell, line) = self.anchor_up(ctx, lines, render);
         let moved = (cell, line) != (self.cell_index, self.line_in_cell);
         let was_following = self.follow;
         self.cell_index = cell;
@@ -900,15 +1047,21 @@ impl Pager {
     }
 
     /// Move the view down by a number of lines.
-    fn scroll_down(&mut self, ctx: &PagerContext<'_>, lines: usize) -> PagerOutcome {
-        let (cell, line) = self.anchor_down(ctx, lines);
+    fn scroll_down(
+        &mut self,
+        ctx: &PagerContext<'_>,
+        lines: usize,
+        render: &dyn CellLines,
+    ) -> PagerOutcome {
+        self.locate_match = false;
+        let (cell, line) = self.anchor_down(ctx, lines, render);
         let moved = (cell, line) != (self.cell_index, self.line_in_cell);
         self.cell_index = cell;
         self.line_in_cell = line;
         if self.follow {
             return PagerOutcome::Stay { redraw: moved };
         }
-        let bottom = self.bottom_snap(ctx);
+        let bottom = self.bottom_snap(ctx, render);
         if (cell, line) == bottom {
             self.follow = true;
             self.new_output = false;
@@ -917,7 +1070,12 @@ impl Pager {
     }
 
     /// The anchor a number of lines up.
-    fn anchor_up(&mut self, ctx: &PagerContext<'_>, lines: usize) -> (usize, usize) {
+    fn anchor_up(
+        &mut self,
+        ctx: &PagerContext<'_>,
+        lines: usize,
+        render: &dyn CellLines,
+    ) -> (usize, usize) {
         let mut cell = self.cell_index;
         let mut line = self.line_in_cell;
         let mut left = lines;
@@ -927,7 +1085,7 @@ impl Pager {
                     break;
                 }
                 cell -= 1;
-                line = self.cell_len(ctx, cell);
+                line = self.cell_len(ctx, cell, render);
                 if line == 0 {
                     continue;
                 }
@@ -939,12 +1097,17 @@ impl Pager {
     }
 
     /// The anchor a number of lines down.
-    fn anchor_down(&mut self, ctx: &PagerContext<'_>, lines: usize) -> (usize, usize) {
+    fn anchor_down(
+        &mut self,
+        ctx: &PagerContext<'_>,
+        lines: usize,
+        render: &dyn CellLines,
+    ) -> (usize, usize) {
         let mut cell = self.cell_index;
         let mut line = self.line_in_cell;
         let mut left = lines;
         while left > 0 {
-            let length = self.cell_len(ctx, cell);
+            let length = self.cell_len(ctx, cell, render);
             if line + 1 < length {
                 line += 1;
             } else if cell + 1 < ctx.cells.len() {
@@ -959,37 +1122,37 @@ impl Pager {
     }
 
     /// How many lines the cell at an index has.
-    fn cell_len(&mut self, ctx: &PagerContext<'_>, cell: usize) -> usize {
+    fn cell_len(&mut self, ctx: &PagerContext<'_>, cell: usize, render: &dyn CellLines) -> usize {
         let Some(current) = ctx.cells.get(cell) else {
             return 0;
         };
-        let render = self.internal_render(&PLAIN);
+        let own = self.internal_render(render);
         self.doc
-            .count_lines(current, cell, self.cols, self.details, &render)
+            .cell_lines(current, cell, self.cols, self.details, render, &own)
             .len()
     }
 
     /// The anchor that shows the end of the session.
-    fn bottom_snap(&mut self, ctx: &PagerContext<'_>) -> (usize, usize) {
+    fn bottom_snap(&mut self, ctx: &PagerContext<'_>, render: &dyn CellLines) -> (usize, usize) {
         let height = self.body_height(ctx);
-        let render = self.internal_render(&PLAIN);
+        let own = self.internal_render(render);
         self.doc
-            .bottom_snap(ctx.cells, height, self.cols, self.details, &render)
+            .rendered_bottom_snap(ctx.cells, height, self.cols, self.details, render, &own)
     }
 
     /// Move the view to the end of the session.
-    fn snap_to_bottom(&mut self, ctx: &PagerContext<'_>) {
-        let (cell, line) = self.bottom_snap(ctx);
+    fn snap_to_bottom(&mut self, ctx: &PagerContext<'_>, render: &dyn CellLines) {
+        let (cell, line) = self.bottom_snap(ctx, render);
         self.cell_index = cell;
         self.line_in_cell = line;
     }
 
     /// Whether the whole session fits in the body.
-    fn document_fits(&mut self, ctx: &PagerContext<'_>) -> bool {
+    fn document_fits(&mut self, ctx: &PagerContext<'_>, render: &dyn CellLines) -> bool {
         let height = self.body_height(ctx);
-        let render = self.internal_render(&PLAIN);
+        let own = self.internal_render(render);
         self.doc
-            .bottom_snap(ctx.cells, height, self.cols, self.details, &render)
+            .rendered_bottom_snap(ctx.cells, height, self.cols, self.details, render, &own)
             == (0, 0)
     }
 
@@ -1031,6 +1194,81 @@ struct CachedCellHits {
     cell: usize,
     occurrence: Option<(usize, usize)>,
     gutter: bool,
+    user_hits: Option<UserMatchPositions>,
+}
+
+/// Mapped character ranges, preserving occurrences that span rows or expand during sanitization.
+struct UserMatchPositions {
+    rows: Vec<Vec<(usize, usize, usize)>>,
+    first_rows: Vec<Option<usize>>,
+}
+
+fn user_match_positions(
+    text: &str,
+    lines: &[Line<'static>],
+    matches: &[Match],
+) -> Option<UserMatchPositions> {
+    let mut rendered = Vec::new();
+    for (row, line) in lines.iter().enumerate() {
+        let text = line.to_string();
+        if text.is_empty() {
+            continue;
+        }
+        if !text.starts_with("› ") && !text.starts_with("  ") {
+            return None;
+        }
+        rendered.extend(
+            text.chars()
+                .enumerate()
+                .skip(2)
+                .map(|(column, ch)| (ch, row, column)),
+        );
+    }
+    let raw: Vec<char> = text.chars().collect();
+    let mut mapped = vec![Vec::new(); raw.len()];
+    let mut rendered = rendered.into_iter();
+    for (index, &ch) in raw.iter().enumerate() {
+        if ch == '\n' || (ch == '\r' && raw.get(index + 1).is_none_or(|next| *next == '\n')) {
+            continue;
+        }
+        let original = ch.to_string();
+        for expected in crate::history::sanitize(&original).chars() {
+            let (actual, row, column) = rendered.next()?;
+            if actual != expected {
+                return None;
+            }
+            mapped[index].push((row, column));
+        }
+    }
+    if rendered.next().is_some() {
+        return None;
+    }
+    let mut result = UserMatchPositions {
+        rows: vec![Vec::new(); lines.len()],
+        first_rows: vec![None; matches.len()],
+    };
+    for found in matches {
+        let ordinal = found.ordinal_in_cell;
+        let end = found
+            .char_start
+            .saturating_add(found.char_len)
+            .min(mapped.len());
+        for &(row, column) in mapped.get(found.char_start..end)?.iter().flatten() {
+            if let Some(first) = result.first_rows.get_mut(ordinal) {
+                first.get_or_insert(row);
+            }
+            let fragments = &mut result.rows[row];
+            if let Some((start, length, hit)) = fragments.last_mut()
+                && *hit == ordinal
+                && *start + *length == column
+            {
+                *length += 1;
+            } else {
+                fragments.push((column, 1, ordinal));
+            }
+        }
+    }
+    Some(result)
 }
 
 /// The occurrences of the query in the rendered lines of one cell.

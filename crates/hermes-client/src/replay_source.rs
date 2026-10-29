@@ -243,7 +243,10 @@ impl ReplaySource {
                 )),
             };
             if let Some(due) = due {
-                tokio::time::sleep_until(started + due).await;
+                tokio::select! {
+                    () = sink.closed() => break,
+                    () = tokio::time::sleep_until(started + due) => {}
+                }
             }
             let item = ReplayItem {
                 generation: frame.generation,

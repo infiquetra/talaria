@@ -23,6 +23,7 @@ fn view(phase: Phase, lines: &[&str], footer: &str) -> ConfigureView {
         confirmation: None,
         footer: footer.into(),
         selected_row: None,
+        detail_scroll: None,
     }
 }
 
@@ -54,6 +55,76 @@ fn paint(
         .unwrap();
     vt.absorb(sink);
     vt.rows().join("\n")
+}
+
+#[test]
+fn detail_wraps_the_complete_value_and_explanation() {
+    let (mut terminal, sink, mut vt) = rig(60, 12);
+    let mut snapshot = view(Phase::Review, &[], "d close · arrows scroll");
+    snapshot.selected_row = Some(0);
+    snapshot.lines = vec![
+        ViewLine {
+            text: "[x] setting".into(),
+            row: Some(0),
+        },
+        ViewLine {
+            text: format!("  value: {} VALUE-END", "wide界 ".repeat(12)),
+            row: Some(0),
+        },
+        ViewLine {
+            text: format!("  why: {} WHY-END", "explain ".repeat(8)),
+            row: Some(0),
+        },
+    ];
+    let screen = paint(&mut terminal, &sink, &mut vt, &snapshot);
+    assert!(screen.contains("VALUE-END"), "{screen}");
+    assert!(screen.contains("WHY-END"), "{screen}");
+}
+
+#[test]
+fn detail_can_scroll_to_its_end_and_confirmation_remains_visible() {
+    let (mut terminal, sink, mut vt) = rig(60, 12);
+    let mut snapshot = view(Phase::Review, &[], "arrows scroll · d close");
+    snapshot.selected_row = Some(0);
+    snapshot.detail_scroll = Some(0);
+    snapshot.lines = vec![
+        ViewLine {
+            text: "[x] setting START".into(),
+            row: Some(0),
+        },
+        ViewLine {
+            text: format!("{}VALUE-END", "wide界 ".repeat(100)),
+            row: Some(0),
+        },
+        ViewLine {
+            text: format!("{}WHY-END", "why ".repeat(100)),
+            row: Some(0),
+        },
+    ];
+    assert!(paint(&mut terminal, &sink, &mut vt, &snapshot).contains("START"));
+    snapshot.detail_scroll = Some(20);
+    let screen = paint(&mut terminal, &sink, &mut vt, &snapshot);
+    assert!(
+        screen.contains("VALUE-END") || screen.contains("WHY-END"),
+        "{screen}"
+    );
+    let area = ratatui::layout::Rect::new(0, 0, 60, 12);
+    snapshot.detail_scroll = Some(usize::MAX);
+    let last =
+        talaria_tui::configure::detail_scroll_target(&snapshot, &ConfigureKey::PageDown, area)
+            .unwrap();
+    let up = talaria_tui::configure::detail_scroll_target(&snapshot, &ConfigureKey::PageUp, area)
+        .unwrap();
+    assert_eq!(up, last.saturating_sub(10));
+    snapshot.phase = Phase::Confirming;
+    snapshot.footer = "y apply · n back".into();
+    snapshot.lines.push(ViewLine {
+        text: "Apply 1 change(s) to profile fixture? y apply · n back".into(),
+        row: None,
+    });
+    let screen = paint(&mut terminal, &sink, &mut vt, &snapshot);
+    assert!(screen.contains("Apply 1 change(s)"), "{screen}");
+    assert!(screen.contains("y apply · n back"), "{screen}");
 }
 
 #[test]

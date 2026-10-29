@@ -138,6 +138,129 @@ fn settings_editor_follows_reducer_navigation_and_preserves_value() {
 }
 
 #[test]
+fn review_wraps_unbroken_values_and_warnings() {
+    let (mut term, sink, mut vt) = rig(60, 12);
+    let mut view = browse();
+    view.screen = Screen::Reviewing;
+    view.review_rows = vec![ReviewRow {
+        key: "display.long".into(),
+        old: "old".into(),
+        new: format!("{}VALUE-END", "界".repeat(45)),
+        effect_label: String::new(),
+        warnings: vec![format!("{}WARNING-END", "w".repeat(70))],
+    }];
+    let screen = paint(&mut term, &sink, &mut vt, &view);
+    assert!(screen.contains("VALUE-END"), "{screen}");
+    assert!(screen.contains("WARNING-END"), "{screen}");
+    assert!(screen.contains("Enter apply"), "{screen}");
+}
+
+#[test]
+fn review_scrolls_to_later_changes_before_apply() {
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsInput, SettingsKey,
+        SettingsSnapshot, SettingsState,
+    };
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    let fields: Vec<_> = (0..12)
+        .map(|n| FieldView {
+            key: format!("setting_{n:02}"),
+            kind: FieldKind::Boolean,
+            description: String::new(),
+            category: "general".into(),
+            options: None,
+            searchable: false,
+            clearable: false,
+        })
+        .collect();
+    let effective = serde_json::Value::Object(
+        (0..12)
+            .map(|n| (format!("setting_{n:02}"), json!(false)))
+            .collect(),
+    );
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields,
+            category_order: vec!["general".into()],
+        },
+        effective: effective.clone(),
+        raw: json!({}),
+        defaults: effective,
+    }));
+    let args = (0..12)
+        .map(|n| format!("setting_{n:02}=true"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    state.update(SettingsInput::Command {
+        profile: "fixture".into(),
+        args,
+    });
+    assert_eq!(state.view().screen, Screen::Reviewing);
+    let (mut term, sink, mut vt) = rig(60, 12);
+    for _ in 0..25 {
+        state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Down)));
+    }
+    let screen = paint(&mut term, &sink, &mut vt, &state.view());
+    assert!(screen.contains("setting_11"), "{screen}");
+    assert!(screen.contains("Enter apply"), "{screen}");
+    let area = ratatui::layout::Rect::new(0, 0, 60, 12);
+    let view = state.view();
+    let max =
+        talaria_tui::settings::review_scroll_target(&view, &SettingsKey::Edit(EditKey::End), area)
+            .unwrap();
+    let up =
+        talaria_tui::settings::review_scroll_target(&view, &SettingsKey::Edit(EditKey::Up), area)
+            .unwrap();
+    assert_eq!(
+        up,
+        max.saturating_sub(1),
+        "up moves immediately from the visible bottom"
+    );
+    state.update(SettingsInput::ReviewScroll(up));
+    assert_eq!(state.view().review_scroll, up);
+}
+
+#[test]
+fn review_and_conflict_scroll_show_late_warnings_and_choices() {
+    let (mut term, sink, mut vt) = rig(60, 12);
+    let mut view = browse();
+    view.screen = Screen::Reviewing;
+    view.review_scroll = 100;
+    view.review_rows = (0..12)
+        .map(|n| ReviewRow {
+            key: format!("setting_{n:02}"),
+            old: "old".into(),
+            new: format!("{}TAIL-{n}", "wide界".repeat(20)),
+            effect_label: String::new(),
+            warnings: vec![format!("{}WARNING-{n}", "warning ".repeat(12))],
+        })
+        .collect();
+    let screen = paint(&mut term, &sink, &mut vt, &view);
+    assert!(screen.contains("TAIL-11"), "{screen}");
+    assert!(screen.contains("WARNING-11"), "{screen}");
+    assert!(screen.contains("Enter apply"), "{screen}");
+
+    view.screen = Screen::Conflict;
+    view.conflict_rows = (0..12)
+        .map(|n| Conflict {
+            key: format!("setting_{n:02}"),
+            yours: json!(format!("{}YOURS-{n}", "x".repeat(65))),
+            baseline: Some(json!("old")),
+            now: Some(json!(format!("NEW-{n}"))),
+        })
+        .collect();
+    let screen = paint(&mut term, &sink, &mut vt, &view);
+    assert!(screen.contains("YOURS-11"), "{screen}");
+    assert!(screen.contains("NEW-11"), "{screen}");
+    assert!(screen.contains("o keep yours"), "{screen}");
+}
+
+#[test]
 fn browse_review_conflict_160x48() {
     let (mut term, sink, mut vt) = rig(160, 48);
     let mut view = browse();
