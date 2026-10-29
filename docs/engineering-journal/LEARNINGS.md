@@ -6333,3 +6333,14 @@ protocol variants and wrapper exit markers explicit.
 **Mechanism.** When an interactive session routes a one-shot `ultracode` keyword prompt and the operator interrupts an in-flight turn to inspect `/ultracode status`, any queued or partially typed text in the composer remains buffered unless cleared before submitting the slash command. Waiting for the active turn indicator to clear and clearing the composer line (`Ctrl+U`) before sending `/ultracode status` ensures the slash command executes as a standalone command rather than appending to draft text. After the operator sitting, removing the temporary workflow skill and staging lock directory restored the profile baseline (`snap_cmp=0`, `cron_cmp=0`).
 
 **Generalizable rule.** Clear any buffered composer text after interrupting an active turn before dispatching a slash command, and verify multi-provider workflow recovery against both frame-log request counts and settled admission receipts.
+
+## 2026-10-29 — Cargo discovers imported integration suites independently
+
+The background property, command and render wrappers imported complete test files that Cargo
+already discovered as integration targets; the process wrapper imported two such files alongside
+two unique cases. Compiler-collected inventories identify 40 repeated registrations across these
+imports. Keep the original output, model, schedule and view targets and the two local process
+cases; both output properties retain their 256-case budgets. No shared helper extraction is needed.
+
+Rule: compare crate, original source case and configuration before removing a wrapper, and preserve
+unique cases and per-property budgets rather than treating registration counts as generated cases.
