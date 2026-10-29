@@ -351,3 +351,160 @@ async fn rate_limited_call_retries_once() {
         assert_eq!(scheduler.status().global_width, 5);
     }
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn resumed_call_intent_respects_max_in_flight() {
+    use talaria_workflow::journal::{JournalReader, Record};
+    let h = Harness::new(1, roster_data()).await;
+    let source = "export const meta={name:'fixture',description:'test',phases:[]}; return await parallel([()=>agent('first',{model:'m',provider:'alpha',label:'a0'}),()=>agent('second',{model:'m',provider:'alpha',label:'a1'})]);";
+    let dir = RunDir::create(
+        h.root.path(),
+        NewManifest {
+            workflow_name: "fixture".into(),
+            args: None,
+            started_at_ms: 0,
+            seed: 1,
+            profile: "fixture".into(),
+            on_unknown: OnUnknown::Wait,
+            talaria_version: "test".into(),
+            hermes: json!({}),
+            roster: json!({}),
+            approval_policy: json!({}),
+        },
+        source,
+    )
+    .unwrap();
+    let run_path = dir.path().to_path_buf();
+    let fake = FakeGateway::new().with_script(vec![ScriptRule {
+        duration: Duration::from_millis(200),
+        usage: json!({"total_tokens":10}),
+        ..Default::default()
+    }]);
+    {
+        let (journal, _, _) = RunJournal::open(dir, source).await.unwrap();
+        let journal = Arc::new(journal);
+        let (scheduler, _) = talaria_workflow::schedule::Scheduler::start(
+            talaria_workflow::schedule::SchedulerConfig::from_table(
+                &h.table,
+                no_budget(),
+                "fixture",
+                h.prices.clone(),
+            ),
+            h.cache.clone(),
+            journal.dir().path().join("journal.jsonl"),
+            h.clock.clone(),
+        )
+        .await
+        .unwrap();
+        let launch = StaffedLaunch::new(
+            StaffingResolver::new(
+                Arc::new(h.table.clone()),
+                h.cache.cached("fixture").unwrap(),
+            ),
+            ExplicitLaunch::new(LaunchDefaults {
+                profile: "fixture".into(),
+                cwd: h.root.path().canonicalize().unwrap(),
+                toolsets: Some(vec!["file".into()]),
+                worktrees: None,
+            }),
+        );
+        let config = journal.engine_config(&launch).unwrap();
+        let backend = JournaledBackend::new(
+            journal.clone(),
+            fake.clone(),
+            SchemaTurnPolicy,
+            launch,
+            scheduler,
+            RetryPolicy::default(),
+        );
+        let handle = engine::spawn(
+            engine::parse_script(source).unwrap(),
+            config,
+            Arc::new(backend),
+            Arc::new(MapResolver::new()),
+        );
+        let forward = journal.forward_events(handle.events);
+        loop {
+            let (lines, _) = JournalReader::read_from(&run_path.join("journal.jsonl"), 0).unwrap();
+            let intents = lines
+                .iter()
+                .filter(|r| matches!(r.record, Record::CallIntent { .. }))
+                .count();
+            let admitted = lines
+                .iter()
+                .filter(|r| matches!(r.record, Record::TurnAdmitted { .. }))
+                .count();
+            if intents == 2 && admitted == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        handle.cancel.cancel();
+        let _ = handle.outcome.await;
+        let _ = forward.await;
+    }
+    let dir = RunDir::open(&run_path).unwrap();
+    let (journal, _, _) = RunJournal::open(dir, source).await.unwrap();
+    let journal = Arc::new(journal);
+    h.source.push("fixture", Ok(roster_data()));
+    let (scheduler, mut events) = talaria_workflow::schedule::Scheduler::start(
+        talaria_workflow::schedule::SchedulerConfig::from_table(
+            &h.table,
+            no_budget(),
+            "fixture",
+            h.prices.clone(),
+        ),
+        h.cache.clone(),
+        journal.dir().path().join("journal.jsonl"),
+        h.clock.clone(),
+    )
+    .await
+    .unwrap();
+    let launch = StaffedLaunch::new(
+        StaffingResolver::new(
+            Arc::new(h.table.clone()),
+            h.cache.cached("fixture").unwrap(),
+        ),
+        ExplicitLaunch::new(LaunchDefaults {
+            profile: "fixture".into(),
+            cwd: h.root.path().canonicalize().unwrap(),
+            toolsets: Some(vec!["file".into()]),
+            worktrees: None,
+        }),
+    );
+    let config = journal.engine_config(&launch).unwrap();
+    let backend = JournaledBackend::new(
+        journal.clone(),
+        fake,
+        SchemaTurnPolicy,
+        launch,
+        scheduler,
+        RetryPolicy::default(),
+    );
+    let handle = engine::spawn(
+        engine::parse_script(source).unwrap(),
+        config,
+        Arc::new(backend),
+        Arc::new(MapResolver::new()),
+    );
+    let forward = journal.forward_events(handle.events);
+    let mut pending = handle.outcome;
+    let outcome = loop {
+        tokio::select! {
+            v = &mut pending => break v.unwrap(),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => h.clock.advance(chrono::Duration::milliseconds(10)),
+        }
+    };
+    forward.await.unwrap().unwrap();
+    assert!(matches!(outcome, RunOutcome::Completed { .. }));
+    let mut peak_in_flight = 0;
+    while let Ok(ev) = events.0.try_recv() {
+        if let talaria_workflow::schedule::SchedulerEvent::Admitted { in_flight, .. } = ev.event {
+            peak_in_flight = peak_in_flight.max(in_flight);
+        }
+    }
+    assert_eq!(
+        peak_in_flight, 1,
+        "resumed CallIntent bypassed max_in_flight = 1"
+    );
+}

@@ -245,6 +245,7 @@ fn discover_summarises_each_status() {
         assert_eq!(value["warning"], Value::Null);
     }
     assert!(!interrupted.join("run.lock").exists());
+    lock.unlock().unwrap();
     drop(lock);
     let after = fs::OpenOptions::new()
         .read(true)
@@ -325,6 +326,7 @@ fn discover_resumed_execution_status() {
     let lock = fs::File::create(dir.join("run.lock")).unwrap();
     lock.try_lock().unwrap();
     assert_eq!(discover_runs(temp.path())[0].status, RunStatus::Running);
+    lock.unlock().unwrap();
     drop(lock);
     assert_eq!(discover_runs(temp.path())[0].status, RunStatus::Interrupted);
     let probe = fs::OpenOptions::new()

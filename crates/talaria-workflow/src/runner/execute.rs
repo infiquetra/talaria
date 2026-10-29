@@ -1046,9 +1046,10 @@ async fn execute_inner(
         if stop_requested && engine_outcome.is_some() && stopping.is_none() && stopped.is_none() {
             backend.cancel_queued().await.map_err(|e| e.to_string())?;
             let port = port.clone();
+            let journal = journal.clone();
             let path = dir.path().to_owned();
             stopping = Some(Box::pin(async move {
-                settle_stop(port, path, settle_bound, receipt_poll).await
+                settle_stop(port, journal, path, settle_bound, receipt_poll).await
             }));
         }
         if stopped.is_some() && engine_outcome.is_some() {
@@ -1171,6 +1172,7 @@ async fn verify_restarts(
 
 async fn settle_stop(
     port: HermesPort,
+    journal: Arc<RunJournal>,
     path: PathBuf,
     bound: Duration,
     poll: Duration,
@@ -1212,8 +1214,18 @@ async fn settle_stop(
                 ),
             )
             .await;
-            if !matches!(result,Ok(Ok(ref receipt)) if receipt.status==AdmissionState::Terminal) {
-                remaining.push(target);
+            match result {
+                Ok(Ok(receipt)) if receipt.status == AdmissionState::Terminal => {
+                    let _ = journal
+                        .append(crate::journal::settled_record(
+                            &target.key,
+                            target.attempt,
+                            target.turn,
+                            receipt,
+                        ))
+                        .await;
+                }
+                _ => remaining.push(target),
             }
         }
         pending = remaining;
@@ -1229,14 +1241,19 @@ fn signal_task(sender: mpsc::UnboundedSender<Input>) -> tokio::task::JoinHandle<
         #[cfg(unix)]
         {
             use tokio::signal::unix::{SignalKind, signal};
-            let (Ok(mut interrupt), Ok(mut terminate)) = (
+            let (Ok(mut interrupt), Ok(mut terminate), Ok(mut hangup)) = (
                 signal(SignalKind::interrupt()),
                 signal(SignalKind::terminate()),
+                signal(SignalKind::hangup()),
             ) else {
                 return;
             };
             loop {
-                tokio::select! {value=interrupt.recv()=>if value.is_none(){return;},value=terminate.recv()=>if value.is_none(){return;}}
+                tokio::select! {
+                    value = interrupt.recv() => if value.is_none() { return; },
+                    value = terminate.recv() => if value.is_none() { return; },
+                    _ = hangup.recv() => continue,
+                }
                 if sender.send(Input::Signal).is_err() {
                     return;
                 }

@@ -228,6 +228,9 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
                 old_attempt
             };
             if fresh {
+                if self.journal.execution() > 1 && next_attempt.is_none() {
+                    tokio::task::yield_now().await;
+                }
                 // Register in scheduler order before asynchronous journal writes can reorder calls.
                 let mut admission = self.gate.acquire(&request, &launch, GateReason::Fresh);
                 let ready = futures::poll!(&mut admission);
@@ -453,13 +456,31 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
             let (_, stored_launch, stored_request_id, stored_label) =
                 h.intent().ok_or_else(|| io_error("missing call intent"))?;
             if permit.is_none() {
-                match self
-                    .gate
-                    .acquire(&request, stored_launch, GateReason::Reattach)
-                    .await
-                {
+                let reason = if matches!(last.record, Record::CallIntent { .. }) {
+                    self.queued
+                        .lock()
+                        .map_err(io_error)?
+                        .insert((key.clone(), attempt));
+                    tokio::task::yield_now().await;
+                    GateReason::Fresh
+                } else {
+                    GateReason::Reattach
+                };
+                let decision = self.gate.acquire(&request, stored_launch, reason).await;
+                if reason == GateReason::Fresh {
+                    self.queued
+                        .lock()
+                        .map_err(io_error)?
+                        .remove(&(key.clone(), attempt));
+                }
+                match decision {
                     GateDecision::Proceed(p) => permit = Some(p),
                     GateDecision::Abort { reason } => return Ok(AgentOutcome::Abort { reason }),
+                    GateDecision::Skip if reason == GateReason::Fresh => {
+                        return self
+                            .finish_call(&key, attempt, 0, AgentOutcome::Skipped)
+                            .await;
+                    }
                     GateDecision::Skip => {
                         return Ok(AgentOutcome::Abort {
                             reason: "reattach gate refused existing work".into(),
@@ -723,49 +744,8 @@ impl<P: GatewayPort, T: TurnPolicy, L: LaunchResolver, G: AdmissionGate> Inner<P
         turn: u32,
         r: Receipt,
     ) -> Result<(), JournalError> {
-        let mut meta = serde_json::Map::new();
-        if let Some(result) = r.result.as_ref().and_then(Value::as_object) {
-            for field in [
-                "completed",
-                "failed",
-                "interrupted",
-                "turn_exit_reason",
-                "model",
-                "provider",
-                "failure_reason",
-            ] {
-                if let Some(v) = result.get(field) {
-                    if field == "failure_reason" && !v.is_string() {
-                        continue;
-                    }
-                    meta.insert(
-                        field.into(),
-                        match v {
-                            Value::String(s) => Value::String(cut(s, 1024)),
-                            _ => v.clone(),
-                        },
-                    );
-                }
-            }
-        }
-        let final_text = r
-            .result
-            .as_ref()
-            .and_then(|v| v.get("final_response"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
         self.journal
-            .append(Record::TurnSettled {
-                key: key.into(),
-                attempt,
-                turn,
-                admission_id: r.admission_id,
-                outcome: r.outcome.unwrap_or_else(|| "interrupted".into()),
-                final_text,
-                final_text_ref: None,
-                result_meta: Value::Object(meta),
-                usage: r.usage,
-            })
+            .append(settled_record(key, attempt, turn, r))
             .await?;
         Ok(())
     }
@@ -939,5 +919,50 @@ impl<'a, P: GatewayPort> PortRunner<'a, P> {
                 Err(e) => return Err(StepError::Port(e)),
             }
         }
+    }
+}
+
+pub(crate) fn settled_record(key: &str, attempt: u32, turn: u32, r: Receipt) -> Record {
+    let mut meta = serde_json::Map::new();
+    if let Some(result) = r.result.as_ref().and_then(Value::as_object) {
+        for field in [
+            "completed",
+            "failed",
+            "interrupted",
+            "turn_exit_reason",
+            "model",
+            "provider",
+            "failure_reason",
+        ] {
+            if let Some(v) = result.get(field) {
+                if field == "failure_reason" && !v.is_string() {
+                    continue;
+                }
+                meta.insert(
+                    field.into(),
+                    match v {
+                        Value::String(s) => Value::String(cut(s, 1024)),
+                        _ => v.clone(),
+                    },
+                );
+            }
+        }
+    }
+    let final_text = r
+        .result
+        .as_ref()
+        .and_then(|v| v.get("final_response"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    Record::TurnSettled {
+        key: key.into(),
+        attempt,
+        turn,
+        admission_id: r.admission_id,
+        outcome: r.outcome.unwrap_or_else(|| "interrupted".into()),
+        final_text,
+        final_text_ref: None,
+        result_meta: Value::Object(meta),
+        usage: r.usage,
     }
 }

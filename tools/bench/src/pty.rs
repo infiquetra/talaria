@@ -125,7 +125,7 @@ pub fn run_in_pty(
             output.extend(chunk);
         }
         if let Ok(Some(status)) = process.child.try_wait() {
-            while let Ok((_, chunk)) = process.output.recv_timeout(Duration::from_millis(10)) {
+            while let Ok((_, chunk)) = process.output.recv_timeout(Duration::from_millis(250)) {
                 output.extend(chunk);
             }
             return Ok(PtyRun {

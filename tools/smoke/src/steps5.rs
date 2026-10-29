@@ -109,9 +109,7 @@ fn shell(run: &Run<'_>, pane: &PaneId, reason: &str) -> Result<(), Abort> {
         let text = visible(run, pane)?;
         if foreground.len() == 1
             && !foreground[0].contains(&run.cfg.talaria.to_string_lossy().to_string())
-            && text
-                .lines()
-                .any(|l| l.trim_end().ends_with(['$', '%', '#']))
+            && !text.trim().is_empty()
         {
             return Ok(());
         }

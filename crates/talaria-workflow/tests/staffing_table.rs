@@ -31,12 +31,13 @@ tokens = 2000000
 
 #[test]
 fn parses_the_documented_example() {
+    assert_eq!(DEFAULT_MAX_IN_FLIGHT, 1);
     let table = StaffingTable::parse(EXAMPLE).unwrap();
     assert_eq!(table.default_tier.as_deref(), Some("builder"));
     assert_eq!(table.tiers["survey"].model, "minimax-m3.1-flash");
     assert_eq!(table.tiers["survey"].provider, "ollama-cloud");
     assert_eq!(table.tiers["builder"].effort, Some(Effort::High));
-    assert_eq!(table.limits.max_in_flight, DEFAULT_MAX_IN_FLIGHT);
+    assert_eq!(table.limits.max_in_flight, 10);
     assert_eq!(table.providers["ollama-cloud"].max_in_flight, 4);
     assert_eq!(table.budget.tokens, Some(2_000_000));
     assert_eq!(table.budget.money_usd, Some(5.0));
