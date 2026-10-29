@@ -109,10 +109,22 @@ pub async fn list(git: &GitRunner, target: &ReviewTarget, scope: Scope) -> Resul
         }
     }
 
-    let (default, has_origin, hooks) = tokio::join!(
-        default_branch_local(git, &root, &target.main_root, target.record.as_ref()),
-        read(git, &root, &["remote", "get-url", "origin"]),
-        count_hooks(git, &root),
+    let identities = async {
+        let origin = origin_identity(git, &target.main_root).await;
+        let has_origin = if root == target.main_root {
+            origin.is_some()
+        } else {
+            origin_identity(git, &root).await.is_some()
+        };
+        (origin, has_origin)
+    };
+    let ((origin, has_origin), remote_head, hooks) =
+        tokio::join!(identities, origin_head(git, &root), count_hooks(git, &root),);
+    let default = default_branch_local(
+        &target.main_root,
+        target.record.as_ref(),
+        origin,
+        remote_head,
     );
     Ok(Listing {
         head,
@@ -120,7 +132,7 @@ pub async fn list(git: &GitRunner, target: &ReviewTarget, scope: Scope) -> Resul
         total,
         base,
         default_branch: default,
-        has_origin: has_origin.is_ok_and(|out| out.status == 0),
+        has_origin,
         hooks,
     })
 }
@@ -720,7 +732,14 @@ pub fn review_env(base: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     env
 }
 
-type DefaultCache = Mutex<HashMap<PathBuf, (Instant, Option<String>)>>;
+struct CachedDefault {
+    origin: String,
+    at: Instant,
+    answer: Option<String>,
+    trust_head: bool,
+}
+
+type DefaultCache = Mutex<HashMap<PathBuf, CachedDefault>>;
 
 fn default_cache() -> &'static DefaultCache {
     static CACHE: OnceLock<DefaultCache> = OnceLock::new();
@@ -734,10 +753,41 @@ pub fn forget_default_branch(main_root: &Path) {
     }
 }
 
-fn cached_default(main_root: &Path) -> Option<Option<String>> {
+fn cached_default(main_root: &Path, origin: &str) -> Option<Option<String>> {
     let cache = default_cache().lock().ok()?;
-    let (at, answer) = cache.get(main_root)?;
-    (at.elapsed() < DEFAULT_BRANCH_TTL).then(|| answer.clone())
+    let entry = cache.get(main_root)?;
+    (entry.origin == origin && entry.at.elapsed() < DEFAULT_BRANCH_TTL)
+        .then(|| entry.answer.clone())
+}
+
+fn may_use_origin_head(main_root: &Path, origin: &str) -> bool {
+    default_cache().lock().ok().is_some_and(|cache| {
+        cache
+            .get(main_root)
+            .is_none_or(|entry| entry.origin == origin && entry.trust_head)
+    })
+}
+
+fn remember_default(main_root: &Path, origin: String, answer: Option<String>, trust_head: bool) {
+    if let Ok(mut cache) = default_cache().lock() {
+        cache.insert(
+            main_root.to_path_buf(),
+            CachedDefault {
+                origin,
+                at: Instant::now(),
+                answer,
+                trust_head,
+            },
+        );
+    }
+}
+
+async fn origin_identity(git: &GitRunner, cwd: &Path) -> Option<String> {
+    let out = read(git, cwd, &["remote", "get-url", "origin"])
+        .await
+        .ok()?;
+    let origin = out.stdout.trim();
+    (out.status == 0 && !origin.is_empty()).then(|| origin.to_owned())
 }
 
 /// The default branch of `origin`: `origin/HEAD`, else `ls-remote`, else the
@@ -747,35 +797,53 @@ pub async fn default_branch(
     main_root: &Path,
     record: Option<&RecordView>,
 ) -> Option<String> {
-    if let Some(branch) = origin_head(git, main_root).await {
+    let origin = origin_identity(git, main_root).await?;
+    let trust_head = may_use_origin_head(main_root, &origin);
+    if trust_head && let Some(branch) = origin_head(git, main_root).await {
+        if origin_identity(git, main_root).await.as_deref() != Some(origin.as_str()) {
+            return None;
+        }
+        remember_default(main_root, origin, Some(branch.clone()), true);
         return Some(branch);
     }
-    let remote = match cached_default(main_root) {
+    let remote = match cached_default(main_root, &origin) {
         Some(answer) => answer,
         None => {
             let answer = ls_remote_default(git, main_root).await;
-            if let Ok(mut cache) = default_cache().lock() {
-                cache.insert(main_root.to_path_buf(), (Instant::now(), answer.clone()));
+            if origin_identity(git, main_root).await.as_deref() != Some(origin.as_str()) {
+                return None;
             }
+            remember_default(main_root, origin, answer.clone(), trust_head);
             answer
         }
     };
-    remote.or_else(|| record_default(record))
+    if trust_head {
+        remote.or_else(|| record_default(record))
+    } else {
+        remote
+    }
 }
 
 /// [`default_branch`] without the network step: a listing stays fast.
-async fn default_branch_local(
-    git: &GitRunner,
-    cwd: &Path,
+fn default_branch_local(
     main_root: &Path,
     record: Option<&RecordView>,
+    origin: Option<String>,
+    head: Option<String>,
 ) -> Option<String> {
-    if let Some(branch) = origin_head(git, cwd).await {
+    let origin = origin?;
+    if may_use_origin_head(main_root, &origin)
+        && let Some(branch) = head
+    {
+        remember_default(main_root, origin, Some(branch.clone()), true);
         return Some(branch);
     }
-    cached_default(main_root)
-        .flatten()
-        .or_else(|| record_default(record))
+    let remote = cached_default(main_root, &origin).flatten();
+    if may_use_origin_head(main_root, &origin) {
+        remote.or_else(|| record_default(record))
+    } else {
+        remote
+    }
 }
 
 fn record_default(record: Option<&RecordView>) -> Option<String> {

@@ -1365,6 +1365,10 @@ pub struct InputKey {
     pub alt: bool,
     /// Shift was held.
     pub shift: bool,
+    /// Super was held.
+    pub super_key: bool,
+    /// Hyper or meta was held.
+    pub other: bool,
 }
 
 impl InputKey {
@@ -1372,7 +1376,11 @@ impl InputKey {
     #[must_use]
     pub fn search_character(self) -> Option<char> {
         match self.code {
-            InputCode::Char(character) if !self.ctrl && !self.alt => Some(character),
+            InputCode::Char(character)
+                if !self.ctrl && !self.alt && !self.super_key && !self.other =>
+            {
+                Some(character)
+            }
             _ => None,
         }
     }
@@ -1389,10 +1397,20 @@ pub enum InputCode {
     Esc,
     /// Backspace.
     Backspace,
+    /// Tab.
+    Tab,
+    /// Forward delete.
+    Delete,
+    /// Insert.
+    Insert,
     /// Up arrow.
     Up,
     /// Down arrow.
     Down,
+    /// Left arrow.
+    Left,
+    /// Right arrow.
+    Right,
     /// Page Up.
     PageUp,
     /// Page Down.
@@ -1401,6 +1419,8 @@ pub enum InputCode {
     Home,
     /// End.
     End,
+    /// A function key.
+    F(u8),
 }
 
 /// What the application asks of the transcript screen.
@@ -7051,6 +7071,7 @@ struct Chord {
     alt: bool,
     /// Shift was held.
     shift: bool,
+    super_key: bool,
 }
 
 impl Chord {
@@ -7063,12 +7084,14 @@ impl Chord {
             ctrl: false,
             alt: false,
             shift: false,
+            super_key: false,
         };
         for modifier in parts {
             match modifier.to_lowercase().as_str() {
                 "ctrl" | "control" => chord.ctrl = true,
                 "alt" | "option" => chord.alt = true,
                 "shift" => chord.shift = true,
+                "super" => chord.super_key = true,
                 _ => return None,
             }
         }
@@ -7078,7 +7101,11 @@ impl Chord {
 
     /// Whether this chord is the key.
     fn matches(&self, key: &InputKey) -> bool {
-        if self.ctrl != key.ctrl || self.alt != key.alt {
+        if self.ctrl != key.ctrl
+            || self.alt != key.alt
+            || self.super_key != key.super_key
+            || key.other
+        {
             return false;
         }
         match (self.code, key.code) {
@@ -7098,14 +7125,28 @@ fn key_code(text: &str, shift: &mut bool) -> Option<InputCode> {
         "enter" => InputCode::Enter,
         "esc" | "escape" => InputCode::Esc,
         "backspace" => InputCode::Backspace,
+        "tab" => InputCode::Tab,
+        "delete" => InputCode::Delete,
+        "insert" => InputCode::Insert,
         "up" => InputCode::Up,
         "down" => InputCode::Down,
+        "left" => InputCode::Left,
+        "right" => InputCode::Right,
         "pageup" => InputCode::PageUp,
         "pagedown" => InputCode::PageDown,
         "home" => InputCode::Home,
         "end" => InputCode::End,
         "space" => InputCode::Char(' '),
+        "plus" => InputCode::Char('+'),
         _ => {
+            if let Some(number) = name
+                .strip_prefix('f')
+                .and_then(|number| number.parse::<u8>().ok())
+                && (1..=24).contains(&number)
+                && !name[1..].starts_with('0')
+            {
+                return Some(InputCode::F(number));
+            }
             let mut characters = text.chars();
             let character = characters.next()?;
             if characters.next().is_some() {
@@ -7151,7 +7192,11 @@ fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
     let is_open = open.iter().any(|chord| chord.matches(&key));
     let is_close = close.iter().any(|chord| chord.matches(&key));
     let is_search = search.iter().any(|chord| chord.matches(&key));
-    let interrupt = key.ctrl && matches!(key.code, InputCode::Char('c'));
+    let interrupt = key.ctrl
+        && !key.alt
+        && !key.super_key
+        && !key.other
+        && matches!(key.code, InputCode::Char('c'));
 
     if !state.pager_open {
         if is_open {

@@ -1129,7 +1129,8 @@ impl<W: io::Write> InlineTerminal<W> {
         }
     }
 
-    fn screen_area(&self) -> Rect {
+    /// The area available to full-screen overlays.
+    pub fn screen_area(&self) -> Rect {
         Rect::new(0, 0, self.cols, self.rows)
     }
 

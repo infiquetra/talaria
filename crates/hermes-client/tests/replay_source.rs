@@ -496,6 +496,49 @@ fn paced_log() -> (TempDir, PathBuf) {
     write_log(&lines, true)
 }
 
+#[tokio::test(start_paused = true)]
+async fn paced_replay_stops_when_receiver_closes_before_the_first_frame() {
+    let (_dir, path) = write_log(
+        &[header(), inbound(1, 60_000, 1, json!({"first": true}))],
+        true,
+    );
+    for speed in [Speed::Recorded, Speed::Factor(2.0)] {
+        let source = ReplaySource::open(&path).unwrap();
+        let (sink, receiver) = mpsc::channel(1);
+        drop(receiver);
+        let sent = tokio::time::timeout(Duration::from_millis(250), source.run(speed, sink))
+            .await
+            .expect("a closed receiver interrupts the first pacing delay")
+            .unwrap();
+        assert_eq!(sent, 0);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn paced_replay_stops_when_receiver_closes_between_frames() {
+    let (_dir, path) = write_log(
+        &[
+            header(),
+            inbound(1, 0, 1, json!({"first": true})),
+            inbound(2, 60_000, 1, json!({"second": true})),
+        ],
+        true,
+    );
+    for speed in [Speed::Recorded, Speed::Factor(2.0)] {
+        let source = ReplaySource::open(&path).unwrap();
+        let (sink, mut receiver) = mpsc::channel(1);
+        let run = tokio::spawn(async move { source.run(speed, sink).await });
+        assert!(receiver.recv().await.is_some());
+        drop(receiver);
+        let sent = tokio::time::timeout(Duration::from_millis(250), run)
+            .await
+            .expect("receiver closure interrupts the next pacing delay")
+            .unwrap()
+            .unwrap();
+        assert_eq!(sent, 1);
+    }
+}
+
 /// Replays at `speed` and returns each item's arrival time on the virtual clock.
 async fn arrival_times(source: &ReplaySource, speed: Speed) -> Vec<Duration> {
     let start = tokio::time::Instant::now();

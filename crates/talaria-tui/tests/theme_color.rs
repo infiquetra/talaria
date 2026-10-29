@@ -2,6 +2,71 @@
 
 use talaria_tui::theme::color::{Rgb, ensure_contrast, parse_color, to_ansi256};
 
+#[test]
+fn command_reply_respects_the_resolved_color_policy_and_palette() {
+    use ratatui::style::{Color, Style};
+    use talaria_core::automation::HermesCommandCell;
+    use talaria_core::session::Cell;
+    use talaria_tui::history::CellLines;
+    use talaria_tui::theme::cells::ThemedCells;
+    use talaria_tui::theme::{
+        ColorDepth, DepthSource, Motion, MotionSource, Polarity, PolaritySource, TerminalColors,
+        ThemeInputs, resolve,
+    };
+
+    let command = Cell::HermesCommand(HermesCommandCell {
+        name: "test".into(),
+        typed: "/test".into(),
+        body: "Warning `code` and [link](https://example.com)".into(),
+        warning: true,
+    });
+    for source in [DepthSource::NoColorEnv, DepthSource::Config] {
+        let theme = resolve(&ThemeInputs {
+            skin: None,
+            skipped: &[],
+            follow_hermes_skin: false,
+            polarity: (Polarity::Dark, PolaritySource::Config),
+            depth: (ColorDepth::None, source),
+            motion: (Motion::Full, MotionSource::Default),
+            terminal: TerminalColors::default(),
+        });
+        let lines = ThemedCells { theme: &theme }.lines(&command, 80);
+        for line in &lines {
+            assert!(
+                line.style.fg.is_none()
+                    && line.style.bg.is_none()
+                    && line.style.underline_color.is_none()
+            );
+            for span in &line.spans {
+                assert!(
+                    span.style.fg.is_none()
+                        && span.style.bg.is_none()
+                        && span.style.underline_color.is_none(),
+                    "{:?}",
+                    span
+                );
+            }
+        }
+    }
+    let mut theme = resolve(&ThemeInputs {
+        skin: None,
+        skipped: &[],
+        follow_hermes_skin: false,
+        polarity: (Polarity::Dark, PolaritySource::Config),
+        depth: (ColorDepth::TrueColor, DepthSource::Config),
+        motion: (Motion::Full, MotionSource::Default),
+        terminal: TerminalColors::default(),
+    });
+    theme.markdown.inline_code = Style::default().fg(Color::Magenta);
+    let lines = ThemedCells { theme: &theme }.lines(&command, 80);
+    assert!(
+        lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .any(|span| span.content.contains("code") && span.style.fg == Some(Color::Magenta))
+    );
+}
+
 fn rgb(r: u8, g: u8, b: u8) -> Rgb {
     Rgb(r, g, b)
 }

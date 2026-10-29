@@ -172,14 +172,32 @@ pub fn hermes_command_lines(
     width: u16,
     theme: &AutomationTheme,
 ) -> Vec<Line<'static>> {
+    hermes_command_lines_with_options(cell, width, theme, &MarkdownOptions::default())
+}
+
+/// Render a command with the same Markdown palette and color policy as other cells.
+pub fn hermes_command_lines_with_options(
+    cell: &HermesCommandCell,
+    width: u16,
+    theme: &AutomationTheme,
+    markdown: &MarkdownOptions,
+) -> Vec<Line<'static>> {
+    let without_color = |mut style: Style| {
+        if !markdown.color {
+            style.fg = None;
+            style.bg = None;
+            style.underline_color = None;
+        }
+        style
+    };
     let typed = Span::styled(
         untrusted_line(&cell.typed),
-        theme.dim.add_modifier(Modifier::BOLD),
+        without_color(theme.dim).add_modifier(Modifier::BOLD),
     );
     let mut lines = vec![cut_spans(vec![typed], usize::from(width))];
     let options = MarkdownOptions {
         width: width.saturating_sub(2).max(1),
-        ..MarkdownOptions::default()
+        ..markdown.clone()
     };
     let mut warned = !cell.warning;
     for body in render_markdown(&cell.body, &options) {
@@ -188,7 +206,7 @@ pub fn hermes_command_lines(
             if warned {
                 spans.push(span);
             } else {
-                warned = warn_first_glyph(span, theme.warning, &mut spans);
+                warned = warn_first_glyph(span, without_color(theme.warning), &mut spans);
             }
         }
         lines.push(Line::from(spans).style(body.style));

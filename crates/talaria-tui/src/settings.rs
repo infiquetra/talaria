@@ -1,6 +1,6 @@
 //! Settings projection and terminal key translation.
 use crate::{
-    history::sanitize,
+    history::{sanitize, wrap_lines},
     keys::{Key, KeyCode, KeyContext, KeyKind, KeyMap},
 };
 use ratatui::{
@@ -89,52 +89,45 @@ pub fn draw_settings(view: &SettingsView, area: Rect, buf: &mut Buffer) {
         ),
         Screen::LoadError => lines(view.banner.clone(), at(area, 2, area.height - 2), buf),
         Screen::Reviewing | Screen::Checking | Screen::Applying | Screen::Verifying => {
-            draw_review(
+            let banner_height = if view.banner.is_empty() {
+                0
+            } else {
+                3.min(area.height.saturating_sub(4))
+            };
+            draw_review_scrolled(
                 &view.review_rows,
                 &format!(
                     "Review {} change(s) · profile {}",
                     view.review_rows.len(),
                     view.profile
                 ),
-                at(area, 0, area.height - 1),
+                view.review_scroll,
+                at(area, 0, area.height.saturating_sub(1 + banner_height)),
                 buf,
             );
             let footer = if view.screen == Screen::Reviewing {
-                "Enter apply · Esc back"
+                "↑ ↓ scroll · Enter apply · Esc back"
             } else {
                 "Applying… (checking, saving, then reading back)"
             };
             line(footer, at(area, area.height - 1, 1), buf);
             if !view.banner.is_empty() {
-                lines(view.banner.clone(), at(area, area.height - 5, 4), buf);
+                lines(
+                    view.banner.clone(),
+                    at(area, area.height - 1 - banner_height, banner_height),
+                    buf,
+                );
             }
         }
         Screen::Conflict => {
-            let mut text = vec![format!(
-                "{} setting(s) changed outside Talaria since you opened settings.",
-                view.conflict_rows.len()
-            )];
-            for row in &view.conflict_rows {
-                let secret = is_secret_key(&row.key)
-                    || contains_secret_key(&row.yours)
-                    || row.now.as_ref().is_some_and(contains_secret_key);
-                let yours = if secret {
-                    "••••".into()
-                } else {
-                    row.yours.to_string()
-                };
-                let now = if secret {
-                    "••••".into()
-                } else {
-                    row.now
-                        .as_ref()
-                        .map_or_else(|| "(not set)".into(), ToString::to_string)
-                };
-                text.push(format!("{}  yours {yours}  now {now}", row.key));
-            }
-            lines(text, at(area, 2, area.height - 3), buf);
+            scroll_text(
+                conflict_text(view),
+                view.review_scroll,
+                at(area, 2, area.height - 3),
+                buf,
+            );
             line(
-                "o keep yours · t take theirs · Esc back",
+                "↑ ↓ scroll · o keep yours · t take theirs · Esc back",
                 at(area, area.height - 1, 1),
                 buf,
             );
@@ -333,8 +326,28 @@ fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
 
 /// Shared review component for formatted domain values.
 pub fn draw_review(rows: &[ReviewRow], title: &str, area: Rect, buf: &mut Buffer) {
+    draw_review_scrolled(rows, title, 0, area, buf);
+}
+
+/// Shared, scrollable review component used by settings and connectors.
+pub fn draw_review_scrolled(
+    rows: &[ReviewRow],
+    title: &str,
+    scroll: usize,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     Clear.render(area, buf);
     line(title, at(area, 0, 1), buf);
+    scroll_text(
+        review_text(rows),
+        scroll,
+        at(area, 2, area.height.saturating_sub(2)),
+        buf,
+    );
+}
+
+fn review_text(rows: &[ReviewRow]) -> Vec<String> {
     let mut text = Vec::new();
     for row in rows {
         let change = if is_secret_key(&row.key) {
@@ -345,7 +358,107 @@ pub fn draw_review(rows: &[ReviewRow], title: &str, area: Rect, buf: &mut Buffer
         text.push(format!("{}  {change}  {}", row.key, row.effect_label));
         text.extend(row.warnings.iter().map(|warning| format!("  {warning}")));
     }
-    lines(text, at(area, 2, area.height.saturating_sub(2)), buf);
+    text
+}
+
+fn conflict_text(view: &SettingsView) -> Vec<String> {
+    let mut text = vec![format!(
+        "{} setting(s) changed outside Talaria since you opened settings.",
+        view.conflict_rows.len()
+    )];
+    for row in &view.conflict_rows {
+        let secret = is_secret_key(&row.key)
+            || contains_secret_key(&row.yours)
+            || row.now.as_ref().is_some_and(contains_secret_key);
+        let yours = if secret {
+            "••••".into()
+        } else {
+            row.yours.to_string()
+        };
+        let now = if secret {
+            "••••".into()
+        } else {
+            row.now
+                .as_ref()
+                .map_or_else(|| "(not set)".into(), ToString::to_string)
+        };
+        text.push(format!("{}  yours {yours}  now {now}", row.key));
+    }
+    text
+}
+
+fn wrapped_text(text: Vec<String>, width: u16) -> Vec<Line<'static>> {
+    text.into_iter()
+        .flat_map(|text| wrap_lines(vec![Line::from(sanitize(&text).into_owned())], width))
+        .collect()
+}
+
+/// The last valid first row of a review component, given its full area.
+pub fn review_scroll_limit(rows: &[ReviewRow], area: Rect) -> usize {
+    wrapped_text(review_text(rows), area.width)
+        .len()
+        .saturating_sub(usize::from(area.height.saturating_sub(2)))
+}
+
+/// Resolve a review scroll key using the actual wrapped content and screen size.
+pub fn review_scroll_target(view: &SettingsView, key: &SettingsKey, area: Rect) -> Option<usize> {
+    let max = match view.screen {
+        Screen::Reviewing => {
+            let banner = if view.banner.is_empty() {
+                0
+            } else {
+                3.min(area.height.saturating_sub(4))
+            };
+            review_scroll_limit(
+                &view.review_rows,
+                at(area, 0, area.height.saturating_sub(1 + banner)),
+            )
+        }
+        Screen::Conflict => wrapped_text(conflict_text(view), area.width)
+            .len()
+            .saturating_sub(usize::from(area.height.saturating_sub(3))),
+        _ => return None,
+    };
+    let current = view.review_scroll.min(max);
+    Some(match key {
+        SettingsKey::Edit(EditKey::Up) => current.saturating_sub(1),
+        SettingsKey::Edit(EditKey::Down) => current.saturating_add(1).min(max),
+        SettingsKey::Edit(EditKey::PageUp) => current.saturating_sub(5),
+        SettingsKey::Edit(EditKey::PageDown) => current.saturating_add(5).min(max),
+        SettingsKey::Edit(EditKey::Home) => 0,
+        SettingsKey::Edit(EditKey::End) => max,
+        _ => return None,
+    })
+}
+
+fn scroll_text(text: Vec<String>, scroll: usize, area: Rect, buf: &mut Buffer) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let lines = wrapped_text(text, area.width);
+    let max = lines.len().saturating_sub(usize::from(area.height));
+    let start = scroll.min(max);
+    for (offset, text) in lines
+        .iter()
+        .skip(start)
+        .take(usize::from(area.height))
+        .enumerate()
+    {
+        buf.set_line(area.x, area.y + offset as u16, text, area.width);
+    }
+    // The position is visible without taking space from the content or the confirmation footer.
+    if lines.len() > usize::from(area.height) && area.y > 0 {
+        let position = format!(
+            "{}–{}/{}",
+            start + 1,
+            (start + usize::from(area.height)).min(lines.len()),
+            lines.len()
+        );
+        let width = u16::try_from(Line::from(position.as_str()).width()).unwrap_or(u16::MAX);
+        if width <= area.width {
+            buf.set_string(area.right() - width, area.y - 1, position, Style::default());
+        }
+    }
 }
 
 /// Only browsing consults the key map; focused input uses the reducer's fixed keys.
@@ -383,6 +496,8 @@ pub fn route_settings(view: &SettingsView, map: &KeyMap, key: &Key) -> Option<Se
         KeyCode::Right => EditKey::Right,
         KeyCode::Up => EditKey::Up,
         KeyCode::Down => EditKey::Down,
+        KeyCode::PageUp => EditKey::PageUp,
+        KeyCode::PageDown => EditKey::PageDown,
         KeyCode::Home => EditKey::Home,
         KeyCode::End => EditKey::End,
         KeyCode::Backspace => EditKey::Backspace,

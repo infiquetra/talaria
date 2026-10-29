@@ -30,10 +30,16 @@ pub(super) fn view(state: &ConnectorsState, now: Instant) -> ConnectorsView {
         screen: Screen::Loading,
         notice: state.notice.clone(),
         footer: Vec::new(),
+        review_scroll: state.review_scroll,
     };
     if let Some(prompt) = &state.prompt {
         result.screen = prompt_screen(state, prompt);
-        result.footer = if matches!(prompt, Prompt::Confirm(_)) {
+        result.footer = if matches!(
+            prompt,
+            Prompt::Confirm(ConfirmKind::SaveTools | ConfirmKind::SavePlatform)
+        ) {
+            footer(&[("↑ ↓", "scroll"), ("y", "confirm"), ("n", "back")])
+        } else if matches!(prompt, Prompt::Confirm(_)) {
             footer(&[("y", "confirm"), ("n", "back")])
         } else {
             footer(&[("enter", "keep"), ("esc", "cancel")])

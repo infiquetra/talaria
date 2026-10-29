@@ -8,7 +8,7 @@ use ratatui::text::Line;
 use talaria_core::session::{Cell, CellId};
 
 use super::Theme;
-use crate::automation::{AutomationTheme, hermes_command_lines};
+use crate::automation::{AutomationTheme, hermes_command_lines_with_options};
 use crate::history::{CellLines, PlainCellLines};
 use crate::markdown::{MarkdownOptions, render_markdown};
 
@@ -34,7 +34,17 @@ impl CellLines for ThemedCells<'_> {
             Cell::Assistant(cell) => (&cell.text, Style::default()),
             Cell::Reasoning(cell) => (&cell.text, reasoning_base(self.theme)),
             Cell::HermesCommand(cell) => {
-                return hermes_command_lines(cell, width, &AutomationTheme::default());
+                return hermes_command_lines_with_options(
+                    cell,
+                    width,
+                    &AutomationTheme::default(),
+                    &MarkdownOptions {
+                        width,
+                        theme: self.theme.markdown.clone(),
+                        color: self.theme.color,
+                        base_style: Style::default(),
+                    },
+                );
             }
             _ => return PlainCellLines.lines(cell, width),
         };

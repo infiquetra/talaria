@@ -53,7 +53,6 @@ Rule: account for primary-screen live-row reflow on width changes even while an 
 `queue_draft_clear_is_emitted_only_after_acceptance` and `busy_queue_shortcuts_keep_text_and_caret` cover a delayed queue operation and both draft shortcuts. Clearing on the key event loses the draft on refusal; deciding from an earlier view can also race with queue completion. `clearing_a_synchronized_draft_invalidates_pending_attachment_results` covers stale attachments after a successful clear.
 
 Rule: clear an unchanged composer draft only after the reducer accepts it, and invalidate pending attachment results when it is cleared.
-
 ## 2026-10-29 — Rust cache identity includes compiler, mode and writer provenance
 
 Evidence: `.github/actions/rust-cache/test_cache.py` exercises stale inputs, missing metadata,
@@ -67,6 +66,7 @@ The locked cargo-typify installation remains mandatory; no cached version string
 
 Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their
 writers, and keep qualification independent of cache state.
+
 
 ## 2026-10-28 — Waiting work and an answered pause need durable evidence
 
@@ -6391,6 +6391,24 @@ protocol variants and wrapper exit markers explicit.
 **Mechanism.** BSD/POSIX `flock` locks are associated with the underlying kernel file description, not a single process or descriptor. When another test thread spawns a child subprocess (`Command::spawn`) while a test holds an `flock` on `run.lock`, the child inherits the open descriptor and keeps the lock alive until the child exits, even after the parent drops its `File`. Calling `file.unlock()` explicitly in `probe_lock`, `RunJournal::drop`, and lock-probing tests releases the kernel lock immediately regardless of concurrent descriptor inheritance.
 
 **Generalizable rule.** Explicitly `unlock()` advisory file locks before dropping the descriptor whenever other threads in the process may spawn child processes.
+
+## 2026-10-29 — A remote's symbolic HEAD and cached answer belong to its URL
+
+**Evidence.** `changing_origin_does_not_trust_the_previous_origins_symbolic_head` and `default_branch_cache_tracks_the_current_origin_including_unknown_answers` in `crates/talaria-app/tests/review_git.rs`. Changing `origin` leaves `refs/remotes/origin/HEAD` pointing to the old remote; both successful and unsuccessful lookups can otherwise outlive the URL that produced them.
+
+**Rule.** Associate default-branch answers with the current origin identity, and stop trusting an old symbolic HEAD after that identity changes.
+
+## 2026-10-29 — Viewport calculations must use the text and renderer that are drawn
+
+**Evidence.** `page_navigation_counts_the_same_tool_rows_that_are_drawn` and `search_highlights_occurrences_split_by_wrapping_and_expanded_controls` in `crates/talaria-tui/tests/pager_render.rs`. The tool renderer changes row counts, and control stand-ins can expand before wrapping; calculating against raw or differently rendered text makes navigation and search diverge from the visible rows.
+
+**Rule.** Measure the final sanitized rendering and retain the mapping from source characters to displayed rows when navigation or highlighting depends on it.
+
+## 2026-10-29 — Concurrent subprocess logs can interleave individual arguments
+
+**Evidence.** The instrumented `listing_shares_one_origin_lookup_and_never_contacts_the_remote` test in `crates/talaria-app/tests/review_git.rs` lost a Git command in its argument count when concurrent wrappers appended each argument separately to one file. Giving each invocation its own log file preserves the complete records.
+
+**Rule.** Record concurrent subprocess calls separately or append each complete call atomically.
 
 ## 2026-10-29 — Multi-provider resume verification and composer state after interrupting routed turns
 

@@ -79,6 +79,243 @@ fn footer_is_separate_from_body_and_clears_previous_contents() {
     }
 }
 
+fn search(pager: &mut Pager, ctx: &PagerContext<'_>, index: &mut SearchIndex, query: &str) {
+    use talaria_tui::pager::SearchInput;
+    pager.handle_action(PagerAction::StartSearch, ctx, index);
+    pager.handle_search_input(SearchInput::Paste(query.into()), ctx, index);
+    pager.handle_search_input(SearchInput::Enter, ctx, index);
+}
+
+#[test]
+fn search_navigates_to_a_deep_occurrence_and_reflows_it() {
+    let text = format!(
+        "{}\nneedle",
+        (0..30)
+            .map(|n| format!("line {n:02}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let cells = vec![user(1, &text)];
+    let ctx = context(&cells);
+    let mut index = SearchIndex::new();
+    let mut pager = Pager::open(&ctx, 50, 8, &mut index);
+    search(&mut pager, &ctx, &mut index, "needle");
+    assert!((1..7).any(|row| row_text(&paint(&mut pager, &ctx, 50, 8), row).contains("needle")));
+    pager.resize(24, 8);
+    assert!((1..7).any(|row| row_text(&paint(&mut pager, &ctx, 24, 8), row).contains("needle")));
+    pager.handle_action(PagerAction::ToggleDetails, &ctx, &mut index);
+    assert!((1..7).any(|row| row_text(&paint(&mut pager, &ctx, 24, 8), row).contains("needle")));
+}
+
+#[test]
+fn search_navigates_to_a_deep_assistant_occurrence() {
+    let text = format!(
+        "{}\nneedle",
+        (0..30)
+            .map(|n| format!("line {n:02}  "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let cells = vec![assistant(1, &text, true)];
+    let ctx = context(&cells);
+    let mut index = SearchIndex::new();
+    let mut pager = Pager::open(&ctx, 50, 8, &mut index);
+    search(&mut pager, &ctx, &mut index, "needle");
+    let buf = paint(&mut pager, &ctx, 50, 8);
+    assert!(
+        (1..7).any(|row| row_text(&buf, row).contains("needle")),
+        "{}",
+        joined(&buf)
+    );
+}
+
+#[test]
+fn only_the_selected_search_occurrence_is_underlined() {
+    use ratatui::style::Modifier;
+    let cells = vec![user(1, "needle needle\nneedle\nneedle")];
+    let ctx = context(&cells);
+    let mut index = SearchIndex::new();
+    let mut pager = Pager::open(&ctx, 50, 8, &mut index);
+    search(&mut pager, &ctx, &mut index, "needle");
+    for expected in [(1, 2), (1, 9), (2, 2), (3, 2)] {
+        let buf = paint(&mut pager, &ctx, 50, 8);
+        let mut underlined = Vec::new();
+        for y in 1..7 {
+            for x in 0..50 {
+                if buf[(x, y)].modifier.contains(Modifier::UNDERLINED) {
+                    underlined.push((y, x));
+                }
+            }
+        }
+        assert_eq!(underlined.len(), 6, "one occurrence: {underlined:?}");
+        assert_eq!(underlined[0], expected);
+        pager.handle_action(PagerAction::NextMatch, &ctx, &mut index);
+    }
+}
+
+#[test]
+fn search_highlights_occurrences_split_by_wrapping_and_expanded_controls() {
+    use ratatui::style::Modifier;
+    let cells = vec![user(1, "0123456789abcdefneedle\tTAIL")];
+    let ctx = context(&cells);
+    let mut index = SearchIndex::new();
+    let mut pager = Pager::open(&ctx, 20, 8, &mut index);
+    search(&mut pager, &ctx, &mut index, "needle");
+    let buf = paint(&mut pager, &ctx, 20, 8);
+    let mut highlighted = String::new();
+    for y in 1..7 {
+        for x in 0..20 {
+            if buf[(x, y)].modifier.contains(Modifier::UNDERLINED) {
+                highlighted.push_str(buf[(x, y)].symbol());
+            }
+        }
+    }
+    assert_eq!(highlighted, "needle");
+}
+
+#[test]
+fn resized_and_compacted_cells_keep_a_visible_anchor() {
+    let text = (0..30)
+        .map(|n| format!("thought {n:02}  "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let cells = vec![reasoning(1, &text)];
+    let ctx = context(&cells);
+    let mut index = SearchIndex::new();
+    let mut pager = Pager::open(&ctx, 50, 8, &mut index);
+    paint(&mut pager, &ctx, 50, 8);
+    pager.handle_action(PagerAction::LineUp, &ctx, &mut index);
+    pager.handle_action(PagerAction::ToggleDetails, &ctx, &mut index);
+    let screen = joined(&paint(&mut pager, &ctx, 50, 8));
+    assert!(
+        screen.contains("thinking") || screen.contains("lines)"),
+        "{screen}"
+    );
+    pager.handle_action(PagerAction::ToggleDetails, &ctx, &mut index);
+    assert!(joined(&paint(&mut pager, &ctx, 50, 8)).contains("thought"));
+
+    let cells = vec![user(2, &"word ".repeat(90))];
+    let ctx = context(&cells);
+    let mut pager = Pager::open(&ctx, 25, 8, &mut index);
+    paint(&mut pager, &ctx, 25, 8);
+    pager.handle_action(PagerAction::LineUp, &ctx, &mut index);
+    pager.resize(100, 8);
+    assert!(joined(&paint(&mut pager, &ctx, 100, 8)).contains("word"));
+    pager.resize(25, 8);
+    assert!(joined(&paint(&mut pager, &ctx, 25, 8)).contains("word"));
+}
+
+#[test]
+fn user_text_is_sanitized_before_wrapping() {
+    for text in [
+        "0123456789\tABCDEFGH",
+        "12345678\t\tABCDEFGH",
+        "123456789\u{202e}ABCDEFGH",
+    ] {
+        let cells = vec![user(1, text)];
+        let ctx = context(&cells);
+        let mut index = SearchIndex::new();
+        let mut pager = Pager::open(&ctx, 20, 8, &mut index);
+        let buf = paint(&mut pager, &ctx, 20, 8);
+        let body: String = (1..7)
+            .map(|row| row_text(&buf, row))
+            .collect::<Vec<_>>()
+            .join("");
+        let compact: String = body.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(compact.contains("ABCDEFGH"), "{body}");
+    }
+}
+
+#[test]
+fn following_uses_the_real_tool_renderer_after_redraw_and_resize() {
+    use talaria_tui::tool_cell::{Detail, ToolCellLines, ToolRenderOptions, ToolTheme};
+    let mut call = tool(1, "terminal", ToolStatus::Succeeded);
+    call.result = Some(format!(
+        "{}END-MARKER",
+        "abcdefghijklmnopqrstuvwx ".repeat(25)
+    ));
+    let cells = vec![Cell::Tool(call)];
+    let ctx = context(&cells);
+    let mut index = SearchIndex::new();
+    let mut pager = Pager::open(&ctx, 50, 8, &mut index);
+    for width in [50, 50, 70, 50] {
+        let renderer = ToolCellLines::new(
+            Box::new(PlainCellLines),
+            ToolRenderOptions {
+                width,
+                theme: ToolTheme::default(),
+                color: true,
+                detail: Detail::Full,
+                expand_hint: None,
+                elapsed: None,
+            },
+        );
+        pager.resize(width, 8);
+        pager.handle_action(PagerAction::Bottom, &ctx, &mut index);
+        let mut buf = Buffer::empty(Rect::new(0, 0, width, 8));
+        pager.draw(buf.area, &mut buf, &ctx, &renderer);
+        let screen = joined(&buf);
+        assert!(screen.contains("END-MARKER"), "{width}: {screen}");
+        assert!(row_text(&buf, 7).contains("following"));
+    }
+}
+
+#[test]
+fn page_navigation_counts_the_same_tool_rows_that_are_drawn() {
+    use talaria_tui::tool_cell::{Detail, ToolCellLines, ToolRenderOptions, ToolTheme};
+    let mut call = tool(1, "terminal", ToolStatus::Succeeded);
+    call.result = Some(
+        (0..30)
+            .map(|n| format!("output-row-{n:02}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    let cells = vec![Cell::Tool(call), user(2, "after tool")];
+    let ctx = context(&cells);
+    let mut index = SearchIndex::new();
+    let renderer = ToolCellLines::new(
+        Box::new(PlainCellLines),
+        ToolRenderOptions {
+            width: 50,
+            theme: ToolTheme::default(),
+            color: true,
+            detail: Detail::Full,
+            expand_hint: None,
+            elapsed: None,
+        },
+    );
+    let expected = renderer.lines(&cells[0], 50);
+    assert!(expected.len() > 10);
+    let mut pager = Pager::open(&ctx, 50, 8, &mut index);
+    pager.handle_action_with_renderer(PagerAction::Top, &ctx, &mut index, &renderer);
+    pager.handle_action_with_renderer(PagerAction::PageDown, &ctx, &mut index, &renderer);
+    let mut buf = Buffer::empty(Rect::new(0, 0, 50, 8));
+    pager.draw(buf.area, &mut buf, &ctx, &renderer);
+    assert_eq!(row_text(&buf, 1).trim(), expected[5].to_string().trim());
+}
+
+#[test]
+fn changing_the_tool_theme_invalidates_cached_rendering() {
+    use ratatui::style::{Color, Style};
+    struct ColoredTool(Color);
+    impl CellLines for ColoredTool {
+        fn lines(&self, _: &Cell, _: u16) -> Vec<Line<'static>> {
+            vec![Line::styled("tool output", Style::default().fg(self.0))]
+        }
+    }
+    let cells = vec![Cell::Tool(tool(1, "terminal", ToolStatus::Succeeded))];
+    let ctx = context(&cells);
+    let mut index = SearchIndex::new();
+    let mut pager = Pager::open(&ctx, 50, 8, &mut index);
+    let mut buf = Buffer::empty(Rect::new(0, 0, 50, 8));
+    pager.draw(buf.area, &mut buf, &ctx, &ColoredTool(Color::Red));
+    assert_eq!(buf[(0, 1)].fg, Color::Red);
+    pager.invalidate_rendering();
+    buf.reset();
+    pager.draw(buf.area, &mut buf, &ctx, &ColoredTool(Color::Blue));
+    assert_eq!(buf[(0, 1)].fg, Color::Blue);
+}
+
 fn tool_diff_context(state: &talaria_core::session::SessionState) -> PagerContext<'_> {
     let mut ctx = context(state.cells());
     ctx.title = "";

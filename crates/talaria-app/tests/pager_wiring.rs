@@ -21,6 +21,8 @@ fn key(code: InputCode, ctrl: bool) -> AppMessage {
         ctrl,
         alt: false,
         shift: false,
+        super_key: false,
+        other: false,
     })
 }
 
@@ -204,6 +206,8 @@ fn shifted_named_close_binding_does_not_match_plain_navigation() {
             ctrl: false,
             alt: false,
             shift: true,
+            super_key: false,
+            other: false,
         }),
     );
     assert!(!state.pager_open, "Shift+Up closes");
@@ -240,6 +244,8 @@ fn named_pager_chords_agree_with_terminal_modifier_matching() {
                     ctrl,
                     alt,
                     shift,
+                    super_key: false,
+                    other: false,
                 }),
             );
             assert_eq!(

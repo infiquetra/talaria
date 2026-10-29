@@ -48,6 +48,8 @@ pub enum ConfigureInput {
         method: String,
     },
     Key(ConfigureKey),
+    /// A viewport-relative detail position computed by the presentation layer.
+    DetailScroll(usize),
     StepDone {
         index: usize,
         result: StepResult,
@@ -118,6 +120,7 @@ pub struct ConfigureState {
     outcomes: Vec<Option<RowOutcome>>,
     cursor: usize,
     detail: bool,
+    detail_scroll: usize,
     discarding: bool,
     refining: bool,
     editor: String,
@@ -180,6 +183,7 @@ impl ConfigureState {
             outcomes: Vec::new(),
             cursor: 0,
             detail: false,
+            detail_scroll: 0,
             discarding: false,
             refining: false,
             editor: String::new(),
@@ -217,6 +221,12 @@ impl ConfigureState {
             };
         }
         match input {
+            ConfigureInput::DetailScroll(offset) => {
+                if self.detail && matches!(self.phase, Phase::Review | Phase::Done) {
+                    self.detail_scroll = offset;
+                }
+                Vec::new()
+            }
             ConfigureInput::Open {
                 request,
                 profile,
@@ -591,10 +601,13 @@ impl ConfigureState {
                 "y apply · n back · esc back".into()
             } else if self.refining {
                 "enter sends · esc back".into()
+            } else if self.detail {
+                "↑ ↓ select · PgUp/PgDn scroll · d close detail · a apply".into()
             } else {
                 "arrows select · space toggle · a apply · d detail · r refine · esc closes".into()
             },
             selected_row: (!self.rows.is_empty()).then_some(self.cursor),
+            detail_scroll: self.detail.then_some(self.detail_scroll),
         }
     }
     pub fn next_deadline(&self) -> Option<Instant> {
@@ -1098,6 +1111,27 @@ impl ConfigureState {
             return self.close();
         }
         if matches!(self.phase, Phase::Review | Phase::Done) {
+            if self.detail {
+                let limit = self.rows.get(self.cursor).map_or(0, |row| {
+                    row.text.chars().count()
+                        + row
+                            .detail
+                            .iter()
+                            .map(|line| line.chars().count())
+                            .sum::<usize>()
+                });
+                match key {
+                    ConfigureKey::PageUp => {
+                        self.detail_scroll = self.detail_scroll.saturating_sub(5);
+                        return Vec::new();
+                    }
+                    ConfigureKey::PageDown => {
+                        self.detail_scroll = self.detail_scroll.saturating_add(5).min(limit);
+                        return Vec::new();
+                    }
+                    _ => {}
+                }
+            }
             match key {
                 ConfigureKey::Up
                 | ConfigureKey::Down
@@ -1125,7 +1159,10 @@ impl ConfigureState {
                         self.selected[self.cursor] = !self.selected[self.cursor];
                     }
                 }
-                ConfigureKey::Char('d') => self.detail = !self.detail,
+                ConfigureKey::Char('d') => {
+                    self.detail = !self.detail;
+                    self.detail_scroll = 0;
+                }
                 ConfigureKey::Char('a')
                     if self.phase == Phase::Review
                         && self.selected.iter().any(|selected| *selected) =>
