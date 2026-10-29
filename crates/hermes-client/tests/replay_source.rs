@@ -305,6 +305,29 @@ fn cut_short_last_line_flagged() {
 }
 
 #[test]
+fn truncated_utf8_tail_keeps_complete_frames_but_complete_invalid_utf8_fails() {
+    let lines = [
+        header(),
+        inbound(1, 0, 1, event("message.start", 1, json!({}))),
+    ];
+    let (_dir, path) = write_log(&lines, true);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(b"{\"kind\":\"frame\",\"text\":\"\xe2\x82");
+    std::fs::write(&path, &bytes).unwrap();
+
+    let source = ReplaySource::open(&path).expect("unfinished UTF-8 is in the discarded tail");
+    assert!(source.truncated());
+    assert_eq!(source.inbound().count(), 1);
+
+    bytes.push(b'\n');
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(
+        ReplaySource::open(&path).unwrap_err(),
+        ReplayError::Io("InvalidData".into())
+    );
+}
+
+#[test]
 fn seq_gap_is_an_error() {
     // A hole in the middle.
     let lines = vec![

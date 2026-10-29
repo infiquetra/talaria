@@ -453,7 +453,7 @@ struct State {
     fleet: FleetTables,
     /// Replies matched by method and params, each used once, before any handler.
     matched_results: Vec<(String, Value, Value)>,
-    method_results: Vec<(String, Value)>,
+    method_results: Vec<(String, Option<Duration>, Value)>,
     /// Process reads default to empty; process mutations and background tasks are opt-in.
     background: BackgroundScript,
     mcp: McpSide,
@@ -1025,7 +1025,13 @@ impl MockGateway {
     pub fn push_method_result(&self, method: &str, result: Value) {
         lock(&self.shared)
             .method_results
-            .push((method.to_owned(), result));
+            .push((method.to_owned(), None, result));
+    }
+
+    pub fn push_method_result_after(&self, method: &str, delay: Duration, result: Value) {
+        lock(&self.shared)
+            .method_results
+            .push((method.to_owned(), Some(delay), result));
     }
 
     /// Give this profile's method no reply while on.
@@ -2059,11 +2065,11 @@ fn plan_request(
     if let Some(index) = state
         .method_results
         .iter()
-        .position(|(wanted, _)| wanted == method)
+        .position(|(wanted, _, _)| wanted == method)
     {
-        let (_, result) = state.method_results.remove(index);
+        let (_, delay, result) = state.method_results.remove(index);
         outgoing.push((
-            None,
+            delay,
             json!({"jsonrpc":"2.0", "id":id, "result":result}).to_string(),
             reply_meta(id, method),
         ));

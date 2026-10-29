@@ -14,7 +14,7 @@ pub use text::{
 
 use std::collections::BTreeSet;
 
-use crate::session::SessionState;
+use crate::session::{Cell, SessionState};
 
 /// How long an accepted side question waits for its answer.
 pub const SIDE_ANSWER_TIMEOUT_MS: u64 = 300_000;
@@ -132,10 +132,21 @@ pub fn next_tick(tasks: &SideTasks, now_ms: u64) -> Option<u64> {
         .min()
 }
 
-/// Move the side rows and ids from a replaced state into its replacement.
+/// Move side work and its locally rendered results into a replacement snapshot.
 ///
 /// The app calls this when a snapshot replaces the state after a replay gap, so pending rows keep
 /// their timeout and a late answer still matches.
 pub fn carry_over(old: &mut SessionState, new: &mut SessionState) {
     new.side = std::mem::take(&mut old.side);
+    for cell in old.cells().iter().filter(|cell| match cell {
+        Cell::Shell(_) | Cell::Side(_) => true,
+        Cell::Notice(notice) => notice.text == SIDE_UNKNOWN_NOTICE,
+        _ => false,
+    }) {
+        let mut carried = cell.clone();
+        if let Cell::Notice(notice) = &mut carried {
+            notice.id = new.next_id();
+        }
+        new.insert_final(carried);
+    }
 }

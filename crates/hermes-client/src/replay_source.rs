@@ -99,15 +99,18 @@ impl ReplaySource {
     pub fn open(path: &Path) -> Result<ReplaySource, ReplayError> {
         let bytes =
             std::fs::read(path).map_err(|error| ReplayError::Io(format!("{:?}", error.kind())))?;
-        let text = String::from_utf8(bytes).map_err(|_| ReplayError::Io("InvalidData".into()))?;
+        let last_newline = bytes.iter().rposition(|byte| *byte == b'\n');
+        let truncated = last_newline.is_some_and(|last| last + 1 < bytes.len());
+        let complete = if truncated {
+            &bytes[..last_newline.map_or(0, |last| last + 1)]
+        } else {
+            &bytes
+        };
+        let text =
+            std::str::from_utf8(complete).map_err(|_| ReplayError::Io("InvalidData".into()))?;
         let mut lines: Vec<&str> = text.split('\n').collect();
-        let mut truncated = false;
         if text.ends_with('\n') {
             lines.pop();
-        } else if lines.len() > 1 {
-            // A recording cut short: its last line has no newline and is ignored.
-            lines.pop();
-            truncated = true;
         }
         let Some((first, records)) = lines.split_first() else {
             return Err(ReplayError::NotAHeader);

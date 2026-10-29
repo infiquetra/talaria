@@ -725,9 +725,10 @@ pub struct AppState {
     /// The running wake task, aborted when a newer wake replaces it.
     fleet_wake_task: Option<JoinHandle<()>>,
     pub opened: Option<OpenedSession>,
+    opened_profile: Option<String>,
     /// Whether the foreground session's process overlay is open.
     pub processes_open: bool,
-    retained_sessions: BTreeMap<String, OpenedSession>,
+    retained_sessions: BTreeMap<RowKey, OpenedSession>,
     connection_generation: u64,
     background_generation_base: u64,
     background_stop_bindings: BTreeMap<(String, u64), BackgroundBinding>,
@@ -1017,6 +1018,7 @@ impl AppState {
             fleet_wake_at: None,
             fleet_wake_task: None,
             opened: None,
+            opened_profile: None,
             processes_open: false,
             retained_sessions: BTreeMap::new(),
             connection_generation: 0,
@@ -1571,7 +1573,10 @@ pub enum AppMessage {
         now_ms: u64,
     },
     /// What a shell command or side question came back with.
-    SideDone(Vec<Event>),
+    SideDone {
+        key: RowKey,
+        events: Vec<Event>,
+    },
     /// A `/skin` command or a reconnect describe finished.
     AppearanceDone {
         /// The skin state it produced, when it changed one.
@@ -1815,7 +1820,10 @@ pub enum AppEffect {
     /// `prompt.submit`.
     Send(Effect),
     /// `shell.exec` or `prompt.btw`, started at once: never queued behind a prompt or a turn.
-    Side(Effect),
+    Side {
+        key: RowKey,
+        effect: Effect,
+    },
     /// One queue call through the queue service. Issue #232.
     Queue(Effect),
     /// A prompt handed back by the queue, for an empty composer. Issue #232.
@@ -3416,10 +3424,16 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
-        AppMessage::SideDone(events) => {
+        AppMessage::SideDone { key, events } => {
             let mut effects = Vec::new();
-            for event in events {
-                effects.extend(reduce(state, event));
+            if foreground_row(state).as_ref() == Some(&key) {
+                for event in events {
+                    effects.extend(reduce(state, event));
+                }
+            } else if let Some(opened) = state.retained_sessions.get_mut(&key) {
+                for event in events {
+                    talaria_core::session::update(&mut opened.state, event);
+                }
             }
             effects
         }
@@ -5145,7 +5159,8 @@ fn background_event(
         }
         return reduce(state, Event::Background(event));
     }
-    let Some(opened) = state.retained_sessions.get_mut(session_id) else {
+    let key = retained_key(state, session_id);
+    let Some(opened) = key.and_then(|key| state.retained_sessions.get_mut(&key)) else {
         return Vec::new();
     };
     let produced = talaria_core::session::update(&mut opened.state, Event::Background(event));
@@ -5233,7 +5248,9 @@ fn route(
                 note: note.take(),
             }),
             Effect::RunShell { .. } | Effect::AskSide { .. } => {
-                effects.push(AppEffect::Side(effect));
+                if let Some(key) = foreground_row(state) {
+                    effects.push(AppEffect::Side { key, effect });
+                }
             }
             // Issue 232. Queue and steer. The queue service will run these calls.
             Effect::CancelQueued { .. }
@@ -6182,9 +6199,28 @@ fn is_foreground(state: &AppState, session_id: &str) -> bool {
 /// The foreground session's row.
 fn foreground_row(state: &AppState) -> Option<RowKey> {
     state.opened.as_ref().map(|opened| RowKey {
-        profile: state.profile.clone(),
+        profile: state
+            .opened_profile
+            .clone()
+            .unwrap_or_else(|| state.profile.clone()),
         session_id: opened.session_id.clone(),
     })
+}
+
+fn retained_key(state: &AppState, session_id: &str) -> Option<RowKey> {
+    let current = RowKey {
+        profile: state.profile.clone(),
+        session_id: session_id.to_owned(),
+    };
+    if state.retained_sessions.contains_key(&current) {
+        return Some(current);
+    }
+    let mut matches = state
+        .retained_sessions
+        .keys()
+        .filter(|key| key.session_id == session_id);
+    let key = matches.next()?.clone();
+    matches.next().is_none().then_some(key)
 }
 
 fn subagent_clock(state: &AppState) -> talaria_core::subagents::Clock {
@@ -7604,7 +7640,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     .filter(|id| !is_open_session(state, id))
                     .map(str::to_owned)
                 {
-                    let Some(opened) = state.retained_sessions.get_mut(&session_id) else {
+                    let key = retained_key(state, &session_id);
+                    let Some(opened) = key.and_then(|key| state.retained_sessions.get_mut(&key))
+                    else {
                         return hub_effects;
                     };
                     if !accept_event(&opened.cursor, epoch, seq) {
@@ -7770,7 +7808,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
         },
         LinkEvent::Gap(gap) => {
             if is_open_session(state, &gap.session_id)
-                || state.retained_sessions.contains_key(&gap.session_id)
+                || retained_key(state, &gap.session_id).is_some()
             {
                 vec![AppEffect::Recover(gap)]
             } else {
@@ -7787,7 +7825,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .filter(|opened| opened.session_id == session_id)
             {
                 opened.subscription_id = subscription_id;
-            } else if let Some(opened) = state.retained_sessions.get_mut(&session_id) {
+            } else if let Some(opened) = retained_key(state, &session_id)
+                .and_then(|key| state.retained_sessions.get_mut(&key))
+            {
                 opened.subscription_id = subscription_id;
             }
             background_event(state, &session_id, BackgroundEvent::Attached { now_ms })
@@ -7797,7 +7837,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 return Vec::new();
             };
             if !is_open_session(state, session_id) {
-                state.retained_sessions.remove(session_id);
+                if let Some(key) = retained_key(state, session_id) {
+                    state.retained_sessions.remove(&key);
+                }
                 return Vec::new();
             }
             let mut closing = close_processes(state);
@@ -7821,7 +7863,11 @@ fn opened_session(
     state.subagents_usage_active = 0;
     let now_ms = state.now_ms;
     let mut background = close_processes(state);
-    let same_session = is_open_session(state, &opened.session_id);
+    let old_profile = state
+        .opened_profile
+        .take()
+        .unwrap_or_else(|| state.profile.clone());
+    let same_session = old_profile == state.profile && is_open_session(state, &opened.session_id);
     if !same_session && let Some(old_id) = state.opened.as_ref().map(|old| old.session_id.clone()) {
         background.extend(background_event(
             state,
@@ -7833,17 +7879,26 @@ fn opened_session(
         ));
     }
     if let Some(mut old) = state.opened.take() {
-        if old.session_id == opened.session_id {
+        if same_session {
             carry_over(&mut old.state, &mut opened.state);
             opened.carry_background_from(&old);
         } else {
-            state.retained_sessions.insert(old.session_id.clone(), old);
+            let key = RowKey {
+                profile: old_profile,
+                session_id: old.session_id.clone(),
+            };
+            state.retained_sessions.insert(key, old);
         }
     }
-    if let Some(mut old) = state.retained_sessions.remove(&opened.session_id) {
+    let key = RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.session_id.clone(),
+    };
+    if let Some(mut old) = state.retained_sessions.remove(&key) {
         carry_over(&mut old.state, &mut opened.state);
         opened.carry_background_from(&old);
     }
+    state.opened_profile = Some(state.profile.clone());
     state.model = opened.info.model.clone();
     state.effort = opened.effort.clone();
     // The snapshot's fences are the ones a later mutation must present.
@@ -8274,15 +8329,18 @@ fn recover_retained(
     result: Result<OpenedSession, OpenError>,
 ) -> Vec<AppEffect> {
     let now_ms = state.now_ms;
+    let Some(key) = retained_key(state, session_id) else {
+        return Vec::new();
+    };
     let mut fresh = match result {
         Ok(fresh) => fresh,
         Err(OpenError::NotFound) => {
-            state.retained_sessions.remove(session_id);
+            state.retained_sessions.remove(&key);
             return Vec::new();
         }
         Err(_) => return Vec::new(),
     };
-    let Some(mut old) = state.retained_sessions.remove(session_id) else {
+    let Some(mut old) = state.retained_sessions.remove(&key) else {
         return Vec::new();
     };
     carry_over(&mut old.state, &mut fresh.state);
@@ -8291,9 +8349,7 @@ fn recover_retained(
         session_id: fresh.session_id.clone(),
         cursor: fresh.cursor.clone(),
     }];
-    state
-        .retained_sessions
-        .insert(session_id.to_string(), fresh);
+    state.retained_sessions.insert(key, fresh);
     effects.extend(background_event(
         state,
         session_id,
@@ -10902,7 +10958,7 @@ fn apply<S: Screen>(
                 };
                 let _ = executor.prompts.send((service, effect));
             }
-            AppEffect::Side(effect) => {
+            AppEffect::Side { key, effect } => {
                 let client = state
                     .service
                     .as_ref()
@@ -10918,7 +10974,7 @@ fn apply<S: Screen>(
                         }
                         None => side::not_sent(&effect),
                     };
-                    AppMessage::SideDone(events)
+                    AppMessage::SideDone { key, events }
                 });
             }
             AppEffect::Interrupt(effect) => {

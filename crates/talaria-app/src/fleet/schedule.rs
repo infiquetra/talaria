@@ -15,10 +15,11 @@ pub(crate) enum Work {
     /// `approval.pending` for a session.
     Approvals(RowKey),
     /// The first outcome probe step: the epoch and latest sequence.
-    ProbeHead(RowKey),
+    ProbeHead { key: RowKey, probe_id: u64 },
     /// The second step: the last events of that epoch.
     ProbeTail {
         key: RowKey,
+        probe_id: u64,
         epoch: String,
         from: u64,
     },
@@ -28,7 +29,7 @@ impl Work {
     pub(crate) fn profile(&self) -> &str {
         match self {
             Work::Roster(profile) | Work::Liveness(profile) => profile,
-            Work::Approvals(key) | Work::ProbeHead(key) | Work::ProbeTail { key, .. } => {
+            Work::Approvals(key) | Work::ProbeHead { key, .. } | Work::ProbeTail { key, .. } => {
                 &key.profile
             }
         }

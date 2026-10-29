@@ -210,17 +210,49 @@ fn status_words_map_and_complete_fails_closed() {
 }
 
 #[test]
-fn only_spawn_and_start_create_rows() {
-    for kind in [
-        "subagent.progress",
-        "subagent.thinking",
-        "subagent.tool",
-        "subagent.complete",
-    ] {
+fn only_spawn_start_and_complete_create_rows() {
+    for kind in ["subagent.progress", "subagent.thinking", "subagent.tool"] {
         let mut tree = SubagentTree::new();
         tree.apply(&event(kind, payload("child-1")), clock(1_000));
         assert!(tree.rows_in_order().is_empty(), "{kind}");
         assert_eq!(tree.version(), 0, "{kind}");
+    }
+}
+
+#[test]
+fn completion_before_initial_list_survives_empty_and_stale_snapshots() {
+    for (status, expected) in [
+        ("completed", RowState::Completed),
+        (
+            "failed",
+            RowState::Failed(talaria_core::subagents::FailKind::Failed),
+        ),
+        ("interrupted", RowState::Interrupted),
+    ] {
+        for stale_running in [false, true] {
+            let mut tree = SubagentTree::new();
+            let done = with(
+                with(payload("child"), "status", json!(status)),
+                "summary",
+                json!("answer"),
+            );
+            tree.apply(&event("subagent.complete", done), clock(1_000));
+            let snapshots = if stale_running {
+                json!([snapshot("child")])
+            } else {
+                json!([])
+            };
+            tree.reconcile(&list_result(snapshots), clock(2_000));
+            tree.reconcile(&list_result(json!([])), clock(3_000));
+            tree.reconcile(&list_result(json!([])), clock(4_000));
+            let row = tree.get("child").expect("completion is retained");
+            assert_eq!(row.state, expected);
+            assert_eq!(row.summary.as_deref(), Some("answer"));
+            assert_eq!(tree.counts().terminal, 1);
+            let batches = tree.take_finished_batches();
+            assert_eq!(batches.len(), 1);
+            assert_eq!(batches[0].rows[0].0.summary.as_deref(), Some("answer"));
+        }
     }
 }
 

@@ -499,7 +499,7 @@ fn shows_cached_rows(state: &PickerState, rows: &[&DirectoryRow]) -> bool {
 /// The notice line, if any. The text carries no margin.
 fn notice_line(state: &PickerState) -> Option<String> {
     match state.mode() {
-        PickerMode::Rename(editor) => Some(rename_line(state, editor)),
+        PickerMode::Rename(editor) => Some(rename_line(editor)),
         PickerMode::Search => Some(format!("Search: {}{}", query_text(state), CARET)),
         PickerMode::Waiting(waiting) => Some(waiting_line(waiting)),
         _ => state.notice().map(|notice| sanitize(notice).into_owned()),
@@ -507,11 +507,7 @@ fn notice_line(state: &PickerState) -> Option<String> {
 }
 
 /// The rename editor: the old title, then the text with the caret in it.
-fn rename_line(state: &PickerState, editor: &LineEditor) -> String {
-    let title = state
-        .selected()
-        .map(|row| row.title.clone())
-        .unwrap_or_default();
+fn rename_line(editor: &LineEditor) -> String {
     let text = sanitize(&editor.text);
     let caret = editor.caret.min(text.chars().count());
     let at = text
@@ -521,7 +517,7 @@ fn rename_line(state: &PickerState, editor: &LineEditor) -> String {
         .unwrap_or(text.len());
     format!(
         "New title for \"{}\": {}{}{}",
-        sanitize(&title),
+        sanitize(&editor.original_title),
         &text[..at],
         CARET,
         &text[at..]

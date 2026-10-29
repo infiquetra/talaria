@@ -55,6 +55,47 @@ fn listed(
 }
 
 #[test]
+fn rename_keeps_its_target_across_refreshes() {
+    for keep_target in [false, true] {
+        let mut state = PickerState::new();
+        let a = row("fixture", "a", "Alpha", RowOrigin::Live);
+        let mut b = row("fixture", "b", "Beta", RowOrigin::Live);
+        update(&mut state, opened(1, vec![a.clone(), b.clone()]), PAGE);
+        assert_eq!(state.selected().unwrap().key, a.key);
+        update(&mut state, PickerInput::Action(PickerAction::Rename), PAGE);
+        update(&mut state, PickerInput::Text('!'), PAGE);
+        b.started_at = Some(1_800_000_000.0);
+        let rows = if keep_target {
+            vec![b, a.clone()]
+        } else {
+            vec![b]
+        };
+        update(
+            &mut state,
+            listed(1, "fixture", RowOrigin::Live, rows),
+            PAGE,
+        );
+        let effects = update(&mut state, PickerInput::Enter, PAGE);
+        if keep_target {
+            assert_eq!(
+                effects,
+                [PickerEffect::Rename {
+                    key: a.key,
+                    title: "Alpha!".into()
+                }]
+            );
+        } else {
+            assert!(
+                effects.is_empty(),
+                "a removed session must not rename another row"
+            );
+            assert_eq!(state.mode(), &PickerMode::List);
+            assert!(state.notice().is_some());
+        }
+    }
+}
+
+#[test]
 fn open_list_and_failures() {
     let mut state = PickerState::new();
     let effects = update(&mut state, opened(1, Vec::new()), PAGE);

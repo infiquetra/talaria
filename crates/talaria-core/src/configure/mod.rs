@@ -127,6 +127,8 @@ pub struct ConfigureView {
     pub title: String,
     pub phase: Phase,
     pub lines: Vec<ViewLine>,
+    /// The active question, kept visible independently of the proposal scroll.
+    pub confirmation: Option<String>,
     pub footer: String,
     pub selected_row: Option<usize>,
 }
@@ -134,6 +136,7 @@ impl ConfigureView {
     pub fn text_lines(&self) -> Vec<String> {
         std::iter::once(self.title.clone())
             .chain(self.lines.iter().map(|line| line.text.clone()))
+            .chain(self.confirmation.iter().cloned())
             .chain(std::iter::once(self.footer.clone()))
             .collect()
     }
