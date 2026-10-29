@@ -308,6 +308,9 @@ impl SubagentHub {
     }
     fn collect_batches(&mut self, key: &RowKey) {
         if let Some(tracker) = self.trackers.get_mut(key) {
+            if tracker.list_inflight && !tracker.tree.hydrated() {
+                return;
+            }
             let batches = tracker.tree.take_finished_batches();
             if self.foreground.as_ref() == Some(key) {
                 self.batches.extend(batches);

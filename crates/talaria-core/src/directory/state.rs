@@ -27,6 +27,10 @@ pub enum PickerMode {
 /// The rename editor: text, caret and its held limit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LineEditor {
+    /// The session whose title is being edited.
+    pub target: RowKey,
+    /// The title displayed when editing began.
+    pub original_title: String,
     /// The text as it stands.
     pub text: String,
     /// The caret, counted in characters.
@@ -35,8 +39,10 @@ pub struct LineEditor {
 
 impl LineEditor {
     /// An editor holding `text`, with the caret at its end.
-    pub fn new(text: &str) -> Self {
+    pub fn new(text: &str, target: RowKey) -> Self {
         Self {
+            target,
+            original_title: text.to_owned(),
             text: text.to_owned(),
             caret: text.chars().count(),
         }
@@ -651,9 +657,13 @@ pub fn update(state: &mut PickerState, input: PickerInput, page: usize) -> Vec<P
                 Vec::new()
             }
             PickerMode::Rename(editor) => {
-                let Some(key) = state.selected().map(|row| row.key.clone()) else {
+                let key = editor.target;
+                if !state.rows.iter().any(|row| row.key == key) {
+                    state.mode = PickerMode::List;
+                    state.notice =
+                        Some("That session is no longer in the list; rename cancelled.".into());
                     return Vec::new();
-                };
+                }
                 match clean_title(&editor.text) {
                     Ok(title) => {
                         let unchanged = state
@@ -775,7 +785,7 @@ fn list_action(state: &mut PickerState, action: PickerAction, page: usize) -> Ve
             let Some(row) = state.selected() else {
                 return Vec::new();
             };
-            let editor = LineEditor::new(&row.title);
+            let editor = LineEditor::new(&row.title, row.key.clone());
             state.mode = PickerMode::Rename(editor);
         }
         PickerAction::Branch => {

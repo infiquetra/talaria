@@ -57,6 +57,16 @@ fn names(effects: &[FleetEffect]) -> Vec<&str> {
         .collect()
 }
 
+fn probe_id(effects: &[FleetEffect]) -> u64 {
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            FleetEffect::ProbeOutcome { probe_id, .. } => Some(*probe_id),
+            _ => None,
+        })
+        .expect("outcome probe")
+}
+
 fn list(reg: &mut FleetRegistry, session: &str) {
     let _ = update(
         reg,
@@ -136,6 +146,125 @@ fn unsubscribed_state_table() {
 }
 
 #[test]
+fn older_outcome_probe_cannot_settle_a_newer_turn() {
+    for (old_outcome, new_outcome, new_state) in [
+        (Outcome::Failed, Outcome::Completed, RowState::Done),
+        (Outcome::Completed, Outcome::Failed, RowState::Failed),
+    ] {
+        let mut reg = FleetRegistry::new();
+        list(&mut reg, "s1");
+        let mut probes = Vec::new();
+        for (request, status) in [
+            (2, LiveStatus::Working),
+            (3, LiveStatus::Idle),
+            (4, LiveStatus::Working),
+            (5, LiveStatus::Idle),
+        ] {
+            let effects = update(
+                &mut reg,
+                FleetInput::Liveness {
+                    profile: "fixture".into(),
+                    request,
+                    items: vec![live("s1", status, request)],
+                    malformed: 0,
+                    at: request as f64,
+                },
+            );
+            if request == 3 || request == 5 {
+                assert_eq!(names(&effects), vec!["probe"]);
+                probes.push(probe_id(&effects));
+            }
+        }
+        assert_ne!(probes[0], probes[1]);
+        update(
+            &mut reg,
+            FleetInput::OutcomeProbed {
+                key: fixture("s1"),
+                probe_id: probes[0],
+                outcome: old_outcome,
+                found_complete: true,
+                at: 6.0,
+            },
+        );
+        assert_eq!(reg.row(&fixture("s1")).unwrap().outcome, None);
+        update(
+            &mut reg,
+            FleetInput::OutcomeProbed {
+                key: fixture("s1"),
+                probe_id: probes[1],
+                outcome: new_outcome,
+                found_complete: true,
+                at: 7.0,
+            },
+        );
+        assert_eq!(reg.row(&fixture("s1")).unwrap().state, new_state);
+    }
+}
+
+#[test]
+fn outcome_probe_ids_survive_row_removal_and_reappearance() {
+    let mut reg = FleetRegistry::new();
+    list(&mut reg, "s1");
+    let status = |request, state| FleetInput::Liveness {
+        profile: "fixture".into(),
+        request,
+        items: vec![live("s1", state, request)],
+        malformed: 0,
+        at: request as f64,
+    };
+    update(&mut reg, status(2, LiveStatus::Working));
+    let old = probe_id(&update(&mut reg, status(3, LiveStatus::Idle)));
+    for request in [4, 5] {
+        update(
+            &mut reg,
+            FleetInput::Roster {
+                profile: "fixture".into(),
+                request,
+                rows: vec![],
+                malformed: 0,
+                at: request as f64,
+            },
+        );
+    }
+    assert!(reg.row(&fixture("s1")).is_none());
+    update(
+        &mut reg,
+        FleetInput::Roster {
+            profile: "fixture".into(),
+            request: 6,
+            rows: vec![roster("s1", true, 6)],
+            malformed: 0,
+            at: 6.0,
+        },
+    );
+    update(&mut reg, status(7, LiveStatus::Working));
+    let new = probe_id(&update(&mut reg, status(8, LiveStatus::Idle)));
+    assert_ne!(old, new);
+    update(
+        &mut reg,
+        FleetInput::OutcomeProbed {
+            key: fixture("s1"),
+            probe_id: old,
+            outcome: Outcome::Failed,
+            found_complete: true,
+            at: 9.0,
+        },
+    );
+    assert_eq!(reg.row(&fixture("s1")).unwrap().outcome, None);
+    update(
+        &mut reg,
+        FleetInput::OutcomeProbed {
+            key: fixture("s1"),
+            probe_id: new,
+            outcome: Outcome::Completed,
+            found_complete: true,
+            at: 10.0,
+        },
+    );
+    assert_eq!(reg.row(&fixture("s1")).unwrap().state, RowState::Done);
+}
+
+#[test]
 fn missed_turn_detected_by_message_count() {
     let mut reg = FleetRegistry::new();
     list(&mut reg, "s1");
@@ -165,6 +294,7 @@ fn missed_turn_detected_by_message_count() {
         &mut reg,
         FleetInput::OutcomeProbed {
             key: fixture("s1"),
+            probe_id: probe_id(&probed),
             outcome: Outcome::Completed,
             found_complete: true,
             at: 13.0,
@@ -186,7 +316,7 @@ fn missed_turn_detected_by_message_count() {
         },
     );
     let version = silent.version();
-    let _ = update(
+    let pending = update(
         &mut silent,
         FleetInput::Liveness {
             profile: "fixture".into(),
@@ -200,6 +330,7 @@ fn missed_turn_detected_by_message_count() {
         &mut silent,
         FleetInput::OutcomeProbed {
             key: fixture("s1"),
+            probe_id: probe_id(&pending),
             outcome: Outcome::Unknown,
             found_complete: false,
             at: 13.0,
@@ -513,6 +644,7 @@ fn waiting_session_outside_the_list_gets_a_row() {
         &mut reg,
         FleetInput::OutcomeProbed {
             key: fixture("hidden"),
+            probe_id: probe_id(&probed),
             outcome: Outcome::Completed,
             found_complete: true,
             at: 14.0,

@@ -2,6 +2,26 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-29 — Asynchronous replies need ownership and read fences
+
+**Evidence.** The replay, picker, rewind, fleet, subagent and configure regressions reproduced failures on `da6907cd51cd882cc4634e5ca78f59eb581992c0`. The session switch regression uses delayed and unanswered `shell.exec` calls; the fleet wire regression delays overlapping event probes; the subagent wire regression completes a child before its initial list. The generated event shapes are from Hermes `4d04303818b61bf3aa09278af48356315515965b`.
+
+**Red runs.** With the affected production paths unchanged, `cargo test --locked -p hermes-client --test replay_source truncated_utf8_tail_keeps_complete_frames_but_complete_invalid_utf8_fails`, the `talaria-core` `picker_state`, `rewind_state`, `fleet_registry`, and `subagent_tree` regressions, `cargo test --locked -p talaria-app --test side_service delayed_shell_result_stays_with_its_originating_session`, and `cargo test --locked -p talaria-tui --test configure_render confirmations_stay_visible_over_a_full_proposal` each exited 101 on their reported failure. The unversioned rewind notification regression also failed before its read-start fence was added.
+
+The first workspace run also hit the smoke harness's three-second startup deadline in `cleanup3::tab_closed_after_signal` while builds were contending; `RUST_TEST_THREADS=1 cargo test --locked -p smoke --test cleanup3 tab_closed_after_signal` passed in isolation. The workspace rerun limits test parallelism to reduce that contention.
+
+The next workspace run passed that signal test but exposed a separate environment dependency: `NO_COLOR` suppresses crossterm's ANSI colors, so `appearance_flow::scrollback_and_streaming_cell_keep_their_theme` failed even in isolation. The isolated test passed with `NO_COLOR` unset; the final workspace and coverage runs use that environment because they assert color output.
+
+**Passing runs.** The focused replay, rewind, picker, fleet, subagent, side-work, switch and configure suites passed. `env -u NO_COLOR RUST_TEST_THREADS=2 CARGO_BUILD_JOBS=4 cargo test --workspace` passed 3,610 tests with 139 ignored. With the pinned Rustup toolchain selected, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --check` passed.
+
+The coverage run's instrumented workspace tests passed, but its initial merge could not find LLVM tools in the Homebrew toolchain sysroot. Both compiler packages report the same pinned Rust commit and LLVM version. Running `cargo llvm-cov report --ignore-filename-regex /generated/ --fail-under-lines 80` with the Rustup toolchain merged the saved profiles and passed at 80.97% line coverage.
+
+A later Rustup workspace rerun reached the unrelated `talaria-bench::sampling` CPU-percentage test but failed its over-80%-of-a-core assertion while the machine was heavily loaded; isolated reruns also failed that assertion. As the load eased, `RUST_TEST_THREADS=1 cargo test -p talaria-bench --test sampling` with the pinned Rustup toolchain passed. The earlier complete workspace and instrumented coverage runs both passed this test.
+
+**Mechanism.** Per-session request counters, stale lists and reads started before notifications cannot identify the current work on their own. An unversioned notification additionally needs a read that started after the notification. A final incomplete log record must be removed before UTF-8 decoding, and a confirmation must remain outside the proposal scroll region.
+
+**Generalizable rule.** Carry resource and operation identity through asynchronous replies, and retain evidence until a suitably fenced read or reconciliation covers it.
+
 ## 2026-10-28 — Waiting work and an answered pause need durable evidence
 
 **Evidence.** Offline runner regressions reproduce a missing completed-replay recording, invisible parallel waiters, and a false unanswered pause after ten seconds. CLI regressions cover replay with an empty gateway home and the plain discovery failure. The runner regression holds pause for twelve seconds, lets its active call settle, and checks both queued cancellation and unchanged gateway submission counts.
@@ -6334,6 +6354,17 @@ protocol variants and wrapper exit markers explicit.
 
 **Generalizable rule.** Clear any buffered composer text after interrupting an active turn before dispatching a slash command, and verify multi-provider workflow recovery against both frame-log request counts and settled admission receipts.
 
+## 2026-10-29 — Cargo discovers imported integration suites independently
+
+Background, builtin registry and live workflow wrappers imported complete test files that Cargo
+already discovered as integration targets. Compiler-collected inventories identify 55 repeated
+registrations, including two ignored live fixtures. Keep the original suites and the unique process,
+service and detached workflow cases; both output properties retain their 256-case budgets and live
+ignore policies stay unchanged. Bounded acceptance commands must select the canonical targets.
+No shared helper extraction is needed; ignored copies provide no default test-execution saving.
+
+Rule: compare crate, original source case and configuration before removing a wrapper, and preserve
+unique cases and per-property budgets rather than treating registration counts as generated cases.
 
 ## 2026-10-29 — Preserve raw payloads for streamed tool events
 

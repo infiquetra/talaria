@@ -294,10 +294,21 @@ fn review_selection_confirm_and_discard() {
     key(&mut state, ConfigureKey::Space, now);
     key(&mut state, ConfigureKey::Char('a'), now);
     assert!(text(&state, now).contains("Apply 2 change(s)"));
+    let view = state.view(now);
+    assert!(
+        view.confirmation
+            .as_deref()
+            .unwrap()
+            .contains("1 removal(s)")
+    );
+    assert!(view.footer.contains("y apply") && view.footer.contains("n back"));
     key(&mut state, ConfigureKey::Char('n'), now);
     assert_eq!(state.view(now).phase, Phase::Review);
     key(&mut state, ConfigureKey::Esc, now);
     assert!(text(&state, now).contains("Discard this proposal"));
+    let view = state.view(now);
+    assert!(view.confirmation.as_deref().unwrap().contains("Discard"));
+    assert!(view.footer.contains("y discard") && view.footer.contains("n back"));
     let effects = key(&mut state, ConfigureKey::Char('y'), now);
     assert!(
         !effects
@@ -428,6 +439,9 @@ fn apply_plan_order_and_outcomes() {
             .any(|e| matches!(e, ConfigureEffect::Apply { .. }))
     );
     assert!(text(&state, now).contains("confirm route"));
+    let view = state.view(now);
+    assert_eq!(view.confirmation.as_deref(), Some("confirm route"));
+    assert!(view.footer.contains("y apply") && view.footer.contains("n skip"));
     let effects = key(&mut state, ConfigureKey::Char('y'), now);
     assert!(effects.iter().any(|e| matches!(
         e,

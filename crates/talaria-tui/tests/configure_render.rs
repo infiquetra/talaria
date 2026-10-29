@@ -20,6 +20,7 @@ fn view(phase: Phase, lines: &[&str], footer: &str) -> ConfigureView {
                 row: None,
             })
             .collect(),
+        confirmation: None,
         footer: footer.into(),
         selected_row: None,
     }
@@ -187,6 +188,51 @@ fn phase_snapshots() {
         let screen = paint(&mut terminal, &sink, &mut vt, &hostile);
         assert!(!screen.contains('\u{1b}'));
         assert!(!screen.contains('\u{202e}'));
+    }
+}
+
+#[test]
+fn confirmations_stay_visible_over_a_full_proposal() {
+    for (cols, rows) in [(80, 24), (40, 12)] {
+        let (mut terminal, sink, mut vt) = rig(cols, rows);
+        for selected in [0, 19] {
+            for (phase, prompt, footer, words) in [
+                (
+                    Phase::Confirming,
+                    "Apply 20 change(s), 5 removal(s)?",
+                    "y apply · n back",
+                    ["20 change(s)", "5 removal(s)"],
+                ),
+                (
+                    Phase::Applying,
+                    "Change main model?",
+                    "y apply · n skip",
+                    ["Change main model?", "y apply"],
+                ),
+                (
+                    Phase::Review,
+                    "Discard this proposal?",
+                    "y discard · n back",
+                    ["Discard this proposal?", "y discard"],
+                ),
+            ] {
+                let mut snapshot = view(phase, &["Summary", "Details"], footer);
+                snapshot.lines.extend((0..20).map(|row| ViewLine {
+                    text: format!("[x] setting {row}"),
+                    row: Some(row),
+                }));
+                snapshot.confirmation = Some(prompt.into());
+                snapshot.selected_row = Some(selected);
+                let screen = paint(&mut terminal, &sink, &mut vt, &snapshot);
+                for word in words {
+                    assert!(
+                        screen.contains(word),
+                        "{cols}x{rows}: missing {word:?}: {screen}"
+                    );
+                }
+                assert!(screen.contains(footer), "{screen}");
+            }
+        }
     }
 }
 
