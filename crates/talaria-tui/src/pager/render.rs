@@ -63,7 +63,10 @@ impl PagerCellLines<'_> {
             .split('\n')
             .map(|piece| Line::from(piece.strip_suffix('\r').unwrap_or(piece).to_string()))
             .collect();
-        let wrapped = wrap_lines(raw, self.inner_width(width));
+        let wrapped = wrap_lines(
+            raw.into_iter().map(crate::history::sanitize_line).collect(),
+            self.inner_width(width),
+        );
         let mut out = Vec::with_capacity(wrapped.len());
         for (index, line) in wrapped.into_iter().enumerate() {
             let text = line

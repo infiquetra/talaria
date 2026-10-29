@@ -57,6 +57,10 @@ fn drafts_review_and_save() {
         rows.iter()
             .any(|row| row.new.contains("new value (hidden)"))
     );
+    let _ = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Down), clock);
+    assert_eq!(view(&state, clock).review_scroll, 1);
+    let _ = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Up), clock);
+    assert_eq!(view(&state, clock).review_scroll, 0);
     let effects = update(
         &mut state,
         ConnectorsInput::Key(ConnectorsKey::Cancel),

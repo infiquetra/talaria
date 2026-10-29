@@ -28,6 +28,32 @@ fn rows(out: &mut Vec<String>, entries: &[Row], selected: usize) {
     }
 }
 
+/// Resolve a review scroll key using the same layout as the shared review component.
+pub fn review_scroll_target(
+    view: &ConnectorsView,
+    key: ConnectorsKey,
+    area: Rect,
+) -> Option<usize> {
+    let Screen::Review { rows, .. } = &view.screen else {
+        return None;
+    };
+    let footer = u16::from(area.height > 1);
+    let notice = u16::from(view.notice.is_some() && area.height > 2);
+    let review_area = Rect::new(
+        area.x,
+        area.y.saturating_add(3),
+        area.width,
+        area.height.saturating_sub(footer + notice + 3),
+    );
+    let max = crate::settings::review_scroll_limit(rows, review_area);
+    let current = view.review_scroll.min(max);
+    Some(match key {
+        ConnectorsKey::Up => current.saturating_sub(1),
+        ConnectorsKey::Down => current.saturating_add(1).min(max),
+        _ => return None,
+    })
+}
+
 /// Paint the overlay. The lens holds lengths of typed secrets, never the characters.
 pub fn draw_connectors(
     view: &ConnectorsView,
@@ -284,7 +310,7 @@ pub fn draw_connectors_with_palette(
             area.width,
             body_area.height.saturating_sub(3),
         );
-        crate::settings::draw_review(rows, title, review_area, buf);
+        crate::settings::draw_review_scrolled(rows, title, view.review_scroll, review_area, buf);
     }
     if notice_height > 0
         && let Some(notice) = &view.notice
@@ -331,6 +357,7 @@ mod tests {
             screen,
             notice: None,
             footer: vec![("esc".into(), "close".into())],
+            review_scroll: 0,
         }
     }
     fn row(buf: &Buffer, y: u16) -> String {

@@ -9,7 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use git_fixture::{GitRepo, git_available};
-use talaria_app::review::git_ops::{commit_context, file_diff, list, run_action};
+use talaria_app::review::git_ops::{commit_context, default_branch, file_diff, list, run_action};
 use talaria_app::worktree::GitRunner;
 use talaria_core::review::{ChangedFile, FileStatus, GitAction, RecordView, ReviewTarget, Scope};
 
@@ -60,9 +60,10 @@ fn commit(git: &GitRepo, repo: &Path, message: &str) {
 
 /// A wrapper that logs every argument list, then runs git.
 fn logging_git(dir: &Path) -> (PathBuf, PathBuf) {
-    let log = dir.join("git-args.log");
+    let log = dir.join("git-args");
+    std::fs::create_dir(&log).expect("create argument log directory");
     let body = format!(
-        "#!/bin/sh\nlog='{}'\nfirst=1\nfor arg in \"$@\"; do\n  if [ \"$first\" = 1 ]; then\n    first=0\n  else\n    printf '\\037' >> \"$log\"\n  fi\n  printf '%s' \"$arg\" >> \"$log\"\ndone\nprintf '\\n' >> \"$log\"\nexec git \"$@\"\n",
+        "#!/bin/sh\nlog_dir='{}'\nlog=$(mktemp \"$log_dir/call.XXXXXXXX\") || exit 1\nfirst=1\nfor arg in \"$@\"; do\n  if [ \"$first\" = 1 ]; then\n    first=0\n  else\n    printf '\\037' >> \"$log\"\n  fi\n  printf '%s' \"$arg\" >> \"$log\"\ndone\nprintf '\\n' >> \"$log\"\nexec git \"$@\"\n",
         log.to_string_lossy().replace('\'', "'\\''")
     );
     let path = dir.join("logging-git");
@@ -103,9 +104,17 @@ fn isolated_git(git: &GitRepo, identity: bool) -> PathBuf {
 }
 
 fn read_log(log: &Path) -> Vec<Vec<String>> {
-    let text = std::fs::read_to_string(log).unwrap_or_default();
-    text.lines()
-        .map(|line| line.split('\x1f').map(str::to_owned).collect())
+    std::fs::read_dir(log)
+        .expect("read argument log directory")
+        .map(|entry| {
+            let text = std::fs::read_to_string(entry.expect("log entry").path())
+                .expect("read argument log");
+            text.strip_suffix('\n')
+                .unwrap_or(&text)
+                .split('\x1f')
+                .map(str::to_owned)
+                .collect()
+        })
         .collect()
 }
 
@@ -857,6 +866,13 @@ async fn branch_base_falls_back_to_origin_main_and_subfolders_list() {
     }
     let git = GitRepo::new();
     let repo = git.repo.clone();
+    assert_eq!(
+        git.ok(
+            &repo,
+            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
+        ),
+        "origin/main"
+    );
     git.ok(&repo, &["checkout", "-q", "-b", "side"]);
     write(&repo, "side.txt", "side\n");
     git.ok(&repo, &["add", "side.txt"]);
@@ -870,4 +886,161 @@ async fn branch_base_falls_back_to_origin_main_and_subfolders_list() {
     assert_eq!(rows.base.as_deref(), Some("origin/HEAD"));
     assert!(rows.files.iter().any(|row| row.path == "side.txt"));
     assert_eq!(rows.head.head.as_deref(), Some("side"));
+    git.ok(&repo, &["remote", "set-head", "origin", "--delete"]);
+    let fallback = list(&runner, &target, Scope::Branch)
+        .await
+        .expect("lists without origin/HEAD");
+    assert_eq!(fallback.base.as_deref(), Some("origin/main"));
+}
+
+#[tokio::test]
+async fn default_branch_cache_tracks_the_current_origin_including_unknown_answers() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let repo = &git.repo;
+    let _ = git.run(repo, &["remote", "set-head", "origin", "--delete"]);
+    let (wrapper, log) = logging_git(git.path());
+    let runner = GitRunner::with_program(wrapper);
+
+    assert_eq!(
+        default_branch(&runner, repo, None).await.as_deref(),
+        Some("main")
+    );
+    assert_eq!(
+        default_branch(&runner, repo, None).await.as_deref(),
+        Some("main")
+    );
+    let count_remote = || {
+        read_log(&log)
+            .iter()
+            .filter(|args| args.iter().any(|arg| arg == "ls-remote"))
+            .count()
+    };
+    assert_eq!(count_remote(), 1, "same-origin answers are cached");
+
+    git.ok(git.path(), &["init", "--bare", "-b", "trunk", "trunk.git"]);
+    let trunk = git.path().join("trunk.git");
+    git.ok(repo, &["push", trunk.to_str().unwrap(), "main:trunk"]);
+    git.ok(
+        repo,
+        &["remote", "set-url", "origin", trunk.to_str().unwrap()],
+    );
+    assert_eq!(
+        default_branch(&runner, repo, None).await.as_deref(),
+        Some("trunk")
+    );
+    assert_eq!(count_remote(), 2);
+
+    let missing = git.path().join("missing.git");
+    git.ok(
+        repo,
+        &["remote", "set-url", "origin", missing.to_str().unwrap()],
+    );
+    assert_eq!(default_branch(&runner, repo, None).await, None);
+    assert_eq!(default_branch(&runner, repo, None).await, None);
+    let old_record = record("old-base");
+    assert_eq!(
+        default_branch(&runner, repo, Some(&old_record)).await,
+        None,
+        "a record from the previous origin cannot authorize a push to the new origin"
+    );
+    git.ok(repo, &["checkout", "-q", "-b", "feature"]);
+    let target = review_target(repo, Some(old_record));
+    assert_eq!(
+        run_action(&runner, &target, &GitAction::Push).await,
+        Err("Talaria cannot tell origin's default branch, so it will not push.".into())
+    );
+    assert!(
+        !read_log(&log)
+            .iter()
+            .any(|args| args.iter().any(|arg| arg == "push"))
+    );
+    assert_eq!(
+        count_remote(),
+        3,
+        "unknown answers are cached for the same origin"
+    );
+    git.ok(
+        repo,
+        &["remote", "set-url", "origin", trunk.to_str().unwrap()],
+    );
+    assert_eq!(
+        default_branch(&runner, repo, None).await.as_deref(),
+        Some("trunk")
+    );
+    assert_eq!(
+        count_remote(),
+        4,
+        "changing the origin invalidates a negative answer"
+    );
+}
+
+#[tokio::test]
+async fn changing_origin_does_not_trust_the_previous_origins_symbolic_head() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let repo = &git.repo;
+    let runner = GitRunner::from_env();
+    assert_eq!(
+        default_branch(&runner, repo, None).await.as_deref(),
+        Some("main")
+    );
+    git.ok(git.path(), &["init", "--bare", "-b", "trunk", "trunk.git"]);
+    let trunk = git.path().join("trunk.git");
+    git.ok(repo, &["push", trunk.to_str().unwrap(), "main:trunk"]);
+    git.ok(
+        repo,
+        &["remote", "set-url", "origin", trunk.to_str().unwrap()],
+    );
+    assert_eq!(
+        git.ok(
+            repo,
+            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
+        ),
+        "origin/main"
+    );
+    assert_eq!(
+        default_branch(&runner, repo, None).await.as_deref(),
+        Some("trunk")
+    );
+    let missing = git.path().join("missing.git");
+    git.ok(
+        repo,
+        &["remote", "set-url", "origin", missing.to_str().unwrap()],
+    );
+    assert_eq!(default_branch(&runner, repo, None).await, None);
+}
+
+#[tokio::test]
+async fn listing_shares_one_origin_lookup_and_never_contacts_the_remote() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let (wrapper, log) = logging_git(git.path());
+    let runner = GitRunner::with_program(wrapper);
+    let listing = list(&runner, &review_target(&git.repo, None), Scope::Uncommitted)
+        .await
+        .expect("list changes");
+    assert!(listing.has_origin);
+    assert_eq!(listing.default_branch.as_deref(), Some("main"));
+    let calls = read_log(&log);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|args| args
+                .windows(3)
+                .any(|args| args == ["remote", "get-url", "origin"]))
+            .count(),
+        1
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|args| args.iter().any(|arg| arg == "ls-remote"))
+    );
 }

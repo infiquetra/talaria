@@ -131,6 +131,8 @@ pub struct ConfigureView {
     pub confirmation: Option<String>,
     pub footer: String,
     pub selected_row: Option<usize>,
+    /// The rendered-line offset within the selected row's open detail, if open.
+    pub detail_scroll: Option<usize>,
 }
 impl ConfigureView {
     pub fn text_lines(&self) -> Vec<String> {

@@ -52,6 +52,15 @@ impl GitRepo {
         commit(tmp.path(), &other, "two");
         run_ok(tmp.path(), &other, &["push", "origin", "main"]);
         run_ok(tmp.path(), &repo, &["fetch", "origin"]);
+        run_ok(
+            tmp.path(),
+            &repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
         let origin_main = rev_parse(tmp.path(), &repo, "origin/main");
         assert_ne!(local_main, origin_main, "local main should lag origin/main");
         Self {

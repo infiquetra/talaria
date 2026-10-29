@@ -3,9 +3,7 @@
 //! A final cell never changes, so its rendered lines are kept by cell id, width and detail level.
 //! A cell that is still live is drawn again every time, because it may still grow.
 //!
-//! Two caches are kept. The drawn lines come from the renderer the application passes in, and
-//! the counted lines come from the pager's own renderer, which is what the movement walks over.
-//! Keeping them apart stops one renderer's lines from standing in for the other's.
+//! Movement and drawing share the same rendered lines.
 
 use std::collections::HashMap;
 
@@ -20,7 +18,6 @@ use crate::history::{CellLines, sanitize_line};
 #[derive(Debug, Default)]
 pub struct Document {
     drawn: HashMap<(CellId, u16, u8), Vec<Line<'static>>>,
-    counted: HashMap<(CellId, u16, u8), Vec<Line<'static>>>,
 }
 
 impl Document {
@@ -33,7 +30,6 @@ impl Document {
     /// Forget every rendered cell.
     pub fn clear(&mut self) {
         self.drawn.clear();
-        self.counted.clear();
     }
 
     /// The lines of one cell, with the blank line that separates it from the one before.
@@ -55,28 +51,7 @@ impl Document {
         } else {
             own
         };
-        self.lines(cell, index, width, details, render, true)
-    }
-
-    /// The lines of one cell as the movement counts them.
-    ///
-    /// The count comes from the pager's own renderer, which is the one the movement walks over.
-    /// A cell that has already been drawn is counted as it was drawn.
-    pub fn count_lines(
-        &mut self,
-        cell: &Cell,
-        index: usize,
-        width: u16,
-        details: Details,
-        render: &dyn CellLines,
-    ) -> Vec<Line<'static>> {
-        if cell.is_final()
-            && let Some(id) = cell_id(cell)
-            && let Some(cached) = self.drawn.get(&(id, width, detail_key(details)))
-        {
-            return cached.clone();
-        }
-        self.lines(cell, index, width, details, render, false)
+        self.lines(cell, index, width, details, render)
     }
 
     /// The lines of one cell, from one of the two caches.
@@ -87,13 +62,8 @@ impl Document {
         width: u16,
         details: Details,
         render: &dyn CellLines,
-        drawn: bool,
     ) -> Vec<Line<'static>> {
-        let cache = if drawn {
-            &mut self.drawn
-        } else {
-            &mut self.counted
-        };
+        let cache = &mut self.drawn;
         let mut lines = if cell.is_final()
             && let Some(id) = cell_id(cell)
         {
@@ -129,24 +99,20 @@ impl Document {
         lines
     }
 
-    /// The position that shows the last `height` lines of the session.
-    ///
-    /// The walk goes backwards from the last cell, so opening the transcript renders only the
-    /// cells that fill the body.
-    pub fn bottom_snap(
+    /// The bottom position using the same renderers as the visible document.
+    pub fn rendered_bottom_snap(
         &mut self,
         cells: &[Cell],
         height: u16,
         width: u16,
         details: Details,
-        render: &dyn CellLines,
+        tool: &dyn CellLines,
+        own: &dyn CellLines,
     ) -> (usize, usize) {
         let mut remaining = usize::from(height).max(1);
-        let mut index = cells.len();
-        while index > 0 {
-            index -= 1;
+        for index in (0..cells.len()).rev() {
             let count = self
-                .count_lines(&cells[index], index, width, details, render)
+                .cell_lines(&cells[index], index, width, details, tool, own)
                 .len();
             if count >= remaining {
                 return (index, count - remaining);

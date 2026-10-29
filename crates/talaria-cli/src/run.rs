@@ -936,28 +936,36 @@ struct Transcript {
 
 /// The key of one terminal event, in the form the application routes.
 fn input_key(event: &crossterm::event::KeyEvent) -> Option<InputKey> {
-    use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
-    if event.kind != KeyEventKind::Press {
+    let key = Key::from(*event);
+    if key.kind != KeyKind::Press {
         return None;
     }
-    let code = match event.code {
+    let code = match key.code {
         KeyCode::Char(character) => InputCode::Char(character),
         KeyCode::Enter => InputCode::Enter,
         KeyCode::Esc => InputCode::Esc,
         KeyCode::Backspace => InputCode::Backspace,
+        KeyCode::Tab => InputCode::Tab,
+        KeyCode::Delete => InputCode::Delete,
+        KeyCode::Insert => InputCode::Insert,
         KeyCode::Up => InputCode::Up,
         KeyCode::Down => InputCode::Down,
+        KeyCode::Left => InputCode::Left,
+        KeyCode::Right => InputCode::Right,
         KeyCode::PageUp => InputCode::PageUp,
         KeyCode::PageDown => InputCode::PageDown,
         KeyCode::Home => InputCode::Home,
         KeyCode::End => InputCode::End,
+        KeyCode::F(number) => InputCode::F(number),
         _ => return None,
     };
     Some(InputKey {
         code,
-        ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
-        alt: event.modifiers.contains(KeyModifiers::ALT),
-        shift: event.modifiers.contains(KeyModifiers::SHIFT),
+        ctrl: key.mods.ctrl,
+        alt: key.mods.alt,
+        shift: key.mods.shift,
+        super_key: key.mods.super_key,
+        other: key.mods.other,
     })
 }
 
@@ -1180,7 +1188,11 @@ impl TuiScreen {
             } else {
                 self.keymap
                     .resolve_connectors(KeyContext::Connectors, &key)
-                    .filter(|action| matches!(action, K::Confirm | K::Cancel | K::Close))
+                    .filter(|action| {
+                        matches!(action, K::Confirm | K::Cancel | K::Close)
+                            || (matches!(view.screen, S::Review { .. })
+                                && matches!(action, K::Up | K::Down))
+                    })
             }
         } else if editing {
             connectors_editor_key(key)
@@ -1195,6 +1207,17 @@ impl TuiScreen {
                         )
                 })
         };
+        if let Some(action) = action
+            && let Some(offset) = talaria_tui::connectors::review_scroll_target(
+                view,
+                action,
+                self.terminal.screen_area(),
+            )
+        {
+            return vec![UserAction::Connectors(ConnectorsInput::ReviewScroll(
+                offset,
+            ))];
+        }
         action
             .map(|key| UserAction::Connectors(self.connectors_wiring.route_key(key)))
             .into_iter()
@@ -1677,6 +1700,11 @@ impl TuiScreen {
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
     fn set_theme(&mut self, theme: Theme) {
+        if (self.color != theme.color || self.tool_theme != theme.tool)
+            && let Some(transcript) = self.transcript.as_mut()
+        {
+            transcript.pager.invalidate_rendering();
+        }
         self.color = theme.color;
         self.checklist_style = if theme.color {
             ChecklistStyle::default()
@@ -2104,6 +2132,17 @@ impl TuiScreen {
                     } else {
                         talaria_tui::configure::route_configure(&self.keymap, &key)
                     };
+                    if let Some(key) = &input
+                        && let Some(offset) = talaria_tui::configure::detail_scroll_target(
+                            configure,
+                            key,
+                            self.terminal.screen_area(),
+                        )
+                    {
+                        return vec![UserAction::Configure(Box::new(
+                            ConfigureInput::DetailScroll(offset),
+                        ))];
+                    }
                     return input
                         .map(|key| UserAction::Configure(Box::new(ConfigureInput::Key(key))))
                         .into_iter()
@@ -2202,10 +2241,17 @@ impl TuiScreen {
                         ];
                     }
                     let input = talaria_tui::settings::route_settings(settings, &self.keymap, &key)
-                        .map_or(
-                            talaria_core::settings::SettingsInput::HideReveal,
-                            talaria_core::settings::SettingsInput::Key,
-                        );
+                        .map_or(talaria_core::settings::SettingsInput::HideReveal, |key| {
+                            talaria_tui::settings::review_scroll_target(
+                                settings,
+                                &key,
+                                self.terminal.screen_area(),
+                            )
+                            .map_or(
+                                talaria_core::settings::SettingsInput::Key(key),
+                                talaria_core::settings::SettingsInput::ReviewScroll,
+                            )
+                        });
                     return vec![UserAction::Settings(input)];
                 }
                 if view.doctor.is_some() {
@@ -2643,6 +2689,8 @@ impl TuiScreen {
                                 ctrl: false,
                                 alt: false,
                                 shift: false,
+                                super_key: false,
+                                other: false,
                             })
                         })
                         .collect();
@@ -2715,12 +2763,18 @@ fn tui_key(key: InputKey) -> Key {
         InputCode::Enter => KeyCode::Enter,
         InputCode::Esc => KeyCode::Esc,
         InputCode::Backspace => KeyCode::Backspace,
+        InputCode::Tab => KeyCode::Tab,
+        InputCode::Delete => KeyCode::Delete,
+        InputCode::Insert => KeyCode::Insert,
         InputCode::Up => KeyCode::Up,
         InputCode::Down => KeyCode::Down,
+        InputCode::Left => KeyCode::Left,
+        InputCode::Right => KeyCode::Right,
         InputCode::PageUp => KeyCode::PageUp,
         InputCode::PageDown => KeyCode::PageDown,
         InputCode::Home => KeyCode::Home,
         InputCode::End => KeyCode::End,
+        InputCode::F(number) => KeyCode::F(number),
     };
     Key {
         code,
@@ -2728,8 +2782,8 @@ fn tui_key(key: InputKey) -> Key {
             ctrl: key.ctrl,
             alt: key.alt,
             shift: key.shift,
-            super_key: false,
-            other: false,
+            super_key: key.super_key,
+            other: key.other,
         },
         kind: KeyKind::Press,
     }
@@ -2766,6 +2820,37 @@ fn pager_action(action: Action) -> Option<PagerAction> {
         Action::PagerClose => PagerAction::Close,
         _ => return None,
     })
+}
+
+fn transcript_tool_renderer(
+    details: Details,
+    width: u16,
+    color: bool,
+    theme: &ToolTheme,
+) -> ToolCellLines {
+    ToolCellLines::new(
+        Box::new(PagerCellLines {
+            details,
+            markdown: MarkdownOptions {
+                width: width.saturating_sub(2).max(8),
+                color,
+                ..MarkdownOptions::default()
+            },
+            theme: PagerTheme::default(),
+            other: &PLAIN_CELLS,
+        }),
+        ToolRenderOptions {
+            width,
+            theme: theme.clone(),
+            color,
+            detail: match details {
+                Details::Expanded => Detail::Full,
+                Details::Compact => Detail::Compact,
+            },
+            expand_hint: None,
+            elapsed: None,
+        },
+    )
 }
 
 impl TuiScreen {
@@ -2807,14 +2892,19 @@ impl TuiScreen {
                     // Escape is reserved in the pager context, so the key map does not bind it.
                     // A bare Escape still has to reach the pager, where it clears a confirmed
                     // search before a later Escape closes the screen.
-                    let action =
-                        if key.code == InputCode::Esc && !key.ctrl && !key.alt && !key.shift {
-                            Some(PagerAction::Escape)
-                        } else {
-                            self.keymap
-                                .resolve(&tui_key(key), KeyContext::Pager)
-                                .and_then(pager_action)
-                        };
+                    let action = if key.code == InputCode::Esc
+                        && !key.ctrl
+                        && !key.alt
+                        && !key.shift
+                        && !key.super_key
+                        && !key.other
+                    {
+                        Some(PagerAction::Escape)
+                    } else {
+                        self.keymap
+                            .resolve(&tui_key(key), KeyContext::Pager)
+                            .and_then(pager_action)
+                    };
                     let Some(transcript) = self.transcript.as_mut() else {
                         continue;
                     };
@@ -2829,9 +2919,18 @@ impl TuiScreen {
                             );
                         }
                     } else if let Some(action) = action {
-                        transcript
-                            .pager
-                            .handle_action(action, &ctx, &mut transcript.index);
+                        let renderer = transcript_tool_renderer(
+                            transcript.pager.details(),
+                            width,
+                            self.color,
+                            &self.tool_theme,
+                        );
+                        transcript.pager.handle_action_with_renderer(
+                            action,
+                            &ctx,
+                            &mut transcript.index,
+                            &renderer,
+                        );
                     }
                 }
             }
@@ -2856,29 +2955,7 @@ impl TuiScreen {
         let height = self.terminal.viewport().height;
         transcript.pager.resize(width, height);
         let details = transcript.pager.details();
-        let renderer = ToolCellLines::new(
-            Box::new(PagerCellLines {
-                details,
-                markdown: MarkdownOptions {
-                    width: width.saturating_sub(2).max(8),
-                    color: self.color,
-                    ..MarkdownOptions::default()
-                },
-                theme: PagerTheme::default(),
-                other: &PLAIN_CELLS,
-            }),
-            ToolRenderOptions {
-                width,
-                theme: self.tool_theme.clone(),
-                color: self.color,
-                detail: match details {
-                    Details::Expanded => Detail::Full,
-                    Details::Compact => Detail::Compact,
-                },
-                expand_hint: None,
-                elapsed: None,
-            },
-        );
+        let renderer = transcript_tool_renderer(details, width, self.color, &self.tool_theme);
         let _ = self
             .terminal
             .draw_overlay(|area, buf| transcript.pager.draw(area, buf, &ctx, &renderer));
@@ -4527,6 +4604,43 @@ mod tests {
     }
 
     #[test]
+    fn configured_pager_named_keys_survive_the_terminal_and_application_path() {
+        use talaria_app::app::{AppEffect, TranscriptAction};
+        use talaria_tui::keys::{Action, KeyContext};
+        for (binding, code, modifiers) in [
+            ("left", KeyCode::Left, KeyModifiers::NONE),
+            ("right", KeyCode::Right, KeyModifiers::NONE),
+            ("tab", KeyCode::Tab, KeyModifiers::NONE),
+            ("delete", KeyCode::Delete, KeyModifiers::NONE),
+            ("insert", KeyCode::Insert, KeyModifiers::NONE),
+            ("f7", KeyCode::F(7), KeyModifiers::NONE),
+            ("super+left", KeyCode::Left, KeyModifiers::SUPER),
+            ("shift+tab", KeyCode::BackTab, KeyModifiers::NONE),
+        ] {
+            let entries = BTreeMap::from([("pager_line_up".into(), vec![binding.into()])]);
+            let (map, notices) = KeyMap::from_entries(&entries);
+            assert!(notices.is_empty(), "{binding}: {notices:?}");
+            let raw = KeyEvent::new(code, modifiers);
+            let input = super::input_key(&raw).unwrap_or_else(|| panic!("{binding} was dropped"));
+            let mut state = AppState::new("pager-keys");
+            state.pager_open = true;
+            let effects = update(&mut state, AppMessage::Input(input));
+            let routed = effects
+                .iter()
+                .find_map(|effect| match effect {
+                    AppEffect::Transcript(TranscriptAction::Key(key)) => Some(*key),
+                    _ => None,
+                })
+                .expect("key reaches the transcript");
+            assert_eq!(
+                map.resolve(&super::tui_key(routed), KeyContext::Pager),
+                Some(Action::PagerLineUp),
+                "{binding}"
+            );
+        }
+    }
+
+    #[test]
     fn control_u_routes_to_the_active_connector_filter() {
         use talaria_core::connectors::{
             CatalogRow, ConnectorsInput, ConnectorsKey, ConnectorsOpen, ConnectorsState,
@@ -4568,6 +4682,35 @@ mod tests {
         };
         assert_eq!(filter.as_deref(), Some(""));
         assert_eq!((rows.len(), selected), (2, 0));
+    }
+
+    #[test]
+    fn named_bindings_open_and_close_the_pager_through_the_application() {
+        let mut state = AppState::new("pager-open-keys");
+        state
+            .key_bindings
+            .insert("transcript_open".into(), vec!["left".into()]);
+        state
+            .key_bindings
+            .insert("pager_close".into(), vec!["f7".into()]);
+        let left = super::input_key(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
+        update(&mut state, AppMessage::Input(left));
+        assert!(state.pager_open);
+        let f7 = super::input_key(&KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE)).unwrap();
+        update(&mut state, AppMessage::Input(f7));
+        assert!(!state.pager_open);
+
+        state.pager_open = true;
+        state
+            .key_bindings
+            .insert("pager_search".into(), vec!["plus".into()]);
+        let plus = super::input_key(&KeyEvent::new(
+            KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE).code,
+            KeyModifiers::NONE,
+        ))
+        .unwrap();
+        update(&mut state, AppMessage::Input(plus));
+        assert!(state.pager_typing);
     }
 
     #[test]
@@ -5068,6 +5211,8 @@ mod tests {
                     ctrl,
                     alt,
                     shift: false,
+                    super_key: false,
+                    other: false,
                 };
                 update(
                     &mut state,

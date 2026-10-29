@@ -6378,6 +6378,24 @@ protocol variants and wrapper exit markers explicit.
 
 **Generalizable rule.** Explicitly `unlock()` advisory file locks before dropping the descriptor whenever other threads in the process may spawn child processes.
 
+## 2026-10-29 — A remote's symbolic HEAD and cached answer belong to its URL
+
+**Evidence.** `changing_origin_does_not_trust_the_previous_origins_symbolic_head` and `default_branch_cache_tracks_the_current_origin_including_unknown_answers` in `crates/talaria-app/tests/review_git.rs`. Changing `origin` leaves `refs/remotes/origin/HEAD` pointing to the old remote; both successful and unsuccessful lookups can otherwise outlive the URL that produced them.
+
+**Rule.** Associate default-branch answers with the current origin identity, and stop trusting an old symbolic HEAD after that identity changes.
+
+## 2026-10-29 — Viewport calculations must use the text and renderer that are drawn
+
+**Evidence.** `page_navigation_counts_the_same_tool_rows_that_are_drawn` and `search_highlights_occurrences_split_by_wrapping_and_expanded_controls` in `crates/talaria-tui/tests/pager_render.rs`. The tool renderer changes row counts, and control stand-ins can expand before wrapping; calculating against raw or differently rendered text makes navigation and search diverge from the visible rows.
+
+**Rule.** Measure the final sanitized rendering and retain the mapping from source characters to displayed rows when navigation or highlighting depends on it.
+
+## 2026-10-29 — Concurrent subprocess logs can interleave individual arguments
+
+**Evidence.** The instrumented `listing_shares_one_origin_lookup_and_never_contacts_the_remote` test in `crates/talaria-app/tests/review_git.rs` lost a Git command in its argument count when concurrent wrappers appended each argument separately to one file. Giving each invocation its own log file preserves the complete records.
+
+**Rule.** Record concurrent subprocess calls separately or append each complete call atomically.
+
 ## 2026-10-29 — Multi-provider resume verification and composer state after interrupting routed turns
 
 **Evidence.** On candidate `da6907c`, all 84 Phase 5 acceptance rows passed in `docs/acceptance/v0.7.0/phase-5.md` and `docs/acceptance/v0.7.0/phase-5-evidence.md`, with the eleven operator rows recorded in [the Stage 3 acceptance comment](https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799). In the three-provider `review-branch` check (`ollama-cloud`, `deepseek`, and `gemini`), killing the terminal client and detached runner (`kill -9`) after three agents finished transitioned `workflow list --json` to `interrupted` within ten seconds. Resuming with a second frame recording (`rec2.jsonl`) exited 0 (`status="reviewed"`), recorded zero `session.create` or `prompt.submit` frames in `rec2.jsonl` for all three pre-kill finished keys (`malformed_rc=2`, `dropped_rc=2`), and matched settled admission-once token usage (`75405` tokens) across `workflow list --json`, `run_finished.spend.tokens`, and the `/workflows` progress view (`75,405 tok`, `cost unknown`).

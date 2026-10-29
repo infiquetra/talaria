@@ -97,6 +97,8 @@ fn input_key(code: InputCode, ctrl: bool) -> AppMessage {
         ctrl,
         alt: false,
         shift: false,
+        super_key: false,
+        other: false,
     })
 }
 

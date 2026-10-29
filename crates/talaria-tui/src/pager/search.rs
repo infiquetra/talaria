@@ -537,3 +537,50 @@ pub fn highlight_line(
     out.alignment = line.alignment;
     out
 }
+
+/// Paint already mapped character ranges, including fragments of a wrapped match.
+pub(super) fn highlight_fragments(
+    line: &Line<'static>,
+    fragments: &[(usize, usize, bool)],
+    theme: &PagerTheme,
+) -> Line<'static> {
+    if fragments.is_empty() {
+        return line.clone();
+    }
+    let text = plain_text(line);
+    let base: Vec<Style> = line
+        .spans
+        .iter()
+        .flat_map(|span| std::iter::repeat_n(span.style, span.content.chars().count()))
+        .collect();
+    let mut marks = vec![None; base.len()];
+    for &(start, length, current) in fragments {
+        for mark in marks.iter_mut().skip(start).take(length) {
+            *mark = Some(current);
+        }
+    }
+    let mut spans = Vec::new();
+    let mut buffer = String::new();
+    let mut previous = None;
+    for (offset, character) in text.chars().enumerate() {
+        let style = match marks[offset] {
+            Some(true) => theme.search_current,
+            Some(false) => theme.search_match,
+            None => base[offset],
+        };
+        if previous != Some(style) && !buffer.is_empty() {
+            spans.push(Span::styled(
+                std::mem::take(&mut buffer),
+                previous.unwrap_or_default(),
+            ));
+        }
+        previous = Some(style);
+        buffer.push(character);
+    }
+    if !buffer.is_empty() {
+        spans.push(Span::styled(buffer, previous.unwrap_or_default()));
+    }
+    let mut result = Line::from(spans).style(line.style);
+    result.alignment = line.alignment;
+    result
+}

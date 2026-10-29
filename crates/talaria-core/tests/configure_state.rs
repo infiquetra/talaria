@@ -323,6 +323,15 @@ fn terminal_replies_and_quit_release_the_created_session() {
         )),
         now,
     ));
+    s.update(ConfigureInput::Key(ConfigureKey::Char('d')), now);
+    assert_eq!(s.view(now).detail_scroll, Some(0));
+    s.update(ConfigureInput::Key(ConfigureKey::PageDown), now);
+    assert_eq!(s.view(now).detail_scroll, Some(5));
+    assert_eq!(s.view(now).selected_row, Some(0));
+    s.update(ConfigureInput::DetailScroll(0), now);
+    assert_eq!(s.view(now).detail_scroll, Some(0));
+    s.update(ConfigureInput::Key(ConfigureKey::Char('d')), now);
+    assert_eq!(s.view(now).detail_scroll, None);
     effects.extend(s.update(ConfigureInput::Key(ConfigureKey::Char('a')), now));
     effects.extend(s.update(ConfigureInput::Key(ConfigureKey::Char('y')), now));
     assert!(

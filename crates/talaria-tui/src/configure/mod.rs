@@ -2,7 +2,7 @@
 
 mod draw;
 
-pub use draw::draw_configure;
+pub use draw::{detail_scroll_target, draw_configure};
 pub use talaria_core::configure::ConfigureKey;
 
 use crate::keys::{Key, KeyCode, KeyKind, KeyMap};
