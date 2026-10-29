@@ -6,9 +6,9 @@ use ratatui::style::{Modifier, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use super::Prepared;
 use super::buffer::row_of;
 use super::wrap::{Row, display_cluster};
+use super::{Prepared, VimMode};
 use crate::history::sanitize;
 use crate::keys::Action;
 use crate::live::LiveSection;
@@ -43,6 +43,13 @@ impl<'a> ComposerSection<'a> {
         let reversed = Modifier::REVERSED;
         let mut out: Vec<Cell> = Vec::new();
         if text.is_empty() {
+            if composer
+                .vim_mode()
+                .is_some_and(|mode| mode != VimMode::Insert)
+            {
+                out.push((" ".to_string(), Style::default().add_modifier(reversed)));
+                return out;
+            }
             let placeholder = composer.placeholder();
             for (position, cluster) in placeholder.graphemes(true).enumerate() {
                 if out.len() + UnicodeWidthStr::width(cluster) > cells {
@@ -60,7 +67,17 @@ impl<'a> ComposerSection<'a> {
         let Some(row) = rows.get(index) else {
             return out;
         };
-        let caret = composer.draft.caret();
+        let caret = if composer
+            .vim_mode()
+            .is_some_and(|mode| mode != VimMode::Insert)
+        {
+            super::vim::displayed_caret(text, composer.draft.caret())
+        } else {
+            composer.draft.caret()
+        };
+        let selection = composer
+            .vim_state()
+            .and_then(|state| state.selection(text, caret));
         let caret_here = row_of(rows, caret) == index;
         let mut caret_drawn = false;
         for (offset, cluster) in text[row.start..row.end].grapheme_indices(true) {
@@ -77,6 +94,12 @@ impl<'a> ComposerSection<'a> {
                 style = style.add_modifier(reversed);
                 caret_drawn = true;
             }
+            let selected = selection.as_ref().is_some_and(|range| {
+                range.start <= row.start + offset && row.start + offset < range.end
+            });
+            if selected {
+                style = style.add_modifier(reversed);
+            }
             let drawn = if cluster == "\t" {
                 "    ".to_string()
             } else {
@@ -87,7 +110,7 @@ impl<'a> ComposerSection<'a> {
             }
             if cluster == "\t" {
                 for space in 0..4 {
-                    let cell_style = if space == 0 {
+                    let cell_style = if space == 0 || selected {
                         style
                     } else {
                         style.remove_modifier(reversed)
@@ -121,12 +144,53 @@ impl<'a> ComposerSection<'a> {
         (prepared.above > 0).then(|| format!("\u{2191} {} more", prepared.above))
     }
 
+    fn mode_segment(&self) -> Option<(&'static str, Option<String>)> {
+        if self.composer.exit_armed.is_some() {
+            return None;
+        }
+        let state = self.composer.vim_state()?;
+        let label = match state.mode() {
+            VimMode::Normal => "-- NORMAL --",
+            VimMode::Insert => "-- INSERT --",
+            VimMode::Visual => "-- VISUAL --",
+            VimMode::VisualLine => "-- VISUAL LINE --",
+        };
+        Some((label, state.pending_label()))
+    }
+
+    fn mode_cells(&self, room: usize) -> Option<Vec<Cell>> {
+        let (mode, pending) = self.mode_segment()?;
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let mut cells = Vec::new();
+        for cluster in mode.graphemes(true) {
+            push_cluster(&mut cells, cluster, dim);
+        }
+        if let Some(pending) = pending
+            && cells.len() + 2 + UnicodeWidthStr::width(pending.as_str()) <= room
+        {
+            cells.push((" ".to_string(), dim));
+            cells.push((" ".to_string(), dim));
+            for cluster in pending.graphemes(true) {
+                push_cluster(&mut cells, cluster, Style::default());
+            }
+        }
+        Some(cells)
+    }
+
     fn render_boxed(&self, prepared: &Prepared, area: Rect, buf: &mut Buffer) {
         let width = usize::from(prepared.width.min(area.width));
         let interior = width.saturating_sub(2);
         let dim = Style::default().add_modifier(Modifier::DIM);
         let border = self.composer.style.border;
-        let marker = self.composer.style.marker;
+        let mut marker = self.composer.style.marker;
+        if self.composer.draft.text().is_empty()
+            && self
+                .composer
+                .vim_mode()
+                .is_some_and(|mode| mode != VimMode::Insert)
+        {
+            marker = marker.add_modifier(Modifier::DIM);
+        }
 
         let mut top = border_cells(interior, Self::top_hint(prepared).as_deref(), dim, border);
         if let Some(title) = &self.composer.title {
@@ -162,7 +226,16 @@ impl<'a> ComposerSection<'a> {
             lines.push(line);
         }
 
-        let bottom = border_cells(interior, self.bottom_hint(prepared).as_deref(), dim, border);
+        let mut bottom = border_cells(interior, self.bottom_hint(prepared).as_deref(), dim, border);
+        if let Some(mode) = self.mode_cells(interior.saturating_sub(1)) {
+            bottom = vec![("\u{2500}".to_string(), border); interior];
+            if !bottom.is_empty() {
+                bottom[0] = (" ".to_string(), Style::default());
+            }
+            for (slot, cell) in bottom.iter_mut().skip(1).zip(mode) {
+                *slot = cell;
+            }
+        }
         lines.push(framed('\u{2570}', bottom, '\u{256F}', border));
         draw_lines(&lines, area, buf);
     }
@@ -184,6 +257,11 @@ impl<'a> ComposerSection<'a> {
             lines.push(line);
         }
         if prepared.hint_row {
+            if let Some(mode) = self.mode_cells(usize::from(prepared.width)) {
+                lines.push(mode);
+                draw_lines(&lines, area, buf);
+                return;
+            }
             let hint = match (Self::top_hint(prepared), self.bottom_hint(prepared)) {
                 (Some(up), Some(down)) if self.composer.exit_armed.is_none() => {
                     format!("{up} \u{b7} {down}")

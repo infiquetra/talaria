@@ -57,16 +57,15 @@ fn parse_options() -> Result<Options, String> {
     Ok(options)
 }
 
-/// Loader notices first, then the key map's.
-/// Whether startup asked for vim. The command tables are not applied yet, so this stays off.
+/// Whether startup asked for vim.
 fn startup_vim(options: &Options) -> bool {
     let from_file = options.config.as_ref().is_some_and(|path| {
         talaria_app::config::composer_starts_with_vim(&talaria_app::config::load_file(path).config)
     });
-    let _requested = options.vim || from_file;
-    false
+    options.vim || from_file
 }
 
+/// Loader notices first, then the key map's.
 fn keymap_and_notices(options: &Options) -> (KeyMap, Vec<String>) {
     let Some(path) = &options.config else {
         return (KeyMap::defaults(), Vec::new());
@@ -126,8 +125,8 @@ fn report(
 
 fn run(terminal: &mut InlineTerminal<Stdout>, options: &Options, keyboard: bool) -> io::Result<()> {
     let (keymap, notices) = keymap_and_notices(options);
-    let mut composer = Composer::with_history(keymap, options.history.clone());
-    let _ = startup_vim(options);
+    let mut composer =
+        Composer::from_startup(keymap, options.history.clone(), startup_vim(options));
     composer.set_keyboard_enhancement(keyboard);
     for notice in notices {
         commit(terminal, format!("NOTICE: {notice}"))?;

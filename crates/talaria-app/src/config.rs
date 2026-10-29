@@ -554,7 +554,9 @@ fn read_composer(section: &Table, notices: &mut Vec<String>) -> ComposerConfig {
     let mut composer = ComposerConfig::default();
     for (name, value) in section {
         if name == "vim" {
-            if value.as_bool().is_none() {
+            if let Some(enabled) = value.as_bool() {
+                composer.vim = enabled;
+            } else {
                 notices.push(
                     "composer.vim in ~/.talaria/config.toml must be true or false; using false."
                         .into(),
@@ -595,15 +597,13 @@ pub fn composer_starts_with_vim(config: &Config) -> bool {
 
 /// Whether a history-search key is redo for a focused vim composer.
 ///
-/// The command tables are not applied yet, so this never claims the key.
 #[must_use]
 pub fn vim_redo_claim(
     history_search: bool,
     composer_focused: bool,
     vim_normal_or_visual: bool,
 ) -> bool {
-    let _ = (history_search, composer_focused, vim_normal_or_visual);
-    false
+    history_search && composer_focused && vim_normal_or_visual
 }
 
 fn read_subagents(section: &Table, notices: &mut Vec<String>) -> crate::subagents::SubagentsConfig {

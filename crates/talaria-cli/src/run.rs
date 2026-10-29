@@ -898,8 +898,10 @@ fn composer_key_actions(
     if let ComposerOutcome::Submit(text) = outcome {
         return vec![UserAction::Submit(text)];
     }
-    let eligible =
-        outcome == ComposerOutcome::Unchanged && composer.is_empty() && !ctx.turn_running;
+    let eligible = outcome == ComposerOutcome::Unchanged
+        && composer.is_empty()
+        && !ctx.turn_running
+        && !composer.vim_enabled();
     let mut actions = match outcome {
         ComposerOutcome::Interrupt => vec![UserAction::Interrupt],
         ComposerOutcome::ExitRequested => vec![UserAction::Quit],
@@ -2314,7 +2316,14 @@ impl TuiScreen {
                 };
                 if config::vim_redo_claim(
                     action == Some(Action::HistorySearch),
-                    focus == talaria_tui::comfort_route::Focus::Composer,
+                    focus == talaria_tui::comfort_route::Focus::Composer
+                        && self.overlay == Overlay::Live
+                        && view.rewind.is_none()
+                        && !self.confirmation_takes_keys()
+                        && !view.palette.open
+                        && queue_view(view).is_none_or(|queue| {
+                            queue.selected.is_none() && queue.editing.is_none()
+                        }),
                     matches!(
                         self.composer.vim_mode(),
                         Some(VimMode::Normal | VimMode::Visual | VimMode::VisualLine)
@@ -2387,6 +2396,17 @@ impl TuiScreen {
                 }
                 if let Some(actions) = self.queue_keys(raw, key, view, prefix) {
                     return actions;
+                }
+                if self
+                    .composer
+                    .vim_mode()
+                    .is_some_and(|mode| mode != VimMode::Insert)
+                    && focus == talaria_tui::comfort_route::Focus::Composer
+                    && !view.palette.open
+                    && route != talaria_tui::comfort_route::Route::OpenEditor
+                    && route != talaria_tui::comfort_route::Route::AttentionNext
+                {
+                    return self.composer_key(key, view, now);
                 }
                 // An open completion list takes its four keys before the composer does.
                 if view.palette.open

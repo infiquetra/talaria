@@ -201,28 +201,26 @@ fn demo_binary() -> PathBuf {
     let deps = exe.parent().expect("deps directory");
     let profile = deps.parent().expect("profile directory");
     let binary = profile.join("examples").join("composer_demo");
-    if !binary.exists() {
-        static BUILD: Once = Once::new();
-        BUILD.call_once(|| {
-            let target_dir = profile.parent().expect("target directory");
-            let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-            let mut command = Command::new(cargo);
-            command.args([
-                "build",
-                "--quiet",
-                "-p",
-                "talaria-tui",
-                "--example",
-                "composer_demo",
-                "--target-dir",
-            ]);
-            command.arg(target_dir);
-            if !cfg!(debug_assertions) {
-                command.arg("--release");
-            }
-            let status = command.status().expect("build composer_demo");
-            assert!(status.success(), "composer_demo failed to build");
-        });
-    }
+    static BUILD: Once = Once::new();
+    BUILD.call_once(|| {
+        let target_dir = profile.parent().expect("target directory");
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let mut command = Command::new(cargo);
+        command.args([
+            "build",
+            "--quiet",
+            "-p",
+            "talaria-tui",
+            "--example",
+            "composer_demo",
+            "--target-dir",
+        ]);
+        command.arg(target_dir);
+        if !cfg!(debug_assertions) {
+            command.arg("--release");
+        }
+        let status = command.status().expect("build composer_demo");
+        assert!(status.success(), "composer_demo failed to build");
+    });
     binary
 }

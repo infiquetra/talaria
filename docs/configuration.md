@@ -5,6 +5,7 @@ is fine, and copying this default file changes nothing. There is no repository-l
 
 ```toml
 [keys]
+# toggle_vim = ["ctrl+alt+v"]
 doctor_up = ["up", "k"]
 doctor_down = ["down", "j"]
 doctor_toggle = ["enter"]
@@ -338,6 +339,7 @@ fleet_finished = "watched"
 [herdr]
 report_state = true
 [composer]
+vim = false
 paste_collapse_lines = 5
 paste_collapse_chars = 2000
 [status]
@@ -436,6 +438,16 @@ an unavailable saved model is dropped. Hermes's profile default never changes.
 `/configure` reviews proposed changes; `talaria configure --dry-run` previews them without applying. See the [terminal guide](terminal-ui.md#configure).
 
 ## Keys
+
+Set `[composer] vim = true` to start the composer in NORMAL mode. Press `i` to
+insert text, Esc to return to NORMAL, and `v` or `V` for characterwise or
+linewise selection. Enter submits in NORMAL or INSERT. Vim mode implements a
+fixed subset of Vim commands; unsupported keys do nothing in NORMAL and VISUAL.
+NORMAL supports `h`/`j`/`k`/`l`, word and line motions, `gg`/`G`, and character
+finds; `d`, `c`, and `y` work with motions or doubled for whole lines. `x`,
+`X`, `r`, `s`, `S`, `D`, `C`, `p`, `P`, `u`, Ctrl+R, and `.` edit, put, undo,
+redo, and repeat. Counts precede commands. VISUAL supports delete, change,
+yank, and put. The optional `toggle_vim` binding above has no default chord.
 
 `/capabilities` (and `talaria capabilities`) opens the current profile's skills, skill hub, toolsets and plugins.
 The `capabilities_*` bindings above apply in that overlay. Tab switches tabs, Space

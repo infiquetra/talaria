@@ -139,6 +139,7 @@ pub struct Draft {
     caret: usize,
     preferred_col: Option<usize>,
     kill: String,
+    kill_linewise: bool,
     revision: u64,
 }
 
@@ -165,6 +166,15 @@ impl Draft {
     #[must_use]
     pub(crate) fn kill_text(&self) -> &str {
         &self.kill
+    }
+
+    pub(crate) fn kill_linewise(&self) -> bool {
+        self.kill_linewise
+    }
+
+    pub(crate) fn set_kill(&mut self, text: String, linewise: bool) {
+        self.kill = text;
+        self.kill_linewise = linewise;
     }
 
     /// Changes each time the text changes.
@@ -234,6 +244,10 @@ impl Draft {
         self.preferred_col = None;
     }
 
+    pub(crate) fn set_caret_preserving_column(&mut self, at: usize) {
+        self.caret = snap(&self.text, at);
+    }
+
     fn edited(&mut self) {
         self.revision += 1;
         self.preferred_col = None;
@@ -254,6 +268,7 @@ impl Draft {
     fn kill_span(&mut self, from: usize, to: usize) {
         if from < to {
             self.kill = self.remove(from, to);
+            self.kill_linewise = false;
         }
     }
 
@@ -305,6 +320,25 @@ impl Draft {
     pub fn move_down(&mut self) {
         let rows = logical_rows(&self.text);
         self.move_down_in(&rows);
+    }
+
+    /// Move by logical lines while retaining the preferred display column.
+    pub(crate) fn move_logical_by(&mut self, down: bool, count: usize) {
+        let rows = logical_rows(&self.text);
+        let current = row_of(&rows, self.caret);
+        let target = if down {
+            current
+                .saturating_add(count)
+                .min(rows.len().saturating_sub(1))
+        } else {
+            current.saturating_sub(count)
+        };
+        if target != current {
+            let column = *self
+                .preferred_col
+                .get_or_insert_with(|| column_in(&self.text, &rows[current], self.caret));
+            self.caret = position_at(&self.text, &rows[target], column, target == rows.len() - 1);
+        }
     }
 
     /// Move to the previous visual row of `rows`. False on the first row.
