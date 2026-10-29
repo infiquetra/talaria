@@ -6345,3 +6345,15 @@ No shared helper extraction is needed; ignored copies provide no default test-ex
 
 Rule: compare crate, original source case and configuration before removing a wrapper, and preserve
 unique cases and per-property budgets rather than treating registration counts as generated cases.
+
+## 2026-10-29 — Rust cache identity includes compiler, mode and writer provenance
+
+Evidence: `.github/actions/rust-cache/test_cache.py` exercises stale inputs, missing metadata,
+PR save denial and release/coverage separation; the action pins official `actions/cache` v4.3.0.
+Downloads are shared from successful default-branch push/schedule/dispatch runs; build objects
+have separate role keys. Release tag writes remain tag-scoped. Installed tools, runtime profiles
+and benchmark reports stay out of caches, and every original command runs after a hit or miss.
+The locked cargo-typify installation remains mandatory; no cached version string qualifies a tool.
+
+Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their
+writers, and keep qualification independent of cache state.

@@ -84,6 +84,13 @@ jobs:
             echo "::error::Tag $TAG releases '$base', but the workspace declares '$expected'."
             exit 1
           fi
+      - name: Restore disposable Rust caches
+        # Older existing tags may predate this optional local action.
+        if: hashFiles('.github/actions/rust-cache/action.yml') != ''
+        continue-on-error: true
+        uses: ./.github/actions/rust-cache
+        with:
+          role: release-debug
       - name: Project check
         run: |
           cargo fmt --check

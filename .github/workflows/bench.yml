@@ -21,6 +21,11 @@ jobs:
         run: |
           rustup toolchain install
           rustup show active-toolchain
+      - name: Restore disposable Rust caches
+        continue-on-error: true
+        uses: ./.github/actions/rust-cache
+        with:
+          role: bench-release
       - name: Build the binaries
         run: cargo build --release -p talaria-cli -p talaria-bench
       - name: Measure
