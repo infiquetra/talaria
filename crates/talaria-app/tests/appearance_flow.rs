@@ -713,6 +713,35 @@ impl Scrollback {
 
 #[test]
 fn scrollback_and_streaming_cell_keep_their_theme() {
+    const CHILD_POLICY: &str = "TALARIA_THEME_TEST_POLICY";
+    let policy = std::env::var(CHILD_POLICY).ok();
+    if policy.is_none() {
+        for color_enabled in [true, false] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args([
+                "--exact",
+                "scrollback_and_streaming_cell_keep_their_theme",
+                "--nocapture",
+            ]);
+            child.env(
+                CHILD_POLICY,
+                if color_enabled { "color" } else { "no-color" },
+            );
+            if color_enabled {
+                child.env_remove("NO_COLOR");
+            } else {
+                child.env("NO_COLOR", "1");
+            }
+            let output = child.output().expect("theme test child");
+            assert!(
+                output.status.success(),
+                "theme test child failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        return;
+    }
     use talaria_tui::terminal::{ProbeReply, TerminalCaps};
     let (default, default_skipped) = {
         let (skin, skipped) = Skin::from_value(&skin_data("default.json"));
@@ -791,6 +820,15 @@ fn scrollback_and_streaming_cell_keep_their_theme() {
     scrollback.feed(&sink.take());
 
     use alacritty_terminal::vte::ansi::{Color as AlacColor, Rgb as AlacRgb};
+    if policy.as_deref() == Some("no-color") {
+        for heading in ["Old head", "Stream head", "New head"] {
+            assert_eq!(
+                scrollback.fg_of(heading),
+                AlacColor::Named(alacritty_terminal::vte::ansi::NamedColor::Foreground)
+            );
+        }
+        return;
+    }
     assert_eq!(
         scrollback.fg_of("Old head"),
         AlacColor::Spec(AlacRgb {

@@ -679,7 +679,7 @@ fn on_cancel_receipt(
 
 /// Hand text back to the person. The reducer cannot see the composer, so the text is also
 /// shown in the transcript: nothing is lost and no draft is touched.
-fn take_back(state: &mut SessionState, text: String) {
+pub(super) fn take_back(state: &mut SessionState, text: String) {
     state.queue.returned.push(text.clone());
     note(
         state,

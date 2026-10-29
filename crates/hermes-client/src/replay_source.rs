@@ -79,6 +79,14 @@ pub struct ReplayFrame {
     pub frame: serde_json::Value,
 }
 
+/// Frames lost by the recorder at a position in the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LossRecord {
+    pub seq: u64,
+    pub t_ms: u64,
+    pub count: u64,
+}
+
 /// One frame handed to the consumer: its generation and its JSON text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayItem {
@@ -91,6 +99,8 @@ pub struct ReplaySource {
     header: FrameLogHeader,
     inbound: Vec<ReplayFrame>,
     outbound: Vec<ReplayFrame>,
+    loss: Vec<LossRecord>,
+    dropped_frames: u64,
     truncated: bool,
 }
 
@@ -120,6 +130,8 @@ impl ReplaySource {
             header,
             inbound: Vec::new(),
             outbound: Vec::new(),
+            loss: Vec::new(),
+            dropped_frames: 0,
             truncated,
         };
         let mut expected_seq = 1_u64;
@@ -141,6 +153,18 @@ impl ReplaySource {
                     return Err(ReplayError::SeqGap { at: expected_seq });
                 }
                 expected_seq += 1;
+            }
+            if kind == "dropped" {
+                let (Some(seq), Some(t_ms), Some(count)) = (
+                    seq,
+                    record.get("tMs").and_then(Value::as_u64),
+                    record.get("count").and_then(Value::as_u64),
+                ) else {
+                    return Err(corrupt);
+                };
+                source.dropped_frames = source.dropped_frames.checked_add(count).ok_or(corrupt)?;
+                source.loss.push(LossRecord { seq, t_ms, count });
+                continue;
             }
             if kind != "frame" {
                 continue;
@@ -183,6 +207,16 @@ impl ReplaySource {
     /// The outbound frames in `seq` order, without null frames.
     pub fn outbound(&self) -> impl Iterator<Item = &ReplayFrame> {
         self.outbound.iter()
+    }
+
+    /// Loss records in log order; these are not gateway frames.
+    pub fn loss_records(&self) -> &[LossRecord] {
+        &self.loss
+    }
+
+    /// Total frames the recorder reported losing.
+    pub fn dropped_frames(&self) -> u64 {
+        self.dropped_frames
     }
 
     /// True when the last line had no newline and was ignored.

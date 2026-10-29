@@ -583,6 +583,27 @@ fn one_plan_at_a_time() {
 }
 
 #[test]
+fn busy_draft_actions_return_the_exact_unsent_text_without_a_submission() {
+    for intent in [
+        QueueIntent::SendDraftNow(" draft\nwith whitespace ".into()),
+        QueueIntent::SteerText(" draft\nwith whitespace ".into()),
+    ] {
+        let mut state = running();
+        state.queue.plan = Some(MovePlan {
+            steps: Vec::new(),
+            next: 0,
+            target: Vec::new(),
+            then_interrupt: None,
+        });
+        let mut ids = Ids(0);
+        assert!(update_queue(&mut state, intent, &mut ids).is_empty());
+        assert_eq!(ids.0, 0, "no submission id should be minted");
+        assert_eq!(state.queue.take_returned(), [" draft\nwith whitespace "]);
+        assert!(has_notice(&state, "Still moving prompts…"));
+    }
+}
+
+#[test]
 fn send_now_interrupts_recorded_generation() {
     let mut state = running();
     state.queue.plan = Some(MovePlan {

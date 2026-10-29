@@ -534,6 +534,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn offer_draft(&mut self, text: &str) {
         let _ = text;
     }
+    /// Clear a submitted draft only if the composer still contains that text.
+    fn clear_submitted_draft(&mut self, _text: &str) -> Option<(String, usize)> {
+        None
+    }
     /// Give the terminal back. Later draws write nothing.
     fn restore(&mut self);
     /// Emit an attention alert between frames.
@@ -1828,6 +1832,8 @@ pub enum AppEffect {
     Queue(Effect),
     /// A prompt handed back by the queue, for an empty composer. Issue #232.
     OfferDraft(String),
+    /// Clear the matching composer contents after a draft action is accepted.
+    ClearSubmittedDraft(String),
     /// Feed this event once the reconcile wait has passed. Issue #232.
     ReconcileLater(Box<Event>),
     /// Deny open approvals, then `session.interrupt`.
@@ -3474,6 +3480,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             attachment_effects(effects)
         }
         AppMessage::DraftSynced { text, caret } => {
+            if text.is_empty() && !state.draft.is_empty() {
+                state.attachment_epoch = state.attachment_epoch.wrapping_add(1);
+            }
             state.draft = text;
             state.caret = caret;
             let mut effects = attachment_effects(state.attachments.sync_draft(&state.draft));
@@ -7265,6 +7274,10 @@ fn queue_line(state: &mut AppState, command: QueueCommand) -> Vec<AppEffect> {
 
 /// Apply one queue intent to the open session; its calls go to the queue service (#232).
 fn queue_intent(state: &mut AppState, intent: QueueIntent) -> Vec<AppEffect> {
+    let draft = match &intent {
+        QueueIntent::SendDraftNow(text) | QueueIntent::SteerText(text) => Some(text.clone()),
+        _ => None,
+    };
     let mut ids = QueueIds {
         launch_id: state.launch_id.clone(),
         counter: Arc::clone(&state.counter),
@@ -7273,7 +7286,14 @@ fn queue_intent(state: &mut AppState, intent: QueueIntent) -> Vec<AppEffect> {
         return Vec::new();
     };
     let produced = update_queue(&mut opened.state, intent, &mut ids);
-    route(state, produced, None)
+    let accepted = produced
+        .iter()
+        .any(|effect| matches!(effect, Effect::SendPrompt { .. } | Effect::Steer { .. }));
+    let mut effects = route(state, produced, None);
+    if accepted && let Some(text) = draft {
+        effects.push(AppEffect::ClearSubmittedDraft(text));
+    }
+    effects
 }
 
 /// The reconcile event a lost queue reply schedules, if `event` is one.
@@ -8801,6 +8821,87 @@ mod attachment_tests {
             },
         });
         state
+    }
+
+    #[test]
+    fn queue_draft_clear_is_emitted_only_after_acceptance() {
+        use talaria_core::queue::{MovePlan, QueueIntent};
+        for steer in [false, true] {
+            for busy in [false, true] {
+                let mut state = opened();
+                if busy {
+                    state.opened.as_mut().unwrap().state.queue.plan = Some(MovePlan {
+                        steps: Vec::new(),
+                        next: 0,
+                        target: Vec::new(),
+                        then_interrupt: None,
+                    });
+                }
+                let text = " draft text ".to_owned();
+                let intent = if steer {
+                    QueueIntent::SteerText(text.clone())
+                } else {
+                    QueueIntent::SendDraftNow(text.clone())
+                };
+                let effects = update(
+                    &mut state,
+                    AppMessage::ForegroundKey(UserAction::Queue(intent)),
+                );
+                let clears = effects.iter().filter(|effect| matches!(effect, AppEffect::ClearSubmittedDraft(draft) if draft == &text)).count();
+                assert_eq!(clears, usize::from(!busy));
+                if busy {
+                    assert!(effects.iter().any(
+                        |effect| matches!(effect, AppEffect::OfferDraft(draft) if draft == &text)
+                    ));
+                    assert!(
+                        !effects.iter().any(|effect| matches!(
+                            effect,
+                            AppEffect::Send(_) | AppEffect::Queue(_)
+                        ))
+                    );
+                } else {
+                    assert!(
+                        effects.iter().any(|effect| matches!(
+                            effect,
+                            AppEffect::Send(_) | AppEffect::Queue(_)
+                        ))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clearing_a_synchronized_draft_invalidates_pending_attachment_results() {
+        let mut state = opened();
+        state.draft = "draft text".into();
+        state.attachment_epoch = 2;
+        let _ = update(
+            &mut state,
+            AppMessage::DraftSynced {
+                text: String::new(),
+                caret: 0,
+            },
+        );
+        assert_eq!(state.attachment_epoch, 3);
+        let effects = update(
+            &mut state,
+            AppMessage::AttachmentResult {
+                epoch: 2,
+                event: AttachmentEvent::FileAttached {
+                    session: SessionId::new("session"),
+                    name: "notes.txt".into(),
+                    ref_text: "@file:notes.txt".into(),
+                    uploaded: true,
+                    remainder: String::new(),
+                },
+            },
+        );
+        assert!(
+            effects
+                .iter()
+                .all(|effect| !matches!(effect, AppEffect::Attachment(_)))
+        );
     }
 
     #[test]
@@ -11014,6 +11115,16 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::OfferDraft(text) => screen.offer_draft(&text),
+            AppEffect::ClearSubmittedDraft(text) => {
+                if let Some((text, caret)) = screen.clear_submitted_draft(&text) {
+                    redraw |= apply(
+                        state,
+                        AppMessage::DraftSynced { text, caret },
+                        screen,
+                        executor,
+                    );
+                }
+            }
             AppEffect::ReconcileLater(event) => executor.send_later(async move {
                 tokio::time::sleep(RECONCILE_WAIT).await;
                 AppMessage::PromptDone {

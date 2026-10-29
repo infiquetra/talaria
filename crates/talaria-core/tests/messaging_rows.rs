@@ -50,6 +50,118 @@ fn platform(state: Option<&str>, error: Option<&str>) -> PlatformRow {
 }
 
 #[test]
+fn toggle_confirmation_keeps_its_direction_across_refreshes() {
+    let clock = Instant::now();
+    for initially_enabled in [false, true] {
+        for refresh_changes_value in [false, true] {
+            let mut state = ready(clock);
+            let mut row = platform(None, None);
+            row.enabled = initially_enabled;
+            let _ = update(
+                &mut state,
+                ConnectorsInput::PlatformsReply(Ok(vec![row.clone()])),
+                clock,
+            );
+            let _ = update(&mut state, ConnectorsInput::Key(ConnectorsKey::Open), clock);
+            let _ = update(
+                &mut state,
+                ConnectorsInput::Key(ConnectorsKey::Toggle),
+                clock,
+            );
+            let Screen::Confirm { text: question } = view(&state, clock).screen else {
+                panic!("toggle confirmation");
+            };
+            row.enabled = initially_enabled ^ refresh_changes_value;
+            let _ = update(
+                &mut state,
+                ConnectorsInput::PlatformsLoaded(Ok(talaria_core::connectors::PlatformsReply {
+                    gateway_start_command: None,
+                    platforms: vec![row],
+                })),
+                clock,
+            );
+            let Screen::Confirm {
+                text: after_refresh,
+            } = view(&state, clock).screen
+            else {
+                panic!("confirmation must remain stable until confirmed or cancelled");
+            };
+            assert_eq!(after_refresh, question);
+            let effects = update(
+                &mut state,
+                ConnectorsInput::Key(ConnectorsKey::Confirm),
+                clock,
+            );
+            if refresh_changes_value {
+                assert!(effects.is_empty(), "the intended state is already present");
+            } else {
+                assert!(
+                    matches!(effects.as_slice(), [ConnectorsEffect::UpdatePlatform { id, enabled: Some(value), .. }] if id == "signal" && *value != initially_enabled)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn toggle_confirmation_keeps_platform_identity_when_the_list_changes() {
+    let clock = Instant::now();
+    for remove in [false, true] {
+        let mut state = ready(clock);
+        let original = platform(None, None);
+        let _ = update(
+            &mut state,
+            ConnectorsInput::PlatformsReply(Ok(vec![original.clone()])),
+            clock,
+        );
+        let _ = update(
+            &mut state,
+            ConnectorsInput::Key(ConnectorsKey::Toggle),
+            clock,
+        );
+        let Screen::Confirm { text: question } = view(&state, clock).screen else {
+            panic!("confirmation")
+        };
+        let mut other = original.clone();
+        other.id = "other".into();
+        other.name = "Other".into();
+        let rows = if remove {
+            vec![other]
+        } else {
+            vec![other, original]
+        };
+        let _ = update(
+            &mut state,
+            ConnectorsInput::PlatformsLoaded(Ok(talaria_core::connectors::PlatformsReply {
+                gateway_start_command: None,
+                platforms: rows,
+            })),
+            clock,
+        );
+        assert!(matches!(view(&state, clock).screen, Screen::Confirm { text } if text == question));
+        let effects = update(
+            &mut state,
+            ConnectorsInput::Key(ConnectorsKey::Confirm),
+            clock,
+        );
+        if remove {
+            assert!(effects.is_empty());
+            assert!(
+                view(&state, clock)
+                    .notice
+                    .unwrap()
+                    .text
+                    .contains("no longer available")
+            );
+        } else {
+            assert!(
+                matches!(effects.as_slice(), [ConnectorsEffect::UpdatePlatform { id, enabled: Some(false), .. }] if id == "signal")
+            );
+        }
+    }
+}
+
+#[test]
 fn filtered_platform_opens_with_one_enter_and_unwinds_with_three_escapes() {
     let clock = Instant::now();
     let mut state = ready(clock);

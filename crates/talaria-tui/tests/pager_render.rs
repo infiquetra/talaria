@@ -48,6 +48,37 @@ fn joined(buf: &Buffer) -> String {
         .join("\n")
 }
 
+#[test]
+fn footer_is_separate_from_body_and_clears_previous_contents() {
+    let cells: Vec<Cell> = (0..30).map(|id| user(id, &"Z".repeat(100))).collect();
+    let ctx = context(&cells);
+    for (cols, rows) in [(50, 8), (35, 6), (80, 12)] {
+        for search in [false, true] {
+            let mut index = SearchIndex::new();
+            let mut pager = Pager::open(&ctx, cols, rows, &mut index);
+            let _ = pager.handle_action(PagerAction::Top, &ctx, &mut index);
+            if search {
+                let _ = pager.handle_action(PagerAction::StartSearch, &ctx, &mut index);
+            }
+            let area = Rect::new(0, 0, cols, rows);
+            let mut buf = Buffer::empty(area);
+            buf.set_string(
+                0,
+                rows - 1,
+                "Q".repeat(usize::from(cols)),
+                ratatui::style::Style::default(),
+            );
+            pager.draw(area, &mut buf, &ctx, &PlainCellLines);
+            assert!(joined(&buf).contains('Z'), "body should be filled");
+            let footer = row_text(&buf, rows - 1);
+            assert!(
+                !footer.contains(['Z', 'Q']),
+                "{cols}x{rows} search={search}: {footer:?}"
+            );
+        }
+    }
+}
+
 fn tool_diff_context(state: &talaria_core::session::SessionState) -> PagerContext<'_> {
     let mut ctx = context(state.cells());
     ctx.title = "";

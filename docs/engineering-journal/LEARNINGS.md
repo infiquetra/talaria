@@ -30,6 +30,30 @@ A later Rustup workspace rerun reached the unrelated `talaria-bench::sampling` C
 
 **Generalizable rule.** Carry resource and operation identity through asynchronous replies, and retain evidence until a suitably fenced read or reconciliation covers it.
 
+## 2026-10-29 — Allow signal-cleanup fixtures to reach their marker under load
+
+The phase 3 smoke cleanup test missed its three-second startup marker under concurrent workspace checks, although its signal and cleanup assertions passed when the marker was reached. The adjacent phase 2 cleanup test already allows a longer startup wait.
+
+Rule: bound fixture startup separately from the cleanup behavior being tested, with enough time for a busy host.
+
+## 2026-10-29 — Terminal color tests need an isolated color policy
+
+With `NO_COLOR=1`, the theme, automation and appearance terminal-emulator assertions failed because Crossterm suppresses color bytes even for explicitly colored styles and caches that policy process-wide. Their color assertions now run in isolated children; the appearance test also verifies no-color output.
+
+Rule: control terminal color policy in a child process rather than changing global color state in parallel tests.
+
+## 2026-10-29 — Width-only resize reflows the primary screen during an overlay
+
+The Alacritty emulator regression `width_only_narrowing_clears_old_live_rows_with_and_without_overlay` reproduced duplicate live rows after narrowing from 100 to 80 columns at a constant height. The same reflow occurred while the alternate screen was open.
+
+Rule: account for primary-screen live-row reflow on width changes even while an overlay is active.
+
+## 2026-10-29 — Queue draft acceptance needs an acknowledgement
+
+`queue_draft_clear_is_emitted_only_after_acceptance` and `busy_queue_shortcuts_keep_text_and_caret` cover a delayed queue operation and both draft shortcuts. Clearing on the key event loses the draft on refusal; deciding from an earlier view can also race with queue completion. `clearing_a_synchronized_draft_invalidates_pending_attachment_results` covers stale attachments after a successful clear.
+
+Rule: clear an unchanged composer draft only after the reducer accepts it, and invalidate pending attachment results when it is cleared.
+
 ## 2026-10-28 — Waiting work and an answered pause need durable evidence
 
 **Evidence.** Offline runner regressions reproduce a missing completed-replay recording, invisible parallel waiters, and a false unanswered pause after ten seconds. CLI regressions cover replay with an empty gateway home and the plain discovery failure. The runner regression holds pause for twelve seconds, lets its active call settle, and checks both queued cancellation and unchanged gateway submission counts.
