@@ -11,6 +11,7 @@ pub mod context_view;
 pub mod cron;
 pub mod diff_view;
 pub mod doctor_view;
+mod editor;
 pub mod fleet_view;
 pub mod history;
 pub mod history_search;

@@ -2163,6 +2163,7 @@ const FILE: &str = "~/.talaria/config.toml";
 pub struct KeyMap {
     /// Indexed by position in [`Action::ALL`].
     chords: Vec<Vec<KeyChord>>,
+    configure_handoff_order: Vec<KeyChord>,
 }
 
 impl KeyMap {
@@ -2321,8 +2322,14 @@ impl KeyMap {
                     .position(|chord| chord.matches(key))
                     .map(|position| {
                         if index == 12 {
+                            let chord = &self.chords[Binding::Configure(index).index()][position];
+                            let original = self
+                                .configure_handoff_order
+                                .iter()
+                                .position(|held| held == chord)
+                                .unwrap_or(position);
                             ConfigureKey::Char(
-                                char::from_digit((position + 1) as u32, 10).unwrap_or('1'),
+                                char::from_digit((original + 1) as u32, 10).unwrap_or('1'),
                             )
                         } else {
                             action.clone()
@@ -2334,7 +2341,7 @@ impl KeyMap {
     /// The built-in bindings.
     #[must_use]
     pub fn defaults() -> Self {
-        let chords = Binding::all()
+        let chords: Vec<Vec<KeyChord>> = Binding::all()
             .map(|action| {
                 action
                     .default_chords()
@@ -2343,7 +2350,11 @@ impl KeyMap {
                     .collect()
             })
             .collect();
-        Self { chords }
+        let configure_handoff_order = chords[Binding::Configure(12).index()].clone();
+        Self {
+            chords,
+            configure_handoff_order,
+        }
     }
 
     /// Apply the keys table from configuration on top of the defaults. Returns the map and
@@ -2426,6 +2437,7 @@ impl KeyMap {
             explicit[action.index()] = true;
         }
 
+        map.configure_handoff_order = map.chords[Binding::Configure(12).index()].clone();
         notices.extend(map.resolve_conflicts(&explicit));
         (map, notices)
     }

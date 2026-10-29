@@ -262,15 +262,7 @@ fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
         detail = format!("{} · {detail}", row.effect_label);
     }
     lines(vec![detail], at(area, bottom, 2), buf);
-    let mut messages = view.banner.clone();
-    if let Some(editor) = &view.editor {
-        let value = if editor.secret {
-            "•".repeat(editor.text.chars().count())
-        } else {
-            editor.text.clone()
-        };
-        messages.push(format!("> {value}"));
-    }
+    let messages = view.banner.clone();
     if view.screen == Screen::Choosing {
         let available = usize::from(area.height.saturating_sub(top + 1));
         let first = view
@@ -296,11 +288,36 @@ fn draw_browser(view: &SettingsView, area: Rect, buf: &mut Buffer) {
             buf,
         );
     } else {
-        lines(
-            messages,
-            at(area, bottom + 2, area.height.saturating_sub(bottom + 3)),
-            buf,
-        );
+        let region = at(area, bottom + 2, area.height.saturating_sub(bottom + 3));
+        if let Some(editor) = &view.editor {
+            lines(
+                messages,
+                at(region, 0, region.height.saturating_sub(1)),
+                buf,
+            );
+            if region.height > 0 {
+                let row = at(region, region.height - 1, 1);
+                line("> ", Rect::new(row.x, row.y, row.width.min(2), 1), buf);
+                let value = if editor.secret {
+                    "•".repeat(editor.text.chars().count())
+                } else {
+                    editor.text.clone()
+                };
+                crate::editor::draw(
+                    &value,
+                    editor.cursor,
+                    Rect::new(
+                        row.x + row.width.min(2),
+                        row.y,
+                        row.width.saturating_sub(2),
+                        1,
+                    ),
+                    buf,
+                );
+            }
+        } else {
+            lines(messages, region, buf);
+        }
     }
     let footer = if view.screen == Screen::Editing
         && view.editor.as_ref().is_some_and(|editor| editor.secret)

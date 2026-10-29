@@ -16,6 +16,7 @@ similar.workspace = true
 shell-words.workspace = true
 time = { workspace = true, features = ["parsing", "formatting"] }
 zeroize.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

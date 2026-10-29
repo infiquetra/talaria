@@ -461,6 +461,56 @@ fn delivery_target_choices() {
 }
 
 #[test]
+fn selected_delivery_target_is_the_saved_destination() {
+    let mut state = open_form();
+    let clock = support::clock();
+    update(
+        &mut state,
+        CronInput::TargetsLoaded(Ok(vec![
+            DeliveryTarget {
+                id: "local".into(),
+                name: "Local".into(),
+                home_target_set: true,
+            },
+            DeliveryTarget {
+                id: "telegram".into(),
+                name: "Telegram".into(),
+                home_target_set: true,
+            },
+        ])),
+        clock,
+        support::WALL,
+    );
+    for key in [
+        CronKey::Paste("job".into()),
+        CronKey::Tab,
+        CronKey::Paste("30m".into()),
+        CronKey::Tab,
+        CronKey::Paste("prompt".into()),
+        CronKey::Tab,
+        CronKey::Tab,
+        CronKey::Right,
+    ] {
+        update(&mut state, CronInput::Key(key), clock, support::WALL);
+    }
+    let CronBody::Form(shown) = view(&state, support::WALL).body else {
+        panic!("form")
+    };
+    assert!(shown.targets[shown.deliver_index].0.contains("telegram"));
+    let effects = update(
+        &mut state,
+        CronInput::Key(CronKey::Action(talaria_core::cron::CronAction::Save)),
+        clock,
+        support::WALL,
+    );
+    assert!(
+        effects.iter().any(
+            |effect| matches!(effect, CronEffect::Add(request) if request.deliver == "telegram")
+        )
+    );
+}
+
+#[test]
 fn slash_arguments() {
     assert_eq!(parse_arguments("").unwrap(), CronOpen::List);
     assert_eq!(parse_arguments("list").unwrap(), CronOpen::List);

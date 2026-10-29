@@ -324,6 +324,9 @@ impl Composer {
             width.saturating_sub(3)
         });
         let wrap_width = text_cells.saturating_sub(1).max(1);
+        if self.wrap_width != Some(wrap_width) {
+            self.draft.reset_preferred_column();
+        }
         self.wrap_width = Some(wrap_width);
         self.refresh_cache(wrap_width);
         let total = if self.draft.text().is_empty() {

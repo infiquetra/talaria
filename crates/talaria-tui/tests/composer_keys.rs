@@ -15,6 +15,59 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use composer_support::Rig;
 
+#[test]
+fn wrapped_vertical_motion_uses_the_visual_column_after_edits_and_resize() {
+    let mut rig = Rig::new();
+    rig.composer.load("abcdefghijklmnopqrst".into());
+    let _ = rig.composer.section(20, 8);
+    rig.press("up");
+    assert_eq!(rig.composer.caret(), 8);
+    rig.press("down");
+    assert_eq!(rig.composer.caret(), 20);
+    rig.press("left up");
+    assert_eq!(rig.composer.caret(), 7);
+    rig.press("down right");
+    let _ = rig.composer.section(24, 8);
+    rig.press("up");
+    assert_eq!(rig.composer.caret(), 4);
+
+    rig.composer.load("abcdefghij你abcdefgh".into());
+    let _ = rig.composer.section(20, 8);
+    rig.press("up");
+    assert_eq!(rig.composer.caret(), 8);
+    rig.press("down");
+    assert_eq!(rig.composer.caret(), rig.composer.text().len());
+
+    rig.composer
+        .load("abcdefghijklmnopqrstuvwx\nab\n1234567890".into());
+    let _ = rig.composer.section(20, 8);
+    for (key, expected) in [
+        ("up", 27),
+        ("up", 22),
+        ("up", 10),
+        ("down", 22),
+        ("down", 27),
+        ("down", 38),
+    ] {
+        rig.press(key);
+        assert_eq!(rig.composer.caret(), expected, "{key}");
+    }
+}
+
+#[test]
+fn sanitized_clusters_and_following_text_remain_visible() {
+    let flag = "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}";
+    for text in [format!("{flag}X"), "abcdefghij\u{2028}X".to_owned()] {
+        let mut rig = Rig::new();
+        rig.composer.load(text.clone());
+        let section = rig.composer.section(20, 8);
+        let rendered = composer_support::rows(&section, 20, 8).join("\n");
+        assert!(rendered.contains('X'), "{rendered:?}");
+        assert!(rendered.contains('�'), "{rendered:?}");
+        assert_eq!(rig.composer.text(), text);
+    }
+}
+
 fn labels(map: &KeyMap, action: Action) -> Vec<String> {
     map.chords(action)
         .iter()

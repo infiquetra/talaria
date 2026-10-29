@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-29 — Probe replies and typed keys can arrive in the same read
+
+**Evidence.** The composer PTY regression reproduced lost text before and after a device-attributes reply; a buffered Unicode CSI-u key initially reappeared as the literal `233u`. Split replies, bracketed paste, arrow keys, key releases, and terminal reacquisition are exercised by the same harness.
+
+**Mechanism.** The probe stops at the response marker, separates recognized replies from earlier input, and hands buffered input to the key reader in order. The fallback decoder needs explicit CSI-u handling because its ordinary key parser does not decode every enhanced keyboard sequence.
+
+**Generalizable rule.** Preserve input across terminal negotiation and test the actual key encodings used by the normal reader.
+
 ## 2026-10-29 — Asynchronous replies need ownership and read fences
 
 **Evidence.** The replay, picker, rewind, fleet, subagent and configure regressions reproduced failures on `da6907cd51cd882cc4634e5ca78f59eb581992c0`. The session switch regression uses delayed and unanswered `shell.exec` calls; the fleet wire regression delays overlapping event probes; the subagent wire regression completes a child before its initial list. The generated event shapes are from Hermes `4d04303818b61bf3aa09278af48356315515965b`.

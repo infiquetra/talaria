@@ -1,5 +1,6 @@
 use super::text::clean;
 use super::{RunRow, RunRowView, RunStatus, duration_text, relative};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub fn run_status(row: &RunRow) -> RunStatus {
     match row.source.as_str() {
@@ -72,7 +73,18 @@ pub(super) fn row_view(row: &RunRow, wall: i64) -> RunRowView {
 pub(super) fn run_card(row: &RunRow, wall: i64) -> Vec<(String, Vec<String>)> {
     let mut fields = Vec::new();
     let mut field = |label: &str, value: &str| {
-        fields.push((label.into(), super::split_and_sanitise(value, 12)))
+        let lines = super::split_and_sanitise(value, usize::MAX)
+            .into_iter()
+            .flat_map(|line| {
+                let clusters: Vec<&str> = line.graphemes(true).collect();
+                if clusters.is_empty() {
+                    vec![String::new()]
+                } else {
+                    clusters.chunks(40).map(|chunk| chunk.concat()).collect()
+                }
+            })
+            .collect();
+        fields.push((label.into(), lines))
     };
     field("Id", &row.id);
     field("Source", &row.source);

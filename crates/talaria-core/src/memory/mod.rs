@@ -320,6 +320,8 @@ pub struct FieldRowView {
     pub value: String,
     pub pending: bool,
     pub selected: bool,
+    /// Caret position in characters when this value is being edited.
+    pub cursor: Option<usize>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConfirmView {

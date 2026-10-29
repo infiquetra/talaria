@@ -243,6 +243,31 @@ fn key(chord: &str) -> Key {
 }
 
 #[test]
+fn handoff_numbers_survive_conflicts_in_default_and_rebound_keys() {
+    for (blocked, surviving) in [("1", "2"), ("4", "5")] {
+        let mut entries = BTreeMap::new();
+        entries.insert("configure_apply".to_owned(), vec![blocked.to_owned()]);
+        let (map, _) = KeyMap::from_entries(&entries);
+        let number = surviving.chars().next().unwrap();
+        assert_eq!(
+            route_configure(&map, &key(surviving)),
+            Some(ConfigureKey::Char(number))
+        );
+    }
+    let mut entries = BTreeMap::new();
+    entries.insert(
+        "configure_open_next".to_owned(),
+        vec!["q".into(), "w".into(), "e".into()],
+    );
+    entries.insert("configure_apply".to_owned(), vec!["w".into()]);
+    let (map, _) = KeyMap::from_entries(&entries);
+    assert_eq!(
+        route_configure(&map, &key("e")),
+        Some(ConfigureKey::Char('3'))
+    );
+}
+
+#[test]
 fn keys_layout_first_frame_and_idle() {
     let map = KeyMap::defaults();
     for (chord, expected) in [
