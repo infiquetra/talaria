@@ -445,6 +445,88 @@ async fn outcome_probe_uses_epoch_and_tail() {
 }
 
 #[tokio::test]
+async fn delayed_probe_head_does_not_advance_a_newer_probe() {
+    let home = home();
+    let mut cfg = FleetConfig::scaled_for_tests();
+    cfg.probe_deadline = Duration::from_secs(6);
+    cfg.call_timeout = Duration::from_secs(6);
+    let (gateway, handle) = start(home.path(), cfg);
+    gateway.set_live_session_ids(["local-3f2a"]);
+    gateway.set_fleet_session("fixture", session("local-3f2a", "working", 4));
+    gateway.set_fleet_ring(
+        "fixture",
+        "local-3f2a",
+        "e1",
+        vec![completion(1, "complete")],
+        1,
+    );
+    let snapshot = wait_connected(&handle, Duration::from_secs(2)).await;
+    assert!(matches!(snapshot.link, FleetLinkState::Connected));
+    gateway.push_method_result_after(
+        "session.events.since",
+        Duration::from_millis(1500),
+        json!({"latest_seq": 1, "replay_epoch": "e1"}),
+    );
+    gateway.push_method_result_after(
+        "session.events.since",
+        Duration::from_millis(3000),
+        json!({"latest_seq": 1, "replay_epoch": "e1"}),
+    );
+    gateway.set_fleet_session("fixture", session("local-3f2a", "idle", 5));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while gateway.requests("session.events.since").is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let live_before = gateway.requests("session.active_list").len();
+    gateway.set_fleet_session("fixture", session("local-3f2a", "working", 6));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while gateway.requests("session.active_list").len() == live_before {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    gateway.set_fleet_session("fixture", session("local-3f2a", "idle", 7));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while gateway.requests("session.events.since").len() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(1700)).await;
+    assert_eq!(
+        gateway.requests("session.events.since").len(),
+        2,
+        "the old head must not start a tail for the newer probe"
+    );
+    let snapshot = handle.snapshot();
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.key.session_id == "local-3f2a" && row.outcome.is_none())
+    );
+    let snapshot = wait_for(&handle, Duration::from_secs(3), |snapshot| {
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.key.session_id == "local-3f2a" && row.state == RowState::Done)
+    })
+    .await;
+    assert!(
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.key.session_id == "local-3f2a" && row.state == RowState::Done)
+    );
+}
+
+#[tokio::test]
 async fn outcome_probe_unknown_cases() {
     let home = home();
     let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());

@@ -166,6 +166,8 @@ pub enum FleetInput {
     OutcomeProbed {
         /// Row the probe named.
         key: RowKey,
+        /// Identity of this particular outcome check.
+        probe_id: u64,
         /// Outcome the probe decided.
         outcome: Outcome,
         /// True when a `message.complete` was found, whatever its status.
@@ -216,7 +218,7 @@ pub enum FleetEffect {
     /// Read `approval.pending` for this row.
     FetchApprovals { key: RowKey },
     /// Probe how the turn ended.
-    ProbeOutcome { key: RowKey },
+    ProbeOutcome { key: RowKey, probe_id: u64 },
     /// Tell the foreground attention owner.
     Attention {
         /// Which alert.
@@ -252,7 +254,7 @@ struct RowEntry {
     /// Status in the latest successful liveness reply; `None` when the reply left it out.
     latest: Option<LiveStatus>,
     /// A probe was asked for and has not answered.
-    probe: Option<ProbeReason>,
+    probe: Option<(u64, ProbeReason)>,
     /// The view an owner holds.
     view: Option<SubscribedView>,
     /// The held view's turn was running, so a finished view is a finished turn.
@@ -472,6 +474,7 @@ pub struct FleetRegistry {
     foreground: Option<RowKey>,
     approvals_request: HashMap<RowKey, u64>,
     diagnostics: Diagnostics,
+    next_probe_id: u64,
     version: u64,
 }
 
@@ -807,6 +810,7 @@ fn apply_status(
     at: f64,
     queue: &mut Queue,
     diagnostics: &mut Diagnostics,
+    next_probe_id: &mut u64,
     effects: &mut Vec<FleetEffect>,
 ) {
     let previous = entry.last_live_count.replace(count);
@@ -823,6 +827,7 @@ fn apply_status(
         at,
         queue,
         diagnostics,
+        next_probe_id,
         effects,
     );
 }
@@ -837,6 +842,7 @@ fn apply_running(
     at: f64,
     queue: &mut Queue,
     diagnostics: &mut Diagnostics,
+    next_probe_id: &mut u64,
     effects: &mut Vec<FleetEffect>,
 ) {
     let key = entry.row.key.clone();
@@ -865,16 +871,24 @@ fn apply_running(
                 if entry.row.foreground {
                     set_state(entry, RowState::Idle, at);
                 } else {
-                    entry.probe = Some(ProbeReason::TurnEnded);
-                    effects.push(FleetEffect::ProbeOutcome { key });
+                    *next_probe_id += 1;
+                    entry.probe = Some((*next_probe_id, ProbeReason::TurnEnded));
+                    effects.push(FleetEffect::ProbeOutcome {
+                        key,
+                        probe_id: *next_probe_id,
+                    });
                     refresh_state(entry, queue, at);
                 }
             } else if previous.is_some_and(|before| count > before)
                 && !entry.row.foreground
                 && entry.probe.is_none()
             {
-                entry.probe = Some(ProbeReason::CountRose { before: previous });
-                effects.push(FleetEffect::ProbeOutcome { key });
+                *next_probe_id += 1;
+                entry.probe = Some((*next_probe_id, ProbeReason::CountRose { before: previous }));
+                effects.push(FleetEffect::ProbeOutcome {
+                    key,
+                    probe_id: *next_probe_id,
+                });
             } else if entry.probe.is_none() {
                 let state = rest_state(entry);
                 set_state(entry, state, at);
@@ -971,12 +985,14 @@ pub fn update(reg: &mut FleetRegistry, input: FleetInput) -> Vec<FleetEffect> {
         } => on_approvals_failed(reg, &key, request, &error, at, &mut effects, &mut dirty),
         FleetInput::OutcomeProbed {
             key,
+            probe_id,
             outcome,
             found_complete,
             at,
         } => on_probed(
             reg,
             &key,
+            probe_id,
             outcome,
             found_complete,
             at,
@@ -1096,6 +1112,7 @@ fn on_roster(
             rows,
             queue,
             diagnostics,
+            next_probe_id,
             ..
         } = reg;
         touch(rows, &key, dirty, |entry| {
@@ -1119,7 +1136,17 @@ fn on_roster(
                     LiveStatus::Idle
                 };
                 let count = listed_row.message_count;
-                apply_status(entry, status, count, true, at, queue, diagnostics, effects);
+                apply_status(
+                    entry,
+                    status,
+                    count,
+                    true,
+                    at,
+                    queue,
+                    diagnostics,
+                    next_probe_id,
+                    effects,
+                );
             } else if created {
                 if let Some(item) = kept {
                     apply_status(
@@ -1130,6 +1157,7 @@ fn on_roster(
                         at,
                         queue,
                         diagnostics,
+                        next_probe_id,
                         effects,
                     );
                     seed_idle_since(entry, true, item.last_active, at);
@@ -1271,6 +1299,7 @@ fn on_liveness(
             rows,
             queue,
             diagnostics,
+            next_probe_id,
             ..
         } = reg;
         touch(rows, &key, dirty, |entry| {
@@ -1286,6 +1315,7 @@ fn on_liveness(
                 at,
                 queue,
                 diagnostics,
+                next_probe_id,
                 effects,
             );
             seed_idle_since(entry, first_sight, item.last_active, at);
@@ -1375,6 +1405,7 @@ fn on_liveness_failed(
                 rows,
                 queue,
                 diagnostics,
+                next_probe_id,
                 ..
             } = reg;
             touch(rows, &key, dirty, |entry| {
@@ -1384,7 +1415,17 @@ fn on_liveness_failed(
                     LiveStatus::Idle
                 };
                 let count = entry.row.message_count;
-                apply_status(entry, status, count, true, at, queue, diagnostics, effects);
+                apply_status(
+                    entry,
+                    status,
+                    count,
+                    true,
+                    at,
+                    queue,
+                    diagnostics,
+                    next_probe_id,
+                    effects,
+                );
             });
         }
         return;
@@ -1522,9 +1563,11 @@ fn on_approvals_failed(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn on_probed(
     reg: &mut FleetRegistry,
     key: &RowKey,
+    probe_id: u64,
     outcome: Outcome,
     found_complete: bool,
     at: f64,
@@ -1533,9 +1576,13 @@ fn on_probed(
 ) {
     let FleetRegistry { rows, queue, .. } = reg;
     touch(rows, key, dirty, |entry| {
-        let Some(reason) = entry.probe.take() else {
+        let Some((current, reason)) = entry.probe else {
             return;
         };
+        if current != probe_id {
+            return;
+        }
+        entry.probe = None;
         if entry.view.is_some() {
             return;
         }
@@ -1738,8 +1785,8 @@ fn on_connection_lost(reg: &mut FleetRegistry, dirty: &mut bool) {
             entry.row.stale = true;
             // The probe's reply belongs to the old connection; ask again at the next read.
             match entry.probe.take() {
-                Some(ProbeReason::TurnEnded) => entry.turn_seen = true,
-                Some(ProbeReason::CountRose { before }) => entry.last_live_count = before,
+                Some((_, ProbeReason::TurnEnded)) => entry.turn_seen = true,
+                Some((_, ProbeReason::CountRose { before })) => entry.last_live_count = before,
                 None => {}
             }
         });

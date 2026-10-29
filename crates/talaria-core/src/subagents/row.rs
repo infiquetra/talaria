@@ -100,7 +100,7 @@ pub struct SubagentRow {
     pub accepting_steer: Option<bool>,
     /// Newest last, at most 24.
     pub activity: VecDeque<Activity>,
-    /// Saw `spawn_requested` or `start` in this process.
+    /// Saw a spawn, start, or completion for a child not discovered by a list.
     pub seen_live: bool,
 }
 

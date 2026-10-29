@@ -1212,12 +1212,15 @@ fn partial_failure_says_what_happened() {
             execution_generation: Some(6),
         },
     );
-    assert_eq!(state.screen(), RewindScreen::Closed);
-    assert_eq!(effects.len(), 1, "{effects:?}");
+    assert_eq!(state.screen(), RewindScreen::Working);
+    expect_call(&effects, Call::ReadSession);
     let text = texts(&effects)[0];
     assert!(text.starts_with("Restored files to checkpoint bbbbbbbb, and Hermes removed the last exchange, but rewinding further to prompt #2 failed: "));
     assert!(text.contains(T13));
     assert!(text.ends_with("Run /rewind to try again."));
+    let refreshed = answer(&mut state, &effects, read(11, 6, without_chosen()));
+    assert!(!rebuild_notice(&refreshed).is_empty());
+    assert_eq!(state.screen(), RewindScreen::Closed);
 
     // Hermes's restore also removed an older prompt than the one chosen: T32 names it.
     let mut state = RewindState::default();
@@ -2141,8 +2144,7 @@ fn session_updated_from_elsewhere_rebuilds_once() {
     assert_eq!(rebuild_notice(&effects), vec![t29(4)]);
     assert_eq!(open_state.screen(), RewindScreen::Closed);
 
-    // A whole-folder restore: the frame between the restore reply and the read is ignored, and
-    // after that read recorded its revision a frame with the same revision is too.
+    // A newer external rewind during a restore needs a second read if the first is stale.
     let (mut state, effects) = at_restore_call();
     let effects = answer(
         &mut state,
@@ -2153,9 +2155,75 @@ fn session_updated_from_elsewhere_rebuilds_once() {
     assert!(step(&mut state, frame("rewind", 99, Some(2))).is_empty());
     assert_eq!(state.screen(), RewindScreen::Working);
     let end = answer(&mut state, &effects, read(5, 3, without_chosen()));
-    assert_eq!(end.len(), 2, "{end:?}");
+    expect_call(&end, Call::ReadSession);
+    let end = answer(&mut state, &end, read(99, 4, without_chosen()));
+    assert_eq!(rebuild_notice(&end), vec![t29(2)]);
     assert_eq!(state.screen(), RewindScreen::Closed);
     assert!(step(&mut state, frame("rewind", 5, Some(2))).is_empty());
+}
+
+#[test]
+fn external_rewinds_during_local_work_are_reconciled() {
+    for external in [false, true] {
+        let mut state = RewindState::default();
+        let initial = step(&mut state, undo(1));
+        if external {
+            assert!(step(&mut state, frame("rewind", 8, Some(2))).is_empty());
+        }
+        let mutate = answer(
+            &mut state,
+            &initial,
+            read(7, 4, vec![user(1, "first"), assistant(2)]),
+        );
+        assert!(matches!(call(&mutate).1, Call::Mutate { .. }));
+        let reconcile = fail(&mut state, &mutate, refused("revision_mismatch"));
+        expect_call(&reconcile, Call::ReadSession);
+        let rebuilt = answer(&mut state, &reconcile, read(8, 5, vec![]));
+        assert!(
+            rebuilt
+                .iter()
+                .any(|effect| matches!(effect, RewindEffect::Rebuild { .. }))
+        );
+    }
+
+    let (mut state, mutate) = at_mutate_call();
+    assert!(step(&mut state, frame("rewind", 9, Some(2))).is_empty());
+    assert!(step(&mut state, frame("rewind", 10, Some(3))).is_empty());
+    let read_old = answer(&mut state, &mutate, mutated(8, 1, Some("prompt")));
+    let next = answer(&mut state, &read_old, read(8, 5, vec![]));
+    expect_call(&next, Call::ReadSession);
+    let end = answer(&mut state, &next, read(10, 6, vec![]));
+    assert_eq!(rebuild_notice(&end), vec![t29(3)]);
+    assert_eq!(state.screen(), RewindScreen::Closed);
+
+    let mut state = RewindState::default();
+    let first = step(&mut state, frame("rewind", 9, Some(1)));
+    assert!(step(&mut state, frame("rewind", 10, Some(2))).is_empty());
+    let next = answer(&mut state, &first, read(9, 5, vec![]));
+    expect_call(&next, Call::ReadSession);
+    let end = answer(&mut state, &next, read(10, 6, vec![]));
+    assert_eq!(rebuild_notice(&end), vec![t29(2)]);
+}
+
+#[test]
+fn unversioned_notification_requires_a_read_started_after_it() {
+    let mut state = RewindState::default();
+    let initial = step(&mut state, frame("rewind", 9, Some(1)));
+    assert!(
+        step(
+            &mut state,
+            RewindInput::SessionUpdated {
+                operation: "rewind".into(),
+                revision: None,
+                rewound_count: Some(2),
+            }
+        )
+        .is_empty()
+    );
+    let next = answer(&mut state, &initial, read(9, 5, vec![]));
+    expect_call(&next, Call::ReadSession);
+    let end = answer(&mut state, &next, read(10, 6, vec![]));
+    assert_eq!(rebuild_notice(&end), vec![t29(2)]);
 }
 
 #[test]

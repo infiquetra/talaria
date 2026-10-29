@@ -224,6 +224,84 @@ async fn hydrate_sends_exact_list_params() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn completion_before_initial_list_is_not_lost_or_resurrected() {
+    for status in ["completed", "failed", "interrupted"] {
+        for stale_running in [false, true] {
+            let (gateway, client, mut hub, mut rx) = rig().await;
+            let mut now_ms = 0;
+            let key = key();
+            let listed = if stale_running {
+                json!([{"subagent_id":"early", "goal":"goal early", "status":"running", "task_index":0, "task_count":1}])
+            } else {
+                json!([])
+            };
+            gateway.push_result(json!({"subagents":listed, "delegations":[]}));
+            hub.set_foreground(Some(key.clone()));
+            hub.attach(key.clone(), client);
+            let done = with(
+                with(payload("early"), "status", json!(status)),
+                "summary",
+                json!("answer"),
+            );
+            assert!(hub.on_notification(
+                &key,
+                &notification("subagent.complete", done),
+                clock_ms(0)
+            ));
+            assert!(
+                hub.take_finished_batches().is_empty(),
+                "wait for the initial list"
+            );
+            wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
+            let row = hub.tree(&key).unwrap().get("early").unwrap();
+            assert!(row.state.is_terminal());
+            assert_eq!(row.summary.as_deref(), Some("answer"));
+            assert_eq!(hub.known_counts(&key).unwrap().terminal, 1);
+            let batches = hub.take_finished_batches();
+            assert_eq!(batches.len(), 1);
+            assert_eq!(batches[0].rows[0].0.summary.as_deref(), Some("answer"));
+            assert!(hub.take_finished_batches().is_empty());
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn initial_list_can_add_a_running_sibling_before_batch_is_finished() {
+    let (gateway, client, mut hub, mut rx) = rig().await;
+    let mut now_ms = 0;
+    let key = key();
+    gateway.push_result(json!({"subagents":[{"subagent_id":"sibling", "goal":"sibling", "status":"running", "task_index":1, "task_count":2, "delegation_id":"batch"}], "delegations":[]}));
+    hub.set_foreground(Some(key.clone()));
+    hub.attach(key.clone(), client);
+    let done = with(
+        with(
+            with(payload("early"), "status", json!("completed")),
+            "delegation_id",
+            json!("batch"),
+        ),
+        "task_count",
+        json!(2),
+    );
+    hub.on_notification(&key, &notification("subagent.complete", done), clock_ms(0));
+    assert!(hub.take_finished_batches().is_empty());
+    wait_call(&mut hub, &mut rx, &gateway, "subagent.list", &mut now_ms).await;
+    assert!(hub.take_finished_batches().is_empty());
+    let sibling = with(
+        with(payload("sibling"), "status", json!("completed")),
+        "delegation_id",
+        json!("batch"),
+    );
+    hub.on_notification(
+        &key,
+        &notification("subagent.complete", sibling),
+        clock_ms(1),
+    );
+    let batches = hub.take_finished_batches();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].rows.len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
 async fn poll_only_while_live_or_open() {
     let (gateway, client, mut hub, mut rx) = rig().await;
     let mut now_ms = 0;

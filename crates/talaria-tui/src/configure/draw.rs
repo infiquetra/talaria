@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::Line,
-    widgets::{Clear, Paragraph, Widget},
+    widgets::{Clear, Paragraph, Widget, Wrap},
 };
 use talaria_core::configure::ConfigureView;
 
@@ -22,7 +22,34 @@ pub fn draw_configure(view: &ConfigureView, area: Rect, buf: &mut Buffer) {
     }
     let footer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
     Paragraph::new(sanitize(&view.footer).into_owned()).render(footer, buf);
-    let height = usize::from(area.height.saturating_sub(2));
+    let available = area.height.saturating_sub(2);
+    let question = view
+        .confirmation
+        .as_ref()
+        .map(|text| sanitize(text).into_owned());
+    let question_height = question.as_ref().map_or(0, |text| {
+        let bounds = Rect::new(0, 0, area.width, available);
+        let mut measured = Buffer::empty(bounds);
+        Paragraph::new(text.as_str())
+            .wrap(Wrap { trim: true })
+            .render(bounds, &mut measured);
+        (0..available)
+            .rev()
+            .find(|y| (0..area.width).any(|x| !measured[(x, *y)].symbol().trim().is_empty()))
+            .map_or(0, |y| y + 1)
+    });
+    if let Some(question) = question {
+        let rect = Rect::new(
+            area.x,
+            footer.y.saturating_sub(question_height),
+            area.width,
+            question_height,
+        );
+        Paragraph::new(question)
+            .wrap(Wrap { trim: true })
+            .render(rect, buf);
+    }
+    let height = usize::from(available.saturating_sub(question_height));
     let selected = view
         .selected_row
         .and_then(|row| view.lines.iter().position(|line| line.row == Some(row)));

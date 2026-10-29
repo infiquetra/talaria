@@ -518,6 +518,7 @@ fn any_input() -> impl Strategy<Value = FleetInput> {
                 8 => FleetInput::ConnectionLost { at: 18.0 },
                 9 => FleetInput::OutcomeProbed {
                     key,
+                    probe_id: 0,
                     outcome: Outcome::Completed,
                     found_complete: true,
                     at: 19.0,

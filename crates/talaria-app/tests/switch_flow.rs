@@ -117,6 +117,58 @@ async fn same_profile_switch_opens_first_then_lets_go() {
 }
 
 #[tokio::test]
+async fn delayed_shell_reply_does_not_complete_the_new_sessions_command() {
+    let rig = drive::Rig::start();
+    let folder = rig.folder.to_string_lossy().to_string();
+    rig.gateway
+        .queue_resume_snapshot(child_snapshot(&folder, "s-two", "Second work", 11));
+    rig.gateway.queue_behavior(
+        "shell.exec",
+        mock_gateway::Behavior::Delay(std::time::Duration::from_secs(2)),
+    );
+    rig.gateway
+        .queue_behavior("shell.exec", mock_gateway::Behavior::Silent);
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            driver.submit("!old_command");
+            drive::eventually("old shell call", || {
+                gateway.requests("shell.exec").len() == 1
+            })
+            .await;
+            driver.submit("/resume s-two");
+            driver.line("Now showing").await;
+            driver.submit("!new_command");
+            drive::eventually("new shell call", || {
+                gateway.requests("shell.exec").len() == 2
+            })
+            .await;
+            let before = driver.counts().1;
+            tokio::time::sleep(std::time::Duration::from_millis(2300)).await;
+            assert_eq!(
+                driver.counts().1,
+                before,
+                "the delayed result must not commit B's pending command"
+            );
+            driver.submit("/resume local-session-1");
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+    let cells = &locked(&log).cells;
+    assert!(
+        cells.iter().any(|cell| cell == "shell: old_command"),
+        "{cells:?}"
+    );
+    assert!(
+        !cells.iter().any(|cell| cell == "shell: new_command"),
+        "{cells:?}"
+    );
+}
+
+#[tokio::test]
 async fn other_profile_switch_opens_a_new_link_first() {
     let rig = drive::Rig::start();
     let folder = rig.folder.to_string_lossy().to_string();

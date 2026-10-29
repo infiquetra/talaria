@@ -107,13 +107,14 @@ impl SubagentTree {
             let state = match ev.kind {
                 SubagentEventKind::SpawnRequested => RowState::Queued,
                 SubagentEventKind::Start => RowState::Running,
+                SubagentEventKind::Complete => terminal(ev.payload.status),
                 _ => return Applied::default(),
             };
             self.indices.insert(id.clone(), self.rows.len());
             self.rows.push(SubagentRow::new(id.clone(), now, state));
         }
         let row = &mut self.rows[self.indices[id]];
-        if row.state.is_terminal() {
+        if row.state.is_terminal() && !created {
             return Applied::default();
         }
         row.last_event_ms = now.mono_ms;
@@ -126,6 +127,9 @@ impl SubagentTree {
             }
             SubagentEventKind::Complete => {
                 row.state = terminal(ev.payload.status);
+                if created {
+                    row.seen_live = true;
+                }
                 row.stop_requested = false;
             }
             _ => row.state = RowState::Running,
