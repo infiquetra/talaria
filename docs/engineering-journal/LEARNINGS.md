@@ -6353,6 +6353,8 @@ PR save denial and release/coverage separation; the action pins official `action
 Downloads are shared from successful default-branch push/schedule/dispatch runs; build objects
 have separate role keys. Release tag writes remain tag-scoped. Installed tools, runtime profiles
 and benchmark reports stay out of caches, and every original command runs after a hit or miss.
+Release caching requires the event ref to match the resolved tag ref and the helper to exist;
+branch-context release dispatches skip the helper and retain the full project and release checks.
 The locked cargo-typify installation remains mandatory; no cached version string qualifies a tool.
 
 Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their

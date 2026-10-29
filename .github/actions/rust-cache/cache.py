@@ -62,8 +62,10 @@ def plan(
     prefix = f"cargo-v1-{platform}-{toolchain}-{lock}-{digest(config)}"
     event, ref = env.get("GITHUB_EVENT_NAME"), env.get("GITHUB_REF", "")
     default = env.get("DEFAULT_BRANCH", "")
+    # Release checkouts can differ from a dispatch's branch ref; never seed that scope.
     trusted = (
-        bool(default)
+        role != "release-debug"
+        and bool(default)
         and ref == "refs/heads/" + default
         and event in {"push", "schedule", "workflow_dispatch"}
     )
