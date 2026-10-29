@@ -1890,6 +1890,86 @@ exit=0
 Owned panes/processes closed; private scratch retained for inspection.
 ```
 
+## P5-04 UAT-5
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+$ cargo run -q -p talaria-workflow --features hermes-live --example roster -- --profile fixture --staffing "$X/staffing.toml"
+Roster for profile fixture at 2026-10-29 15:43 UTC
+
+Providers (signed in)
+  nous                69 models   ready
+  anthropic           14 models   ready
+  openai-codex        15 models   ready
+  openai-api          22 models   ready
+  xai-oauth            9 models   ready
+  copilot             17 models   ready
+  copilot-acp          1 models   ready
+  gemini              17 models   ready
+  deepseek             2 models   limited until 15:43 UTC
+  ollama-cloud        24 models   ready
+  opencode-zen        130 models   ready
+  opencode-go         50 models   ready
+  alibaba-token-plan  14 models   ready
+  meta-ai              1 models   ready
+
+Tiers
+  limited   deepseek-flash on deepseek               unknown  warning: rate-limited until 15:43 UTC
+  survey    minimax-m3.1-flash on ollama-cloud      unknown  ok
+
+Limits: 1 agents at once
+Budget: none
+Estimate: no estimate without a token budget; tier prices: limited unknown, survey unknown per million tokens
+tier 'limited': 'deepseek' is rate-limited until 15:43 UTC; its agents will wait
+exit=0
+
+$ cargo run -q -p talaria-workflow --features hermes-live --example staffed_run -- --profile fixture --staffing "$X/staffing.toml" --script "$X/two_agent.js" --run-dir "$X/run"
+{"at":"2026-10-29T15:43:24.572703Z","event":"admitted","key":"99caf1711d29cc908213c6049a07e783","profile":"fixture","provider":"ollama-cloud","in_flight":1,"lane_in_flight":1,"reattached":false}
+{"at":"2026-10-29T15:43:24.576419Z","event":"queued","key":"48bc05cafed3a8ec8266315eb3d6c2fb","label":"limited-agent","profile":"fixture","provider":"deepseek","model":"deepseek-flash","reason":{"kind":"provider_limited","until":"2026-10-29T15:43:42.152Z"}}
+{"at":"2026-10-29T15:43:28.218610Z","event":"released","key":"99caf1711d29cc908213c6049a07e783","profile":"fixture","provider":"ollama-cloud"}
+{"at":"2026-10-29T15:43:54.556360Z","event":"queued","key":"48bc05cafed3a8ec8266315eb3d6c2fb","label":"limited-agent","profile":"fixture","provider":"deepseek","model":"deepseek-flash","reason":{"cause":"rate_limited","kind":"lane_paused","until":null}}
+{"at":"2026-10-29T15:43:54.657130Z","event":"roster_refreshed","profile":"fixture"}
+{"at":"2026-10-29T15:43:54.657153Z","event":"admitted","key":"48bc05cafed3a8ec8266315eb3d6c2fb","profile":"fixture","provider":"deepseek","in_flight":1,"lane_in_flight":1,"reattached":false}
+{"at":"2026-10-29T15:43:55.865999Z","event":"released","key":"48bc05cafed3a8ec8266315eb3d6c2fb","profile":"fixture","provider":"deepseek"}
+{"at":"2026-10-29T15:43:55.880615Z","event":"finished","money_text":"$0.00 plus 1 unpriced turns","outcome":"completed","result":{"a":"ok","b":"ok"},"run_dir":"<path>","spend":{"money_source":"hermes","money_unknown_turns":1,"money_usd":0.000550158,"tokens":10369,"tokens_unknown_turns":0}}
+tier 'limited': 'deepseek' is rate-limited until 15:43 UTC; its agents will wait
+exit=0
+
+Restored fixture/auth.json (cmp=0):
+Roster for profile fixture at 2026-10-29 15:43 UTC
+
+Providers (signed in)
+  nous                74 models   ready
+  anthropic           14 models   ready
+  openai-codex        15 models   ready
+  openai-api          22 models   ready
+  xai-oauth            9 models   ready
+  copilot             17 models   ready
+  copilot-acp          1 models   ready
+  gemini              17 models   ready
+  deepseek             2 models   ready
+  ollama-cloud        24 models   ready
+  opencode-zen        130 models   ready
+  opencode-go         50 models   ready
+  alibaba-token-plan  14 models   ready
+  meta-ai              1 models   ready
+```
+
+```text
+
+Tiers
+  limited   deepseek-flash on deepseek               unknown  ok
+  survey    minimax-m3.1-flash on ollama-cloud      unknown  ok
+
+Limits: 1 agents at once
+Budget: none
+Estimate: no estimate without a token budget; tier prices: limited unknown, survey unknown per million tokens
+exit=0
+```
+
 ## P5-04 UAT-6
 
 Candidate: da6907c. Runner: agent tester. Run 1 of 1. Date: 2026-10-29.
@@ -3909,6 +3989,23 @@ fleet readback: none of the run's 1 sessions is working
 owned pane closed: wC5:pRF
 ```
 
+## P5-06 UAT-5
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+Restarted isolated test gateway (old_pids=[87684] -> new_pid=94741)
+needs operator: run 01M645E6EBHAVA7ZB598AC9J5Q agent parked-agent key 53073ea53b7b31b0ef4ba530fd061d06 attempt 0 episode 0 - answer: talaria workflow resolve 01M645E6EBHAVA7ZB598AC9J5Q --key 53073ea53b7b31b0ef4ba530fd061d06 --attempt 0 --episode 0 --resolution fail|rerun|abort
+$ $T workflow list
+01M645E6EBHAVA7ZB598AC9J5Q  park-resolve  parked  agents 0/1  parked 1  tokens -  money -  2026-10-29T15:46:12Z  <path>
+$ $T workflow resolve 01M645E6EBHAVA7ZB598AC9J5Q --key 53073ea53b7b31b0ef4ba530fd061d06 --attempt 0 --episode 0 --resolution fail; echo exit=$?
+exit=0
+runner_exit=0; outcome_json={"finished_at_ms": 1793288781178, "outcome": "completed", "result": null, "summary": {"completed": 0, "failed": 1, "parked": 0, "skipped": 0, "unfinished": 0}, "v": 1}
+outcount={"prompt.submit": 1, "session.create": 1}
+```
+
 ## P5-06 UAT-6
 
 Candidate: da6907c. Runner: agent tester. Run 1 of 1. Date: 2026-10-29.
@@ -4742,6 +4839,57 @@ model minimax-m3.1-flash
 command: herdr pane close wC5:pRR
 exit=0
 {"id":"cli:pane:close","result":{"type":"ok"}}
+```
+
+## P5-09 UAT-5
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+RUN_ID=01M645VRNHKARXFS3CJM07Q1H7
+$ $T workflow list --json --limit 100 | jq -r --arg id "$RUN_ID" '.[] | select(.run_id == $id) | .status'
+completed
+$ $T workflow resume --json "$RUN_ID" | tail -n 1
+{"event":"run_finished","run_id":"01M645VRNHKARXFS3CJM07Q1H7","outcome":"completed","result":{"base_ref":"HEAD~1","checkout_commit":"122109b79011cfe157ca94ea3b24b91ed0a7c0e2","confirmed":[{"detail":"The `if b == 0: raise ValueError(\"division by zero\")` guard was deleted, so `divide(3, 0)` now raises the interpreter's built-in `ZeroDivisionError` instead of `ValueError`. The repo's own test suite encodes the old contract: test_calc.py:7-9 (`test_divide_by_zero`) asserts `assertRaises(ValueError)`, so that test now fails. `ZeroDivisionError` derives from `ArithmeticError`, not `ValueError`, so any caller with `except ValueError:` around a `divide` call will no longer catch the failure and the exception will propagate as an unhandled error.","evidence":["calc.py:7-8 (reviewed head): `def divide(a, b):` / `    return a // b` — no zero guard remains.","Merge-base diff shows the removed line
+confirmed_findings_count=1
+--- pane tail ---
+Previous run with 4 lenses and 8 maxFindings: 13 agents known, 246k+30k tokens. This run with 3 lenses and 12 maxFindings: similar magnitude, maybe more findings
+verified → more tokens. Last time 276k tokens for 14 agents ≈ ~20k tokens/agent. This run could be ~350-400k tokens with no cap.
+
+Budget: none. Profile budget is null. Fine — user chose uncapped.
+
+Let me run it in background with notify=true.
+
+The command as given: talaria workflow run review-branch --profile fixture --args '{"base":"HEAD~1"}' --json. I need HERMES_HOME prefix per skill, and the binary path.
+Should I add --cwd? The user's command doesn't have it, and cwd is already correct (pwd confirms). I'll run exactly the user's command with the required HERMES_HOME and
+binary path prefix. Adding --cwd explicitly would be equivalent but let me keep it faithful to the user's command; cwd is inherited.
+
+Let me launch.
+Probe confirmed: review-branch resolves by name, args validate, and the rejected run spent 0 tokens — no paid work triggered.
+
+Run plan (script defaults, since --args only sets base): base HEAD~1 → head HEAD; lenses correctness, security, simplicity (3 reviewers); maxFindings 12; tiers survey
+(collect), reviewer-1/2/3 (review), judge (verify + synthesize) — all on minimax-m3.1-flash / ollama-cloud. Upper bound 17 agent calls; the previous run used 14 for
+similar work. Cost estimate: still unknown (all tier prices unknown), and no budget cap means spend is uncapped — expect roughly the 250–400k token range based on the
+last run.
+⏺ Shell(HERMES_HOME='<home>/.hermes' <worktree><path> workflow run review-branch --pro…) ✓ · 0.1s
+  ⎿  Background process started
+Run started (process proc_c1d6cb343178). Waiting.
+⏺ Process manage(wait proc_c1d6cb34317 60s)  ✓ · 1m
+Collect phase done, three reviewers running. Continuing to wait.
+⏺ Process manage(wait proc_c1d6cb34317 60s)  ✓ · 1m
+Reviewers finished; Verify phase is running on the selected findings. Continuing.
+⏺ Process manage(wait proc_c1d6cb34317 60s)  ✓ · 1m
+Verification is proceeding without budget skips this time. Let me keep waiting.
+Verifiers are completing without budget skips this time. Continuing.
+⏺ Process manage(wait proc_c1d6cb34317 60s)  … running 12s
+[IMPORTANT: The user has invoked the "talaria-workflows" skill, indicating they want you to follow its instructions. The full skill c… (+77 lines)  queued (1) · ↑ select
+⚙ HERMES_HOME='<home>/.hermes' <path> · 3m19s · last: {"event":"agent_finished","label":"verify: correctness-2","state":"completed… · /processes
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Shift+Enter adds a line.                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ ultracode │ approvals: manual │ …/review-uat5 (feature) │ ctx 6% │ 1 working
 ```
 
 ## P5-09 UAT-6
@@ -8438,6 +8586,257 @@ exit=0
 offline command family and both journal views verified
 ```
 
+## XF-8
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+Part A (/ultracode on -> start run -> /workflows -> Shift+X stop):
+run1_id=01M647S5T8ZY46DZQ8WPPZR3N5
+$ $T workflow list
+01M647S5T8ZY46DZQ8WPPZR3N5  review-branch  running  agents 0/0  tokens -  money -  2026-10-29T16:27:08Z  <worktree><path>
+--- /workflows tree before Shift+X ---
+┌Workflows──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│review-branch · running · agents 0/1 · 1 queued · 0 tokens · cost unknown · 1 unpriced                                                                                 │
+│  Collect · agents 0/1                                                                                                                                                 │
+│    ○ collect · minimax-m3.1-flash on ollama-cloud · queued · 5.9s · 0 tokens · cost unknown ·                                                                         │
+│  Review · agents 0/0                                                                                                                                                  │
+│  Verify · agents 0/0                                                                                                                                                  │
+│  Synthesize · agents 0/0                                                                                                                                              │
+│
+wfjson_after_stop={"agents_finished": 0, "agents_total_known": 1, "money_spent_usd": null, "name": "review-branch", "parked": 0, "profile": "fixture", "run_dir": "<worktree><path>", "run_id": "01M647S5T8ZY46DZQ8WPPZR3N5", "started_at_ms": 1793291228999, "status": "aborted", "tokens_spent": 6040, "warning": null}
+$ $T fleet list --profile fixture
+IDLE (200)
+  fixture  Run review-branch workflow detached       minimax-m3.1-flash  idle  now
+  fixture  Run Talaria review-branch workflow        minimax-m3.1-flash  idle  6m
+  fixture  Review last commit for bugs #5            minimax-m3.1-flash  idle  9m
+  fixture  Review last commit for bugs #4            minimax-m3.1-flash  idle  15m
+  fixture  Review last commit for bugs #3            minimax-m3.1-flash  idle  19m
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22m
+  fixture  Review last commit for bugs #2            minimax-m3.1-flash  idle  34m
+  fixture  (untitled)                                minimax-m3.1-flash  idle  36m
+  fixture  (untitled)                                minimax-m3.1-flash  idle  40m
+  fixture  (untitled)                                minimax-m3.1-flash  idle  55m
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1h
+  fixture  Join walnut and 2123                      minimax-m3.1-flash  idle  10h
+  fixture  juniper-2633                              minimax-m3.1-flash  idle  10h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  10h
+  fixture  Remove talaria-smoke-probe directory #14  minimax-m3.1-flash  idle  10h
+  fixture  Walnut-4329 hyphenated result             minimax-m3.1-flash  idle  10h
+  fixture  Reply with ok #47                         minimax-m3.1-flash  idle  10h
+  fixture  Reply with only ok #21                    minimax-m3.1-flash  idle  10h
+  fixture  tundra-4103                               minimax-m3.1-flash  idle  10h
+  fixture  Join tundra and 3343                      minimax-m3.1-flash  idle  10h
+  fixture  harbor-4645                               minimax-m3.1-flash  idle  10h
+  fixture  Create cobalt-9513 hyphenated result      minimax-m3.1-flash  idle  10h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  10h
+  fixture  Remove talaria-smoke-probe directory #13  minimax-m3.1-flash  idle  10h
+  fixture  saffron-7050                              minimax-m3.1-flash  idle  10h
+  fixture  Reply with ok #46                         minimax-m3.1-flash  idle  10h
+  fixture  Reply with only ok #20                    minimax-m3.1-flash  idle  10h
+  fixture  fixture smoke kx4d7s2h                    minimax-m3.1-flash  idle  10h
+  fixture  cobalt-3010                               minimax-m3.1-flash  idle  11h
+  fixture  Join tundra and 4337                      minimax-m3.1-flash  idle  11h
+  fixture  Join saffron and 2361                     minimax-m3.1-flash  idle  11h
+  fixture  Remember code word heron #11              minimax-m3.1-flash  idle  11h
+  fixture  Identify intended truncated question      minimax-m3.1-flash  idle  11h
+  fixture  Join quartz and 9549 with hyphen          minimax-m3.1-flash  idle  11h
+  fixture  juniper-1808                              minimax-m3.1-flash  idle  11h
+  fixture  Calculate 2 + 2 #9                        minimax-m3.1-flash  idle  11h
+  fixture  List files in talaria-workflows #4        minimax-m3.1-flash  idle  11h
+  fixture  List files in talaria-workflows #3        minimax-m3.1-flash  idle  11h
+  fixture  List talaria-workflows folder files #3    minimax-m3.1-flash  idle  11h
+  fixture  List files in talaria-workflows #2        minimax-m3.1-flash  idle  12h
+  fixture  Calculate 2 + 2 #8                        minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+```
+
+```text
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  20h
+  fixture  Calculate 2 + 2 #7                        minimax-m3.1-flash  idle  21h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 plus 2                        minimax-m3.1-flash  idle  22h
+  fixture  List files in talaria-workflows           minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 + 2 #6                        minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  List files in talaria-workflows folder    minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 + 2 result                    minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 + 2 #5                        minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 + 2 #4                        minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  23h
+  fixture  List talaria-workflows files              minimax-m3.1-flash  idle  23h
+  fixture  Calculate 2 + 2 #3                        minimax-m3.1-flash  idle  23h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  23h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  23h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  23h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  List talaria-workflows folder files #2    minimax-m3.1-flash  idle  1d
+  fixture  List talaria-workflows folder files       minimax-m3.1-flash  idle  1d
+  fixture  Calculate 2 + 2 #2                        minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Compute 2 + 2                             minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Review last commit for bugs               minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Calculate 2 + 2                           minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+```
+
+```text
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Find cobalt-5091 marker text              minimax-m3.1-flash  idle  1d
+  fixture  Create walnut-1920 hyphenated result      minimax-m3.1-flash  idle  1d
+  fixture  Join cobalt and 1417                      minimax-m3.1-flash  idle  1d
+  fixture  Count from 1 to 5000 #3                   minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Count from 1 to 5000 #2                   minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Join juniper and 3005                     minimax-m3.1-flash  idle  1d
+  fixture  Join maple and 9705                       minimax-m3.1-flash  idle  1d
+  fixture  saffron-9007                              minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Remove talaria-smoke-probe directory #12  minimax-m3.1-flash  idle  1d
+  fixture  Join juniper and 3181 with hyphen         minimax-m3.1-flash  idle  1d
+  fixture  Reply with only word ok #9                minimax-m3.1-flash  idle  1d
+  fixture  Reply with only ok #19                    minimax-m3.1-flash  idle  1d
+  fixture  fixture smoke jp80nwjh                    minimax-m3.1-flash  idle  1d
+  fixture  tundra-8724                               minimax-m3.1-flash  idle  1d
+  fixture  saffron-8816                              minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Count numbers from 1 to 5000              minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Count to 5000                             minimax-m3.1-flash  idle  1d
+  fixture  Count to 2000 line by line                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+```
+
+```text
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  cobalt-2977                               minimax-m3.1-flash  idle  1d
+  fixture  Join tundra and 8663 with hyphen          minimax-m3.1-flash  idle  1d
+  fixture  Join walnut and 9207                      minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Remove talaria-smoke-probe directory #11  minimax-m3.1-flash  idle  1d
+  fixture  Join saffron and 5918                     minimax-m3.1-flash  idle  1d
+  fixture  Reply with ok #31                         minimax-m3.1-flash  idle  1d
+  fixture  Reply with only ok #18                    minimax-m3.1-flash  idle  1d
+  fixture  fixture smoke eocce1ad                    minimax-m3.1-flash  idle  1d
+  fixture  Identify cobalt-6351 marker               minimax-m3.1-flash  idle  1d
+  fixture  maple-9316                                minimax-m3.1-flash  idle  1d
+  fixture  Join tundra and 1959                      minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  List numbers 1 through 5000               minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  Count from 1 to 2000 #7                   minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  Count from 1 to 2000 #6                   minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+truncated: fixture (only its 200 newest live sessions are listed; working sessions beyond them are not shown)
+
+Part B (keyword ultracode with toggle off):
+keyword_banner_seen=True; run2_id=01M647TE0M3BD5PDHJDNYXCJAB
+--- /ultracode status after keyword turn ---
+Arguments: {"base":"HEAD~1"} · Budget: 200,000 tokens · Mode: detachedCost estimate: roster prices tier rates as unknown, so the only estimate available is the token cap
+(200k).
+Launching now.
+⏺ Shell(HERMES_HOME=<home>/.hermes <worktree><path> workflow run <home>/.talari…) ✓ · 0.9s
+  ⎿  unknown
+     {"detached":true,"run_dir":"<worktree><path>","run_id":"01M647TE0M3BD5PDHJDNYXCJAB"}
+· Interrupted
+· Ultracode is off for this session. Skill: installed (local).
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ > Type a message. Enter sends, Shift+Enter adds a line.                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ minimax-m3.1-flash │ approvals: manual │ …/review-xf8 (feature) │ ctx 2%
+```
+
 ## XF-9
 
 Candidate: da6907c. Runner: agent tester. Run 1 of 1. Date: 2026-10-29.
@@ -10635,4 +11034,416 @@ exit=0
 command: <worktree><path> workflow list --json
 exit=0
 [{"run_id":"01M62XVK006NC4NQD6R5S07GY3","name":"ten","profile":"fixture","started_at_ms":1793247267840,"status":"aborted","agents_finished":2,"agents_total_known":10,"parked":0,"tokens_spent":25097,"money_spent_usd":null,"run_dir":"<worktree><path>","warning":null}]
+```
+
+## OPC-1
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+$ $T workflow roster --profile fixture --staffing "$X/staffing.toml"; echo exit=$?
+Roster for profile fixture at 2026-10-29 15:47 UTC
+
+Providers (signed in)
+  nous                74 models   ready
+  anthropic           14 models   ready
+  openai-codex        15 models   ready
+  openai-api          22 models   ready
+  xai-oauth            9 models   ready
+  copilot             17 models   ready
+  copilot-acp          1 models   ready
+  gemini              17 models   ready
+  deepseek             2 models   ready
+  ollama-cloud        24 models   ready
+  opencode-zen        130 models   ready
+  opencode-go         50 models   ready
+  alibaba-token-plan  14 models   ready
+  meta-ai              1 models   ready
+
+Tiers
+  builder      minimax-m3.1-flash on ollama-cloud       unknown  ok
+  judge        minimax-m3.1-flash on ollama-cloud     unknown  ok
+  reviewer-1   minimax-m3.1-flash on ollama-cloud          unknown  ok
+  reviewer-2   deepseek-flash on deepseek                  unknown  ok
+  reviewer-3   gemini-3.1-flash-lite on gemini             unknown  ok
+  survey       minimax-m3.1-flash on ollama-cloud      unknown  ok
+
+Limits: 1 agents at once
+Budget: none
+Estimate: no estimate without a token budget; tier prices: builder unknown, judge unknown, reviewer-1 unknown, reviewer-2 unknown, reviewer-3 unknown, survey unknown per million tokens
+Workflows:
+Skill: missing
+exit=0
+
+$ $T workflow builtins check review-branch --staffing "$X/staffing.toml"; echo exit=$?
+collector: tier 'survey' -> ollama-cloud/minimax-m3.1-flash
+reviewers[0]: tier 'reviewer-1' -> ollama-cloud/minimax-m3.1-flash
+reviewers[1]: tier 'reviewer-2' -> deepseek/deepseek-flash
+reviewers[2]: tier 'reviewer-3' -> gemini/gemini-3.1-flash-lite
+verifier: tier 'judge' -> ollama-cloud/minimax-m3.1-flash
+synthesizer: tier 'judge' -> ollama-cloud/minimax-m3.1-flash
+collector uses file, terminal in a worktree
+reviewers uses file in a worktree
+verifier uses file in a worktree
+synthesizer uses todo
+ok
+exit=0
+unique_reviewer_providers=3 (ollama-cloud, deepseek, gemini)
+```
+
+## OPC-2
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+$ $T workflow run review-branch --detach --json --profile fixture --staffing "$X/staffing.toml" --record "$X/rec1.jsonl"
+run_id=01M645G3F0BKG7773V1FRKF3QM
+wfjson={"agents_finished": 3, "agents_total_known": 4, "money_spent_usd": null, "name": "review-branch", "parked": 0, "profile": "fixture", "run_dir": "<path>", "run_id": "01M645G3F0BKG7773V1FRKF3QM", "started_at_ms": 1793288834528, "status": "running", "tokens_spent": 61534, "warning": null}
+manifest_tiers={"builder": {"effort": null, "model": "minimax-m3.1-flash", "price": {"input": "", "output": ""}, "provider": "ollama-cloud"}, "judge": {"effort": null, "model": "minimax-m3.1-flash", "price": {"input": "", "output": ""}, "provider": "ollama-cloud"}, "reviewer-1": {"effort": null, "model": "minimax-m3.1-flash", "price": {"input": "", "output": ""}, "provider": "ollama-cloud"}, "reviewer-2": {"effort": null, "model": "deepseek-flash", "price": {"input": "", "output": ""}, "provider": "deepseek"}, "reviewer-3": {"effort": null, "model": "gemini-3.1-flash-lite", "price": {"input": "", "output": ""}, "provider": "gemini"}, "survey": {"effort": null, "model": "minimax-m3.1-flash", "price": {"input": "", "output": ""}, "provider": "ollama-cloud"}}
+--- /workflows visible screen ---
+┌Workflows──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│review-branch · running · agents 3/4 · 1 running · 61.5k tokens · $0.00 · 3 unpriced                                                                                   │
+│  Collect · agents 1/1                                                                                                                                                 │
+│    ✓ collect · minimax-m3.1-flash on ollama-cloud · done · 20.2s · 34.8k tokens · cost unknown · terminal                                                             │
+│  Review · agents 2/3                                                                                                                                                  │
+│    ✓ review: correctness · minimax-m3.1-flash on ollama-cloud · done · 16.4s · 16.6k tokens · cost unknown · search_files                                             │
+│    ✓ review: security · deepseek-flash on deepseek · done · 23.5s · 10.0k tokens · $0.00 · read_file                                                                  │
+│    ◐ review: simplicity · gemini-3.1-flash-lite on gemini · running · 24.7s · 0 tokens · cost unknown ·     {                                                         │
+│  Verify · agents 0/0                                                                                                                                                  │
+│  Synthesize · agents 0/0                                                                                                                                              │
+│                                                                                                                                                                       │
+│                                                                                                                                                                       │
+│                                                                                                                                                                       │
+│                                                                                                                                                                       │
+│
+```
+
+## OPC-3
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+Killed Talaria TUI pid(s)=[109] and detached runner pid=134 (kill -9)
+finished_keys_before_kill=["11bd4ab0cdccdf91cc8372cf5c359cb5", "146c1b4b861a4eeea26cc6b9a2049cd5", "46faab7d85c44e648d9665994d0ea14e"]
+finished_labels_before_kill={"11bd4ab0cdccdf91cc8372cf5c359cb5": "collect", "146c1b4b861a4eeea26cc6b9a2049cd5": "review: correctness", "46faab7d85c44e648d9665994d0ea14e": "review: security"}
+journal_exists=True
+wfjson_after_kill={"agents_finished": 3, "agents_total_known": 4, "money_spent_usd": null, "name": "review-branch", "parked": 0, "profile": "fixture", "run_dir": "<path>", "run_id": "01M645G3F0BKG7773V1FRKF3QM", "started_at_ms": 1793288834528, "status": "interrupted", "tokens_spent": 61534, "warning": null}
+```
+
+## OPC-4
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+$ cd "$X" && $T workflow resume 01M645G3F0BKG7773V1FRKF3QM --staffing "$X/staffing.toml" --record "$X/rec2.jsonl" --json; echo exit=$?
+exit=0; status=reviewed; confirmed=7; uncertain=0; refuted=0
+wfjson={"agents_finished": 12, "agents_total_known": 12, "money_spent_usd": null, "name": "review-branch", "parked": 0, "profile": "fixture", "run_dir": "<path>", "run_id": "01M645G3F0BKG7773V1FRKF3QM", "started_at_ms": 1793288834528, "status": "completed", "tokens_spent": 215153, "warning": null}
+pre_kill_finished_keys=["11bd4ab0cdccdf91cc8372cf5c359cb5", "146c1b4b861a4eeea26cc6b9a2049cd5", "46faab7d85c44e648d9665994d0ea14e"]
+post_kill_control_keys=["6d8bd4a614a62e8cc29bbb6e700549ed", "3198e15e1aaa27d50b88bac052d7053d", "1330a3f0bf59ad1b2254886ad9a6bf73", "2e82de063d9b0c6552d9f9d2d0a8b4c4", "6f4b5b35abfabc1c62b662de563d480d", "3ae7baef5b19eba836f4c778cd6283b8", "fdf9f5e12e1b22e8398e57934aec7712", "0929358e9c2899af1d5db117132f3d14"]
+rec2_outcount_by_key={"0929358e9c2899af1d5db117132f3d14": {"prompt.submit": 1, "session.create": 1}, "11bd4ab0cdccdf91cc8372cf5c359cb5": {"prompt.submit": 0, "session.create": 0}, "1330a3f0bf59ad1b2254886ad9a6bf73": {"prompt.submit": 1, "session.create": 1}, "146c1b4b861a4eeea26cc6b9a2049cd5": {"prompt.submit": 0, "session.create": 0}, "2e82de063d9b0c6552d9f9d2d0a8b4c4": {"prompt.submit": 1, "session.create": 1}, "3198e15e1aaa27d50b88bac052d7053d": {"prompt.submit": 1, "session.create": 1}, "3ae7baef5b19eba836f4c778cd6283b8": {"prompt.submit": 1, "session.create": 1}, "46faab7d85c44e648d9665994d0ea14e": {"prompt.submit": 0, "session.create": 0}, "6d8bd4a614a62e8cc29bbb6e700549ed": {"prompt.submit": 1, "session.create": 1}, "6f4b5b35abfabc1c62b662de563d480d": {"prompt.submit": 1, "session.create": 1}, "fdf9f5e12e1b22e8398e57934aec7712": {"prompt.submit": 1, "session.create": 1}}
+outcount_negative_controls={"dropped_rc": 2, "malformed_rc": 2}
+distinct_sessions_created=12; distinct_sessions_bound=12; total_agents=12
+```
+
+## OPC-5
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+settled_receipt_tokens=215153; wfjson_tokens=215153; run_finished_tokens=215153; rendered_view_tokens=215.2k
+per_provider_tokens={"deepseek": 10045, "gemini": 5032, "ollama-cloud": 200076}
+per_provider_admissions={"deepseek": 1, "gemini": 1, "ollama-cloud": 10}
+wfjson_money_spent_usd=None; run_finished_money_usd=0.0022440660000000003; cumulative_cost_control=0.02
+--- /workflows completed screen ---
+┌Workflows──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│review-branch · completed · agents 12/12 · 215.2k tokens · $0.00 · 10 unpriced                                                                                         │
+│  Collect · agents 1/1                                                                                                                                                 │
+│    ✓ collect · minimax-m3.1-flash on ollama-cloud · done · 20.2s · 34.8k tokens · cost unknown · {"base_ref": "main", "merge_base": "29a4b8b122d173e01d327adee2a2cc497│
+│  Review · agents 3/3                                                                                                                                                  │
+│    ✓ review: correctness · minimax-m3.1-flash on ollama-cloud · done · 16.4s · 16.6k tokens · cost unknown · }                                                        │
+│    ✓ review: security · deepseek-flash on deepseek · done · 23.5s · 10.0k tokens · $0.00 · {"findings":[{"file":"calc.py","line":8,"severity":"medium","title":"Divisi│
+│    ✓ review: simplicity · gemini-3.1-flash-lite on gemini · done · 25.6s · 5.0k tokens · $0.00 · }                                                                    │
+│  Verify · agents 7/7                                                                                                                                                  │
+│    ✓ verify: correctness-1 · minimax-m3.1-flash on ollama-cloud · done · 13.4s · 16.6k tokens · cost unknown · {"verdict": "confirmed", "reason": "The reviewed head o│
+│    ✓ verify: simplicity-1 · minimax-m3.1-flash on ollama-cloud · done · 31.8s · 16.9k tokens · cost unknown · {"verdict": "confirmed", "evidence": ["calc.py:7-8 (revi│
+│    ✓ verify: correctness-2 · minimax-m3.1-flash on ollama-cloud · done · 48.9s · 22.4k tokens · cost unknown · {"verdict":"confirmed","reason":"The reviewed head's ca│
+│    ✓ verify: security-1 · minimax-m3.1-flash on ollama-cloud · done · 69.3s · 16.8k tokens · cost unknown · {"verdict":"confirmed","evidence":["calc.py:7-8 — `def div│
+│    ✓ verify: simplicity-2 · minimax-m3.1-flash on ollama-cloud · done · 83.5s · 21.0k tokens · cost unknown · {"verdict":"confirmed","reason":"At the reviewed head, c│
+│    ✓ verify: correctness-3 · minimax-m3.1-flash on ollama-cloud · done · 98.4s · 22.7k tokens · cost unknown · {"verdi
+```
+
+## OPC-6
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+journal_turn_settled_outcomes={"40757a52f2a84cb082410bbeb3ae2035": "completed", "566c2afaab5f4f4586ece16981290cf6": "completed", "5a4c5b0fa3b94ee5b268e038e80edb4a": "completed", "5bc55be67bd1430b98b21080d18fb43d": "completed", "7e3ba60a38354df098e4cdb17368e5d4": "completed", "7e83d81a8dc146b6990c1a9a29842d92": "completed", "811b6659b9894a3c99fb6117bae3ea66": "completed", "910109212750486bbc65e4d11ecdbc7b": "completed", "a82ea460a3694409920e8e9ee77889dd": "completed", "ac93180e91d7421591cd9a7eb33b4073": "completed", "b1ae9ce928f945719f5eefc05c2fb8dd": "completed", "c0256ccdf66743509f6e7c93942b54d5": "completed"}
+removed_worktrees=["40a2b5d33f0ab02811967f26f965cf1a9594b4bb50980459de72b07738d732a1-0", "46126dd589ad6c32551cedcd69ad57918fe674467b920e81f612cd2cec76fe53-0", "56c03e3de2783f58bed86ebf8fc68fa92714269ab7164e72f94eba97bf054a75-0", "6273e561770c66b2cb1c587e5ff02dbae5fe3c5cb4b76584b4dd762acab0a609-0", "792038642bf14d8241170468634e5e31d5e06c45b6ac53ec597a6751c3279adc-0", "835863559f63daeb58e87272301507009ec28330767e90284ad20b316579a719-0", "87bfb7c098845a07a4152538af674f313674af5f5f3d72745c118f59a6525956-0", "88105e9d3cbded2fbd3c451f5a58f6b85aafdce369f23115d78f7557a0c7a23a-0", "938cad0aac2bf4367815ab22143744905949d36f2d125bc4924813bbff615374-0", "9b24fdbe5f532875a3292fa65ed84143a3ff89931a1b45b6749de489a2edcb0c-0", "a3240db6389ab089015e761cded5cf33a42af4c16f001120c1a3daa044db67a2-0"]; worktree_list_after_count=1
+$ $T fleet list --profile fixture
+IDLE (200)
+  fixture  (untitled)                                minimax-m3.1-flash  idle  now
+  fixture  (untitled)                                minimax-m3.1-flash  idle  3m
+  fixture  (untitled)                                minimax-m3.1-flash  idle  18m
+  fixture  (untitled)                                minimax-m3.1-flash  idle  23m
+  fixture  (untitled)                                minimax-m3.1-flash  idle  24m
+  fixture  Join walnut and 2123                      minimax-m3.1-flash  idle  9h
+  fixture  juniper-2633                              minimax-m3.1-flash  idle  9h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  9h
+  fixture  Remove talaria-smoke-probe directory #14  minimax-m3.1-flash  idle  9h
+  fixture  Walnut-4329 hyphenated result             minimax-m3.1-flash  idle  9h
+  fixture  Reply with ok #47                         minimax-m3.1-flash  idle  9h
+  fixture  Reply with only ok #21                    minimax-m3.1-flash  idle  9h
+  fixture  tundra-4103                               minimax-m3.1-flash  idle  10h
+  fixture  Join tundra and 3343                      minimax-m3.1-flash  idle  10h
+  fixture  harbor-4645                               minimax-m3.1-flash  idle  10h
+  fixture  Create cobalt-9513 hyphenated result      minimax-m3.1-flash  idle  10h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  10h
+  fixture  Remove talaria-smoke-probe directory #13  minimax-m3.1-flash  idle  10h
+  fixture  saffron-7050                              minimax-m3.1-flash  idle  10h
+  fixture  Reply with ok #46                         minimax-m3.1-flash  idle  10h
+  fixture  Reply with only ok #20                    minimax-m3.1-flash  idle  10h
+  fixture  fixture smoke kx4d7s2h                    minimax-m3.1-flash  idle  10h
+  fixture  cobalt-3010                               minimax-m3.1-flash  idle  10h
+  fixture  Join tundra and 4337                      minimax-m3.1-flash  idle  10h
+  fixture  Join saffron and 2361                     minimax-m3.1-flash  idle  10h
+  fixture  Remember code word heron #11              minimax-m3.1-flash  idle  10h
+  fixture  Identify intended truncated question      minimax-m3.1-flash  idle  10h
+  fixture  Join quartz and 9549 with hyphen          minimax-m3.1-flash  idle  10h
+  fixture  juniper-1808                              minimax-m3.1-flash  idle  10h
+  fixture  Calculate 2 + 2 #9                        minimax-m3.1-flash  idle  10h
+  fixture  List files in talaria-workflows #4        minimax-m3.1-flash  idle  10h
+  fixture  List files in talaria-workflows #3        minimax-m3.1-flash  idle  11h
+  fixture  List talaria-workflows folder files #3    minimax-m3.1-flash  idle  11h
+  fixture  List files in talaria-workflows #2        minimax-m3.1-flash  idle  11h
+  fixture  Calculate 2 + 2 #8                        minimax-m3.1-flash  idle  11h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  11h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  11h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  11h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  11h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  12h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  13h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  19h
+  fixture  Calculate 2 + 2 #7                        minimax-m3.1-flash  idle  21h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  21h
+```
+
+```text
+  fixture  (untitled)                                minimax-m3.1-flash  idle  21h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  21h
+  fixture  Calculate 2 plus 2                        minimax-m3.1-flash  idle  21h
+  fixture  List files in talaria-workflows           minimax-m3.1-flash  idle  21h
+  fixture  Calculate 2 + 2 #6                        minimax-m3.1-flash  idle  21h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  List files in talaria-workflows folder    minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 + 2 result                    minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 + 2 #5                        minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 + 2 #4                        minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  List talaria-workflows files              minimax-m3.1-flash  idle  22h
+  fixture  Calculate 2 + 2 #3                        minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  22h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  23h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  23h
+  fixture  List talaria-workflows folder files #2    minimax-m3.1-flash  idle  23h
+  fixture  List talaria-workflows folder files       minimax-m3.1-flash  idle  23h
+  fixture  Calculate 2 + 2 #2                        minimax-m3.1-flash  idle  23h
+  fixture  (untitled)                                minimax-m3.1-flash  idle  23h
+  fixture  Compute 2 + 2                             minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Review last commit for bugs               minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Calculate 2 + 2                           minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Find cobalt-5091 marker text              minimax-m3.1-flash  idle  1d
+  fixture  Create walnut-1920 hyphenated result      minimax-m3.1-flash  idle  1d
+  fixture  Join cobalt and 1417                      minimax-m3.1-flash  idle  1d
+  fixture  Count from 1 to 5000 #3                   minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Count from 1 to 5000 #2                   minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+```
+
+```text
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Join juniper and 3005                     minimax-m3.1-flash  idle  1d
+  fixture  Join maple and 9705                       minimax-m3.1-flash  idle  1d
+  fixture  saffron-9007                              minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Remove talaria-smoke-probe directory #12  minimax-m3.1-flash  idle  1d
+  fixture  Join juniper and 3181 with hyphen         minimax-m3.1-flash  idle  1d
+  fixture  Reply with only word ok #9                minimax-m3.1-flash  idle  1d
+  fixture  Reply with only ok #19                    minimax-m3.1-flash  idle  1d
+  fixture  fixture smoke jp80nwjh                    minimax-m3.1-flash  idle  1d
+  fixture  tundra-8724                               minimax-m3.1-flash  idle  1d
+  fixture  saffron-8816                              minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Count numbers from 1 to 5000              minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Count to 5000                             minimax-m3.1-flash  idle  1d
+  fixture  Count to 2000 line by line                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  cobalt-2977                               minimax-m3.1-flash  idle  1d
+  fixture  Join tundra and 8663 with hyphen          minimax-m3.1-flash  idle  1d
+  fixture  Join walnut and 9207                      minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  1d
+  fixture  Remove talaria-smoke-probe directory #11  minimax-m3.1-flash  idle  1d
+  fixture  Join saffron and 5918                     minimax-m3.1-flash  idle  1d
+  fixture  Reply with ok #31                         minimax-m3.1-flash  idle  1d
+  fixture  Reply with only ok #18                    minimax-m3.1-flash  idle  1d
+  fixture  fixture smoke eocce1ad                    minimax-m3.1-flash  idle  1d
+  fixture  Identify cobalt-6351 marker               minimax-m3.1-flash  idle  1d
+  fixture  maple-9316                                minimax-m3.1-flash  idle  1d
+  fixture  Join tundra and 1959                      minimax-m3.1-flash  idle  1d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  List numbers 1 through 5000               minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  Count from 1 to 2000 #7                   minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+```
+
+```text
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  Count from 1 to 2000 #6                   minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  (untitled)                                minimax-m3.1-flash  idle  2d
+  fixture  Join saffron and 3678                     minimax-m3.1-flash  idle  2d
+  fixture  Join saffron-7637 with hyphen             minimax-m3.1-flash  idle  2d
+truncated: fixture (only its 200 newest live sessions are listed; working sessions beyond them are not shown)
+$ $T workflow list
+01M645G3F0BKG7773V1FRKF3QM  review-branch  completed  agents 12/12  tokens 215153  money -  2026-10-29T15:47:14Z  <path>
+running_runs_count=0; snap_cmp=0; snap_neg_cmp=1; cron_cmp=0; scratch_deleted=True
+```
+
+## OP-1
+
+Candidate: da6907c. Runner: operator. Run 1 of 1. Date: 2026-10-29.
+
+
+```text
+Operator comment: https://github.com/infiquetra/talaria/issues/273#issuecomment-6502424799
+$ TALARIA_LIVE_REQUIRE=1 TALARIA_OPERATOR_RESTART=1 cargo test -p talaria-workflow --features mock,fake-gateway --test journal_live live_unknown_after_restart -- --ignored --nocapture
+warning: crates/talaria-workflow/Cargo.toml: version requirement `=1.1.8+spec-1.1.0` for dependency `toml` includes semver metadata which will be ignored, removing the metadata is recommended to avoid confusion
+warning: crates/talaria-workflow/Cargo.toml: version requirement `=1.1.8+spec-1.1.0` for dependency `toml` includes semver metadata which will be ignored, removing the metadata is recommended to avoid confusion
+warning: `talaria-workflow` (manifest) generated 2 warnings
+warning: crates/talaria-app/Cargo.toml: version requirement `=1.1.8+spec-1.1.0` for dependency `toml` includes semver metadata which will be ignored, removing the metadata is recommended to avoid confusion
+warning: `talaria-app` (manifest) generated 1 warning
+    Finished `test` profile [unoptimized] target(s) in 0.34s
+     Running tests/journal_live.rs (target/debug/deps/journal_live-474cdebf4f51a383)
+
+running 1 test
+RESTART THE GATEWAY NOW
+JOURNAL_LIVE_RESULT: PASSED
+test live_unknown_after_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 6.62s
+exit=0
+
+$ TALARIA_LIVE_REQUIRE=1 TALARIA_LIVE_APPROVALS_CONFIRMED=1 cargo test -p talaria-workflow --features hermes-live --test hermes_live live_dangerous_command_denied_without_waiting -- --ignored --exact --nocapture
+running 1 test
+test live_dangerous_command_denied_without_waiting ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 31.46s
+
+warning: crates/talaria-app/Cargo.toml: version requirement `=1.1.8+spec-1.1.0` for dependency `toml` includes semver metadata which will be ignored, removing the metadata is recommended to avoid confusion
+warning: `talaria-app` (manifest) generated 1 warning
+warning: crates/talaria-workflow/Cargo.toml: version requirement `=1.1.8+spec-1.1.0` for dependency `toml` includes semver metadata which will be ignored, removing the metadata is recommended to avoid confusion
+warning: crates/talaria-workflow/Cargo.toml: version requirement `=1.1.8+spec-1.1.0` for dependency `toml` includes semver metadata which will be ignored, removing the metadata is recommended to avoid confusion
+warning: `talaria-workflow` (manifest) generated 2 warnings
+    Finished `test` profile [unoptimized] target(s) in 0.16s
+     Running tests/hermes_live.rs (target/debug/deps/hermes_live-4fbf943f92e217ac)
+exit=0 (approvals.mode=manual, snap_cmp=0, cron_cmp=0)
 ```

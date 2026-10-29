@@ -1,6 +1,6 @@
 # PH5-ACC: Phase 5 acceptance: a three-provider review workflow survives a kill and resumes without re-running finished agents
 
-Status: `proposed`. The GitHub issue for this unit is the contract; this document is its reference specification. If they disagree, the issue wins and the disagreement is reported on the issue.
+Status: `accepted`. The GitHub issue for this unit is the contract; this document is its reference specification. If they disagree, the issue wins and the disagreement is reported on the issue.
 
 ## How to use this document
 
@@ -569,13 +569,13 @@ The record is shape A (the four files of section 4) when `PH4-ACC`'s merged pull
 
 ### 10.3 Facts not verified while drafting (check at build time, record the result)
 
-1. The field names of the frame-log format used by `outcount` (docs/formats/frame-log.md, version 3).
-2. The text of `/ultracode status` (P5-09 spec 7.3 N3, quoted in 9.4). The progress view's stop-run key is `Shift+X` (P5-05 REQ-19), which XF-6 row (c) uses.
-3. Whether `interrupted` appears in `wf list` within 10 seconds of the kill in OPC-3 (it depends on the lock probe; P5-06 REQ-6a).
-4. Whether Hermes reports a cost for the `ollama-cloud` provider (so whether OPC-5 sees `cost unknown`).
-5. Whether the `skills` folder of the profile is the one P5-09 writes (name of the folder), and whether it moves any `snap` digest.
-6. The earlier suites' `PASS` line counts and limits (copied from PH4-ACC at its freeze).
-7. Whether `limits.max_in_flight` is the staffing key for the width (P5-04 section 3; the table above lists it), and that XF-9's "no staffing width" run uses the roadmap's default of 10 unless `P5-00` recommends another.
+1. The field names of the frame-log format used by `outcount` (`docs/formats/frame-log.md`, version 3): verified on candidate `da6907c` — outbound request frames carry `dir == "out"`, `frame.type == "req"`, `frame.method`, and `frame.params` (`idempotencyKey` or `clientRequestId`).
+2. The text of `/ultracode status` (P5-09 spec 7.3 N3, quoted in 9.4) and the progress view's stop-run key `Shift+X` (P5-05 REQ-19): verified on candidate `da6907c` in `AUTO-14`, `AUTO-15`, `XF-6`, and `XF-8`.
+3. Whether `interrupted` appears in `wf list` within 10 seconds of the kill in `OPC-3` (P5-06 REQ-6a): verified in `OPC-3` — killing the detached runner released the kernel `flock` immediately and `workflow list --json` reported `"status":"interrupted"` within 10 seconds.
+4. Whether Hermes reports a cost for the `ollama-cloud` provider (so whether `OPC-5` sees `cost unknown`): verified on Hermes `v0.22.4` in `OPC-1` and `OPC-5` — `ollama-cloud`, `deepseek`, and `gemini` report `cost_status: "unknown"`, so `money_spent_usd` is `null` and `/workflows` renders `cost unknown` (never `$0.00`).
+5. Whether the `skills` folder of the profile is the one `P5-09` writes (`skills/talaria-workflows`), and whether it moves any `snap` digest: verified — installing `talaria-workflows` adds `skills/talaria-workflows` (`snap_neg_cmp=1`), and removing `skills/talaria-workflows` plus staging `.locks` restores `snap_cmp=0` and `cron_cmp=0`.
+6. The earlier suites' `PASS` line counts and limits (copied from `PH4-ACC` at its freeze): verified in `AUTO-8` through `AUTO-13` (11, 8, 15, 12, 17, and 14 `PASS` lines respectively), with `phase5` adding 10 `PASS` lines in `AUTO-14` and `AUTO-15`.
+7. Whether `limits.max_in_flight` is the staffing key for the width (P5-04 section 3) and the default width is 10: verified in `XF-9` (`max_in_flight=3` caps concurrency at 3; omitting `limits.max_in_flight` uses the default width of 10).
 
 ## Appendix A: the scenarios of the accepted issues, indexed
 

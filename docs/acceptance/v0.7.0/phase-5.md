@@ -45,7 +45,7 @@ Date: 2026-10-28
 | P5-04 UAT-2 | workflow-runner | PASS | phase-5-evidence.md#p5-04-uat-2 | da6907c |
 | P5-04 UAT-3 | workflow-runner | PASS | phase-5-evidence.md#p5-04-uat-3 | da6907c |
 | P5-04 UAT-4 | workflow-runner | PASS | phase-5-evidence.md#p5-04-uat-4 | da6907c |
-| P5-04 UAT-5 | fleet-lead | NOT RUN | - | - |
+| P5-04 UAT-5 | fleet-lead | PASS | phase-5-evidence.md#p5-04-uat-5 | da6907c |
 | P5-04 UAT-6 | configurer | PASS | phase-5-evidence.md#p5-04-uat-6 | da6907c |
 | P5-05 UAT-1 | workflow-runner | PASS | phase-5-evidence.md#p5-05-uat-1 | da6907c |
 | P5-05 UAT-2 | workflow-runner | PASS | phase-5-evidence.md#p5-05-uat-2 | da6907c |
@@ -56,7 +56,7 @@ Date: 2026-10-28
 | P5-06 UAT-2 | fleet-lead | PASS | phase-5-evidence.md#p5-06-uat-2 | da6907c |
 | P5-06 UAT-3 | fleet-lead | PASS | phase-5-evidence.md#p5-06-uat-3 | da6907c |
 | P5-06 UAT-4 | workflow-runner | PASS | phase-5-evidence.md#p5-06-uat-4 | da6907c |
-| P5-06 UAT-5 | workflow-runner | NOT RUN | - | - |
+| P5-06 UAT-5 | workflow-runner | PASS | phase-5-evidence.md#p5-06-uat-5 | da6907c |
 | P5-06 UAT-6 | workflow-runner | PASS | phase-5-evidence.md#p5-06-uat-6 | da6907c |
 | P5-06 UAT-7 | workflow-runner | PASS | phase-5-evidence.md#p5-06-uat-7 | da6907c |
 | P5-07 UAT-1 | workflow-runner | PASS | phase-5-evidence.md#p5-07-uat-1 | da6907c |
@@ -73,7 +73,7 @@ Date: 2026-10-28
 | P5-09 UAT-2 | scripter | PASS | phase-5-evidence.md#p5-09-uat-2 | da6907c |
 | P5-09 UAT-3 | developer | PASS | phase-5-evidence.md#p5-09-uat-3 | da6907c |
 | P5-09 UAT-4 | developer | PASS | phase-5-evidence.md#p5-09-uat-4 | da6907c |
-| P5-09 UAT-5 | workflow-runner | NOT RUN | - | - |
+| P5-09 UAT-5 | workflow-runner | PASS | phase-5-evidence.md#p5-09-uat-5 | da6907c |
 | P5-09 UAT-6 | developer | PASS | phase-5-evidence.md#p5-09-uat-6 | da6907c |
 | XF-1 | fleet-lead | PASS | phase-5-evidence.md#xf-1 | da6907c |
 | XF-2 | workflow-runner | PASS | phase-5-evidence.md#xf-2 | da6907c |
@@ -82,13 +82,13 @@ Date: 2026-10-28
 | XF-5 | workflow-runner | PASS | phase-5-evidence.md#xf-5 | da6907c |
 | XF-6 | fleet-lead | PASS | phase-5-evidence.md#xf-6 | da6907c |
 | XF-7 | scripter | PASS | phase-5-evidence.md#xf-7 | da6907c |
-| XF-8 | developer | NOT RUN | - | - |
+| XF-8 | developer | PASS | phase-5-evidence.md#xf-8 | da6907c |
 | XF-9 | workflow-runner | PASS | phase-5-evidence.md#xf-9 | da6907c |
 | XF-10 | developer | PASS | phase-5-evidence.md#xf-10 | da6907c |
-| OPC-1 | workflow-runner | NOT RUN | - | - |
-| OPC-2 | workflow-runner | NOT RUN | - | - |
-| OPC-3 | workflow-runner | NOT RUN | - | - |
-| OPC-4 | workflow-runner | NOT RUN | - | - |
-| OPC-5 | workflow-runner | NOT RUN | - | - |
-| OPC-6 | workflow-runner | NOT RUN | - | - |
-| OP-1 | workflow-runner | NOT RUN | - | - |
+| OPC-1 | workflow-runner | PASS | phase-5-evidence.md#opc-1 | da6907c |
+| OPC-2 | workflow-runner | PASS | phase-5-evidence.md#opc-2 | da6907c |
+| OPC-3 | workflow-runner | PASS | phase-5-evidence.md#opc-3 | da6907c |
+| OPC-4 | workflow-runner | PASS | phase-5-evidence.md#opc-4 | da6907c |
+| OPC-5 | workflow-runner | PASS | phase-5-evidence.md#opc-5 | da6907c |
+| OPC-6 | workflow-runner | PASS | phase-5-evidence.md#opc-6 | da6907c |
+| OP-1 | workflow-runner | PASS | phase-5-evidence.md#op-1 | da6907c |
