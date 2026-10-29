@@ -862,6 +862,7 @@ fn signal_after_output_closes_takes_precedence() {
         Input::Prompt,
         Some(2),
         |mock, _, _, stops| async move {
+            mock.hold("session.interrupt");
             start(&mock, 1).await;
             mock.send_stream_event("message.delta", "adm-1", 1, json!({"text":"one"}))
                 .await;
