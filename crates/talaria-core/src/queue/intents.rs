@@ -343,8 +343,12 @@ fn send_draft_now(state: &mut SessionState, text: &str, ids: &mut dyn IdSource) 
         return Vec::new();
     }
     let submission_id = ids.submission_id();
-    if running_generation(state).is_some() {
-        state.queue.send_now_drafts.insert(submission_id.clone());
+    if let Some(generation) = running_generation(state) {
+        let authority_epoch = state.queue.generation_fence.map(|(epoch, _)| epoch);
+        state
+            .queue
+            .send_now_drafts
+            .insert(submission_id.clone(), (generation, authority_epoch));
     }
     submit_text(state, text, &submission_id.0)
 }

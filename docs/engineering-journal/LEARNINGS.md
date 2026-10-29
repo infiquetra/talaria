@@ -6354,6 +6354,24 @@ protocol variants and wrapper exit markers explicit.
 
 **Generalizable rule.** Clear any buffered composer text after interrupting an active turn before dispatching a slash command, and verify multi-provider workflow recovery against both frame-log request counts and settled admission receipts.
 
+## 2026-10-29 — In-flight work can outlive a foreground session switch
+
+**Evidence.** The delayed-detach loopback regression in `crates/talaria-app/tests/switch_flow.rs` lost a target completion that arrived after its snapshot but before installation. The rewind service regressions in `crates/talaria-app/tests/rewind_service.rs` showed an old retry advancing after another session was selected, and a failed retry returning its text to the new session.
+
+**Rule.** Bind asynchronous work and recovery to its originating profile and session, and replay switch-target events against the installed snapshot's sequence cursor.
+
+## 2026-10-29 — An unchanged memory value does not confirm an uncertain clear
+
+**Evidence.** At Hermes `4d04303818b61bf3aa09278af48356315515965b`, `hermes_cli/web_server_memory.py` derives a non-secret field's `is_set` from its effective value, including defaults. The refused and unknown clear regressions in `crates/talaria-core/tests/memory_state.rs` exercise unchanged read-back and confirmed defaults.
+
+**Rule.** Keep an uncertain clear pending when its effective value is unchanged; only a successful reply or changed read-back can confirm it.
+
+## 2026-10-29 — Coverage counters change a frame-time measurement
+
+**Evidence.** `review_timing::keystroke_budget_while_gh_sleeps` measured p95 at 18–20 ms under `cargo llvm-cov` and 1–2 ms in the same uninstrumented test binary on the same host. Its 16 ms budget failed only with instrumentation in those paired runs.
+
+**Rule.** Enforce frame-time budgets in the normal test run; exclude that timing measurement when coverage counters are active.
+
 ## 2026-10-29 — Cargo discovers imported integration suites independently
 
 Background, builtin registry and live workflow wrappers imported complete test files that Cargo

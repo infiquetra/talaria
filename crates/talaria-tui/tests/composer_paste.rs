@@ -214,3 +214,27 @@ fn idle() -> ComposerContext {
         turn_running: false,
     }
 }
+
+#[test]
+fn burst_preserves_graphemes_at_both_insertion_boundaries() {
+    let mut before_flag = Rig::new();
+    before_flag.composer.handle_paste("🇸X");
+    before_flag.press("home");
+    before_flag.burst("🇺ab");
+    assert_eq!(before_flag.composer.text(), "🇸X");
+    assert_eq!(before_flag.composer.caret(), 0);
+    before_flag.advance(8);
+    before_flag.tick();
+    assert_eq!(before_flag.composer.text(), "🇺ab🇸X");
+    assert_eq!(before_flag.composer.caret(), "🇺ab".len());
+
+    let mut after_base = Rig::new();
+    after_base.composer.handle_paste("e");
+    after_base.burst("\u{301}ab");
+    assert_eq!(after_base.composer.text(), "e");
+    assert_eq!(after_base.composer.caret(), 1);
+    after_base.advance(8);
+    after_base.tick();
+    assert_eq!(after_base.composer.text(), "e\u{301}ab");
+    assert_eq!(after_base.composer.caret(), "e\u{301}ab".len());
+}

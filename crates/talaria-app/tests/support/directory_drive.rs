@@ -52,6 +52,7 @@ pub struct ScreenLog {
     pub cells: Vec<String>,
     pub drafts: Vec<String>,
     pub session: Option<String>,
+    pub running: bool,
     pub restored: bool,
 }
 
@@ -114,6 +115,9 @@ impl Screen for Probe {
         log.draws += 1;
         log.draw_at.push(Instant::now());
         log.session = view.session_id.map(str::to_string);
+        log.running = view
+            .state
+            .is_some_and(|state| *state.turn() == talaria_core::session::TurnState::Running);
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
