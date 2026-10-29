@@ -518,6 +518,34 @@ pub async fn write_frame(
         })
 }
 
+// Keep the stamped envelope and original payload even when a stream event's
+// typed payload cannot represent it. Other malformed frames remain errors.
+pub(crate) fn decode_event_params(
+    params: &Value,
+) -> Result<EventFrame, hermes_contract::events::DecodeError> {
+    match EventFrame::from_params(params) {
+        Ok(frame) => Ok(frame),
+        Err(error) => {
+            let kind = params.get("type").and_then(Value::as_str);
+            if !matches!(kind, Some("message.delta" | "tool.start" | "tool.complete"))
+                || params.get("session_id").and_then(Value::as_str).is_none()
+                || params.get("admission_id").and_then(Value::as_str).is_none()
+                || params.get("seq").and_then(Value::as_u64).is_none()
+                || params.get("replay_epoch").and_then(Value::as_str).is_none()
+            {
+                return Err(error);
+            }
+            let mut envelope = params.clone();
+            if let Some(object) = envelope.as_object_mut() {
+                object.insert("type".into(), Value::String("raw.stream.event".into()));
+            }
+            let mut frame = EventFrame::from_params(&envelope)?;
+            frame.notification = hermes_contract::events::Notification::Unknown(params.clone());
+            Ok(frame)
+        }
+    }
+}
+
 /// Classify and decode one payload. This is the only function that interprets inbound text.
 ///
 /// `responders` is called once for a server request the application may answer, with the request id.
@@ -551,7 +579,7 @@ pub fn decode_frame(
                 Ok(value["result"].clone())
             },
         }),
-        FrameClass::Event => match EventFrame::from_params(&value["params"]) {
+        FrameClass::Event => match decode_event_params(&value["params"]) {
             Ok(frame) => Decoded::Inbound(Inbound::Event(InboundEvent {
                 generation,
                 frame,
@@ -1926,5 +1954,30 @@ mod tests {
         assert_eq!(closed.open_server_requests, 0);
         assert_eq!(closed.pending_calls, 0);
         assert_eq!(closed.dropped_without_decision, kept_dropped);
+    }
+}
+
+#[cfg(test)]
+mod raw_stream_event_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_stamped_untyped_stream_payloads() {
+        for payload in [
+            json!({"tool_call_id":"call-1", "tool_name":"terminal"}),
+            json!(null),
+        ] {
+            let params = json!({"type":"tool.start", "session_id":"s", "admission_id":"a", "seq":1, "replay_epoch":"e", "payload":payload});
+            let frame = decode_event_params(&params).expect("stamped event is retained");
+            assert_eq!(frame.session_id.as_deref(), Some("s"));
+            assert_eq!(frame.seq, Some(1));
+            assert_eq!(frame.type_name(), Some("tool.start"));
+            assert!(
+                matches!(frame.notification, hermes_contract::events::Notification::Unknown(raw) if raw == params)
+            );
+        }
+        assert!(decode_event_params(&json!({"type":"message.delta", "payload":1})).is_err());
+        assert!(decode_event_params(&json!({"type":"tool.start", "session_id":"s", "admission_id":"a", "seq":"bad", "replay_epoch":"e", "payload":{}})).is_err());
     }
 }

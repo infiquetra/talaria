@@ -34,7 +34,7 @@ fn reject_bench(value: &str) -> Result<String, String> {
     version,
     about = "Talk to a Hermes session from the terminal.",
     color = ColorChoice::Never,
-    after_long_help = "Print mode runs one finite prompt without a screen. -p takes a prompt, not a profile name.\nPass < /dev/null when standard input is an open pipe you do not mean to send.\nWithout --timeout, talaria -p waits as long as the turn runs; set --timeout in automated jobs.\nPrint exits: 0 completed, 1 failed or unknown, 2 usage, 3 input required, 4 not started,\n124 timed out, 129 hangup, 130 interrupted, 143 terminated.\nJSON format: docs/formats/print-result-v1.md\n\n--bg starts a new session in the background and returns once Hermes has accepted the prompt.\nGive the prompt as an argument or on standard input, as for -p.\n--worktree (-w) first creates a git worktree for the session: a second checkout on a new\nbranch talaria/<name>, under .worktrees/ in the main checkout, cut from a freshly fetched\norigin. Folders listed in .worktreeinclude are shared with the main checkout by a link, so\nedits inside them reach the main checkout. Uncommitted changes in the main checkout are not\ncarried into the tree. --name sets the worktree's name and needs --worktree.\nBackground exits: 0 launched, 1 unknown (the prompt may have started), 2 usage, 4 not started,\n130 interrupted before the prompt was sent.\nJSON format: docs/formats/bg-result-v1.md"
+    after_long_help = "Print mode runs one finite prompt without a screen. -p takes a prompt, not a profile name.\nPass < /dev/null when standard input is an open pipe you do not mean to send.\nWithout --timeout, talaria -p waits as long as the turn runs; set --timeout in automated jobs.\nPrint exits: 0 completed, 1 failed or unknown, 2 usage, 3 input required, 4 not started,\n124 timed out, 129 hangup, 130 interrupted, 143 terminated.\nJSON format: docs/formats/print-result-v1.md\nStreaming JSON format: docs/formats/stream-v1.md (stream-json input and output).\n\n--bg starts a new session in the background and returns once Hermes has accepted the prompt.\nGive the prompt as an argument or on standard input, as for -p.\n--worktree (-w) first creates a git worktree for the session: a second checkout on a new\nbranch talaria/<name>, under .worktrees/ in the main checkout, cut from a freshly fetched\norigin. Folders listed in .worktreeinclude are shared with the main checkout by a link, so\nedits inside them reach the main checkout. Uncommitted changes in the main checkout are not\ncarried into the tree. --name sets the worktree's name and needs --worktree.\nBackground exits: 0 launched, 1 unknown (the prompt may have started), 2 usage, 4 not started,\n130 interrupted before the prompt was sent.\nJSON format: docs/formats/bg-result-v1.md"
 )]
 pub struct Cli {
     /// Route substantive interactive prompts through workflow agents.
@@ -276,23 +276,20 @@ pub fn validate_print_options(cli: &Cli) -> Result<(), PrintUsageError> {
                 format!("Add -p, or drop {option}."),
             ));
         }
+        if cli.input_format.is_some() {
+            return Err(error(
+                "--input-format only works with -p.".into(),
+                "add -p, or remove --input-format.".into(),
+            ));
+        }
         return Ok(());
     }
     if let Some(format) = &cli.output_format {
         match format.as_str() {
-            "text" | "json" => {}
-            "stream-json" => {
-                return Err(error(
-                    "streaming JSON output is not available yet.".into(),
-                    "Use --output-format json.".into(),
-                ));
-            }
+            "text" | "json" | "stream-json" => {}
             _ => {
                 return Err(error(
-                    format!(
-                        "--output-format must be text or json (got {}).",
-                        talaria_app::headless::output::neutralise_line(format)
-                    ),
+                    "--output-format takes text, json or stream-json.".into(),
                     "Pick one of those values.".into(),
                 ));
             }
@@ -319,6 +316,38 @@ pub fn validate_print_options(cli: &Cli) -> Result<(), PrintUsageError> {
             "talaria -p needs a session id after --resume.".into(),
             "Find one with talaria --resume, then pass it.".into(),
         ));
+    }
+    if cli.input_format.is_some() && !cli.print {
+        return Err(error(
+            "--input-format only works with -p.".into(),
+            "add -p, or remove --input-format.".into(),
+        ));
+    }
+    if let Some(format) = &cli.input_format {
+        match format.as_str() {
+            "text" => {}
+            "stream-json" => {
+                if cli.output_format.as_deref() != Some("stream-json") {
+                    return Err(error(
+                        "--input-format stream-json needs --output-format stream-json.".into(),
+                        "add --output-format stream-json.".into(),
+                    ));
+                }
+                if cli.prompt.is_some() {
+                    return Err(error(
+                        "with --input-format stream-json, prompts come only from standard input."
+                            .into(),
+                        "send {\"type\":\"user\",\"text\":\"...\"} lines on standard input.".into(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(error(
+                    "--input-format takes text or stream-json.".into(),
+                    "use --input-format text or --input-format stream-json.".into(),
+                ));
+            }
+        }
     }
     Ok(())
 }

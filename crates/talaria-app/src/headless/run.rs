@@ -572,6 +572,10 @@ impl HeadlessRun {
             return Vec::new();
         }
         match kind.as_str() {
+            "message.delta" | "tool.start" | "tool.complete" => vec![HeadlessEffect::Observed {
+                event_type: kind,
+                payload,
+            }],
             "message.start" => {
                 self.started = true;
                 if self.generation.is_none() {
@@ -837,7 +841,8 @@ impl HeadlessRun {
         let stop_code = self.stop.map(|cause| match cause {
             StopCause::Timeout => 124,
             StopCause::Signal(signal) => (128 + signal) as u8,
-            StopCause::Record | StopCause::OutputClosed => todo!("add stream-json implementation"),
+            StopCause::Record => 130,
+            StopCause::OutputClosed => 141,
         });
         if self.stop_applies
             && stop_code == Some(code)
@@ -976,7 +981,16 @@ impl HeadlessRun {
                 },
                 124,
             ),
-            StopCause::Record | StopCause::OutputClosed => todo!("add stream-json implementation"),
+            StopCause::Record => (
+                "stopped by an interrupt record",
+                "Continue the session if you need the rest.",
+                130,
+            ),
+            StopCause::OutputClosed => (
+                "standard output was closed",
+                "Continue the session if you need the rest.",
+                141,
+            ),
             StopCause::Signal(signal) => (
                 "stopped by a signal",
                 "Continue the session if you need the rest.",

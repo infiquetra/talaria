@@ -73,7 +73,24 @@ pub async fn run_headless(
     mut stops: Receiver<StopCause>,
     timings: HeadlessTimings,
 ) -> HeadlessResult {
-    let _ = options; // The caller starts the process deadline before reading standard input.
+    let _ = options;
+    let (mut engine, stops_open) =
+        match open_engine(launch, Some(text), home, &mut stops, timings).await {
+            Ok(opened) => opened,
+            Err(result) => return timed(*result, started),
+        };
+    let result = engine.drive(&mut stops, stops_open).await;
+    engine.close().await;
+    timed(result, started)
+}
+
+pub(crate) async fn open_engine(
+    launch: &Launch,
+    text: Option<String>,
+    home: &Path,
+    stops: &mut Receiver<StopCause>,
+    timings: HeadlessTimings,
+) -> Result<(Engine, bool), Box<HeadlessResult>> {
     let recorder = match launch
         .record
         .as_deref()
@@ -81,15 +98,15 @@ pub async fn run_headless(
         .transpose()
     {
         Ok(recorder) => recorder,
-        Err(error) => return timed(failed_before_open(error), started),
+        Err(error) => return Err(Box::new(failed_before_open(error))),
     };
     let recording = Recording(recorder);
     let connection = tokio::select! {
         biased;
-        Some(cause) = stops.recv() => return timed(stopped_before_submit(cause), started),
+        Some(cause) = stops.recv() => return Err(Box::new(stopped_before_submit(cause))),
         result = crate::connection::ConnectionService::open(launch, home, recording.0.clone()) => match result {
             Ok(connection) => connection,
-            Err(error) => return timed(failed_before_open(error), started),
+            Err(error) => return Err(Box::new(failed_before_open(error))),
         }
     };
     let mut request = match wire::plan_headless(launch, new_request_id(), &connection.describe) {
@@ -100,7 +117,7 @@ pub async fn run_headless(
                 HeadlessStartError::OneshotMissing => LaunchFailure { what: "this Hermes gateway does not offer the session source headless mode needs (oneshot).".into(), next_step: "Update Hermes to a release that offers it.".into(), exit_code: 4 },
             };
             connection.link.close().await;
-            return timed(failed_before_open(failure), started);
+            return Err(Box::new(failed_before_open(failure)));
         }
     };
     if let crate::launch::SessionRequest::Latest { workspace } = &mut request {
@@ -110,14 +127,14 @@ pub async fn run_headless(
         let top = tokio::select! {
             Some(cause) = stops.recv() => {
                 connection.link.close().await;
-                return timed(stopped_before_submit(cause), started);
+                return Err(Box::new(stopped_before_submit(cause)));
             }
             result = git => result.ok().flatten(),
         };
         *workspace = workspace_key(&launch.folder, top.as_deref());
     }
     let service = SessionService::with_client(new_launch_id(), connection.link.client());
-    let mut machine = HeadlessRun::new(text);
+    let mut machine = HeadlessRun::new(text.clone().unwrap_or_default());
     let mut budget = None;
     let mut stops_open = true;
     let opening_service = service.clone();
@@ -135,7 +152,7 @@ pub async fn run_headless(
                     let effects = machine.step(HeadlessInput::Stop(cause));
                     if let Some(result) = immediate(effects, &mut budget, timings.stop_budget) {
                         connection.link.close().await;
-                        return timed(result, started);
+                        return Err(Box::new(result));
                     }
                 }
                 None => stops_open = false,
@@ -144,7 +161,7 @@ pub async fn run_headless(
                 let effects = machine.step(HeadlessInput::StopBudgetExpired);
                 if let Some(result) = immediate(effects, &mut budget, timings.stop_budget) {
                     connection.link.close().await;
-                    return timed(result, started);
+                    return Err(Box::new(result));
                 }
             },
             result = &mut opening => match result {
@@ -152,14 +169,18 @@ pub async fn run_headless(
                 Err(error) => {
                     let effects = machine.step(HeadlessInput::OpenFailed(open_failure(error, launch)));
                     connection.link.close().await;
-                    if let Some(result) = immediate(effects, &mut budget, timings.stop_budget) { return timed(result, started); }
-                    return timed(failed_before_open(failure::link_failure("the session could not be opened")), started);
+                    if let Some(result) = immediate(effects, &mut budget, timings.stop_budget) { return Err(Box::new(result)); }
+                    return Err(Box::new(failed_before_open(failure::link_failure("the session could not be opened"))));
                 }
             },
         }
     };
     let input = opened_input(&opened, snapshot.as_ref().ok(), &connection.profile_name);
-    let mut effects = machine.step(input);
+    let mut effects = if text.is_some() || budget.is_some() {
+        machine.step(input.clone())
+    } else {
+        Vec::new()
+    };
     if snapshot.is_err() {
         effects = machine.step(HeadlessInput::OpenFailed(failure::link_failure(
             "the session snapshot could not be refreshed",
@@ -169,7 +190,7 @@ pub async fn run_headless(
     connection
         .link
         .track(&opened.session_id, opened.cursor.clone());
-    let mut engine = Engine {
+    let engine = Engine {
         link: Some(connection.link),
         inbound: connection.inbound,
         service,
@@ -186,16 +207,11 @@ pub async fn run_headless(
         gap: None,
         timings,
         inbound_open: true,
+        live_opened: input,
+        turn: 1,
+        _recording: recording,
     };
-    let result = engine.drive(&mut stops, stops_open).await;
-    for (_, (_, responder)) in engine.responders.drain() {
-        responder.ignore();
-    }
-    engine.jobs.abort_all();
-    if let Some(link) = engine.link.take() {
-        link.close().await;
-    }
-    timed(result, started)
+    Ok((engine, stops_open))
 }
 
 struct Recording(Option<hermes_client::record::Recorder>);
@@ -208,12 +224,12 @@ impl Drop for Recording {
     }
 }
 
-fn timed(mut result: HeadlessResult, started: Instant) -> HeadlessResult {
+pub(crate) fn timed(mut result: HeadlessResult, started: Instant) -> HeadlessResult {
     result.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     result
 }
 
-async fn wait_deadline(deadline: Option<tokio::time::Instant>) {
+pub(crate) async fn wait_deadline(deadline: Option<tokio::time::Instant>) {
     match deadline {
         Some(deadline) => tokio::time::sleep_until(deadline).await,
         None => std::future::pending::<()>().await,
@@ -321,7 +337,7 @@ fn open_failure(error: OpenError, launch: &Launch) -> LaunchFailure {
     }
 }
 
-enum JobReply {
+pub(crate) enum JobReply {
     Input(HeadlessInput),
     Snapshot(Box<Snapshot>),
     RecoveryFailed(OpenError),
@@ -329,27 +345,30 @@ enum JobReply {
     Ignored,
 }
 
-struct Engine {
-    link: Option<Link>,
-    inbound: Receiver<LinkEvent>,
-    service: SessionService,
-    machine: HeadlessRun,
-    opened: OpenedSession,
-    jobs: JoinSet<JobReply>,
-    responders: HashMap<u64, (String, Responder)>,
-    next_request: u64,
-    effects: VecDeque<HeadlessEffect>,
-    budget: Option<tokio::time::Instant>,
-    settle: Option<tokio::time::Instant>,
-    final_result: Option<HeadlessResult>,
-    detaching: bool,
-    gap: Option<ReplayGap>,
-    timings: HeadlessTimings,
-    inbound_open: bool,
+pub(crate) struct Engine {
+    pub(crate) link: Option<Link>,
+    pub(crate) inbound: Receiver<LinkEvent>,
+    pub(crate) service: SessionService,
+    pub(crate) machine: HeadlessRun,
+    pub(crate) opened: OpenedSession,
+    pub(crate) jobs: JoinSet<JobReply>,
+    pub(crate) responders: HashMap<u64, (String, Responder)>,
+    pub(crate) next_request: u64,
+    pub(crate) effects: VecDeque<HeadlessEffect>,
+    pub(crate) budget: Option<tokio::time::Instant>,
+    pub(crate) settle: Option<tokio::time::Instant>,
+    pub(crate) final_result: Option<HeadlessResult>,
+    pub(crate) detaching: bool,
+    pub(crate) gap: Option<ReplayGap>,
+    pub(crate) timings: HeadlessTimings,
+    pub(crate) inbound_open: bool,
+    pub(crate) live_opened: HeadlessInput,
+    pub(crate) turn: u64,
+    _recording: Recording,
 }
 
 impl Engine {
-    fn feed(&mut self, input: HeadlessInput) {
+    pub(crate) fn feed(&mut self, input: HeadlessInput) {
         self.effects.extend(self.machine.step(input));
     }
 
@@ -396,7 +415,7 @@ impl Engine {
         }
     }
 
-    fn execute(&mut self, effect: HeadlessEffect) {
+    pub(crate) fn execute(&mut self, effect: HeadlessEffect) {
         let is_approval = matches!(&effect, HeadlessEffect::DenyApproval { .. });
         let Some(client) = self.service.client().cloned() else {
             return;
@@ -404,7 +423,7 @@ impl Engine {
         let session = self.opened.session_id.clone();
         match effect {
             HeadlessEffect::Submit { text } => {
-                let submission = submission_id(self.service.launch_id(), 1);
+                let submission = submission_id(self.service.launch_id(), self.turn);
                 self.jobs.spawn(async move {
                     let reply = client
                         .call_raw(
@@ -562,12 +581,12 @@ impl Engine {
                 });
             }
             HeadlessEffect::Finish(result) => self.final_result = Some(result),
-            HeadlessEffect::Observed { .. } => todo!("add stream-json implementation"),
+            HeadlessEffect::Observed { .. } => {}
             HeadlessEffect::ExitNow(_) => {}
         }
     }
 
-    fn job(&mut self, reply: JobReply) {
+    pub(crate) fn job(&mut self, reply: JobReply) {
         match reply {
             JobReply::Input(input) => self.feed(input),
             JobReply::Snapshot(pair) => {
@@ -598,6 +617,25 @@ impl Engine {
                         .and_then(Value::as_i64),
                     open_prompts: prompts(Some(&snapshot)),
                 };
+                if let HeadlessInput::Opened {
+                    open_prompts,
+                    unknown_admissions,
+                    ..
+                } = &mut self.live_opened
+                {
+                    *open_prompts = prompts(Some(&snapshot));
+                    *unknown_admissions =
+                        snapshot
+                            .get("pending")
+                            .and_then(Value::as_array)
+                            .map_or(0, |rows| {
+                                rows.iter()
+                                    .filter(|row| {
+                                        row.get("status").and_then(Value::as_str) == Some("unknown")
+                                    })
+                                    .count()
+                            });
+                }
                 if let Some(link) = &self.link {
                     link.resync(&opened.session_id, opened.cursor.clone());
                 }
@@ -614,7 +652,63 @@ impl Engine {
         }
     }
 
-    fn link_event(&mut self, event: LinkEvent) {
+    pub(crate) async fn close(&mut self) {
+        for (_, (_, responder)) in self.responders.drain() {
+            responder.ignore();
+        }
+        self.jobs.abort_all();
+        if let Some(link) = self.link.take() {
+            link.close().await;
+        }
+    }
+
+    fn update_live(&mut self, raw: &Value, payload: &Value) {
+        let HeadlessInput::Opened {
+            open_prompts,
+            unknown_admissions,
+            ..
+        } = &mut self.live_opened
+        else {
+            return;
+        };
+        let kind = raw.get("type").and_then(Value::as_str).unwrap_or("");
+        match kind {
+            "approval.request" | "clarify.request" => {
+                if let Some(id) = payload.get("prompt_id").and_then(Value::as_str) {
+                    open_prompts.retain(|prompt| prompt.prompt_id != id);
+                    open_prompts.push(OpenPrompt {
+                        prompt_id: id.into(),
+                        kind: kind.split('.').next().unwrap_or("").into(),
+                        admission_id: raw
+                            .get("admission_id")
+                            .and_then(Value::as_str)
+                            .or_else(|| payload.get("admission_id").and_then(Value::as_str))
+                            .map(str::to_owned),
+                        execution_generation: payload
+                            .get("execution_generation")
+                            .and_then(Value::as_i64)
+                            .or_else(|| raw.get("execution_generation").and_then(Value::as_i64)),
+                    });
+                }
+            }
+            "approval.settled" | "clarify.settled" => {
+                if let Some(id) = payload.get("prompt_id").and_then(Value::as_str) {
+                    open_prompts.retain(|prompt| prompt.prompt_id != id);
+                }
+            }
+            "session.info" => {
+                if let Some(rows) = payload.get("pending").and_then(Value::as_array) {
+                    *unknown_admissions = rows
+                        .iter()
+                        .filter(|row| row.get("status").and_then(Value::as_str) == Some("unknown"))
+                        .count();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn link_event(&mut self, event: LinkEvent) {
         match event {
             LinkEvent::Inbound {
                 item: Inbound::Event(event),
@@ -622,6 +716,7 @@ impl Engine {
             } if event.frame.session_id.as_deref() == Some(&self.opened.session_id) => {
                 let raw = event.raw;
                 let payload = raw.get("payload").cloned().unwrap_or(Value::Null);
+                self.update_live(&raw, &payload);
                 self.feed(HeadlessInput::Event {
                     admission_id: raw
                         .get("admission_id")

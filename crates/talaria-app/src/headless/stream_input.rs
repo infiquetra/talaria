@@ -27,13 +27,65 @@ pub const MAX_LINE_BYTES: usize = crate::headless::input::MAX_STDIN_BYTES;
 pub const INPUT_QUEUE: usize = 64;
 
 impl InputError {
-    pub fn what(&self, _line: Option<u64>) -> String {
-        todo!("add stream-json implementation")
+    pub fn what(&self, line: Option<u64>) -> String {
+        let n = line.unwrap_or(0);
+        match self {
+            Self::TooLong => format!("line {n} is longer than 1048576 bytes."),
+            Self::NotUtf8 => format!("line {n} is not UTF-8."),
+            Self::NotJson => format!("line {n} is not valid JSON."),
+            Self::NotObject => format!("line {n} is not a JSON object."),
+            Self::NoType => format!("line {n} has no type."),
+            Self::UnknownType(kind) => {
+                let kind: String = crate::headless::output::neutralise_line(kind)
+                    .chars()
+                    .take(40)
+                    .collect();
+                format!("line {n} has unknown type \"{kind}\".")
+            }
+            Self::BadKeys(kind) => {
+                format!("line {n} has a key that a {kind} record does not take.")
+            }
+            Self::BadText => format!("line {n} needs a non-blank text string."),
+            Self::NoUserRecord => "no user record arrived before the end of standard input.".into(),
+        }
     }
 }
 
-pub fn parse_input_line(_line: &[u8]) -> Result<Option<InputRecord>, InputError> {
-    todo!("add stream-json implementation")
+pub fn parse_input_line(line: &[u8]) -> Result<Option<InputRecord>, InputError> {
+    if line.len() > MAX_LINE_BYTES {
+        return Err(InputError::TooLong);
+    }
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let text = std::str::from_utf8(line).map_err(|_| InputError::NotUtf8)?;
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|_| InputError::NotJson)?;
+    let object = value.as_object().ok_or(InputError::NotObject)?;
+    let kind = object
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(InputError::NoType)?;
+    match kind {
+        "user" => {
+            if object.keys().any(|key| key != "type" && key != "text") {
+                return Err(InputError::BadKeys("user"));
+            }
+            let text = object
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .ok_or(InputError::BadText)?;
+            Ok(Some(InputRecord::User { text: text.into() }))
+        }
+        "interrupt" => {
+            if object.keys().any(|key| key != "type") {
+                return Err(InputError::BadKeys("interrupt"));
+            }
+            Ok(Some(InputRecord::Interrupt))
+        }
+        _ => Err(InputError::UnknownType(kind.into())),
+    }
 }
 
 pub struct InputReader {
@@ -41,10 +93,68 @@ pub struct InputReader {
 }
 
 pub fn spawn_input_reader<R: std::io::Read + Send + 'static>(
-    _input: R,
-    _queue: usize,
+    input: R,
+    queue: usize,
 ) -> InputReader {
-    todo!("add stream-json implementation")
+    use std::io::BufRead;
+    let (sender, items) = tokio::sync::mpsc::channel(queue);
+    std::thread::spawn(move || {
+        let mut input = std::io::BufReader::new(input);
+        let mut line = Vec::new();
+        let mut number = 1u64;
+        loop {
+            let (count, complete, eof, too_long) = match input.fill_buf() {
+                Ok([]) => (0, true, true, false),
+                Ok(buf) => {
+                    let end = buf.iter().position(|byte| *byte == b'\n');
+                    let count = end.unwrap_or(buf.len());
+                    if line.len().saturating_add(count) > MAX_LINE_BYTES {
+                        (0, true, false, true)
+                    } else {
+                        line.extend_from_slice(&buf[..count]);
+                        (
+                            count + usize::from(end.is_some()),
+                            end.is_some(),
+                            false,
+                            false,
+                        )
+                    }
+                }
+                Err(_) => {
+                    let _ = sender.blocking_send((number, InputItem::Error(InputError::NotJson)));
+                    break;
+                }
+            };
+            input.consume(count);
+            if too_long {
+                let _ = sender.blocking_send((number, InputItem::Error(InputError::TooLong)));
+                break;
+            }
+            if complete {
+                match parse_input_line(&line) {
+                    Ok(Some(record)) => {
+                        if sender
+                            .blocking_send((number, InputItem::Record(record)))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        let _ = sender.blocking_send((number, InputItem::Error(error)));
+                        break;
+                    }
+                }
+                line.clear();
+                number += 1;
+            }
+            if eof {
+                break;
+            }
+        }
+    });
+    InputReader { items }
 }
 
 #[cfg(test)]

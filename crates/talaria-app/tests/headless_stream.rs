@@ -798,3 +798,78 @@ fn records_flushed_within_50ms() {
     assert_eq!(times.len(), 1);
     check_flushes(&delayed, &times);
 }
+
+#[test]
+fn queued_interrupt_before_submission_stops_without_sending() {
+    let report = run_case(
+        HeadlessScenario::StreamManual,
+        Input::Lines("{\"type\":\"user\",\"text\":\"one\"}\n{\"type\":\"interrupt\"}\n"),
+        None,
+        |_, _, _, _| async {},
+    );
+    assert_eq!(report.code, 130);
+    assert!(report.submissions.is_empty());
+    assert_eq!(lines(&report, "result")[0]["exit_code"], 130);
+    assert_eq!(report.detaches.len(), 1);
+}
+
+#[test]
+fn gap_with_a_running_recovery_uses_the_stored_answer() {
+    let report = run_case(
+        HeadlessScenario::StreamManual,
+        Input::Prompt,
+        None,
+        |mock, _, _, _| async move {
+            start(&mock, 1).await;
+            let mut snapshot = mock_gateway::recorded_create_snapshot();
+            snapshot["pending"] = json!([{
+                "admission_id":"adm-1", "authority_epoch":1, "execution_generation":1,
+                "input_id":"input-1", "outcome":null,
+                "ref":{"profile_id":"fixture", "session_id":"local-session-1"},
+                "sequence":1, "status":"started", "text":"hello"
+            }]);
+            mock.add_session_snapshot(snapshot);
+            mock.skip_stream_sequence();
+            mock.send_stream_event("message.delta", "adm-1", 1, json!({"text":"lost"}))
+                .await;
+            wait_for(|| mock.requests("session.resume").len() >= 3).await;
+            mock.send_stream_event("message.complete", "adm-1", 1, json!({
+                "admission_id":"adm-1", "text":"live-only", "outcome":"completed", "status":"complete"
+            })).await;
+        },
+    );
+    assert_eq!(report.code, 0);
+    let result = lines(&report, "result").pop().expect("result");
+    assert_eq!(result["text"], "5555");
+    assert!(
+        result["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("stored copy"))
+    );
+    assert!(
+        lines(&report, "warning")
+            .iter()
+            .any(|warning| warning["text"].as_str().unwrap().contains("stored copy"))
+    );
+}
+
+#[test]
+fn signal_after_output_closes_takes_precedence() {
+    let report = run_case(
+        HeadlessScenario::StreamManual,
+        Input::Prompt,
+        Some(2),
+        |mock, _, _, stops| async move {
+            start(&mock, 1).await;
+            mock.send_stream_event("message.delta", "adm-1", 1, json!({"text":"one"}))
+                .await;
+            wait_for(|| !mock.requests("session.interrupt").is_empty()).await;
+            stops.send(StopCause::Signal(15)).await.expect("signal");
+        },
+    );
+    assert_eq!(report.code, 143);
+    assert_eq!(report.records.len(), 2);
+    assert!(report.detaches.is_empty());
+}

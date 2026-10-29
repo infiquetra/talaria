@@ -104,7 +104,8 @@ pub fn judge(
             StopCause::Signal(1) => (RunStatus::Interrupted, 129),
             StopCause::Signal(15) => (RunStatus::Interrupted, 143),
             StopCause::Signal(_) => (RunStatus::Interrupted, 130),
-            StopCause::Record | StopCause::OutputClosed => todo!("add stream-json implementation"),
+            StopCause::Record => (RunStatus::Interrupted, 130),
+            StopCause::OutputClosed => (RunStatus::Interrupted, 141),
         };
     }
     let flag = |key: &str| {
