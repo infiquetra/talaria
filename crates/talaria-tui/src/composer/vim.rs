@@ -576,9 +576,9 @@ impl VimState {
             _ => kind,
         };
         let target = self.motion(composer, actual_kind, target, count, explicit, true);
+        composer.draft.set_caret(start);
         self.clear_pending();
         let Some(target) = target else {
-            composer.draft.set_caret(start);
             return ComposerOutcome::Unchanged;
         };
         if matches!(actual_kind, 'j' | 'k' | 'g' | 'G') {

@@ -6224,6 +6224,16 @@ estimate is therefore stale; the documented defaults still load without notices.
 **Rule.** Preserve the complete default map when a later configuration change
 outgrows an old document-length target.
 
+During `UAT-6` operator rehearsal (`dw` followed by `u` on `alpha beta gamma`),
+`apply_operator_motion` in `crates/talaria-tui/src/composer/vim.rs:578` invoked
+`self.motion(...)` before `Snapshot::of(composer)` ran in `apply_span`, so undo
+restored the post-motion target caret (`11`) instead of the pre-operator caret (`6`).
+Restoring `composer.draft.set_caret(start)` immediately after `self.motion(...)`
+ensures the undo snapshot captures the pre-operator caret (`composer_vim.rs:486`).
+
+**Rule.** When a motion helper mutates caret state as a side effect, restore the
+pre-operator caret before recording the undo snapshot for an operator span.
+
 ### 2026-10-27 — A durable operator answer also needs a consumption barrier
 
 A `call_resolved` append wakes backend futures before the polling task has necessarily deleted the

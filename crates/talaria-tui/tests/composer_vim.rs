@@ -481,9 +481,15 @@ fn undo_groups_and_redo() {
 
     let word = edited("one two", 0, "dwu");
     assert_eq!(word.composer.text(), "one two");
+    assert_eq!(word.composer.caret(), 0);
+
+    let mid_word = edited("alpha beta gamma", 6, "dwu");
+    assert_eq!(mid_word.composer.text(), "alpha beta gamma");
+    assert_eq!(mid_word.composer.caret(), 6);
 
     let changed = edited("aa bb", 0, "cw1 esc u");
     assert_eq!(changed.composer.text(), "aa bb");
+    assert_eq!(changed.composer.caret(), 0);
 
     let mut cleared = load_byte("ab", 0);
     cleared.press("x");
