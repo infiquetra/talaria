@@ -9,6 +9,8 @@ use talaria_app::headless::output::{
 };
 use talaria_app::headless::run::{StopCause, failed_before_open, stopped_before_submit};
 use talaria_app::headless::service::{HeadlessTimings, run_headless};
+use talaria_app::headless::stream_input::{INPUT_QUEUE, spawn_input_reader};
+use talaria_app::headless::stream_service::{StreamSource, run_stream};
 use talaria_app::headless::{OutputFormat, PrintOptions};
 
 use crate::args::Cli;
@@ -20,10 +22,10 @@ pub fn run_print(cli: &Cli, started: Instant) -> u8 {
     }
     let options = PrintOptions {
         prompt_arg: cli.prompt.clone(),
-        format: if cli.output_format.as_deref() == Some("json") {
-            OutputFormat::Json
-        } else {
-            OutputFormat::Text
+        format: match cli.output_format.as_deref() {
+            Some("json") => OutputFormat::Json,
+            Some("stream-json") => OutputFormat::StreamJson,
+            _ => OutputFormat::Text,
         },
         timeout: cli
             .timeout
@@ -31,6 +33,12 @@ pub fn run_print(cli: &Cli, started: Instant) -> u8 {
             .and_then(|s| s.parse::<u64>().ok())
             .map(Duration::from_secs),
     };
+    if cli.input_format.as_deref() == Some("stream-json") && io::stdin().is_terminal() {
+        return usage(
+            "--input-format stream-json reads standard input, which is a terminal.",
+            "pipe JSON lines into talaria, or use --input-format text.",
+        );
+    }
     let launch = match cli.clone().into_launch() {
         Ok(launch) => launch,
         Err(error) => {
@@ -93,6 +101,13 @@ pub fn run_print(cli: &Cli, started: Instant) -> u8 {
             });
         }
         drop(tx);
+        let home = std::env::var_os("HERMES_HOME").map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".hermes")))
+            .unwrap_or_default();
+        if cli.input_format.as_deref() == Some("stream-json") {
+            let source = StreamSource::Lines(spawn_input_reader(io::stdin(), INPUT_QUEUE));
+            return run_stream(&launch, &options, source, &home, started, stops, HeadlessTimings::default(), io::stdout()).await;
+        }
         let bytes = if io::stdin().is_terminal() { None } else {
             let read = tokio::task::spawn_blocking(|| {
                 let mut bytes = Vec::new();
@@ -111,9 +126,9 @@ pub fn run_print(cli: &Cli, started: Instant) -> u8 {
             Ok(text) => text,
             Err(error) => return prompt_error(error),
         };
-        let home = std::env::var_os("HERMES_HOME").map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".hermes")))
-            .unwrap_or_default();
+        if options.format == OutputFormat::StreamJson {
+            return run_stream(&launch, &options, StreamSource::Prompt(text), &home, started, stops, HeadlessTimings::default(), io::stdout()).await;
+        }
         let result = run_headless(&launch, &options, text, &home, started, stops, HeadlessTimings::default()).await;
         write_result(&result, options.format)
     });
@@ -154,6 +169,7 @@ fn write_result(result: &HeadlessResult, format: OutputFormat) -> u8 {
     let bytes = match format {
         OutputFormat::Text => render_text_stdout(result, io::stdout().is_terminal()),
         OutputFormat::Json => render_json(result).into_bytes(),
+        OutputFormat::StreamJson => render_json(result).into_bytes(),
     };
     let _ = io::stdout().lock().write_all(&bytes);
     let _ = io::stderr().lock().write_all(&render_stderr(result));

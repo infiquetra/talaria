@@ -14,6 +14,8 @@ use crate::headless::output::{
 pub enum StopCause {
     Timeout,
     Signal(i32),
+    Record,
+    OutputClosed,
 }
 
 /// How the submit call answered.
@@ -114,6 +116,10 @@ pub enum HeadlessEffect {
         request_key: u64,
     },
     Recover,
+    Observed {
+        event_type: String,
+        payload: Value,
+    },
     StartSettleTimer,
     StartStopBudget,
     Detach,
@@ -566,6 +572,10 @@ impl HeadlessRun {
             return Vec::new();
         }
         match kind.as_str() {
+            "message.delta" | "tool.start" | "tool.complete" => vec![HeadlessEffect::Observed {
+                event_type: kind,
+                payload,
+            }],
             "message.start" => {
                 self.started = true;
                 if self.generation.is_none() {
@@ -831,6 +841,8 @@ impl HeadlessRun {
         let stop_code = self.stop.map(|cause| match cause {
             StopCause::Timeout => 124,
             StopCause::Signal(signal) => (128 + signal) as u8,
+            StopCause::Record => 130,
+            StopCause::OutputClosed => 141,
         });
         if self.stop_applies
             && stop_code == Some(code)
@@ -968,6 +980,16 @@ impl HeadlessRun {
                     _ => "Raise --timeout, or continue the session.",
                 },
                 124,
+            ),
+            StopCause::Record => (
+                "stopped by an interrupt record",
+                "Continue the session if you need the rest.",
+                130,
+            ),
+            StopCause::OutputClosed => (
+                "standard output was closed",
+                "Continue the session if you need the rest.",
+                141,
             ),
             StopCause::Signal(signal) => (
                 "stopped by a signal",
@@ -1436,5 +1458,115 @@ mod tests {
         assert!(!effects.contains(&HeadlessEffect::Interrupt {
             execution_generation: 7
         }));
+    }
+    #[test]
+    fn observes_only_own_admission() {
+        let mut run = HeadlessRun::new("hello".into());
+        let _ = run.step(opened());
+        let _ = run.step(admitted("started"));
+        for kind in ["message.delta", "tool.start", "tool.complete"] {
+            let payload = json!({"text":"own", "is_error":true, "tool_call_id":"t"});
+            assert!(
+                run.step(event(Some("adm-9"), kind, payload.clone()))
+                    .is_empty()
+            );
+            assert_eq!(
+                run.step(event(Some("adm-1"), kind, payload.clone())),
+                vec![HeadlessEffect::Observed {
+                    event_type: kind.into(),
+                    payload
+                }]
+            );
+        }
+        assert!(
+            run.step(event(
+                Some("adm-1"),
+                "thinking.delta",
+                json!({"text":"hidden"})
+            ))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn held_events_observed_after_reply_in_order() {
+        let mut run = HeadlessRun::new("hello".into());
+        let _ = run.step(opened());
+        let early = [
+            ("message.delta", json!({"text":"a"})),
+            ("tool.start", json!({"tool_call_id":"t"})),
+            (
+                "tool.complete",
+                json!({"tool_call_id":"t", "is_error":true}),
+            ),
+        ];
+        for (kind, payload) in &early {
+            assert!(
+                run.step(event(Some("adm-1"), kind, payload.clone()))
+                    .is_empty()
+            );
+        }
+        assert!(
+            run.step(event(
+                Some("adm-9"),
+                "message.delta",
+                json!({"text":"foreign"})
+            ))
+            .is_empty()
+        );
+        let effects = run.step(admitted("started"));
+        let observed: Vec<_> = effects
+            .into_iter()
+            .filter_map(|effect| match effect {
+                HeadlessEffect::Observed {
+                    event_type,
+                    payload,
+                } => Some((event_type, payload)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            observed,
+            early
+                .into_iter()
+                .map(|(kind, payload)| (kind.to_string(), payload))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn record_and_output_closed_stops() {
+        for (cause, code) in [(StopCause::Record, 130), (StopCause::OutputClosed, 141)] {
+            let mut run = HeadlessRun::new("hello".into());
+            let _ = run.step(opened());
+            let _ = run.step(admitted("started"));
+            let _ = run.step(start("adm-1"));
+            let effects = run.step(HeadlessInput::Stop(cause));
+            assert!(effects.contains(&HeadlessEffect::Interrupt {
+                execution_generation: 7
+            }));
+            let _ = run.step(event(
+                Some("adm-1"),
+                "message.complete",
+                json!({"text":"", "outcome":"cancelled", "status":"interrupted"}),
+            ));
+            let done = run.step(HeadlessInput::ReceiptRead(CallReply::Ok(
+                json!({"status":"terminal", "outcome":"cancelled", "result":{"interrupted":true}}),
+            )));
+            let result = finish_of(&done).expect("stopped result");
+            assert_eq!(result.exit_code, code);
+            assert_eq!(
+                result.status,
+                crate::headless::output::RunStatus::Interrupted
+            );
+            let mut queued = HeadlessRun::new("hello".into());
+            let _ = queued.step(opened());
+            let _ = queued.step(admitted("queued"));
+            assert!(
+                queued
+                    .step(HeadlessInput::Stop(cause))
+                    .contains(&HeadlessEffect::Cancel)
+            );
+        }
     }
 }

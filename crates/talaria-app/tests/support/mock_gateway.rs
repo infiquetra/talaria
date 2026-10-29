@@ -1202,6 +1202,31 @@ impl MockGateway {
         seq
     }
 
+    /// Evict one sequence from the observable stream.
+    pub fn skip_stream_sequence(&self) {
+        lock(&self.shared).next_seq += 1;
+    }
+
+    /// Publish a stamped event for a particular admission.
+    pub async fn send_stream_event(
+        &self,
+        kind: &str,
+        admission: &str,
+        generation: i64,
+        payload: Value,
+    ) {
+        let params = {
+            let mut state = lock(&self.shared);
+            let session = state.session_id.clone();
+            let seq = state.next_seq;
+            state.next_seq += 1;
+            state.sess.gens.insert(session.clone(), generation);
+            json!({"type":kind, "session_id":session, "seq":seq, "replay_epoch":state.sess.replay_epoch,
+                "authority_epoch":1, "execution_generation":generation, "admission_id":admission, "payload":payload})
+        };
+        self.send_event_params(params).await;
+    }
+
     /// `connection.update` for an account owner. The payload has no link and no connection id.
     pub async fn send_connection_update(&self, op_id: &str) {
         self.send_event(
@@ -2447,6 +2472,8 @@ pub enum HeadlessScenario {
     StartedStop,
     QueuedStop,
     ServerRequest,
+    StreamManual,
+    StreamFailed,
 }
 
 /// What the mock does with the next request of a method.
@@ -2572,6 +2599,7 @@ struct SessionSide {
     detaches: Vec<DetachSeen>,
     submissions: Vec<Submission>,
     admitted: u64,
+    stream_stopped: HashSet<String>,
     replay_once: HashMap<String, VecDeque<Vec<Value>>>,
     replay_always: HashMap<String, Vec<Value>>,
     violations: Vec<Violation>,
@@ -2688,6 +2716,7 @@ impl SessionSide {
             detaches: Vec::new(),
             submissions: Vec::new(),
             admitted: 0,
+            stream_stopped: HashSet::new(),
             replay_once: HashMap::new(),
             replay_always: HashMap::new(),
             violations: Vec::new(),
@@ -3846,6 +3875,24 @@ fn plan_session_method(
     {
         fields.push("finite".to_owned());
     }
+    if method == "prompt.submit"
+        && matches!(
+            state.sess.headless,
+            Some(HeadlessScenario::StreamManual | HeadlessScenario::StreamFailed)
+        )
+    {
+        if params.get("unattended").is_some() {
+            fields.push("unattended".to_owned());
+        }
+        if state
+            .sess
+            .submissions
+            .iter()
+            .any(|s| Some(s.submission_id.as_str()) == params["submission_id"].as_str())
+        {
+            fields.push("submission_id".to_owned());
+        }
+    }
     if !fields.is_empty() {
         state.sess.violations.push(Violation {
             method: method.to_owned(),
@@ -3934,6 +3981,17 @@ fn plan_session_method(
         return;
     }
     let voice = matches!(behavior, Behavior::VoiceStopped);
+    if matches!(
+        state.sess.headless,
+        Some(HeadlessScenario::StreamManual | HeadlessScenario::StreamFailed)
+    ) && matches!(method, "session.interrupt" | "prompt.cancel")
+    {
+        let admission = params["admission_id"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("adm-{}", state.sess.admitted));
+        state.sess.stream_stopped.insert(admission);
+    }
     let result = match method {
         "runtime.describe" => Ok(describe_result(state)),
         "config.get" if params["key"].as_str() == Some("skin") => handle_skin_get(state, params),
@@ -4028,6 +4086,14 @@ fn plan_session_method(
         frame["params"]["payload"]["content"] = json!("");
         frame["params"]["payload"]["outcome"] = json!("cancelled");
         frame["params"]["payload"]["status"] = json!("interrupted");
+        if matches!(
+            state.sess.headless,
+            Some(HeadlessScenario::StreamManual | HeadlessScenario::StreamFailed)
+        ) {
+            let admission = format!("adm-{}", state.sess.admitted);
+            frame["params"]["admission_id"] = json!(admission);
+            frame["params"]["payload"]["admission_id"] = json!(admission);
+        }
         if method == "prompt.cancel" {
             frame["params"]
                 .as_object_mut()
@@ -4048,24 +4114,38 @@ fn headless_receipt(state: &State, params: &Value) -> Value {
     let stopped = matches!(
         state.sess.headless,
         Some(HeadlessScenario::StartedStop | HeadlessScenario::QueuedStop)
-    );
+    ) || params["admission_id"]
+        .as_str()
+        .is_some_and(|id| state.sess.stream_stopped.contains(id));
+    let failed = state.sess.headless == Some(HeadlessScenario::StreamFailed);
     let mut receipt = json!({
         "admission_id": params["admission_id"],
         "ref": {"profile_id": state.sess.profile_id, "session_id": params["session_id"]},
         "sequence": 1, "status": "terminal",
-        "outcome": if stopped { "cancelled" } else { "completed" },
+        "outcome": if stopped { "cancelled" } else if failed { "failed" } else { "completed" },
         "authority_epoch": 1,
         "execution_generation": state.sess.gens.get(params["session_id"].as_str().unwrap_or_default()),
     });
     if params["include_result"] == true {
         receipt["result"] = json!({
-            "completed": !stopped, "failed": false, "partial": false,
+            "completed": !stopped && !failed, "failed": failed, "partial": false,
             "interrupted": stopped, "final_response": if stopped { "" } else { "5555" },
             "turn_exit_reason": if stopped { "interrupted" } else { "text_response(stop)" },
             "input_tokens": 12, "output_tokens": 4, "total_tokens": 16, "api_calls": 1,
         });
     }
     receipt
+}
+
+/// Tool payloads following the captured gateway event shape.
+pub fn stream_tool_payloads() -> (Value, Value) {
+    let start = json!({"tool_id":"call_1", "name":"terminal", "context":"ls", "tool_call_id":"call_1", "tool_name":"terminal", "args":{"command":"ls"}});
+    let mut complete = start.clone();
+    complete["is_error"] = json!(false);
+    complete["result"] = json!("a.txt");
+    complete["duration_s"] = json!(0.5);
+    complete["inline_diff"] = Value::Null;
+    (start, complete)
 }
 
 /// The committed finite-turn recording, with the admission allocated by this mock.
@@ -4787,7 +4867,10 @@ impl MockGateway {
             HeadlessScenario::StartedStop => {
                 frames.truncate(1);
             }
-            HeadlessScenario::QueuedStop | HeadlessScenario::ServerRequest => frames.clear(),
+            HeadlessScenario::QueuedStop
+            | HeadlessScenario::ServerRequest
+            | HeadlessScenario::StreamManual
+            | HeadlessScenario::StreamFailed => frames.clear(),
             _ => {}
         }
         self.replay_after("prompt.submit", frames);
