@@ -74,11 +74,15 @@ fn print_refusals_exit_2() {
     let cli = parse(&["talaria", "-p", "--resume"]);
     let error = validate_print_options(&cli).expect_err("resume needs an id");
     assert_eq!(error.what, "talaria -p needs a session id after --resume.");
-    // Streaming output has its own refusal.
     let cli = parse(&["talaria", "-p", "--output-format", "stream-json", "hi"]);
-    let error = validate_print_options(&cli).expect_err("stream-json refused");
-    assert_eq!(error.what, "streaming JSON output is not available yet.");
-    assert_eq!(error.next_step, "Use --output-format json.");
+    validate_print_options(&cli).expect("stream-json accepted");
+    let cli = parse(&["talaria", "-p", "--output-format", "yaml", "hi"]);
+    let error = validate_print_options(&cli).expect_err("bad output format");
+    assert_eq!(
+        error.what,
+        "--output-format takes text, json or stream-json."
+    );
+    assert_eq!(error.next_step, "Pick one of those values.");
     // Other bad formats and timeouts are refused too.
     for args in [
         ["talaria", "-p", "--output-format", "yaml", "hi"].as_slice(),

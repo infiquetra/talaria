@@ -562,6 +562,7 @@ impl Engine {
                 });
             }
             HeadlessEffect::Finish(result) => self.final_result = Some(result),
+            HeadlessEffect::Observed { .. } => todo!("add stream-json implementation"),
             HeadlessEffect::ExitNow(_) => {}
         }
     }

@@ -69,6 +69,8 @@ pub struct Cli {
     pub name: Option<String>,
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
+    #[arg(long = "input-format")]
+    pub input_format: Option<String>,
     #[arg(long = "output-format")]
     pub output_format: Option<String>,
     #[arg(long = "timeout", allow_hyphen_values = true)]

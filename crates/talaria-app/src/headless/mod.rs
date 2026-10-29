@@ -4,6 +4,9 @@ pub mod input;
 pub mod output;
 pub mod run;
 pub mod service;
+pub mod stream;
+pub mod stream_input;
+pub mod stream_service;
 pub mod wire;
 
 /// How the answer is printed.
@@ -11,6 +14,7 @@ pub mod wire;
 pub enum OutputFormat {
     Text,
     Json,
+    StreamJson,
 }
 
 /// The headless options one run needs.

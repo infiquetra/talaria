@@ -154,6 +154,7 @@ fn write_result(result: &HeadlessResult, format: OutputFormat) -> u8 {
     let bytes = match format {
         OutputFormat::Text => render_text_stdout(result, io::stdout().is_terminal()),
         OutputFormat::Json => render_json(result).into_bytes(),
+        OutputFormat::StreamJson => todo!("add stream-json implementation"),
     };
     let _ = io::stdout().lock().write_all(&bytes);
     let _ = io::stderr().lock().write_all(&render_stderr(result));
