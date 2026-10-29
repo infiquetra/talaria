@@ -42,6 +42,18 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 }
                 state.cursor.last_seq = seq;
             }
+            // A running turn can precede its queue fanout; remember a new authority so
+            // send-now remains bound to its original turn while that fanout is in flight.
+            if name == "message.start"
+                && let (Some(epoch), Some(generation)) =
+                    (frame.authority_epoch, frame.execution_generation)
+                && state
+                    .queue
+                    .generation_fence
+                    .is_none_or(|(current, _)| epoch > current)
+            {
+                state.queue.generation_fence = Some((epoch, generation));
+            }
             // A settlement of a queued row has no turn generation. It never ends the turn.
             if name == "message.complete"
                 && frame.execution_generation.is_none()

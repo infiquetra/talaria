@@ -989,3 +989,238 @@ fn notices_of_table_6_12() {
     );
     assert!(!static_notices[22].contains(" · sent;"));
 }
+
+#[test]
+fn delayed_send_now_receipt_cannot_interrupt_a_later_generation() {
+    let mut state = running();
+    let mut ids = Ids(0);
+    update_queue(
+        &mut state,
+        QueueIntent::SendDraftNow("next".into()),
+        &mut ids,
+    );
+    update(&mut state, ev_gen(3, 2, "message.start", json!({})));
+    let effects = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Submit,
+            admission_id: None,
+            submission_id: Some(sub("sub-1")),
+            result: receipt("adm-now", Status::Queued, None),
+        },
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Interrupt { .. })),
+        "late receipt interrupted a later turn: {effects:?}"
+    );
+    assert!(
+        state
+            .queue
+            .plan
+            .as_ref()
+            .is_none_or(|plan| plan.then_interrupt != Some(2))
+    );
+}
+
+#[test]
+fn send_now_receipt_after_started_fanout_never_requeues_or_interrupts() {
+    let mut state = running();
+    let mut ids = Ids(0);
+    update_queue(
+        &mut state,
+        QueueIntent::SendDraftNow("next".into()),
+        &mut ids,
+    );
+    let mut row = admission("adm-now", "next", "queued", 3);
+    row.input_id = "sub-1".into();
+    update(
+        &mut state,
+        ev_gen(3, 1, "session.info", json!({"pending": [row.clone()]})),
+    );
+    update(
+        &mut state,
+        ev_gen(4, 1, "message.complete", json!({"status": "complete"})),
+    );
+    row.status = serde_json::from_value(json!("started")).unwrap();
+    update(
+        &mut state,
+        ev_gen(5, 2, "session.info", json!({"pending": [row]})),
+    );
+    update(&mut state, ev_gen(6, 2, "message.start", json!({})));
+    let effects = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Submit,
+            admission_id: None,
+            submission_id: Some(sub("sub-1")),
+            result: receipt("adm-now", Status::Queued, None),
+        },
+    );
+    assert!(!effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Interrupt { .. } | Effect::ReplaceQueued { .. }
+    )));
+    assert!(
+        state
+            .queue
+            .rows
+            .iter()
+            .all(|row| row.status != RowStatus::Queued)
+    );
+}
+
+#[test]
+fn send_draft_now_interrupts_only_the_original_running_generation() {
+    let mut state = running();
+    let mut ids = Ids(0);
+    update_queue(
+        &mut state,
+        QueueIntent::SendDraftNow("next".into()),
+        &mut ids,
+    );
+    let effects = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Submit,
+            admission_id: None,
+            submission_id: Some(sub("sub-1")),
+            result: receipt("adm-now", Status::Queued, None),
+        },
+    );
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Interrupt {
+            execution_generation: 1,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn delayed_send_now_receipt_does_not_cross_an_authority_epoch() {
+    let mut state = running();
+    update(
+        &mut state,
+        ev_gen(
+            3,
+            1,
+            "session.info",
+            json!({"authority_epoch":1,"execution_generation":1,"pending":[]}),
+        ),
+    );
+    assert_eq!(state.queue.generation_fence, Some((1, 1)));
+    let mut ids = Ids(0);
+    update_queue(
+        &mut state,
+        QueueIntent::SendDraftNow("next".into()),
+        &mut ids,
+    );
+    update(
+        &mut state,
+        ev_gen(
+            4,
+            1,
+            "session.info",
+            json!({"authority_epoch":2,"execution_generation":1,"pending":[]}),
+        ),
+    );
+    assert_eq!(state.queue.generation_fence, Some((2, 1)));
+    let effects = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Submit,
+            admission_id: None,
+            submission_id: Some(sub("sub-1")),
+            result: receipt("adm-now", Status::Queued, None),
+        },
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Interrupt { .. })),
+        "the generation was reused by another authority epoch"
+    );
+}
+
+#[test]
+fn delayed_send_now_receipt_does_not_interrupt_a_reused_generation_on_new_authority_start() {
+    let mut state = running();
+    let mut ids = Ids(0);
+    update_queue(
+        &mut state,
+        QueueIntent::SendDraftNow("next".into()),
+        &mut ids,
+    );
+    update(&mut state, ev(3, "message.complete", json!({})));
+    update(
+        &mut state,
+        events::session_event(
+            SESSION,
+            json!({
+                "type": "message.start", "session_id": SESSION,
+                "replay_epoch": EPOCH, "seq": 4,
+                "authority_epoch": 2, "execution_generation": 1, "payload": {}
+            }),
+        ),
+    );
+    let effects = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Submit,
+            admission_id: None,
+            submission_id: Some(sub("sub-1")),
+            result: receipt("adm-now", Status::Queued, None),
+        },
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Interrupt { .. })),
+        "a new authority can start before its queue fanout"
+    );
+}
+
+#[test]
+fn send_now_interrupts_after_first_queued_fanout_in_the_same_turn() {
+    let mut state = running();
+    let mut ids = Ids(0);
+    update_queue(
+        &mut state,
+        QueueIntent::SendDraftNow("next".into()),
+        &mut ids,
+    );
+    let mut row = admission("adm-now", "next", "queued", 3);
+    row.input_id = "sub-1".into();
+    update(
+        &mut state,
+        ev_gen(
+            3,
+            1,
+            "session.info",
+            json!({
+                "authority_epoch": 1, "execution_generation": 1, "pending": [row]
+            }),
+        ),
+    );
+    let effects = update(
+        &mut state,
+        Event::QueueCallResult {
+            action: QueueAction::Submit,
+            admission_id: None,
+            submission_id: Some(sub("sub-1")),
+            result: receipt("adm-now", Status::Queued, None),
+        },
+    );
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Interrupt {
+                execution_generation: 1,
+                ..
+            }
+        )),
+        "the same running turn should still be interrupted"
+    );
+}

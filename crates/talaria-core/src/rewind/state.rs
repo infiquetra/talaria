@@ -402,6 +402,14 @@ fn view_line(text: impl Into<String>, style: LineStyle) -> ViewLine {
 static OFF_LIST: CheckpointList = CheckpointList::Off;
 
 impl RewindState {
+    /// Cancel session-owned work without reusing tickets from earlier sessions.
+    pub fn change_session(&mut self) {
+        *self = Self {
+            next_ticket: self.next_ticket,
+            ..Self::default()
+        };
+    }
+
     /// An overlay is showing. A typed command's working step is not an overlay.
     #[must_use]
     pub fn is_open(&self) -> bool {

@@ -283,7 +283,15 @@ impl MemoryState {
             }
             let after_field = after.fields.iter().find(|field| field.key == before.key);
             let outcome = if let Some(after_field) = after_field {
-                classify_saved(before, sent.unwrap_or(&Value::Null), before, after_field)
+                if !secret
+                    && sent.is_some_and(|value| value_text(value).is_empty())
+                    && save.detail.is_some()
+                    && value_text(&before.value) == value_text(&after_field.value)
+                {
+                    SavedOutcome::NotSaved
+                } else {
+                    classify_saved(before, sent.unwrap_or(&Value::Null), before, after_field)
+                }
             } else if secret {
                 SavedOutcome::SecretNotStored
             } else {
@@ -337,7 +345,14 @@ impl MemoryState {
                 save.before.name, self.profile
             )
         } else {
-            format!("Some settings for {} were not saved.", save.before.name)
+            let detail = save
+                .detail
+                .as_deref()
+                .map_or(String::new(), |text| format!(" {text}"));
+            format!(
+                "Some settings for {} were not saved.{detail}",
+                save.before.name
+            )
         };
         if let Some(card) = &mut self.card {
             for key in saved {

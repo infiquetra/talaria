@@ -251,15 +251,6 @@ impl Draft {
         }
     }
 
-    /// Delete the `bytes` just before the caret, when they are whole characters.
-    pub(crate) fn remove_before(&mut self, bytes: usize) {
-        let caret = self.caret;
-        if bytes == 0 || bytes > caret || !self.text.is_char_boundary(caret - bytes) {
-            return;
-        }
-        self.remove(caret - bytes, caret);
-    }
-
     /// Delete the cluster before the caret.
     pub fn backspace(&mut self) {
         if self.caret > 0 {

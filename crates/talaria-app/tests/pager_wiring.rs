@@ -186,3 +186,67 @@ async fn pager_sends_no_frames() {
         assert_eq!(mock.frame_count(), frames, "no new frame");
     }
 }
+
+#[test]
+fn shifted_named_close_binding_does_not_match_plain_navigation() {
+    let mut state = AppState::new(LAUNCH);
+    state
+        .key_bindings
+        .insert("pager_close".into(), vec!["shift+up".into()]);
+    update(&mut state, key(InputCode::Char('o'), true));
+    assert!(state.pager_open);
+    update(&mut state, key(InputCode::Up, false));
+    assert!(state.pager_open, "plain Up must navigate, not close");
+    update(
+        &mut state,
+        AppMessage::Input(InputKey {
+            code: InputCode::Up,
+            ctrl: false,
+            alt: false,
+            shift: true,
+        }),
+    );
+    assert!(!state.pager_open, "Shift+Up closes");
+}
+
+#[test]
+fn named_pager_chords_agree_with_terminal_modifier_matching() {
+    use talaria_tui::keys::{Key, KeyChord, KeyCode, KeyContext, KeyKind, Mods};
+    for binding in ["shift+up", "ctrl+up", "alt+up", "ctrl+alt+shift+up"] {
+        let chord = KeyChord::parse(binding, KeyContext::Pager).unwrap();
+        for bits in 0..8 {
+            let ctrl = bits & 1 != 0;
+            let alt = bits & 2 != 0;
+            let shift = bits & 4 != 0;
+            let terminal_key = Key {
+                code: KeyCode::Up,
+                mods: Mods {
+                    ctrl,
+                    alt,
+                    shift,
+                    ..Mods::default()
+                },
+                kind: KeyKind::Press,
+            };
+            let mut state = AppState::new(LAUNCH);
+            state.pager_open = true;
+            state
+                .key_bindings
+                .insert("pager_close".into(), vec![binding.into()]);
+            update(
+                &mut state,
+                AppMessage::Input(InputKey {
+                    code: InputCode::Up,
+                    ctrl,
+                    alt,
+                    shift,
+                }),
+            );
+            assert_eq!(
+                !state.pager_open,
+                chord.matches(&terminal_key),
+                "{binding}, modifiers {bits}"
+            );
+        }
+    }
+}

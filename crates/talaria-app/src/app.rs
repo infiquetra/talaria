@@ -230,6 +230,8 @@ pub enum UserAction {
     },
     /// The peek's card was answered.
     FleetAnswer(crate::peek::CardAnswer),
+    /// The terminal's focused fleet card changed.
+    FleetAnswerEdited,
     /// Open or close the foreground subagents panel.
     ToggleAgents,
     /// A control from the subagents overlay.
@@ -801,16 +803,22 @@ pub struct AppState {
     pub launch: Option<Launch>,
     /// The row a switch is running for.
     pub pending_switch: Option<RowKey>,
+    /// Target events received before its resume snapshot is installed.
+    pending_switch_events: Vec<hermes_client::InboundEvent>,
     /// The gateway's refusal reason of the last failed switch.
     pub switch_reason: Option<String>,
     /// The channel the loop reads; a new link forwards its events through it.
     pub sender: Option<mpsc::UnboundedSender<AppMessage>>,
     /// The rewind overlay and the typed rewind commands. Issue #233.
     rewind: RewindState,
+    /// Session that owns the rewind state and outstanding calls.
+    rewind_owner: Option<RowKey>,
     /// Two quick eligible Esc presses open the rewind overlay.
     double_esc: DoubleEsc,
-    /// The `/retry` submission still waiting for its outcome, with its text.
-    retry: Option<(String, String)>,
+    /// Retry submissions still waiting for their outcome, keyed by submission id.
+    retry: BTreeMap<String, (RowKey, String)>,
+    /// Failed retries waiting to return to their original session's composer.
+    retry_returns: BTreeMap<RowKey, VecDeque<String>>,
     /// What each session's context readings mean.
     pub context: ContextTracker,
     /// The mutation requests kept for an exact resend.
@@ -1069,11 +1077,14 @@ impl AppState {
             launch_folder: PathBuf::new(),
             launch: None,
             pending_switch: None,
+            pending_switch_events: Vec::new(),
             switch_reason: None,
             sender: None,
             rewind: RewindState::default(),
+            rewind_owner: None,
             double_esc: DoubleEsc::default(),
-            retry: None,
+            retry: BTreeMap::new(),
+            retry_returns: BTreeMap::new(),
             context: ContextTracker::new(),
             ledger,
             context_blocks: HeldBlocks::new(),
@@ -1356,6 +1367,17 @@ pub struct InputKey {
     pub shift: bool,
 }
 
+impl InputKey {
+    /// A character that can be inserted into the transcript search editor.
+    #[must_use]
+    pub fn search_character(self) -> Option<char> {
+        match self.code {
+            InputCode::Char(character) if !self.ctrl && !self.alt => Some(character),
+            _ => None,
+        }
+    }
+}
+
 /// The key half of [`InputKey`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputCode {
@@ -1559,8 +1581,13 @@ pub enum AppMessage {
         typed: String,
         outcome: CommandOutcome,
     },
-    /// A rewind call's reply, or another rewind input. Issue #233.
+    /// A rewind input from the current session.
     Rewind(talaria_core::rewind::RewindInput),
+    /// A rewind call's reply, bound to the session that issued it.
+    RewindReply {
+        owner: RowKey,
+        input: talaria_core::rewind::RewindInput,
+    },
     /// A local command's answer came back.
     ContextDone {
         block: ContextBlock,
@@ -1792,8 +1819,9 @@ pub enum AppEffect {
         row: RowKey,
         origin: ReviewOrigin,
     },
-    /// Run one rewind call; its reply comes back as [`AppMessage::Rewind`]. Issue #233.
+    /// Run one rewind call; its reply comes back as [`AppMessage::RewindReply`].
     Rewind {
+        owner: RowKey,
         ticket: u64,
         call: talaria_core::rewind::Call,
     },
@@ -2522,12 +2550,32 @@ fn rewind_command(state: &mut AppState, action: LocalAction, argument: &str) -> 
     rewind_input(state, input)
 }
 
+fn bind_rewind_session(state: &mut AppState, owner: Option<RowKey>) {
+    if state.rewind_owner != owner {
+        state.rewind.change_session();
+        state.rewind_owner = owner;
+    }
+}
+
 /// Apply one rewind input and carry out what it asks for.
 fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
+    let owner = state.opened.as_ref().map(|opened| RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.session_id.clone(),
+    });
+    bind_rewind_session(state, owner);
     let mut effects = Vec::new();
     for effect in rewind_update(&mut state.rewind, input, wall_ms()) {
         match effect {
-            RewindEffect::Call { ticket, call } => effects.push(AppEffect::Rewind { ticket, call }),
+            RewindEffect::Call { ticket, call } => {
+                if let Some(owner) = state.rewind_owner.clone() {
+                    effects.push(AppEffect::Rewind {
+                        owner,
+                        ticket,
+                        call,
+                    });
+                }
+            }
             RewindEffect::Rebuild { snapshot, notice } => effects.extend(rebuild_foreground(
                 state,
                 snapshot,
@@ -2538,7 +2586,11 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
             }
             RewindEffect::Submit(text) => {
                 let submission_id = state.next_submission_id();
-                state.retry = Some((submission_id.clone(), text.clone()));
+                if let Some(owner) = state.rewind_owner.clone() {
+                    state
+                        .retry
+                        .insert(submission_id.clone(), (owner, text.clone()));
+                }
                 effects.extend(reduce(
                     state,
                     Event::Submit {
@@ -3312,6 +3364,17 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::WorkflowPolled { run, result } => workflow_polled(state, run, result),
         AppMessage::Recovered(result) => recovered(state, result),
         AppMessage::Rewind(input) => rewind_input(state, input),
+        AppMessage::RewindReply { owner, input } => {
+            if state.rewind_owner.as_ref() == Some(&owner)
+                && state.profile == owner.profile
+                && is_open_session(state, &owner.session_id)
+            {
+                rewind_input(state, input)
+            } else {
+                redraw = false;
+                Vec::new()
+            }
+        }
         AppMessage::Subagents(message) => {
             let now = subagent_clock(state);
             let command_output = match &message {
@@ -3512,7 +3575,17 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 state.switching = false;
                 state.session_action = false;
                 state.pending_switch = None;
-                return vec![AppEffect::CronNotice(text.clone())];
+                let mut effects = vec![AppEffect::CronNotice(text.clone())];
+                for event in std::mem::take(&mut state.pending_switch_events) {
+                    effects.extend(link_event(
+                        state,
+                        LinkEvent::Inbound {
+                            item: Inbound::Event(event),
+                            replayed: false,
+                        },
+                    ));
+                }
+                return effects;
             }
             switched(state, outcome, install, reason)
         }
@@ -5578,6 +5651,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             effects
         }
         UserAction::FleetAnswer(intent) => vec![AppEffect::FleetAnswer(intent)],
+        UserAction::FleetAnswerEdited => vec![AppEffect::Redraw],
         UserAction::Review(key) => review_input(state, talaria_core::review::ReviewInput::Key(key)),
         UserAction::ReviewPaste(text) => {
             review_input(state, talaria_core::review::ReviewInput::Paste(text))
@@ -6650,7 +6724,8 @@ fn switched(
     state.switching = false;
     state.session_action = false;
     let target = state.pending_switch.take();
-    match outcome {
+    let pending_events = std::mem::take(&mut state.pending_switch_events);
+    let mut effects = match outcome {
         SwitchOutcome::AlreadyHere => {
             end_picker_wait(state, ALREADY_HERE_NOTICE);
             vec![AppEffect::CommitLines(vec![ALREADY_HERE_NOTICE.to_owned()])]
@@ -6681,7 +6756,17 @@ fn switched(
             effects.extend(close_picker(state));
             effects
         }
+    };
+    for event in pending_events {
+        effects.extend(link_event(
+            state,
+            LinkEvent::Inbound {
+                item: Inbound::Event(event),
+                replayed: false,
+            },
+        ));
     }
+    effects
 }
 
 /// A branch finished: the child is in front, or the parent stayed.
@@ -7001,7 +7086,7 @@ impl Chord {
                 let shifted = key.shift || got.is_uppercase();
                 lower(got) == want && self.shift == shifted
             }
-            (want, got) => want == got,
+            (want, got) => want == got && self.shift == key.shift,
         }
     }
 }
@@ -7114,7 +7199,9 @@ fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
                     state.pager_typed_len -= 1;
                 }
             }
-            InputCode::Char(_) if !key.ctrl && !key.alt && state.pager_typed_len < 256 => {
+            InputCode::Char(_)
+                if key.search_character().is_some() && state.pager_typed_len < 256 =>
+            {
                 state.pager_typed_len += 1;
             }
             _ => {}
@@ -7589,6 +7676,15 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 effects
             }
             Inbound::Event(inbound) => {
+                if state.pending_switch.as_ref().is_some_and(|target| {
+                    target.profile == state.profile
+                        && inbound.raw.get("session_id").and_then(Value::as_str)
+                            == Some(target.session_id.as_str())
+                        && !is_open_session(state, &target.session_id)
+                }) {
+                    state.pending_switch_events.push(inbound);
+                    return Vec::new();
+                }
                 if inbound
                     .raw
                     .get("session_id")
@@ -7880,6 +7976,11 @@ fn opened_session(
     mut opened: OpenedSession,
     notice: Option<String>,
 ) -> Vec<AppEffect> {
+    let rewind_owner = RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.session_id.clone(),
+    };
+    bind_rewind_session(state, Some(rewind_owner.clone()));
     state.subagents_usage_active = 0;
     let now_ms = state.now_ms;
     let mut background = close_processes(state);
@@ -7989,6 +8090,22 @@ fn opened_session(
         .fences_mut(&session_id)
         .adopt(Some(opened.revision), Some(opened.execution_generation));
     state.opened = Some(opened);
+    if state.draft.is_empty() {
+        let returned = state
+            .retry_returns
+            .get_mut(&rewind_owner)
+            .and_then(VecDeque::pop_front);
+        if let Some(text) = returned {
+            effects.extend(return_prompt(state, text, false));
+        }
+        if state
+            .retry_returns
+            .get(&rewind_owner)
+            .is_some_and(VecDeque::is_empty)
+        {
+            state.retry_returns.remove(&rewind_owner);
+        }
+    }
     attach_subagent_foreground(state);
     state.session_gone = false;
     background.extend(background_event(
@@ -8121,13 +8238,38 @@ fn restore_failed_attachments(state: &mut AppState) -> Vec<AppEffect> {
 }
 
 fn submit_done(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec<AppEffect> {
-    let retried = state
-        .retry
-        .take_if(|(retry_id, _)| *retry_id == id)
-        .map(|(_, text)| text);
+    let retried = state.retry.remove(&id);
+    if let Some((owner, text)) = retried.as_ref()
+        && (state.profile != owner.profile || !is_open_session(state, &owner.session_id))
+    {
+        return match outcome {
+            ExecuteOutcome::Refused { reason } => {
+                state
+                    .retry_returns
+                    .entry(owner.clone())
+                    .or_default()
+                    .push_back(text.clone());
+                vec![
+                    notice_lines(&rewind_text::resend_failed(&reason)),
+                    notice_lines("The retry is kept for its original session."),
+                ]
+            }
+            ExecuteOutcome::OutcomeUnknown => {
+                state
+                    .retry_returns
+                    .entry(owner.clone())
+                    .or_default()
+                    .push_back(text.clone());
+                vec![notice_lines(
+                    "The retry's outcome is unknown; its text is kept for its original session.",
+                )]
+            }
+            ExecuteOutcome::Sent | ExecuteOutcome::VoiceStopped => Vec::new(),
+        };
+    }
     let mut effects = submit_outcome(state, id, outcome.clone());
     // `/retry` already removed the prompt, so a send that did not go through returns it.
-    if let Some(text) = retried {
+    if let Some((_, text)) = retried {
         match outcome {
             ExecuteOutcome::Refused { reason } => {
                 effects.push(notice_lines(&rewind_text::resend_failed(&reason)));
@@ -10810,16 +10952,26 @@ fn apply<S: Screen>(
                     }
                 });
             }
-            AppEffect::Rewind { ticket, call } => {
-                let client = state
-                    .service
-                    .as_ref()
-                    .and_then(SessionService::client)
-                    .cloned();
-                let session_id = state
-                    .opened
-                    .as_ref()
-                    .map(|opened| opened.session_id.clone());
+            AppEffect::Rewind {
+                owner,
+                ticket,
+                call,
+            } => {
+                let current = state.profile == owner.profile
+                    && state
+                        .opened
+                        .as_ref()
+                        .is_some_and(|opened| opened.session_id == owner.session_id);
+                let client = current
+                    .then(|| {
+                        state
+                            .service
+                            .as_ref()
+                            .and_then(SessionService::client)
+                            .cloned()
+                    })
+                    .flatten();
+                let session_id = current.then(|| owner.session_id.clone());
                 executor.send_later(async move {
                     let input = match (client, session_id) {
                         (Some(client), Some(session_id)) => {
@@ -10834,7 +10986,7 @@ fn apply<S: Screen>(
                             )),
                         },
                     };
-                    AppMessage::Rewind(input)
+                    AppMessage::RewindReply { owner, input }
                 });
             }
             AppEffect::Profiles(effect) => match effect {

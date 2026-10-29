@@ -612,6 +612,56 @@ fn card_answer(intent: PromptIntent) -> CardAnswer {
     }
 }
 
+fn fleet_peek_is_foreground(
+    peeked: &talaria_core::directory::rows::RowKey,
+    profile: &str,
+    session_id: Option<&str>,
+) -> bool {
+    peeked.profile == profile && Some(peeked.session_id.as_str()) == session_id
+}
+
+fn fleet_paste(
+    focus: &FleetFocus,
+    foreground: bool,
+    prompts: &mut PromptStack,
+    peek_prompts: &mut PromptStack,
+    text: String,
+    now: Instant,
+) -> Vec<UserAction> {
+    match focus {
+        FleetFocus::Reply | FleetFocus::Filter => {
+            vec![UserAction::Fleet(FleetViewInput::Paste(text))]
+        }
+        FleetFocus::Answer => {
+            let stack = if foreground { prompts } else { peek_prompts };
+            fleet_card_actions(stack.handle_paste(&text, now))
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn fleet_card_actions(outcome: KeyOutcome) -> Vec<UserAction> {
+    let KeyOutcome::Consumed {
+        intent,
+        interrupt_requested,
+        notice,
+    } = outcome
+    else {
+        return Vec::new();
+    };
+    let mut actions = vec![UserAction::FleetAnswerEdited];
+    if let Some(intent) = intent {
+        actions.push(UserAction::FleetAnswer(card_answer(intent)));
+    }
+    if interrupt_requested {
+        actions.push(UserAction::Fleet(FleetViewInput::CtrlC));
+    }
+    if let Some(notice) = notice {
+        actions.push(UserAction::Notice(notice));
+    }
+    actions
+}
+
 /// The picker's input for one key, in the mode the picker is in.
 ///
 /// The mode decides the rules. The list reads the picker's own key context; the export
@@ -1205,21 +1255,15 @@ impl TuiScreen {
                 if is_ctrl_c(&key) {
                     return input(FleetViewInput::CtrlC);
                 }
-                let foreground = fleet
-                    .peek()
-                    .is_some_and(|(peeked, _)| Some(peeked.session_id.as_str()) == view.session_id);
+                let foreground = fleet.peek().is_some_and(|(peeked, _)| {
+                    fleet_peek_is_foreground(peeked, view.profile, view.session_id)
+                });
                 let outcome = if foreground {
                     self.prompts.handle_key(key, now)
                 } else {
                     self.peek_prompts.handle_key(key, now)
                 };
-                match outcome {
-                    KeyOutcome::Consumed {
-                        intent: Some(intent),
-                        ..
-                    } => vec![UserAction::FleetAnswer(card_answer(intent))],
-                    _ => Vec::new(),
-                }
+                fleet_card_actions(outcome)
             }
             FleetFocus::Reply | FleetFocus::Filter => {
                 if is_escape(&key) {
@@ -2544,12 +2588,17 @@ impl TuiScreen {
                     return vec![UserAction::LaunchDialog(DialogEvent::Edited)];
                 }
                 if let Some(fleet) = view.fleet {
-                    return match fleet.focus() {
-                        FleetFocus::Reply | FleetFocus::Filter => {
-                            vec![UserAction::Fleet(FleetViewInput::Paste(text))]
-                        }
-                        _ => Vec::new(),
-                    };
+                    let foreground = fleet.peek().is_some_and(|(peeked, _)| {
+                        fleet_peek_is_foreground(peeked, view.profile, view.session_id)
+                    });
+                    return fleet_paste(
+                        fleet.focus(),
+                        foreground,
+                        &mut self.prompts,
+                        &mut self.peek_prompts,
+                        text,
+                        now,
+                    );
                 }
                 if let Some(progress) = view.workflow_progress {
                     if progress.steer_input.is_some() {
@@ -2686,6 +2735,17 @@ fn tui_key(key: InputKey) -> Key {
     }
 }
 
+/// Translate a transcript search key into a pager edit.
+fn pager_search_input(key: InputKey) -> Option<SearchInput> {
+    match key.code {
+        InputCode::Enter => Some(SearchInput::Enter),
+        InputCode::Esc => Some(SearchInput::Escape),
+        InputCode::Backspace => Some(SearchInput::Backspace),
+        InputCode::Char(_) => key.search_character().map(SearchInput::Char),
+        _ => None,
+    }
+}
+
 /// The transcript action of a key-map action.
 fn pager_action(action: Action) -> Option<PagerAction> {
     Some(match action {
@@ -2760,13 +2820,7 @@ impl TuiScreen {
                     };
                     let ctx = transcript_context(view);
                     if transcript.pager.is_typing_search() {
-                        let input = match key.code {
-                            InputCode::Enter => Some(SearchInput::Enter),
-                            InputCode::Esc => Some(SearchInput::Escape),
-                            InputCode::Backspace => Some(SearchInput::Backspace),
-                            InputCode::Char(character) => Some(SearchInput::Char(character)),
-                            _ => None,
-                        };
+                        let input = pager_search_input(key);
                         if let Some(input) = input {
                             transcript.pager.handle_search_input(
                                 input,
@@ -3169,7 +3223,7 @@ impl Screen for TuiScreen {
         }
         let foreground = peeked
             .as_ref()
-            .is_some_and(|key| Some(key.session_id.as_str()) == view.session_id);
+            .is_some_and(|key| fleet_peek_is_foreground(key, view.profile, view.session_id));
         let clock = unix_now();
         let panel = if foreground {
             view.state.map(|session| PeekPanel {
@@ -4997,5 +5051,133 @@ mod tests {
         let snapshot = reported_snapshot(&composer, &mut reported).expect("the burst is flushed");
         assert_eq!(snapshot, ("@sr".to_string(), 3));
         assert_eq!(reported, snapshot);
+    }
+
+    #[test]
+    fn modified_search_characters_keep_app_and_pager_in_sync() {
+        use talaria_app::app::{AppEffect, InputCode, InputKey, TranscriptAction};
+        use talaria_tui::pager::{Pager, PagerAction, SearchIndex};
+        for (ctrl, alt) in [(true, false), (false, true)] {
+            for ending in [InputCode::Backspace, InputCode::Enter, InputCode::Esc] {
+                let mut state = AppState::new("pager-search");
+                let mut index = SearchIndex::new();
+                let view = state.view();
+                let mut pager = Pager::open(&super::transcript_context(&view), 80, 24, &mut index);
+                let key = |code, ctrl, alt| InputKey {
+                    code,
+                    ctrl,
+                    alt,
+                    shift: false,
+                };
+                update(
+                    &mut state,
+                    AppMessage::Input(key(InputCode::Char('o'), true, false)),
+                );
+                update(
+                    &mut state,
+                    AppMessage::Input(key(InputCode::Char('/'), false, false)),
+                );
+                let view = state.view();
+                pager.handle_action(
+                    PagerAction::StartSearch,
+                    &super::transcript_context(&view),
+                    &mut index,
+                );
+                for input in [
+                    key(InputCode::Char('a'), ctrl, alt),
+                    key(ending, false, false),
+                    key(InputCode::Char('q'), false, false),
+                ] {
+                    let effects = update(&mut state, AppMessage::Input(input));
+                    for effect in effects {
+                        if let AppEffect::Transcript(TranscriptAction::Key(key)) = effect
+                            && pager.is_typing_search()
+                            && let Some(edit) = super::pager_search_input(key)
+                        {
+                            let view = state.view();
+                            pager.handle_search_input(
+                                edit,
+                                &super::transcript_context(&view),
+                                &mut index,
+                            );
+                        }
+                    }
+                    assert_eq!(state.pager_typing, pager.is_typing_search());
+                }
+                assert!(!state.pager_open);
+            }
+        }
+    }
+
+    #[test]
+    fn fleet_answer_paste_reaches_only_the_selected_prompt_stack() {
+        use talaria_core::session::{PromptCell, PromptKey, PromptKind, PromptState, SessionId};
+        use talaria_tui::prompts::{KeyOutcome, PromptStack};
+        let make = |session: &str| PromptCell {
+            id: CellId::new(1),
+            key: PromptKey {
+                session_id: SessionId::new(session),
+                prompt_id: "question".into(),
+                execution_generation: 1,
+            },
+            kind: PromptKind::Clarify,
+            command: None,
+            description: None,
+            question: Some("Answer?".into()),
+            choices: vec![],
+            multi_select: false,
+            edit: None,
+            timeout_s: None,
+            state: PromptState::Open,
+            sealed: false,
+        };
+        for foreground in [true, false] {
+            let now = Instant::now();
+            let main = make("main");
+            let background = make("background");
+            let mut prompts = PromptStack::new();
+            let mut peek = PromptStack::new();
+            prompts.sync(Some("main"), &[&main], &[], true, now);
+            peek.sync(Some("background"), &[&background], &[], true, now);
+            let ready = now + Duration::from_millis(300);
+            let actions = super::fleet_paste(
+                &super::FleetFocus::Answer,
+                foreground,
+                &mut prompts,
+                &mut peek,
+                "pasted answer".into(),
+                ready,
+            );
+            assert!(
+                actions
+                    .iter()
+                    .any(|action| matches!(action, UserAction::FleetAnswerEdited))
+            );
+            let (selected, other) = if foreground {
+                (&mut prompts, &mut peek)
+            } else {
+                (&mut peek, &mut prompts)
+            };
+            let enter = Key::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            let actions = super::fleet_card_actions(selected.handle_key(enter, ready));
+            assert!(actions.iter().any(|action| matches!(action,
+                UserAction::FleetAnswer(super::CardAnswer::Clarify { key, answer })
+                if answer == "pasted answer" && key.session_id.as_str() == if foreground { "main" } else { "background" }
+            )));
+            assert!(matches!(
+                other.handle_key(enter, ready),
+                KeyOutcome::Consumed { intent: None, .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn fleet_peek_identity_includes_profile() {
+        let key = talaria_core::directory::rows::RowKey {
+            profile: "other".into(),
+            session_id: "same".into(),
+        };
+        assert!(!super::fleet_peek_is_foreground(&key, "main", Some("same")));
+        assert!(super::fleet_peek_is_foreground(&key, "other", Some("same")));
     }
 }

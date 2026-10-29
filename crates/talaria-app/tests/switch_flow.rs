@@ -398,3 +398,70 @@ async fn prompt_during_switch_is_refused_and_kept() {
     let drafts = locked(&log).drafts.clone();
     assert_eq!(drafts, ["hello".to_owned()]);
 }
+
+#[tokio::test]
+async fn target_events_during_delayed_detach_are_replayed_after_the_snapshot() {
+    let rig = drive::Rig::start();
+    let folder = rig.folder.to_string_lossy().to_string();
+    let mut snapshot = child_snapshot(&folder, "s-target", "Target", 11);
+    snapshot["running"] = json!(true);
+    snapshot["last_sequence"] = json!(6);
+    snapshot["replay_epoch"] = json!("switch-epoch");
+    snapshot["messages"] = json!([]);
+    snapshot["display_messages"] = json!([]);
+    rig.gateway.queue_resume_snapshot(snapshot);
+    rig.gateway.queue_behavior(
+        "session.resume",
+        mock_gateway::Behavior::Delay(std::time::Duration::from_millis(250)),
+    );
+    rig.gateway.queue_behavior(
+        "session.detach",
+        mock_gateway::Behavior::Delay(std::time::Duration::from_millis(700)),
+    );
+    let gateway = &rig.gateway;
+    let (_outcome, log) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            driver.submit("/resume s-target");
+            drive::eventually("resume request", || {
+                !gateway.requests("session.resume").is_empty()
+            })
+            .await;
+            // Start with the corresponding recorded plain-answer events; alter their
+            // session and sequence to straddle this snapshot.
+            let event = |kind: &str, seq: u64, text: Option<&str>| {
+                let frame = mock_gateway::fixture_event(mock_gateway::Fixture::PlainAnswer, kind);
+                let mut params = frame["params"].clone();
+                params["session_id"] = json!("s-target");
+                params["replay_epoch"] = json!("switch-epoch");
+                params["seq"] = json!(seq);
+                params["execution_generation"] = json!(3);
+                if let Some(text) = text {
+                    params["payload"]["text"] = json!(text);
+                }
+                params
+            };
+            gateway
+                .send_event_params(event("message.delta", 6, Some("old duplicate")))
+                .await;
+            drive::eventually("detach request", || {
+                !gateway.requests("session.detach").is_empty()
+            })
+            .await;
+            gateway
+                .send_event_params(event("message.delta", 7, Some("target answer")))
+                .await;
+            gateway
+                .send_event_params(event("message.complete", 8, None))
+                .await;
+            driver.line("Now showing").await;
+            settle_short().await;
+            driver.quit();
+            driver.finished().await;
+        })
+        .await;
+    let log = locked(&log);
+    assert!(log.cells.iter().any(|cell| cell.contains("target answer")));
+    assert!(!log.cells.iter().any(|cell| cell.contains("old duplicate")));
+    assert!(!log.running, "the target turn completed");
+}
