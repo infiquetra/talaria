@@ -230,6 +230,8 @@ pub enum UserAction {
     },
     /// The peek's card was answered.
     FleetAnswer(crate::peek::CardAnswer),
+    /// The terminal's focused fleet card changed.
+    FleetAnswerEdited,
     /// Open or close the foreground subagents panel.
     ToggleAgents,
     /// A control from the subagents overlay.
@@ -534,6 +536,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn offer_draft(&mut self, text: &str) {
         let _ = text;
     }
+    /// Clear a submitted draft only if the composer still contains that text.
+    fn clear_submitted_draft(&mut self, _text: &str) -> Option<(String, usize)> {
+        None
+    }
     /// Give the terminal back. Later draws write nothing.
     fn restore(&mut self);
     /// Emit an attention alert between frames.
@@ -725,9 +731,10 @@ pub struct AppState {
     /// The running wake task, aborted when a newer wake replaces it.
     fleet_wake_task: Option<JoinHandle<()>>,
     pub opened: Option<OpenedSession>,
+    opened_profile: Option<String>,
     /// Whether the foreground session's process overlay is open.
     pub processes_open: bool,
-    retained_sessions: BTreeMap<String, OpenedSession>,
+    retained_sessions: BTreeMap<RowKey, OpenedSession>,
     connection_generation: u64,
     background_generation_base: u64,
     background_stop_bindings: BTreeMap<(String, u64), BackgroundBinding>,
@@ -796,16 +803,22 @@ pub struct AppState {
     pub launch: Option<Launch>,
     /// The row a switch is running for.
     pub pending_switch: Option<RowKey>,
+    /// Target events received before its resume snapshot is installed.
+    pending_switch_events: Vec<hermes_client::InboundEvent>,
     /// The gateway's refusal reason of the last failed switch.
     pub switch_reason: Option<String>,
     /// The channel the loop reads; a new link forwards its events through it.
     pub sender: Option<mpsc::UnboundedSender<AppMessage>>,
     /// The rewind overlay and the typed rewind commands. Issue #233.
     rewind: RewindState,
+    /// Session that owns the rewind state and outstanding calls.
+    rewind_owner: Option<RowKey>,
     /// Two quick eligible Esc presses open the rewind overlay.
     double_esc: DoubleEsc,
-    /// The `/retry` submission still waiting for its outcome, with its text.
-    retry: Option<(String, String)>,
+    /// Retry submissions still waiting for their outcome, keyed by submission id.
+    retry: BTreeMap<String, (RowKey, String)>,
+    /// Failed retries waiting to return to their original session's composer.
+    retry_returns: BTreeMap<RowKey, VecDeque<String>>,
     /// What each session's context readings mean.
     pub context: ContextTracker,
     /// The mutation requests kept for an exact resend.
@@ -1017,6 +1030,7 @@ impl AppState {
             fleet_wake_at: None,
             fleet_wake_task: None,
             opened: None,
+            opened_profile: None,
             processes_open: false,
             retained_sessions: BTreeMap::new(),
             connection_generation: 0,
@@ -1063,11 +1077,14 @@ impl AppState {
             launch_folder: PathBuf::new(),
             launch: None,
             pending_switch: None,
+            pending_switch_events: Vec::new(),
             switch_reason: None,
             sender: None,
             rewind: RewindState::default(),
+            rewind_owner: None,
             double_esc: DoubleEsc::default(),
-            retry: None,
+            retry: BTreeMap::new(),
+            retry_returns: BTreeMap::new(),
             context: ContextTracker::new(),
             ledger,
             context_blocks: HeldBlocks::new(),
@@ -1350,6 +1367,17 @@ pub struct InputKey {
     pub shift: bool,
 }
 
+impl InputKey {
+    /// A character that can be inserted into the transcript search editor.
+    #[must_use]
+    pub fn search_character(self) -> Option<char> {
+        match self.code {
+            InputCode::Char(character) if !self.ctrl && !self.alt => Some(character),
+            _ => None,
+        }
+    }
+}
+
 /// The key half of [`InputKey`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputCode {
@@ -1553,8 +1581,13 @@ pub enum AppMessage {
         typed: String,
         outcome: CommandOutcome,
     },
-    /// A rewind call's reply, or another rewind input. Issue #233.
+    /// A rewind input from the current session.
     Rewind(talaria_core::rewind::RewindInput),
+    /// A rewind call's reply, bound to the session that issued it.
+    RewindReply {
+        owner: RowKey,
+        input: talaria_core::rewind::RewindInput,
+    },
     /// A local command's answer came back.
     ContextDone {
         block: ContextBlock,
@@ -1571,7 +1604,10 @@ pub enum AppMessage {
         now_ms: u64,
     },
     /// What a shell command or side question came back with.
-    SideDone(Vec<Event>),
+    SideDone {
+        key: RowKey,
+        events: Vec<Event>,
+    },
     /// A `/skin` command or a reconnect describe finished.
     AppearanceDone {
         /// The skin state it produced, when it changed one.
@@ -1783,8 +1819,9 @@ pub enum AppEffect {
         row: RowKey,
         origin: ReviewOrigin,
     },
-    /// Run one rewind call; its reply comes back as [`AppMessage::Rewind`]. Issue #233.
+    /// Run one rewind call; its reply comes back as [`AppMessage::RewindReply`].
     Rewind {
+        owner: RowKey,
         ticket: u64,
         call: talaria_core::rewind::Call,
     },
@@ -1815,11 +1852,16 @@ pub enum AppEffect {
     /// `prompt.submit`.
     Send(Effect),
     /// `shell.exec` or `prompt.btw`, started at once: never queued behind a prompt or a turn.
-    Side(Effect),
+    Side {
+        key: RowKey,
+        effect: Effect,
+    },
     /// One queue call through the queue service. Issue #232.
     Queue(Effect),
     /// A prompt handed back by the queue, for an empty composer. Issue #232.
     OfferDraft(String),
+    /// Clear the matching composer contents after a draft action is accepted.
+    ClearSubmittedDraft(String),
     /// Feed this event once the reconcile wait has passed. Issue #232.
     ReconcileLater(Box<Event>),
     /// Deny open approvals, then `session.interrupt`.
@@ -2508,12 +2550,32 @@ fn rewind_command(state: &mut AppState, action: LocalAction, argument: &str) -> 
     rewind_input(state, input)
 }
 
+fn bind_rewind_session(state: &mut AppState, owner: Option<RowKey>) {
+    if state.rewind_owner != owner {
+        state.rewind.change_session();
+        state.rewind_owner = owner;
+    }
+}
+
 /// Apply one rewind input and carry out what it asks for.
 fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
+    let owner = state.opened.as_ref().map(|opened| RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.session_id.clone(),
+    });
+    bind_rewind_session(state, owner);
     let mut effects = Vec::new();
     for effect in rewind_update(&mut state.rewind, input, wall_ms()) {
         match effect {
-            RewindEffect::Call { ticket, call } => effects.push(AppEffect::Rewind { ticket, call }),
+            RewindEffect::Call { ticket, call } => {
+                if let Some(owner) = state.rewind_owner.clone() {
+                    effects.push(AppEffect::Rewind {
+                        owner,
+                        ticket,
+                        call,
+                    });
+                }
+            }
             RewindEffect::Rebuild { snapshot, notice } => effects.extend(rebuild_foreground(
                 state,
                 snapshot,
@@ -2524,7 +2586,11 @@ fn rewind_input(state: &mut AppState, input: RewindInput) -> Vec<AppEffect> {
             }
             RewindEffect::Submit(text) => {
                 let submission_id = state.next_submission_id();
-                state.retry = Some((submission_id.clone(), text.clone()));
+                if let Some(owner) = state.rewind_owner.clone() {
+                    state
+                        .retry
+                        .insert(submission_id.clone(), (owner, text.clone()));
+                }
                 effects.extend(reduce(
                     state,
                     Event::Submit {
@@ -3298,6 +3364,17 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::WorkflowPolled { run, result } => workflow_polled(state, run, result),
         AppMessage::Recovered(result) => recovered(state, result),
         AppMessage::Rewind(input) => rewind_input(state, input),
+        AppMessage::RewindReply { owner, input } => {
+            if state.rewind_owner.as_ref() == Some(&owner)
+                && state.profile == owner.profile
+                && is_open_session(state, &owner.session_id)
+            {
+                rewind_input(state, input)
+            } else {
+                redraw = false;
+                Vec::new()
+            }
+        }
         AppMessage::Subagents(message) => {
             let now = subagent_clock(state);
             let command_output = match &message {
@@ -3416,10 +3493,16 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
-        AppMessage::SideDone(events) => {
+        AppMessage::SideDone { key, events } => {
             let mut effects = Vec::new();
-            for event in events {
-                effects.extend(reduce(state, event));
+            if foreground_row(state).as_ref() == Some(&key) {
+                for event in events {
+                    effects.extend(reduce(state, event));
+                }
+            } else if let Some(opened) = state.retained_sessions.get_mut(&key) {
+                for event in events {
+                    talaria_core::session::update(&mut opened.state, event);
+                }
             }
             effects
         }
@@ -3460,6 +3543,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             attachment_effects(effects)
         }
         AppMessage::DraftSynced { text, caret } => {
+            if text.is_empty() && !state.draft.is_empty() {
+                state.attachment_epoch = state.attachment_epoch.wrapping_add(1);
+            }
             state.draft = text;
             state.caret = caret;
             let mut effects = attachment_effects(state.attachments.sync_draft(&state.draft));
@@ -3489,7 +3575,17 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 state.switching = false;
                 state.session_action = false;
                 state.pending_switch = None;
-                return vec![AppEffect::CronNotice(text.clone())];
+                let mut effects = vec![AppEffect::CronNotice(text.clone())];
+                for event in std::mem::take(&mut state.pending_switch_events) {
+                    effects.extend(link_event(
+                        state,
+                        LinkEvent::Inbound {
+                            item: Inbound::Event(event),
+                            replayed: false,
+                        },
+                    ));
+                }
+                return effects;
             }
             switched(state, outcome, install, reason)
         }
@@ -5145,7 +5241,8 @@ fn background_event(
         }
         return reduce(state, Event::Background(event));
     }
-    let Some(opened) = state.retained_sessions.get_mut(session_id) else {
+    let key = retained_key(state, session_id);
+    let Some(opened) = key.and_then(|key| state.retained_sessions.get_mut(&key)) else {
         return Vec::new();
     };
     let produced = talaria_core::session::update(&mut opened.state, Event::Background(event));
@@ -5233,7 +5330,9 @@ fn route(
                 note: note.take(),
             }),
             Effect::RunShell { .. } | Effect::AskSide { .. } => {
-                effects.push(AppEffect::Side(effect));
+                if let Some(key) = foreground_row(state) {
+                    effects.push(AppEffect::Side { key, effect });
+                }
             }
             // Issue 232. Queue and steer. The queue service will run these calls.
             Effect::CancelQueued { .. }
@@ -5552,6 +5651,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             effects
         }
         UserAction::FleetAnswer(intent) => vec![AppEffect::FleetAnswer(intent)],
+        UserAction::FleetAnswerEdited => vec![AppEffect::Redraw],
         UserAction::Review(key) => review_input(state, talaria_core::review::ReviewInput::Key(key)),
         UserAction::ReviewPaste(text) => {
             review_input(state, talaria_core::review::ReviewInput::Paste(text))
@@ -6182,9 +6282,28 @@ fn is_foreground(state: &AppState, session_id: &str) -> bool {
 /// The foreground session's row.
 fn foreground_row(state: &AppState) -> Option<RowKey> {
     state.opened.as_ref().map(|opened| RowKey {
-        profile: state.profile.clone(),
+        profile: state
+            .opened_profile
+            .clone()
+            .unwrap_or_else(|| state.profile.clone()),
         session_id: opened.session_id.clone(),
     })
+}
+
+fn retained_key(state: &AppState, session_id: &str) -> Option<RowKey> {
+    let current = RowKey {
+        profile: state.profile.clone(),
+        session_id: session_id.to_owned(),
+    };
+    if state.retained_sessions.contains_key(&current) {
+        return Some(current);
+    }
+    let mut matches = state
+        .retained_sessions
+        .keys()
+        .filter(|key| key.session_id == session_id);
+    let key = matches.next()?.clone();
+    matches.next().is_none().then_some(key)
 }
 
 fn subagent_clock(state: &AppState) -> talaria_core::subagents::Clock {
@@ -6605,7 +6724,8 @@ fn switched(
     state.switching = false;
     state.session_action = false;
     let target = state.pending_switch.take();
-    match outcome {
+    let pending_events = std::mem::take(&mut state.pending_switch_events);
+    let mut effects = match outcome {
         SwitchOutcome::AlreadyHere => {
             end_picker_wait(state, ALREADY_HERE_NOTICE);
             vec![AppEffect::CommitLines(vec![ALREADY_HERE_NOTICE.to_owned()])]
@@ -6636,7 +6756,17 @@ fn switched(
             effects.extend(close_picker(state));
             effects
         }
+    };
+    for event in pending_events {
+        effects.extend(link_event(
+            state,
+            LinkEvent::Inbound {
+                item: Inbound::Event(event),
+                replayed: false,
+            },
+        ));
     }
+    effects
 }
 
 /// A branch finished: the child is in front, or the parent stayed.
@@ -6956,7 +7086,7 @@ impl Chord {
                 let shifted = key.shift || got.is_uppercase();
                 lower(got) == want && self.shift == shifted
             }
-            (want, got) => want == got,
+            (want, got) => want == got && self.shift == key.shift,
         }
     }
 }
@@ -7069,7 +7199,9 @@ fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
                     state.pager_typed_len -= 1;
                 }
             }
-            InputCode::Char(_) if !key.ctrl && !key.alt && state.pager_typed_len < 256 => {
+            InputCode::Char(_)
+                if key.search_character().is_some() && state.pager_typed_len < 256 =>
+            {
                 state.pager_typed_len += 1;
             }
             _ => {}
@@ -7229,6 +7361,10 @@ fn queue_line(state: &mut AppState, command: QueueCommand) -> Vec<AppEffect> {
 
 /// Apply one queue intent to the open session; its calls go to the queue service (#232).
 fn queue_intent(state: &mut AppState, intent: QueueIntent) -> Vec<AppEffect> {
+    let draft = match &intent {
+        QueueIntent::SendDraftNow(text) | QueueIntent::SteerText(text) => Some(text.clone()),
+        _ => None,
+    };
     let mut ids = QueueIds {
         launch_id: state.launch_id.clone(),
         counter: Arc::clone(&state.counter),
@@ -7237,7 +7373,14 @@ fn queue_intent(state: &mut AppState, intent: QueueIntent) -> Vec<AppEffect> {
         return Vec::new();
     };
     let produced = update_queue(&mut opened.state, intent, &mut ids);
-    route(state, produced, None)
+    let accepted = produced
+        .iter()
+        .any(|effect| matches!(effect, Effect::SendPrompt { .. } | Effect::Steer { .. }));
+    let mut effects = route(state, produced, None);
+    if accepted && let Some(text) = draft {
+        effects.push(AppEffect::ClearSubmittedDraft(text));
+    }
+    effects
 }
 
 /// The reconcile event a lost queue reply schedules, if `event` is one.
@@ -7533,6 +7676,15 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 effects
             }
             Inbound::Event(inbound) => {
+                if state.pending_switch.as_ref().is_some_and(|target| {
+                    target.profile == state.profile
+                        && inbound.raw.get("session_id").and_then(Value::as_str)
+                            == Some(target.session_id.as_str())
+                        && !is_open_session(state, &target.session_id)
+                }) {
+                    state.pending_switch_events.push(inbound);
+                    return Vec::new();
+                }
                 if inbound
                     .raw
                     .get("session_id")
@@ -7604,7 +7756,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     .filter(|id| !is_open_session(state, id))
                     .map(str::to_owned)
                 {
-                    let Some(opened) = state.retained_sessions.get_mut(&session_id) else {
+                    let key = retained_key(state, &session_id);
+                    let Some(opened) = key.and_then(|key| state.retained_sessions.get_mut(&key))
+                    else {
                         return hub_effects;
                     };
                     if !accept_event(&opened.cursor, epoch, seq) {
@@ -7770,7 +7924,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
         },
         LinkEvent::Gap(gap) => {
             if is_open_session(state, &gap.session_id)
-                || state.retained_sessions.contains_key(&gap.session_id)
+                || retained_key(state, &gap.session_id).is_some()
             {
                 vec![AppEffect::Recover(gap)]
             } else {
@@ -7787,7 +7941,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .filter(|opened| opened.session_id == session_id)
             {
                 opened.subscription_id = subscription_id;
-            } else if let Some(opened) = state.retained_sessions.get_mut(&session_id) {
+            } else if let Some(opened) = retained_key(state, &session_id)
+                .and_then(|key| state.retained_sessions.get_mut(&key))
+            {
                 opened.subscription_id = subscription_id;
             }
             background_event(state, &session_id, BackgroundEvent::Attached { now_ms })
@@ -7797,7 +7953,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 return Vec::new();
             };
             if !is_open_session(state, session_id) {
-                state.retained_sessions.remove(session_id);
+                if let Some(key) = retained_key(state, session_id) {
+                    state.retained_sessions.remove(&key);
+                }
                 return Vec::new();
             }
             let mut closing = close_processes(state);
@@ -7818,10 +7976,19 @@ fn opened_session(
     mut opened: OpenedSession,
     notice: Option<String>,
 ) -> Vec<AppEffect> {
+    let rewind_owner = RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.session_id.clone(),
+    };
+    bind_rewind_session(state, Some(rewind_owner.clone()));
     state.subagents_usage_active = 0;
     let now_ms = state.now_ms;
     let mut background = close_processes(state);
-    let same_session = is_open_session(state, &opened.session_id);
+    let old_profile = state
+        .opened_profile
+        .take()
+        .unwrap_or_else(|| state.profile.clone());
+    let same_session = old_profile == state.profile && is_open_session(state, &opened.session_id);
     if !same_session && let Some(old_id) = state.opened.as_ref().map(|old| old.session_id.clone()) {
         background.extend(background_event(
             state,
@@ -7833,17 +8000,26 @@ fn opened_session(
         ));
     }
     if let Some(mut old) = state.opened.take() {
-        if old.session_id == opened.session_id {
+        if same_session {
             carry_over(&mut old.state, &mut opened.state);
             opened.carry_background_from(&old);
         } else {
-            state.retained_sessions.insert(old.session_id.clone(), old);
+            let key = RowKey {
+                profile: old_profile,
+                session_id: old.session_id.clone(),
+            };
+            state.retained_sessions.insert(key, old);
         }
     }
-    if let Some(mut old) = state.retained_sessions.remove(&opened.session_id) {
+    let key = RowKey {
+        profile: state.profile.clone(),
+        session_id: opened.session_id.clone(),
+    };
+    if let Some(mut old) = state.retained_sessions.remove(&key) {
         carry_over(&mut old.state, &mut opened.state);
         opened.carry_background_from(&old);
     }
+    state.opened_profile = Some(state.profile.clone());
     state.model = opened.info.model.clone();
     state.effort = opened.effort.clone();
     // The snapshot's fences are the ones a later mutation must present.
@@ -7914,6 +8090,22 @@ fn opened_session(
         .fences_mut(&session_id)
         .adopt(Some(opened.revision), Some(opened.execution_generation));
     state.opened = Some(opened);
+    if state.draft.is_empty() {
+        let returned = state
+            .retry_returns
+            .get_mut(&rewind_owner)
+            .and_then(VecDeque::pop_front);
+        if let Some(text) = returned {
+            effects.extend(return_prompt(state, text, false));
+        }
+        if state
+            .retry_returns
+            .get(&rewind_owner)
+            .is_some_and(VecDeque::is_empty)
+        {
+            state.retry_returns.remove(&rewind_owner);
+        }
+    }
     attach_subagent_foreground(state);
     state.session_gone = false;
     background.extend(background_event(
@@ -8046,13 +8238,38 @@ fn restore_failed_attachments(state: &mut AppState) -> Vec<AppEffect> {
 }
 
 fn submit_done(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec<AppEffect> {
-    let retried = state
-        .retry
-        .take_if(|(retry_id, _)| *retry_id == id)
-        .map(|(_, text)| text);
+    let retried = state.retry.remove(&id);
+    if let Some((owner, text)) = retried.as_ref()
+        && (state.profile != owner.profile || !is_open_session(state, &owner.session_id))
+    {
+        return match outcome {
+            ExecuteOutcome::Refused { reason } => {
+                state
+                    .retry_returns
+                    .entry(owner.clone())
+                    .or_default()
+                    .push_back(text.clone());
+                vec![
+                    notice_lines(&rewind_text::resend_failed(&reason)),
+                    notice_lines("The retry is kept for its original session."),
+                ]
+            }
+            ExecuteOutcome::OutcomeUnknown => {
+                state
+                    .retry_returns
+                    .entry(owner.clone())
+                    .or_default()
+                    .push_back(text.clone());
+                vec![notice_lines(
+                    "The retry's outcome is unknown; its text is kept for its original session.",
+                )]
+            }
+            ExecuteOutcome::Sent | ExecuteOutcome::VoiceStopped => Vec::new(),
+        };
+    }
     let mut effects = submit_outcome(state, id, outcome.clone());
     // `/retry` already removed the prompt, so a send that did not go through returns it.
-    if let Some(text) = retried {
+    if let Some((_, text)) = retried {
         match outcome {
             ExecuteOutcome::Refused { reason } => {
                 effects.push(notice_lines(&rewind_text::resend_failed(&reason)));
@@ -8274,15 +8491,18 @@ fn recover_retained(
     result: Result<OpenedSession, OpenError>,
 ) -> Vec<AppEffect> {
     let now_ms = state.now_ms;
+    let Some(key) = retained_key(state, session_id) else {
+        return Vec::new();
+    };
     let mut fresh = match result {
         Ok(fresh) => fresh,
         Err(OpenError::NotFound) => {
-            state.retained_sessions.remove(session_id);
+            state.retained_sessions.remove(&key);
             return Vec::new();
         }
         Err(_) => return Vec::new(),
     };
-    let Some(mut old) = state.retained_sessions.remove(session_id) else {
+    let Some(mut old) = state.retained_sessions.remove(&key) else {
         return Vec::new();
     };
     carry_over(&mut old.state, &mut fresh.state);
@@ -8291,9 +8511,7 @@ fn recover_retained(
         session_id: fresh.session_id.clone(),
         cursor: fresh.cursor.clone(),
     }];
-    state
-        .retained_sessions
-        .insert(session_id.to_string(), fresh);
+    state.retained_sessions.insert(key, fresh);
     effects.extend(background_event(
         state,
         session_id,
@@ -8745,6 +8963,87 @@ mod attachment_tests {
             },
         });
         state
+    }
+
+    #[test]
+    fn queue_draft_clear_is_emitted_only_after_acceptance() {
+        use talaria_core::queue::{MovePlan, QueueIntent};
+        for steer in [false, true] {
+            for busy in [false, true] {
+                let mut state = opened();
+                if busy {
+                    state.opened.as_mut().unwrap().state.queue.plan = Some(MovePlan {
+                        steps: Vec::new(),
+                        next: 0,
+                        target: Vec::new(),
+                        then_interrupt: None,
+                    });
+                }
+                let text = " draft text ".to_owned();
+                let intent = if steer {
+                    QueueIntent::SteerText(text.clone())
+                } else {
+                    QueueIntent::SendDraftNow(text.clone())
+                };
+                let effects = update(
+                    &mut state,
+                    AppMessage::ForegroundKey(UserAction::Queue(intent)),
+                );
+                let clears = effects.iter().filter(|effect| matches!(effect, AppEffect::ClearSubmittedDraft(draft) if draft == &text)).count();
+                assert_eq!(clears, usize::from(!busy));
+                if busy {
+                    assert!(effects.iter().any(
+                        |effect| matches!(effect, AppEffect::OfferDraft(draft) if draft == &text)
+                    ));
+                    assert!(
+                        !effects.iter().any(|effect| matches!(
+                            effect,
+                            AppEffect::Send(_) | AppEffect::Queue(_)
+                        ))
+                    );
+                } else {
+                    assert!(
+                        effects.iter().any(|effect| matches!(
+                            effect,
+                            AppEffect::Send(_) | AppEffect::Queue(_)
+                        ))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clearing_a_synchronized_draft_invalidates_pending_attachment_results() {
+        let mut state = opened();
+        state.draft = "draft text".into();
+        state.attachment_epoch = 2;
+        let _ = update(
+            &mut state,
+            AppMessage::DraftSynced {
+                text: String::new(),
+                caret: 0,
+            },
+        );
+        assert_eq!(state.attachment_epoch, 3);
+        let effects = update(
+            &mut state,
+            AppMessage::AttachmentResult {
+                epoch: 2,
+                event: AttachmentEvent::FileAttached {
+                    session: SessionId::new("session"),
+                    name: "notes.txt".into(),
+                    ref_text: "@file:notes.txt".into(),
+                    uploaded: true,
+                    remainder: String::new(),
+                },
+            },
+        );
+        assert!(
+            effects
+                .iter()
+                .all(|effect| !matches!(effect, AppEffect::Attachment(_)))
+        );
     }
 
     #[test]
@@ -10653,16 +10952,26 @@ fn apply<S: Screen>(
                     }
                 });
             }
-            AppEffect::Rewind { ticket, call } => {
-                let client = state
-                    .service
-                    .as_ref()
-                    .and_then(SessionService::client)
-                    .cloned();
-                let session_id = state
-                    .opened
-                    .as_ref()
-                    .map(|opened| opened.session_id.clone());
+            AppEffect::Rewind {
+                owner,
+                ticket,
+                call,
+            } => {
+                let current = state.profile == owner.profile
+                    && state
+                        .opened
+                        .as_ref()
+                        .is_some_and(|opened| opened.session_id == owner.session_id);
+                let client = current
+                    .then(|| {
+                        state
+                            .service
+                            .as_ref()
+                            .and_then(SessionService::client)
+                            .cloned()
+                    })
+                    .flatten();
+                let session_id = current.then(|| owner.session_id.clone());
                 executor.send_later(async move {
                     let input = match (client, session_id) {
                         (Some(client), Some(session_id)) => {
@@ -10677,7 +10986,7 @@ fn apply<S: Screen>(
                             )),
                         },
                     };
-                    AppMessage::Rewind(input)
+                    AppMessage::RewindReply { owner, input }
                 });
             }
             AppEffect::Profiles(effect) => match effect {
@@ -10902,7 +11211,7 @@ fn apply<S: Screen>(
                 };
                 let _ = executor.prompts.send((service, effect));
             }
-            AppEffect::Side(effect) => {
+            AppEffect::Side { key, effect } => {
                 let client = state
                     .service
                     .as_ref()
@@ -10918,7 +11227,7 @@ fn apply<S: Screen>(
                         }
                         None => side::not_sent(&effect),
                     };
-                    AppMessage::SideDone(events)
+                    AppMessage::SideDone { key, events }
                 });
             }
             AppEffect::Interrupt(effect) => {
@@ -10958,6 +11267,16 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::OfferDraft(text) => screen.offer_draft(&text),
+            AppEffect::ClearSubmittedDraft(text) => {
+                if let Some((text, caret)) = screen.clear_submitted_draft(&text) {
+                    redraw |= apply(
+                        state,
+                        AppMessage::DraftSynced { text, caret },
+                        screen,
+                        executor,
+                    );
+                }
+            }
             AppEffect::ReconcileLater(event) => executor.send_later(async move {
                 tokio::time::sleep(RECONCILE_WAIT).await;
                 AppMessage::PromptDone {

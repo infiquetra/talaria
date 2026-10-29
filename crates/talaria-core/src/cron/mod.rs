@@ -95,6 +95,7 @@ struct Detail {
     runs: Option<Result<Vec<RunRow>, RestFailure>>,
     selected: usize,
     run_card: Option<String>,
+    run_scroll: usize,
     latest_seq: u64,
     in_flight: Option<u64>,
     queued: bool,
@@ -461,6 +462,7 @@ pub struct DetailView {
     pub run_card: Option<Vec<(String, Vec<String>)>>,
     pub focus: CardFocus,
     pub fields_scroll: usize,
+    pub run_scroll: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1140,6 +1142,7 @@ impl CronState {
                         runs: None,
                         selected: 0,
                         run_card: None,
+                        run_scroll: 0,
                         latest_seq: 0,
                         in_flight: None,
                         queued: false,
@@ -1175,7 +1178,19 @@ impl CronState {
         let Mode::Detail(d) = &mut self.mode else {
             return;
         };
-        if d.run_card.is_some() {
+        if let Some(id) = &d.run_card {
+            let count = d
+                .runs
+                .as_ref()
+                .and_then(|runs| runs.as_ref().ok())
+                .and_then(|runs| runs.iter().find(|run| &run.id == id))
+                .map_or(0, |run| {
+                    history::run_card(run, wall)
+                        .iter()
+                        .map(|(_, lines)| lines.len().max(1))
+                        .sum()
+                });
+            d.run_scroll = navigate(d.run_scroll.min(count.saturating_sub(1)), count, &key);
             return;
         }
         match key {
@@ -1191,6 +1206,7 @@ impl CronState {
                     && let Some(row) = rows.get(d.selected)
                 {
                     d.run_card = Some(row.id.clone());
+                    d.run_scroll = 0;
                 }
             }
             _ if d.focus == CardFocus::History => {
@@ -1434,12 +1450,17 @@ impl CronState {
                                 .and_then(|rows| rows.iter().find(|r| r.id == *id))
                         })
                         .map(|r| history::run_card(r, wall));
+                    let run_scroll = run_card.as_ref().map_or(0, |card| {
+                        let count: usize = card.iter().map(|(_, lines)| lines.len().max(1)).sum();
+                        detail.run_scroll.min(count.saturating_sub(1))
+                    });
                     CronBody::Detail(DetailView {
                         fields: self.detail_fields(job, wall),
                         runs,
                         run_card,
                         focus: detail.focus,
                         fields_scroll: detail.scroll,
+                        run_scroll,
                     })
                 } else {
                     self.list_body(wall)
@@ -1461,7 +1482,7 @@ impl CronState {
         };
         let hints = match &self.mode {
             Mode::Form(_) => "tab next field · ctrl+s save · esc cancel",
-            Mode::Detail(d) if d.run_card.is_some() => "esc back",
+            Mode::Detail(d) if d.run_card.is_some() => "↑↓ scroll · esc back",
             Mode::Detail(_) => "tab fields/runs · enter run details · o open run · ctrl+t run now · ctrl+e pause/resume · ctrl+d remove · ctrl+r reload · esc back",
             Mode::List => "enter details · ctrl+n new · ctrl+t run now · ctrl+e pause/resume · ctrl+d remove · ctrl+r reload · esc close",
         }.into();

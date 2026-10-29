@@ -99,6 +99,7 @@ fn card() -> CardView {
             value: "not set".into(),
             pending: false,
             selected: true,
+            cursor: None,
         }],
         setup: Some("Set up outside Talaria: hermes -p fixture memory setup retaindb".into()),
         result_lines: vec![],
@@ -110,6 +111,138 @@ fn key(chord: &str) -> Key {
 }
 
 const SIZES: [(u16, u16); 3] = [(100, 30), (80, 24), (60, 16)];
+
+#[test]
+fn footer_and_selected_rows_remain_visible_at_minimum_size() {
+    let mut current = view();
+    for (selected, label) in [
+        "built-in only",
+        "byterover",
+        "retaindb",
+        "Agent memory",
+        "User profile",
+        "active",
+    ]
+    .iter()
+    .enumerate()
+    {
+        current.cursor = selected;
+        let screen = render(&current, 60, 16);
+        assert!(
+            screen
+                .lines()
+                .any(|line| line.contains('>') && line.contains(label)),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("enter open") && screen.contains("esc close"),
+            "{screen}"
+        );
+    }
+}
+
+#[test]
+fn memory_editor_tracks_real_state_navigation_and_edits() {
+    use ratatui::{buffer::Buffer, style::Modifier};
+    use talaria_core::memory::{
+        BuiltinFiles, ConfigSurface, ConfigView, EditOp, FieldKind, FieldView, ProviderRowView,
+        ProviderSetup, StatusView,
+    };
+    let now = std::time::Instant::now();
+    let mut state = MemoryState::new();
+    state.update(
+        MemoryInput::Open {
+            profile: "fixture".into(),
+        },
+        now,
+    );
+    state.update(
+        MemoryInput::StatusLoaded(Ok(StatusView {
+            active: "retaindb".into(),
+            providers: vec![ProviderRowView {
+                name: "retaindb".into(),
+                description: "provider".into(),
+                available: true,
+                configured: true,
+                status: "ready".into(),
+                setup: ProviderSetup {
+                    pip_dependencies: vec![],
+                    python_dependencies_declared: false,
+                    external_dependencies: vec![],
+                    required_env: vec![],
+                    dependencies_installed: true,
+                },
+            }],
+            builtin_files: BuiltinFiles { memory: 0, user: 0 },
+        })),
+        now,
+    );
+    for key in [MemoryKey::Down, MemoryKey::Open] {
+        state.update(MemoryInput::Key(key), now);
+    }
+    let value = format!("https://例.test/{}-END", "x".repeat(90));
+    state.update(
+        MemoryInput::ConfigLoaded {
+            name: "retaindb".into(),
+            result: Ok(ConfigView {
+                name: "retaindb".into(),
+                label: "RetainDB".into(),
+                surface: ConfigSurface::Plain,
+                fields: vec![FieldView {
+                    key: "base_url".into(),
+                    label: "Base URL".into(),
+                    kind: FieldKind::Text,
+                    description: String::new(),
+                    placeholder: String::new(),
+                    required: false,
+                    value: serde_json::json!(value),
+                    is_set: true,
+                    options: vec![],
+                    when: None,
+                    minimum: None,
+                    maximum: None,
+                }],
+            }),
+        },
+        now,
+    );
+    state.update(MemoryInput::Key(MemoryKey::Open), now);
+    for (operation, expected) in [(EditOp::End, "-END"), (EditOp::Home, "https://例.test/")] {
+        state.update(MemoryInput::Key(MemoryKey::Edit(operation)), now);
+        for width in [60, 80] {
+            let current = state.view(now);
+            let screen = render(&current, width, 16);
+            assert!(screen.contains(expected), "{screen}");
+            let area = Rect::new(0, 0, width, 16);
+            let mut buffer = Buffer::empty(area);
+            draw_memory(&current, area, &mut buffer);
+            assert!(
+                (0..area.height).any(|y| (0..area.width).any(|x| buffer[(x, y)]
+                    .style()
+                    .add_modifier
+                    .contains(Modifier::REVERSED))),
+                "{screen}"
+            );
+        }
+    }
+    state.update(MemoryInput::Key(MemoryKey::Char('Z')), now);
+    state.update(MemoryInput::Key(MemoryKey::Edit(EditOp::Delete)), now);
+    let current = state.view(now);
+    let field = &current.card.unwrap().fields[0];
+    assert!(field.value.starts_with("Zttps://"));
+    assert_eq!(field.cursor, Some(1));
+}
+
+#[test]
+fn long_memory_editor_shows_the_end_of_the_value() {
+    let mut current = view();
+    current.card = Some(card());
+    current.editing = true;
+    current.card.as_mut().unwrap().fields[0].value =
+        format!("https://example.test/{}-END", "x".repeat(90));
+    let screen = render(&current, 60, 16);
+    assert!(screen.contains("-END"), "{screen}");
+}
 
 #[test]
 fn draws_every_screen() {

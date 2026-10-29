@@ -3,6 +3,8 @@
 //! The expected colours come from specification 7.2 and 7.3, computed by hand
 //! from the skin fixtures, not copied from the issue rows.
 
+#[path = "support/color.rs"]
+mod color;
 mod support;
 
 use std::path::PathBuf;
@@ -127,6 +129,9 @@ fn first_cell_fg(parser: &vt100::Parser, needle: &str) -> vt100::Color {
 
 #[test]
 fn composer_and_status_follow_default_skin() {
+    if color::run_with_terminal_colors("composer_and_status_follow_default_skin") {
+        return;
+    }
     let (skin, skipped) = skin_of("default.json");
     let terminal = TerminalColors {
         background: Some(rgb(0x1e, 0x1e, 0x1e)),
@@ -213,6 +218,9 @@ fn composer_and_status_follow_default_skin() {
 
 #[test]
 fn ansi256_uses_indexed_colours() {
+    if color::run_with_terminal_colors("ansi256_uses_indexed_colours") {
+        return;
+    }
     let (skin, skipped) = skin_of("default.json");
     let terminal = TerminalColors {
         background: Some(rgb(0x1e, 0x1e, 0x1e)),
@@ -254,6 +262,9 @@ fn ansi256_uses_indexed_colours() {
 
 #[test]
 fn markdown_cells_use_skin_roles() {
+    if color::run_with_terminal_colors("markdown_cells_use_skin_roles") {
+        return;
+    }
     let (skin, skipped) = skin_of("ares.json");
     let terminal = TerminalColors {
         background: Some(rgb(0x1e, 0x1e, 0x1e)),

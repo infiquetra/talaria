@@ -171,6 +171,24 @@ fn missing_fixture_and_piped_output_exit_2() {
 }
 
 #[test]
+fn benchmark_rejects_a_recording_with_dropped_frames_before_opening_terminal() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let path = dir.path().join("loss.jsonl");
+    std::fs::write(
+        &path,
+        concat!(
+            "{\"kind\":\"header\",\"version\":3}\n",
+            "{\"kind\":\"dropped\",\"seq\":1,\"tMs\":0,\"count\":100}\n",
+        ),
+    )
+    .expect("recording");
+    let result = run_talaria(&["--bench-replay", path.to_str().expect("path")]);
+    assert_eq!(result.code, Some(2));
+    let line = only_line(&result);
+    assert!(line.contains("100") && line.contains("dropped"), "{line}");
+}
+
+#[test]
 fn bad_speed_exits_2_with_one_plain_line() {
     // The speed is checked before the fixture, so the fixture need not exist.
     for value in ["0", "-1", "abc", "inf", "NaN"] {

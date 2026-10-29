@@ -516,7 +516,7 @@ fn narrowing_live_rows_tracks_wraps_separately_from_history() {
         (80, false, 7),
         (100, false, 10),
         (120, false, 10),
-        (80, true, 10),
+        (80, true, 7),
     ] {
         let sink = ByteSink::default();
         let mut term = InlineTerminal::new(
@@ -558,6 +558,72 @@ fn narrowing_live_rows_tracks_wraps_separately_from_history() {
             expected_top + 6,
             "only the six rows pushed by the height change are pulled back"
         );
+    }
+}
+
+#[test]
+fn width_only_narrowing_clears_old_live_rows_with_and_without_overlay() {
+    for overlay in [false, true] {
+        let mut rig = Rig::new(
+            Alac::with_shell_rows(100, 30, (0, 3)),
+            (100, 30),
+            10,
+            probe(false, false, Some((0, 3))),
+        );
+        rig.commit_lines(tagged(12));
+        let mut live = live_view_sections(6);
+        for n in 1..=3 {
+            let label = format!("LIVE-WIDE-{n} ");
+            live.push(PlainTextSection::new(&format!(
+                "{label}{}",
+                "x".repeat(100 - label.len())
+            )));
+        }
+        live.push(PlainTextSection::new("status"));
+        rig.draw(&live);
+        if overlay {
+            rig.open_overlay();
+            rig.draw_overlay();
+        }
+        rig.resize(80, 30);
+        if overlay {
+            rig.close_overlay();
+        }
+        rig.draw(&live);
+        let all = rig.alac.history_and_screen();
+        assert_tags_once_in_order(&all, 12);
+        let viewport = rig.term.viewport();
+        let screen_start = all.len() - 30;
+        for n in 1..=6 {
+            let label = format!("LIVE# {n}");
+            let matching: Vec<_> = all
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.contains(&label))
+                .collect();
+            assert_eq!(matching.len(), 1, "overlay={overlay}: {all:?}");
+            let index = matching[0].0;
+            assert!(
+                index >= screen_start + usize::from(viewport.y)
+                    && index < screen_start + usize::from(viewport.y + viewport.height),
+                "overlay={overlay}: {all:?}"
+            );
+        }
+        for n in 1..=3 {
+            let label = format!("LIVE-WIDE-{n}");
+            let matching: Vec<_> = all
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.contains(&label))
+                .collect();
+            assert_eq!(matching.len(), 1, "overlay={overlay}: {all:?}");
+            let index = matching[0].0;
+            assert!(
+                index >= screen_start + usize::from(viewport.y)
+                    && index < screen_start + usize::from(viewport.y + viewport.height),
+                "overlay={overlay}: {all:?}"
+            );
+        }
     }
 }
 

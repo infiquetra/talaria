@@ -2,6 +2,72 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-29 — Probe replies and typed keys can arrive in the same read
+
+**Evidence.** The composer PTY regression reproduced lost text before and after a device-attributes reply; a buffered Unicode CSI-u key initially reappeared as the literal `233u`. Split replies, bracketed paste, arrow keys, key releases, and terminal reacquisition are exercised by the same harness.
+
+**Mechanism.** The probe stops at the response marker, separates recognized replies from earlier input, and hands buffered input to the key reader in order. The fallback decoder needs explicit CSI-u handling because its ordinary key parser does not decode every enhanced keyboard sequence.
+
+**Generalizable rule.** Preserve input across terminal negotiation and test the actual key encodings used by the normal reader.
+
+## 2026-10-29 — Asynchronous replies need ownership and read fences
+
+**Evidence.** The replay, picker, rewind, fleet, subagent and configure regressions reproduced failures on `da6907cd51cd882cc4634e5ca78f59eb581992c0`. The session switch regression uses delayed and unanswered `shell.exec` calls; the fleet wire regression delays overlapping event probes; the subagent wire regression completes a child before its initial list. The generated event shapes are from Hermes `4d04303818b61bf3aa09278af48356315515965b`.
+
+**Red runs.** With the affected production paths unchanged, `cargo test --locked -p hermes-client --test replay_source truncated_utf8_tail_keeps_complete_frames_but_complete_invalid_utf8_fails`, the `talaria-core` `picker_state`, `rewind_state`, `fleet_registry`, and `subagent_tree` regressions, `cargo test --locked -p talaria-app --test side_service delayed_shell_result_stays_with_its_originating_session`, and `cargo test --locked -p talaria-tui --test configure_render confirmations_stay_visible_over_a_full_proposal` each exited 101 on their reported failure. The unversioned rewind notification regression also failed before its read-start fence was added.
+
+The first workspace run also hit the smoke harness's three-second startup deadline in `cleanup3::tab_closed_after_signal` while builds were contending; `RUST_TEST_THREADS=1 cargo test --locked -p smoke --test cleanup3 tab_closed_after_signal` passed in isolation. The workspace rerun limits test parallelism to reduce that contention.
+
+The next workspace run passed that signal test but exposed a separate environment dependency: `NO_COLOR` suppresses crossterm's ANSI colors, so `appearance_flow::scrollback_and_streaming_cell_keep_their_theme` failed even in isolation. The isolated test passed with `NO_COLOR` unset; the final workspace and coverage runs use that environment because they assert color output.
+
+**Passing runs.** The focused replay, rewind, picker, fleet, subagent, side-work, switch and configure suites passed. `env -u NO_COLOR RUST_TEST_THREADS=2 CARGO_BUILD_JOBS=4 cargo test --workspace` passed 3,610 tests with 139 ignored. With the pinned Rustup toolchain selected, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --check` passed.
+
+The coverage run's instrumented workspace tests passed, but its initial merge could not find LLVM tools in the Homebrew toolchain sysroot. Both compiler packages report the same pinned Rust commit and LLVM version. Running `cargo llvm-cov report --ignore-filename-regex /generated/ --fail-under-lines 80` with the Rustup toolchain merged the saved profiles and passed at 80.97% line coverage.
+
+A later Rustup workspace rerun reached the unrelated `talaria-bench::sampling` CPU-percentage test but failed its over-80%-of-a-core assertion while the machine was heavily loaded; isolated reruns also failed that assertion. As the load eased, `RUST_TEST_THREADS=1 cargo test -p talaria-bench --test sampling` with the pinned Rustup toolchain passed. The earlier complete workspace and instrumented coverage runs both passed this test.
+
+**Mechanism.** Per-session request counters, stale lists and reads started before notifications cannot identify the current work on their own. An unversioned notification additionally needs a read that started after the notification. A final incomplete log record must be removed before UTF-8 decoding, and a confirmation must remain outside the proposal scroll region.
+
+**Generalizable rule.** Carry resource and operation identity through asynchronous replies, and retain evidence until a suitably fenced read or reconciliation covers it.
+
+## 2026-10-29 — Allow signal-cleanup fixtures to reach their marker under load
+
+The phase 3 smoke cleanup test missed its three-second startup marker under concurrent workspace checks, although its signal and cleanup assertions passed when the marker was reached. The adjacent phase 2 cleanup test already allows a longer startup wait.
+
+Rule: bound fixture startup separately from the cleanup behavior being tested, with enough time for a busy host.
+
+## 2026-10-29 — Terminal color tests need an isolated color policy
+
+With `NO_COLOR=1`, the theme, automation and appearance terminal-emulator assertions failed because Crossterm suppresses color bytes even for explicitly colored styles and caches that policy process-wide. Their color assertions now run in isolated children; the appearance test also verifies no-color output.
+
+Rule: control terminal color policy in a child process rather than changing global color state in parallel tests.
+
+## 2026-10-29 — Width-only resize reflows the primary screen during an overlay
+
+The Alacritty emulator regression `width_only_narrowing_clears_old_live_rows_with_and_without_overlay` reproduced duplicate live rows after narrowing from 100 to 80 columns at a constant height. The same reflow occurred while the alternate screen was open.
+
+Rule: account for primary-screen live-row reflow on width changes even while an overlay is active.
+
+## 2026-10-29 — Queue draft acceptance needs an acknowledgement
+
+`queue_draft_clear_is_emitted_only_after_acceptance` and `busy_queue_shortcuts_keep_text_and_caret` cover a delayed queue operation and both draft shortcuts. Clearing on the key event loses the draft on refusal; deciding from an earlier view can also race with queue completion. `clearing_a_synchronized_draft_invalidates_pending_attachment_results` covers stale attachments after a successful clear.
+
+Rule: clear an unchanged composer draft only after the reducer accepts it, and invalidate pending attachment results when it is cleared.
+
+## 2026-10-29 — Rust cache identity includes compiler, mode and writer provenance
+
+Evidence: `.github/actions/rust-cache/test_cache.py` exercises stale inputs, missing metadata,
+PR save denial and release/coverage separation; the action pins official `actions/cache` v4.3.0.
+Downloads are shared from successful default-branch push/schedule/dispatch runs; build objects
+have separate role keys. Release tag writes remain tag-scoped. Installed tools, runtime profiles
+and benchmark reports stay out of caches, and every original command runs after a hit or miss.
+Release caching requires the event ref to match the resolved tag ref and the helper to exist;
+branch-context release dispatches skip the helper and retain the full project and release checks.
+The locked cargo-typify installation remains mandatory; no cached version string qualifies a tool.
+
+Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their
+writers, and keep qualification independent of cache state.
+
 ## 2026-10-28 — Waiting work and an answered pause need durable evidence
 
 **Evidence.** Offline runner regressions reproduce a missing completed-replay recording, invisible parallel waiters, and a false unanswered pause after ten seconds. CLI regressions cover replay with an empty gateway home and the plain discovery failure. The runner regression holds pause for twelve seconds, lets its active call settle, and checks both queued cancellation and unchanged gateway submission counts.
@@ -6334,6 +6400,24 @@ protocol variants and wrapper exit markers explicit.
 
 **Generalizable rule.** Clear any buffered composer text after interrupting an active turn before dispatching a slash command, and verify multi-provider workflow recovery against both frame-log request counts and settled admission receipts.
 
+## 2026-10-29 — In-flight work can outlive a foreground session switch
+
+**Evidence.** The delayed-detach loopback regression in `crates/talaria-app/tests/switch_flow.rs` lost a target completion that arrived after its snapshot but before installation. The rewind service regressions in `crates/talaria-app/tests/rewind_service.rs` showed an old retry advancing after another session was selected, and a failed retry returning its text to the new session.
+
+**Rule.** Bind asynchronous work and recovery to its originating profile and session, and replay switch-target events against the installed snapshot's sequence cursor.
+
+## 2026-10-29 — An unchanged memory value does not confirm an uncertain clear
+
+**Evidence.** At Hermes `4d04303818b61bf3aa09278af48356315515965b`, `hermes_cli/web_server_memory.py` derives a non-secret field's `is_set` from its effective value, including defaults. The refused and unknown clear regressions in `crates/talaria-core/tests/memory_state.rs` exercise unchanged read-back and confirmed defaults.
+
+**Rule.** Keep an uncertain clear pending when its effective value is unchanged; only a successful reply or changed read-back can confirm it.
+
+## 2026-10-29 — Coverage counters change a frame-time measurement
+
+**Evidence.** `review_timing::keystroke_budget_while_gh_sleeps` measured p95 at 18–20 ms under `cargo llvm-cov` and 1–2 ms in the same uninstrumented test binary on the same host. Its 16 ms budget failed only with instrumentation in those paired runs.
+
+**Rule.** Enforce frame-time budgets in the normal test run; exclude that timing measurement when coverage counters are active.
+
 ## 2026-10-29 — Cargo discovers imported integration suites independently
 
 Background, builtin registry and live workflow wrappers imported complete test files that Cargo
@@ -6346,16 +6430,8 @@ No shared helper extraction is needed; ignored copies provide no default test-ex
 Rule: compare crate, original source case and configuration before removing a wrapper, and preserve
 unique cases and per-property budgets rather than treating registration counts as generated cases.
 
-## 2026-10-29 — Rust cache identity includes compiler, mode and writer provenance
+## 2026-10-29 — Preserve raw payloads for streamed tool events
 
-Evidence: `.github/actions/rust-cache/test_cache.py` exercises stale inputs, missing metadata,
-PR save denial and release/coverage separation; the action pins official `actions/cache` v4.3.0.
-Downloads are shared from successful default-branch push/schedule/dispatch runs; build objects
-have separate role keys. Release tag writes remain tag-scoped. Installed tools, runtime profiles
-and benchmark reports stay out of caches, and every original command runs after a hit or miss.
-Release caching requires the event ref to match the resolved tag ref and the helper to exist;
-branch-context release dispatches skip the helper and retain the full project and release checks.
-The locked cargo-typify installation remains mandatory; no cached version string qualifies a tool.
+**Evidence.** The recorded `stream_tool_turn.frames.jsonl` includes `tool_call_id` and `is_error`, while the generated tool payload types omit those keys. The headless stream tests also exercise a stamped tool event with only the fallback identifier; typed decoding alone rejected that event before its raw payload reached the projector.
 
-Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their
-writers, and keep qualification independent of cache state.
+**Rule.** Preserve the validated event envelope and original payload through live delivery and replay when projecting stream events; use the raw payload for tool identifiers and error flags.

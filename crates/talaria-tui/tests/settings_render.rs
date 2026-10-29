@@ -2,7 +2,9 @@ mod support;
 
 use serde_json::json;
 use support::{ByteSink, Vt, probe};
-use talaria_core::settings::{Conflict, ReviewRow, Screen, SettingsRow, SettingsView};
+use talaria_core::settings::{
+    Conflict, ReviewRow, Screen, SettingsEditorView, SettingsRow, SettingsView,
+};
 use talaria_tui::live::FrameStats;
 use talaria_tui::settings::draw_settings;
 use talaria_tui::terminal::{InlineTerminal, RestoreLink};
@@ -55,6 +57,84 @@ fn paint(
         .unwrap();
     vt.absorb(sink);
     vt.rows().join("\n")
+}
+
+#[test]
+fn long_editor_follows_and_marks_the_caret() {
+    use ratatui::{buffer::Buffer, layout::Rect, style::Modifier};
+    let text = format!("START-{}-END", "x".repeat(150));
+    let mut current = browse();
+    current.screen = Screen::Editing;
+    for (cursor, visible) in [(0, "START"), (text.chars().count(), "END")] {
+        current.editor = Some(SettingsEditorView {
+            text: text.clone(),
+            cursor,
+            secret: false,
+        });
+        let area = Rect::new(0, 0, 60, 12);
+        let mut buffer = Buffer::empty(area);
+        draw_settings(&current, area, &mut buffer);
+        let screen: String = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .map(|pos| buffer[pos].symbol())
+            .collect();
+        assert!(screen.contains(visible), "{screen}");
+        assert!(
+            (0..area.height).any(|y| (0..area.width).any(|x| buffer[(x, y)]
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED))),
+            "caret missing: {screen}"
+        );
+    }
+}
+
+#[test]
+fn settings_editor_follows_reducer_navigation_and_preserves_value() {
+    use talaria_core::settings::{
+        ConfigSchemaView, EditKey, FieldKind, FieldView, SettingsAction, SettingsInput,
+        SettingsKey, SettingsSnapshot, SettingsState,
+    };
+    let value = format!("https://例.test/{}-END", "x".repeat(130));
+    let mut state = SettingsState::new(&[]);
+    state.update(SettingsInput::Open {
+        profile: "fixture".into(),
+        filter: None,
+    });
+    state.update(SettingsInput::Loaded(SettingsSnapshot {
+        profile: "fixture".into(),
+        schema: ConfigSchemaView {
+            fields: vec![FieldView {
+                key: "general.url".into(),
+                kind: FieldKind::String,
+                description: String::new(),
+                category: "general".into(),
+                options: None,
+                searchable: false,
+                clearable: false,
+            }],
+            category_order: vec!["general".into()],
+        },
+        effective: json!({"general": {"url": value}}),
+        raw: json!({}),
+        defaults: json!({"general": {"url": ""}}),
+    }));
+    state.update(SettingsInput::Key(SettingsKey::Action(
+        SettingsAction::Edit,
+    )));
+    let (mut term, sink, mut vt) = rig(60, 12);
+    for (key, visible) in [(EditKey::End, "-END"), (EditKey::Home, "https://例.test/")] {
+        state.update(SettingsInput::Key(SettingsKey::Edit(key)));
+        let screen = paint(&mut term, &sink, &mut vt, &state.view());
+        assert!(screen.contains(visible), "{screen}");
+    }
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Right)));
+    state.update(SettingsInput::Key(SettingsKey::Char('Z')));
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Left)));
+    state.update(SettingsInput::Key(SettingsKey::Edit(EditKey::Delete)));
+    let editor = state.view().editor.unwrap();
+    assert_eq!(editor.text, value);
+    assert_eq!(editor.cursor, 1);
 }
 
 #[test]

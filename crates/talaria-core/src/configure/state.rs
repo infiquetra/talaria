@@ -416,6 +416,7 @@ impl ConfigureState {
         }
     }
     pub fn view(&self, now: Instant) -> ConfigureView {
+        let mut confirmation = None;
         let mut title = format!("Configure · profile {}", self.profile);
         if let Some((provider, model)) = &self.model {
             title.push_str(&format!(" · {provider}/{model}"));
@@ -526,18 +527,10 @@ impl ConfigureState {
                         .zip(&self.selected)
                         .filter(|(row, selected)| **selected && row.destructive)
                         .count();
-                    push(
-                        format!(
-                            "Apply {count} change(s) to profile {}? y apply · n back{}",
-                            self.profile,
-                            if destructive > 0 {
-                                format!(" ({destructive} removal(s) or switch-off(s))")
-                            } else {
-                                String::new()
-                            }
-                        ),
-                        None,
-                    );
+                    confirmation = Some(format!(
+                        "Apply {count} change(s), {destructive} removal(s) or switch-off(s) to profile {}?",
+                        self.profile
+                    ));
                 }
                 if self.phase == Phase::Done {
                     if self.rows.iter().any(|row| row.status == RowStatus::HandOff) {
@@ -577,10 +570,10 @@ impl ConfigureState {
             push(self.message.clone(), None);
         }
         if let Some(message) = &self.confirm_step {
-            push(format!("{message} · y apply · n skip"), None);
+            confirmation = Some(message.clone());
         }
         if self.discarding {
-            push("Discard this proposal? y/n".into(), None);
+            confirmation = Some("Discard this proposal?".into());
         }
         if self.refining {
             push(format!("Refine: {}", self.clean(&self.editor)), None);
@@ -589,7 +582,14 @@ impl ConfigureState {
             title: self.clean(&title),
             phase: self.phase.clone(),
             lines,
-            footer: if self.refining {
+            confirmation: confirmation.map(|text| self.clean(&text)),
+            footer: if self.discarding {
+                "y discard · n back · esc back".into()
+            } else if self.confirm_step.is_some() {
+                "y apply · n skip · esc skip".into()
+            } else if self.phase == Phase::Confirming {
+                "y apply · n back · esc back".into()
+            } else if self.refining {
                 "enter sends · esc back".into()
             } else {
                 "arrows select · space toggle · a apply · d detail · r refine · esc closes".into()

@@ -339,18 +339,30 @@ fn send_now(state: &mut SessionState, ids: &mut dyn IdSource) -> Vec<Effect> {
 
 /// Send the draft as a prompt. While a turn runs, its receipt starts the head plan.
 fn send_draft_now(state: &mut SessionState, text: &str, ids: &mut dyn IdSource) -> Vec<Effect> {
-    if refuse_busy(state) || text.trim().is_empty() {
+    if refuse_busy(state) {
+        super::flow::take_back(state, text.to_owned());
+        return Vec::new();
+    }
+    if text.trim().is_empty() {
         return Vec::new();
     }
     let submission_id = ids.submission_id();
-    if running_generation(state).is_some() {
-        state.queue.send_now_drafts.insert(submission_id.clone());
+    if let Some(generation) = running_generation(state) {
+        let authority_epoch = state.queue.generation_fence.map(|(epoch, _)| epoch);
+        state
+            .queue
+            .send_now_drafts
+            .insert(submission_id.clone(), (generation, authority_epoch));
     }
     submit_text(state, text, &submission_id.0)
 }
 
 fn steer_text(state: &mut SessionState, text: String, ids: &mut dyn IdSource) -> Vec<Effect> {
-    if refuse_busy(state) || text.trim().is_empty() {
+    if refuse_busy(state) {
+        super::flow::take_back(state, text);
+        return Vec::new();
+    }
+    if text.trim().is_empty() {
         return Vec::new();
     }
     let submission_id = ids.submission_id();

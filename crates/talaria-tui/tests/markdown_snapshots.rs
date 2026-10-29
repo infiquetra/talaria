@@ -81,6 +81,25 @@ fn lists_all_kinds() {
 }
 
 #[test]
+fn empty_list_items_keep_their_markers() {
+    for (input, expected) in [
+        ("- \n- next", vec!["•", "• next"]),
+        ("3. \n4. next", vec!["3.", "4. next"]),
+        ("- [ ]\n- [x]\n- [x] done", vec!["☐", "☑", "☑ done"]),
+        (
+            "- outer\n  - first\n  - \n  - nested",
+            vec!["• outer", "  ◦ first", "  ◦", "  ◦ nested"],
+        ),
+    ] {
+        let actual: Vec<String> = render(input, 80)
+            .iter()
+            .map(|line| line.to_string().trim_end().to_owned())
+            .collect();
+        assert_eq!(actual, expected, "{input:?}");
+    }
+}
+
+#[test]
 fn nested_quotes_with_list_code() {
     // The blank row between the outer paragraph and the nested quote is the
     // outer bar alone, with no trailing space. Nested bars merge into one dim span.

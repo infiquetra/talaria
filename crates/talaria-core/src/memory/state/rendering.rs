@@ -235,6 +235,12 @@ impl MemoryState {
                     value,
                     pending,
                     selected: index == card.cursor,
+                    cursor: editing.map(|editor| match &editor.text {
+                        EditorText::Plain(text) => text[..editor.cursor].chars().count(),
+                        EditorText::Secret(text) => {
+                            text.expose()[..editor.cursor].chars().count().min(40)
+                        }
+                    }),
                 }
             })
             .collect();

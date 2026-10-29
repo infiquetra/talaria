@@ -11,6 +11,71 @@ use std::time::{Duration, Instant};
 use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
 
 #[test]
+fn probe_preserves_input_before_after_and_between_split_replies() {
+    for (chunks, expected) in [
+        (vec![b"\x1b[?62;22chello".to_vec()], "hello"),
+        (vec![b"hel\x1b[24;1Rlo\x1b[?62;22c".to_vec()], "hello"),
+        (vec![b"he\x1b[?62;".to_vec(), b"22cllo".to_vec()], "hello"),
+        (vec![b"he\x1b[D\x1b[?62;22cllo".to_vec()], "hlloe"),
+        (
+            vec![
+                "hé"
+                    .as_bytes()
+                    .iter()
+                    .copied()
+                    .chain(b"\x1b[?62;22cllo".iter().copied())
+                    .collect(),
+            ],
+            "héllo",
+        ),
+        (
+            vec![b"ab\x1b[200~xy\x1b[?62;22cz\x1b[201~".to_vec()],
+            "abxyz",
+        ),
+        (vec![b"\x1b[233u\x1b[?62;22c".to_vec()], "é"),
+        (vec![b"\x1b[97;1:3u\x1b[98;1u\x1b[?62;22c".to_vec()], "b"),
+    ] {
+        let Some(mut demo) = Demo::open(&[]) else {
+            return;
+        };
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            if demo
+                .output
+                .lock()
+                .unwrap()
+                .windows(4)
+                .any(|bytes| bytes == b"\x1b[6n")
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            demo.output
+                .lock()
+                .unwrap()
+                .windows(4)
+                .any(|bytes| bytes == b"\x1b[6n"),
+            "probe did not start"
+        );
+        for chunk in chunks {
+            assert!(demo.write(&chunk));
+        }
+        thread::sleep(Duration::from_millis(200));
+        assert!(demo.write(b"\r"));
+        let output = demo.collect(Duration::from_secs(1));
+        assert!(
+            output.contains(&format!(
+                "SUBMITTED lines=1 chars={} text={expected:?}",
+                expected.chars().count()
+            )),
+            "{output}"
+        );
+    }
+}
+
+#[test]
 fn bracketed_paste_of_10000_characters_is_one_event() {
     let text = ten_thousand();
     let mut bytes = vec![0x1b];

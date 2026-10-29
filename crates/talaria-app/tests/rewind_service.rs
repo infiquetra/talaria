@@ -148,7 +148,7 @@ async fn drive(
     let mut pending = first;
     loop {
         let next = pending.iter().find_map(|effect| match effect {
-            AppEffect::Rewind { ticket, call } => Some((*ticket, call.clone())),
+            AppEffect::Rewind { ticket, call, .. } => Some((*ticket, call.clone())),
             _ => None,
         });
         seen.append(&mut pending);
@@ -588,7 +588,7 @@ async fn dropped_connection_is_unknown_and_never_resent() {
     );
     let mut seen = Vec::new();
     while let Some((ticket, call)) = pending.iter().find_map(|effect| match effect {
-        AppEffect::Rewind { ticket, call } => Some((*ticket, call.clone())),
+        AppEffect::Rewind { ticket, call, .. } => Some((*ticket, call.clone())),
         _ => None,
     }) {
         seen.append(&mut pending);
@@ -770,4 +770,302 @@ async fn rewound_prompt_loads_only_into_empty_composer() {
     composer.load("a\u{1b}]0;x\u{7}b\nline two".to_string());
     assert_eq!(composer.text(), "a]0;xb\nline two");
     assert!(!composer.text().contains('\u{1b}'));
+}
+
+fn test_read(snapshot: Value) -> talaria_core::rewind::Reply {
+    talaria_core::rewind::Reply::SessionRead(talaria_core::rewind::SessionRead {
+        revision: snapshot["revision"].as_i64().unwrap_or(0),
+        execution_generation: snapshot["execution_generation"].as_i64().unwrap_or(0),
+        running: false,
+        pending: 0,
+        messages: snapshot["messages"].as_array().cloned().unwrap_or_default(),
+        raw: snapshot,
+    })
+}
+
+fn rewind_ticket(effects: &[AppEffect]) -> u64 {
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            AppEffect::Rewind { ticket, .. } => Some(*ticket),
+            _ => None,
+        })
+        .expect("rewind call")
+}
+
+fn install_other(app: &mut AppState, id: &str) {
+    let mut snapshot = prompts_snapshot();
+    snapshot["session_id"] = json!(id);
+    let opened = talaria_app::sessions::OpenedSession::from_snapshot(
+        serde_json::from_value(snapshot).unwrap(),
+    );
+    update(
+        app,
+        AppMessage::Opened {
+            opened,
+            notice: None,
+        },
+    );
+}
+
+#[tokio::test]
+async fn stale_rewind_read_cannot_mutate_the_new_foreground_session() {
+    let snapshot = prompts_snapshot();
+    let (_mock, mut app) = opened_app(snapshot.clone()).await;
+    let effects = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/retry".into())),
+    );
+    let old_ticket = rewind_ticket(&effects);
+    install_other(&mut app, "other-session");
+    let late = update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::Reply {
+            ticket: old_ticket,
+            reply: test_read(snapshot),
+        }),
+    );
+    assert!(
+        !late
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Rewind { .. } | AppEffect::Send(_))),
+        "old read produced work for new session"
+    );
+}
+
+#[tokio::test]
+async fn stale_retry_mutation_cannot_rebuild_or_submit_into_the_new_session() {
+    let snapshot = prompts_snapshot();
+    let (_mock, mut app) = opened_app(snapshot.clone()).await;
+    let effects = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/retry".into())),
+    );
+    let ticket = rewind_ticket(&effects);
+    let mutation = update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::Reply {
+            ticket,
+            reply: test_read(snapshot),
+        }),
+    );
+    let mutation_ticket = rewind_ticket(&mutation);
+    install_other(&mut app, "other-session");
+    let late = update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::Reply {
+            ticket: mutation_ticket,
+            reply: talaria_core::rewind::Reply::Mutated(talaria_core::rewind::MutateOutcome {
+                revision: Some(8),
+                rewound_count: 1,
+                target_content: Some(json!("second\nline two")),
+            }),
+        }),
+    );
+    assert!(
+        !late
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Rewind { .. } | AppEffect::Send(_))),
+        "old mutation produced work for new session"
+    );
+}
+
+#[tokio::test]
+async fn rewind_revision_from_one_session_does_not_hide_another_sessions_update() {
+    let mut snapshot = prompts_snapshot();
+    snapshot["revision"] = json!(100);
+    let (_mock, mut app) = opened_app(snapshot.clone()).await;
+    let first = update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::SessionUpdated {
+            operation: "rewind".into(),
+            revision: Some(100),
+            rewound_count: Some(1),
+        }),
+    );
+    let ticket = rewind_ticket(&first);
+    update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::Reply {
+            ticket,
+            reply: test_read(snapshot),
+        }),
+    );
+    install_other(&mut app, "other-session");
+    let second = update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::SessionUpdated {
+            operation: "rewind".into(),
+            revision: Some(8),
+            rewound_count: Some(1),
+        }),
+    );
+    assert!(second.iter().any(|effect| matches!(
+        effect,
+        AppEffect::Rewind {
+            call: Call::ReadSession,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn stale_tickets_cannot_collide_after_switching_away_and_back() {
+    let snapshot = prompts_snapshot();
+    let (_mock, mut app) = opened_app(snapshot.clone()).await;
+    let first = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/retry".into())),
+    );
+    let old_ticket = rewind_ticket(&first);
+    let old_id = app.opened.as_ref().unwrap().session_id.clone();
+    install_other(&mut app, "other-session");
+    install_other(&mut app, &old_id);
+    let current = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/retry".into())),
+    );
+    let current_ticket = rewind_ticket(&current);
+    assert_ne!(old_ticket, current_ticket);
+    assert!(
+        current
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Rewind { owner, .. }
+        if owner.profile == app.profile && owner.session_id == old_id))
+    );
+    let late = update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::Reply {
+            ticket: old_ticket,
+            reply: test_read(snapshot.clone()),
+        }),
+    );
+    assert!(
+        !late
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Rewind { .. }))
+    );
+    let current_reply = update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::Reply {
+            ticket: current_ticket,
+            reply: test_read(snapshot),
+        }),
+    );
+    assert!(current_reply.iter().any(
+        |effect| matches!(effect, AppEffect::Rewind { owner, call: Call::Mutate { .. }, .. }
+        if owner.profile == app.profile && owner.session_id == old_id)
+    ));
+}
+
+#[tokio::test]
+async fn failed_retry_after_switch_returns_to_its_original_session() {
+    let (_mock, mut app, service, _client) = opened_app_with_service(prompts_snapshot()).await;
+    let original_id = app.opened.as_ref().unwrap().session_id.clone();
+    let first = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/retry".into())),
+    );
+    let effects = drive(&mut app, &service, first).await;
+    let submission_id = effects
+        .iter()
+        .find_map(|effect| match effect {
+            AppEffect::Send(Effect::SendPrompt { submission_id, .. }) => {
+                Some(submission_id.clone())
+            }
+            _ => None,
+        })
+        .expect("retry submission");
+    install_other(&mut app, "other-session");
+    let late = update(
+        &mut app,
+        AppMessage::SubmitDone {
+            submission_id,
+            outcome: ExecuteOutcome::Refused {
+                reason: "session_busy".into(),
+            },
+        },
+    );
+    assert!(
+        !late
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::LoadDraft(_)))
+    );
+    assert!(
+        app.draft.is_empty(),
+        "another session must not inherit the retry"
+    );
+    let mut snapshot = prompts_snapshot();
+    snapshot["session_id"] = json!(original_id);
+    let opened = talaria_app::sessions::OpenedSession::from_snapshot(
+        serde_json::from_value(snapshot).unwrap(),
+    );
+    let restored = update(
+        &mut app,
+        AppMessage::Opened {
+            opened,
+            notice: None,
+        },
+    );
+    assert!(
+        restored.iter().any(
+            |effect| matches!(effect, AppEffect::LoadDraft(text) if text == "second\nline two")
+        )
+    );
+}
+
+#[tokio::test]
+async fn rewind_reply_checks_its_profile_and_session_even_with_a_current_ticket() {
+    let snapshot = prompts_snapshot();
+    let (_mock, mut app) = opened_app(snapshot.clone()).await;
+    let old = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/retry".into())),
+    );
+    let old_owner = old
+        .iter()
+        .find_map(|effect| match effect {
+            AppEffect::Rewind { owner, .. } => Some(owner.clone()),
+            _ => None,
+        })
+        .expect("original owner");
+    install_other(&mut app, "other-session");
+    let current = update(
+        &mut app,
+        AppMessage::User(UserAction::Submit("/retry".into())),
+    );
+    let ticket = rewind_ticket(&current);
+    let current_owner = current
+        .iter()
+        .find_map(|effect| match effect {
+            AppEffect::Rewind { owner, .. } => Some(owner.clone()),
+            _ => None,
+        })
+        .expect("current owner");
+    let wrong = update(
+        &mut app,
+        AppMessage::RewindReply {
+            owner: old_owner,
+            input: talaria_core::rewind::RewindInput::Reply {
+                ticket,
+                reply: test_read(snapshot.clone()),
+            },
+        },
+    );
+    assert!(
+        !wrong
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::Rewind { .. }))
+    );
+    let right = update(
+        &mut app,
+        AppMessage::RewindReply {
+            owner: current_owner.clone(),
+            input: talaria_core::rewind::RewindInput::Reply {
+                ticket,
+                reply: test_read(snapshot),
+            },
+        },
+    );
+    assert!(right.iter().any(|effect| matches!(effect, AppEffect::Rewind { owner, call: Call::Mutate { .. }, .. } if *owner == current_owner)));
 }

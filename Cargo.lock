@@ -3140,6 +3140,7 @@ dependencies = [
  "similar",
  "tempfile",
  "time",
+ "unicode-segmentation",
  "zeroize",
 ]
 
@@ -3164,6 +3165,7 @@ dependencies = [
  "talaria-core",
  "talaria-workflow",
  "tempfile",
+ "termwiz",
  "tokio",
  "unicode-segmentation",
  "unicode-width",

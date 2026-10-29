@@ -953,3 +953,118 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn refused_and_unknown_clears_remain_pending_when_readback_is_unchanged() {
+    for outcome in [
+        WriteOutcome::Refused {
+            status: 400,
+            detail: Some("rejected".into()),
+        },
+        WriteOutcome::Unknown,
+    ] {
+        let field = config_field(
+            "base_url",
+            FieldKind::Text,
+            serde_json::json!("old"),
+            true,
+            false,
+        );
+        let (mut state, now) = open_card(true, vec![field.clone()]);
+        key(&mut state, MemoryKey::Open, now);
+        for _ in 0..3 {
+            key(&mut state, MemoryKey::Edit(EditOp::Backspace), now);
+        }
+        key(&mut state, MemoryKey::Open, now);
+        assert!(matches!(
+            key(&mut state, MemoryKey::Save, now).as_slice(),
+            [MemoryEffect::SaveConfig { .. }]
+        ));
+        state.update(MemoryInput::ConfigSaved(outcome), now);
+        state.update(
+            MemoryInput::ConfigLoaded {
+                name: "ready".into(),
+                result: Ok(ConfigView {
+                    name: "ready".into(),
+                    label: "Ready".into(),
+                    surface: ConfigSurface::Plain,
+                    fields: vec![field],
+                }),
+            },
+            now,
+        );
+        let mut st = status();
+        st.active = "ready".into();
+        state.update(MemoryInput::StatusLoaded(Ok(st)), now);
+        let view = state.view(now);
+        assert!(view.banner.unwrap().contains("not saved"));
+        assert!(
+            view.card
+                .unwrap()
+                .result_lines
+                .iter()
+                .any(|line| line.contains("not saved"))
+        );
+        assert!(matches!(
+            key(&mut state, MemoryKey::Save, now).as_slice(),
+            [MemoryEffect::SaveConfig { .. }]
+        ));
+    }
+}
+
+#[test]
+fn confirmed_clears_and_changed_readbacks_clear_the_pending_edit() {
+    for (outcome, after) in [
+        (WriteOutcome::Ok(serde_json::json!({"ok": true})), "old"),
+        (WriteOutcome::Ok(serde_json::json!({"ok": true})), "default"),
+        (WriteOutcome::Unknown, "default"),
+    ] {
+        let field = config_field(
+            "base_url",
+            FieldKind::Text,
+            serde_json::json!("old"),
+            true,
+            false,
+        );
+        let (mut state, now) = open_card(true, vec![field.clone()]);
+        key(&mut state, MemoryKey::Open, now);
+        for _ in 0..3 {
+            key(&mut state, MemoryKey::Edit(EditOp::Backspace), now);
+        }
+        key(&mut state, MemoryKey::Open, now);
+        key(&mut state, MemoryKey::Save, now);
+        state.update(MemoryInput::ConfigSaved(outcome), now);
+        let after_field = config_field(
+            "base_url",
+            FieldKind::Text,
+            serde_json::json!(after),
+            false,
+            false,
+        );
+        state.update(
+            MemoryInput::ConfigLoaded {
+                name: "ready".into(),
+                result: Ok(ConfigView {
+                    name: "ready".into(),
+                    label: "Ready".into(),
+                    surface: ConfigSurface::Plain,
+                    fields: vec![after_field],
+                }),
+            },
+            now,
+        );
+        let mut st = status();
+        st.active = "ready".into();
+        state.update(MemoryInput::StatusLoaded(Ok(st)), now);
+        let view = state.view(now);
+        assert!(view.banner.unwrap().contains("Saved settings"));
+        assert!(
+            view.card
+                .unwrap()
+                .result_lines
+                .iter()
+                .any(|line| line.contains("cleared"))
+        );
+        assert!(key(&mut state, MemoryKey::Save, now).is_empty());
+    }
+}

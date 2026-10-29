@@ -22,7 +22,7 @@ use crate::replay::{
 };
 use crate::ticket::TicketError;
 use crate::{CallError, CallOptions};
-use hermes_contract::events::{EventFrame, Notification};
+use hermes_contract::events::Notification;
 use hermes_contract::schemas::{CanonicalEventsResult, CanonicalSnapshot};
 
 /// Half-jitter ladder. `floor` is the shortest delay and `cap` is the longest.
@@ -1056,7 +1056,8 @@ fn decode_window(
         .iter()
         .cloned()
         .map(|raw| {
-            let frame = EventFrame::from_params(&raw).map_err(|_| ReplayFailure::Other)?;
+            let frame =
+                crate::channel::decode_event_params(&raw).map_err(|_| ReplayFailure::Other)?;
             if frame.session_id.as_deref() != Some(session_id) {
                 return Err(ReplayFailure::Other);
             }
@@ -1110,6 +1111,30 @@ mod tests {
         };
         assert_eq!(inbound.generation, Generation(3));
         assert_eq!(inbound.raw, event);
+    }
+
+    #[test]
+    fn replay_preserves_untyped_stamped_tool_payload() {
+        let event = serde_json::json!({
+            "type": "tool.start", "session_id": "s", "admission_id": "a", "seq": 5,
+            "replay_epoch": "e", "payload": {"tool_call_id": "call-1", "tool_name": "terminal"},
+        });
+        let raw = serde_json::json!({
+            "events": [event.clone()], "latest_seq": 5, "last_sequence": 5,
+            "epoch": "e", "replay_epoch": "e", "truncated": false,
+            "snapshot_required": false, "count": 1,
+        });
+        let typed = serde_json::from_value(raw.clone()).expect("canonical replay envelope");
+        let ReplayWindow::Events(mut events) =
+            decode_window(typed, raw, Generation(3), "s").unwrap()
+        else {
+            panic!("expected events");
+        };
+        let (_, _, Inbound::Event(inbound)) = events.pop().expect("one event") else {
+            panic!("expected inbound event");
+        };
+        assert_eq!(inbound.raw, event);
+        assert_eq!(inbound.frame.type_name(), Some("tool.start"));
     }
 
     #[test]

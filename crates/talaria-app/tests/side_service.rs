@@ -320,6 +320,214 @@ fn opened_state() -> AppState {
     state
 }
 
+#[test]
+fn delayed_shell_result_stays_with_its_originating_session() {
+    let mut app = AppState::new("side-session-test");
+    app.profile = "fixture".into();
+    let opened =
+        |id| OpenedSession::from_snapshot(snapshot_json::snapshot(snapshot_json::base(id)));
+    update(
+        &mut app,
+        AppMessage::Opened {
+            opened: opened("a"),
+            notice: None,
+        },
+    );
+    submit(&mut app, "!old_command");
+    update(
+        &mut app,
+        AppMessage::Opened {
+            opened: opened("b"),
+            notice: None,
+        },
+    );
+    submit(&mut app, "!new_command");
+    update(
+        &mut app,
+        AppMessage::SideDone {
+            key: talaria_core::directory::rows::RowKey {
+                profile: "fixture".into(),
+                session_id: "a".into(),
+            },
+            events: vec![Event::ShellFinished {
+                request_id: RequestId(1),
+                outcome: ShellOutcome::Ok {
+                    stdout: "old output".into(),
+                    stderr: String::new(),
+                    code: 0,
+                },
+                duration_ms: 3,
+            }],
+        },
+    );
+    let b = &app.opened.as_ref().unwrap().state;
+    assert_eq!(b.side().pending.len(), 1, "B's command is still pending");
+    update(
+        &mut app,
+        AppMessage::Opened {
+            opened: opened("a"),
+            notice: None,
+        },
+    );
+    let a = &app.opened.as_ref().unwrap().state;
+    assert!(a.side().pending.is_empty());
+    assert!(a.cells().iter().any(|cell| matches!(cell, talaria_core::session::Cell::Shell(shell)
+        if shell.command == "old_command" && matches!(&shell.outcome, ShellOutcome::Ok { stdout, .. } if stdout == "old output"))));
+}
+
+#[test]
+fn delayed_side_results_remain_scoped_across_profiles_with_the_same_session_id() {
+    for outcome in [
+        ShellOutcome::Unknown,
+        ShellOutcome::NotSent {
+            not_connected: true,
+        },
+    ] {
+        let mut app = AppState::new("side-profiles");
+        let opened = || {
+            OpenedSession::from_snapshot(snapshot_json::snapshot(snapshot_json::base("same-id")))
+        };
+        app.profile = "first".into();
+        update(
+            &mut app,
+            AppMessage::Opened {
+                opened: opened(),
+                notice: None,
+            },
+        );
+        submit(&mut app, "!first_command");
+        app.profile = "second".into();
+        update(
+            &mut app,
+            AppMessage::Opened {
+                opened: opened(),
+                notice: None,
+            },
+        );
+        submit(&mut app, "!second_command");
+        update(
+            &mut app,
+            AppMessage::SideDone {
+                key: talaria_core::directory::rows::RowKey {
+                    profile: "first".into(),
+                    session_id: "same-id".into(),
+                },
+                events: vec![Event::ShellFinished {
+                    request_id: RequestId(1),
+                    outcome: outcome.clone(),
+                    duration_ms: 0,
+                }],
+            },
+        );
+        assert_eq!(app.opened.as_ref().unwrap().state.side().pending.len(), 1);
+        app.profile = "first".into();
+        update(
+            &mut app,
+            AppMessage::Opened {
+                opened: opened(),
+                notice: None,
+            },
+        );
+        let first = &app.opened.as_ref().unwrap().state;
+        assert!(first.side().pending.is_empty());
+        assert!(first.cells().iter().any(
+            |cell| matches!(cell, talaria_core::session::Cell::Shell(shell)
+            if shell.command == "first_command" && shell.outcome == outcome)
+        ));
+        app.profile = "second".into();
+        update(
+            &mut app,
+            AppMessage::Opened {
+                opened: opened(),
+                notice: None,
+            },
+        );
+        assert_eq!(app.opened.as_ref().unwrap().state.side().pending.len(), 1);
+    }
+}
+
+#[test]
+fn delayed_side_question_acceptance_and_failures_stay_with_the_origin() {
+    let events = [
+        Event::SideAccepted {
+            request_id: RequestId(1),
+            task_id: "old-task".into(),
+            accepted_ms: 4,
+        },
+        Event::SideRefused {
+            request_id: RequestId(1),
+            reason: "refused".into(),
+            detail: None,
+        },
+        Event::SideNotSent {
+            request_id: RequestId(1),
+            not_connected: true,
+        },
+        Event::SideUnknown {
+            request_id: RequestId(1),
+        },
+    ];
+    for event in events {
+        let mut app = AppState::new("side-question-owner");
+        app.profile = "fixture".into();
+        let opened =
+            |id| OpenedSession::from_snapshot(snapshot_json::snapshot(snapshot_json::base(id)));
+        update(
+            &mut app,
+            AppMessage::Opened {
+                opened: opened("a"),
+                notice: None,
+            },
+        );
+        submit(&mut app, "/btw old question");
+        update(
+            &mut app,
+            AppMessage::Opened {
+                opened: opened("b"),
+                notice: None,
+            },
+        );
+        submit(&mut app, "/btw new question");
+        update(
+            &mut app,
+            AppMessage::SideDone {
+                key: talaria_core::directory::rows::RowKey {
+                    profile: "fixture".into(),
+                    session_id: "a".into(),
+                },
+                events: vec![event.clone()],
+            },
+        );
+        assert_eq!(app.opened.as_ref().unwrap().state.side().pending.len(), 1);
+        update(
+            &mut app,
+            AppMessage::Opened {
+                opened: opened("a"),
+                notice: None,
+            },
+        );
+        let first = &app.opened.as_ref().unwrap().state;
+        match event {
+            Event::SideAccepted { .. } => assert!(matches!(&first.side().pending[0].kind,
+                talaria_core::side::PendingKind::Side { task_id: Some(id), .. } if id == "old-task")),
+            Event::SideUnknown { .. } => {
+                assert_eq!(first.side().unconfirmed.len(), 1);
+                assert!(first.cells().iter().any(
+                    |cell| matches!(cell, talaria_core::session::Cell::Notice(notice)
+                    if notice.text == talaria_core::side::SIDE_UNKNOWN_NOTICE)
+                ));
+            }
+            _ => {
+                assert!(first.side().pending.is_empty());
+                assert!(first.cells().iter().any(
+                    |cell| matches!(cell, talaria_core::session::Cell::Side(side)
+                    if side.question == "old question")
+                ));
+            }
+        }
+    }
+}
+
 fn submit(state: &mut AppState, text: &str) -> Vec<AppEffect> {
     update(
         state,
@@ -351,7 +559,7 @@ fn btw_is_a_local_command_that_asks_a_side_question() {
     let effects = submit(&mut state, "/btw why?");
     assert!(effects.iter().any(|effect| matches!(
         effect,
-        AppEffect::Side(Effect::AskSide { question, .. }) if question == "why?"
+        AppEffect::Side { effect: Effect::AskSide { question, .. }, .. } if question == "why?"
     )));
     assert!(unrecorded(&effects).is_empty());
 }

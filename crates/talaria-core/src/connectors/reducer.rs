@@ -1143,6 +1143,10 @@ fn key_input(
                 state.filter.pop();
                 state.selected = 0;
             }
+            ConnectorsKey::ClearField => {
+                state.filter.clear();
+                state.selected = 0;
+            }
             ConnectorsKey::Close | ConnectorsKey::Cancel => {
                 state.filter.clear();
                 state.filtering = false;
@@ -1271,6 +1275,14 @@ fn key_input(
             }]
         }
         ConnectorsKey::Toggle if platform(state).is_some() => {
+            let Some(platform) = platform(state) else {
+                return Vec::new();
+            };
+            state.pending_toggle = Some(PendingToggle {
+                id: platform.id.clone(),
+                name: platform.name.clone(),
+                enabled: !platform.enabled,
+            });
             state.prompt = Some(Prompt::Confirm(ConfirmKind::TogglePlatform));
             Vec::new()
         }
@@ -1730,6 +1742,7 @@ fn pairing_confirm(state: &mut ConnectorsState, approve: bool) -> Vec<Connectors
 fn prompt_key(state: &mut ConnectorsState, key: ConnectorsKey) -> Vec<ConnectorsEffect> {
     if matches!(key, ConnectorsKey::Close | ConnectorsKey::Cancel) {
         state.prompt = None;
+        state.pending_toggle = None;
         return Vec::new();
     }
     if matches!(state.prompt, Some(Prompt::Confirm(_))) {
@@ -1829,6 +1842,7 @@ fn confirm(state: &mut ConnectorsState) -> Vec<ConnectorsEffect> {
     let Some(Prompt::Confirm(kind)) = state.prompt.take() else {
         return Vec::new();
     };
+    let pending_toggle = state.pending_toggle.take();
     if !matches!(
         kind,
         ConfirmKind::DiscardPlatform | ConfirmKind::DiscardTools
@@ -1884,10 +1898,29 @@ fn confirm(state: &mut ConnectorsState) -> Vec<ConnectorsEffect> {
             }];
         }
         ConfirmKind::SavePlatform | ConfirmKind::TogglePlatform => {
-            let Some(platform) = platform(state).cloned() else {
+            let selected = if kind == ConfirmKind::TogglePlatform {
+                pending_toggle
+                    .as_ref()
+                    .and_then(|pending| state.platforms.iter().find(|row| row.id == pending.id))
+            } else {
+                platform(state)
+            };
+            let Some(platform) = selected.cloned() else {
+                notice(state, "That messaging platform is no longer available.");
                 return Vec::new();
             };
-            let enabled = (kind == ConfirmKind::TogglePlatform).then_some(!platform.enabled);
+            let enabled = pending_toggle.as_ref().map(|pending| pending.enabled);
+            if enabled == Some(platform.enabled) {
+                notice(
+                    state,
+                    format!(
+                        "{} is already {}.",
+                        platform.name,
+                        if platform.enabled { "on" } else { "off" }
+                    ),
+                );
+                return Vec::new();
+            }
             let draft = if enabled.is_none() {
                 state.drafts.get(&platform.id).cloned().unwrap_or_default()
             } else {

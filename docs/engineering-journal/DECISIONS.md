@@ -4354,3 +4354,12 @@ fixture measurement. Shared width 1 met it; per-session width 1 failed foregroun
 **Revisit when.** The operator approves the default or a new measurement on the intended
 machine supports another value. The C tool observation and the real-provider error also
 need investigation before drawing broader conclusions.
+
+
+## 2026-10-29 — Streaming JSON for scripts
+
+**Decision.** Use Hermes's familiar stream-json record names with Talaria's own documented fields and the existing print result as each turn's result. Consume input lines in order, run turns sequentially in one session, and stop on the first turn failure except an interrupt record. A closed output stops the owned turn and exits 141.
+
+**Rationale.** Ordered input assigns interrupts unambiguously; sequential execution avoids running a later prompt after a failure. Stopping when output closes avoids continuing work whose consumer has left. The existing result shape gives scripts one parser for both print modes.
+
+**Rejected.** Queueing prompts ahead of their predecessors, silently continuing after output closes, and claiming wire compatibility with Hermes's different field shapes. **Revisit when.** A pipelined input mode or drop-in compatibility is explicitly required.

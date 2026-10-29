@@ -87,3 +87,42 @@ fn read_segments(path: &Path) -> (Vec<Vec<String>>, bool) {
     }
     (segments, saw_delta_text)
 }
+
+#[test]
+fn deeply_nested_markdown_survives_in_a_subprocess() {
+    const CHILD: &str = "TALARIA_DEEP_MARKDOWN_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        for input in [
+            "> ".repeat(5_000) + "visible quote",
+            (0..300)
+                .map(|depth| format!("{}- item\n", "  ".repeat(depth)))
+                .collect(),
+        ] {
+            let rendered = render_markdown(&input, &options(80));
+            let plain = rendered
+                .iter()
+                .flat_map(|line| &line.spans)
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            assert!(
+                plain.contains("visible quote") || plain.contains("item"),
+                "missing content: {plain:?}"
+            );
+            assert!(plain.len() < 100_000, "fallback is not bounded");
+        }
+        return;
+    }
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "deeply_nested_markdown_survives_in_a_subprocess",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "nested Markdown subprocess failed: {status}"
+    );
+}

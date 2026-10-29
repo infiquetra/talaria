@@ -76,9 +76,8 @@ pub struct Composer {
     draft: Draft,
     recall: Recall,
     burst: PasteBurst,
-    /// Bytes each character of the current fast run put into the draft, so a burst takes
-    /// exactly those back out.
-    run: Vec<usize>,
+    /// Exact insertion positions and byte lengths for the provisional fast run.
+    run: Vec<(usize, usize)>,
     exit_armed: Option<Instant>,
     title: Option<String>,
     /// Border and prompt-marker styles; the default is the phase 1 look.
@@ -159,11 +158,7 @@ impl Composer {
         let mut inserted = self.flush_burst();
         self.burst.reset();
         self.run.clear();
-        let clean = clean_text(text);
-        if !clean.is_empty() {
-            self.draft.insert_clean(&clean);
-            inserted = true;
-        }
+        inserted |= self.insert_paste_text(text);
         if inserted {
             self.disarm();
             ComposerOutcome::Changed
@@ -324,6 +319,9 @@ impl Composer {
             width.saturating_sub(3)
         });
         let wrap_width = text_cells.saturating_sub(1).max(1);
+        if self.wrap_width != Some(wrap_width) {
+            self.draft.reset_preferred_column();
+        }
         self.wrap_width = Some(wrap_width);
         self.refresh_cache(wrap_width);
         let total = if self.draft.text().is_empty() {
@@ -385,9 +383,10 @@ impl Composer {
                 if self.burst_run_restarted() {
                     self.run.clear();
                 }
+                let start = self.draft.caret();
                 let before = self.draft.text().len();
                 self.draft.insert(&c.to_string());
-                self.run.push(self.draft.text().len() - before);
+                self.run.push((start, self.draft.text().len() - before));
                 if self.draft.text().len() != before || disarmed {
                     ComposerOutcome::Changed
                 } else {
@@ -395,8 +394,15 @@ impl Composer {
                 }
             }
             CharStep::TakeBack(count) => {
-                let taken: usize = self.run.iter().rev().take(count).sum();
-                self.draft.remove_before(taken);
+                let caret = self.run.first().map(|(start, _)| *start);
+                for &(start, len) in self.run.iter().rev().take(count) {
+                    if len != 0 {
+                        self.draft.replace_range(start..start + len, "");
+                    }
+                }
+                if let Some(caret) = caret {
+                    self.draft.set_caret(caret);
+                }
                 self.run.clear();
                 ComposerOutcome::Changed
             }
@@ -457,11 +463,12 @@ impl Composer {
     }
 
     fn insert_paste_text(&mut self, text: &str) -> bool {
-        let clean = clean_text(text);
-        if clean.is_empty() {
+        let normalised = text.replace("\r\n", "\n").replace('\r', "\n");
+        let before = self.draft.text().len();
+        self.draft.insert(&normalised);
+        if self.draft.text().len() == before {
             return false;
         }
-        self.draft.insert_clean(&clean);
         self.disarm();
         true
     }

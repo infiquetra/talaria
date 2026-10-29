@@ -136,8 +136,8 @@ pub struct QueueState {
     pub(crate) started_seen: BTreeSet<AdmissionId>,
     /// Admission to the id of the session's own waiting submit it belongs to.
     pub(crate) fifo_of: BTreeMap<AdmissionId, String>,
-    /// Draft submits that send the draft now once their receipt reads `queued`.
-    pub(crate) send_now_drafts: BTreeSet<SubmissionId>,
+    /// Draft submits with the generation and authority epoch they intended to interrupt.
+    pub(crate) send_now_drafts: BTreeMap<SubmissionId, (i64, Option<i64>)>,
     /// Target of a finished plan whose final order still has to be checked.
     pub(crate) verify: Option<Vec<AdmissionId>>,
     /// Text the person should get back, oldest first, until taken.

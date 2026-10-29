@@ -19,11 +19,39 @@ enum Spacing {
     Item,
 }
 
-fn nodes<'a>(events: &mut impl Iterator<Item = Event<'a>>) -> Vec<Node<'a>> {
+const MAX_NESTING: usize = 32;
+
+fn nodes<'a>(events: &mut impl Iterator<Item = Event<'a>>, depth: usize) -> Vec<Node<'a>> {
     let mut result = Vec::new();
     while let Some(event) = events.next() {
         match event {
-            Event::Start(tag) => result.push(Node::Branch(tag, nodes(events))),
+            Event::Start(tag) if depth < MAX_NESTING => {
+                result.push(Node::Branch(tag, nodes(events, depth + 1)));
+            }
+            Event::Start(_) => {
+                // Consume the rest of this subtree iteratively, including its closing tag.
+                let mut nesting = 1usize;
+                let mut flattened = vec![Node::Leaf(Event::Text("… ".into()))];
+                for event in events.by_ref() {
+                    match event {
+                        Event::Start(_) => nesting += 1,
+                        Event::End(_) => {
+                            nesting -= 1;
+                            if nesting == 0 {
+                                break;
+                            }
+                        }
+                        Event::Text(_)
+                        | Event::Code(_)
+                        | Event::Html(_)
+                        | Event::InlineHtml(_)
+                        | Event::SoftBreak
+                        | Event::HardBreak => flattened.push(Node::Leaf(event)),
+                        _ => {}
+                    }
+                }
+                result.push(Node::Branch(Tag::Paragraph, flattened));
+            }
             Event::End(_) => break,
             event => result.push(Node::Leaf(event)),
         }
@@ -41,7 +69,7 @@ pub(crate) fn render(
         text,
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS,
     );
-    let document = nodes(&mut parser.into_iter());
+    let document = nodes(&mut parser.into_iter(), 0);
     Renderer { options, cache }.sequence(
         &document,
         usize::from(options.width.max(8)),
@@ -273,18 +301,21 @@ impl Renderer<'_> {
                 )
             };
             let indent = " ".repeat(wrap::columns(&[Span::raw(marker.as_str())]));
-            let lines = self.sequence(
+            let mut lines = self.sequence(
                 item,
                 width.saturating_sub(indent.len()).max(1),
                 depth + 1,
                 if loose { Spacing::Item } else { Spacing::Tight },
             );
+            if lines.is_empty() {
+                lines.push(Line::default());
+            }
             result.extend(prefix(
                 lines,
                 &marker,
                 &indent,
                 self.style(Style::default()),
-                false,
+                true,
             ));
         }
         result

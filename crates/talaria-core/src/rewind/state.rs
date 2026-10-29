@@ -319,6 +319,14 @@ struct LoadedRead {
     pending: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct PendingExternal {
+    revision: Option<i64>,
+    removed: Option<u64>,
+    is_rewind: bool,
+    read_after_event: Option<u64>,
+}
+
 impl LoadedRead {
     fn blocked(self) -> bool {
         self.running || self.pending > 0
@@ -368,6 +376,10 @@ pub struct RewindState {
     diff_stat_only: Option<bool>,
     diff_scroll: usize,
     external_removed: Option<u64>,
+    external_is_rewind: bool,
+    pending_external: Option<PendingExternal>,
+    external_sequence: u64,
+    read_sequence: u64,
     reload_pending: bool,
     last_rebuild_revision: Option<i64>,
 }
@@ -390,6 +402,14 @@ fn view_line(text: impl Into<String>, style: LineStyle) -> ViewLine {
 static OFF_LIST: CheckpointList = CheckpointList::Off;
 
 impl RewindState {
+    /// Cancel session-owned work without reusing tickets from earlier sessions.
+    pub fn change_session(&mut self) {
+        *self = Self {
+            next_ticket: self.next_ticket,
+            ..Self::default()
+        };
+    }
+
     /// An overlay is showing. A typed command's working step is not an overlay.
     #[must_use]
     pub fn is_open(&self) -> bool {
@@ -693,6 +713,8 @@ impl RewindState {
             viewport: self.viewport,
             reload_pending: self.reload_pending,
             last_rebuild_revision: self.last_rebuild_revision,
+            pending_external: self.pending_external,
+            external_sequence: self.external_sequence,
             ..Self::default()
         };
     }
@@ -703,6 +725,9 @@ impl RewindState {
     }
 
     fn call(&mut self, call: Call) -> RewindEffect {
+        if matches!(&call, Call::ReadSession) {
+            self.read_sequence = self.external_sequence;
+        }
         let kind = match &call {
             Call::ReadSession => CallKind::ReadSession,
             Call::ListCheckpoints => CallKind::ListCheckpoints,
@@ -839,18 +864,42 @@ impl RewindState {
         revision: Option<i64>,
         rewound_count: Option<u64>,
     ) -> Vec<RewindEffect> {
-        if operation != "rewind" || matches!(self.mode, Mode::Working(_)) {
+        if operation != "rewind" {
             return Vec::new();
         }
-        if let (Some(revision), Some(last)) = (revision, self.last_rebuild_revision)
+        if !matches!(self.mode, Mode::Working(_))
+            && let (Some(revision), Some(last)) = (revision, self.last_rebuild_revision)
             && revision <= last
         {
             return Vec::new();
         }
+        self.remember_external(revision, rewound_count, true);
+        if matches!(self.mode, Mode::Working(_)) {
+            return Vec::new();
+        }
         self.close();
         self.external_removed = rewound_count;
+        self.external_is_rewind = true;
         self.mode = Mode::Working(Step::ExternalRebuildRead);
         vec![self.call(Call::ReadSession)]
+    }
+
+    fn remember_external(&mut self, revision: Option<i64>, removed: Option<u64>, is_rewind: bool) {
+        self.external_sequence += 1;
+        let pending = self
+            .pending_external
+            .get_or_insert_with(PendingExternal::default);
+        if let Some(revision) = revision {
+            if pending.revision.is_none_or(|old| revision >= old) {
+                pending.revision = Some(revision);
+                pending.removed = removed;
+                pending.is_rewind |= is_rewind;
+            }
+        } else {
+            pending.read_after_event = Some(self.external_sequence);
+            pending.removed = removed;
+            pending.is_rewind |= is_rewind;
+        }
     }
 
     fn key(&mut self, key: RewindKey) -> Vec<RewindEffect> {
@@ -1286,7 +1335,11 @@ impl RewindState {
             }
             (Step::ExternalRebuildRead, Reply::SessionRead(read)) => {
                 self.record_revision(read.revision);
-                let notice = vec![text::rewound_elsewhere_marker(self.external_removed)];
+                let notice = if self.external_is_rewind {
+                    vec![text::rewound_elsewhere_marker(self.external_removed)]
+                } else {
+                    vec![text::RELOADED_MARKER.to_string()]
+                };
                 let effect = self.rebuild(read.raw, notice);
                 self.close_with(vec![effect])
             }
@@ -1457,6 +1510,19 @@ impl RewindState {
         after_restore: bool,
         failure: CallFailure,
     ) -> Vec<RewindEffect> {
+        if let CallFailure::Refused {
+            reason, revision, ..
+        } = &failure
+            && matches!(
+                reason.as_str(),
+                "revision_conflict"
+                    | "stale_generation"
+                    | "revision_mismatch"
+                    | "generation_mismatch"
+            )
+        {
+            self.remember_external(*revision, None, false);
+        }
         let reason = match &failure {
             CallFailure::Refused {
                 reason,
@@ -1802,7 +1868,18 @@ fn reply_matches(kind: CallKind, reply: &Reply) -> bool {
 pub fn update(state: &mut RewindState, input: RewindInput, now_ms: u64) -> Vec<RewindEffect> {
     // The view reads the clock; no transition does.
     let _ = now_ms;
-    match input {
+    let external_read_failed = matches!(state.mode, Mode::Working(Step::ExternalRebuildRead))
+        && matches!(
+            &input,
+            RewindInput::Reply {
+                ticket,
+                reply: Reply::Failed(_),
+            } if state.awaited == Some((*ticket, CallKind::ReadSession))
+        );
+    let read_sequence = matches!(&input, RewindInput::Reply { ticket, .. }
+        if state.awaited == Some((*ticket, CallKind::ReadSession)))
+    .then_some(state.read_sequence);
+    let mut effects = match input {
         RewindInput::Open { turn_running } => state.open(turn_running),
         RewindInput::OpenCheckpoints => state.open_checkpoints(),
         RewindInput::OpenDiff(source) => state.open_diff(source),
@@ -1830,5 +1907,35 @@ pub fn update(state: &mut RewindState, input: RewindInput, now_ms: u64) -> Vec<R
             revision,
             rewound_count,
         } => state.session_updated(&operation, revision, rewound_count),
+    };
+    if external_read_failed {
+        state.pending_external = None;
     }
+    if let Some(pending) = state.pending_external {
+        let covered = effects.iter().any(|effect| match effect {
+            RewindEffect::Rebuild { snapshot, .. } => {
+                pending.revision.is_none_or(|wanted| {
+                    snapshot
+                        .get("revision")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|actual| actual >= wanted)
+                }) && pending
+                    .read_after_event
+                    .is_none_or(|event| read_sequence.is_some_and(|read| read >= event))
+            }
+            _ => false,
+        });
+        if covered {
+            state.pending_external = None;
+        } else if !matches!(state.mode, Mode::Working(_)) {
+            state.pending_external = None;
+            state.close();
+            state.external_removed = pending.removed;
+            state.external_is_rewind = pending.is_rewind;
+            state.pending_external = Some(pending);
+            state.mode = Mode::Working(Step::ExternalRebuildRead);
+            effects.push(state.call(Call::ReadSession));
+        }
+    }
+    effects
 }

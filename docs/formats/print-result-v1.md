@@ -51,8 +51,7 @@ to 200 Unicode characters when the message is built. The same built strings
 appear on standard error and in this record.
 
 Version changes when a key is removed or its meaning changes. Adding a key keeps
-version 1; readers should tolerate additional keys. Future streaming output uses
-this object as its final record.
+version 1; readers should tolerate additional keys. The [streaming JSON format](stream-v1.md) uses this object as its `result` record for each turn.
 
 ```json
 {"type":"result","version":1,"status":"completed","exit_code":0,"text":"5555","session_id":"local-session-1","profile":"fixture","model":null,"provider":null,"admission_id":"adm-1","duration_ms":4210,"outcome":"completed","turn_exit_reason":null,"usage":{"input_tokens":null,"output_tokens":null,"cache_read_tokens":null,"cache_write_tokens":null,"reasoning_tokens":null,"total_tokens":null,"api_calls":null,"estimated_cost_usd":null,"cost_status":null},"warnings":[],"error":null}

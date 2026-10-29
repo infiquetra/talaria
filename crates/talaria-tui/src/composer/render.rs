@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::Prepared;
 use super::buffer::row_of;
-use super::wrap::Row;
+use super::wrap::{Row, display_cluster};
 use crate::history::sanitize;
 use crate::keys::Action;
 use crate::live::LiveSection;
@@ -80,7 +80,7 @@ impl<'a> ComposerSection<'a> {
             let drawn = if cluster == "\t" {
                 "    ".to_string()
             } else {
-                sanitize(cluster).into_owned()
+                display_cluster(cluster).into_owned()
             };
             if out.len() + UnicodeWidthStr::width(drawn.as_str()) > cells {
                 break;

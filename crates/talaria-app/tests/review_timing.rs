@@ -1,5 +1,7 @@
 //! Timing red tests for the review. Issue #245.
 
+#![allow(unexpected_cfgs, reason = "cargo-llvm-cov defines the coverage cfg")]
+
 #[path = "support/gh_stub.rs"]
 mod gh_stub;
 
@@ -107,6 +109,10 @@ async fn open_to_first_list_frame_200_files() {
 
 /// Keystrokes stay in budget while `gh` sleeps: 16 ms at the 95th percentile,
 /// 33 ms worst.
+#[cfg_attr(
+    coverage,
+    ignore = "instrumentation changes timing; the normal workspace run checks this budget"
+)]
 #[tokio::test]
 async fn keystroke_budget_while_gh_sleeps() {
     if skip_unless_git() {

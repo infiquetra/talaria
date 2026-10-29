@@ -432,8 +432,14 @@ fn on_submit_receipt(
             state.queue.ledger.remove(key);
         }
     }
-    if state.queue.send_now_drafts.remove(key) && result.status == Status::Queued {
-        return send_draft_plan(state, key, receipt);
+    if let Some((generation, authority_epoch)) = state.queue.send_now_drafts.remove(key)
+        && authority_epoch == state.queue.generation_fence.map(|(epoch, _)| epoch)
+        && authority_epoch.is_none_or(|epoch| result.authority_epoch == epoch)
+        && result.status == Status::Queued
+        && !state.queue.started_seen.contains(&receipt)
+        && running_generation(state) == Some(generation)
+    {
+        return send_draft_plan(state, key, receipt, generation);
     }
     Vec::new()
 }
@@ -443,10 +449,8 @@ fn send_draft_plan(
     state: &mut SessionState,
     draft: &SubmissionId,
     receipt: AdmissionId,
+    generation: i64,
 ) -> Vec<Effect> {
-    let Some(generation) = running_generation(state) else {
-        return Vec::new();
-    };
     let mut current = state.queue.queued_ids();
     if !current.contains(&receipt) {
         current.push(receipt.clone());
@@ -679,7 +683,7 @@ fn on_cancel_receipt(
 
 /// Hand text back to the person. The reducer cannot see the composer, so the text is also
 /// shown in the transcript: nothing is lost and no draft is touched.
-fn take_back(state: &mut SessionState, text: String) {
+pub(super) fn take_back(state: &mut SessionState, text: String) {
     state.queue.returned.push(text.clone());
     note(
         state,

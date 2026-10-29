@@ -3,19 +3,45 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
+    text::Line,
+    widgets::{Paragraph, Widget, Wrap},
 };
 use talaria_core::cron::{CardFocus, DetailView, RunsView};
 
 pub(super) fn draw(view: &DetailView, area: Rect, buf: &mut Buffer) {
     let accent = Style::default().fg(Color::Cyan);
     if let Some(card) = &view.run_card {
-        for (row, line) in field_lines(card)
+        let text = field_lines(card)
+            .into_iter()
+            .map(|line| crate::history::sanitize(&line).into_owned())
+            .collect::<Vec<_>>();
+        let selected = view.run_scroll.min(text.len().saturating_sub(1));
+        let rows_through_selection: usize = text
             .iter()
-            .take(usize::from(area.height))
+            .take(selected + 1)
+            .map(|line| {
+                Paragraph::new(line.as_str())
+                    .wrap(Wrap { trim: false })
+                    .line_count(area.width)
+            })
+            .sum();
+        let scroll = rows_through_selection.saturating_sub(usize::from(area.height));
+        let lines = text
+            .into_iter()
             .enumerate()
-        {
-            put(buf, area, row as u16, line, Style::default());
-        }
+            .map(|(index, line)| {
+                let style = if index == selected {
+                    Style::default().bg(Color::DarkGray)
+                } else {
+                    Style::default()
+                };
+                Line::styled(line, style)
+            })
+            .collect::<Vec<_>>();
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0))
+            .render(area, buf);
         return;
     }
     let lines = field_lines(&view.fields);

@@ -45,6 +45,83 @@ fn base(tab: ProvidersTab) -> ProvidersView {
     }
 }
 
+#[test]
+fn endpoint_form_shows_each_focused_field_after_a_wrapped_url() {
+    let fields = [
+        "Name",
+        "Base URL",
+        "API key",
+        "API mode",
+        "Model",
+        "Context length",
+    ];
+    for selected in 0..fields.len() {
+        let mut shown = base(ProvidersTab::Endpoints);
+        let lines = fields
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let value = if index == 1 {
+                    format!("https://example.test/{}", "x".repeat(85))
+                } else {
+                    String::new()
+                };
+                format!(
+                    "{}{label}: {value}",
+                    if index == selected { "› " } else { "" }
+                )
+            })
+            .collect();
+        shown.card = Some(CardView {
+            kind: CardKind::EndpointForm,
+            lines,
+            footer: "ctrl+s save · esc close".into(),
+        });
+        let screen = paint(&shown, 0, 60, 12);
+        assert!(
+            screen.contains(&format!("› {}", fields[selected])),
+            "{screen}"
+        );
+        assert!(screen.contains("ctrl+s save"), "{screen}");
+    }
+}
+
+#[test]
+fn real_endpoint_form_tracks_focus_after_editing_a_long_url() {
+    use talaria_core::providers::{EndpointList, ProvidersKey};
+    let now = Instant::now();
+    let mut state = ProvidersState::new();
+    update(
+        &mut state,
+        ProvidersInput::Open {
+            target: OpenTarget::Tab(ProvidersTab::Endpoints),
+            profile_name: "fixture".into(),
+            connected: true,
+        },
+        now,
+    );
+    update(
+        &mut state,
+        ProvidersInput::EndpointsLoaded(Ok(EndpointList {
+            endpoints: vec![],
+            current_provider: String::new(),
+            current_model: String::new(),
+        })),
+        now,
+    );
+    update(&mut state, ProvidersInput::Key(ProvidersKey::Enter), now);
+    update(&mut state, ProvidersInput::Key(ProvidersKey::Tab), now);
+    for ch in format!("https://example.test/{}", "x".repeat(85)).chars() {
+        update(&mut state, ProvidersInput::Key(ProvidersKey::Char(ch)), now);
+    }
+    for label in ["Base URL", "API key", "API mode", "Model", "Context length"] {
+        let screen = paint(&view(&state, now), 0, 60, 12);
+        assert!(screen.contains(&format!("› {label}")), "{screen}");
+        assert!(screen.contains("ctrl+s save"), "{screen}");
+        update(&mut state, ProvidersInput::Key(ProvidersKey::Tab), now);
+    }
+}
+
 fn loaded_keys() -> ProvidersView {
     let mut shown = base(ProvidersTab::Keys);
     shown.rows = vec![

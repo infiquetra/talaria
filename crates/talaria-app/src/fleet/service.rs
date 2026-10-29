@@ -471,6 +471,7 @@ struct Gate {
 }
 
 struct Probe {
+    id: u64,
     deadline: Instant,
 }
 
@@ -888,18 +889,19 @@ impl FleetTask {
         for effect in effects {
             match effect {
                 FleetEffect::FetchApprovals { key } => self.fetch_approvals(key, now),
-                FleetEffect::ProbeOutcome { key } => {
+                FleetEffect::ProbeOutcome { key, probe_id } => {
                     self.probes.insert(
                         key.clone(),
                         Probe {
+                            id: probe_id,
                             deadline: now + self.cfg.probe_deadline,
                         },
                     );
                     if self.guard(&key) {
                         self.schedule
-                            .trigger(Work::ProbeHead(key), CLASS_PROMPT, now);
+                            .trigger(Work::ProbeHead { key, probe_id }, CLASS_PROMPT, now);
                     } else {
-                        self.probed(key, Outcome::Unknown, false);
+                        self.probed(key, probe_id, Outcome::Unknown, false);
                     }
                 }
                 FleetEffect::Attention { .. } | FleetEffect::Diagnostic(_) => {}
@@ -936,12 +938,18 @@ impl FleetTask {
             .is_some_and(|(seen, ids)| *seen == tag && ids.contains(&key.session_id))
     }
 
-    fn probed(&mut self, key: RowKey, outcome: Outcome, found_complete: bool) {
-        if self.probes.remove(&key).is_none() {
+    fn probed(&mut self, key: RowKey, probe_id: u64, outcome: Outcome, found_complete: bool) {
+        if !self
+            .probes
+            .get(&key)
+            .is_some_and(|probe| probe.id == probe_id)
+        {
             return;
         }
+        self.probes.remove(&key);
         let effects = self.hub.apply(FleetInput::OutcomeProbed {
             key,
+            probe_id,
             outcome,
             found_complete,
             at: now_secs(),
@@ -993,11 +1001,13 @@ impl FleetTask {
                 "approval.pending",
                 json!({"session_id": key.session_id, "profile": key.profile}),
             ),
-            Work::ProbeHead(key) => (
+            Work::ProbeHead { key, .. } => (
                 "session.events.since",
                 json!({"session_id": key.session_id, "profile": key.profile, "last_sequence": 0}),
             ),
-            Work::ProbeTail { key, epoch, from } => (
+            Work::ProbeTail {
+                key, epoch, from, ..
+            } => (
                 "session.events.since",
                 json!({
                     "session_id": key.session_id,
@@ -1132,16 +1142,16 @@ impl FleetTask {
                 error,
                 at,
             },
-            (Work::ProbeHead(key), outcome) => {
-                self.probe_head(key, outcome, now);
+            (Work::ProbeHead { key, probe_id }, outcome) => {
+                self.probe_head(key, probe_id, outcome, now);
                 return;
             }
-            (Work::ProbeTail { key, .. }, outcome) => {
+            (Work::ProbeTail { key, probe_id, .. }, outcome) => {
                 let (outcome, found) = match outcome {
                     Ok(result) => tail_outcome(&result),
                     Err(_) => (Outcome::Unknown, false),
                 };
-                self.probed(key, outcome, found);
+                self.probed(key, probe_id, outcome, found);
                 return;
             }
         };
@@ -1149,12 +1159,22 @@ impl FleetTask {
         self.effects(effects);
     }
 
-    fn probe_head(&mut self, key: RowKey, outcome: Result<Value, CallError>, now: Instant) {
-        if !self.probes.contains_key(&key) {
+    fn probe_head(
+        &mut self,
+        key: RowKey,
+        probe_id: u64,
+        outcome: Result<Value, CallError>,
+        now: Instant,
+    ) {
+        if !self
+            .probes
+            .get(&key)
+            .is_some_and(|probe| probe.id == probe_id)
+        {
             return;
         }
         let Ok(result) = outcome else {
-            self.probed(key, Outcome::Unknown, false);
+            self.probed(key, probe_id, Outcome::Unknown, false);
             return;
         };
         let latest = result["latest_seq"].as_u64().unwrap_or(0);
@@ -1165,10 +1185,18 @@ impl FleetTask {
         match epoch {
             Some(epoch) if latest > 0 && self.guard(&key) => {
                 let from = latest.saturating_sub(PROBE_TAIL);
-                self.schedule
-                    .trigger(Work::ProbeTail { key, epoch, from }, CLASS_PROMPT, now);
+                self.schedule.trigger(
+                    Work::ProbeTail {
+                        key,
+                        probe_id,
+                        epoch,
+                        from,
+                    },
+                    CLASS_PROMPT,
+                    now,
+                );
             }
-            _ => self.probed(key, Outcome::Unknown, false),
+            _ => self.probed(key, probe_id, Outcome::Unknown, false),
         }
     }
 
@@ -1250,18 +1278,20 @@ impl FleetTask {
             self.next_backstop = now + self.cfg.backstop;
             return;
         }
-        let expired: Vec<RowKey> = self
+        let expired: Vec<(RowKey, u64)> = self
             .probes
             .iter()
             .filter(|(_, probe)| probe.deadline <= now)
-            .map(|(key, _)| key.clone())
+            .map(|(key, probe)| (key.clone(), probe.id))
             .collect();
-        for key in expired {
+        for (key, probe_id) in expired {
             self.schedule.forget(|work| match work {
-                Work::ProbeHead(probe) | Work::ProbeTail { key: probe, .. } => *probe != key,
+                Work::ProbeHead { key: probe, .. } | Work::ProbeTail { key: probe, .. } => {
+                    *probe != key
+                }
                 _ => true,
             });
-            self.probed(key, Outcome::Unknown, false);
+            self.probed(key, probe_id, Outcome::Unknown, false);
         }
         let due: Vec<RowKey> = self
             .deferred

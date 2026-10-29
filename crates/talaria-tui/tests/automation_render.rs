@@ -1,5 +1,7 @@
 //! Drawing the automation section and command cells. Behavior contract: issue 236.
 
+#[path = "support/color.rs"]
+mod color;
 mod support;
 
 use ratatui::buffer::Buffer;
@@ -161,6 +163,9 @@ fn first_cell(parser: &vt100::Parser, needle: &str, rows: u16, cols: u16) -> (vt
 
 #[test]
 fn section_rows_at_80_columns() {
+    if color::run_with_terminal_colors("section_rows_at_80_columns") {
+        return;
+    }
     let state = full_state();
     let theme = explicit_theme();
     let section = AutomationSection {
