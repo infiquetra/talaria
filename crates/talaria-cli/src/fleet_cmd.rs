@@ -562,6 +562,7 @@ fn slot_json(slot: &NeedSlot) -> (&'static str, Option<&str>) {
         NeedSlot::Prompt(id) => ("prompt", Some(id)),
         NeedSlot::Masked(id) => ("masked", Some(id)),
         NeedSlot::Waiting => ("waiting", None),
+        NeedSlot::External(_) => todo!("add external fleet sessions"),
     }
 }
 

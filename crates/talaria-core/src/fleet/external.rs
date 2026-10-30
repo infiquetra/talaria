@@ -1,0 +1,46 @@
+//! An externally owned fleet session.
+
+use super::{FleetEffect, FleetRegistry, NeedSlot, Outcome, RowKey, RowState};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FleetBackend {
+    Hermes,
+    Acp,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalOption {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternalNeed {
+    pub slot: NeedSlot,
+    pub text: String,
+    pub options: Vec<ExternalOption>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternalSession {
+    pub key: RowKey,
+    pub backend: FleetBackend,
+    pub agent: String,
+    pub title: String,
+    pub model: Option<String>,
+    pub activity: Option<String>,
+    pub state: RowState,
+    pub outcome: Option<Outcome>,
+    pub used: Option<u64>,
+    pub size: Option<u64>,
+    pub cost: Option<(f64, String)>,
+    pub needs: Vec<ExternalNeed>,
+    pub at: f64,
+}
+
+impl FleetRegistry {
+    pub fn observe_external(&mut self, _session: ExternalSession) -> Vec<FleetEffect> {
+        todo!("add external fleet sessions")
+    }
+}

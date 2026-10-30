@@ -9,6 +9,8 @@ pub enum NeedSlot {
     Prompt(String),
     /// A masked request id from an attached session.
     Masked(String),
+    /// The response belongs to an external backend.
+    External(String),
     /// The detail is not known yet.
     Waiting,
 }
@@ -52,4 +54,10 @@ pub struct NeedItem {
     pub exact: bool,
     /// The row is the foreground session.
     pub foreground: bool,
+}
+
+impl NeedItem {
+    pub fn external_options(&self) -> &[super::ExternalOption] {
+        todo!("add external fleet sessions")
+    }
 }

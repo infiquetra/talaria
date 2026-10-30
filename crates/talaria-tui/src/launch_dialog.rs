@@ -854,3 +854,36 @@ fn visible_controls(text: &str) -> String {
     }
     out
 }
+
+/// Values collected for a session owned by an external agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcpLaunchSubmit {
+    pub agent_id: String,
+    pub cwd: PathBuf,
+    pub prompt: String,
+}
+
+/// The fleet launch affordance for an external agent.
+pub struct AcpLaunchDialog;
+
+impl AcpLaunchDialog {
+    pub fn from_fleet_action(
+        _action: talaria_core::fleet_view::FleetAction,
+        _agents: Vec<(String, String)>,
+        _launch_directory: PathBuf,
+    ) -> Option<Self> {
+        todo!("add external agent launch")
+    }
+    pub fn choose_agent(&mut self, _agent_id: &str) {
+        todo!("add external agent launch")
+    }
+    pub fn set_prompt(&mut self, _prompt: &str) {
+        todo!("add external agent launch")
+    }
+    pub fn set_cwd(&mut self, _cwd: PathBuf) {
+        todo!("add external agent launch")
+    }
+    pub fn submit(&self) -> Result<AcpLaunchSubmit, String> {
+        todo!("add external agent launch")
+    }
+}

@@ -220,3 +220,18 @@ fn count_field(value: &Value, name: &str) -> Option<u64> {
         Some(field) => field.as_u64(),
     }
 }
+
+impl FleetRow {
+    pub fn backend(&self) -> super::FleetBackend {
+        todo!("add external fleet sessions")
+    }
+    pub fn agent(&self) -> Option<&str> {
+        todo!("add external fleet sessions")
+    }
+    pub fn occupancy(&self) -> Option<(u64, u64)> {
+        todo!("add external fleet sessions")
+    }
+    pub fn cost(&self) -> Option<(f64, &str)> {
+        todo!("add external fleet sessions")
+    }
+}
