@@ -16,9 +16,10 @@ runs:
       run: python3 -I "$GITHUB_ACTION_PATH/cache.py" "$CACHE_ROLE"
 
     # Only successful default-branch push/schedule/dispatch jobs publish shared downloads.
-    # PRs restore only. Do not add broad restore prefixes or cache installed tool binaries.
+    # PRs restore only. The dedicated tool role uses the caller's existing download cache.
+    # Do not add broad restore prefixes or cache installed tool binaries.
     - name: Cargo downloads (trusted writer)
-      if: steps.plan.outputs.save-downloads == 'true'
+      if: inputs.role != 'typify-install-release' && steps.plan.outputs.save-downloads == 'true'
       continue-on-error: true
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
@@ -29,7 +30,7 @@ runs:
           ${{ steps.plan.outputs.cargo-home }}/registry/src
           ${{ steps.plan.outputs.cargo-home }}/git/db
     - name: Cargo downloads (reader)
-      if: steps.plan.outputs.save-downloads != 'true'
+      if: inputs.role != 'typify-install-release' && steps.plan.outputs.save-downloads != 'true'
       continue-on-error: true
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
