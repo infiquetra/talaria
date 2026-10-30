@@ -192,6 +192,8 @@ pub struct FleetRow {
     pub occupancy: Option<(u64, u64)>,
     /// External-agent cost with its original currency.
     pub cost: Option<(f64, String)>,
+    /// Display location of a terminal agent.
+    pub terminal_location: Option<String>,
 }
 
 /// A string field. Missing or null is empty; another type is malformed.
@@ -248,6 +250,6 @@ impl FleetRow {
 
 impl FleetRow {
     pub fn terminal_location(&self) -> Option<&str> {
-        todo!("add terminal agent mapping")
+        self.terminal_location.as_deref()
     }
 }

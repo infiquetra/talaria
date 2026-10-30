@@ -4,4 +4,4 @@ mod config;
 mod service;
 
 pub use config::HerdrConfig;
-pub use service::{HerdrError, HerdrService};
+pub use service::{HerdrClient, HerdrError, HerdrFleetBackend, HerdrService, list_panes};

@@ -332,6 +332,11 @@ pub struct FleetReporter {
 }
 
 impl FleetReporter {
+    /// Publish a terminal observation through the same registry and attention queue.
+    pub fn observe_herdr(&self, projection: talaria_core::fleet::herdr::HerdrProjection) {
+        self.hub.apply_from_handle(FleetInput::Herdr(projection));
+    }
+
     /// Publish a complete external-session observation.
     pub fn observe_external(&self, session: talaria_core::fleet::ExternalSession) {
         self.hub.apply_from_handle(FleetInput::External(session));
@@ -434,8 +439,23 @@ impl FleetHandle {
 
 /// One-shot read for `talaria fleet list`: discover, attach, list once, close.
 pub async fn list_once(home: &Path, cfg: &FleetConfig) -> Result<FleetSnapshot, FleetListError> {
+    list_once_with_herdr(home, cfg, None).await
+}
+
+/// Read a fleet snapshot with optional live terminal agents on the same registry.
+pub async fn list_once_with_herdr(
+    home: &Path,
+    cfg: &FleetConfig,
+    herdr: Option<crate::herdr::HerdrConfig>,
+) -> Result<FleetSnapshot, FleetListError> {
     let profile = check_fleet_profile(home, cfg).await?;
     let handle = FleetService::start(home.to_path_buf(), profile, cfg.clone(), |_| {});
+    let mut terminals = herdr
+        .filter(|config| config.enabled)
+        .map(|config| crate::herdr::HerdrService::with_reporter(config, handle.reporter()));
+    if let Some(service) = terminals.as_mut() {
+        let _ = service.poll_once().await;
+    }
     let started = Instant::now();
     let deadline = cfg.connect_timeout + cfg.call_timeout;
     let mut last_reason = String::from("no connection");
@@ -455,6 +475,9 @@ pub async fn list_once(home: &Path, cfg: &FleetConfig) -> Result<FleetSnapshot, 
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     };
+    if let Some(service) = terminals.as_mut() {
+        service.close().await;
+    }
     handle.close().await;
     result
 }

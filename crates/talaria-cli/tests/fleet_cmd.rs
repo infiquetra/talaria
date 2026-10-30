@@ -188,6 +188,7 @@ fn profile_filter_hides_other_profiles() {
 
 fn row(session: &str, state: RowState, stale: bool) -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key: key(session),
         title: String::new(),
         model: Some("minimax-m3.1-flash".into()),

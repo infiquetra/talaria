@@ -453,6 +453,7 @@ mod tests {
             ProfileStatus::Listed { truncated: false },
         )];
         snap.rows = vec![FleetRow {
+            terminal_location: None,
             key: key.clone(),
             title: "probe".to_owned(),
             model: None,

@@ -21,6 +21,7 @@ fn key(profile: &str, id: &str) -> RowKey {
 
 fn row(profile: &str, id: &str, title: &str, state: RowState, model: Option<&str>) -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key: key(profile, id),
         title: title.to_owned(),
         model: model.map(str::to_owned),

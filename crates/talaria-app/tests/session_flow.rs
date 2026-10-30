@@ -411,6 +411,7 @@ impl Rig {
 
     fn setup(&self) -> RunSetup {
         RunSetup {
+            herdr: None,
             home: self.gateway.home().to_path_buf(),
             launch_id: LAUNCH_ID.to_string(),
             preopened: None,
