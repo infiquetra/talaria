@@ -6611,6 +6611,16 @@ clock advancement can otherwise fire a network deadline before the operating sys
 ready I/O. A bounded test-support guard keeps the runtime active while HTTP I/O is pending;
 explicit `advance()` still exercises the timeout. Production builds have no such guard.
 
+## 2026-10-29 — Migration notices must follow the current loader
+
+**Evidence.** Running the default Python-era configuration through the current loader and key map produced 25 notices. The loader now accepts reduced motion and the paste-line limit, and the current key map has three documented form and commit exceptions for Ctrl+S.
+
+**Mechanism.** Later configuration and modal-key work changed the behavior assumed by the earlier migration outline.
+
+**Rule.** Derive migration rows, exact notices, and key tables from the current loader and key map rather than a historical estimate.
+
+**Verification.** The documentation suite initially failed all 10 cases with missing pages; after the pages and test-harness corrections it passed all 10. The existing configuration and key-map documentation checks also passed.
+
 ## 2026-10-30 — Fleet backends report through one owner
 
 The merged ACP adapter owns `FleetHandle` and exposes a cloneable `FleetReporter`. Reconciling

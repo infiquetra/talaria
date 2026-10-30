@@ -56,3 +56,8 @@ No attribution lines belong in commits, PRs, code or generated documentation.
 - [Architecture decisions](platform-specs/04-architecture/adrs/)
 - [Changelog](CHANGELOG.md)
 - [License](LICENSE)
+
+- [Guide](docs/guide.md)
+- [Keybindings](docs/keybindings.md)
+- [Configuration](docs/configuration.md)
+- [Migrating from 0.6.5](docs/migrating-from-0.6.5.md)
