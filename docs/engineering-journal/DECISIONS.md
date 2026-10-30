@@ -4,44 +4,27 @@
 
 ## 2026-10-29
 
-### Gateway-owned voice and session-owned interaction
+### Distribute verified archives and review tap changes
 
-**Decision.** Keep audio capture and playback on Hermes. Talaria owns one voice
-state machine per attached session, sends narrow gateway calls, and renders the
-recording state and partial transcript in the existing terminal. On exit, wait a
-bounded time for the recording stop before detaching.
+**Decision.** Ship separate macOS and statically linked musl Linux archives for
+both architectures. Attach checksums and provenance to GitHub Releases, and
+propose final-release Homebrew formula updates as pull requests for the operator.
+Do not publish to package registries.
 
-**Rationale.** The gateway owns the microphone, the speaker, and per-session voice
-mode. Requests can settle after notifications, so pending calls must remain distinct
-from the visible capture phase. The terminal run module needs a small integration
-change to route the key and draw the status and partial line because it owns both
-composer input and the live region. **Rejected.** Client-side audio and process-wide
-voice toggles. **Revisit when.** The gateway exposes a session-scoped stop operation
-that also cancels whole-reply speech.
+**Rationale.** Static Linux binaries avoid a distribution-specific glibc floor;
+reviewing tap changes catches formula mistakes before users install them.
 
-The terminal run module also supplies the actual composer key routing and live-region
-rendering, and the foreground switch service owns detach after opening the target.
-Those minimal integration points lie outside the voice modules and are necessary for
-push-to-talk and stop-before-detach to work during a session switch.
+**Revisit when.** A supported dependency cannot build for musl.
 
-The voice action precedes the unbound Vim toggle in both the action enum and its ordered
-list. Existing fixed action-count assertions include the new action, and the key-map test
-checks that enum indices and list positions stay aligned. The voice shortcut is routed
-before Vim's command handler, after the active overlay, card and queue have had priority.
+### Defer Apple notarisation
 
-### External agents share the fleet, while keeping their own transport
+**Decision.** Release macOS archives without Developer ID signing or
+notarisation for now; explain the browser quarantine mark in the install guide.
 
-**Decision.** An owned external agent reports its session and individual permission responders to
-the existing fleet registry. The fleet routes its actions and transcript to that owner; Hermes
-continues to use the gateway. File and terminal capabilities are granted per configured agent and
-are disabled by default.
+**Rationale.** Notarisation requires an Apple signing identity and operator
+setup. Homebrew and command-line downloads do not add the browser quarantine mark.
 
-**Rationale.** A single queue preserves attention ordering, while responder identity prevents two
-requests for the same tool from being answered together. Keeping transport ownership explicit
-prevents external actions from becoming gateway requests.
-
-**Revisit when.** ACP adds a stable session ownership or reopening contract that Talaria can safely
-support.
+**Revisit when.** Signing and notarisation become an approved release requirement.
 
 ## 2026-10-26
 
@@ -4395,76 +4378,3 @@ fixture measurement. Shared width 1 met it; per-session width 1 failed foregroun
 **Revisit when.** The operator approves the default or a new measurement on the intended
 machine supports another value. The C tool observation and the real-provider error also
 need investigation before drawing broader conclusions.
-
-## 2026-10-29 — Streaming JSON for scripts
-
-**Decision.** Use Hermes's familiar stream-json record names with Talaria's own documented fields and the existing print result as each turn's result. Consume input lines in order, run turns sequentially in one session, and stop on the first turn failure except an interrupt record. A closed output stops the owned turn and exits 141.
-
-**Rationale.** Ordered input assigns interrupts unambiguously; sequential execution avoids running a later prompt after a failure. Stopping when output closes avoids continuing work whose consumer has left. The existing result shape gives scripts one parser for both print modes.
-
-**Rejected.** Queueing prompts ahead of their predecessors, silently continuing after output closes, and claiming wire compatibility with Hermes's different field shapes. **Revisit when.** A pipelined input mode or drop-in compatibility is explicitly required.
-
-## 2026-10-29 — Compile through the existing engine and native board transport
-
-**Decision.** The compiler captures the existing engine with a backend that reports
-start and completion messages through a channel and yields before each stub response.
-It retains canonical engine call IDs. HTTP operations use `RestClient`; the events
-socket belongs to the board client. Payload checks finish before graph emission,
-and an unassigned root is completed last. The sink's existing metadata interface does
-not carry full task payloads, so payload comparison reads matching tasks through the
-same native board client. No engine or generated-contract changes are needed.
-
-**Rationale.** Recomputing call IDs or implementing a second script engine would make
-compilation disagree with ordinary workflow execution. Metadata-only comparison would
-miss changed prompts and overrides. The frozen staffing resolver exposes its roster
-by reference so the compiler can reject another profile and report limited routes.
-
-**Integration exceptions.** The application loop and terminal adapter need narrow
-board message, effect, view, key and overlay arms to make the feature reachable.
-The shared REST client preserves full, credential-redacted Kanban refusal details and
-applies the response cap without limiting Kanban request bodies. Existing non-Kanban
-request limits and refusal truncation remain in force. These changes are needed in
-addition to the board modules and command table owned by this unit.
-
-**Revisit when.** Hermes publishes a generated board contract, a transactional graph
-endpoint, or an enforced result-schema contract.
-
-## 2026-10-29 — Remote native sign-in uses the existing client and reconnect actor
-
-**Decision.** A remote signs in through Hermes's native browser PKCE broker, saves owner-only
-credentials, and exchanges bearer tokens for a new query ticket on every attach. Both local
-and remote connections use `MaybeTlsStream<TcpStream>`. Unknown remote identity is adopted
-from `runtime.describe`; the existing replay epoch detects later restarts. A parameter policy
-travels with connection parts into the client actor and survives replacement, so profile
-routing covers ordinary calls and replay calls.
-
-**Rationale.** At the pinned Hermes commit `4d04303818b61bf3aa09278af48356315515965b`,
-`hermes_cli/web_server_chat.py:265-281` sets the public subprotocol echo only for a ticket
-subprotocol; the query path intentionally has no echo. Tungstenite 0.26.2 rejects that valid
-response when a protocol was offered. The remote HTTP upgrade validates status, accept key,
-Upgrade/Connection headers, extensions and any optional protocol echo, then recovers the same
-verified TLS stream and buffered bytes for tungstenite's frame implementation. Certificate
-verification remains enabled; extra roots are exposed only by the test-support feature.
-
-**Rejected.** Access tokens in URLs; ticket subprotocols whose success depends on proxy peer
-location; disabled certificate checks; a second RPC or reconnect implementation.
-**Revisit when.** Upstream negotiates the public protocol on query-ticket upgrades or a
-compatible tungstenite version supports optional protocol negotiation.
-
-The supplied-dial entry point and the existing preopened-connection slot keep local launch
-semantics intact. Minimal integration touches include the CLI entry, library exports,
-configuration dependencies and interactive runner; plain client streams in the client peer
-and application gateway fixtures are wrapped in `MaybeTlsStream::Plain`. Those fixture
-changes adapt the transport type without changing assertions. The configuration-root
-helper follows the existing nonempty override rule because no application-level
-`talaria_home()` helper is present in this baseline.
-
-Two drafted harness details were corrected without changing assertions: the TLS round trip
-retains its Link event receiver, whose lifetime owns the existing Link loop, and the gated
-mock omits the optional `info.launch_request` field when the recorded fixture holds the
-recorder's `[redacted]` string in place of the contract's object. The production reconnect
-and snapshot decoding rules stay unchanged.
-
-Paste-back sign-in runs before the screen and uses a scoped descriptor guard to disable and
-restore echo. This is the unit's narrow exception to terminal-mode ownership in the patterns
-guide; it writes no escape sequences and does not share the live terminal's input reader.

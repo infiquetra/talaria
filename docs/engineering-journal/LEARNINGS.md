@@ -2,6 +2,28 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — Release packages need runner and artifact checks
+
+**Evidence.** The packaging tests construct Mach-O and ELF headers, exercise the
+static-link check and compare reproducible archive bytes. The release workflow
+waits for all target artifacts, verifies their checksums and only then creates a
+release; a rerun hashes existing assets before uploading missing files. GitHub's
+[runner retirement announcement](https://github.com/actions/runner-images/issues/13518)
+states that `macos-14` has scheduled brownouts and retires on 2026-11-02.
+
+**Generalizable rule.** Validate platform and linkage from the artifact, guard
+published bytes on retries, and recheck runner availability before the dry run.
+
+## 2026-10-30 — A formula test needs a real Homebrew installation
+
+**Evidence.** The offline suite compares the formula against its independently
+written golden file and checks Ruby syntax. The package-check workflow also
+installs and tests a generated formula through a temporary local tap; that live
+runner check remains to be observed on the pull request.
+
+**Generalizable rule.** Treat a golden template as an offline guard, and use a
+real package-manager installation to establish runtime compatibility.
+
 ## 2026-10-29 — Voice mode and capture have different gateway owners
 
 **Evidence.** Hermes v0.22.4 `gateway/session_config.py:123-151`,

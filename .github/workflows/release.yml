@@ -1,6 +1,6 @@
 name: Release
 
-# Check the tag format, its workspace version and the project check on the tagged tree.
+# Check the tagged tree, then publish verified archives and propose tap updates.
 
 on:
   push:
@@ -20,9 +20,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    # macOS arm64 is the supported platform.
-    runs-on: macos-14
+  check:
+    runs-on: macos-15
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Resolve the tag being released
         id: resolve
@@ -97,13 +100,137 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test --workspace
-      - name: Create the GitHub Release
+      - name: Check the release version
+        id: version
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          workspace="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "talaria-cli") | .version')"
+          version="$(python3 -I tools/package/package.py version-gate --tag "$TAG" \
+            --workspace-version "$workspace")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    uses: ./.github/workflows/package-build.yml
+    with:
+      ref: ${{ needs.check.outputs.tag }}
+      version: ${{ needs.check.outputs.version }}
+
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: talaria-*
+          path: dist
+          merge-multiple: true
+      - name: Create and verify checksums
+        run: |
+          python3 -I tools/package/package.py checksums dist
+          (cd dist && sha256sum -c SHA256SUMS)
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/talaria-*.tar.gz
+      - name: Create or complete the release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.resolve.outputs.tag }}
-          PRERELEASE: ${{ steps.resolve.outputs.prerelease }}
+          TAG: ${{ needs.check.outputs.tag }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
         run: |
-          args=(release create "$TAG" --verify-tag --title "Talaria $TAG" --generate-notes)
-          if [ "$PRERELEASE" = "true" ]; then args+=(--prerelease); fi
-          gh "${args[@]}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            mkdir existing
+            count="$(gh release view "$TAG" --json assets --jq '.assets | length')"
+            if [ "$count" -gt 0 ]; then
+              gh release download "$TAG" --dir existing
+            fi
+            names="$(python3 -I tools/package/package.py plan-upload dist/SHA256SUMS existing)"
+            for name in $names; do gh release upload "$TAG" "dist/$name"; done
+          else
+            args=(release create "$TAG" --verify-tag --title "Talaria $TAG" --generate-notes)
+            if [ "$PRERELEASE" = "true" ]; then args+=(--prerelease); fi
+            gh "${args[@]}" dist/talaria-*.tar.gz dist/SHA256SUMS
+          fi
+
+  tap:
+    needs: [check, publish]
+    if: needs.check.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Is the tap token set
+        id: token
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; the Homebrew tap was not updated"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+          path: talaria
+      - if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: infiquetra/homebrew-talaria
+          token: ${{ env.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Fetch the published checksums
+        if: steps.token.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir sums
+      - name: Open the tap pull request
+        if: steps.token.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ env.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          branch="talaria-$VERSION"
+          cd tap
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "::error::Branch $branch already exists in the tap; not overwriting it."
+            exit 1
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              echo "::error::Could not check the tap branch."
+              exit "$status"
+            fi
+          fi
+          open="$(gh pr list --repo infiquetra/homebrew-talaria --head "$branch" --state open \
+            --json number --jq 'length')"
+          if [ "$open" != "0" ]; then
+            echo "::error::An open pull request for $branch already exists in the tap."
+            exit 1
+          fi
+          mkdir -p Formula
+          python3 -I ../talaria/tools/package/package.py formula --version "$VERSION" \
+            --sums ../sums/SHA256SUMS > Formula/talaria.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add Formula/talaria.rb
+          git commit -m "talaria $VERSION"
+          git push origin "$branch"
+          gh pr create --repo infiquetra/homebrew-talaria --head "$branch" --base main \
+            --title "talaria $VERSION" \
+            --body "Release: https://github.com/infiquetra/talaria/releases/tag/$TAG"

@@ -1,0 +1,75 @@
+name: Package check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/package/**"
+      - ".github/workflows/package-*.yml"
+      - ".github/workflows/release.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Package tests
+        env:
+          PACKAGE_REQUIRE_RUBY: "1"
+        run: python3 -I -m unittest discover -s tools/package/tests -t tools/package
+
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      ref: ${{ steps.v.outputs.ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+      - id: v
+        run: |
+          echo "version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "talaria-cli") | .version')" >> "$GITHUB_OUTPUT"
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [tests, version]
+    uses: ./.github/workflows/package-build.yml
+    with:
+      ref: ${{ needs.version.outputs.ref }}
+      version: ${{ needs.version.outputs.version }}
+
+  formula-install:
+    needs: [build, version]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: talaria-*
+          path: dist
+          merge-multiple: true
+      - name: Install the formula from a throwaway local tap
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_ANALYTICS: "1"
+        run: |
+          python3 -I tools/package/package.py checksums dist
+          dist="$(cd dist && pwd)"
+          python3 -I tools/package/package.py formula --version "$VERSION" \
+            --sums dist/SHA256SUMS --base-url "file://$dist" > talaria.rb
+          brew tap-new --no-git talaria-ci/local
+          cp talaria.rb "$(brew --repository talaria-ci/local)/Formula/talaria.rb"
+          brew install --formula talaria-ci/local/talaria
+          "$(brew --prefix)/bin/talaria" --version
+          brew test talaria-ci/local/talaria
+          brew audit --strict --formula talaria-ci/local/talaria
+          brew uninstall --formula talaria-ci/local/talaria
+          brew untap talaria-ci/local

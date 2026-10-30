@@ -608,7 +608,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             ]
             if actual != inventory:
                 raise ValueError(f"wrong ordered cache role/path inventory for {job}")
-            if job == "release" and cls.field(caches[0], "if", 8) != RELEASE_CACHE_IF:
+            if job in {"release", "check"} and cls.field(caches[0], "if", 8) != RELEASE_CACHE_IF:
                 raise ValueError(
                     "release cache must bind the event ref to the checked-out tag"
                 )
@@ -676,7 +676,12 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_release_cache_requires_bound_tag_ref_and_existing_helper(self) -> None:
         root = Path(__file__).resolve().parents[3]
         source = (root / ".github/workflows/release.yml").read_text()
-        expected = {"release": [("release-debug", "target/debug")]}
+        expected = {
+            "check": [("release-debug", "target/debug")],
+            "build": [],
+            "publish": [],
+            "tap": [],
+        }
         for weakened in (
             "hashFiles('.github/actions/rust-cache/action.yml') != ''",
             "github.ref == format('refs/tags/{0}', steps.resolve.outputs.tag)",
@@ -811,7 +816,12 @@ class WorkflowPolicyTests(unittest.TestCase):
                     ("typify-install-release", "target/ci-tools/cargo-typify-0.8.0"),
                 ],
             },
-            "release.yml": {"release": [("release-debug", "target/debug")]},
+            "release.yml": {
+                "check": [("release-debug", "target/debug")],
+                "build": [],
+                "publish": [],
+                "tap": [],
+            },
         }
         for name, expected in roles.items():
             source = (root / ".github/workflows" / name).read_text()
