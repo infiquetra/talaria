@@ -14565,7 +14565,7 @@ mod workflow_wake_tests {
             "v":1,"run_id":"01JB2X9Q4M8Z7K3T5V6W8Y0A1C", "created_at_ms":1000,
             "workflow":{"name":"review-branch","script_sha256":"a".repeat(64)},
             "args":null,"started_at_ms":1,"seed":4242,"profile":"fixture",
-            "on_unknown":"wait","talaria_version":"0.7.0-dev", "hermes":{},
+            "on_unknown":"wait","talaria_version":env!("CARGO_PKG_VERSION"), "hermes":{},
             "roster":{},"approval_policy":{}
         }))
         .unwrap();

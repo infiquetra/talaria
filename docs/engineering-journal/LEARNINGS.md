@@ -2,6 +2,16 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — Historical recordings and active version values have different roles
+
+**Evidence.** The release metadata check found development-version literals in workflow test manifests and in three recorded doctor screens. The manifest values follow the workspace version, while the recordings retain the exact bytes captured at the time.
+
+**Mechanism.** A hard-coded active version becomes stale at the release bump; rewriting a recording would change the historical evidence.
+
+**Rule.** Derive active test versions from package metadata and keep historical recordings intact in the documented archive.
+
+**Verification.** The metadata suite initially passed eight cases and failed on the stale development-version literal. It passed all nine after the version-source and recording-location corrections. The relocated screen readers also passed their smoke regression tests.
+
 ## 2026-10-30 ACP adapter: one fleet for non-Hermes agents
 
 The Hermes v0.22.4 ACP server projects the gateway rather than owning an independent execution
