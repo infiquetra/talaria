@@ -6516,6 +6516,27 @@ count, and repeated the corrected test twenty times successfully.
 **Rule.** In paused-time transport tests, observe the socket operation before asserting
 a timer's effect; keep production connection deadlines intact.
 
+## 2026-10-29 — Cargo install compilation has its own cache identity
+
+Evidence: the cache policy tests bind both locked cargo-typify installs to one isolated target/build
+directory and preserve installation after cache miss, hit or error. The tool key includes the
+published crate and packaged-lock checksums, compiler, host image, flags and fixed install policy.
+Home Cargo configuration, unsupported overrides and unsafe paths disable only the optional cache.
+Compiler outputs remain executable input from trusted producers; a version check is functional
+qualification, not binary attestation. Actual fresh-state reuse and hosted transport need measurement.
+
+Rule: cache tool compilation separately from installed state, bind effective inputs, and keep the
+original locked installation and its failures mandatory.
+
+## 2026-10-29 — Configuration refusal must match the complete hash-input prefix
+
+Evidence: synthetic `config*` files, directories and links to dummy credentials now trigger typify
+cache refusal with content reads forbidden. Metadata failures and parent aliases also refuse;
+configuration added after admission cannot enter the new role's shared content-hashing path.
+
+Rule: refuse the full configuration prefix by metadata and exclude it from unsupported content
+inputs; checking only conventional filenames leaves nonstandard names and links uncovered.
+
 ## 2026-10-29 — Remote tickets, optional protocol echoes and rotating refresh credentials
 
 **Evidence.** Hermes commit `4d04303818b61bf3aa09278af48356315515965b`,
