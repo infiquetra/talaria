@@ -8,3 +8,8 @@ A public terminal client for the Hermes gateway, being rewritten in Rust.
 - [Agent guidance](AGENTS.md): architecture and contribution rules.
 - [Handoff](docs/handoff/2026-10-22-next-steps/README.md): rewrite direction.
 - [Engineering journal](docs/engineering-journal/): durable project knowledge.
+
+- [Guide](docs/guide.md)
+- [Keybindings](docs/keybindings.md)
+- [Configuration](docs/configuration.md)
+- [Migrating from 0.6.5](docs/migrating-from-0.6.5.md)

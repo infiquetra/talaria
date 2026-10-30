@@ -380,7 +380,7 @@ focus = false
 searches saved prompts; Ctrl+Z suspends to the shell until `fg`. History is kept owner-only in `~/.talaria/history.jsonl`; a leading space or over 100,000 characters
 keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
 lists choose channels separately, and `done` waits for `done_after_seconds` (0 to 86400). Inside Herdr, `[herdr] report_state` reports blocked, working or idle.
-`status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees only `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
+`status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees the default-deny environment described below plus `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
 (`/theme` overrides it for one session); `theme.follow_hermes_skin = false` keeps Talaria's colours; `theme.colors` is `auto`, `truecolor`, `256`, `16` or `none`.
 `ui.reduced_motion` stops timed changes except counters, which change at most once a second. A paste of `paste_collapse_lines` lines or `paste_collapse_chars` characters
 becomes a label (0 turns that rule off). `TALARIA_THEME` beats `theme.mode`, `TALARIA_REDUCED_MOTION` beats `ui.reduced_motion`, and a non-empty `NO_COLOR` turns colour
@@ -629,3 +629,134 @@ Use `talaria acp agents` to check executable availability, or `talaria acp agent
 check the version handshake without creating a session. From the fleet view, start a new session
 and choose an `acp:` agent in the profile selector. Set its working directory and an optional first
 prompt. Its row shows the agent name, and its peek shows its transcript and permission choices.
+
+## Configuration tables
+
+The default block above is authoritative. Invalid values use the documented default and produce a notice; the application continues to start.
+
+### `keys`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| action name | string or list of strings | built-in bindings | valid chord names; an empty list unbinds | see [keybindings](keybindings.md) |
+
+### `editor`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `command` | string | empty | see the section above | empty |
+
+### `history`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `save` | boolean | true | true or false | true |
+
+### `notifications`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `bell` | list | needs_you, failed | see the section above | needs_you, failed |
+| `desktop` | list | needs_you, done, failed | see the section above | needs_you, done, failed |
+| `done_after_seconds` | integer | 20 | 0–86400 seconds | 20 |
+| `fleet_needs_you` | string | all | see the section above | all |
+| `fleet_finished` | string | watched | see the section above | watched |
+
+### `herdr`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `report_state` | boolean | true | true or false | true |
+
+### `composer`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `vim` | boolean | false | true or false | true |
+| `paste_collapse_lines` | integer | 5 | non-negative | 5 |
+| `paste_collapse_chars` | integer | 2000 | non-negative | 2000 |
+
+### `status`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `command` | string | not set | a program and optional arguments | `status-script` |
+| `interval_seconds` | integer | 5 | 1–3600 seconds | 5 |
+
+### `environment`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `allowlist` | list | `[]` | environment variable names | `EDITOR` |
+
+### `theme`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `mode` | string | auto | auto, light, dark | auto |
+| `follow_hermes_skin` | boolean | true | true or false | true |
+| `colors` | string | auto | auto, truecolor, 256, 16, none | auto |
+
+### `ui`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `reduced_motion` | boolean | false | true or false | false |
+
+### `fleet`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `enabled` | boolean | true | true or false | true |
+| `hot_poll_ms` | integer | 2000 | 1000–10000 ms | 2000 |
+| `cold_poll_ms` | integer | 4000 | 2000–30000 ms | 4000 |
+| `backstop_s` | integer | 30 | 10–300 seconds | 30 |
+
+### `subagents`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `poll_s` | integer | 5 | 2–60 seconds | 5 |
+| `tail_poll_ms` | integer | 2000 | 1000–10000 ms | 2000 |
+| `dock_rows` | integer | 3 | 0–10 | 3 |
+
+### `panes`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `multiplexer` | string | auto | auto, herdr, tmux, off | auto |
+| `direction` | string | auto | auto, right, down | auto |
+| `focus` | boolean | false | true or false | false |
+
+### `configure`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `provider` | string | not set | see the section above | not set |
+| `model` | string | not set | see the section above | not set |
+
+### `acp`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `agents` | list of tables | `[]` | see the section above | an `[[acp.agents]]` table |
+
+### `acp.agents`
+
+| Key | Type | Default | Range | Example |
+|---|---|---|---|---|
+| `id` | string | required | unique lowercase letters, digits and hyphens; 1–32 characters, starting with a letter or digit | `example` |
+| `display_name` | string | agent id | any string; an empty value uses the id | Example Agent |
+| `command` | string | required | non-empty executable name or path | `example-acp` |
+| `args` | list of strings | `[]` | separate command arguments | `[]` |
+| `auth_method` | string | not set | an agent-advertised authentication method | `agent-login` |
+| `allow_fs` | boolean | false | true or false | false |
+| `allow_terminal` | boolean | false | true or false | false |
+
+## Environment
+
+The client reads `HOME` for its configuration and `HERMES_HOME` for the Hermes home. `NO_COLOR`, `TALARIA_THEME`, and `TALARIA_REDUCED_MOTION` affect presentation; the latter two override the corresponding settings. Multiplexer detection also reads the Herdr and tmux environment.
+
+A status command receives a default-deny environment: `PATH`, `HOME`, `SHELL`, `TERM`, `TMPDIR`, `LANG`, and `LC_*`, plus `TALARIA_CONFIG_DIR`, `TALARIA_GATEWAY_URL` without credentials, `TALARIA_PROFILE`, `TALARIA_LOG_LEVEL`, and `TALARIA_STATUS_INTERVAL` when set, and allowed names from `environment.allowlist`. Credential-like names and known secret variables are never forwarded. `TALARIA_CONFIG_DIR` does not move the Talaria configuration file.
+
+See [migration from 0.6.5](migrating-from-0.6.5.md) for removed and changed settings.
