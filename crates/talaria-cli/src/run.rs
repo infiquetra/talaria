@@ -4263,9 +4263,13 @@ fn pick_session(
     launch: &Launch,
     home: &std::path::Path,
     launch_id: &str,
+    preopened: Option<OpenConnection>,
 ) -> Result<Option<(OpenConnection, String, Option<String>)>, LaunchFailure> {
     let (connection, rows) = runtime.block_on(async {
-        let connection = app::connect(launch, home).await?;
+        let connection = match preopened {
+            Some(connection) => connection,
+            None => app::connect(launch, home).await?,
+        };
         match app::list_sessions(&connection, launch_id).await {
             Ok(rows) => Ok((connection, rows)),
             Err(failure) => {
@@ -4304,7 +4308,27 @@ pub fn run(launch: Launch) -> ExitCode {
     run_with_ultracode(launch, false)
 }
 
-pub fn run_with_ultracode(mut launch: Launch, ultracode: bool) -> ExitCode {
+pub fn run_with_ultracode(launch: Launch, ultracode: bool) -> ExitCode {
+    run_selected(launch, ultracode, None)
+}
+
+pub fn run_remote(
+    launch: Launch,
+    ultracode: bool,
+    cfg: hermes_client::remote::RemoteConfig,
+    store: hermes_client::remote::TokenStore,
+) -> ExitCode {
+    run_selected(launch, ultracode, Some((cfg, store)))
+}
+
+fn run_selected(
+    mut launch: Launch,
+    ultracode: bool,
+    remote: Option<(
+        hermes_client::remote::RemoteConfig,
+        hermes_client::remote::TokenStore,
+    )>,
+) -> ExitCode {
     match launch.folder.canonicalize() {
         Ok(folder) if folder.is_dir() => launch.folder = folder,
         _ => return fail(&failure::folder_unreadable()),
@@ -4359,11 +4383,34 @@ pub fn run_with_ultracode(mut launch: Launch, ultracode: bool) -> ExitCode {
         list_title: None,
         notices,
         keys: loaded.config.keys.clone(),
-        fleet: talaria_app::fleet::attaches_after_first_frame(false, loaded.config.fleet.enabled)
-            .then(|| loaded.config.fleet.clone()),
+        fleet: talaria_app::fleet::attaches_after_first_frame(
+            false,
+            loaded.config.fleet.enabled && remote.is_none(),
+        )
+        .then(|| loaded.config.fleet.clone()),
     };
+    if let Some((cfg, store)) = remote {
+        let dial = hermes_client::remote::RemoteDial::new(cfg, store, launch.profile.clone());
+        let dial = match launch.record.as_deref() {
+            Some(path) => dial.with_recording(path.to_path_buf()),
+            None => dial,
+        };
+        match runtime.block_on(talaria_app::connection::ConnectionService::open_with_dial(
+            &launch, dial,
+        )) {
+            Ok(connection) => setup.preopened = Some(connection),
+            Err(failure) => {
+                eprintln!(
+                    "talaria: {}\nNext step: {}",
+                    failure.what,
+                    failure.next_step.trim_end_matches('.')
+                );
+                return ExitCode::from(failure.exit_code);
+            }
+        }
+    }
     if launch.mode == StartMode::Resume(None) {
-        match pick_session(&runtime, &launch, &home, &launch_id) {
+        match pick_session(&runtime, &launch, &home, &launch_id, setup.preopened.take()) {
             Ok(Some((connection, id, title))) => {
                 launch.mode = StartMode::Resume(Some(id));
                 setup.preopened = Some(connection);

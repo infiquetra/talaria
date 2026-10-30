@@ -100,9 +100,12 @@ impl Peer {
             stream
                 .set_nodelay(true)
                 .expect("loopback websocket pair failed");
-            let (socket, _) = tokio_tungstenite::client_async("ws://127.0.0.1/", stream)
-                .await
-                .expect("loopback websocket pair failed");
+            let (socket, _) = tokio_tungstenite::client_async(
+                "ws://127.0.0.1/",
+                tokio_tungstenite::MaybeTlsStream::Plain(stream),
+            )
+            .await
+            .expect("loopback websocket pair failed");
             socket
         });
         let (server_stream, _) = listener

@@ -1,6 +1,6 @@
 //! Open the session socket and finish the opening handshake.
 //!
-//! TLS is refused. The socket is a plain TCP connection to the loopback origin.
+//! Local sockets use plain TCP; remote sockets use verified TLS.
 
 use std::time::Duration;
 
@@ -25,7 +25,8 @@ use hermes_contract::schemas::{
     ClientCapabilitiesResult, GatewayReadyPayload, RuntimeDescribeResult,
 };
 
-pub type WsStreamInner = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+pub type WsStreamInner =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 pub type WsSink = SplitSink<WsStreamInner, Message>;
 pub type WsStream = SplitStream<WsStreamInner>;
 
@@ -153,10 +154,13 @@ pub async fn connect_with(
         let config = WebSocketConfig::default()
             .max_message_size(Some(8 * 1024 * 1024))
             .max_frame_size(Some(8 * 1024 * 1024));
-        let (socket, response) =
-            tokio_tungstenite::client_async_with_config(request, socket, Some(config))
-                .await
-                .map_err(map_upgrade_error)?;
+        let (socket, response) = tokio_tungstenite::client_async_with_config(
+            request,
+            tokio_tungstenite::MaybeTlsStream::Plain(socket),
+            Some(config),
+        )
+        .await
+        .map_err(map_upgrade_error)?;
         if response
             .headers()
             .get("Sec-WebSocket-Protocol")
@@ -178,6 +182,8 @@ pub async fn connect_with(
             next_request_id: 1,
             buffered: Vec::new(),
             recorder: None,
+            identity_unknown: false,
+            param_injector: None,
         })
     })
     .await
@@ -331,6 +337,8 @@ pub struct Connection {
     next_request_id: u64,
     buffered: Vec<String>,
     recorder: Option<(Recorder, u64)>,
+    identity_unknown: bool,
+    param_injector: Option<crate::remote::ParamInjector>,
 }
 
 impl std::fmt::Debug for Connection {
@@ -341,13 +349,60 @@ impl std::fmt::Debug for Connection {
 
 impl Connection {
     /// Wrap an upgraded socket before its handshake.
-    pub fn from_websocket(
-        _socket: tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        _identity: ExpectedIdentity,
-    ) -> Self {
-        todo!("add remote gateway implementation")
+    pub fn from_websocket(socket: WsStreamInner, identity: ExpectedIdentity) -> Self {
+        let (instance_id, profile_id, identity_unknown) = match identity {
+            ExpectedIdentity::Unknown => (String::new(), None, true),
+            ExpectedIdentity::Known {
+                instance_id,
+                profile_id,
+            } => (instance_id, profile_id, false),
+        };
+        let (sink, stream) = socket.split();
+        Self {
+            sink,
+            stream,
+            instance_id,
+            profile_id,
+            identity_unknown,
+            param_injector: None,
+            next_request_id: 1,
+            buffered: Vec::new(),
+            recorder: None,
+        }
+    }
+
+    pub(crate) fn set_param_injector(&mut self, injector: crate::remote::ParamInjector) {
+        self.param_injector = Some(injector);
+    }
+
+    pub(crate) async fn request_raw(
+        &mut self,
+        method: &str,
+        mut params: Value,
+    ) -> Result<Value, HandshakeError> {
+        if let Some(injector) = &self.param_injector {
+            injector(method, &mut params);
+        }
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        self.send_text(
+            serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+                .to_string(),
+        )
+        .await?;
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let (raw, frame) = read_frame(self).await?;
+                if frame["id"] == id && is_reply(&frame) {
+                    return Ok(frame);
+                }
+                self.buffered.push(raw);
+            }
+        })
+        .await
+        .map_err(|_| HandshakeError::CallTimeout {
+            method: "session.list",
+        })?
     }
 
     /// Record every handshake frame this connection reads or writes, tagged with
@@ -365,6 +420,7 @@ impl Connection {
             next_request_id: self.next_request_id,
             buffered: self.buffered,
             recorder: self.recorder.map(|(recorder, _)| recorder),
+            param_injector: self.param_injector,
         }
     }
 
@@ -414,6 +470,8 @@ pub struct ConnectionParts {
     pub buffered: Vec<String>,
     /// The connection's recorder, passed on so the channel records after hand-over.
     pub recorder: Option<Recorder>,
+    /// Optional routing policy, installed by the client actor for every generation.
+    pub param_injector: Option<crate::remote::ParamInjector>,
 }
 
 impl ConnectionParts {
@@ -433,6 +491,7 @@ impl ConnectionParts {
             next_request_id,
             buffered,
             recorder: None,
+            param_injector: None,
         }
     }
 }
@@ -514,13 +573,18 @@ pub async fn handshake_with(
     }
     let describe: RuntimeDescribeResult =
         serde_json::from_value(value["result"].clone()).map_err(|_| HandshakeError::BadDescribe)?;
-    if describe.instance_id != conn.instance_id
-        || conn
-            .profile_id
-            .as_ref()
-            .is_some_and(|profile| profile.as_ref() != describe.profile_id)
+    if !conn.identity_unknown
+        && (describe.instance_id != conn.instance_id
+            || conn
+                .profile_id
+                .as_ref()
+                .is_some_and(|profile| profile.as_ref() != describe.profile_id))
     {
         return Err(HandshakeError::IdentityChanged);
+    }
+    if conn.identity_unknown {
+        conn.instance_id = describe.instance_id.clone();
+        conn.identity_unknown = false;
     }
     if conn.profile_id.is_none() {
         conn.profile_id = Some(ProfileId::from(describe.profile_id.clone()));

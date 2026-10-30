@@ -16,6 +16,9 @@ name = "talaria"
 path = "src/main.rs"
 
 [dependencies]
+url.workspace = true
+toml.workspace = true
+tokio-util.workspace = true
 talaria-workflow.workspace = true
 serde.workspace = true
 chrono.workspace = true

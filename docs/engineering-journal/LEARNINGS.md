@@ -6515,3 +6515,33 @@ count, and repeated the corrected test twenty times successfully.
 
 **Rule.** In paused-time transport tests, observe the socket operation before asserting
 a timer's effect; keep production connection deadlines intact.
+
+## 2026-10-29 — Remote tickets, optional protocol echoes and rotating refresh credentials
+
+**Evidence.** Hermes commit `4d04303818b61bf3aa09278af48356315515965b`,
+`hermes_cli/web_server_chat.py:265-281`, `gateway/run_api.py:327-351`,
+`hermes_cli/dashboard_auth/routes.py:569-617`, and
+`hermes_cli/dashboard_auth/refresh_singleflight.py:26-27`; the remote authentication and
+connection suites in `crates/hermes-client/tests/`.
+
+**Mechanism.** Query tickets admit a host-scoped session without a protocol echo. Ticket
+subprotocols additionally require a loopback peer. An authorization code is consumed before
+proof-key validation and is never safe to retry after an uncertain exchange. Refresh must
+re-read the file, serialize concurrent requests within the process, and save the successful
+response before using its bearer. Identical strings are valid for stateless providers.
+There is no cross-process lock: a second process can hold an old rotating refresh token
+beyond Hermes's 30-second success cache and invalidate the session. The re-read narrows that
+gap but cannot close it.
+
+The gated mock has two explicit shortcuts: `/mock/approve` and auto-approval replace the
+real provider round trip, and ticket subprotocols are always refused to model a non-loopback
+proxy peer. Mock success does not verify the operator's tunnel. The live probe and ignored
+live round trip remain operator prerequisites.
+
+**Generalizable rule.** Keep authentication retries specific to the endpoint: never retry
+one-time redemption; persist refresh before use; mint a fresh ticket for every connection.
+
+The authentication tests combine real socket readiness with Tokio's paused clock. Automatic
+clock advancement can otherwise fire a network deadline before the operating system reports
+ready I/O. A bounded test-support guard keeps the runtime active while HTTP I/O is pending;
+explicit `advance()` still exercises the timeout. Production builds have no such guard.

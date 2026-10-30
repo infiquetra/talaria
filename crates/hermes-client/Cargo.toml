@@ -12,6 +12,13 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
+bytes.workspace = true
+getrandom.workspace = true
+subtle = "=2.6.1"
+tempfile.workspace = true
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "=0.8.5"
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 base64.workspace = true
 tokio-util.workspace = true
 http.workspace = true
@@ -23,7 +30,7 @@ gethostname.workspace = true
 regex.workspace = true
 time.workspace = true
 url.workspace = true
-zeroize.workspace = true
+zeroize = { workspace = true, features = ["derive"] }
 futures-util = { workspace = true, features = ["sink"] }
 hermes-contract.workspace = true
 rustix.workspace = true
@@ -32,7 +39,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
+tokio-tungstenite = { workspace = true, features = ["connect", "handshake", "rustls-tls-native-roots"] }
 
 [lints]
 workspace = true
@@ -56,7 +63,7 @@ serde_json.workspace = true
 static_assertions.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
-tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
+tokio-tungstenite = { workspace = true, features = ["connect", "handshake", "rustls-tls-native-roots"] }
 trybuild = "=1.0.121"
 talaria-app.workspace = true
 talaria-core.workspace = true

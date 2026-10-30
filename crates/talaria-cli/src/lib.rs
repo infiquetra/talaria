@@ -12,6 +12,7 @@ pub mod picker;
 pub mod print;
 pub mod profiles_cmd;
 pub mod providers_wiring;
+pub mod remote;
 pub mod run;
 pub mod workflow;
 pub mod workflow_roster;

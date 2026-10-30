@@ -408,8 +408,8 @@ pub struct InboundStream {
 
 impl Client {
     /// Install a parameter injector for outbound calls.
-    pub fn set_param_injector(&self, _injector: Option<crate::remote::ParamInjector>) {
-        todo!("add remote gateway implementation")
+    pub fn set_param_injector(&self, injector: Option<crate::remote::ParamInjector>) {
+        let _ = self.handle.sender.send(Command::SetInjector(injector));
     }
     /// Start the actor on `parts`. The generation is 1. The id counter starts at `parts.next_request_id`.
     pub fn start(parts: ConnectionParts) -> (Self, InboundStream) {
@@ -1029,6 +1029,7 @@ impl Drop for InboundStream {
 }
 
 enum Command {
+    SetInjector(Option<crate::remote::ParamInjector>),
     Call {
         token: u64,
         method: String,
@@ -1239,6 +1240,7 @@ struct Actor {
     generation: Arc<AtomicU64>,
     commands: mpsc::WeakUnboundedSender<Command>,
     recorder: Option<Recorder>,
+    param_injector: Option<crate::remote::ParamInjector>,
 }
 
 impl Actor {
@@ -1263,6 +1265,7 @@ impl Actor {
             generation,
             commands: sender,
             recorder: None,
+            param_injector: None,
         };
         actor.install(parts, &events).await;
         loop {
@@ -1281,6 +1284,9 @@ impl Actor {
         mut parts: ConnectionParts,
         events: &mpsc::UnboundedSender<SocketEvent>,
     ) {
+        if let Some(injector) = parts.param_injector.take() {
+            self.param_injector = Some(injector);
+        }
         // The client keeps its recorder across a replaced connection.
         if let Some(recorder) = parts.recorder.take() {
             self.recorder = Some(recorder);
@@ -1351,12 +1357,16 @@ impl Actor {
 
     async fn command(&mut self, command: Command, events: &mpsc::UnboundedSender<SocketEvent>) {
         match command {
+            Command::SetInjector(injector) => self.param_injector = injector,
             Command::Call {
                 token,
                 method,
-                params,
+                mut params,
                 result,
             } => {
+                if let Some(injector) = &self.param_injector {
+                    injector(&method, &mut params);
+                }
                 if !self.state.connected || self.state.closed {
                     let _ = result.send(Err(CallError::NotConnected));
                     return;
@@ -1654,6 +1664,7 @@ mod tests {
             generation: Arc::new(AtomicU64::new(1)),
             commands: sender.downgrade(),
             recorder: None,
+            param_injector: None,
         };
         (actor, id, receiver)
     }
