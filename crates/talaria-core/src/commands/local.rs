@@ -93,6 +93,8 @@ pub enum LocalAction {
     Connectors(ConnectorsOpen),
     /// Propose configuration changes for review.
     Configure,
+    /// View the shared task board.
+    Kanban,
 }
 
 /// One local command.
@@ -421,6 +423,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[on|off|status]",
         takes_argument: true,
         action: LocalAction::Ultracode,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "kanban",
+        aliases: &[],
+        summary: "View a shared task board",
+        args_hint: "[board]",
+        takes_argument: true,
+        action: LocalAction::Kanban,
         tag: "talaria",
     },
 ];

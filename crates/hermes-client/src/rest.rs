@@ -64,6 +64,7 @@ pub enum Method {
     Get,
     Put,
     Post,
+    Patch,
     Delete,
 }
 impl Method {
@@ -72,6 +73,7 @@ impl Method {
             Self::Get => "GET",
             Self::Put => "PUT",
             Self::Post => "POST",
+            Self::Patch => "PATCH",
             Self::Delete => "DELETE",
         }
     }
@@ -191,9 +193,10 @@ impl RestClient {
         opts: RequestOpts,
     ) -> Result<Vec<u8>, RestError> {
         validate_path(path)?;
-        if body
-            .as_ref()
-            .is_some_and(|bytes| bytes.len() > self.options.max_body)
+        if !path.starts_with("/api/plugins/kanban/")
+            && body
+                .as_ref()
+                .is_some_and(|bytes| bytes.len() > self.options.max_body)
         {
             return Err(RestError::BodyTooLarge);
         }
@@ -309,6 +312,10 @@ impl RestClient {
         self.request(Method::Post, path, Some(body), RequestOpts::default())
             .await
     }
+    pub async fn patch_json(&self, path: &str, body: &Value) -> Result<Value, RestError> {
+        self.request(Method::Patch, path, Some(body), RequestOpts::default())
+            .await
+    }
     pub async fn delete_json(&self, path: &str) -> Result<Value, RestError> {
         self.request(Method::Delete, path, None, RequestOpts::default())
             .await
@@ -365,7 +372,11 @@ fn map_reply(
                     || text.to_owned(),
                     |ticket| text.replace(ticket, "<redacted>"),
                 );
-                text.chars().take(200).collect::<String>()
+                if path.starts_with("/api/plugins/kanban/") {
+                    text
+                } else {
+                    text.chars().take(200).collect::<String>()
+                }
             })
         })
     };

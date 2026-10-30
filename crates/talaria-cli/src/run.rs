@@ -150,6 +150,7 @@ pub enum ScreenInput {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Overlay {
     WorkflowProgress,
+    Kanban,
     Cron,
     /// The live screen, with no overlay.
     Live,
@@ -1987,6 +1988,54 @@ impl TuiScreen {
         prefix: &mut Vec<UserAction>,
     ) -> Vec<UserAction> {
         use crossterm::event::Event;
+        if let Some(board) = view.kanban
+            && !self.terminal.is_released()
+        {
+            use talaria_core::kanban::{BoardKey, BoardMode};
+            match &event {
+                Event::Key(raw) => {
+                    let key = Key::from(*raw);
+                    if key.kind == KeyKind::Release
+                        || key.mods.ctrl
+                        || key.mods.alt
+                        || key.mods.super_key
+                        || key.mods.other
+                    {
+                        return vec![];
+                    }
+                    let text_mode = matches!(
+                        board.mode,
+                        BoardMode::Comment { .. } | BoardMode::Evidence { .. } | BoardMode::Filter
+                    );
+                    let key = match key.code {
+                        KeyCode::Char(c) => Some(BoardKey::Char(c)),
+                        KeyCode::Left if !text_mode => Some(BoardKey::Char('h')),
+                        KeyCode::Down if !text_mode => Some(BoardKey::Char('j')),
+                        KeyCode::Up if !text_mode => Some(BoardKey::Char('k')),
+                        KeyCode::Right if !text_mode => Some(BoardKey::Char('l')),
+                        KeyCode::Enter => Some(BoardKey::Enter),
+                        KeyCode::Esc => Some(BoardKey::Esc),
+                        KeyCode::Backspace => Some(BoardKey::Backspace),
+                        _ => None,
+                    };
+                    return key.map(UserAction::Kanban).into_iter().collect();
+                }
+                Event::Paste(text) => {
+                    return if matches!(
+                        board.mode,
+                        BoardMode::Comment { .. } | BoardMode::Evidence { .. } | BoardMode::Filter
+                    ) {
+                        text.chars()
+                            .filter(|c| !c.is_control())
+                            .map(|c| UserAction::Kanban(BoardKey::Char(c)))
+                            .collect()
+                    } else {
+                        vec![]
+                    };
+                }
+                _ => {}
+            }
+        }
         if self.cron.is_some()
             && !self.terminal.is_released()
             && self.mcp_view.is_none()
@@ -3427,6 +3476,14 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        if let Some(board) = view.kanban {
+            self.open_overlay(Overlay::Kanban);
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::kanban_view::KanbanView::draw(board, area, buf)
+            });
+            return;
+        }
+        self.close_overlay(Overlay::Kanban);
         if let Some(picker) = view.workflow_picker {
             self.open_overlay(Overlay::WorkflowProgress);
             let theme = talaria_tui::workflow_view::WorkflowTheme::default();

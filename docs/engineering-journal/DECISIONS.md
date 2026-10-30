@@ -4355,7 +4355,6 @@ fixture measurement. Shared width 1 met it; per-session width 1 failed foregroun
 machine supports another value. The C tool observation and the real-provider error also
 need investigation before drawing broader conclusions.
 
-
 ## 2026-10-29 — Streaming JSON for scripts
 
 **Decision.** Use Hermes's familiar stream-json record names with Talaria's own documented fields and the existing print result as each turn's result. Consume input lines in order, run turns sequentially in one session, and stop on the first turn failure except an interrupt record. A closed output stops the owned turn and exits 141.
@@ -4363,3 +4362,28 @@ need investigation before drawing broader conclusions.
 **Rationale.** Ordered input assigns interrupts unambiguously; sequential execution avoids running a later prompt after a failure. Stopping when output closes avoids continuing work whose consumer has left. The existing result shape gives scripts one parser for both print modes.
 
 **Rejected.** Queueing prompts ahead of their predecessors, silently continuing after output closes, and claiming wire compatibility with Hermes's different field shapes. **Revisit when.** A pipelined input mode or drop-in compatibility is explicitly required.
+
+## 2026-10-29 — Compile through the existing engine and native board transport
+
+**Decision.** The compiler captures the existing engine with a backend that reports
+start and completion messages through a channel and yields before each stub response.
+It retains canonical engine call IDs. HTTP operations use `RestClient`; the events
+socket belongs to the board client. Payload checks finish before graph emission,
+and an unassigned root is completed last. The sink's existing metadata interface does
+not carry full task payloads, so payload comparison reads matching tasks through the
+same native board client. No engine or generated-contract changes are needed.
+
+**Rationale.** Recomputing call IDs or implementing a second script engine would make
+compilation disagree with ordinary workflow execution. Metadata-only comparison would
+miss changed prompts and overrides. The frozen staffing resolver exposes its roster
+by reference so the compiler can reject another profile and report limited routes.
+
+**Integration exceptions.** The application loop and terminal adapter need narrow
+board message, effect, view, key and overlay arms to make the feature reachable.
+The shared REST client preserves full, credential-redacted Kanban refusal details and
+applies the response cap without limiting Kanban request bodies. Existing non-Kanban
+request limits and refusal truncation remain in force. These changes are needed in
+addition to the board modules and command table owned by this unit.
+
+**Revisit when.** Hermes publishes a generated board contract, a transactional graph
+endpoint, or an enforced result-schema contract.
