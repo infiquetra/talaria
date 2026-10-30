@@ -87,4 +87,12 @@ The old `theme.name` selection and theme importer are not used. Set `display.ski
 
 ## Going back to 0.6.5
 
-Remove or move the Rust binary using the method by which you installed it, then reinstall the Python release using the command above. Check `command -v talaria` and `talaria --version` before continuing. Keep your configuration directory; review its settings instead of deleting it.
+Remove the source-built Rust binary (for example `rm ~/.local/bin/talaria`), then reinstall the Python release using the command above. Check `command -v talaria` and `talaria --version` before continuing.
+
+```bash
+rm ~/.local/bin/talaria
+command -v talaria
+talaria --version
+```
+
+Keep your configuration directory; review its settings instead of deleting it.
