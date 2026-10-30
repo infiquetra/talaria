@@ -69,6 +69,7 @@ fn full() -> StatusInputs {
         done: 0,
         approvals: None,
         pull_request: None,
+        voice: None,
     }
 }
 

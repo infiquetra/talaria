@@ -847,7 +847,8 @@ impl Composer {
             | Action::McpOpenLink
             | Action::McpCopy
             | Action::McpPasteRedirect
-            | Action::ToggleVim => {}
+            | Action::ToggleVim
+            | Action::VoiceRecord => {}
         }
         false
     }

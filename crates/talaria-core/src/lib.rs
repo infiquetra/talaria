@@ -40,3 +40,4 @@ pub mod text;
 pub mod workspace;
 
 pub mod ultracode;
+pub mod voice;

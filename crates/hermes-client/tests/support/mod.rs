@@ -7,6 +7,7 @@
 
 pub mod mock_rest;
 pub mod peer;
+pub mod voice_peer;
 
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};

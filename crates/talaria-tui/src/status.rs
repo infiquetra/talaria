@@ -20,7 +20,7 @@ pub use env::{DENIED_PROVIDER_KEYS, FORWARDED_TALARIA, build_child_env, clean_ga
 pub use output::{ExternalRow, Failure, ParsedOutput, parse_output};
 pub use segments::{
     ApprovalsSegment, ExternalSegment, LinePlan, Segment, SessionRef, StatusInputs, StatusSection,
-    TokenUsage, plan,
+    TokenUsage, VoiceSegment, plan,
 };
 
 /// The attach state of the gateway link.

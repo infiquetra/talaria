@@ -91,12 +91,23 @@ pub struct StatusInputs {
     pub approvals: Option<ApprovalsSegment>,
     /// The foreground folder's pull-request label, when its branch has one (#245).
     pub pull_request: Option<PrLabel>,
+    /// The microphone segment, when voice has something to show.
+    pub voice: Option<VoiceSegment>,
 }
 
 /// The approvals segment text and tone, handed over by the caller.
 #[derive(Clone, Debug)]
 pub struct ApprovalsSegment {
     /// The full segment text, for example `approvals: smart`.
+    pub text: String,
+    /// The tone the segment is drawn with.
+    pub tone: Tone,
+}
+
+/// The microphone segment text and tone, handed over by the caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoiceSegment {
+    /// The full segment text, for example `REC 0:00`.
     pub text: String,
     /// The tone the segment is drawn with.
     pub tone: Tone,
@@ -140,6 +151,8 @@ pub enum Segment {
     Done,
     /// The foreground folder's pull-request label (#245).
     PullRequest,
+    /// The microphone.
+    Voice,
 }
 
 impl Segment {
@@ -176,6 +189,7 @@ impl Segment {
             Segment::PullRequest => 11,
             Segment::External => 12,
             Segment::Ultracode => 13,
+            Segment::Voice => 14,
         }
     }
 
@@ -195,6 +209,7 @@ impl Segment {
             Segment::Done => 10,
             Segment::PullRequest => 11,
             Segment::External => 12,
+            Segment::Voice => 13,
         }
     }
 }

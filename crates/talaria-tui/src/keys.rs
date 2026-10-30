@@ -946,6 +946,7 @@ pub enum Action {
     McpPasteRedirect,
     /// Turn vim editing on or off. No default chord.
     ToggleVim,
+    VoiceRecord,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -977,7 +978,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 193] = [
+    pub const ALL: [Self; 194] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1171,6 +1172,7 @@ impl Action {
         Self::McpCopy,
         Self::McpPasteRedirect,
         Self::ToggleVim,
+        Self::VoiceRecord,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -1371,6 +1373,7 @@ impl Action {
             Self::McpCopy => "mcp_copy",
             Self::McpPasteRedirect => "mcp_paste_redirect",
             Self::ToggleVim => "toggle_vim",
+            Self::VoiceRecord => "voice_record",
         }
     }
 
@@ -1438,7 +1441,8 @@ impl Action {
             | Self::ComposerSendNow
             | Self::ComposerSteer
             | Self::AgentsPanel
-            | Self::ToggleVim => KeyContext::Composer,
+            | Self::ToggleVim
+            | Self::VoiceRecord => KeyContext::Composer,
             Self::AttentionNext => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
@@ -1785,6 +1789,7 @@ impl Action {
             Self::McpCopy => &["c"],
             Self::McpPasteRedirect => &["p"],
             Self::ToggleVim => &[],
+            Self::VoiceRecord => &[],
         }
     }
 }
@@ -3462,5 +3467,30 @@ mod tests {
             ),
             Some(RolesKey::Effort)
         );
+    }
+
+    #[test]
+    fn voice_record_default_is_alt_r_and_unique() {
+        assert_eq!(
+            Action::VoiceRecord.default_chords(),
+            &["alt+r"],
+            "push-to-talk defaults to alt+r"
+        );
+        assert!(
+            !Action::VoiceRecord.default_chords().contains(&"ctrl+b"),
+            "push-to-talk must not take ctrl+b"
+        );
+        assert_eq!(Action::VoiceRecord.context(), KeyContext::Composer);
+        assert_eq!(Action::VoiceRecord.config_name(), "voice_record");
+        for action in Action::ALL {
+            if action == Action::VoiceRecord {
+                continue;
+            }
+            assert!(
+                !action.default_chords().contains(&"alt+r"),
+                "{} already uses alt+r",
+                action.config_name()
+            );
+        }
     }
 }
