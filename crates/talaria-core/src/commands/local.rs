@@ -436,6 +436,15 @@ const BUILTIN: &[LocalCommand] = &[
         action: LocalAction::Kanban,
         tag: "talaria",
     },
+    LocalCommand {
+        name: "voice",
+        aliases: &[],
+        summary: "Control push-to-talk and read-aloud",
+        args_hint: "[on|off|status|read]",
+        takes_argument: true,
+        action: LocalAction::Voice,
+        tag: "talaria",
+    },
 ];
 
 /// The five rewind commands, in table order. Issue #233.
@@ -492,15 +501,6 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
         args_hint: "",
         takes_argument: false,
         action: LocalAction::Fleet,
-        tag: "talaria",
-    },
-    LocalCommand {
-        name: "voice",
-        aliases: &[],
-        summary: "Control push-to-talk and read-aloud",
-        args_hint: "[on|off|status|read]",
-        takes_argument: true,
-        action: LocalAction::Voice,
         tag: "talaria",
     },
 ];
