@@ -3155,6 +3155,9 @@ impl StatusHost for TuiScreen {
 }
 
 impl Screen for TuiScreen {
+    fn acp_config(&self) -> talaria_app::acp::AcpConfig {
+        self.config.acp.clone()
+    }
     fn sync_providers(&mut self, view: Option<ProvidersView>) {
         if view.is_some() {
             self.open_overlay(Overlay::Providers);

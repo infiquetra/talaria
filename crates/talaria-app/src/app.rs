@@ -13216,6 +13216,11 @@ async fn run_inner<S: Screen>(
             .iter()
             .map(|agent| (agent.id.clone(), agent.display_name.clone()))
             .collect();
+        state.acp_manager = Some(crate::acp::manager::start(
+            acp_config,
+            fleet.reporter(),
+            executor.sender.clone(),
+        ));
         state.fleet_service = Some(fleet);
     }
     let mut pending = Some(tokio::spawn(connect_and_open(

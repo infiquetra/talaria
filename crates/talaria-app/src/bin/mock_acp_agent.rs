@@ -89,15 +89,15 @@ impl Mock {
                     let Some(message) = self.receive(input)? else {
                         break;
                     };
-                    if let Some(method) = step.get("method") {
-                        if &message["method"] != method {
-                            return Err(io::Error::other("unexpected protocol method"));
-                        }
+                    if let Some(method) = step.get("method")
+                        && &message["method"] != method
+                    {
+                        return Err(io::Error::other("unexpected protocol method"));
                     }
-                    if let Some(id) = step.get("response_id") {
-                        if message.get("id") != Some(id) || message.get("method").is_some() {
-                            return Err(io::Error::other("unexpected protocol response"));
-                        }
+                    if let Some(id) = step.get("response_id")
+                        && (message.get("id") != Some(id) || message.get("method").is_some())
+                    {
+                        return Err(io::Error::other("unexpected protocol response"));
                     }
                     if let Some(saved) = step.get("save").and_then(Value::as_object) {
                         for (name, pointer) in saved {

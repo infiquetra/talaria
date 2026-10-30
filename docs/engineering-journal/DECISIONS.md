@@ -2,6 +2,22 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-10-29
+
+### External agents share the fleet, while keeping their own transport
+
+**Decision.** An owned external agent reports its session and individual permission responders to
+the existing fleet registry. The fleet routes its actions and transcript to that owner; Hermes
+continues to use the gateway. File and terminal capabilities are granted per configured agent and
+are disabled by default.
+
+**Rationale.** A single queue preserves attention ordering, while responder identity prevents two
+requests for the same tool from being answered together. Keeping transport ownership explicit
+prevents external actions from becoming gateway requests.
+
+**Revisit when.** ACP adds a stable session ownership or reopening contract that Talaria can safely
+support.
+
 ## 2026-10-26
 
 ### Proposed, awaiting the operator: configuration travels over dashboard REST, not socket config.get and config.set

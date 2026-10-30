@@ -261,7 +261,7 @@ async fn prompt_streams_updates_then_completes() {
         prompt[0]["params"],
         json!({"sessionId":"session-1","prompt":[{"type":"text","text":"hello"}]})
     );
-    let snapshots = h.snapshots.lock().expect("snapshots");
+    let snapshots = h.snapshots.lock().expect("snapshots").clone();
     assert!(
         snapshots
             .iter()
@@ -285,7 +285,6 @@ async fn prompt_streams_updates_then_completes() {
             .count(),
         1
     );
-    drop(snapshots);
     h.service.close().await;
 }
 
@@ -308,7 +307,7 @@ async fn failed_tool_then_recovery_stays_working_until_end() {
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let snapshots = h.snapshots.lock().expect("snapshots");
+    let snapshots = h.snapshots.lock().expect("snapshots").clone();
     assert!(
         !snapshots
             .iter()
@@ -336,7 +335,6 @@ async fn failed_tool_then_recovery_stays_working_until_end() {
             .transcript(&key)
             .contains(&AcpCell::Text("Recovered".into()))
     );
-    drop(snapshots);
     h.service.close().await;
 }
 

@@ -230,7 +230,7 @@ fn external_body(
         scratch.set_stringn(
             0,
             u16::try_from(*y).unwrap_or(0),
-            &cut(&sanitize(line), width, false),
+            cut(&sanitize(line), width, false),
             width,
             theme.idle,
         );
