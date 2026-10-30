@@ -1139,7 +1139,23 @@ mod ensure {
                             assert_ready(&endpoint, &canonical, mock.as_ref().map(|item| item.origin()).unwrap_or(""));
                             break;
                         }
-                        Ok(Err(err)) => panic!("ensure discover failed: {err}"),
+                        Ok(Err(err)) => {
+                            let io_kind = match &err {
+                                DiscoveryError::Io(kind) => Some(*kind),
+                                _ => None,
+                            };
+                            let control_connections = mock.as_ref().map(AttachMock::connections);
+                            let identify_requests = mock.as_ref().map(|item| item.requests().len());
+                            panic!(
+                                "ensure discover failed: {err}; io_kind={io_kind:?}; \
+                                 ensure_runs={}; marker={}; mock_started={}; \
+                                 control_connections={control_connections:?}; \
+                                 identify_requests={identify_requests:?}",
+                                run_count(home.path()),
+                                marker.exists(),
+                                mock.is_some(),
+                            );
+                        }
                         Err(join) if join.is_panic() => std::panic::resume_unwind(join.into_panic()),
                         Err(_) => panic!("discover task ended"),
                     }
