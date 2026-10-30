@@ -73,6 +73,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Fleet view open | none | Open the fleet view. | `fleet_view_open` |
 | Agents panel | Alt+S | Open the subagent panel. | `agents_panel` |
 | Attention next | Alt+A | Jump to the next waiting request. | `attention_next` |
+| Voice record | Alt+R | Start or stop push-to-talk recording. | `voice_record` |
 | Toggle Vim editing | none | Turn Vim editing on or off in the composer. | `toggle_vim` |
 
 ## Completion keys

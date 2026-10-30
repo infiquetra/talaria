@@ -112,6 +112,24 @@ pub struct Config {
     pub subagents: crate::subagents::SubagentsConfig,
     /// Optional provider and model for the configuration assistant.
     pub configure: Option<(String, String)>,
+    /// Local speech preferences; microphone and playback remain on the gateway.
+    pub voice: VoiceConfig,
+}
+
+/// Voice preferences for newly attached sessions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceConfig {
+    pub read_aloud: bool,
+    pub speak_max_chars: usize,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            read_aloud: false,
+            speak_max_chars: 1_500,
+        }
+    }
 }
 
 /// Paste collapse thresholds. Zero turns that rule off.
@@ -275,6 +293,7 @@ impl Default for Config {
             panes: crate::panes::PaneSettings::default(),
             subagents: crate::subagents::SubagentsConfig::default(),
             configure: None,
+            voice: VoiceConfig::default(),
         }
     }
 }
@@ -333,6 +352,7 @@ pub fn parse(text: &str) -> LoadedConfig {
         "panes",
         "subagents",
         "configure",
+        "voice",
     ] {
         let Some(value) = table.get(name) else {
             continue;
@@ -355,6 +375,7 @@ pub fn parse(text: &str) -> LoadedConfig {
             "panes" => config.panes = read_panes(section, &mut notices),
             "subagents" => config.subagents = read_subagents(section, &mut notices),
             "configure" => config.configure = read_configure(section, &mut notices),
+            "voice" => config.voice = read_voice(section, &mut notices),
             _ => read_comforts(name, section, &mut config, &mut notices),
         }
     }
@@ -376,6 +397,7 @@ pub fn parse(text: &str) -> LoadedConfig {
                 | "panes"
                 | "subagents"
                 | "configure"
+                | "voice"
         ) {
             continue;
         }
@@ -389,6 +411,31 @@ pub fn parse(text: &str) -> LoadedConfig {
         ));
     }
     LoadedConfig { config, notices }
+}
+
+fn read_voice(section: &Table, notices: &mut Vec<String>) -> VoiceConfig {
+    let mut voice = VoiceConfig::default();
+    for (name, value) in section {
+        match name.as_str() {
+            "read_aloud" => match value.as_bool() {
+                Some(enabled) => voice.read_aloud = enabled,
+                None => {
+                    notices.push("[voice] read_aloud must be true or false; using false.".into())
+                }
+            },
+            "speak_max_chars" => match value.as_integer() {
+                Some(count @ 100..=10_000) => {
+                    voice.speak_max_chars = usize::try_from(count).unwrap_or(1_500)
+                }
+                _ => notices.push(
+                    "[voice] speak_max_chars must be a whole number from 100 to 10000; using 1500."
+                        .into(),
+                ),
+            },
+            _ => notices.push(unknown_setting("voice", name)),
+        }
+    }
+    voice
 }
 
 /// One-based line and column, in characters, of a byte offset. An offset at the end of the

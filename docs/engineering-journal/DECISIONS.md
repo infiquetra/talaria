@@ -4,6 +4,31 @@
 
 ## 2026-10-29
 
+### Gateway-owned voice and session-owned interaction
+
+**Decision.** Keep audio capture and playback on Hermes. Talaria owns one voice
+state machine per attached session, sends narrow gateway calls, and renders the
+recording state and partial transcript in the existing terminal. On exit, wait a
+bounded time for the recording stop before detaching.
+
+**Rationale.** The gateway owns the microphone, the speaker, and per-session voice
+mode. Requests can settle after notifications, so pending calls must remain distinct
+from the visible capture phase. The terminal run module needs a small integration
+change to route the key and draw the status and partial line because it owns both
+composer input and the live region. **Rejected.** Client-side audio and process-wide
+voice toggles. **Revisit when.** The gateway exposes a session-scoped stop operation
+that also cancels whole-reply speech.
+
+The terminal run module also supplies the actual composer key routing and live-region
+rendering, and the foreground switch service owns detach after opening the target.
+Those minimal integration points lie outside the voice modules and are necessary for
+push-to-talk and stop-before-detach to work during a session switch.
+
+The voice action precedes the unbound Vim toggle in both the action enum and its ordered
+list. Existing fixed action-count assertions include the new action, and the key-map test
+checks that enum indices and list positions stay aligned. The voice shortcut is routed
+before Vim's command handler, after the active overlay, card and queue have had priority.
+
 ### External agents share the fleet, while keeping their own transport
 
 **Decision.** An owned external agent reports its session and individual permission responders to

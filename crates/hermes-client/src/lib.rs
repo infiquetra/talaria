@@ -37,6 +37,7 @@ pub mod replay_source;
 pub mod rest;
 pub mod rpc;
 pub mod ticket;
+pub mod voice_api;
 
 pub use channel::{
     ChannelStats, Client, ClientClosed, CloseReason, ClosedConnection, Decoded, Generation,

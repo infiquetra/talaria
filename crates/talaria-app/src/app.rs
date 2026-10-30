@@ -204,6 +204,8 @@ pub enum UserAction {
         tool_call_id: String,
         option_id: String,
     },
+    /// Start or stop gateway-side push-to-talk.
+    VoiceRecord,
     Workflow(talaria_workflow::progress::live::ProgressKey),
     /// Input owned by the configuration assistant overlay.
     Configure(Box<talaria_core::configure::ConfigureInput>),
@@ -353,6 +355,7 @@ pub struct View<'a> {
     /// Configured external agents and the selected external transcript.
     pub acp_agents: &'a [(String, String)],
     pub acp_peek: Option<&'a talaria_core::fleet::acp::AcpMapping>,
+    pub voice: Option<talaria_core::voice::VoiceView>,
     pub workflow_progress: Option<&'a talaria_workflow::progress::live::ProgressState>,
     pub workflow_picker: Option<&'a talaria_workflow::runner::ProgressPicker>,
     pub configure: Option<talaria_core::configure::ConfigureView>,
@@ -638,6 +641,9 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     /// How notices name the approvals toggle key: its first binding, or `None` when the
     /// person unbound it (#237).
+    fn voice_config(&self) -> crate::config::VoiceConfig {
+        crate::config::VoiceConfig::default()
+    }
     fn configure_model(&self) -> Option<(String, String)> {
         None
     }
@@ -692,6 +698,12 @@ struct CronBinding {
 pub struct AppState {
     pub kanban: Option<talaria_core::kanban::KanbanBoardState>,
     kanban_service: Option<crate::kanban::KanbanService>,
+    pub voice: crate::voice::VoiceService,
+    voice_last_tick_ms: u64,
+    voice_connection_generation: u64,
+    voice_submit_mode: Option<Option<String>>,
+    voice_config_pending: bool,
+    voice_submissions: BTreeMap<String, String>,
     pub workflow_views: crate::workflow_progress::ProgressViews,
     pub ultracode: crate::ultracode::UltracodeService,
     ultracode_requests: std::collections::HashMap<SessionId, u64>,
@@ -974,6 +986,12 @@ impl AppState {
         let ledger = MutationLedger::new(&launch_id);
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
+            voice: crate::voice::VoiceService::new(),
+            voice_last_tick_ms: 0,
+            voice_connection_generation: 0,
+            voice_submit_mode: None,
+            voice_config_pending: false,
+            voice_submissions: BTreeMap::new(),
             configure: None,
             configure_service: None,
             configure_generation: 0,
@@ -1199,6 +1217,9 @@ impl AppState {
                 .as_ref()
                 .and_then(|fleet| fleet.peek())
                 .and_then(|(key, _)| self.acp_views.get(key)),
+            voice: opened
+                .and_then(|session| self.voice.get(&session.session_id))
+                .map(talaria_core::voice::VoiceState::view),
             configure: self
                 .configure
                 .as_ref()
@@ -1338,6 +1359,8 @@ impl AppState {
     pub fn working_copy(&self) -> AppState {
         let mut copy = AppState::new(self.launch_id.clone());
         copy.service = self.service.clone();
+        copy.voice = self.voice.clone();
+        copy.connection_generation = self.connection_generation;
         copy.opened = self.opened.clone();
         copy.profile = self.profile.clone();
         copy.fleet_enabled = self.fleet_enabled;
@@ -1351,6 +1374,27 @@ impl AppState {
         copy.connectors_open = self.connectors_open;
         copy.connectors_consent = self.connectors_consent.clone();
         copy
+    }
+
+    pub(crate) fn voice_detaching(&self, session_id: &str) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(AppMessage::Voice {
+                session_id: session_id.to_owned(),
+                generation: self.connection_generation,
+                input: talaria_core::voice::VoiceInput::DetachBegins,
+            });
+        }
+    }
+
+    pub(crate) fn voice_warning(&self, session_id: &str, warning: String) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(AppMessage::VoiceNotice {
+                session_id: session_id.to_owned(),
+                generation: self.connection_generation,
+                text: warning.trim_end().to_owned(),
+            });
+        }
+        self.voice.keep_warning(warning);
     }
 
     /// What a finished switch or a finished branch leaves behind: the session that is in
@@ -1489,6 +1533,26 @@ pub enum AppMessage {
         view: talaria_core::fleet::acp::AcpMapping,
     },
     AcpResult(crate::fleet::ExternalResult),
+    VoiceFull {
+        generation: u64,
+        mode: Option<Option<String>>,
+    },
+    Voice {
+        session_id: String,
+        generation: u64,
+        input: talaria_core::voice::VoiceInput,
+    },
+    VoiceNotice {
+        session_id: String,
+        generation: u64,
+        text: String,
+    },
+    VoiceStatus {
+        session_id: String,
+        generation: u64,
+        mode: Result<Option<String>, String>,
+        requirements: Result<hermes_contract::schemas::VoiceToggleResult, (Option<i64>, String)>,
+    },
     WorkflowDiscovered(talaria_workflow::runner::ProgressPicker),
     WorkflowOpened(Result<crate::workflow_progress::OpenedRun, String>),
     WorkflowScoped(PathBuf),
@@ -1774,6 +1838,13 @@ pub enum AppEffect {
     Kanban {
         board: String,
         effect: talaria_core::kanban::KanbanEffect,
+    },
+    Voice {
+        session_id: String,
+        effect: talaria_core::voice::VoiceEffect,
+    },
+    VoiceStatus {
+        session_id: String,
     },
     WorkflowPrompt {
         run: PathBuf,
@@ -3446,13 +3517,69 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             user_action(state, UserAction::ToggleTasks)
         }
         AppMessage::User(action) => user_action(state, action),
+        AppMessage::VoiceFull { generation, mode } => {
+            if generation != state.connection_generation {
+                Vec::new()
+            } else {
+                state.voice_config_pending = false;
+                if let Some(mode) = mode {
+                    state.voice_submit_mode = Some(mode.clone());
+                    let mut effects = Vec::new();
+                    for session in state.voice.session_ids() {
+                        effects.extend(voice_input(
+                            state,
+                            &session,
+                            talaria_core::voice::VoiceInput::SubmitModeRead(mode.clone()),
+                        ));
+                    }
+                    effects
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+        AppMessage::Voice {
+            session_id,
+            generation,
+            input,
+        } => {
+            if generation == state.connection_generation {
+                voice_input(state, &session_id, input)
+            } else {
+                Vec::new()
+            }
+        }
+        AppMessage::VoiceNotice {
+            session_id,
+            generation,
+            text,
+        } => {
+            if generation == state.connection_generation {
+                voice_notice(state, &session_id, text)
+            } else {
+                Vec::new()
+            }
+        }
+        AppMessage::VoiceStatus {
+            session_id,
+            generation,
+            mode,
+            requirements,
+        } => {
+            if generation != state.connection_generation {
+                Vec::new()
+            } else {
+                voice_status(state, &session_id, mode, requirements)
+            }
+        }
         AppMessage::Link(event) => {
             if matches!(&event, LinkEvent::Inbound { item: Inbound::Event(event), .. }
                 if event.frame.type_name() == Some("cron.changed"))
             {
                 return cron_input(state, CronInput::Changed);
             }
-            let mut effects = workflow_link(state, &event);
+            let mut effects = voice_link(state, &event);
+            effects.extend(workflow_link(state, &event));
             effects.extend(skin_changed(state, &event));
             if is_session_less_skin(&event) {
                 // A skin equal to the current one draws nothing.
@@ -3462,7 +3589,68 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 effects.push(AppEffect::Redraw);
                 return effects;
             }
+            let completed = match &event {
+                LinkEvent::Inbound {
+                    item: Inbound::Event(inbound),
+                    ..
+                } if inbound.raw.get("type").and_then(Value::as_str)
+                    == Some("message.complete")
+                    && inbound
+                        .raw
+                        .pointer("/payload/outcome")
+                        .and_then(Value::as_str)
+                        .map_or_else(
+                            || {
+                                inbound
+                                    .raw
+                                    .pointer("/payload/status")
+                                    .and_then(Value::as_str)
+                                    == Some("complete")
+                            },
+                            |outcome| outcome == "completed",
+                        ) =>
+                {
+                    inbound
+                        .raw
+                        .get("session_id")
+                        .and_then(Value::as_str)
+                        .filter(|id| {
+                            state.opened.as_ref().is_some_and(|opened| {
+                                let (epoch, seq) = event_position(&inbound.raw);
+                                opened.session_id == *id && accept_event(&opened.cursor, epoch, seq)
+                            })
+                        })
+                        .map(str::to_owned)
+                }
+                _ => None,
+            };
             effects.extend(link_event(state, event));
+            if let Some(session) = completed {
+                let cells = state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.state.cells())
+                    .unwrap_or_default();
+                let last_user = cells.iter().rposition(|cell| matches!(cell, Cell::User(_)));
+                if let Some(index) = last_user {
+                    let assistant_markdown = cells[index + 1..]
+                        .iter()
+                        .filter_map(|cell| match cell {
+                            Cell::Assistant(cell) => Some(cell.text.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    effects.extend(voice_input(
+                        state,
+                        &session,
+                        talaria_core::voice::VoiceInput::TurnCompleted {
+                            assistant_markdown,
+                            outcome: talaria_core::voice::TurnOutcome::Completed,
+                            focused: true,
+                        },
+                    ));
+                }
+            }
             effects
         }
         AppMessage::Input(key) => input_key(state, key),
@@ -3646,7 +3834,17 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         } => compact_done(state, request, outcome, typed),
         AppMessage::Tick { now_ms } => {
             state.now_ms = now_ms;
-            let mut effects = review_tick(state);
+            let delta = Duration::from_millis(now_ms.saturating_sub(state.voice_last_tick_ms));
+            state.voice_last_tick_ms = now_ms;
+            let mut effects = Vec::new();
+            for session in state.voice.session_ids() {
+                effects.extend(voice_input(
+                    state,
+                    &session,
+                    talaria_core::voice::VoiceInput::Tick(delta),
+                ));
+            }
+            effects.extend(review_tick(state));
             effects.extend(workflow_tick(state));
             effects.extend(kanban_input(
                 state,
@@ -5181,6 +5379,26 @@ fn local_effect(
             board: board.into(),
         }];
     }
+    if action == LocalAction::Voice {
+        let Some(session) = state
+            .opened
+            .as_ref()
+            .map(|opened| opened.session_id.clone())
+        else {
+            return notice_effect(state, "No session is attached.".into());
+        };
+        return match talaria_core::voice::parse_voice_args(&argument) {
+            Ok(talaria_core::voice::VoiceCommand::Status) => vec![AppEffect::VoiceStatus {
+                session_id: session,
+            }],
+            Ok(command) => voice_input(
+                state,
+                &session,
+                talaria_core::voice::VoiceInput::Command(command),
+            ),
+            Err(text) => notice_effect(state, text),
+        };
+    }
     if action == LocalAction::Workflows {
         return workflow_command(state, &argument);
     }
@@ -5742,6 +5960,17 @@ fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
+        UserAction::VoiceRecord if state.switching => Vec::new(),
+        UserAction::VoiceRecord => {
+            let Some(session) = state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.clone())
+            else {
+                return notice_effect(state, "No session is attached.".into());
+            };
+            voice_input(state, &session, talaria_core::voice::VoiceInput::Press)
+        }
         UserAction::Capabilities(input) => capabilities_input(state, *input),
         UserAction::Cron(input) => match *input {
             CronInput::Open(mode) => open_cron(state, mode),
@@ -7871,6 +8100,23 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .max(state.background_generation_base.saturating_add(generation));
             state.link_state = LinkView::Connected;
             let mut effects = vec![AppEffect::ConnectionOpened(generation)];
+            let new_connection = state.voice_connection_generation != state.connection_generation;
+            state.voice_connection_generation = state.connection_generation;
+            if new_connection && !state.voice.session_ids().is_empty() {
+                state.voice_submit_mode = None;
+                state.voice_config_pending = false;
+                for session in state.voice.session_ids() {
+                    effects.extend(voice_input(
+                        state,
+                        &session,
+                        talaria_core::voice::VoiceInput::ConnectionOpened,
+                    ));
+                    effects.push(AppEffect::Voice {
+                        session_id: session,
+                        effect: talaria_core::voice::VoiceEffect::ReadSubmitMode,
+                    });
+                }
+            }
             effects.extend(prepare_cron(state, true));
             // A reconnect describes again: the skin may have changed while the link was down.
             if generation >= 2 {
@@ -8394,6 +8640,30 @@ fn opened_session(
             state.retry_returns.remove(&rewind_owner);
         }
     }
+    if state.voice.open(&session_id) {
+        effects.push(AppEffect::Voice {
+            session_id: session_id.clone(),
+            effect: talaria_core::voice::VoiceEffect::ReadMode,
+        });
+    } else if !same_session {
+        effects.extend(voice_input(
+            state,
+            &session_id,
+            talaria_core::voice::VoiceInput::SessionReopened,
+        ));
+    }
+    if let Some(mode) = state.voice_submit_mode.clone() {
+        effects.extend(voice_input(
+            state,
+            &session_id,
+            talaria_core::voice::VoiceInput::SubmitModeRead(mode),
+        ));
+    } else {
+        effects.push(AppEffect::Voice {
+            session_id: session_id.clone(),
+            effect: talaria_core::voice::VoiceEffect::ReadSubmitMode,
+        });
+    }
     attach_subagent_foreground(state);
     state.session_gone = false;
     background.extend(background_event(
@@ -8571,6 +8841,19 @@ fn submit_done(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec
 }
 
 fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec<AppEffect> {
+    let voice_session = state.voice_submissions.remove(&id);
+    let voice_stopped = matches!(outcome, ExecuteOutcome::VoiceStopped);
+    let voice_effects = if voice_stopped {
+        voice_session.map_or_else(Vec::new, |session| {
+            voice_input(
+                state,
+                &session,
+                talaria_core::voice::VoiceInput::VoiceStopped,
+            )
+        })
+    } else {
+        Vec::new()
+    };
     let mut attachment_notices = Vec::new();
     if let Some((owner, payload)) = state.submitted_attachments.remove(&id) {
         if state
@@ -8579,7 +8862,7 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
             .map(|opened| opened.session_id.as_str())
             != Some(owner.as_str())
         {
-            return Vec::new();
+            return voice_effects;
         }
         state.attachments.forget_submission(&payload.expanded);
         if matches!(
@@ -8597,7 +8880,6 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
             }
         }
     }
-    let voice_stopped = matches!(outcome, ExecuteOutcome::VoiceStopped);
     let (reason, notice) = match outcome {
         ExecuteOutcome::Sent => return attachment_notices,
         ExecuteOutcome::Refused { reason } => ("refused", failure::prompt_refused_notice(&reason)),
@@ -8627,6 +8909,7 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
         },
     );
     effects.push(notice_lines(&notice));
+    effects.extend(voice_effects);
     effects.extend(attachment_notices);
     effects.extend(restore_failed_attachments(state));
     if voice_stopped {
@@ -9071,12 +9354,25 @@ pub fn link_notice(event: &LinkEvent) -> Option<String> {
 /// session has a user message). After `SessionGone` or a failed link nothing is detached and
 /// the exit code is 1; the hint follows only a failed link.
 pub async fn quit(state: &mut AppState) -> (DetachOutcome, u8, String) {
+    quit_with_voice(state, &mut Vec::new()).await
+}
+
+async fn quit_with_voice(
+    state: &mut AppState,
+    err: &mut (dyn std::io::Write + Send),
+) -> (DetachOutcome, u8, String) {
     state.quitting = true;
     let broken = state.session_gone || state.link_failed;
     let mut outcome = DetachOutcome::Skipped;
     if !broken
         && let (Some(opened), Some(service)) = (state.opened.as_ref(), state.service.as_ref())
     {
+        if let Some(client) = service.client() {
+            state
+                .voice
+                .stop_before_detach(client, &opened.session_id, err)
+                .await;
+        }
         if let Some(link) = &state.link {
             link.untrack(&opened.session_id);
         }
@@ -10576,6 +10872,10 @@ fn apply<S: Screen>(
     if matches!(
         &message,
         AppMessage::Attachment(_)
+            | AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(_),
+                ..
+            })
             | AppMessage::AttachmentResult { .. }
             | AppMessage::SubmitDone { .. }
     ) && let Some((text, caret)) = screen.flush_draft()
@@ -11538,6 +11838,16 @@ fn apply<S: Screen>(
                 redraw = true;
             }
             AppEffect::Send(effect) => {
+                if let Effect::SendPrompt {
+                    session_id,
+                    submission_id,
+                    ..
+                } = &effect
+                {
+                    state
+                        .voice_submissions
+                        .insert(submission_id.clone(), session_id.as_str().to_owned());
+                }
                 let Some(service) = state.service.clone() else {
                     continue;
                 };
@@ -11666,6 +11976,10 @@ fn apply<S: Screen>(
                     (Vec::new(), notice_texts(notices))
                 });
             }
+            AppEffect::Voice { session_id, effect } => {
+                run_voice_effect(state, executor, session_id, effect)
+            }
+            AppEffect::VoiceStatus { session_id } => run_voice_status(state, executor, session_id),
             AppEffect::ConnectionOpened(generation) => {
                 let Some(prompts) = &state.prompts else {
                     continue;
@@ -13259,6 +13573,10 @@ async fn run_inner<S: Screen>(
 ) -> Outcome {
     let mut state = AppState::new_boxed(setup.launch_id.clone());
     state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
+    let voice_config = screen.voice_config();
+    state
+        .voice
+        .configure(voice_config.read_aloud, voice_config.speak_max_chars);
     state.models = ModelsState::new(
         &format!("{}-model", setup.launch_id),
         crate::config::load_models(),
@@ -13388,6 +13706,24 @@ async fn run_inner<S: Screen>(
         } else {
             deadline
         };
+        let voice_due = state
+            .voice
+            .session_ids()
+            .iter()
+            .any(|id| {
+                state.voice.get(id).is_some_and(|voice| {
+                    matches!(
+                        voice.phase(),
+                        talaria_core::voice::VoicePhase::Recording
+                            | talaria_core::voice::VoicePhase::Transcribing
+                    )
+                })
+            })
+            .then(|| {
+                executor.started
+                    + Duration::from_millis(state.voice_last_tick_ms.saturating_add(1_000))
+            });
+        let deadline = earliest_of([deadline, voice_due]);
         let deadline = earliest_of([deadline, state.attachments.next_deadline()]);
         let deadline = earliest_of([deadline, state.automation_deadline]);
         let deadline = earliest_of([deadline, state.configure_tick_at]);
@@ -13440,7 +13776,7 @@ async fn run_inner<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
-                if side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
+                if voice_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
                     redraw |= apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
@@ -13546,7 +13882,11 @@ async fn run_inner<S: Screen>(
                 let (detached, code, _) = quit_while_opening(&mut state).await;
                 (detached, code)
             } else {
-                let (detached, code, hint) = quit(&mut state).await;
+                let mut voice_error = Vec::new();
+                let (detached, code, hint) = quit_with_voice(&mut state, &mut voice_error).await;
+                outcome
+                    .stderr
+                    .push_str(&String::from_utf8_lossy(&voice_error));
                 outcome.stdout = hint;
                 (detached, code)
             };
@@ -13557,6 +13897,17 @@ async fn run_inner<S: Screen>(
             }
         }
         Ending::Signal(code) => {
+            if let (Some(opened), Some(client)) = (
+                state.opened.as_ref(),
+                state.service.as_ref().and_then(SessionService::client),
+            ) {
+                let mut warning = Vec::new();
+                state
+                    .voice
+                    .stop_before_detach(client, &opened.session_id, &mut warning)
+                    .await;
+                outcome.stderr.push_str(&String::from_utf8_lossy(&warning));
+            }
             if let Some(handle) = pending.take() {
                 handle.abort();
             }
@@ -13590,6 +13941,9 @@ async fn run_inner<S: Screen>(
     }
     drive_status(screen, hermes_client::is_suspicious_key).await;
     screen.restore();
+    for warning in state.voice.take_warnings() {
+        outcome.stderr.push_str(&warning);
+    }
     outcome.stderr.push_str(&held_text(&state.held));
     for line in unfinished {
         outcome.stderr.push_str(line);
@@ -14867,6 +15221,506 @@ mod external_fleet_route_tests {
                 effect,
                 AppEffect::FleetAnswer(_) | AppEffect::FleetPeek(_)
             ))
+        );
+    }
+}
+
+fn voice_input(
+    state: &mut AppState,
+    session: &str,
+    input: talaria_core::voice::VoiceInput,
+) -> Vec<AppEffect> {
+    use talaria_core::voice::VoiceEffect as V;
+    let is_tick = matches!(input, talaria_core::voice::VoiceInput::Tick(_));
+    if matches!(input, talaria_core::voice::VoiceInput::Press) {
+        state.voice_last_tick_ms = state.now_ms;
+    }
+    let was_timed = state.voice.get(session).is_some_and(|voice| {
+        matches!(
+            voice.phase(),
+            talaria_core::voice::VoicePhase::Recording
+                | talaria_core::voice::VoicePhase::Transcribing
+        )
+    });
+    let produced = state.voice.update(session, input, state.draft.is_empty());
+    let now_timed = state.voice.get(session).is_some_and(|voice| {
+        matches!(
+            voice.phase(),
+            talaria_core::voice::VoicePhase::Recording
+                | talaria_core::voice::VoicePhase::Transcribing
+        )
+    });
+    if !was_timed && now_timed {
+        state.voice_last_tick_ms = state.now_ms;
+    }
+    let mut effects = Vec::new();
+    for effect in produced {
+        match effect {
+            V::Submit(text) if is_open_session(state, session) => {
+                let submission_id = state.next_submission_id();
+                effects.extend(reduce(
+                    state,
+                    Event::Submit {
+                        display: text.clone(),
+                        text,
+                        submission_id,
+                        attachments: Vec::new(),
+                    },
+                ));
+            }
+            V::AppendToDraft(text) if is_open_session(state, session) => {
+                let trimmed = state.draft.trim_end().len();
+                state.draft.truncate(trimmed);
+                if !state.draft.is_empty() {
+                    state.draft.push(' ');
+                }
+                state.draft.push_str(&text);
+                let draft = state.draft.clone();
+                effects.extend(load_draft(state, draft));
+            }
+            V::Notice(text) => effects.extend(voice_notice(state, session, text)),
+            V::NoticeIn { session_id, text } => {
+                effects.extend(voice_notice(state, &session_id, text))
+            }
+            V::Submit(_) | V::AppendToDraft(_) | V::StopBeforeDetach => {}
+            other => effects.push(AppEffect::Voice {
+                session_id: session.to_owned(),
+                effect: other,
+            }),
+        }
+    }
+    if is_open_session(state, session) && (!is_tick || was_timed || now_timed) {
+        effects.push(AppEffect::Redraw);
+    }
+    effects
+}
+
+fn voice_notice(state: &mut AppState, session: &str, text: String) -> Vec<AppEffect> {
+    if is_open_session(state, session) {
+        return notice_effect(state, text);
+    }
+    if let Some(opened) =
+        retained_key(state, session).and_then(|key| state.retained_sessions.get_mut(&key))
+    {
+        let _ = talaria_core::session::update(
+            &mut opened.state,
+            Event::Notice {
+                kind: NoticeKind::System,
+                text,
+            },
+        );
+    }
+    Vec::new()
+}
+
+fn voice_link(state: &mut AppState, event: &LinkEvent) -> Vec<AppEffect> {
+    let LinkEvent::Inbound {
+        item: Inbound::Event(inbound),
+        ..
+    } = event
+    else {
+        return Vec::new();
+    };
+    let Some(id) = inbound.raw.get("session_id").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let opened = state
+        .opened
+        .as_ref()
+        .filter(|opened| opened.session_id == id)
+        .or_else(|| retained_key(state, id).and_then(|key| state.retained_sessions.get(&key)));
+    let Some(opened) = opened else {
+        return Vec::new();
+    };
+    let (epoch, seq) = event_position(&inbound.raw);
+    if !accept_event(&opened.cursor, epoch, seq) {
+        return Vec::new();
+    }
+    let focused = is_open_session(state, id);
+    let Some((session, voice)) = crate::voice::voice_event(&inbound.raw, focused) else {
+        return Vec::new();
+    };
+    voice_input(
+        state,
+        &session,
+        talaria_core::voice::VoiceInput::Event(voice),
+    )
+}
+
+fn voice_status(
+    state: &mut AppState,
+    session: &str,
+    mode: Result<Option<String>, String>,
+    requirements: Result<hermes_contract::schemas::VoiceToggleResult, (Option<i64>, String)>,
+) -> Vec<AppEffect> {
+    use talaria_core::voice::{VoiceInput, clean_message};
+    let mut effects = Vec::new();
+    let mode_text = match mode {
+        Ok(mode) => {
+            effects.extend(voice_input(
+                state,
+                session,
+                VoiceInput::ModeRead(mode.clone()),
+            ));
+            mode.unwrap_or_else(|| "off".into())
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(24)
+                .collect::<String>()
+        }
+        Err(message) => format!("unknown ({})", clean_message(&message)),
+    };
+    let chords = state
+        .key_bindings
+        .get("voice_record")
+        .cloned()
+        .unwrap_or_else(|| vec!["alt+r".into()]);
+    let chords = if chords.is_empty() {
+        "not bound".into()
+    } else {
+        chords
+            .iter()
+            .map(|chord| {
+                chord
+                    .split('+')
+                    .map(|part| {
+                        let mut chars = part.chars();
+                        chars.next().map_or_else(String::new, |first| {
+                            first.to_uppercase().collect::<String>() + chars.as_str()
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .join("+")
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if matches!(&requirements, Err((Some(-32601), _))) {
+        effects.extend(voice_input(state, session, VoiceInput::Unavailable));
+    }
+    let read = state
+        .voice
+        .get(session)
+        .is_some_and(talaria_core::voice::VoiceState::read_aloud);
+    let mut lines = vec![
+        format!("Mode: {mode_text}"),
+        format!("Push-to-talk: {chords}"),
+        format!("Read aloud: {}", if read { "on" } else { "off" }),
+    ];
+    match requirements {
+        Ok(result)
+            if result.available.is_none()
+                && result.audio_available.is_none()
+                && result.stt_available.is_none() =>
+        {
+            lines
+                .push("Requirements: unknown (gateway probe returned no availability data).".into())
+        }
+        Ok(result) => {
+            fn yes(value: Option<bool>) -> &'static str {
+                match value {
+                    Some(true) => "yes",
+                    Some(false) => "no",
+                    None => "unknown",
+                }
+            }
+            lines.push(format!("Audio: {}", yes(result.audio_available)));
+            lines.push(format!("Speech-to-text: {}", yes(result.stt_available)));
+            lines.push(format!("Ready: {}", yes(result.available)));
+            if let Some(details) = result.details {
+                lines.extend(
+                    details
+                        .lines()
+                        .map(talaria_core::voice::clean_transcript)
+                        .filter(|line| !line.is_empty())
+                        .map(|line| format!("  {line}")),
+                );
+            }
+        }
+        Err((_code, message)) => {
+            lines.push(format!(
+                "Requirements: unknown ({}).",
+                clean_message(&message)
+            ));
+        }
+    }
+    effects.extend(voice_notice(state, session, lines.join("\n")));
+    effects
+}
+
+fn voice_error(error: &hermes_client::rpc::CallError) -> (Option<i64>, String, bool) {
+    match error {
+        hermes_client::rpc::CallError::Rpc(rpc) => (Some(rpc.code), rpc.message.clone(), false),
+        _ => (
+            None,
+            error.to_string(),
+            error.outcome_unknown() || matches!(error, hermes_client::rpc::CallError::NotConnected),
+        ),
+    }
+}
+
+fn run_voice_status(state: &AppState, executor: &Executor, session_id: String) {
+    let Some(client) = state
+        .service
+        .as_ref()
+        .and_then(SessionService::client)
+        .cloned()
+    else {
+        return;
+    };
+    let generation = state.connection_generation;
+    executor.send_later(async move {
+        let (mode, requirements) = tokio::join!(
+            hermes_client::voice_api::voice_mode(&client, &session_id),
+            hermes_client::voice_api::voice_requirements(&client)
+        );
+        AppMessage::VoiceStatus {
+            session_id,
+            generation,
+            mode: mode.map_err(|e| voice_error(&e).1),
+            requirements: requirements.map_err(|e| {
+                let (code, message, _) = voice_error(&e);
+                (code, message)
+            }),
+        }
+    });
+}
+
+fn run_voice_effect(
+    state: &mut AppState,
+    executor: &Executor,
+    session_id: String,
+    effect: talaria_core::voice::VoiceEffect,
+) {
+    use talaria_core::voice::{RecordStatus, VoiceEffect as V, VoiceInput as I};
+    let Some(client) = state
+        .service
+        .as_ref()
+        .and_then(SessionService::client)
+        .cloned()
+    else {
+        return;
+    };
+    let generation = state.connection_generation;
+    let sender = executor.sender.clone();
+    if matches!(effect, V::ReadSubmitMode) {
+        if state.voice_config_pending {
+            return;
+        }
+        state.voice_config_pending = true;
+    }
+    let pending = matches!(effect, V::Record { .. }).then(|| state.voice.track_record(&session_id));
+    tokio::spawn(async move {
+        let send = |input| {
+            let _ = sender.send(AppMessage::Voice {
+                session_id: session_id.clone(),
+                generation,
+                input,
+            });
+        };
+        let notice = |text| {
+            let _ = sender.send(AppMessage::VoiceNotice {
+                session_id: session_id.clone(),
+                generation,
+                text,
+            });
+        };
+        match effect {
+            V::ReadMode => {
+                if let Ok(mode) = hermes_client::voice_api::voice_mode(&client, &session_id).await {
+                    send(I::ModeRead(mode));
+                }
+            }
+            V::ReadSubmitMode => {
+                let mode = hermes_client::voice_api::voice_submit_mode(&client)
+                    .await
+                    .ok();
+                let _ = sender.send(AppMessage::VoiceFull { generation, mode });
+            }
+            V::SetMode { on } => {
+                match hermes_client::voice_api::set_voice_mode(&client, &session_id, on).await {
+                    Ok(result) => {
+                        if let Some(output) = result.output.filter(|text| !text.is_empty()) {
+                            notice(output);
+                        }
+                        if let Some(warning) = result.warning.filter(|text| !text.is_empty()) {
+                            notice(warning);
+                        }
+                        if let Ok(mode) =
+                            hermes_client::voice_api::voice_mode(&client, &session_id).await
+                        {
+                            send(I::ModeRead(mode));
+                        }
+                        if on {
+                            let mode = hermes_client::voice_api::voice_submit_mode(&client)
+                                .await
+                                .ok();
+                            let _ = sender.send(AppMessage::VoiceFull { generation, mode });
+                        }
+                    }
+                    Err(error) => {
+                        notice(format!(
+                            "Could not change voice mode: {}.",
+                            talaria_core::voice::clean_message(&voice_error(&error).1)
+                        ));
+                        if let Ok(mode) =
+                            hermes_client::voice_api::voice_mode(&client, &session_id).await
+                        {
+                            send(I::ModeRead(mode));
+                        }
+                    }
+                }
+            }
+            V::Record { start } => {
+                match hermes_client::voice_api::voice_record(&client, &session_id, start).await {
+                    Ok(reply) => {
+                        use hermes_contract::schemas::VoiceRecordStatus as R;
+                        let status = match reply.status {
+                            R::Recording => RecordStatus::Recording,
+                            R::Stopped => RecordStatus::Stopped,
+                            R::Busy => RecordStatus::Busy,
+                        };
+                        if let Some(pending) = pending {
+                            use crate::voice::RecordSettlement as S;
+                            let settlement = if !start {
+                                S::StopConfirmed
+                            } else if status == RecordStatus::Recording {
+                                S::Started
+                            } else {
+                                S::Rejected
+                            };
+                            let _ = pending.send(Some(settlement));
+                        }
+                        send(I::RecordReply {
+                            start,
+                            status,
+                            reason: reply.reason,
+                        });
+                    }
+                    Err(error) => {
+                        if let Some(pending) = pending {
+                            use crate::voice::RecordSettlement as S;
+                            let settlement =
+                                if matches!(error, hermes_client::rpc::CallError::Rpc(_)) {
+                                    if start { S::Rejected } else { S::StopConfirmed }
+                                } else {
+                                    S::Unknown
+                                };
+                            let _ = pending.send(Some(settlement));
+                        }
+                        let (code, message, dropped) = voice_error(&error);
+                        send(I::RecordFailed {
+                            start,
+                            code,
+                            message,
+                            dropped,
+                        });
+                    }
+                }
+            }
+            V::Speak(text) => {
+                if let Err(error) = hermes_client::voice_api::voice_speak(&client, &text).await {
+                    let (code, message, dropped) = voice_error(&error);
+                    send(I::SpeakFailed {
+                        code,
+                        message,
+                        dropped,
+                    });
+                }
+            }
+            _ => {}
+        }
+    });
+}
+
+#[cfg(test)]
+mod voice_ownership_tests {
+    use super::*;
+
+    #[test]
+    fn retained_voice_notices_respect_profile_and_ambiguity() {
+        let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+            serde_json::from_str(include_str!("../tests/data/running_turn.json"))
+                .expect("snapshot");
+        let session = snapshot.session_id.clone();
+        let first = RowKey {
+            profile: "first".into(),
+            session_id: session.clone(),
+        };
+        let second = RowKey {
+            profile: "second".into(),
+            session_id: session.clone(),
+        };
+        let mut state = AppState::new("voice-owner");
+        state.profile = first.profile.clone();
+        state.retained_sessions.insert(
+            first.clone(),
+            OpenedSession::from_snapshot(snapshot.clone()),
+        );
+        state
+            .retained_sessions
+            .insert(second.clone(), OpenedSession::from_snapshot(snapshot));
+
+        voice_notice(&mut state, &session, "first only".into());
+        let has_notice = |key: &RowKey, text: &str, state: &AppState| {
+            state.retained_sessions[key]
+                .state
+                .cells()
+                .iter()
+                .any(|cell| matches!(cell, Cell::Notice(notice) if notice.text == text))
+        };
+        assert!(has_notice(&first, "first only", &state));
+        assert!(!has_notice(&second, "first only", &state));
+
+        state.profile = "different".into();
+        voice_notice(&mut state, &session, "ambiguous".into());
+        assert!(!has_notice(&first, "ambiguous", &state));
+        assert!(!has_notice(&second, "ambiguous", &state));
+
+        state.retained_sessions.remove(&second);
+        voice_notice(&mut state, &session, "unique".into());
+        assert!(has_notice(&first, "unique", &state));
+    }
+
+    #[test]
+    fn typed_stop_reply_reads_the_origin_after_focus_changes() {
+        let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+            serde_json::from_str(include_str!("../tests/data/running_turn.json"))
+                .expect("snapshot");
+        let mut state = AppState::new("voice-owner");
+        state.opened = Some(OpenedSession::from_snapshot(snapshot));
+        state.voice.open("earlier-session");
+        state.voice.update(
+            "earlier-session",
+            talaria_core::voice::VoiceInput::ModeRead(Some("voice_only".into())),
+            true,
+        );
+        state
+            .voice_submissions
+            .insert("prompt-1".into(), "earlier-session".into());
+        state.submitted_attachments.insert(
+            "prompt-1".into(),
+            (
+                "earlier-session".into(),
+                SubmittedAttachments {
+                    expanded: Expanded {
+                        text: "stop".into(),
+                        display: "stop".into(),
+                        attachments: Vec::new(),
+                        reference_count: 0,
+                    },
+                    media: Vec::new(),
+                },
+            ),
+        );
+        let effects = submit_outcome(&mut state, "prompt-1".into(), ExecuteOutcome::VoiceStopped);
+        assert!(effects.iter().any(|effect| matches!(effect, AppEffect::Voice { session_id, effect: talaria_core::voice::VoiceEffect::ReadMode } if session_id == "earlier-session")));
+        assert_eq!(
+            state
+                .voice
+                .get("earlier-session")
+                .map(talaria_core::voice::VoiceState::phase),
+            Some(talaria_core::voice::VoicePhase::Off)
         );
     }
 }

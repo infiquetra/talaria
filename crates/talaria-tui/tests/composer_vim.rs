@@ -18,7 +18,7 @@ const SEED: u64 = 42;
 #[test]
 fn toggle_action_turns_vim_on_and_off_and_keeps_every_default() {
     let defaults = KeyMap::defaults();
-    assert_eq!(Action::ALL.len(), 193);
+    assert_eq!(Action::ALL.len(), 194);
     assert_eq!(Action::ALL[Action::ALL.len() - 1], Action::ToggleVim);
     assert!(defaults.chords(Action::ToggleVim).is_empty());
     for action in Action::ALL {

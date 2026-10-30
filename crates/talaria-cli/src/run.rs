@@ -1142,6 +1142,10 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         failed: view.fleet_counts.failed,
         done: view.fleet_counts.done,
         context_percent,
+        voice: view
+            .voice
+            .as_ref()
+            .and_then(talaria_tui::voice_view::segment_for),
         approvals: view.approvals.as_ref().map(approvals_segment),
         pull_request: view.pull_request.clone(),
         ..StatusInputs::default()
@@ -2545,6 +2549,14 @@ impl TuiScreen {
                 if let Some(actions) = self.queue_keys(raw, key, view, prefix) {
                     return actions;
                 }
+                if key.kind != KeyKind::Release
+                    && !view.palette.open
+                    && action == Some(Action::VoiceRecord)
+                {
+                    let mut actions = flush_draft_actions(&mut self.composer, now);
+                    actions.push(UserAction::VoiceRecord);
+                    return actions;
+                }
                 if self
                     .composer
                     .vim_mode()
@@ -3291,6 +3303,9 @@ impl Screen for TuiScreen {
     ) -> Option<BTreeMap<String, zeroize::Zeroizing<String>>> {
         self.connectors_wiring.secrets_for(effect)
     }
+    fn voice_config(&self) -> config::VoiceConfig {
+        self.config.voice.clone()
+    }
     fn configure_model(&self) -> Option<(String, String)> {
         self.config.configure.clone()
     }
@@ -3885,6 +3900,17 @@ impl Screen for TuiScreen {
                 .unwrap_or_default(),
         );
         let composer = self.composer.section(width, COMPOSER_ROWS);
+        let partial_text = view
+            .voice
+            .as_ref()
+            .and_then(|voice| voice.partial.as_deref())
+            .and_then(|text| {
+                talaria_tui::voice_view::partial_line(
+                    text.strip_prefix("heard: ").unwrap_or(text),
+                    usize::from(width),
+                )
+            });
+        let partial = partial_text.as_deref().map(PlainTextSection::new);
         let compacting = CompactingSection {
             line: view.compacting_line,
             now_ms: view.now_ms,
@@ -3973,6 +3999,9 @@ impl Screen for TuiScreen {
                 sections.push(background);
             }
             sections.push(&composer);
+            if let Some(partial) = &partial {
+                sections.push(partial);
+            }
             if !composer_is_empty || prompts.is_none() {
                 sections.push(&palette);
             }

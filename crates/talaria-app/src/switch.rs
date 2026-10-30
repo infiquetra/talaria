@@ -87,6 +87,7 @@ pub async fn switch_foreground(app: &mut AppState, target: RowKey) -> SwitchOutc
             Err(error) => return failed_switch(app, &target, &error),
         };
         // The old session lets go only after the new one is open.
+        stop_voice(app, &old_service, &old.session_id).await;
         old_service.detach(&old).await;
         let notice = switch_notice(app, &opened, &old);
         app.opened = Some(opened);
@@ -133,6 +134,7 @@ pub async fn switch_foreground(app: &mut AppState, target: RowKey) -> SwitchOutc
         }
     };
     // The old session lets go on the old link; the old link closes after that.
+    stop_voice(app, &old_service, &old.session_id).await;
     old_service.detach(&old).await;
     let notice = switch_notice(app, &opened, &old);
     app.opened = Some(opened);
@@ -317,6 +319,7 @@ pub async fn open_branch_child(app: &mut AppState, receipt: &Value) -> BranchOut
     {
         Ok(child) => {
             // The parent lets go only after the child is open.
+            stop_voice(app, &service, &parent.session_id).await;
             service.detach(&parent).await;
             let title = session_title(child.title.as_deref(), None, child.state.cells());
             app.opened = Some(child);
@@ -374,4 +377,17 @@ fn write_new(path: &std::path::Path, content: &str) -> Result<(std::path::PathBu
         return Err(format!("the export could not be written: {error}"));
     }
     Ok((path.to_path_buf(), content.len() as u64))
+}
+
+async fn stop_voice(app: &mut AppState, service: &SessionService, session_id: &str) {
+    if let Some(client) = service.client() {
+        app.voice_detaching(session_id);
+        let mut warning = Vec::new();
+        app.voice
+            .stop_before_detach(client, session_id, &mut warning)
+            .await;
+        if !warning.is_empty() {
+            app.voice_warning(session_id, String::from_utf8_lossy(&warning).into_owned());
+        }
+    }
 }

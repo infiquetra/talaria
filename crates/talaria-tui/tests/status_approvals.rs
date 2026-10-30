@@ -60,8 +60,8 @@ fn row_with(rows: &[String], needle: &str) -> String {
 
 #[test]
 fn segment_position_priority_and_snapshot() {
-    // Priority and position: after the model, dropped third.
-    assert_eq!(Segment::Approvals.priority(), 3);
+    // Priority and position: after the model, dropped after voice.
+    assert_eq!(Segment::Approvals.priority(), 4);
     assert_eq!(Segment::Approvals.position(), 3);
     assert!(Segment::Model.position() < Segment::Approvals.position());
     assert!(Segment::Approvals.position() < Segment::Folder.position());

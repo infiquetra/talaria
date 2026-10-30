@@ -944,6 +944,7 @@ pub enum Action {
     McpOpenLink,
     McpCopy,
     McpPasteRedirect,
+    VoiceRecord,
     /// Turn vim editing on or off. No default chord.
     ToggleVim,
 }
@@ -977,7 +978,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 193] = [
+    pub const ALL: [Self; 194] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1170,6 +1171,7 @@ impl Action {
         Self::McpOpenLink,
         Self::McpCopy,
         Self::McpPasteRedirect,
+        Self::VoiceRecord,
         Self::ToggleVim,
     ];
 
@@ -1371,6 +1373,7 @@ impl Action {
             Self::McpCopy => "mcp_copy",
             Self::McpPasteRedirect => "mcp_paste_redirect",
             Self::ToggleVim => "toggle_vim",
+            Self::VoiceRecord => "voice_record",
         }
     }
 
@@ -1438,7 +1441,8 @@ impl Action {
             | Self::ComposerSendNow
             | Self::ComposerSteer
             | Self::AgentsPanel
-            | Self::ToggleVim => KeyContext::Composer,
+            | Self::ToggleVim
+            | Self::VoiceRecord => KeyContext::Composer,
             Self::AttentionNext => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
@@ -1785,6 +1789,7 @@ impl Action {
             Self::McpCopy => &["c"],
             Self::McpPasteRedirect => &["p"],
             Self::ToggleVim => &[],
+            Self::VoiceRecord => &["alt+r"],
         }
     }
 }
@@ -2784,7 +2789,10 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 193);
+        assert_eq!(Action::ALL.len(), 194);
+        for (index, action) in Action::ALL.iter().enumerate() {
+            assert_eq!(action.index(), index, "{}", action.config_name());
+        }
         for action in Action::ALL {
             let wanted = match action {
                 Action::ProgressUp
@@ -3367,7 +3375,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 193);
+        assert_eq!(Action::ALL.len(), 194);
     }
 
     #[test]
@@ -3462,5 +3470,30 @@ mod tests {
             ),
             Some(RolesKey::Effort)
         );
+    }
+
+    #[test]
+    fn voice_record_default_is_alt_r_and_unique() {
+        assert_eq!(
+            Action::VoiceRecord.default_chords(),
+            &["alt+r"],
+            "push-to-talk defaults to alt+r"
+        );
+        assert!(
+            !Action::VoiceRecord.default_chords().contains(&"ctrl+b"),
+            "push-to-talk must not take ctrl+b"
+        );
+        assert_eq!(Action::VoiceRecord.context(), KeyContext::Composer);
+        assert_eq!(Action::VoiceRecord.config_name(), "voice_record");
+        for action in Action::ALL {
+            if action == Action::VoiceRecord {
+                continue;
+            }
+            assert!(
+                !action.default_chords().contains(&"alt+r"),
+                "{} already uses alt+r",
+                action.config_name()
+            );
+        }
     }
 }

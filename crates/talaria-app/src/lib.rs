@@ -57,3 +57,4 @@ pub mod settings;
 pub mod doctor;
 
 pub mod ultracode;
+pub mod voice;

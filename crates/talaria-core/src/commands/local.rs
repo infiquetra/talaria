@@ -95,6 +95,8 @@ pub enum LocalAction {
     Configure,
     /// View the shared task board.
     Kanban,
+    /// Microphone push-to-talk and read-aloud for the focused session.
+    Voice,
 }
 
 /// One local command.
@@ -432,6 +434,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[board]",
         takes_argument: true,
         action: LocalAction::Kanban,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "voice",
+        aliases: &[],
+        summary: "Control push-to-talk and read-aloud",
+        args_hint: "[on|off|status|read]",
+        takes_argument: true,
+        action: LocalAction::Voice,
         tag: "talaria",
     },
 ];
