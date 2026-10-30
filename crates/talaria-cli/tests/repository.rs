@@ -29,7 +29,6 @@ const REMOVED_PATHS: &[&str] = &[
     "docs/design/",
     "docs/releases/",
     "docs/examples/",
-    "docs/install.md",
     "GEMINI.md",
     "IDEA.md",
     ".prettierignore",

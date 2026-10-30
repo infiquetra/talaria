@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — Cargo 1.98 release-profile debuginfo stripping corrupts `rquickjs-macro` on macOS
+
+**Evidence.** Running `cargo build --release --workspace` (`release-build` gate) and `cargo test --workspace --release` (`live-tests` gate) in `tools/release/gates.tsv` on macOS (`aarch64-apple-darwin`) failed in `rquickjs v0.14.0` with `E0463: can't find crate for rquickjs_macro`, and `dlopen` on `target/release/deps/librquickjs_macro-*.dylib` reported `mis-aligned LINKEDIT string pool`.
+
+**Mechanism.** When `debug = 0` (the default for `release` and `bench`), Cargo 1.98 defaults `strip = "debuginfo"` and passes `-C strip=debuginfo` to `rustc`. On macOS, stripping debug symbols from `librquickjs_macro-*.dylib` after linking `rquickjs-core` and its C archive (`rquickjs-sys`) leaves a misaligned Mach-O `__LINKEDIT` string pool that `dyld` refuses to load. Commit `da6907cd` set `strip = "none"` on `[profile.dev]` and `[profile.test]`; setting `strip = "none"` on `[profile.release]` and `[profile.bench]` in `Cargo.toml` prevents `-C strip=debuginfo` on release and benchmark builds as well.
+
+**Generalizable rule.** When a workspace disables `strip = "debuginfo"` on `dev` and `test` profiles to avoid macOS Mach-O `__LINKEDIT` corruption in proc-macro dylibs that link native archives, apply `strip = "none"` to `release` and `bench` profiles as well.
+
 ## 2026-10-30 — Drift workspaces need recorded frames outside the crate
 
 **Evidence.** Diagnostic run 41137840436 on the logging repair built the contract,
@@ -38,6 +46,28 @@ subsequent fixture-copy repair has its own verification pending.
 
 **Rule.** Emit actionable failure evidence through the job log before writing an
 optional presentation surface, and preserve the original failure semantics.
+
+## 2026-10-30 — Release packages need runner and artifact checks
+
+**Evidence.** The packaging tests construct Mach-O and ELF headers, exercise the
+static-link check and compare reproducible archive bytes. The release workflow
+waits for all target artifacts, verifies their checksums and only then creates a
+release; a rerun hashes existing assets before uploading missing files. GitHub's
+[runner retirement announcement](https://github.com/actions/runner-images/issues/13518)
+states that `macos-14` has scheduled brownouts and retires on 2026-11-02.
+
+**Generalizable rule.** Validate platform and linkage from the artifact, guard
+published bytes on retries, and recheck runner availability before the dry run.
+
+## 2026-10-30 — A formula test needs a real Homebrew installation
+
+**Evidence.** The offline suite compares the formula against its independently
+written golden file and checks Ruby syntax. The package-check workflow also
+installs and tests a generated formula through a temporary local tap; that live
+runner check remains to be observed on the pull request.
+
+**Generalizable rule.** Treat a golden template as an offline guard, and use a
+real package-manager installation to establish runtime compatibility.
 
 ## 2026-10-29 — Voice mode and capture have different gateway owners
 

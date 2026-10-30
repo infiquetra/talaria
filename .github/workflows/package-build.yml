@@ -1,0 +1,63 @@
+name: Package build
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - id: targets
+        run: echo "matrix=$(python3 -I tools/package/package.py targets --json)" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: plan
+    name: package (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner == 'macos-14' && 'macos-15' || matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+      - name: Install musl tools
+        if: endsWith(matrix.target, '-linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build, check, and archive
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          bin="$(python3 -I tools/package/package.py build --target "$TARGET")"
+          python3 -I tools/package/package.py check-binary --target "$TARGET" --version "$VERSION" "$bin"
+          python3 -I tools/package/package.py archive --target "$TARGET" --version "$VERSION" \
+            --binary "$bin" --out dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: talaria-${{ matrix.target }}
+          path: dist/*.tar.gz
+          retention-days: 7
+          if-no-files-found: error
