@@ -413,6 +413,155 @@ class TypifyCacheTests(CacheFixture):
         ):
             self.tool()
 
+    def test_every_config_prefix_entry_is_refused_before_any_content_read(self) -> None:
+        workspace_config = self.root / ".cargo"
+        workspace_config.mkdir()
+        dummy = self.home / "credentials.toml"
+        dummy.write_text("synthetic fixture; never read")
+        for base in (workspace_config, self.home):
+            for kind in ("file", "unreadable", "symlink", "dangling", "directory"):
+                with self.subTest(base=base.name, kind=kind):
+                    entry = (
+                        base
+                        / {
+                            "file": "configuration",
+                            "unreadable": "config-private",
+                            "symlink": "config-sentinel",
+                            "dangling": "config.toml.disabled",
+                            "directory": "config.d",
+                        }[kind]
+                    )
+                    if kind in {"file", "unreadable"}:
+                        entry.write_text("synthetic configuration; never read")
+                        if kind == "unreadable":
+                            entry.chmod(0)
+                    elif kind == "symlink":
+                        entry.symlink_to(dummy)
+                    elif kind == "dangling":
+                        entry.symlink_to(self.root / "absent-dummy")
+                    else:
+                        entry.mkdir()
+                    try:
+                        with (
+                            patch.object(
+                                Path,
+                                "read_bytes",
+                                side_effect=AssertionError(
+                                    "content read before refusal"
+                                ),
+                            ),
+                            patch.object(
+                                Path,
+                                "read_text",
+                                side_effect=AssertionError(
+                                    "content read before refusal"
+                                ),
+                            ),
+                            self.assertRaises(ValueError),
+                        ):
+                            self.tool()
+                    finally:
+                        if kind == "directory":
+                            entry.rmdir()
+                        else:
+                            entry.unlink()
+        self.assertEqual(
+            self.tool()["build-path"], "target/ci-tools/cargo-typify-0.8.0"
+        )
+
+    def test_config_prefix_added_after_admission_is_not_read_by_shared_hashing(
+        self,
+    ) -> None:
+        workspace_config = self.root / ".cargo"
+        workspace_config.mkdir()
+        dummy = self.home / "credentials.toml"
+        dummy.write_text("synthetic fixture; never read")
+        identity = cache.typify_identity
+        read_bytes = Path.read_bytes
+        forbidden_reads = []
+
+        def admitted_then_changed(root, env):
+            result = identity(root, env)
+            (workspace_config / "config-late").symlink_to(dummy)
+            return result
+
+        def guarded_read(path):
+            if path == dummy or path.parent == workspace_config:
+                forbidden_reads.append(path)
+                raise AssertionError("configuration or dummy credentials were read")
+            return read_bytes(path)
+
+        with (
+            patch.object(cache, "typify_identity", admitted_then_changed),
+            patch.object(Path, "read_bytes", guarded_read),
+            self.assertRaises(ValueError),
+        ):
+            self.tool()
+        self.assertEqual(forbidden_reads, [])
+
+    def test_config_directory_aliases_and_unknown_metadata_refuse_without_reads(
+        self,
+    ) -> None:
+        iterdir = Path.iterdir
+        for failure in (PermissionError, FileNotFoundError):
+            with (
+                self.subTest(failure=failure.__name__),
+                patch.object(Path, "iterdir", side_effect=failure),
+                patch.object(
+                    Path,
+                    "read_bytes",
+                    side_effect=AssertionError("content read before refusal"),
+                ),
+                patch.object(
+                    Path,
+                    "read_text",
+                    side_effect=AssertionError("content read before refusal"),
+                ),
+                self.assertRaises(ValueError),
+            ):
+                self.tool()
+
+        workspace_config = self.root / ".cargo"
+        workspace_config.symlink_to(self.home, target_is_directory=True)
+
+        def no_alias_traversal(path):
+            if path == workspace_config:
+                raise AssertionError("aliased configuration parent was followed")
+            return iterdir(path)
+
+        with (
+            patch.object(Path, "iterdir", no_alias_traversal),
+            patch.object(
+                Path,
+                "read_bytes",
+                side_effect=AssertionError("content read before refusal"),
+            ),
+            patch.object(
+                Path,
+                "read_text",
+                side_effect=AssertionError("content read before refusal"),
+            ),
+            self.assertRaises(ValueError),
+        ):
+            self.tool()
+        workspace_config.unlink()
+        workspace_config.mkdir()
+        (workspace_config / "config-backup").touch()
+        with (
+            patch.object(
+                Path,
+                "read_bytes",
+                side_effect=AssertionError("content read before refusal"),
+            ),
+            patch.object(
+                Path,
+                "read_text",
+                side_effect=AssertionError("content read before refusal"),
+            ),
+            self.assertRaises(ValueError),
+        ):
+            self.tool(CARGO_HOME="")
+
 
 class WorkflowPolicyTests(unittest.TestCase):
     @staticmethod

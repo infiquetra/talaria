@@ -6527,3 +6527,12 @@ qualification, not binary attestation. Actual fresh-state reuse and hosted trans
 
 Rule: cache tool compilation separately from installed state, bind effective inputs, and keep the
 original locked installation and its failures mandatory.
+
+## 2026-10-29 — Configuration refusal must match the complete hash-input prefix
+
+Evidence: synthetic `config*` files, directories and links to dummy credentials now trigger typify
+cache refusal with content reads forbidden. Metadata failures and parent aliases also refuse;
+configuration added after admission cannot enter the new role's shared content-hashing path.
+
+Rule: refuse the full configuration prefix by metadata and exclude it from unsupported content
+inputs; checking only conventional filenames leaves nonstandard names and links uncovered.

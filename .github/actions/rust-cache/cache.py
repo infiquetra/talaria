@@ -121,6 +121,29 @@ def present(path: Path) -> bool:
     return True
 
 
+def typify_config_home(root: Path, env: dict[str, str]) -> Path:
+    home = Path(
+        env.get("CARGO_HOME") or str(Path(env.get("HOME") or Path.home()) / ".cargo")
+    )
+    for base in (home, root / ".cargo"):
+        if not present(base):
+            continue
+        if base.is_symlink():
+            raise ValueError(
+                "tool cache does not support aliased Cargo configuration directories"
+            )
+        try:
+            if any(entry.name.startswith("config") for entry in base.iterdir()):
+                raise ValueError(
+                    "tool cache does not support Cargo configuration entries"
+                )
+        except OSError as error:
+            raise ValueError(
+                "cannot inspect Cargo configuration directory metadata"
+            ) from error
+    return home
+
+
 def typify_identity(root: Path, env: dict[str, str]) -> bytes:
     if (
         env.get("GITHUB_ACTIONS") != "true"
@@ -137,16 +160,7 @@ def typify_identity(root: Path, env: dict[str, str]) -> bytes:
             env.get(name, ""),
         ):
             raise ValueError("unsupported compiler or native-tool flags")
-    home = Path(
-        env.get("CARGO_HOME") or str(Path(env.get("HOME") or Path.home()) / ".cargo")
-    )
-    for base in (home, root / ".cargo"):
-        for name in ("config", "config.toml"):
-            config = base / name
-            if present(config):
-                raise ValueError(
-                    "tool cache does not support Cargo configuration files"
-                )
+    home = typify_config_home(root, env)
     target = root / TYPIFY_PATH
     if BUILD_PATHS.get(TYPIFY_ROLE) != TYPIFY_PATH:
         raise ValueError("tool cache must use its fixed compilation path")
@@ -216,9 +230,13 @@ def plan(
     toolchain = digest([pin, compiler.encode(), cargo.encode()])
     lock = digest([(root / "Cargo.lock").read_bytes()])
     manifest = tomllib.loads((root / "Cargo.toml").read_text())
+    if tool is not None:
+        typify_config_home(root, env)
+    # New-role refusal must not race into the legacy glob's content reads.
+    config_paths = root.glob(".cargo/config*") if tool is None else ()
     files = {
         root / "Cargo.toml",
-        *root.glob(".cargo/config*"),
+        *config_paths,
         *root.glob(".github/workflows/*.yml"),
     }
     for member in manifest.get("workspace", {}).get("members", []):
