@@ -2,12 +2,15 @@
 use smoke::screen4a::*;
 use smoke::wording4a::*;
 fn screen(name: &str) -> String {
-    std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/screens/phase4a")
-            .join(name),
-    )
-    .expect("screen")
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = if name == "doctor-overlay-r1.txt" {
+        manifest
+            .join("../../docs/fixtures/smoke/phase4a")
+            .join(name)
+    } else {
+        manifest.join("tests/fixtures/screens/phase4a").join(name)
+    };
+    std::fs::read_to_string(path).expect("screen")
 }
 #[test]
 fn settings_title_found_with_profile() {

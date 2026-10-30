@@ -122,6 +122,15 @@ fn render(
                 put(scratch, &line.to_string(), theme.failed, &mut y);
             }
         }
+        Panel::Terminal(text) => {
+            let lines = text
+                .split('\n')
+                .map(|line| Line::from(sanitize(line).into_owned()))
+                .collect();
+            for line in wrap_lines(lines, width_u16(width)) {
+                put(scratch, &line.to_string(), theme.header, &mut y);
+            }
+        }
         Panel::Session(panel) => {
             session_body(panel, row, scratch, theme, &mut y, height.max(CHROME_ROWS));
         }

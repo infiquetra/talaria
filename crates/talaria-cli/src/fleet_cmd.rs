@@ -11,7 +11,7 @@ use clap::{Arg, ArgAction, Command, value_parser};
 use serde_json::{Value, json};
 use talaria_app::fleet::{
     FleetConfig, FleetLinkState, FleetListError, FleetNotice, FleetService, FleetSnapshot,
-    check_fleet_profile, list_once,
+    check_fleet_profile, list_once_with_herdr,
 };
 use talaria_app::side_connection::SideScope;
 use talaria_core::attention::{AlertKind, NeedSummary};
@@ -147,24 +147,20 @@ pub fn run(args: &[String]) -> u8 {
         }
     };
     let home = hermes_client::default_home();
-    let mut cfg = user_fleet_config();
-    cfg.only_profile = parsed.profile.clone();
-    runtime.block_on(async move {
-        if parsed.watch {
-            watch(&home, cfg, &parsed, offset).await
-        } else {
-            once(&home, &cfg, &parsed).await
-        }
-    })
-}
-
-/// `[fleet]` timings from the configuration file. `enabled` does not apply to this command.
-fn user_fleet_config() -> FleetConfig {
     let loaded = match std::env::var_os("HOME") {
         Some(home) => talaria_app::config::load_user_config(&PathBuf::from(home)),
         None => talaria_app::config::parse(""),
     };
-    loaded.config.fleet
+    let mut cfg = loaded.config.fleet;
+    let herdr = loaded.config.herdr.fleet_config();
+    cfg.only_profile = parsed.profile.clone();
+    runtime.block_on(async move {
+        if parsed.watch {
+            watch(&home, cfg, &parsed, offset, herdr).await
+        } else {
+            once(&home, &cfg, &parsed, herdr).await
+        }
+    })
 }
 
 fn list_error(error: &FleetListError, profile: Option<&str>) -> (String, u8) {
@@ -194,8 +190,13 @@ fn list_error(error: &FleetListError, profile: Option<&str>) -> (String, u8) {
     }
 }
 
-async fn once(home: &std::path::Path, cfg: &FleetConfig, args: &FleetArgs) -> u8 {
-    match list_once(home, cfg).await {
+async fn once(
+    home: &std::path::Path,
+    cfg: &FleetConfig,
+    args: &FleetArgs,
+    herdr: talaria_app::herdr::HerdrConfig,
+) -> u8 {
+    match list_once_with_herdr(home, cfg, Some(herdr)).await {
         Ok(snapshot) => {
             let now = now_secs();
             if args.json {
@@ -213,7 +214,13 @@ async fn once(home: &std::path::Path, cfg: &FleetConfig, args: &FleetArgs) -> u8
     }
 }
 
-async fn watch(home: &std::path::Path, cfg: FleetConfig, args: &FleetArgs, offset: i32) -> u8 {
+async fn watch(
+    home: &std::path::Path,
+    cfg: FleetConfig,
+    args: &FleetArgs,
+    offset: i32,
+    herdr: talaria_app::herdr::HerdrConfig,
+) -> u8 {
     let profile = match check_fleet_profile(home, &cfg).await {
         Ok(profile) => profile,
         Err(error) => {
@@ -226,6 +233,12 @@ async fn watch(home: &std::path::Path, cfg: FleetConfig, args: &FleetArgs, offse
     let handle = FleetService::start(home.to_path_buf(), profile, cfg, move |notice| {
         let _ = sender.send(notice);
     });
+    let mut terminals = herdr
+        .enabled
+        .then(|| talaria_app::herdr::HerdrService::with_reporter(herdr, handle.reporter()));
+    if let Some(service) = terminals.as_mut() {
+        let _ = service.poll_once().await;
+    }
     let stop = async {
         match args.for_seconds {
             Some(seconds) => tokio::time::sleep(Duration::from_secs(seconds)).await,
@@ -288,6 +301,9 @@ async fn watch(home: &std::path::Path, cfg: FleetConfig, args: &FleetArgs, offse
             }
         }
     };
+    if let Some(service) = terminals.as_mut() {
+        service.close().await;
+    }
     handle.close().await;
     code
 }
@@ -390,6 +406,12 @@ fn row_detail(row: &FleetRow, queue: &[NeedItem]) -> String {
             Some(Outcome::Interrupted) => "interrupted".to_owned(),
             _ => "finished".to_owned(),
         },
+        RowState::Idle
+            if row.backend() == talaria_core::fleet::FleetBackend::Herdr
+                && row.outcome == Some(Outcome::Unknown) =>
+        {
+            "unknown".to_owned()
+        }
         RowState::Idle => "idle".to_owned(),
     };
     if row.backend() == talaria_core::fleet::FleetBackend::Acp {
@@ -397,6 +419,12 @@ fn row_detail(row: &FleetRow, queue: &[NeedItem]) -> String {
             " [acp {}]",
             shown(row.agent().unwrap_or_default(), DETAIL_CHARS)
         ));
+    } else if row.backend() == talaria_core::fleet::FleetBackend::Herdr {
+        detail.push_str(&format!(" [herdr {}]", row.agent().unwrap_or("agent")));
+        if let Some(location) = row.terminal_location() {
+            detail.push(' ');
+            detail.push_str(location);
+        }
     }
     detail
 }
@@ -545,14 +573,15 @@ fn row_json(row: &FleetRow) -> Value {
     json!({
         "profile": row.key.profile,
         "session_id": row.key.session_id,
-        "title": row.title,
-        "model": row.model,
-        "source": row.source,
         "backend": match row.backend() {
             talaria_core::fleet::FleetBackend::Hermes => "hermes",
             talaria_core::fleet::FleetBackend::Acp => "acp",
+            talaria_core::fleet::FleetBackend::Herdr => "herdr",
         },
         "agent": row.agent(),
+        "title": row.title,
+        "model": row.model,
+        "source": row.source,
         "state": state_json(row.state),
         "state_since": row.state_since,
         "outcome": row.outcome.map(|outcome| match outcome {

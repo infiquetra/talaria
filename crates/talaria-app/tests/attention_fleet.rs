@@ -44,6 +44,7 @@ fn row(
     foreground: bool,
 ) -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key,
         title: title.to_owned(),
         model: None,

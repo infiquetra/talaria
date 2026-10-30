@@ -35,6 +35,7 @@ fn key(profile: &str, id: &str) -> RowKey {
 
 fn row(profile: &str, id: &str, title: &str, state: RowState) -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key: key(profile, id),
         title: title.to_owned(),
         model: Some("ollama-cloud/minimax-m3.1-flash".to_owned()),

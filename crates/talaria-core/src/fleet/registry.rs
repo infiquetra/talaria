@@ -187,6 +187,8 @@ pub enum FleetInput {
     },
     /// An independently owned session changed.
     External(ExternalSession),
+    /// An observation and terminal location from a live pane owner.
+    Herdr(super::herdr::HerdrProjection),
     /// An external owner ended a session.
     RemoveExternal { key: RowKey },
     /// Retain a stopped external process's row until acknowledgement.
@@ -276,6 +278,7 @@ impl RowEntry {
     fn new(key: RowKey, at: f64, foreground: bool) -> RowEntry {
         RowEntry {
             row: FleetRow {
+                terminal_location: None,
                 key,
                 title: String::new(),
                 model: None,
@@ -1018,11 +1021,22 @@ pub fn update(reg: &mut FleetRegistry, input: FleetInput) -> Vec<FleetEffect> {
             on_subscribed(reg, key, view, at, &mut effects, &mut dirty)
         }
         FleetInput::External(session) => on_external(reg, session, &mut effects, &mut dirty),
+        FleetInput::Herdr(projection) => {
+            let key = projection.session.key.clone();
+            on_external(reg, projection.session, &mut effects, &mut dirty);
+            touch(&mut reg.rows, &key, &mut dirty, |entry| {
+                let location = format!(
+                    "{} {} {}",
+                    projection.workspace, projection.tab, projection.pane
+                );
+                entry.row.terminal_location = Some(crate::text::sanitize(&location).into_owned());
+            });
+        }
         FleetInput::RemoveExternal { key } => {
             if reg
                 .rows
                 .get(&key)
-                .is_some_and(|entry| entry.row.backend == FleetBackend::Acp)
+                .is_some_and(|entry| entry.row.backend != FleetBackend::Hermes)
             {
                 reg.remove_row(&key, &mut dirty);
             }

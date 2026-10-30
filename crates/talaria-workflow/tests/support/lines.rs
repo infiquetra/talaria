@@ -46,7 +46,7 @@ pub fn manifest() -> Manifest {
         "seed": 4242,
         "profile": "fixture",
         "on_unknown": "wait",
-        "talaria_version": "0.7.0-dev",
+        "talaria_version": env!("CARGO_PKG_VERSION"),
         "hermes": {},
         "roster": {},
         "approval_policy": {}
