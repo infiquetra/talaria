@@ -1,0 +1,51 @@
+[theme]
+name = "refined-default"
+
+[ui]
+reduced_motion = false
+inspector_width = 36
+inspector_open_at_start = false
+inspector_dock_min_columns = 120
+diff_side_by_side_min_columns = 112
+show_timestamps = false
+
+[status]
+interval_seconds = 5
+segments = [
+  "cwd",
+  "git_branch",
+  "agent_model",
+  "context",
+  "task_progress",
+  "connection",
+  "version",
+]
+cwd_max_columns = 24
+git_branch_max_columns = 18
+agent_model_max_columns = 24
+
+[environment]
+allowlist = []
+
+[composer]
+paste_collapse_lines = 6
+paste_collapse_bytes = 512
+attachment_max_mb = 16
+
+[notifications]
+transcript_line = true
+
+[keys]
+toggle_inspector = "ctrl+o"
+interrupt = "ctrl+s"
+agents = "ctrl+g"
+commands = "f3"
+models = "f11"
+profiles = "f12"
+config = "ctrl+k"
+follow = "f5"
+replay_pause = "f8"
+replay_slower = "f9"
+replay_faster = "f10"
+
+[profiles.endpoints]
