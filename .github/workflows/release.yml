@@ -84,6 +84,14 @@ jobs:
             echo "::error::Tag $TAG releases '$base', but the workspace declares '$expected'."
             exit 1
           fi
+      - name: Restore disposable Rust caches
+        # Branch-context dispatches use the full-work fallback, without loading tag-owned helpers.
+        # Tag contexts must match the resolved checkout; older tags may lack this optional action.
+        if: github.ref == format('refs/tags/{0}', steps.resolve.outputs.tag) && hashFiles('.github/actions/rust-cache/action.yml') != ''
+        continue-on-error: true
+        uses: ./.github/actions/rust-cache
+        with:
+          role: release-debug
       - name: Project check
         run: |
           cargo fmt --check

@@ -53,6 +53,20 @@ Rule: account for primary-screen live-row reflow on width changes even while an 
 `queue_draft_clear_is_emitted_only_after_acceptance` and `busy_queue_shortcuts_keep_text_and_caret` cover a delayed queue operation and both draft shortcuts. Clearing on the key event loses the draft on refusal; deciding from an earlier view can also race with queue completion. `clearing_a_synchronized_draft_invalidates_pending_attachment_results` covers stale attachments after a successful clear.
 
 Rule: clear an unchanged composer draft only after the reducer accepts it, and invalidate pending attachment results when it is cleared.
+## 2026-10-29 — Rust cache identity includes compiler, mode and writer provenance
+
+Evidence: `.github/actions/rust-cache/test_cache.py` exercises stale inputs, missing metadata,
+PR save denial and release/coverage separation; the action pins official `actions/cache` v4.3.0.
+Downloads are shared from successful default-branch push/schedule/dispatch runs; build objects
+have separate role keys. Release tag writes remain tag-scoped. Installed tools, runtime profiles
+and benchmark reports stay out of caches, and every original command runs after a hit or miss.
+Release caching requires the event ref to match the resolved tag ref and the helper to exist;
+branch-context release dispatches skip the helper and retain the full project and release checks.
+The locked cargo-typify installation remains mandatory; no cached version string qualifies a tool.
+
+Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their
+writers, and keep qualification independent of cache state.
+
 
 ## 2026-10-28 — Waiting work and an answered pause need durable evidence
 

@@ -29,6 +29,14 @@ jobs:
         run: |
           rustup toolchain install
           rustup show active-toolchain
+      - name: Cache policy checks
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 -I -m unittest discover -s .github/actions/rust-cache -p 'test_*.py'
+      - name: Restore disposable Rust caches
+        continue-on-error: true
+        uses: ./.github/actions/rust-cache
+        with:
+          role: native-debug
       - name: Format
         run: cargo fmt --check
       - name: Clippy
@@ -57,6 +65,11 @@ jobs:
         uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-llvm-cov
+      - name: Restore disposable Rust caches
+        continue-on-error: true
+        uses: ./.github/actions/rust-cache
+        with:
+          role: coverage-debug
       - name: Measure line coverage (floor 80%)
         run: cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
       # The report is its own step so it still runs when the floor fails; in one step the
