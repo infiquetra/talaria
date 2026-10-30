@@ -2,6 +2,41 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — Consolidated coverage still needs native timing and documentation checks
+
+**Current input.** The layout is refreshed onto merged `5e6b6da`, preserving the
+current reconnect/UI regressions, ACP and Herdr inputs, release checks, CLI
+documentation tests, guides, migration fixtures, Cargo declarations and pins.
+That merge's native Linux/macOS and coverage runs passed. Those results qualify
+the old layout, not this consolidation or repeated stability of earlier failures.
+
+**Mechanism.** The existing required Linux `rust-check` context now owns one full
+instrumented workspace execution with the unchanged 80% floor and `/generated/`
+exclusion. Native macOS still runs the complete workspace. Linux first lists and
+executes the exact native keystroke case with its original 16 ms p95 / 33 ms worst
+budgets, then lists and executes native workspace doctests with default features
+and ignore policy. The focused `--include-ignored` never extends to the workspace
+or operator-configured live ACP cases. Native and coverage cache roles stay separate;
+cache outcomes never replace execution.
+
+**Documentation scope.** The retained native baseline records nine passing examples
+across eleven doctest scopes, including the original compile-fail example and
+patterns guide. `crates/talaria-cli/tests/docs.rs` is an ordinary integration target
+covering the user guide and migration pages; it remains in the full workspace run.
+Displayed test-summary occurrences are not globally unique case counts. Collection
+alone does not prove doctest execution, and `cargo llvm-cov --no-run` is report-only.
+
+**Failure handling and limits.** LCOV writing and upload are attempted after Linux
+failure; report or upload failure remains fatal. The retained `rust-coverage`
+context accepts only exact matrix success without another workspace run. Source
+and inert-command shell controls do not establish compiled case parity, measured
+coverage, artifact transport or hosted cancellation. Both final source reviews,
+current native/doc/instrumented inventory reconciliation and full hosted checks
+remain required; no new warm run or savings claim follows from this layout change.
+
+**Rule.** Consolidate duplicate execution only after preserving each native-only
+obligation and keeping its failure inside the existing required context.
+
 ## 2026-10-30 — Preserve an unknown admission through worker completion
 
 **Mechanism.** Backend retention alone is insufficient when a worker reports a refused resend: the fleet reducer clears its unconfirmed marker and a later Enter can allocate a new submission ID. The resend worker now reports the existing unknown outcome only when a refused attempt still has an authoritative pending service entry. A genuine remote refusal has already removed that entry, even when its reason is literally `not connected`. Fresh sends and direct service outcomes are unchanged; no reason-string classification or automatic resend is added.

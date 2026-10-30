@@ -696,8 +696,11 @@ class WorkflowPolicyTests(unittest.TestCase):
             .replace("role: temporary", "role: coverage-debug")
         )
         expected = {
-            "rust-check": [("native-debug", "target/debug")],
-            "rust-coverage": [("coverage-debug", "target/llvm-cov-target/debug")],
+            "rust-check": [
+                ("native-debug", "target/debug"),
+                ("coverage-debug", "target/llvm-cov-target/debug"),
+            ],
+            "rust-coverage": [],
         }
         with self.assertRaises(ValueError):
             self.check_job_bindings(swapped, expected)
@@ -791,8 +794,11 @@ class WorkflowPolicyTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         roles = {
             "ci.yml": {
-                "rust-check": [("native-debug", "target/debug")],
-                "rust-coverage": [("coverage-debug", "target/llvm-cov-target/debug")],
+                "rust-check": [
+                    ("native-debug", "target/debug"),
+                    ("coverage-debug", "target/llvm-cov-target/debug"),
+                ],
+                "rust-coverage": [],
             },
             "bench.yml": {"bench": [("bench-release", "target/release")]},
             "contract.yml": {
