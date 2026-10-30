@@ -71,7 +71,7 @@ pub fn manifest() -> NewManifest {
         seed: 7,
         profile: "fixture".into(),
         on_unknown: OnUnknown::Wait,
-        talaria_version: "0.7.0-dev".into(),
+        talaria_version: env!("CARGO_PKG_VERSION").into(),
         hermes: json!({}),
         roster: json!({}),
         approval_policy: json!({}),

@@ -21,6 +21,7 @@ const WORST_US: u128 = 33_000;
 
 fn row(index: usize) -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key: RowKey {
             profile: if index.is_multiple_of(2) {
                 "default"

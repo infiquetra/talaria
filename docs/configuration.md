@@ -338,6 +338,10 @@ fleet_needs_you = "all"
 fleet_finished = "watched"
 [herdr]
 report_state = true
+enabled = false
+binary = "herdr"
+poll_interval_ms = 2000
+# workspace_filter = "workspace-id"
 [composer]
 vim = false
 paste_collapse_lines = 5
@@ -380,6 +384,15 @@ focus = false
 searches saved prompts; Ctrl+Z suspends to the shell until `fg`. History is kept owner-only in `~/.talaria/history.jsonl`; a leading space or over 100,000 characters
 keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
 lists choose channels separately, and `done` waits for `done_after_seconds` (0 to 86400). Inside Herdr, `[herdr] report_state` reports blocked, working or idle.
+
+Set `[herdr] enabled = true` to add live terminal agents to the enabled fleet. `binary` selects the
+executable, `poll_interval_ms` accepts 50–300000 milliseconds, and `workspace_filter` optionally
+limits discovery to one workspace. `talaria herdr panes [--probe]` lists agents without focusing
+them; `--probe` refreshes each pane with `agent get`. Fleet peek shows sanitized visible terminal
+output, and Enter on a Herdr row focuses its pane. Follow-up prompts use atomic submission;
+blocked approvals use validated keys explicitly submitted by the operator. Unknown agent states
+remain idle with an unknown indicator.
+
 `status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees the default-deny environment described below plus `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
 (`/theme` overrides it for one session); `theme.follow_hermes_skin = false` keeps Talaria's colours; `theme.colors` is `auto`, `truecolor`, `256`, `16` or `none`.
 `ui.reduced_motion` stops timed changes except counters, which change at most once a second. A paste of `paste_collapse_lines` lines or `paste_collapse_chars` characters

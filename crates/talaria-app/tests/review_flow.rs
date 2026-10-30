@@ -125,6 +125,7 @@ async fn fleet_v_opens_review_and_esc_returns() {
 /// A fleet snapshot listing one working row.
 fn snapshot(key: &RowKey) -> FleetViewInput {
     let row = talaria_core::fleet::FleetRow {
+        terminal_location: None,
         key: key.clone(),
         title: "work".to_owned(),
         model: None,

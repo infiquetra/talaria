@@ -235,6 +235,7 @@ impl Rig {
 
     pub fn setup(&self) -> RunSetup {
         RunSetup {
+            herdr: None,
             home: self.gateway.home().to_path_buf(),
             launch_id: "launch-1".to_string(),
             preopened: None,
