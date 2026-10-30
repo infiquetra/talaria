@@ -4,6 +4,7 @@
 
 pub mod acp;
 mod external;
+pub mod herdr;
 mod queue;
 mod registry;
 mod row;

@@ -245,3 +245,9 @@ impl FleetRow {
             .map(|(amount, currency)| (*amount, currency.as_str()))
     }
 }
+
+impl FleetRow {
+    pub fn terminal_location(&self) -> Option<&str> {
+        todo!("add terminal agent mapping")
+    }
+}
