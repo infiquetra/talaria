@@ -552,6 +552,11 @@ impl PeekService {
         outcome
     }
 
+    /// Whether the original reply still has no confirmed outcome.
+    pub(crate) fn has_unconfirmed_reply(&self, key: &RowKey) -> bool {
+        self.unconfirmed.contains_key(key)
+    }
+
     /// Send the stored unconfirmed reply again, with the same text and submission id.
     pub async fn resend_unconfirmed(&mut self, key: &RowKey) -> ReplyOutcome {
         let Some((text, submission_id)) = self.unconfirmed.get(key).cloned() else {

@@ -2,6 +2,16 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — Preserve an unknown admission through worker completion
+
+**Mechanism.** Backend retention alone is insufficient when a worker reports a refused resend: the fleet reducer clears its unconfirmed marker and a later Enter can allocate a new submission ID. The resend worker now reports the existing unknown outcome only when a refused attempt still has an authoritative pending service entry. A genuine remote refusal has already removed that entry, even when its reason is literally `not connected`. Fresh sends and direct service outcomes are unchanged; no reason-string classification or automatic resend is added.
+
+**Evidence.** Two new round trips drive the real reducer, effects, worker, service and wire with a counting, distinct-ID factory. Before the worker correction, the UI pending-state assertion fails while the genuine remote-refusal control passes. After the correction, the complete peek target passes all 19 cases; formatting and whitespace checks pass. The original 17 case bodies and assertions remain intact. Explicit resumed sends retain the original text and ID; a real refusal permits a different ID for a later fresh send.
+
+**Fixture limits.** The resumed snapshot must retain the initial gateway-ready replay epoch: changing it simulates a backend restart and suppresses replay. That fixture mismatch was corrected. An intermediate setup run also observed an unexplained extra initial connection and failed the unchanged barrier before either oracle; its failure is retained, with failure-only wire diagnostics added. The final before/control and 19-case after runs pass, without asserting repeated stability. The earlier hosted ensure I/O cause remains unresolved; full hosted OS and workspace coverage qualification is still required.
+
+**Rule.** Preserve uncertainty across every consumer of a completion, and distinguish it with typed state rather than presentation text.
+
 ## 2026-10-30 — A known-unsent resend must preserve an earlier unknown reply
 
 **Mechanism.** A peek reply whose connection drops has an unknown result, so its text and submission ID remain available for explicit resend. During reconnect, the channel can return typed `CallError::NotConnected` before writing a request. Mapping that error to a public refusal previously cleared the earlier unconfirmed reply. The service now retains the entry for this typed transport error while preserving the public refusal and the existing treatment of genuine RPC refusals, including a remote reason literally saying `not connected`.
