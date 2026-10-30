@@ -1,0 +1,45 @@
+name: release-candidate
+on:
+  pull_request:
+    paths:
+      - 'tools/release/**'
+      - '.github/workflows/release-candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rc-tools:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RC_TESTS_BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - run: rustup toolchain install
+      - run: sh tools/release/tests/rc.test.sh
+  rc-linux:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - run: rustup toolchain install
+      - run: cargo install cargo-typify --version 0.8.0 --locked
+      - run: git rev-parse HEAD
+      - run: sh tools/release/rc.sh run --class ci --evidence "$RUNNER_TEMP/evidence.md" --summary "$RUNNER_TEMP/summary.md"
+      - if: always()
+        run: test ! -f "$RUNNER_TEMP/summary.md" || cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rc-linux-evidence
+          path: |
+            ${{ runner.temp }}/evidence.md
+            ${{ runner.temp }}/summary.md
