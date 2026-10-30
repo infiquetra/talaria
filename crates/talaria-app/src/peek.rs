@@ -530,6 +530,7 @@ impl PeekService {
                     &submission_id,
                 )
                 .await
+                .outcome
             }
             None => ReplyOutcome::Unknown {
                 why: "connection dropped".to_owned(),
@@ -568,7 +569,7 @@ impl PeekService {
                 reason: "the session is not open".to_owned(),
             };
         };
-        let outcome = match self.link.as_ref().map(|link| link.client.clone()) {
+        let attempt = match self.link.as_ref().map(|link| link.client.clone()) {
             Some(client) => {
                 submit_on(
                     client,
@@ -579,14 +580,17 @@ impl PeekService {
                 )
                 .await
             }
-            None => ReplyOutcome::Unknown {
-                why: "connection dropped".to_owned(),
+            None => SubmitAttempt {
+                outcome: ReplyOutcome::Unknown {
+                    why: "connection dropped".to_owned(),
+                },
+                not_connected: false,
             },
         };
-        if !matches!(outcome, ReplyOutcome::Unknown { .. }) {
+        if !attempt.not_connected && !matches!(attempt.outcome, ReplyOutcome::Unknown { .. }) {
             self.unconfirmed.remove(key);
         }
-        outcome
+        attempt.outcome
     }
 }
 
@@ -612,6 +616,11 @@ async fn connect(
     })
 }
 
+struct SubmitAttempt {
+    outcome: ReplyOutcome,
+    not_connected: bool,
+}
+
 /// `prompt.submit` with exactly the three keys, and its outcome.
 async fn submit_on(
     client: Client,
@@ -619,7 +628,7 @@ async fn submit_on(
     session_id: &str,
     text: &str,
     submission_id: &str,
-) -> ReplyOutcome {
+) -> SubmitAttempt {
     {
         let params =
             json!({"session_id": session_id, "text": text, "submission_id": submission_id});
@@ -632,7 +641,8 @@ async fn submit_on(
                 },
             )
             .await;
-        match result {
+        let not_connected = matches!(&result, Err(CallError::NotConnected));
+        let outcome = match result {
             Ok(reply) if reply.get("voice_stopped") == Some(&Value::Bool(true)) => {
                 ReplyOutcome::VoiceStopped
             }
@@ -651,6 +661,10 @@ async fn submit_on(
             Err(error) => ReplyOutcome::Refused {
                 reason: call_reason(&error, "prompt.submit"),
             },
+        };
+        SubmitAttempt {
+            outcome,
+            not_connected,
         }
     }
 }

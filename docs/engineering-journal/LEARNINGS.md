@@ -2,6 +2,16 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — A known-unsent resend must preserve an earlier unknown reply
+
+**Mechanism.** A peek reply whose connection drops has an unknown result, so its text and submission ID remain available for explicit resend. During reconnect, the channel can return typed `CallError::NotConnected` before writing a request. Mapping that error to a public refusal previously cleared the earlier unconfirmed reply. The service now retains the entry for this typed transport error while preserving the public refusal and the existing treatment of genuine RPC refusals, including a remote reason literally saying `not connected`.
+
+**Regression.** The existing `reply_failures_and_resend` case now holds the mock's second connection before its handshake, checks that an explicit disconnected resend sends nothing, releases the barrier, and waits for the client's new `Connected` generation before one explicit resend. Its original refusal, unknown-result, success and identical-payload assertions remain. Controls cover another unknown resend, a different open row, and the same-text remote refusal. The barrier is disabled by default. No automatic resend is added.
+
+**Diagnostics and limits.** The ensure test's failure arm now records only its I/O error kind and bounded lifecycle counters. The original I/O cause remains unresolved. Initial native and instrumented attempts stopped at locked dependency resolution. After the cache was restored, the original-runtime peek binary compiled all 17 cases, but the focused regression stopped at the mock's port bind; a separate loopback probe returned `EPERM`. The repaired source was restored without changing the tests. Subsequent permission-capable execution at the same unprivileged UID reproduced the original `nothing to resend` failure, passed the same forced case with the repair, and passed all 17 native peek cases and all 26 instrumented connect cases. The tests, locked dependencies and test budgets were unchanged. Full workspace, native macOS, coverage-floor, benchmark and contract qualification remains required. Formatting and source/assertion inventory checks passed; no workspace coverage percentage is claimed.
+
+**Rule.** Preserve typed transport disposition through presentation mapping, and synchronize reconnect tests on client readiness rather than a server's accepted-socket count.
+
 ## 2026-10-30 — Historical recordings and active version values have different roles
 
 **Evidence.** The release metadata check found development-version literals in workflow test manifests and in three recorded doctor screens. The manifest values follow the workspace version, while the recordings retain the exact bytes captured at the time.

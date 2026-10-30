@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fake_fleet::{FakeFleetSink, FleetCall};
+use hermes_client::liveness::{LinkEvent, LinkState};
 use mock_gateway::{Behavior, MockGateway, Reply, StandaloneGateway, data_snapshot};
 use serde_json::{Value, json};
 use talaria_app::app::{self, AppEffect, AppMessage, AppState, UserAction};
@@ -22,6 +23,7 @@ use talaria_core::fleet_view::{
     FleetAction, FleetViewEffect, FleetViewInput, ReplyOutcome, StopOutcome,
 };
 use talaria_core::session::{PromptKey, SessionId};
+use tokio::sync::{mpsc, oneshot};
 
 const NOW: f64 = 1_792_700_000.0;
 
@@ -377,6 +379,8 @@ async fn reply_failures_and_resend() {
     seed(&gateway, "local-3f2a", true, false);
     let (mut peek, _) = service(home.path());
     peek.open(key("fixture", "local-3f2a")).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    let (held, release) = gateway.hold_second_handshake();
     gateway.queue_behavior("prompt.submit", Behavior::Refuse("queue_full".to_owned()));
     let refused = peek.reply("one".to_owned()).await;
     assert!(
@@ -398,21 +402,30 @@ async fn reply_failures_and_resend() {
         matches!(dropped, ReplyOutcome::Unknown { .. }),
         "a dropped reply was not unknown: {dropped:?}"
     );
-    // The resend goes out once the link is back.
-    let started = Instant::now();
-    while gateway.websocket_connections() < 2 && started.elapsed() < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let mut again = ReplyOutcome::Unknown {
-        why: "not tried".to_owned(),
-    };
-    while started.elapsed() < Duration::from_secs(5) {
-        again = peek.resend_unconfirmed(&key("fixture", "local-3f2a")).await;
-        if !matches!(again, ReplyOutcome::Refused { ref reason } if reason == "not connected") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    wait_for_held_handshake(&mut peek, &mut events, held, deadline).await;
+    assert_eq!(gateway.requests("prompt.submit").len(), 3);
+    let disconnected = peek.resend_unconfirmed(&key("fixture", "local-3f2a")).await;
+    assert_eq!(
+        disconnected,
+        ReplyOutcome::Refused {
+            reason: "not connected".to_owned()
+        },
+        "a resend before handshake must be known unsent"
+    );
+    assert_eq!(
+        gateway.requests("prompt.submit").len(),
+        3,
+        "disconnected resend wrote a request"
+    );
+    release.send(()).expect("release handshake");
+    wait_for_connected(&mut peek, &mut events, 2, deadline).await;
+    assert_eq!(
+        gateway.requests("prompt.submit").len(),
+        3,
+        "reconnect automatically resent"
+    );
+    let again = peek.resend_unconfirmed(&key("fixture", "local-3f2a")).await;
     assert_eq!(again, ReplyOutcome::Sent, "the resend was answered");
     let submits = gateway.requests("prompt.submit");
     assert!(submits.len() >= 4, "the resend was not sent");
@@ -421,6 +434,177 @@ async fn reply_failures_and_resend() {
         submits.last().expect("resend").params,
         "the resend repeats the dropped reply's params byte for byte"
     );
+    assert_eq!(submits.len(), 4, "one explicit resend reached the gateway");
+    assert_eq!(
+        names(&submits[3].params),
+        ["session_id", "submission_id", "text"]
+    );
+    assert_eq!(
+        peek.resend_unconfirmed(&key("fixture", "local-3f2a")).await,
+        ReplyOutcome::Refused {
+            reason: "nothing to resend".to_owned()
+        },
+        "a confirmed reply clears the pending entry"
+    );
+    assert_eq!(gateway.requests("prompt.submit").len(), 4);
+}
+
+async fn wait_for_held_handshake(
+    peek: &mut PeekService,
+    events: &mut mpsc::Receiver<LinkEvent>,
+    mut held: oneshot::Receiver<()>,
+    deadline: tokio::time::Instant,
+) {
+    tokio::time::timeout_at(deadline, async {
+        loop {
+            tokio::select! {
+                result = &mut held => { result.expect("handshake barrier reached"); return; }
+                event = events.recv() => {
+                    peek.on_link_event(event.expect("link event stream remains open"));
+                }
+            }
+        }
+    })
+    .await
+    .expect("second handshake reached within the reconnect budget");
+}
+
+async fn wait_for_connected(
+    peek: &mut PeekService,
+    events: &mut mpsc::Receiver<LinkEvent>,
+    minimum_generation: u64,
+    deadline: tokio::time::Instant,
+) {
+    tokio::time::timeout_at(deadline, async {
+        loop {
+            let event = events.recv().await.expect("link event stream remains open");
+            let connected = matches!(&event,
+                LinkEvent::State(LinkState::Connected { generation }) if *generation >= minimum_generation);
+            peek.on_link_event(event);
+            if connected { return; }
+        }
+    }).await.expect("client connected within the reconnect budget");
+}
+
+#[tokio::test]
+async fn resend_unknown_keeps_original_payload() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "local-3f2a", true, false);
+    let (mut peek, _) = service(home.path());
+    let row = key("fixture", "local-3f2a");
+    peek.open(row.clone()).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    assert!(matches!(
+        peek.reply("keep me".to_owned()).await,
+        ReplyOutcome::Unknown { .. }
+    ));
+    wait_for_connected(
+        &mut peek,
+        &mut events,
+        2,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+    )
+    .await;
+    assert_eq!(gateway.requests("prompt.submit").len(), 1);
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    assert!(matches!(
+        peek.resend_unconfirmed(&row).await,
+        ReplyOutcome::Unknown { .. }
+    ));
+    wait_for_connected(
+        &mut peek,
+        &mut events,
+        3,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+    )
+    .await;
+    assert_eq!(gateway.requests("prompt.submit").len(), 2);
+    assert_eq!(peek.resend_unconfirmed(&row).await, ReplyOutcome::Sent);
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 3);
+    assert_eq!(submits[0].params, submits[1].params);
+    assert_eq!(submits[0].params, submits[2].params);
+}
+
+#[tokio::test]
+async fn resend_not_attached_keeps_original_row() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "local-3f2a", true, false);
+    seed(&gateway, "local-other", false, false);
+    let (mut peek, _) = service(home.path());
+    let row = key("fixture", "local-3f2a");
+    peek.open(row.clone()).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    assert!(matches!(
+        peek.reply("keep my row".to_owned()).await,
+        ReplyOutcome::Unknown { .. }
+    ));
+    wait_for_connected(
+        &mut peek,
+        &mut events,
+        2,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+    )
+    .await;
+    peek.open(key("fixture", "local-other"))
+        .await
+        .expect("other peek");
+    assert_eq!(
+        peek.resend_unconfirmed(&row).await,
+        ReplyOutcome::NotAttached {
+            reason: "the session is not open".to_owned()
+        }
+    );
+    assert_eq!(gateway.requests("prompt.submit").len(), 1);
+    peek.open(row.clone()).await.expect("original peek");
+    assert_eq!(peek.resend_unconfirmed(&row).await, ReplyOutcome::Sent);
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 2);
+    assert_eq!(submits[0].params, submits[1].params);
+}
+
+#[tokio::test]
+async fn resend_remote_not_connected_refusal_clears_entry() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "local-3f2a", true, false);
+    let (mut peek, _) = service(home.path());
+    let row = key("fixture", "local-3f2a");
+    peek.open(row.clone()).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    assert!(matches!(
+        peek.reply("server refusal".to_owned()).await,
+        ReplyOutcome::Unknown { .. }
+    ));
+    wait_for_connected(
+        &mut peek,
+        &mut events,
+        2,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+    )
+    .await;
+    gateway.queue_behavior(
+        "prompt.submit",
+        Behavior::Refuse("not connected".to_owned()),
+    );
+    assert_eq!(
+        peek.resend_unconfirmed(&row).await,
+        ReplyOutcome::Refused {
+            reason: "not connected".to_owned()
+        }
+    );
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 2, "remote refusal answered a real request");
+    assert_eq!(submits[0].params, submits[1].params);
+    assert_eq!(
+        peek.resend_unconfirmed(&row).await,
+        ReplyOutcome::Refused {
+            reason: "nothing to resend".to_owned()
+        }
+    );
+    assert_eq!(gateway.requests("prompt.submit").len(), 2);
 }
 
 fn worker(home: &Path) -> PeekWorker {

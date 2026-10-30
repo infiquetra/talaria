@@ -5457,6 +5457,7 @@ struct StandaloneInfo {
     control: Mutex<Vec<ControlSeen>>,
     tickets: Mutex<Vec<IssuedTicket>>,
     websockets: Mutex<Vec<Instant>>,
+    second_handshake: Mutex<Option<HandshakeGate>>,
     present: std::sync::atomic::AtomicBool,
     refuse_host_scope: Mutex<bool>,
     refuse_tickets: Mutex<bool>,
@@ -5464,6 +5465,11 @@ struct StandaloneInfo {
     parked_profiles: Mutex<Vec<(String, String)>>,
     configure_rest_origin: Mutex<Option<String>>,
     doctor: Mutex<DoctorMockState>,
+}
+
+struct HandshakeGate {
+    reached: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
 }
 
 #[derive(Clone, Debug)]
@@ -5574,6 +5580,7 @@ impl StandaloneGateway {
             control: Mutex::new(Vec::new()),
             tickets: Mutex::new(Vec::new()),
             websockets: Mutex::new(Vec::new()),
+            second_handshake: Mutex::new(None),
             present: std::sync::atomic::AtomicBool::new(false),
             refuse_host_scope: Mutex::new(false),
             refuse_tickets: Mutex::new(false),
@@ -5699,6 +5706,25 @@ impl StandaloneGateway {
     /// How many connections the WebSocket port has accepted.
     pub fn websocket_connections(&self) -> usize {
         plain(&self.info.websockets).len()
+    }
+
+    /// Hold the second connection before its WebSocket handshake, until explicitly released.
+    /// Unarmed gateways keep their normal behavior.
+    pub fn hold_second_handshake(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        assert_eq!(
+            self.websocket_connections(),
+            1,
+            "arm after the first connection"
+        );
+        let (reached, held) = oneshot::channel();
+        let (release, wait) = oneshot::channel();
+        let mut gate = plain(&self.info.second_handshake);
+        assert!(gate.is_none(), "handshake barrier already armed");
+        *gate = Some(HandshakeGate {
+            reached,
+            release: wait,
+        });
+        (held, release)
     }
 
     /// How many tickets the control socket has issued.
@@ -6040,7 +6066,22 @@ async fn accept_sockets(listener: TcpListener, shared: Arc<Shared>, info: Arc<St
             {
                 doctor_http(stream, info).await;
             } else {
-                plain(&info.websockets).push(Instant::now());
+                let connection = {
+                    let mut sockets = plain(&info.websockets);
+                    sockets.push(Instant::now());
+                    sockets.len()
+                };
+                let gate = if connection == 2 {
+                    plain(&info.second_handshake).take()
+                } else {
+                    None
+                };
+                if let Some(gate) = gate {
+                    let _ = gate.reached.send(());
+                    if gate.release.await.is_err() {
+                        return;
+                    }
+                }
                 serve_socket(stream, shared, info).await;
             }
         });
