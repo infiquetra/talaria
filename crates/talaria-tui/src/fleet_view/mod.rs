@@ -49,6 +49,13 @@ pub struct PeekPanel<'a> {
     pub now: f64,
 }
 
+/// A transcript and permission choices owned by an external agent.
+pub struct ExternalPeekPanel<'a> {
+    pub mapping: &'a talaria_core::fleet::acp::AcpMapping,
+    pub selected_option: usize,
+    pub now: f64,
+}
+
 /// The key names the footer shows. A `None` leaves that hint out.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FleetKeyLabels {
@@ -195,6 +202,7 @@ enum Panel<'a> {
     Failed(&'a str),
     /// The session's latest output.
     Session(&'a PeekPanel<'a>),
+    External(&'a ExternalPeekPanel<'a>),
 }
 
 /// The fleet overlay.
@@ -222,6 +230,20 @@ impl FleetView {
         theme: &FleetTheme,
         labels: &BTreeMap<RowKey, PrLabel>,
     ) {
+        Self::draw_with_sources(state, peek, None, area, buf, theme, labels);
+    }
+
+    /// Draw the fleet using either a Hermes or an external transcript source.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_with_sources(
+        state: &FleetViewState,
+        peek: Option<PeekPanel<'_>>,
+        external: Option<ExternalPeekPanel<'_>>,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &FleetTheme,
+        labels: &BTreeMap<RowKey, PrLabel>,
+    ) {
         let area = area.intersection(buf.area);
         if area.is_empty() {
             return;
@@ -239,7 +261,7 @@ impl FleetView {
         let notice_row = area.bottom() - 2;
         let footer_row = area.bottom() - 1;
 
-        let panel = panel_of(state, peek.as_ref());
+        let panel = panel_of(state, peek.as_ref(), external.as_ref());
         let has_card = panel_has_card(state, panel.as_ref());
 
         if state.seen_snapshot() {
@@ -270,13 +292,18 @@ fn draw_too_small(area: Rect, buf: &mut Buffer, theme: &FleetTheme) {
 
 /// Which panel to draw: the failure or opening text from the view state first, otherwise the
 /// session passed in.
-fn panel_of<'a>(state: &'a FleetViewState, peek: Option<&'a PeekPanel<'a>>) -> Option<Panel<'a>> {
-    match (state.peek(), peek) {
-        (Some((_, PeekStatus::Opening)), _) => Some(Panel::Opening),
-        (Some((_, PeekStatus::Failed { text })), _) => Some(Panel::Failed(text)),
-        (_, Some(panel)) => Some(Panel::Session(panel)),
-        (Some((_, PeekStatus::Open { .. })), None) => Some(Panel::Opening),
-        (None, None) => None,
+fn panel_of<'a>(
+    state: &'a FleetViewState,
+    peek: Option<&'a PeekPanel<'a>>,
+    external: Option<&'a ExternalPeekPanel<'a>>,
+) -> Option<Panel<'a>> {
+    match (state.peek(), peek, external) {
+        (Some((_, PeekStatus::Opening)), _, _) => Some(Panel::Opening),
+        (Some((_, PeekStatus::Failed { text })), _, _) => Some(Panel::Failed(text)),
+        (_, _, Some(panel)) => Some(Panel::External(panel)),
+        (_, Some(panel), _) => Some(Panel::Session(panel)),
+        (Some((_, PeekStatus::Open { .. })), None, None) => Some(Panel::Opening),
+        (None, None, None) => None,
     }
 }
 
@@ -296,6 +323,7 @@ fn panel_has_card(state: &FleetViewState, panel: Option<&Panel<'_>>) -> bool {
             );
             from_status || panel.stack.is_some_and(|stack| stack.section().is_some())
         }
+        Some(Panel::External(panel)) => !panel.mapping.needs.is_empty(),
         _ => false,
     }
 }
@@ -418,6 +446,9 @@ fn footer_text(
         Focus::Reply => FOOTER_REPLY.to_owned(),
         Focus::Filter => FOOTER_FILTER.to_owned(),
         Focus::Answer => match panel {
+            Some(Panel::External(_)) => {
+                "arrows choose · enter select · ctrl+c back to list".to_owned()
+            }
             Some(Panel::Session(panel)) => panel
                 .stack
                 .and_then(|stack| peek::card_hint(stack, width))
@@ -430,11 +461,20 @@ fn footer_text(
                 ),
             _ => BACK_TO_LIST.to_owned(),
         },
-        Focus::List | Focus::ConfirmStop => list_footer(&theme.keys, has_card),
+        Focus::List | Focus::ConfirmStop => {
+            let can_reply = state
+                .cursor()
+                .and_then(|key| state.find_row(key))
+                .is_none_or(|row| {
+                    row.backend() != talaria_core::fleet::FleetBackend::Acp
+                        || !matches!(row.state, RowState::Working | RowState::NeedsYou)
+                });
+            list_footer(&theme.keys, has_card, can_reply)
+        }
     }
 }
 
-fn list_footer(keys: &FleetKeyLabels, has_card: bool) -> String {
+fn list_footer(keys: &FleetKeyLabels, has_card: bool, can_reply: bool) -> String {
     let mut parts = Vec::new();
     let mut hint = |key: &Option<String>, word: &str| {
         if let Some(key) = key {
@@ -443,7 +483,9 @@ fn list_footer(keys: &FleetKeyLabels, has_card: bool) -> String {
     };
     hint(&keys.open, "open");
     hint(&keys.peek, "peek");
-    hint(&keys.reply, "reply");
+    if can_reply {
+        hint(&keys.reply, "reply");
+    }
     hint(&keys.stop, "stop");
     if has_card {
         hint(&keys.answer, "answer");

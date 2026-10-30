@@ -195,6 +195,15 @@ pub enum LinkView {
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
     Kanban(talaria_core::kanban::BoardKey),
+    /// Redraw an external permission selection.
+    AcpSelect,
+    /// Answer a permission owned by an external agent.
+    AcpAnswer {
+        key: RowKey,
+        responder: String,
+        tool_call_id: String,
+        option_id: String,
+    },
     Workflow(talaria_workflow::progress::live::ProgressKey),
     /// Input owned by the configuration assistant overlay.
     Configure(Box<talaria_core::configure::ConfigureInput>),
@@ -341,6 +350,9 @@ pub enum ToggleContext {
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
     pub kanban: Option<&'a talaria_core::kanban::KanbanBoardState>,
+    /// Configured external agents and the selected external transcript.
+    pub acp_agents: &'a [(String, String)],
+    pub acp_peek: Option<&'a talaria_core::fleet::acp::AcpMapping>,
     pub workflow_progress: Option<&'a talaria_workflow::progress::live::ProgressState>,
     pub workflow_picker: Option<&'a talaria_workflow::runner::ProgressPicker>,
     pub configure: Option<talaria_core::configure::ConfigureView>,
@@ -435,6 +447,10 @@ impl View<'_> {
 
 /// The terminal side of the loop.
 pub trait Screen: ComposerDeadline + StatusHost {
+    /// Agent executables configured before the application loop starts.
+    fn acp_config(&self) -> crate::acp::AcpConfig {
+        crate::acp::AcpConfig::default()
+    }
     /// Open or close the profiles overlay before other overlay synchronizers run.
     fn sync_profiles(&mut self, _view: Option<&ProfilesView>) {}
     /// The number of profiles rows visible above notices in this terminal.
@@ -895,6 +911,9 @@ pub struct AppState {
     failed_attachments: VecDeque<(String, SubmittedAttachments, bool)>,
     /// The fleet service of an interactive launch, once the first frame is drawn.
     fleet_service: Option<crate::fleet::FleetHandle>,
+    acp_manager: Option<crate::fleet::ExternalHandle>,
+    acp_agents: Vec<(String, String)>,
+    acp_views: BTreeMap<RowKey, talaria_core::fleet::acp::AcpMapping>,
     /// The latest fleet snapshot.
     pub fleet_snapshot: Option<Arc<crate::fleet::FleetSnapshot>>,
     /// The foreground row and view last reported to the fleet service.
@@ -1133,6 +1152,9 @@ impl AppState {
             attachment_home: PathBuf::new(),
             attachment_folder: PathBuf::new(),
             fleet_service: None,
+            acp_manager: None,
+            acp_agents: Vec::new(),
+            acp_views: BTreeMap::new(),
             fleet_snapshot: None,
             fleet_reported: None,
             peek_worker: None,
@@ -1169,6 +1191,12 @@ impl AppState {
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
+            acp_agents: &self.acp_agents,
+            acp_peek: self
+                .fleet
+                .as_ref()
+                .and_then(|fleet| fleet.peek())
+                .and_then(|(key, _)| self.acp_views.get(key)),
             configure: self
                 .configure
                 .as_ref()
@@ -1454,6 +1482,11 @@ pub enum AppMessage {
         board: String,
         result: Result<crate::kanban::KanbanService, String>,
     },
+    AcpChanged {
+        key: talaria_core::fleet::acp::AcpSessionKey,
+        view: talaria_core::fleet::acp::AcpMapping,
+    },
+    AcpResult(crate::fleet::ExternalResult),
     WorkflowDiscovered(talaria_workflow::runner::ProgressPicker),
     WorkflowOpened(Result<crate::workflow_progress::OpenedRun, String>),
     WorkflowScoped(PathBuf),
@@ -3231,6 +3264,93 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                             talaria_core::mcp::Failure::NotSent(reason),
                         )),
                     ));
+                    effects
+                }
+            }
+        }
+        AppMessage::AcpChanged { key, view } => {
+            redraw = false;
+            let row = RowKey {
+                profile: format!("acp:{}", key.agent_id),
+                session_id: key.session_id,
+            };
+            let status = talaria_core::fleet_view::PeekStatus::Open {
+                has_open_prompt: !view.needs.is_empty(),
+                running: matches!(
+                    view.state,
+                    talaria_core::fleet::RowState::Working
+                        | talaria_core::fleet::RowState::NeedsYou
+                ),
+            };
+            state.acp_views.insert(row.clone(), view);
+            if state
+                .fleet
+                .as_ref()
+                .and_then(|fleet| fleet.peek())
+                .is_some_and(|(peeked, _)| *peeked == row)
+            {
+                let mut effects = fleet_input(
+                    state,
+                    talaria_core::fleet_view::FleetViewInput::Peek { key: row, status },
+                );
+                effects.push(AppEffect::Redraw);
+                effects
+            } else {
+                Vec::new()
+            }
+        }
+        AppMessage::AcpResult(result) => {
+            redraw = false;
+            use crate::fleet::ExternalResult;
+            use talaria_core::fleet_view::{FleetViewInput, ReplyOutcome, StopOutcome};
+            match result {
+                ExternalResult::Launch(result) => {
+                    state.launch_ui.external_finished(result);
+                    vec![AppEffect::Redraw]
+                }
+                ExternalResult::Prompt { key, result } => {
+                    let notice = result
+                        .as_ref()
+                        .err()
+                        .map(|reason| format!("Agent refused the reply ({reason})."));
+                    let mut effects = fleet_input(
+                        state,
+                        FleetViewInput::ReplyDone {
+                            key,
+                            outcome: result.map_or_else(
+                                |reason| ReplyOutcome::Refused { reason },
+                                |_| ReplyOutcome::Sent,
+                            ),
+                        },
+                    );
+                    if let Some(notice) = notice {
+                        effects.extend(fleet_input(state, FleetViewInput::Notice(notice)));
+                    }
+                    effects
+                }
+                ExternalResult::Cancel { key, result } => {
+                    let notice = result.as_ref().map_or_else(
+                        |reason| format!("Agent did not stop the turn ({reason})."),
+                        |_| "Agent turn stopped.".into(),
+                    );
+                    let mut effects = fleet_input(
+                        state,
+                        FleetViewInput::StopDone {
+                            key,
+                            outcome: result.map_or_else(
+                                |reason| StopOutcome::Refused { reason },
+                                |_| StopOutcome::Stopping,
+                            ),
+                        },
+                    );
+                    effects.extend(fleet_input(state, FleetViewInput::Notice(notice)));
+                    effects
+                }
+                ExternalResult::Answer { result } => {
+                    let mut effects = fleet_input(state, FleetViewInput::AnswerFocusEnded);
+                    if let Err(reason) = result {
+                        effects.extend(fleet_input(state, FleetViewInput::Notice(reason)));
+                    }
                     effects
                 }
             }
@@ -5746,6 +5866,23 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         }
         UserAction::FleetAnswer(intent) => vec![AppEffect::FleetAnswer(intent)],
         UserAction::FleetAnswerEdited => vec![AppEffect::Redraw],
+        UserAction::AcpSelect => vec![AppEffect::Redraw],
+        UserAction::AcpAnswer {
+            key,
+            responder,
+            tool_call_id,
+            option_id,
+        } => {
+            if let Some(manager) = &state.acp_manager {
+                manager.send(crate::fleet::ExternalCommand::Answer {
+                    key,
+                    responder,
+                    tool_call_id,
+                    option_id,
+                });
+            }
+            Vec::new()
+        }
         UserAction::Review(key) => review_input(state, talaria_core::review::ReviewInput::Key(key)),
         UserAction::ReviewPaste(text) => {
             review_input(state, talaria_core::review::ReviewInput::Paste(text))
@@ -5759,6 +5896,34 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                     vec![AppEffect::Redraw]
                 }
                 DialogEvent::Submit(submit) => {
+                    if let Some(name) = submit.profile.strip_prefix("acp:") {
+                        let id = name.split_whitespace().next().unwrap_or_default();
+                        let typed = submit.folder.trim();
+                        let cwd = if typed == "~" || typed.starts_with("~/") {
+                            state.home.as_ref().map(|home| {
+                                home.join(typed.trim_start_matches('~').trim_start_matches('/'))
+                            })
+                        } else {
+                            Some(PathBuf::from(typed))
+                        };
+                        if submit.worktree
+                            || cwd
+                                .as_ref()
+                                .is_none_or(|path| !path.is_absolute() || !path.is_dir())
+                        {
+                            state.launch_ui.external_finished(Err(
+                                "The working directory does not exist.".into(),
+                            ));
+                        } else if let (Some(manager), Some(cwd)) = (&state.acp_manager, cwd) {
+                            state.launch_ui.external_started();
+                            manager.send(crate::fleet::ExternalCommand::Launch {
+                                agent_id: id.into(),
+                                cwd,
+                                prompt: submit.prompt,
+                            });
+                        }
+                        return vec![AppEffect::Redraw];
+                    }
                     let context = launch_context(state);
                     let out = state.launch_ui.submit(submit, &context);
                     launch_effects(state, out)
@@ -12530,6 +12695,74 @@ pub(crate) fn fleet_effect(
         .and_then(|view| view.peek())
         .is_some_and(|(key, _)| is_foreground(key));
     match effect {
+        FleetViewEffect::OpenInPane(key) if is_external_row(state, &key) => {
+            vec![AppEffect::FleetInput(FleetViewInput::Notice(
+                "External agents cannot be opened in a Hermes pane.".into(),
+            ))]
+        }
+        FleetViewEffect::OpenPeek(key) if is_external_row(state, &key) => {
+            drop_peek_worker(state);
+            state.peek_frame = None;
+            let status = state.acp_views.get(&key).map_or_else(
+                || talaria_core::fleet_view::PeekStatus::Failed {
+                    text: "Agent session is unavailable.".into(),
+                },
+                |view| talaria_core::fleet_view::PeekStatus::Open {
+                    has_open_prompt: !view.needs.is_empty(),
+                    running: matches!(
+                        view.state,
+                        talaria_core::fleet::RowState::Working
+                            | talaria_core::fleet::RowState::NeedsYou
+                    ),
+                },
+            );
+            vec![AppEffect::FleetInput(FleetViewInput::Peek { key, status })]
+        }
+        FleetViewEffect::SendReply { key, text } if is_external_row(state, &key) => {
+            if let Some(manager) = &state.acp_manager {
+                manager.send(crate::fleet::ExternalCommand::Prompt { key, text });
+                Vec::new()
+            } else {
+                vec![AppEffect::FleetInput(FleetViewInput::ReplyDone {
+                    key,
+                    outcome: ReplyOutcome::NotAttached {
+                        reason: "the agent is unavailable".into(),
+                    },
+                })]
+            }
+        }
+        FleetViewEffect::Stop(key) if is_external_row(state, &key) => {
+            if let Some(manager) = &state.acp_manager {
+                manager.send(crate::fleet::ExternalCommand::Cancel { key });
+                Vec::new()
+            } else {
+                vec![AppEffect::FleetInput(FleetViewInput::StopDone {
+                    key,
+                    outcome: talaria_core::fleet_view::StopOutcome::NotAttached {
+                        reason: "the agent is unavailable".into(),
+                    },
+                })]
+            }
+        }
+        FleetViewEffect::ResendReply(key) if is_external_row(state, &key) => {
+            vec![AppEffect::FleetInput(FleetViewInput::ReplyDone {
+                key,
+                outcome: ReplyOutcome::Refused {
+                    reason: "check the agent session before sending it again".into(),
+                },
+            })]
+        }
+        FleetViewEffect::Open(key) if is_external_row(state, &key) => {
+            let produced = state
+                .fleet
+                .as_mut()
+                .map(|view| view.open_at(key))
+                .unwrap_or_default();
+            produced
+                .into_iter()
+                .flat_map(|effect| fleet_effect(state, effect))
+                .collect()
+        }
         FleetViewEffect::OpenInPane(key) => crate::fleet_actions::start_pane(state, key)
             .into_iter()
             .map(AppEffect::FleetInput)
@@ -12559,6 +12792,11 @@ pub(crate) fn fleet_effect(
             })]
         }
         FleetViewEffect::Acknowledge(key) => {
+            if is_external_row(state, &key)
+                && let Some(manager) = &state.acp_manager
+            {
+                manager.send(crate::fleet::ExternalCommand::Acknowledge { key: key.clone() });
+            }
             if let Some(fleet) = &state.fleet_service {
                 fleet.acknowledge(key);
             }
@@ -12593,6 +12831,15 @@ pub(crate) fn fleet_effect(
         }],
         other => vec![AppEffect::FleetPeek(other)],
     }
+}
+
+fn is_external_row(state: &AppState, key: &RowKey) -> bool {
+    state.acp_views.contains_key(key)
+        || state.fleet_snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot.rows.iter().any(|row| {
+                row.key == *key && row.backend() == talaria_core::fleet::FleetBackend::Acp
+            })
+        })
 }
 
 /// Close the overlay; each reply still unsettled leaves one scrollback notice.
@@ -12794,6 +13041,14 @@ fn peek_report(state: &mut AppState, report: crate::fleet_actions::PeekReport) -
             if state.fleet.is_none() {
                 return Vec::new();
             }
+            if state
+                .fleet
+                .as_ref()
+                .and_then(|fleet| fleet.peek())
+                .is_some_and(|(key, _)| is_external_row(state, key) && *key != frame.key)
+            {
+                return Vec::new();
+            }
             let card = frame.state.open_prompts().next().is_some() || !frame.masked.is_empty();
             state.peek_frame = Some(*frame);
             let mut effects = vec![AppEffect::Redraw];
@@ -12947,14 +13202,21 @@ async fn run_inner<S: Screen>(
     state.fleet_enabled = setup.fleet.is_some();
     if let Some(cfg) = setup.fleet.take() {
         let fleet_sender = executor.sender.clone();
-        state.fleet_service = Some(crate::fleet::FleetService::start(
+        let fleet = crate::fleet::FleetService::start(
             setup.home.clone(),
             state.profile.clone(),
             cfg,
             move |notice| {
                 let _ = fleet_sender.send(AppMessage::Fleet(notice));
             },
-        ));
+        );
+        let acp_config = screen.acp_config();
+        state.acp_agents = acp_config
+            .agents
+            .iter()
+            .map(|agent| (agent.id.clone(), agent.display_name.clone()))
+            .collect();
+        state.fleet_service = Some(fleet);
     }
     let mut pending = Some(tokio::spawn(connect_and_open(
         launch,
@@ -13176,6 +13438,9 @@ async fn run_inner<S: Screen>(
         let _ = closing.await;
     }
     let unfinished = state.launch_ui.shutdown().await;
+    if let Some(manager) = state.acp_manager.take() {
+        manager.close().await;
+    }
     if let Some(fleet) = state.fleet_service.take() {
         fleet.close().await;
     }
@@ -14387,4 +14652,52 @@ fn kanban_input(state: &mut AppState, input: talaria_core::kanban::KanbanInput) 
         state.kanban = None;
     }
     mapped
+}
+
+#[cfg(test)]
+mod external_fleet_route_tests {
+    use super::{AppEffect, AppState, UserAction, fleet_effect, user_action};
+    use talaria_core::fleet::RowKey;
+    use talaria_core::fleet::acp::AcpMapping;
+    use talaria_core::fleet_view::FleetViewEffect;
+
+    #[test]
+    fn external_actions_never_fall_through_to_the_hermes_peek_worker() {
+        let key = RowKey {
+            profile: "acp:example".into(),
+            session_id: "s1".into(),
+        };
+        let mut state = AppState::new("launch");
+        state.acp_views.insert(key.clone(), AcpMapping::default());
+        for action in [
+            FleetViewEffect::OpenPeek(key.clone()),
+            FleetViewEffect::SendReply {
+                key: key.clone(),
+                text: "hello".into(),
+            },
+            FleetViewEffect::Stop(key.clone()),
+            FleetViewEffect::OpenInPane(key.clone()),
+        ] {
+            let effects = fleet_effect(&mut state, action);
+            assert!(!effects.iter().any(|effect| matches!(
+                effect,
+                AppEffect::FleetPeek(_) | AppEffect::Switch { .. }
+            )));
+        }
+        let effects = user_action(
+            &mut state,
+            UserAction::AcpAnswer {
+                key,
+                responder: "1:7".into(),
+                tool_call_id: "tool".into(),
+                option_id: "reject".into(),
+            },
+        );
+        assert!(
+            !effects.iter().any(|effect| matches!(
+                effect,
+                AppEffect::FleetAnswer(_) | AppEffect::FleetPeek(_)
+            ))
+        );
+    }
 }

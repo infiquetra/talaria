@@ -85,6 +85,7 @@ fn render(
     let row = key.and_then(|key| state.find_row(key));
     let now = match panel {
         Panel::Session(panel) => panel.now,
+        Panel::External(panel) => panel.now,
         _ => state.now(),
     };
     let mut y = 0usize;
@@ -124,8 +125,117 @@ fn render(
         Panel::Session(panel) => {
             session_body(panel, row, scratch, theme, &mut y, height.max(CHROME_ROWS));
         }
+        Panel::External(panel) => external_body(panel, scratch, theme, &mut y, height),
     }
     y.min(height)
+}
+
+fn external_body(
+    panel: &super::ExternalPeekPanel<'_>,
+    scratch: &mut Buffer,
+    theme: &FleetTheme,
+    y: &mut usize,
+    height: usize,
+) {
+    use talaria_core::fleet::acp::AcpCell;
+    let width = usize::from(scratch.area.width);
+    let mut headers = Vec::new();
+    if let Some(usage) = &panel.mapping.usage {
+        let mut text = format!("ctx {}/{}", usage.used, usage.size);
+        if let (Some(amount), Some(currency)) = (usage.cost_amount, usage.cost_currency.as_deref())
+        {
+            text.push_str(&format!(" - cost {amount} {currency}"));
+        }
+        headers.push(text);
+    }
+    let mut capabilities = Vec::new();
+    if let Some(mode) = &panel.mapping.mode {
+        capabilities.push(format!("mode: {mode}"));
+    }
+    if !panel.mapping.commands.is_empty() {
+        capabilities.push(format!("commands: {}", panel.mapping.commands.join(", ")));
+    }
+    if !capabilities.is_empty() {
+        headers.push(capabilities.join(" - "));
+    }
+    let mut lines = Vec::new();
+    for cell in &panel.mapping.transcript {
+        let text = match cell {
+            AcpCell::Text(text)
+            | AcpCell::Thought(text)
+            | AcpCell::Notice(text)
+            | AcpCell::Plan(text) => text.clone(),
+            AcpCell::Tool {
+                title,
+                body,
+                status,
+                ..
+            } => format!("{title}: {body} {}", status.as_deref().unwrap_or_default()),
+        };
+        lines.extend(
+            wrap_lines(
+                vec![Line::raw(sanitize(&text).into_owned())],
+                width_u16(width),
+            )
+            .into_iter()
+            .map(|line| line.to_string()),
+        );
+    }
+    let room = height.saturating_sub(*y);
+    let minimum_permission = panel
+        .mapping
+        .needs
+        .first()
+        .map_or(0, |need| 1 + usize::from(!need.options.is_empty()));
+    headers.truncate(room.saturating_sub(minimum_permission));
+    let body_room = room.saturating_sub(headers.len());
+    if let Some(need) = panel.mapping.needs.first() {
+        let permission_rows = body_room.min(need.options.len().saturating_add(1));
+        let transcript_rows = body_room.saturating_sub(permission_rows);
+        let mut visible = lines
+            .into_iter()
+            .rev()
+            .take(transcript_rows)
+            .collect::<Vec<_>>();
+        visible.reverse();
+        if permission_rows > 0 {
+            visible.push(format!("Permission: {}", need.tool_title));
+        }
+        let option_rows = permission_rows.saturating_sub(1);
+        let start = panel
+            .selected_option
+            .saturating_sub(option_rows / 2)
+            .min(need.options.len().saturating_sub(option_rows));
+        for (index, option) in need
+            .options
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(option_rows)
+        {
+            let marker = if index == panel.selected_option {
+                ">"
+            } else {
+                " "
+            };
+            visible.push(format!("{marker} {}. {}", index + 1, option.name));
+        }
+        lines = visible;
+    } else {
+        lines = lines.into_iter().rev().take(body_room).collect();
+        lines.reverse();
+    }
+    headers.extend(lines);
+    for line in &headers {
+        scratch.set_stringn(
+            0,
+            u16::try_from(*y).unwrap_or(0),
+            &cut(&sanitize(line), width, false),
+            width,
+            theme.idle,
+        );
+        *y += 1;
+    }
 }
 
 fn width_u16(width: usize) -> u16 {

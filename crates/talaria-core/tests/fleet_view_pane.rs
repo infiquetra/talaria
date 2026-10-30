@@ -33,6 +33,10 @@ fn row(profile: &str, id: &str, title: &str, state: RowState) -> FleetRow {
         unlisted: false,
         activity: None,
         cost_usd: None,
+        backend: talaria_core::fleet::FleetBackend::Hermes,
+        agent: None,
+        occupancy: None,
+        cost: None,
     }
 }
 

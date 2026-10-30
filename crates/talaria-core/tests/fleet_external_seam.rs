@@ -42,6 +42,7 @@ fn external_row_has_backend_agent_usage_and_detail_tag() {
 }
 
 #[test]
+#[allow(clippy::cloned_ref_to_slice_refs)]
 fn external_input_keeps_responder_keyed_options_distinct() {
     let mut registry = FleetRegistry::new();
     let option = ExternalOption {

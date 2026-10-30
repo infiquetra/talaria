@@ -57,6 +57,10 @@ fn row(profile: &str, id: &str, title: &str, state: RowState, model: Option<&str
         unlisted: false,
         activity: None,
         cost_usd: Some(1.25),
+        backend: talaria_core::fleet::FleetBackend::Hermes,
+        agent: None,
+        occupancy: None,
+        cost: None,
     }
 }
 

@@ -123,6 +123,10 @@ pub struct AcpMapping {
     pub outcome: Option<Outcome>,
     pub diagnostics: Vec<String>,
     pub needs: Vec<PermissionRequest>,
+    pub activity: Option<String>,
+    pub model: Option<String>,
+    pub mode: Option<String>,
+    pub commands: Vec<String>,
 }
 
 impl Default for AcpMapping {
@@ -135,6 +139,10 @@ impl Default for AcpMapping {
             outcome: None,
             diagnostics: Vec::new(),
             needs: Vec::new(),
+            activity: None,
+            model: None,
+            mode: None,
+            commands: Vec::new(),
         }
     }
 }

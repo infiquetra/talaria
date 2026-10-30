@@ -54,10 +54,12 @@ pub struct NeedItem {
     pub exact: bool,
     /// The row is the foreground session.
     pub foreground: bool,
+    /// Choices supplied by an external permission responder.
+    pub external_options: Vec<super::ExternalOption>,
 }
 
 impl NeedItem {
     pub fn external_options(&self) -> &[super::ExternalOption] {
-        todo!("add external fleet sessions")
+        &self.external_options
     }
 }

@@ -1,6 +1,6 @@
 //! An externally owned fleet session.
 
-use super::{FleetEffect, FleetRegistry, NeedSlot, Outcome, RowKey, RowState};
+use super::{FleetEffect, FleetInput, FleetRegistry, NeedSlot, Outcome, RowKey, RowState, update};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FleetBackend {
@@ -40,7 +40,7 @@ pub struct ExternalSession {
 }
 
 impl FleetRegistry {
-    pub fn observe_external(&mut self, _session: ExternalSession) -> Vec<FleetEffect> {
-        todo!("add external fleet sessions")
+    pub fn observe_external(&mut self, session: ExternalSession) -> Vec<FleetEffect> {
+        update(self, FleetInput::External(session))
     }
 }

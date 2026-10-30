@@ -50,6 +50,10 @@ fn foreground_row() -> FleetRow {
         unlisted: false,
         activity: Some("compiling".to_owned()),
         cost_usd: None,
+        backend: talaria_core::fleet::FleetBackend::Hermes,
+        agent: None,
+        occupancy: None,
+        cost: None,
     }
 }
 

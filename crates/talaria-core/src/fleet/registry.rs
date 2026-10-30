@@ -3,8 +3,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use super::{
-    AlertKind, FleetRow, LiveItem, LiveStatus, NeedDetail, NeedId, NeedItem, NeedSlot, NeedSummary,
-    Outcome, RosterRow, RowKey, RowState, SubscribedNeed, SubscribedTurn, SubscribedView,
+    AlertKind, ExternalSession, FleetBackend, FleetRow, LiveItem, LiveStatus, NeedDetail, NeedId,
+    NeedItem, NeedSlot, NeedSummary, Outcome, RosterRow, RowKey, RowState, SubscribedNeed,
+    SubscribedTurn, SubscribedView,
 };
 
 /// `session.list` returns at most this many rows; a full page may hide more.
@@ -184,6 +185,12 @@ pub enum FleetInput {
         /// Seconds since 1970.
         at: f64,
     },
+    /// An independently owned session changed.
+    External(ExternalSession),
+    /// An external owner ended a session.
+    RemoveExternal { key: RowKey },
+    /// Retain a stopped external process's row until acknowledgement.
+    ExternalExited { key: RowKey },
     /// The owner let go.
     Unsubscribed {
         /// Row.
@@ -285,6 +292,10 @@ impl RowEntry {
                 unlisted: false,
                 activity: None,
                 cost_usd: None,
+                backend: super::FleetBackend::Hermes,
+                agent: None,
+                occupancy: None,
+                cost: None,
             },
             turn_seen: false,
             last_live_count: None,
@@ -560,7 +571,10 @@ impl FleetRegistry {
         let mut hot: Vec<String> = self
             .rows
             .values()
-            .filter(|entry| running(entry.row.state) || entry.probe.is_some())
+            .filter(|entry| {
+                entry.row.backend == FleetBackend::Hermes
+                    && (running(entry.row.state) || entry.probe.is_some())
+            })
             .map(|entry| entry.row.key.profile.clone())
             .collect::<HashSet<String>>()
             .into_iter()
@@ -774,6 +788,7 @@ fn waiting_item(entry: &RowEntry, at: f64) -> NeedItem {
         timeout_s: None,
         exact: false,
         foreground: entry.row.foreground,
+        external_options: Vec::new(),
     }
 }
 
@@ -1002,6 +1017,23 @@ pub fn update(reg: &mut FleetRegistry, input: FleetInput) -> Vec<FleetEffect> {
         FleetInput::Subscribed { key, view, at } => {
             on_subscribed(reg, key, view, at, &mut effects, &mut dirty)
         }
+        FleetInput::External(session) => on_external(reg, session, &mut effects, &mut dirty),
+        FleetInput::RemoveExternal { key } => {
+            if reg
+                .rows
+                .get(&key)
+                .is_some_and(|entry| entry.row.backend == FleetBackend::Acp)
+            {
+                reg.remove_row(&key, &mut dirty);
+            }
+        }
+        FleetInput::ExternalExited { key } => {
+            touch(&mut reg.rows, &key, &mut dirty, |entry| {
+                if entry.row.backend == FleetBackend::Acp {
+                    entry.row.gone = true;
+                }
+            });
+        }
         FleetInput::Unsubscribed { key, at: _ } => on_unsubscribed(reg, &key, &mut dirty),
         FleetInput::Foreground { key, at } => on_foreground(reg, key, at, &mut dirty),
         FleetInput::Acknowledge { key, at } => on_acknowledge(reg, &key, at, &mut dirty),
@@ -1048,7 +1080,10 @@ fn on_profiles(
         .rows
         .values()
         .filter(|entry| {
-            !scope.contains(&entry.row.key.profile) && entry.view.is_none() && !entry.row.foreground
+            entry.row.backend == FleetBackend::Hermes
+                && !scope.contains(&entry.row.key.profile)
+                && entry.view.is_none()
+                && !entry.row.foreground
         })
         .map(|entry| entry.row.key.clone())
         .collect();
@@ -1502,6 +1537,7 @@ fn on_approvals(
                         timeout_s: None,
                         exact: false,
                         foreground: entry.row.foreground,
+                        external_options: Vec::new(),
                     },
                     effects,
                 ),
@@ -1629,7 +1665,105 @@ fn exact_item(key: &RowKey, need: &SubscribedNeed, at: f64, foreground: bool) ->
         timeout_s: need.timeout_s,
         exact: true,
         foreground,
+        external_options: Vec::new(),
     }
+}
+
+fn on_external(
+    reg: &mut FleetRegistry,
+    session: ExternalSession,
+    effects: &mut Vec<FleetEffect>,
+    dirty: &mut bool,
+) {
+    let key = session.key.clone();
+    if !reg.rows.contains_key(&key) {
+        reg.create_row(key.clone(), session.at, dirty);
+    }
+    let FleetRegistry { rows, queue, .. } = reg;
+    touch(rows, &key, dirty, |entry| {
+        let previous = entry.row.state;
+        entry.row.backend = session.backend;
+        entry.row.agent = Some(crate::text::sanitize(&session.agent).into_owned());
+        entry.row.title = crate::text::sanitize(&session.title).into_owned();
+        entry.row.model = session
+            .model
+            .as_deref()
+            .map(|s| crate::text::sanitize(s).into_owned());
+        entry.row.activity = session
+            .activity
+            .as_deref()
+            .map(|s| crate::text::sanitize(s).into_owned());
+        entry.row.occupancy = session.used.zip(session.size);
+        entry.row.cost = session
+            .cost
+            .as_ref()
+            .map(|(amount, currency)| (*amount, crate::text::sanitize(currency).into_owned()));
+        entry.row.subscribed = true;
+        entry.row.stale = false;
+        entry.row.gone = false;
+        entry.row.unlisted = false;
+        let mut wanted = HashSet::new();
+        for need in &session.needs {
+            let id = NeedId {
+                key: key.clone(),
+                slot: need.slot.clone(),
+            };
+            wanted.insert(id.clone());
+            let options = need
+                .options
+                .iter()
+                .map(|option| super::ExternalOption {
+                    id: option.id.clone(),
+                    name: crate::text::sanitize(&option.name).into_owned(),
+                    kind: crate::text::sanitize(&option.kind).into_owned(),
+                })
+                .collect::<Vec<_>>();
+            let detail = NeedDetail::Known(NeedSummary::Question(
+                crate::text::sanitize(&need.text).into_owned(),
+            ));
+            let choices = options
+                .iter()
+                .map(|option| option.name.clone())
+                .collect::<Vec<_>>();
+            if queue.get(&id).is_some() {
+                queue.modify(&id, |held| {
+                    held.detail = detail;
+                    held.choices = choices;
+                    held.external_options = options;
+                });
+            } else {
+                queue.open(
+                    NeedItem {
+                        id,
+                        seq: 0,
+                        since: session.at,
+                        detail,
+                        choices,
+                        execution_generation: None,
+                        timeout_s: None,
+                        exact: true,
+                        foreground: entry.row.foreground,
+                        external_options: options,
+                    },
+                    effects,
+                );
+            }
+        }
+        queue.remove_where(&key, |item| !wanted.contains(&item.id));
+        let next = if queue.has_items(&key) {
+            RowState::NeedsYou
+        } else {
+            session.state
+        };
+        set_state(entry, next, session.at);
+        entry.row.outcome = session.outcome;
+        if running(previous) && finished(next) && !entry.row.foreground {
+            effects.push(finish_attention(
+                entry,
+                session.outcome.unwrap_or(Outcome::Unknown),
+            ));
+        }
+    });
 }
 
 fn on_subscribed(
@@ -1782,6 +1916,9 @@ fn on_connection_lost(reg: &mut FleetRegistry, dirty: &mut bool) {
     let keys: Vec<RowKey> = reg.rows.keys().cloned().collect();
     for key in keys {
         touch(&mut reg.rows, &key, dirty, |entry| {
+            if entry.row.backend != FleetBackend::Hermes {
+                return;
+            }
             entry.row.stale = true;
             // The probe's reply belongs to the old connection; ask again at the next read.
             match entry.probe.take() {

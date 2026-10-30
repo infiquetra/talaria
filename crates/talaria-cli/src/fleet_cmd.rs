@@ -377,7 +377,7 @@ fn need_text(item: &NeedItem) -> String {
 }
 
 fn row_detail(row: &FleetRow, queue: &[NeedItem]) -> String {
-    match row.state {
+    let mut detail = match row.state {
         RowState::NeedsYou => queue
             .iter()
             .find(|item| item.id.key == row.key)
@@ -391,7 +391,14 @@ fn row_detail(row: &FleetRow, queue: &[NeedItem]) -> String {
             _ => "finished".to_owned(),
         },
         RowState::Idle => "idle".to_owned(),
+    };
+    if row.backend() == talaria_core::fleet::FleetBackend::Acp {
+        detail.push_str(&format!(
+            " [acp {}]",
+            shown(row.agent().unwrap_or_default(), DETAIL_CHARS)
+        ));
     }
+    detail
 }
 
 fn status_reason(status: &ProfileStatus) -> Option<String> {
@@ -541,6 +548,11 @@ fn row_json(row: &FleetRow) -> Value {
         "title": row.title,
         "model": row.model,
         "source": row.source,
+        "backend": match row.backend() {
+            talaria_core::fleet::FleetBackend::Hermes => "hermes",
+            talaria_core::fleet::FleetBackend::Acp => "acp",
+        },
+        "agent": row.agent(),
         "state": state_json(row.state),
         "state_since": row.state_since,
         "outcome": row.outcome.map(|outcome| match outcome {
@@ -562,7 +574,7 @@ fn slot_json(slot: &NeedSlot) -> (&'static str, Option<&str>) {
         NeedSlot::Prompt(id) => ("prompt", Some(id)),
         NeedSlot::Masked(id) => ("masked", Some(id)),
         NeedSlot::Waiting => ("waiting", None),
-        NeedSlot::External(_) => todo!("add external fleet sessions"),
+        NeedSlot::External(id) => ("external", Some(id)),
     }
 }
 
