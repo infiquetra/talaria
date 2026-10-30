@@ -194,6 +194,7 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    Kanban(talaria_core::kanban::BoardKey),
     Workflow(talaria_workflow::progress::live::ProgressKey),
     /// Input owned by the configuration assistant overlay.
     Configure(Box<talaria_core::configure::ConfigureInput>),
@@ -339,6 +340,7 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub kanban: Option<&'a talaria_core::kanban::KanbanBoardState>,
     pub workflow_progress: Option<&'a talaria_workflow::progress::live::ProgressState>,
     pub workflow_picker: Option<&'a talaria_workflow::runner::ProgressPicker>,
     pub configure: Option<talaria_core::configure::ConfigureView>,
@@ -672,6 +674,8 @@ struct CronBinding {
 }
 
 pub struct AppState {
+    pub kanban: Option<talaria_core::kanban::KanbanBoardState>,
+    kanban_service: Option<crate::kanban::KanbanService>,
     pub workflow_views: crate::workflow_progress::ProgressViews,
     pub ultracode: crate::ultracode::UltracodeService,
     ultracode_requests: std::collections::HashMap<SessionId, u64>,
@@ -1119,6 +1123,8 @@ impl AppState {
             pending: None,
             command_service: None,
             subagents: None,
+            kanban: None,
+            kanban_service: None,
             workflow_views: crate::workflow_progress::ProgressViews::default(),
             subagents_usage_active: 0,
             attachments: AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024),
@@ -1247,6 +1253,7 @@ impl AppState {
             picker: self.picker.as_ref(),
             fleet: self.fleet.as_ref(),
             peek: self.peek_frame.as_ref(),
+            kanban: self.kanban.as_ref(),
             workflow_progress: self
                 .workflow_views
                 .active
@@ -1439,6 +1446,14 @@ pub enum TranscriptAction {
 /// One input to [`update`].
 #[allow(clippy::large_enum_variant)]
 pub enum AppMessage {
+    Kanban {
+        board: String,
+        input: talaria_core::kanban::KanbanInput,
+    },
+    KanbanPrepared {
+        board: String,
+        result: Result<crate::kanban::KanbanService, String>,
+    },
     WorkflowDiscovered(talaria_workflow::runner::ProgressPicker),
     WorkflowOpened(Result<crate::workflow_progress::OpenedRun, String>),
     WorkflowScoped(PathBuf),
@@ -1718,6 +1733,13 @@ pub struct SwitchInstall {
 /// What the executor does after one update. Ranges index the open session's cells.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEffect {
+    PrepareKanban {
+        board: String,
+    },
+    Kanban {
+        board: String,
+        effect: talaria_core::kanban::KanbanEffect,
+    },
     WorkflowPrompt {
         run: PathBuf,
         key: String,
@@ -2922,6 +2944,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         .and_then(|_| capabilities_foreground(state));
     cron_sync_profile(state);
     let connectors_effects = connectors_on_message(state, &message);
+    let kanban_before = state.kanban.as_ref().map(|s| s.frame());
     let background_version = state
         .opened
         .as_ref()
@@ -3371,6 +3394,34 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
+        AppMessage::Kanban { board, input } => {
+            if state.kanban.as_ref().is_some_and(|s| s.board == board) {
+                kanban_input(state, input)
+            } else {
+                vec![]
+            }
+        }
+        AppMessage::KanbanPrepared { board, result } => {
+            if !state.kanban.as_ref().is_some_and(|s| s.board == board) {
+                vec![]
+            } else {
+                match result {
+                    Ok(service) => {
+                        state.kanban_service = Some(service);
+                        vec![AppEffect::Kanban {
+                            board,
+                            effect: talaria_core::kanban::KanbanEffect::Fetch {
+                                workflow: true,
+                                detail: None,
+                            },
+                        }]
+                    }
+                    Err(error) => {
+                        kanban_input(state, talaria_core::kanban::KanbanInput::Failed(error))
+                    }
+                }
+            }
+        }
         AppMessage::WorkflowScoped(run) => {
             state.workflow_views.scoped.insert(run);
             vec![]
@@ -3473,6 +3524,12 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             state.now_ms = now_ms;
             let mut effects = review_tick(state);
             effects.extend(workflow_tick(state));
+            effects.extend(kanban_input(
+                state,
+                talaria_core::kanban::KanbanInput::Tick {
+                    now_ms: (state.wall_s * 1000.0).max(0.0) as u64,
+                },
+            ));
             if state
                 .configure_tick_at
                 .is_some_and(|at| Instant::now() >= at)
@@ -3749,6 +3806,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
     }
     effects.extend(checklist_effects(state));
+    redraw |= kanban_before != state.kanban.as_ref().map(|s| s.frame());
     redraw |= background_version
         != state
             .opened
@@ -4984,6 +5042,21 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Kanban {
+        let board = if argument.trim().is_empty() {
+            "default"
+        } else {
+            argument.trim()
+        };
+        let (board_state, _) = talaria_core::kanban::KanbanBoardState::open(
+            board,
+            (state.wall_s * 1000.0).max(0.0) as u64,
+        );
+        state.kanban = Some(board_state);
+        return vec![AppEffect::PrepareKanban {
+            board: board.into(),
+        }];
+    }
     if action == LocalAction::Workflows {
         return workflow_command(state, &argument);
     }
@@ -5563,6 +5636,7 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Mcp(input) => mcp_input(state, input),
         UserAction::Memory(input) => memory_input(state, input),
         UserAction::Connectors(input) => connectors_input(state, input),
+        UserAction::Kanban(key) => kanban_input(state, talaria_core::kanban::KanbanInput::Key(key)),
         UserAction::Workflow(key) => {
             if state.workflow_views.picker.is_some() {
                 return workflow_picker_input(state, key);
@@ -10031,6 +10105,9 @@ fn background_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
 
 /// An open workflow keeps consuming journal and control changes even without input.
 fn workflow_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
+    if state.kanban.is_some() {
+        return Some(Instant::now() + Duration::from_millis(250));
+    }
     state
         .workflow_views
         .next_tick_ms()
@@ -10871,6 +10948,45 @@ fn apply<S: Screen>(
                         },
                     });
                 });
+            }
+            AppEffect::PrepareKanban { board } => {
+                let home = state.hermes_home.clone();
+                let profile = state.profile.clone();
+                let sender = executor.sender.clone();
+                tokio::spawn(async move {
+                    let result = async {
+                        let endpoint = Arc::new(
+                            hermes_client::discover_with(
+                                &home,
+                                &hermes_client::DiscoverOptions {
+                                    ensure: hermes_client::EnsurePolicy::Never,
+                                    ..Default::default()
+                                },
+                            )
+                            .await
+                            .map_err(|e| e.to_string())?,
+                        );
+                        let id = endpoint
+                            .resolve_profile(&profile)
+                            .map_err(|e| e.to_string())?;
+                        let minter = Arc::new(hermes_client::NativeHttpMinter::new(
+                            home,
+                            endpoint.clone(),
+                            id,
+                        ));
+                        Ok(crate::kanban::KanbanService::new(
+                            endpoint.api_origin().into(),
+                            minter,
+                        ))
+                    }
+                    .await;
+                    let _ = sender.send(AppMessage::KanbanPrepared { board, result });
+                });
+            }
+            AppEffect::Kanban { board, effect } => {
+                if let Some(service) = state.kanban_service.as_mut() {
+                    service.execute(&board, effect, executor.sender.clone());
+                }
             }
             AppEffect::WorkflowDiscover => {
                 let sender = executor.sender.clone();
@@ -14250,4 +14366,25 @@ mod workflow_wake_tests {
         );
         assert!(workflow_wake(&state, &executor).is_none());
     }
+}
+
+fn kanban_input(state: &mut AppState, input: talaria_core::kanban::KanbanInput) -> Vec<AppEffect> {
+    use talaria_core::kanban::KanbanEffect;
+    let Some(board_state) = state.kanban.as_mut() else {
+        return vec![];
+    };
+    let effects = talaria_core::kanban::update(board_state, input);
+    let board = board_state.board.clone();
+    let close = effects.contains(&KanbanEffect::Close);
+    let mapped = effects
+        .into_iter()
+        .map(|effect| AppEffect::Kanban {
+            board: board.clone(),
+            effect,
+        })
+        .collect();
+    if close {
+        state.kanban = None;
+    }
+    mapped
 }

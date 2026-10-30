@@ -15,6 +15,7 @@ mod editor;
 pub mod fleet_view;
 pub mod history;
 pub mod history_search;
+pub mod kanban_view;
 pub mod keys;
 pub mod launch_dialog;
 pub mod live;

@@ -5,6 +5,7 @@ pub mod dry_run;
 pub mod engine;
 pub mod hermes;
 pub mod journal;
+pub mod kanban_compile;
 #[cfg(feature = "mock")]
 pub mod mock;
 pub mod progress;

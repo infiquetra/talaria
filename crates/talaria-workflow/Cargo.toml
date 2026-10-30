@@ -40,6 +40,7 @@ getrandom.workspace = true
 [dev-dependencies]
 talaria-workflow = { path = ".", features = ["mock", "fake-gateway"] }
 hermes-client.workspace = true
+chrono.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 proptest.workspace = true
 toml.workspace = true

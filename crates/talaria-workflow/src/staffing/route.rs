@@ -38,6 +38,10 @@ impl StaffingResolver {
         self.path = path;
         self
     }
+    /// The frozen roster used to check compile profiles and report limited routes.
+    pub fn roster(&self) -> &Roster {
+        &self.roster
+    }
     pub fn route(&self, q: &AgentRequest) -> Result<Route, RouteError> {
         let profile = q.profile.as_deref().unwrap_or(self.roster.profile());
         let same_profile = || {
