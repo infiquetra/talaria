@@ -29,10 +29,16 @@ async fn main() {
             .windows(3)
             .find(|w| w[0] == "--tls")
             .map(|w| (w[1].clone().into(), w[2].clone().into())),
+        user_id: Some("fixture-user".into()),
+        log_stderr: true,
         ..Default::default()
     };
     let gateway = mock_gated::MockGateway::start(options).await;
     println!("{}", gateway.base());
+    eprintln!(
+        "MOCK_URL={}; request count: 0; token calls: 0",
+        gateway.base()
+    );
     if let Some(ipv6) = gateway.base_v6() {
         eprintln!("IPv6: {ipv6}");
     }

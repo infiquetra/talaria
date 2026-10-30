@@ -178,9 +178,9 @@ fn expiry(expires: i64) -> String {
     if seconds <= 0 {
         "expired".into()
     } else if seconds < 7200 {
-        format!("in {} minutes", seconds / 60)
+        format!("in {} minutes", (seconds + 30) / 60)
     } else {
-        format!("in {} hours", seconds / 3600)
+        format!("in {} hours", (seconds + 1800) / 3600)
     }
 }
 fn visible(text: &str) -> String {

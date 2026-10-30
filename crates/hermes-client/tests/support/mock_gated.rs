@@ -37,6 +37,8 @@ pub struct Options {
     pub listen_both: bool,
     pub ticket_snapshot: Option<std::path::PathBuf>,
     pub profiles: Vec<String>,
+    pub user_id: Option<String>,
+    pub log_stderr: bool,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Counts {
@@ -280,8 +282,8 @@ fn unix_now() -> i64 {
         .expect("clock")
         .as_secs() as i64
 }
-fn token_payload(expired: bool) -> Value {
-    json!({"access_token":"SENTINEL-access", "refresh_token":"SENTINEL-refresh", "token_type":"Bearer", "expires_at":if expired { unix_now()-1 } else { unix_now()+43200 }, "provider":"basic", "user_id":"fixture"})
+fn token_payload(expired: bool, user_id: &str) -> Value {
+    json!({"access_token":"SENTINEL-access", "refresh_token":"SENTINEL-refresh", "token_type":"Bearer", "expires_at":if expired { unix_now()-1 } else { unix_now()+43200 }, "provider":"basic", "user_id":user_id})
 }
 fn captured_frame(method: &str) -> Value {
     for file in [
@@ -617,10 +619,11 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                     if found.is_some_and(|c| {
                         c.expires > tokio::time::Instant::now() && c.challenge == challenge
                     }) {
+                        let user_id = s.opts.user_id.as_deref().unwrap_or("fixture");
                         (
                             200,
                             vec![],
-                            token_payload(s.opts.expire_now).to_string(),
+                            token_payload(s.opts.expire_now, user_id).to_string(),
                             false,
                             false,
                         )
@@ -650,7 +653,8 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 } else if s.opts.refresh_down {
                     (503, vec![], "{}".into(), false, false)
                 } else {
-                    let mut response = token_payload(s.opts.expire_now);
+                    let user_id = s.opts.user_id.as_deref().unwrap_or("fixture");
+                    let mut response = token_payload(s.opts.expire_now, user_id);
                     if s.opts.rotating {
                         s.counter += 1;
                         s.current_access = format!("SENTINEL-access-{}", s.counter);
@@ -705,6 +709,16 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
             _ => (404, vec![], String::new(), false, false),
         }
     };
+    {
+        let s = inner.lock().unwrap();
+        if s.opts.log_stderr {
+            eprintln!(
+                "{method} {path}{safe_query}; request count: {}; token calls: {}",
+                s.counts.log.len(),
+                s.counts.token
+            );
+        }
+    }
     if drop_connection {
         return;
     }
