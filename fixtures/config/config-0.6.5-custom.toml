@@ -1,0 +1,16 @@
+[theme]
+name = "homebrew"
+
+[status]
+command = "./status-demo.sh"
+interval_seconds = 10
+
+[environment]
+allowlist = ["EDITOR"]
+
+[keys]
+interrupt = "ctrl+s"
+commands = "f3"
+
+[connections.fixture]
+label = "local dashboard"

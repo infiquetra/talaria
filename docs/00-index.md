@@ -18,3 +18,8 @@
 
 Documents written before the Rust rewrite may link to files that exist only at the tag
 `python-final`; open them at [python-final](https://github.com/infiquetra/talaria/tree/python-final).
+
+- [Guide](guide.md)
+- [Keybindings](keybindings.md)
+- [Configuration](configuration.md)
+- [Migrating from 0.6.5](migrating-from-0.6.5.md)
