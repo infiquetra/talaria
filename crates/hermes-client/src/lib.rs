@@ -22,6 +22,7 @@ pub mod control_verbs;
 pub mod cron_api;
 pub mod discovery;
 pub mod gateway_api;
+pub mod kanban;
 pub mod liveness;
 pub mod mcp_api;
 pub mod memory_api;

@@ -36,6 +36,26 @@ pub enum WorkflowCommand {
     List(ListArgs),
     Stop(StopArgs),
     Resolve(ResolveArgs),
+    Compile(CompileArgs),
+}
+#[derive(Clone, Debug, Args)]
+pub struct CompileArgs {
+    #[arg(value_name = "SCRIPT", value_parser = required_path)]
+    pub script: PathBuf,
+    #[arg(long, default_value = "default", value_parser = required_text)]
+    pub board: String,
+    #[arg(long, value_parser = required_text)]
+    pub tenant: Option<String>,
+    #[arg(long)]
+    pub args: Option<String>,
+    #[arg(long, value_parser = required_text)]
+    pub profile: Option<String>,
+    #[arg(long, value_parser = required_path)]
+    pub repo: Option<PathBuf>,
+    #[arg(long)]
+    pub dry_run: bool,
+    #[arg(long)]
+    pub no_dispatch: bool,
 }
 #[derive(Clone, Debug, Args)]
 pub struct RunArgs {
@@ -549,6 +569,11 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         }
         WorkflowCommand::Run(args) => run_command(args).await,
         WorkflowCommand::Builtins(args) => builtins::execute(args),
+        WorkflowCommand::Compile(args) => {
+            let _ = args;
+            eprintln!("compile is not available");
+            1
+        }
     }
 }
 async fn run_command(args: RunArgs) -> u8 {

@@ -64,6 +64,7 @@ pub enum Method {
     Get,
     Put,
     Post,
+    Patch,
     Delete,
 }
 impl Method {
@@ -72,6 +73,7 @@ impl Method {
             Self::Get => "GET",
             Self::Put => "PUT",
             Self::Post => "POST",
+            Self::Patch => "PATCH",
             Self::Delete => "DELETE",
         }
     }
@@ -307,6 +309,10 @@ impl RestClient {
     }
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<Value, RestError> {
         self.request(Method::Post, path, Some(body), RequestOpts::default())
+            .await
+    }
+    pub async fn patch_json(&self, path: &str, body: &Value) -> Result<Value, RestError> {
+        self.request(Method::Patch, path, Some(body), RequestOpts::default())
             .await
     }
     pub async fn delete_json(&self, path: &str) -> Result<Value, RestError> {
