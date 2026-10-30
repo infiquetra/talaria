@@ -56,6 +56,8 @@ pub struct Cli {
     pub record: Option<PathBuf>,
     #[arg(long)]
     pub no_ensure: bool,
+    #[arg(long)]
+    pub remote: Option<String>,
     #[arg(short = 'p', long = "print")]
     pub print: bool,
     /// Start a session in the background and return.

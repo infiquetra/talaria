@@ -31,6 +31,7 @@ pub mod model_roles_api;
 pub mod providers_api;
 pub mod record;
 pub mod redact;
+pub mod remote;
 pub mod replay;
 pub mod replay_source;
 pub mod rest;
@@ -46,9 +47,9 @@ pub use config_api::{
     ConfigField, ConfigSchema, FieldKind, config_defaults, config_read, config_schema, config_write,
 };
 pub use connect::{
-    Closed, ConnectError, ConnectOptions, Connection, ConnectionParts, Handshake, HandshakeError,
-    HandshakeOptions, HandshakeTimings, connect, connect_with, format_failure, handshake,
-    handshake_with, ws_url,
+    Closed, ConnectError, ConnectOptions, Connection, ConnectionParts, ExpectedIdentity, Handshake,
+    HandshakeError, HandshakeOptions, HandshakeTimings, connect, connect_with, format_failure,
+    handshake, handshake_with, ws_url,
 };
 pub use discovery::{
     DiscoverOptions, DiscoveryError, Endpoint, EnsureError, EnsurePolicy, ExitKind, GatewayState,

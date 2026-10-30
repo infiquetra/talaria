@@ -4387,3 +4387,43 @@ addition to the board modules and command table owned by this unit.
 
 **Revisit when.** Hermes publishes a generated board contract, a transactional graph
 endpoint, or an enforced result-schema contract.
+
+## 2026-10-29 — Remote native sign-in uses the existing client and reconnect actor
+
+**Decision.** A remote signs in through Hermes's native browser PKCE broker, saves owner-only
+credentials, and exchanges bearer tokens for a new query ticket on every attach. Both local
+and remote connections use `MaybeTlsStream<TcpStream>`. Unknown remote identity is adopted
+from `runtime.describe`; the existing replay epoch detects later restarts. A parameter policy
+travels with connection parts into the client actor and survives replacement, so profile
+routing covers ordinary calls and replay calls.
+
+**Rationale.** At the pinned Hermes commit `4d04303818b61bf3aa09278af48356315515965b`,
+`hermes_cli/web_server_chat.py:265-281` sets the public subprotocol echo only for a ticket
+subprotocol; the query path intentionally has no echo. Tungstenite 0.26.2 rejects that valid
+response when a protocol was offered. The remote HTTP upgrade validates status, accept key,
+Upgrade/Connection headers, extensions and any optional protocol echo, then recovers the same
+verified TLS stream and buffered bytes for tungstenite's frame implementation. Certificate
+verification remains enabled; extra roots are exposed only by the test-support feature.
+
+**Rejected.** Access tokens in URLs; ticket subprotocols whose success depends on proxy peer
+location; disabled certificate checks; a second RPC or reconnect implementation.
+**Revisit when.** Upstream negotiates the public protocol on query-ticket upgrades or a
+compatible tungstenite version supports optional protocol negotiation.
+
+The supplied-dial entry point and the existing preopened-connection slot keep local launch
+semantics intact. Minimal integration touches include the CLI entry, library exports,
+configuration dependencies and interactive runner; plain client streams in the client peer
+and application gateway fixtures are wrapped in `MaybeTlsStream::Plain`. Those fixture
+changes adapt the transport type without changing assertions. The configuration-root
+helper follows the existing nonempty override rule because no application-level
+`talaria_home()` helper is present in this baseline.
+
+Two drafted harness details were corrected without changing assertions: the TLS round trip
+retains its Link event receiver, whose lifetime owns the existing Link loop, and the gated
+mock omits the optional `info.launch_request` field when the recorded fixture holds the
+recorder's `[redacted]` string in place of the contract's object. The production reconnect
+and snapshot decoding rules stay unchanged.
+
+Paste-back sign-in runs before the screen and uses a scoped descriptor guard to disable and
+restore echo. This is the unit's narrow exception to terminal-mode ownership in the patterns
+guide; it writes no escape sequences and does not share the live terminal's input reader.

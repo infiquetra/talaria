@@ -130,6 +130,53 @@ impl Dial for LaunchDial {
 pub struct ConnectionService;
 
 impl ConnectionService {
+    /// Open a connection using a caller-supplied dial.
+    pub async fn open_with_dial<D: hermes_client::liveness::Dial>(
+        launch: &Launch,
+        dial: D,
+    ) -> Result<OpenConnection, LaunchFailure> {
+        let (link, inbound) = Link::start(dial, LinkConfig::default())
+            .await
+            .map_err(|error| {
+                let plain = |text: &str| {
+                    text.chars()
+                        .map(|ch| {
+                            if ch.is_control()
+                                || matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+                            {
+                                '?'
+                            } else {
+                                ch
+                            }
+                        })
+                        .collect()
+                };
+                LaunchFailure {
+                    what: plain(error.reason()),
+                    next_step: plain(error.next_step()),
+                    exit_code: 1,
+                }
+            })?;
+        let describe = link
+            .client()
+            .call::<hermes_contract::methods::canonical::runtime_describe::Marker>(
+                hermes_contract::schemas::RuntimeDescribeParams(serde_json::Map::new()),
+            )
+            .await;
+        match describe {
+            Ok(describe) => Ok(OpenConnection {
+                link,
+                inbound,
+                describe,
+                profile_name: launch.profile.clone(),
+            }),
+            Err(error) => {
+                link.close().await;
+                Err(error.into())
+            }
+        }
+    }
+
     /// Discover (running `ensure` at most once, never with `--no-ensure`), resolve the profile,
     /// and start the link on an interactive, profile-scoped ticket.
     pub async fn open(
@@ -239,5 +286,40 @@ mod tests {
         run_case("relative", &bin, &outside);
         install(&git, "#!/bin/sh\nprintf '\\n'\n");
         run_case("empty", &bin, &outside);
+    }
+
+    #[tokio::test]
+    async fn supplied_dial_preserves_remote_upgrade_guidance() {
+        use hermes_client::liveness::{Dial, DialFailure, Dialed};
+        struct Refused;
+        impl Dial for Refused {
+            async fn dial(&mut self, _generation: u64) -> Result<Dialed, DialFailure> {
+                Err(DialFailure::GiveUp {
+                    reason: "no /api/ws at https://gateway.example.com/hermes".into(),
+                    next_step: "check the tunnel and gateway".into(),
+                })
+            }
+        }
+        let launch = crate::launch::Launch {
+            mode: crate::launch::StartMode::New,
+            model: None,
+            provider: None,
+            effort: None,
+            profile: "fixture".into(),
+            folder: PathBuf::new(),
+            record: None,
+            bench_replay: None,
+            no_ensure: true,
+        };
+        let failure = super::ConnectionService::open_with_dial(&launch, Refused)
+            .await
+            .err()
+            .expect("refused upgrade");
+        assert_eq!(failure.exit_code, 1);
+        assert_eq!(
+            failure.what,
+            "no /api/ws at https://gateway.example.com/hermes"
+        );
+        assert_eq!(failure.next_step, "check the tunnel and gateway");
     }
 }
