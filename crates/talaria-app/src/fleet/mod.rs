@@ -13,7 +13,7 @@ pub use external::{ExternalCommand, ExternalHandle, ExternalResult};
 pub use host_dial::HostDial;
 pub use service::{
     FleetHandle, FleetLinkState, FleetListError, FleetNotice, FleetReporter, FleetService,
-    FleetSnapshot, check_fleet_profile, list_once,
+    FleetSnapshot, check_fleet_profile, list_once, list_once_with_herdr,
 };
 
 /// Whether an interactive launch attaches after its first frame.

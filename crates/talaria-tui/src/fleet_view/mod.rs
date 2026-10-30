@@ -203,6 +203,8 @@ enum Panel<'a> {
     /// The session's latest output.
     Session(&'a PeekPanel<'a>),
     External(&'a ExternalPeekPanel<'a>),
+    /// Visible terminal output supplied by a live pane owner.
+    Terminal(&'a str),
 }
 
 /// The fleet overlay.
@@ -302,6 +304,9 @@ fn panel_of<'a>(
         (Some((_, PeekStatus::Failed { text })), _, _) => Some(Panel::Failed(text)),
         (_, _, Some(panel)) => Some(Panel::External(panel)),
         (_, Some(panel), _) => Some(Panel::Session(panel)),
+        (Some((_, PeekStatus::Open { .. })), None, None) if state.external_peek().is_some() => {
+            state.external_peek().map(Panel::Terminal)
+        }
         (Some((_, PeekStatus::Open { .. })), None, None) => Some(Panel::Opening),
         (None, None, None) => None,
     }
@@ -310,6 +315,16 @@ fn panel_of<'a>(
 /// Whether the peek shows an open card, which adds `a answer` to the footer.
 fn panel_has_card(state: &FleetViewState, panel: Option<&Panel<'_>>) -> bool {
     match panel {
+        Some(Panel::Terminal(_)) => matches!(
+            state.peek(),
+            Some((
+                _,
+                PeekStatus::Open {
+                    has_open_prompt: true,
+                    ..
+                }
+            ))
+        ),
         Some(Panel::Session(panel)) => {
             let from_status = matches!(
                 state.peek(),

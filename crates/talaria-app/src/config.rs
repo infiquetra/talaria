@@ -193,6 +193,14 @@ pub struct NotificationsConfig {
 pub struct HerdrConfig {
     /// Report working, blocked and idle to Herdr when inside Herdr. The default is true.
     pub report_state: bool,
+    /// Discover live terminal agents in the fleet.
+    pub enabled: bool,
+    /// Terminal manager executable.
+    pub binary: PathBuf,
+    /// Discovery period in milliseconds.
+    pub poll_interval_ms: u64,
+    /// Optional workspace identifier.
+    pub workspace_filter: Option<String>,
 }
 
 /// Theme settings from `[theme]`.
@@ -264,7 +272,13 @@ impl Default for Config {
                 fleet_needs_you: FleetScope::All,
                 fleet_finished: FleetScope::Watched,
             },
-            herdr: HerdrConfig { report_state: true },
+            herdr: HerdrConfig {
+                report_state: true,
+                enabled: false,
+                binary: PathBuf::from("herdr"),
+                poll_interval_ms: 2_000,
+                workspace_filter: None,
+            },
             theme: ThemeConfig {
                 mode: ThemeMode::Auto,
                 follow_hermes_skin: true,
@@ -827,6 +841,22 @@ fn read_comforts(table: &str, section: &Table, config: &mut Config, notices: &mu
                 Some(enabled) => if table=="history" { config.history.save=enabled; } else { config.herdr.report_state=enabled; },
                 None => notices.push(format!("{table}.{key} in {FILE} must be true or false; using true.")),
             },
+            ("herdr", "enabled") => match value.as_bool() {
+                Some(enabled) => config.herdr.enabled = enabled,
+                None => notices.push("[herdr] enabled must be true or false; using false.".into()),
+            },
+            ("herdr", "binary") => match value.as_str().filter(|text| !text.trim().is_empty()) {
+                Some(text) => config.herdr.binary = PathBuf::from(text),
+                None => notices.push("[herdr] binary must be nonempty text; using herdr.".into()),
+            },
+            ("herdr", "poll_interval_ms") => match value.as_integer() {
+                Some(value) if (50..=300_000).contains(&value) => config.herdr.poll_interval_ms = value as u64,
+                _ => notices.push("[herdr] poll_interval_ms must be a whole number from 50 to 300000; using 2000.".into()),
+            },
+            ("herdr", "workspace_filter") => match value.as_str().filter(|text| !text.trim().is_empty()) {
+                Some(text) => config.herdr.workspace_filter = Some(text.to_owned()),
+                None => notices.push("[herdr] workspace_filter must be nonempty text; using all workspaces.".into()),
+            },
             ("notifications","done_after_seconds") => match value.as_integer() {
                 Some(n) if (0..=86400).contains(&n) => config.notifications.done_after_seconds=n as u64,
                 _ => notices.push("[notifications] done_after_seconds must be a whole number from 0 to 86400; using 20.".into()),
@@ -899,6 +929,18 @@ pub fn user_config_path(home: &Path) -> PathBuf {
 #[must_use]
 pub fn load_user_config(home: &Path) -> LoadedConfig {
     load_file(&user_config_path(home))
+}
+
+impl HerdrConfig {
+    /// Discovery settings for the terminal-agent service.
+    pub fn fleet_config(&self) -> crate::herdr::HerdrConfig {
+        crate::herdr::HerdrConfig {
+            enabled: self.enabled,
+            binary: self.binary.clone(),
+            poll_interval_ms: self.poll_interval_ms,
+            workspace_filter: self.workspace_filter.clone(),
+        }
+    }
 }
 
 #[cfg(test)]

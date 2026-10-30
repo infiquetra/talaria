@@ -23,6 +23,7 @@ pub mod fleet;
 pub mod fleet_actions;
 pub mod fleet_attention;
 pub mod headless;
+pub mod herdr;
 pub mod kanban;
 pub mod launch;
 pub mod mcp;

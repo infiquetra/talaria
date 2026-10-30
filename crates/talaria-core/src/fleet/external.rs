@@ -6,6 +6,7 @@ use super::{FleetEffect, FleetInput, FleetRegistry, NeedSlot, Outcome, RowKey, R
 pub enum FleetBackend {
     Hermes,
     Acp,
+    Herdr,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -16,6 +16,7 @@ use talaria_tui::fleet_view::{FleetTheme, FleetView};
 
 fn row(session_id: &str, state: RowState) -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key: RowKey {
             profile: "fixture".to_owned(),
             session_id: session_id.to_owned(),

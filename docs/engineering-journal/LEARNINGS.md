@@ -37,6 +37,16 @@ safe to speak; a code-block marker with a non-whitespace suffix is not a closing
 **Generalizable rule.** Remove URL tokens even inside inline code, and require a real
 matching fence before resuming spoken prose.
 
+## 2026-10-30 — Historical recordings and active version values have different roles
+
+**Evidence.** The release metadata check found development-version literals in workflow test manifests and in three recorded doctor screens. The manifest values follow the workspace version, while the recordings retain the exact bytes captured at the time.
+
+**Mechanism.** A hard-coded active version becomes stale at the release bump; rewriting a recording would change the historical evidence.
+
+**Rule.** Derive active test versions from package metadata and keep historical recordings intact in the documented archive.
+
+**Verification.** The metadata suite initially passed eight cases and failed on the stale development-version literal. It passed all nine after the version-source and recording-location corrections. The relocated screen readers also passed their smoke regression tests.
+
 ## 2026-10-30 ACP adapter: one fleet for non-Hermes agents
 
 The Hermes v0.22.4 ACP server projects the gateway rather than owning an independent execution
@@ -55,6 +65,16 @@ usage reporting with file and terminal powers refused by default.
 
 Rule: keep protocol ownership and permission responders explicit when different backends share a
 fleet view, and refuse client filesystem and terminal powers unless explicitly enabled per agent.
+
+## 2026-10-29 — Release checks need an external test fixture and a stable tree
+
+**Evidence.** The release runner's temporary repositories contain gate definitions supplied by the test harness, while a separate case introduces a real untracked file and expects the runner to refuse it. A quiet grep also produced no output for the next process in a pipeline.
+
+**Mechanism.** Fixture configuration must be ignored explicitly in the temporary repository, and `grep -q` consumes its input without forwarding matching lines.
+
+**Rule.** Keep test-supplied gate files outside the dirty-tree signal and use a non-quiet producer when a later command must inspect its output.
+
+**Verification.** The original stub failed all 23 runner cases; the corrected implementation passed all 23. The source, scanner and test script also passed ShellCheck.
 
 ## 2026-10-29 — Probe replies and typed keys can arrive in the same read
 
@@ -120,6 +140,12 @@ The locked cargo-typify installation remains mandatory; no cached version string
 
 Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their
 writers, and keep qualification independent of cache state.
+
+## 2026-10-29 — Blocked terminal agents need explicit keys
+
+**Evidence.** The installed `herdr` CLI contract rejects prompt submission to a blocked agent before any input is sent. The terminal-agent wire tests retain that rejection and exercise the operator-selected key sequence separately.
+
+**Rule.** Use atomic prompt submission for follow-ups; answer a blocked terminal UI only through explicit, validated keys, and never report a rejected prompt as submitted.
 
 ## 2026-10-28 — Waiting work and an answered pause need durable evidence
 
@@ -6619,3 +6645,13 @@ The authentication tests combine real socket readiness with Tokio's paused clock
 clock advancement can otherwise fire a network deadline before the operating system reports
 ready I/O. A bounded test-support guard keeps the runtime active while HTTP I/O is pending;
 explicit `advance()` still exercises the timeout. Production builds have no such guard.
+
+## 2026-10-30 — Fleet backends report through one owner
+
+The merged ACP adapter owns `FleetHandle` and exposes a cloneable `FleetReporter`. Reconciling
+live terminal discovery against that seam retained ACP permission responders and transcript
+rendering while publishing Herdr observations through the same registry input and application
+notification channel. The mapping, mixed-backend wire, and owner-routing tests cover both paths.
+
+Rule: share a backend's reporting endpoint rather than cloning task ownership or creating a
+second registry when another fleet source is added.

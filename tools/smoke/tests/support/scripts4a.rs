@@ -14,9 +14,17 @@ pub struct Exec4a {
 }
 
 fn fixture(name: &str, replacements: &[(&str, &str, &str)]) -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/screens/phase4a")
-        .join(name);
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = if matches!(
+        name,
+        "doctor-cli-r1.txt" | "doctor-overlay-r1.txt" | "no-gateway-r1.txt"
+    ) {
+        manifest
+            .join("../../docs/fixtures/smoke/phase4a")
+            .join(name)
+    } else {
+        manifest.join("tests/fixtures/screens/phase4a").join(name)
+    };
     let mut text = std::fs::read_to_string(path).expect("recorded screen");
     for (file, before, after) in replacements {
         if *file == name {

@@ -12,6 +12,10 @@ publish.workspace = true
 name = "mock-acp-agent"
 path = "src/bin/mock_acp_agent.rs"
 
+[[bin]]
+name = "mock-herdr"
+path = "src/bin/mock_herdr.rs"
+
 [dependencies]
 talaria-workflow.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
