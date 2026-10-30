@@ -15067,6 +15067,7 @@ fn voice_input(
     input: talaria_core::voice::VoiceInput,
 ) -> Vec<AppEffect> {
     use talaria_core::voice::VoiceEffect as V;
+    let is_tick = matches!(input, talaria_core::voice::VoiceInput::Tick(_));
     if matches!(input, talaria_core::voice::VoiceInput::Press) {
         state.voice_last_tick_ms = state.now_ms;
     }
@@ -15124,7 +15125,7 @@ fn voice_input(
             }),
         }
     }
-    if is_open_session(state, session) {
+    if is_open_session(state, session) && (!is_tick || was_timed || now_timed) {
         effects.push(AppEffect::Redraw);
     }
     effects
