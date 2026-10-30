@@ -2,6 +2,26 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — Drift failures need diagnostics in the job log
+
+**Evidence.** Inspection of `tools/contract-gen/contract_gen.py` found that drift
+captured combined Cargo output but retained only lines containing `FAILED` or
+`test result:`. Compiler source context and assertion details can contain neither.
+The assembled release, catalogue and phase report went only to the summary file,
+so an exit code alone could survive in the job log. This explains diagnostic loss;
+it does not establish the cause of an earlier failed run.
+
+**Mechanism.** Each phase now prints its label, exact argument vector and numeric
+return code, with the complete captured output on failure. The concise report is
+printed before its identical summary-file write, so a summary-write error leaves
+the report visible and still fails. Build, binding and documentation results keep
+their existing gate; recording failures remain informational. New behavioral tests
+cover these paths with temporary fixtures and mocked external boundaries. Runtime
+negative and positive verification remains pending.
+
+**Rule.** Emit actionable failure evidence through the job log before writing an
+optional presentation surface, and preserve the original failure semantics.
+
 ## 2026-10-29 — Voice mode and capture have different gateway owners
 
 **Evidence.** Hermes v0.22.4 `gateway/session_config.py:123-151`,

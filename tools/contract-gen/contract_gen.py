@@ -675,6 +675,9 @@ def drift(tag, summary=None, hermes_checkout=None):
             def step(label, args):
                 result = subprocess.run(args, cwd=temp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 output = result.stdout.decode(errors="replace")
+                print("{} argv={} returncode={}".format(label, json.dumps(args), result.returncode), flush=True)
+                if result.returncode:
+                    print(output, end="" if output.endswith("\n") else "\n", flush=True)
                 failures = [line for line in output.splitlines() if "FAILED" in line or "test result:" in line]
                 report.append("{} ({}): {}\n{}".format(label, " ".join(args), "passed" if not result.returncode else "failed", "\n".join(failures)))
                 return result.returncode == 0
@@ -694,8 +697,10 @@ def drift(tag, summary=None, hermes_checkout=None):
         report.append("failed: " + message)
         print(message)
     finally:
+        rendered = "\n\n".join(report) + "\n"
+        print(rendered, end="", flush=True)
         if summary:
-            Path(summary).write_text("\n\n".join(report) + "\n")
+            Path(summary).write_text(rendered)
     return status
 
 
