@@ -117,9 +117,13 @@ pub fn detail(detail: TaskDetail, now_ms: u64) -> KanbanInput {
                 .join(", ")
         }
     };
+    let kind = detail.task.workspace_kind.as_deref().unwrap_or("scratch");
+    let workspace = match detail.task.workspace_path.as_deref() {
+        Some(path) if !path.is_empty() && kind != "scratch" => format!("Workspace: {kind} {path}"),
+        _ => format!("Workspace: {kind}"),
+    };
     let mut fields = vec![
         format!("Title: {}", text(&base.title)),
-        format!("Body: {}", text(&base.body)),
         format!("Assignee: {}", text(&base.assignee)),
         format!("Status: {}", base.status),
         format!(
@@ -131,11 +135,7 @@ pub fn detail(detail: TaskDetail, now_ms: u64) -> KanbanInput {
             "Effort: {}",
             detail.task.reasoning_effort.as_deref().unwrap_or("-")
         ),
-        format!(
-            "Workspace: {} {}",
-            detail.task.workspace_kind.as_deref().unwrap_or("scratch"),
-            detail.task.workspace_path.as_deref().unwrap_or("")
-        ),
+        workspace,
         format!("Parents: {}", text(&parents(&base.parent_titles))),
         format!("Children: {}", text(&parents(&base.child_titles))),
     ];
@@ -162,6 +162,7 @@ pub fn detail(detail: TaskDetail, now_ms: u64) -> KanbanInput {
         ));
     }
     fields.push(format!("Attachments: {}", detail.attachments.len()));
+    fields.push(format!("Body: {}", text(&base.body)));
     KanbanInput::Detail { card: base, fields }
 }
 pub fn now_ms() -> u64 {

@@ -2003,8 +2003,16 @@ impl TuiScreen {
                     {
                         return vec![];
                     }
+                    let text_mode = matches!(
+                        board.mode,
+                        BoardMode::Comment { .. } | BoardMode::Evidence { .. } | BoardMode::Filter
+                    );
                     let key = match key.code {
                         KeyCode::Char(c) => Some(BoardKey::Char(c)),
+                        KeyCode::Left if !text_mode => Some(BoardKey::Char('h')),
+                        KeyCode::Down if !text_mode => Some(BoardKey::Char('j')),
+                        KeyCode::Up if !text_mode => Some(BoardKey::Char('k')),
+                        KeyCode::Right if !text_mode => Some(BoardKey::Char('l')),
                         KeyCode::Enter => Some(BoardKey::Enter),
                         KeyCode::Esc => Some(BoardKey::Esc),
                         KeyCode::Backspace => Some(BoardKey::Backspace),

@@ -40,6 +40,7 @@ pub struct MockOptions {
     pub tail_burst: bool,
     pub unauthorized: bool,
     pub fail_task_post: Option<u64>,
+    pub seed_uat_ready: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -78,7 +79,33 @@ impl MockKanban {
     pub async fn start(options: MockOptions) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("addr").port();
-        let tasks = load_tasks();
+        let mut tasks = load_tasks();
+        if options.seed_uat_ready {
+            tasks.insert(
+                0,
+                json!({
+                    "id": "t_102",
+                    "title": "update the docs",
+                    "body": "Document the new flags.",
+                    "assignee": "fixture",
+                    "status": "ready",
+                    "priority": 0,
+                    "created_at": 1792993000
+                }),
+            );
+            tasks.insert(
+                0,
+                json!({
+                    "id": "t_101",
+                    "title": "check the schema",
+                    "body": "Verify the wire schema.",
+                    "assignee": "fixture",
+                    "status": "ready",
+                    "priority": 1,
+                    "created_at": 1792993000
+                }),
+            );
+        }
         let inner = Arc::new(Inner {
             options,
             tasks: Mutex::new(tasks),
@@ -422,11 +449,28 @@ fn task_body(inner: &Inner, id: &str) -> (u16, Value) {
         .filter(|(parent, _)| parent == id)
         .map(|(_, child)| child.clone())
         .collect();
+    let comments: Vec<_> = inner
+        .comments
+        .lock()
+        .expect("comments")
+        .iter()
+        .filter(|(task_id, _, _)| task_id == id)
+        .enumerate()
+        .map(|(idx, (_, author, body))| {
+            json!({
+                "id": (idx + 1) as u64,
+                "task_id": id,
+                "author": author,
+                "body": body,
+                "created_at": 1_793_000_000_i64 + (idx as i64)
+            })
+        })
+        .collect();
     (
         200,
         json!({
             "task": task,
-            "comments": [],
+            "comments": comments,
             "events": [],
             "attachments": [],
             "links": {"parents": parents, "children": children},

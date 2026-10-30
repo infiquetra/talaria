@@ -10,7 +10,10 @@ mod mock_kanban;
 use mock_kanban::{MockKanban, MockOptions};
 
 fn main() {
-    let mut options = MockOptions::default();
+    let mut options = MockOptions {
+        seed_uat_ready: true,
+        ..MockOptions::default()
+    };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {

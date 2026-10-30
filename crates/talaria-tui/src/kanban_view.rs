@@ -127,13 +127,24 @@ fn draw_columns(frame: &KanbanFrame, area: Rect, buf: &mut Buffer, start: usize)
         }
     }
     if area.height > 1 {
-        line(
-            &frame.status_line,
+        let clean = sanitize(&frame.status_line).into_owned();
+        let w = usize::from(area.width).max(1);
+        let max_rows = usize::from(area.height.saturating_sub(3)).max(1);
+        let needed = Line::from(clean.as_str())
+            .width()
+            .div_ceil(w)
+            .max(1)
+            .min(max_rows) as u16;
+        let rect = Rect::new(
             area.x,
-            area.bottom() - 1,
+            area.bottom().saturating_sub(needed),
             area.width,
-            buf,
+            needed,
         );
+        Clear.render(rect, buf);
+        Paragraph::new(clean)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .render(rect, buf);
     }
 }
 pub struct KanbanView;

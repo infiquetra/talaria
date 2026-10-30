@@ -25,7 +25,7 @@ pub struct Progress {
 pub struct KanbanTask {
     pub id: String,
     pub title: String,
-    #[serde(deserialize_with = "null_string")]
+    #[serde(deserialize_with = "null_default")]
     pub body: String,
     pub assignee: Option<String>,
     pub status: String,
@@ -33,7 +33,7 @@ pub struct KanbanTask {
     pub tenant: Option<String>,
     pub result: Option<String>,
     pub idempotency_key: Option<String>,
-    #[serde(deserialize_with = "null_vec")]
+    #[serde(deserialize_with = "null_default")]
     pub skills: Vec<String>,
     pub model_override: Option<String>,
     pub provider_override: Option<String>,
@@ -41,8 +41,11 @@ pub struct KanbanTask {
     pub session_id: Option<String>,
     pub workspace_kind: Option<String>,
     pub workspace_path: Option<String>,
+    #[serde(deserialize_with = "null_default")]
     pub link_counts: LinkCounts,
+    #[serde(deserialize_with = "null_default")]
     pub comment_count: u64,
+    #[serde(deserialize_with = "null_default")]
     pub progress: Progress,
     pub latest_summary: Option<String>,
     pub current_run_started_at: Option<i64>,
@@ -50,11 +53,12 @@ pub struct KanbanTask {
     pub current_run_id: Option<i64>,
     pub created_at: Option<i64>,
 }
-fn null_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
-}
-fn null_vec<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
-    Ok(Option::<Vec<String>>::deserialize(d)?.unwrap_or_default())
+fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct BoardColumn {

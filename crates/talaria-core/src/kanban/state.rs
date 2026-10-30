@@ -80,6 +80,7 @@ pub struct KanbanBoardState {
     connecting: bool,
     dirty: bool,
     last_fetch_ms: Option<u64>,
+    follow_id: Option<String>,
 }
 
 impl KanbanBoardState {
@@ -106,6 +107,7 @@ impl KanbanBoardState {
             connecting: false,
             dirty: false,
             last_fetch_ms: None,
+            follow_id: None,
         }
     }
 
@@ -471,11 +473,28 @@ impl KanbanBoardState {
             vec![]
         } else {
             self.mode = BoardMode::Browse;
+            self.follow_id = Some(card.id.clone());
             vec![KanbanEffect::Patch {
                 id: card.id,
                 status: destination,
                 summary: None,
             }]
+        }
+    }
+    fn follow(&mut self, id: &str) {
+        let columns = self.column_keys();
+        let Some(card) = self.filtered().into_iter().find(|c| c.id == id) else {
+            return;
+        };
+        let key = self.column_for(card).to_owned();
+        if let Some(col) = columns.iter().position(|c| *c == key) {
+            self.column = col;
+            self.row = self
+                .filtered()
+                .into_iter()
+                .filter(|c| self.column_for(c) == key)
+                .position(|c| c.id == id)
+                .unwrap_or(0);
         }
     }
 }
@@ -511,6 +530,9 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
             state.cursor = state.cursor.max(cursor);
             state.loading = false;
             state.error = None;
+            if let Some(id) = state.follow_id.take() {
+                state.follow(&id);
+            }
             state.clamp();
             if state
                 .detail_id
@@ -580,6 +602,7 @@ pub fn update(state: &mut KanbanBoardState, input: KanbanInput) -> Vec<KanbanEff
         KanbanInput::Failed(error) => {
             state.fetching = false;
             state.loading = false;
+            state.follow_id = None;
             state.notice = Some(error.clone());
             if state.cards.is_empty() {
                 state.error = Some(error);
