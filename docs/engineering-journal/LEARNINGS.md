@@ -6536,3 +6536,17 @@ configuration added after admission cannot enter the new role's shared content-h
 
 Rule: refuse the full configuration prefix by metadata and exclude it from unsupported content
 inputs; checking only conventional filenames leaves nonstandard names and links uncovered.
+
+## 2026-10-30 — Cancellation groups must distinguish independent validation runs
+
+Successful native CI job `123864468292` took 46m58s and Bench job `123864467835` took
+18m1s. CI now has 90-minute ceilings; contract generation and drift have 30-minute ceilings.
+Bench retains its existing 30-minute ceiling and exact workflow assertion, with 11m59s above
+that successful sample. These samples do not establish a cold or warm execution maximum.
+Workflow name, workflow-file ref and PR number identify cancellable runs only when PR/ref
+metadata is present. Other events use run ID and attempt with cancellation disabled, keeping
+scheduled and manual drift independent. Release serialization stays unchanged. Workflow edits
+invalidate the existing workflow-bound cache identity without relaxing its inputs.
+
+Rule: cancel only superseded validation for the same PR and workflow/ref; give independent runs
+distinct groups and preserve measured deadline headroom without assuming a cache hit.

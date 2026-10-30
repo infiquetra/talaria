@@ -8,12 +8,24 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.workflow_ref }}-${{
+      github.event_name == 'pull_request' && github.event.pull_request.number > 0 &&
+      github.workflow != '' && github.workflow_ref != '' && github.ref != '' &&
+      format('pr-{0}', github.event.pull_request.number) ||
+      format('run-{0}-{1}', github.run_id, github.run_attempt) }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request' && github.event.pull_request.number > 0 &&
+        github.workflow != '' && github.workflow_ref != '' && github.ref != '' }}
+
 jobs:
   # Job names are load-bearing: the required status checks on main name them exactly.
   # The matrix holds only `os`. Adding a matrix key would change the reported names and
   # silently detach branch protection from them.
   rust-check:
     name: rust-check (${{ matrix.os }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +65,7 @@ jobs:
 
   rust-coverage:
     name: rust-coverage
+    timeout-minutes: 90
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
