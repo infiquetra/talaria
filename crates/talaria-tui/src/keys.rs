@@ -944,6 +944,8 @@ pub enum Action {
     McpOpenLink,
     McpCopy,
     McpPasteRedirect,
+    /// Turn vim editing on or off. No default chord.
+    ToggleVim,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -975,7 +977,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 192] = [
+    pub const ALL: [Self; 193] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1168,6 +1170,7 @@ impl Action {
         Self::McpOpenLink,
         Self::McpCopy,
         Self::McpPasteRedirect,
+        Self::ToggleVim,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -1367,6 +1370,7 @@ impl Action {
             Self::McpOpenLink => "mcp_open_link",
             Self::McpCopy => "mcp_copy",
             Self::McpPasteRedirect => "mcp_paste_redirect",
+            Self::ToggleVim => "toggle_vim",
         }
     }
 
@@ -1433,7 +1437,8 @@ impl Action {
             | Self::ApprovalsToggle
             | Self::ComposerSendNow
             | Self::ComposerSteer
-            | Self::AgentsPanel => KeyContext::Composer,
+            | Self::AgentsPanel
+            | Self::ToggleVim => KeyContext::Composer,
             Self::AttentionNext => KeyContext::Composer,
             Self::PagerLineUp
             | Self::PagerLineDown
@@ -1779,6 +1784,7 @@ impl Action {
             Self::McpOpenLink => &["o"],
             Self::McpCopy => &["c"],
             Self::McpPasteRedirect => &["p"],
+            Self::ToggleVim => &[],
         }
     }
 }
@@ -2778,7 +2784,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 192);
+        assert_eq!(Action::ALL.len(), 193);
         for action in Action::ALL {
             let wanted = match action {
                 Action::ProgressUp
@@ -3361,7 +3367,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 192);
+        assert_eq!(Action::ALL.len(), 193);
     }
 
     #[test]

@@ -6204,6 +6204,36 @@ produce a value outside the run ID's range.
 **Generalizable rule.** When generating valid run IDs for property tests, draw
 only 0 through 7 for the first character and the full alphabet for the rest.
 
+## 2026-10-29 — P6-04 composer modes keep the existing input boundaries
+
+**Evidence.** The default composer map in `crates/talaria-tui/src/keys.rs` already
+assigns both Ctrl+V and Alt+V to clipboard images. The live screen in
+`crates/talaria-cli/src/run.rs` owns the composer and routes history search before
+composer input. The Vim command and rendering checks exercise grapheme carets,
+the shared kill buffer, and mode-specific handling.
+
+**Rule.** Give an optional composer mode no default toggle chord; claim the
+configured history-search chord only while the Vim composer has focus. Keep the
+Vim command set bounded: macros, named registers, ex commands, search, text
+objects, marks, and insert-mode remaps stay outside this subset.
+
+The existing configuration document already contained 581 lines before this
+change, with a default-key block exceeding 300 lines. The earlier 200-line
+estimate is therefore stale; the documented defaults still load without notices.
+
+**Rule.** Preserve the complete default map when a later configuration change
+outgrows an old document-length target.
+
+During `UAT-6` operator rehearsal (`dw` followed by `u` on `alpha beta gamma`),
+`apply_operator_motion` in `crates/talaria-tui/src/composer/vim.rs:578` invoked
+`self.motion(...)` before `Snapshot::of(composer)` ran in `apply_span`, so undo
+restored the post-motion target caret (`11`) instead of the pre-operator caret (`6`).
+Restoring `composer.draft.set_caret(start)` immediately after `self.motion(...)`
+ensures the undo snapshot captures the pre-operator caret (`composer_vim.rs:486`).
+
+**Rule.** When a motion helper mutates caret state as a side effect, restore the
+pre-operator caret before recording the undo snapshot for an operator span.
+
 ### 2026-10-27 — A durable operator answer also needs a consumption barrier
 
 A `call_resolved` append wakes backend futures before the polling task has necessarily deleted the

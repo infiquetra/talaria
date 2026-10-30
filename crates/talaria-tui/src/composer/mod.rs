@@ -4,10 +4,12 @@ mod buffer;
 pub mod paste_burst;
 pub mod recall;
 mod render;
+mod vim;
 pub mod wrap;
 
 pub use buffer::clean_text;
 pub use render::ComposerSection;
+pub use vim::{VimMode, VimState, byte_of_cluster};
 
 use std::time::{Duration, Instant};
 
@@ -91,6 +93,7 @@ pub struct Composer {
     highlights: Vec<(std::ops::Range<usize>, ratatui::style::Style)>,
     highlight_revision: u64,
     last_history_recall: bool,
+    vim: Option<VimState>,
 }
 
 impl Composer {
@@ -120,7 +123,70 @@ impl Composer {
             highlights: Vec::new(),
             highlight_revision: 0,
             last_history_recall: false,
+            vim: None,
         }
+    }
+
+    /// An empty draft, with vim on or off from startup.
+    #[must_use]
+    pub fn from_startup(keymap: KeyMap, history: Vec<String>, vim: bool) -> Self {
+        let mut composer = Self::with_history(keymap, history);
+        if vim {
+            composer.set_vim_enabled(true);
+        }
+        composer
+    }
+
+    /// Whether vim editing is on.
+    #[must_use]
+    pub fn vim_enabled(&self) -> bool {
+        self.vim.is_some()
+    }
+
+    /// Turn vim on in normal mode, or return to ordinary editing.
+    pub fn set_vim_enabled(&mut self, on: bool) {
+        if on == self.vim.is_some() {
+            return;
+        }
+        self.flush_burst();
+        self.burst.reset();
+        self.run.clear();
+        self.disarm();
+        if on {
+            vim::clamp_caret(self, false);
+            self.vim = Some(VimState::new());
+        } else {
+            self.vim = None;
+        }
+    }
+
+    /// The vim mode, or nothing when vim is off.
+    #[must_use]
+    pub fn vim_mode(&self) -> Option<VimMode> {
+        self.vim.as_ref().map(VimState::mode)
+    }
+
+    /// Pending vim state, when vim is enabled.
+    #[must_use]
+    pub fn vim_state(&self) -> Option<&VimState> {
+        self.vim.as_ref()
+    }
+
+    /// The one kill buffer span.
+    #[must_use]
+    pub fn kill_buffer(&self) -> &str {
+        self.draft.kill_text()
+    }
+
+    /// Whether the kill buffer was filled by a linewise vim operator.
+    #[must_use]
+    pub fn kill_linewise(&self) -> bool {
+        self.draft.kill_linewise()
+    }
+
+    /// Put the caret on a cluster boundary.
+    pub fn set_caret(&mut self, byte: usize) {
+        self.draft.set_caret(byte);
     }
 
     /// Apply one key.
@@ -130,6 +196,34 @@ impl Composer {
             return ComposerOutcome::Unchanged;
         }
         let action = self.keymap.resolve(&key, KeyContext::Composer);
+        if action == Some(Action::ToggleVim) {
+            self.set_vim_enabled(!self.vim_enabled());
+            return ComposerOutcome::Changed;
+        }
+        if self.vim_mode().is_some_and(|mode| mode != VimMode::Insert)
+            && let Some(mut state) = self.vim.take()
+        {
+            let outcome = state.handle_key(self, key, action, ctx);
+            if matches!(outcome, ComposerOutcome::Submit(_)) {
+                state.submitted(self);
+            }
+            self.vim = Some(state);
+            return outcome;
+        }
+        if self.vim_mode() == Some(VimMode::Insert)
+            && key.code == KeyCode::Esc
+            && key.mods == Default::default()
+        {
+            self.flush_burst();
+            self.burst.reset();
+            self.run.clear();
+            self.disarm();
+            if let Some(mut state) = self.vim.take() {
+                state.leave_insert(self);
+                self.vim = Some(state);
+            }
+            return ComposerOutcome::Changed;
+        }
         let mods = key.mods;
         let plain = match key.code {
             KeyCode::Char(c) if !(mods.ctrl || mods.alt || mods.super_key || mods.other) => Some(c),
@@ -155,6 +249,13 @@ impl Composer {
 
     /// Insert a bracketed paste. Never submits.
     pub fn handle_paste(&mut self, text: &str) -> ComposerOutcome {
+        if self.vim_mode().is_some_and(|mode| mode != VimMode::Insert)
+            && let Some(mut state) = self.vim.take()
+        {
+            let outcome = state.paste(self, text);
+            self.vim = Some(state);
+            return outcome;
+        }
         let mut inserted = self.flush_burst();
         self.burst.reset();
         self.run.clear();
@@ -224,6 +325,9 @@ impl Composer {
         if self.draft.replace_range(range, &clean_text(text)) {
             self.recall.end();
             self.disarm();
+            if let Some(state) = &mut self.vim {
+                state.adjust_anchor(self.draft.text());
+            }
         }
     }
 
@@ -281,13 +385,29 @@ impl Composer {
 
     /// Replace the draft. The caret lands at the end. History is unchanged.
     pub fn load(&mut self, text: String) {
-        self.clear();
+        let before = self.vim.as_ref().map(|_| vim::Snapshot::of(self));
+        self.clear_inner();
         let clean = clean_text(&text);
         self.draft.replace(clean);
+        let after = self.vim.as_ref().map(|_| vim::Snapshot::of(self));
+        if let (Some(state), Some(before), Some(after)) = (&mut self.vim, before, after) {
+            state.loaded(before, after);
+        }
     }
 
     /// Remove the draft, end a history browse, and disarm exit.
     pub fn clear(&mut self) {
+        let before = self.vim.as_ref().map(|_| vim::Snapshot::of(self));
+        let changed = !self.draft.text().is_empty();
+        self.clear_inner();
+        if let (Some(state), Some(before)) = (&mut self.vim, before)
+            && changed
+        {
+            state.record_clear(before);
+        }
+    }
+
+    fn clear_inner(&mut self) {
         self.draft.replace(String::new());
         self.recall.end();
         self.burst.reset();
@@ -339,7 +459,7 @@ impl Composer {
         let exit_hint = self.exit_armed.is_some();
         let (shown, hint_row) = if boxed {
             (total.min(limit), false)
-        } else if max_rows >= 2 && (total > limit || exit_hint) {
+        } else if max_rows >= 2 && (total > limit || exit_hint || self.vim.is_some()) {
             (total.min(limit - 1).max(1), true)
         } else {
             (total.min(limit), false)
@@ -450,6 +570,10 @@ impl Composer {
         self.recall.end();
         self.draft.replace(String::new());
         self.disarm();
+        if let Some(mut state) = self.vim.take() {
+            state.submitted(self);
+            self.vim = Some(state);
+        }
         ComposerOutcome::Submit(text)
     }
 
@@ -722,7 +846,8 @@ impl Composer {
             | Action::McpSave
             | Action::McpOpenLink
             | Action::McpCopy
-            | Action::McpPasteRedirect => {}
+            | Action::McpPasteRedirect
+            | Action::ToggleVim => {}
         }
         false
     }
