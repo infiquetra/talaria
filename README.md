@@ -4,8 +4,10 @@ Talaria is a terminal client for the Hermes agent gateway, being rewritten in Ru
 It owns the terminal experience; Hermes owns agent execution and durable sessions.
 
 The last Python release is v0.6.5, preserved at [python-final](https://github.com/infiquetra/talaria/tree/python-final).
-The Rust client is not usable yet. Nothing on `main` should be installed.
-The current binary only reports its version and placeholder help.
+
+## Install
+
+Install: see [docs/install.md](docs/install.md) (Homebrew, release archives, or build from source).
 
 ## Build and check
 

@@ -111,6 +111,8 @@ jobs:
       - name: Conflict markers
         run: |
           ! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)
+      - name: Package tests
+        run: python3 -I -m unittest discover -s tools/package/tests -t tools/package
       # The report is its own step so it still runs when the floor fails; in one step the
       # shell would stop at the failing floor and never write lcov.info.
       - name: Write the LCOV report

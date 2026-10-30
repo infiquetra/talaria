@@ -6,6 +6,10 @@ Talaria is a terminal client for the Hermes agent gateway. It presents sessions 
 
 ## Install
 
+On macOS and Linux with Homebrew, install from the project tap with `brew install infiquetra/talaria/talaria`. See [install.md](install.md).
+
+Or download the archive and checksums for your platform with `gh release download v<version> --repo infiquetra/talaria --pattern 'talaria-*-<target>.tar.gz' --pattern SHA256SUMS` and unpack `talaria-<version>-<target>/talaria` onto your path. See [install.md](install.md).
+
 Install the Rust toolchain specified in `rust-toolchain.toml`, clone this repository, and build the client:
 
 ```bash

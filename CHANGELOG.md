@@ -10,6 +10,10 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+### Added
+
+- Release archives for macOS and Linux, verified checksums and provenance, and a Homebrew tap update workflow.
+
 ### Removed
 
 - Removed the Python client, its tests and process records from `main`. The last Python
