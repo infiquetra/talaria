@@ -644,6 +644,9 @@ def copy_workspace_for_drift(source, destination):
     for name in ("Cargo.lock", "rust-toolchain.toml"):
         shutil.copy2(source / name, destination / name)
     shutil.copytree(source / "crates/hermes-contract", destination / "crates/hermes-contract")
+    frames = source / "fixtures/frames"
+    if frames.exists():
+        shutil.copytree(frames, destination / "fixtures/frames")
 
 
 def drift(tag, summary=None, hermes_checkout=None):

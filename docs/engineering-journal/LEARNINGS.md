@@ -2,6 +2,22 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — Drift workspaces need recorded frames outside the crate
+
+**Evidence.** Diagnostic run 41137840436 on the logging repair built the contract,
+but binding tests failed to compile because `overrides.rs` includes the root
+`fixtures/frames/model-switch.jsonl`. The contract's session-info tests also read
+`queue-edit-remove.jsonl` from that root tree. The earlier run's cause remains unknown.
+
+**Mechanism.** The isolated drift workspace copied the crate but omitted its root
+recordings. Copying the frames tree preserves those relative paths; a focused
+synthetic regression checks nested, byte-preserved copies. The prior logging suite
+passed 41 tests; native verification of this fixture-copy change and a new-head drift
+run remain pending.
+
+**Rule.** Include external test inputs when constructing isolated workspaces, and
+preserve the original test paths and contents.
+
 ## 2026-10-30 — Drift failures need diagnostics in the job log
 
 **Evidence.** Inspection of `tools/contract-gen/contract_gen.py` found that drift
@@ -17,7 +33,8 @@ printed before its identical summary-file write, so a summary-write error leaves
 the report visible and still fails. Build, binding and documentation results keep
 their existing gate; recording failures remain informational. New behavioral tests
 cover these paths with temporary fixtures and mocked external boundaries. Runtime
-negative and positive verification remains pending.
+negative and positive verification of that logging repair passed 41 tests; the
+subsequent fixture-copy repair has its own verification pending.
 
 **Rule.** Emit actionable failure evidence through the job log before writing an
 optional presentation surface, and preserve the original failure semantics.

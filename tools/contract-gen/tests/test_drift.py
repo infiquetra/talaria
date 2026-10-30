@@ -151,6 +151,27 @@ class DriftTests(unittest.TestCase):
             self.assertTrue((dest / "crates" / "hermes-contract" / "Cargo.toml").is_file())
             self.assertFalse((dest / "crates" / "other").exists())
 
+    def test_workspace_copy_preserves_root_recordings_at_test_relative_path(self) -> None:
+        with support.temporary_directory() as temp_name:
+            source = Path(temp_name) / "source"
+            tests = source / "crates" / "hermes-contract" / "tests"
+            tests.mkdir(parents=True)
+            (source / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/hermes-contract"]\n')
+            (source / "Cargo.lock").write_text("# lock\n")
+            (source / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "1.98.1"\n')
+            frames = source / "fixtures" / "frames"
+            (frames / "nested").mkdir(parents=True)
+            recording = b'{"frame": {"result": {}}}\r\n'
+            (frames / "model-switch.jsonl").write_bytes(recording)
+            (frames / "queue-edit-remove.jsonl").write_bytes(b"queue\n")
+            (frames / "nested" / "extra.jsonl").write_bytes(b"nested\n")
+            dest = Path(temp_name) / "dest"
+            contract_gen.copy_workspace_for_drift(source, dest)
+            relative = dest / "crates" / "hermes-contract" / "tests" / "../../../fixtures/frames"
+            self.assertEqual((relative / "model-switch.jsonl").read_bytes(), recording)
+            self.assertEqual((relative / "queue-edit-remove.jsonl").read_bytes(), b"queue\n")
+            self.assertEqual((relative / "nested" / "extra.jsonl").read_bytes(), b"nested\n")
+
 
 class DriftDiagnosticsTests(unittest.TestCase):
     def setUp(self) -> None:
