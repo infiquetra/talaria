@@ -494,6 +494,15 @@ pub const LOCAL_COMMANDS: &[LocalCommand] = &[
         action: LocalAction::Fleet,
         tag: "talaria",
     },
+    LocalCommand {
+        name: "voice",
+        aliases: &[],
+        summary: "Control push-to-talk and read-aloud",
+        args_hint: "[on|off|status|read]",
+        takes_argument: true,
+        action: LocalAction::Voice,
+        tag: "talaria",
+    },
 ];
 
 /// Background-process commands, after the rewind commands.

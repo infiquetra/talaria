@@ -17,6 +17,7 @@ doctor_no = ["n"]
 doctor_tab = ["tab"]
 doctor_left = ["left"]
 doctor_right = ["right"]
+voice_record = ["alt+r"]
 submit = ["enter"]
 newline = ["shift+enter", "alt+enter", "ctrl+j"]
 interrupt = ["esc"]
@@ -371,6 +372,10 @@ focus = false
 # Set both provider and model to use a specific configuration assistant model.
 # provider = "example-provider"
 # model = "example-model"
+
+[voice]
+read_aloud = false
+speak_max_chars = 1500
 ```
 
 ## Settings
@@ -629,3 +634,26 @@ Use `talaria acp agents` to check executable availability, or `talaria acp agent
 check the version handshake without creating a session. From the fleet view, start a new session
 and choose an `acp:` agent in the profile selector. Set its working directory and an optional first
 prompt. Its row shows the agent name, and its peek shows its transcript and permission choices.
+
+## Voice
+
+Voice capture and speech playback run on the local Hermes gateway's machine. Enable
+voice for the current session with `/voice on`, then press `Alt+R` to start or stop
+push-to-talk. `/voice off` disables session capture, and `/voice status` reports the
+session mode, key binding, and gateway requirements. Configure the key with
+`[keys] voice_record`; an empty binding disables the shortcut.
+
+A transcript is sent immediately when the gateway's `voice.submit_mode` is `direct`
+and the composer is empty. Otherwise it is appended to the draft. `/voice read on`
+and `/voice read off` control spoken replies for the current session. A reply already
+being spoken cannot be stopped by changing this preference.
+
+```text
+[voice]
+read_aloud = false
+speak_max_chars = 1500
+```
+
+`read_aloud` is the default for newly attached sessions. `speak_max_chars` accepts
+whole numbers from 100 to 10000; longer replies are shortened before being sent for
+speech. Invalid values produce a configuration notice and use the defaults.

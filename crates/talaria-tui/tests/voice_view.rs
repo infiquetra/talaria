@@ -100,3 +100,27 @@ fn segment_and_partial_snapshots() {
         "the microphone sits immediately before the external command"
     );
 }
+
+#[test]
+fn phase_projection_hides_unknown_and_marks_a_pending_stop() {
+    use talaria_core::voice::{RecordStatus, VoiceInput, VoiceState};
+    use talaria_tui::voice_view::segment_for;
+
+    let mut state = VoiceState::new("fixture-session", true, 1500);
+    assert!(segment_for(&state.view()).is_none());
+    state.update(VoiceInput::ModeRead(Some("voice_only".into())), true);
+    state.update(VoiceInput::Press, true);
+    state.update(
+        VoiceInput::RecordReply {
+            start: true,
+            status: RecordStatus::Recording,
+            reason: None,
+        },
+        true,
+    );
+    state.update(VoiceInput::Press, true);
+    assert_eq!(
+        segment_for(&state.view()).expect("stopping segment").text,
+        "transcribing… +read"
+    );
+}

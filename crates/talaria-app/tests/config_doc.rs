@@ -103,6 +103,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("doctor_tab", &["tab"][..]),
         ("doctor_left", &["left"][..]),
         ("doctor_right", &["right"][..]),
+        ("voice_record", &["alt+r"][..]),
         ("submit", &["enter"][..]),
         ("newline", &["shift+enter", "alt+enter", "ctrl+j"][..]),
         ("interrupt", &["esc"][..]),

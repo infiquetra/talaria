@@ -944,9 +944,9 @@ pub enum Action {
     McpOpenLink,
     McpCopy,
     McpPasteRedirect,
+    VoiceRecord,
     /// Turn vim editing on or off. No default chord.
     ToggleVim,
-    VoiceRecord,
 }
 
 /// What a key does in an open completion list: the slash palette or the `@` list.
@@ -1171,8 +1171,8 @@ impl Action {
         Self::McpOpenLink,
         Self::McpCopy,
         Self::McpPasteRedirect,
-        Self::ToggleVim,
         Self::VoiceRecord,
+        Self::ToggleVim,
     ];
 
     /// Name used in the keys table of the configuration file.
@@ -1789,7 +1789,7 @@ impl Action {
             Self::McpCopy => &["c"],
             Self::McpPasteRedirect => &["p"],
             Self::ToggleVim => &[],
-            Self::VoiceRecord => &[],
+            Self::VoiceRecord => &["alt+r"],
         }
     }
 }
@@ -2789,7 +2789,10 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 193);
+        assert_eq!(Action::ALL.len(), 194);
+        for (index, action) in Action::ALL.iter().enumerate() {
+            assert_eq!(action.index(), index, "{}", action.config_name());
+        }
         for action in Action::ALL {
             let wanted = match action {
                 Action::ProgressUp
@@ -3372,7 +3375,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 193);
+        assert_eq!(Action::ALL.len(), 194);
     }
 
     #[test]

@@ -2,6 +2,41 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-29 — Voice mode and capture have different gateway owners
+
+**Evidence.** Hermes v0.22.4 `gateway/session_config.py:123-151`,
+`tui_gateway/methods_voice.py:59-67,798-871`, and
+`tui_gateway/ws_legacy_fallback.py:31-62`.
+
+**Mechanism.** Session voice mode belongs to the shared session authority, while
+microphone capture and speech run in the gateway's legacy sidecar. The WebSocket
+allows the voice fallback for an interactive grant, and disconnecting a client does
+not itself stop an active push-to-talk capture.
+
+**Generalizable rule.** Change mode through the session command, never a global voice
+toggle; stop an open capture before detaching and report an unconfirmed stop.
+
+## 2026-10-30 — Key slots and retained sessions carry hidden identity
+
+**Evidence.** During the voice merge, an action list ordered differently from its enum
+assigned the voice chord to the Vim toggle. The retained-session map also changed from
+session IDs to profile-and-session keys. The key-map invariant and retained voice-notice
+tests now cover these cases, including duplicate session IDs across profiles.
+
+**Rule.** Keep action list order aligned with enum indices, and use the existing
+profile-aware resolver for retained sessions.
+
+## 2026-10-29 — Inline code can contain a raw URL
+
+**Evidence.** The speech filter regression covers URLs inside inline code and inside
+parenthesized prose, as well as a non-closing fence-like line inside a code block.
+
+**Mechanism.** Markdown delimiters can surround a URL without making its destination
+safe to speak; a code-block marker with a non-whitespace suffix is not a closing fence.
+
+**Generalizable rule.** Remove URL tokens even inside inline code, and require a real
+matching fence before resuming spoken prose.
+
 ## 2026-10-30 ACP adapter: one fleet for non-Hermes agents
 
 The Hermes v0.22.4 ACP server projects the gateway rather than owning an independent execution

@@ -139,8 +139,12 @@ pub enum VoiceInput {
         focused: bool,
     },
     VoiceStopped,
+    /// A voice method is unavailable on this connection.
+    Unavailable,
     Command(VoiceCommand),
     ConnectionOpened,
+    /// A session previously detached on this connection is attached again.
+    SessionReopened,
     DetachBegins,
     Tick(Duration),
     SpeakFailed {
@@ -185,6 +189,14 @@ pub struct VoiceState {
     speak_max_chars: usize,
     submit_mode: SubmitMode,
     focused: bool,
+    pending: Option<bool>,
+    capture_auto_submitted: bool,
+    partial: Option<String>,
+    label: Option<String>,
+    clock: Option<Duration>,
+    transcribing_for: Duration,
+    detaching: bool,
+    unavailable: bool,
 }
 
 impl VoiceState {
@@ -197,22 +209,256 @@ impl VoiceState {
             speak_max_chars,
             submit_mode: SubmitMode::Direct,
             focused: true,
+            pending: None,
+            capture_auto_submitted: false,
+            partial: None,
+            label: None,
+            clock: None,
+            transcribing_for: Duration::ZERO,
+            detaching: false,
+            unavailable: false,
         }
     }
 
-    /// Apply one input. The stub keeps the phase and returns no effects.
+    /// Apply one input without performing I/O.
     pub fn update(&mut self, input: VoiceInput, composer_empty: bool) -> Vec<VoiceEffect> {
-        let _ = (input, composer_empty, self.speak_max_chars, self.focused);
-        Vec::new()
+        use VoiceEffect as Effect;
+        use VoiceInput as Input;
+        let mut effects = Vec::new();
+        match input {
+            Input::ModeRead(mode) => {
+                if matches!(mode.as_deref(), Some("voice_only" | "all")) && !self.unavailable {
+                    if matches!(self.phase, VoicePhase::Unknown | VoicePhase::Off) {
+                        self.set_phase(VoicePhase::Ready);
+                    }
+                } else {
+                    self.off();
+                }
+            }
+            Input::SubmitModeRead(mode) => {
+                self.submit_mode = SubmitMode::from_config(mode.as_deref())
+            }
+            Input::Press if self.unavailable => effects.push(Effect::Notice(UNAVAILABLE.into())),
+            Input::Press if self.pending.is_some() || self.detaching => {}
+            Input::Press => match self.phase {
+                VoicePhase::Unknown => effects.push(Effect::Notice("Checking voice mode…".into())),
+                VoicePhase::Off => effects.push(Effect::Notice(
+                    "Voice is off. Type /voice on to use the microphone.".into(),
+                )),
+                VoicePhase::Ready => {
+                    self.capture_auto_submitted = false;
+                    self.pending = Some(true);
+                    self.set_phase(VoicePhase::Starting);
+                    effects.push(Effect::Record { start: true });
+                }
+                VoicePhase::Recording => {
+                    self.pending = Some(false);
+                    self.set_phase(VoicePhase::Stopping);
+                    effects.push(Effect::Record { start: false });
+                }
+                VoicePhase::Starting | VoicePhase::Stopping | VoicePhase::Transcribing => {}
+            },
+            Input::RecordReply {
+                start,
+                status,
+                reason,
+            } => {
+                if self.pending == Some(start) {
+                    self.pending = None;
+                    let sent_phase = if start {
+                        VoicePhase::Starting
+                    } else {
+                        VoicePhase::Stopping
+                    };
+                    if self.phase == sent_phase {
+                        match (start, status) {
+                            (true, RecordStatus::Recording) => {
+                                self.set_phase(VoicePhase::Recording)
+                            }
+                            (false, RecordStatus::Stopped) => {
+                                self.set_phase(VoicePhase::Transcribing)
+                            }
+                            (_, RecordStatus::Busy) => {
+                                self.set_phase(VoicePhase::Ready);
+                                let notice = if reason.as_deref() == Some("wake_owned") {
+                                    "The wake word holds the microphone. Turn it off in Hermes, then try again."
+                                } else {
+                                    "The microphone is busy."
+                                };
+                                effects.push(Effect::Notice(notice.into()));
+                            }
+                            _ => self.set_phase(VoicePhase::Ready),
+                        }
+                    }
+                }
+            }
+            Input::RecordFailed {
+                start,
+                code,
+                message,
+                dropped,
+            } => {
+                if code == Some(-32601) {
+                    self.disable_unavailable(&mut effects);
+                } else if self.pending == Some(start) {
+                    self.pending = None;
+                    let sent_phase = if start {
+                        VoicePhase::Starting
+                    } else {
+                        VoicePhase::Stopping
+                    };
+                    if self.phase == sent_phase {
+                        if dropped {
+                            self.set_phase(VoicePhase::Unknown);
+                            effects.push(Effect::Notice(DROPPED.into()));
+                            effects.push(Effect::ReadMode);
+                        } else {
+                            if start && code == Some(4015) {
+                                self.off();
+                            } else {
+                                self.set_phase(VoicePhase::Ready);
+                            }
+                            effects.push(Effect::Notice(record_error(code, &message)));
+                        }
+                    }
+                }
+            }
+            Input::Event(event) => self.event(event, composer_empty, &mut effects),
+            Input::TurnCompleted {
+                assistant_markdown,
+                outcome,
+                focused,
+            } if self.read_aloud
+                && focused
+                && outcome == TurnOutcome::Completed
+                && !self.detaching =>
+            {
+                if let Some(text) = speakable::speakable_text(
+                    &assistant_markdown.join("\n\n"),
+                    self.speak_max_chars,
+                ) {
+                    effects.push(Effect::Speak(text));
+                }
+            }
+            Input::TurnCompleted { .. } => {}
+            Input::VoiceStopped => {
+                self.off();
+                effects.push(Effect::ReadMode);
+            }
+            Input::Unavailable => self.disable_unavailable(&mut effects),
+            Input::Command(command) => match command {
+                VoiceCommand::On => effects.push(Effect::SetMode { on: true }),
+                VoiceCommand::Off => effects.push(Effect::SetMode { on: false }),
+                VoiceCommand::Status => {
+                    effects.extend([Effect::ReadMode, Effect::ReadRequirements])
+                }
+                VoiceCommand::Read(value) => {
+                    let enabled = value.unwrap_or(!self.read_aloud);
+                    if enabled && self.unavailable {
+                        effects.push(Effect::Notice(UNAVAILABLE.into()));
+                    } else {
+                        self.read_aloud = enabled;
+                        effects.push(Effect::Notice(
+                            if enabled {
+                                "Read-aloud on."
+                            } else {
+                                "Read-aloud off. A reply already speaking will finish."
+                            }
+                            .into(),
+                        ));
+                    }
+                }
+            },
+            Input::ConnectionOpened => {
+                if matches!(
+                    self.phase,
+                    VoicePhase::Starting
+                        | VoicePhase::Recording
+                        | VoicePhase::Stopping
+                        | VoicePhase::Transcribing
+                ) {
+                    effects.push(Effect::Notice(DROPPED.into()));
+                }
+                self.pending = None;
+                self.detaching = false;
+                self.unavailable = false;
+                self.partial = None;
+                self.label = None;
+                self.set_phase(VoicePhase::Unknown);
+                effects.push(Effect::ReadMode);
+            }
+            Input::SessionReopened => {
+                self.pending = None;
+                self.detaching = false;
+                self.partial = None;
+                self.label = None;
+                if self.unavailable {
+                    self.off();
+                } else {
+                    self.set_phase(VoicePhase::Unknown);
+                }
+                effects.push(Effect::ReadMode);
+            }
+            Input::DetachBegins => {
+                self.detaching = true;
+                self.partial = None;
+                if matches!(self.phase, VoicePhase::Starting | VoicePhase::Recording) {
+                    effects.push(Effect::StopBeforeDetach);
+                }
+            }
+            Input::Tick(delta) => {
+                if self.phase == VoicePhase::Recording {
+                    self.clock = Some(self.clock.unwrap_or_default().saturating_add(delta));
+                } else if self.phase == VoicePhase::Transcribing {
+                    self.transcribing_for = self.transcribing_for.saturating_add(delta);
+                    if self.transcribing_for >= Duration::from_secs(120) {
+                        self.set_phase(VoicePhase::Ready);
+                    }
+                }
+            }
+            Input::SpeakFailed {
+                code,
+                message,
+                dropped,
+            } => {
+                if dropped {
+                    effects.push(Effect::Notice(
+                        "Read-aloud got no answer from the gateway.".into(),
+                    ));
+                } else if code == Some(4020) {
+                    effects.push(Effect::Notice(
+                        "Talaria sent an empty text to speak (4020). Please report this.".into(),
+                    ));
+                } else if matches!(code, Some(5026 | -32601)) {
+                    if code == Some(-32601) {
+                        self.disable_unavailable(&mut effects);
+                    }
+                    self.read_aloud = false;
+                    effects.push(Effect::Notice(format!(
+                        "Read-aloud is off: {}.",
+                        clean_message(&message)
+                    )));
+                } else {
+                    effects.push(Effect::Notice(
+                        "Read-aloud got no answer from the gateway.".into(),
+                    ));
+                }
+            }
+        }
+        effects
     }
 
     #[must_use]
     pub fn view(&self) -> VoiceView {
         VoiceView {
             phase: self.phase,
-            label: None,
-            partial: None,
-            clock: None,
+            label: self.label.clone(),
+            partial: self.partial.as_ref().map(|text| format!("heard: {text}")),
+            clock: if self.phase == VoicePhase::Starting {
+                Some(Duration::ZERO)
+            } else {
+                self.clock
+            },
             read_aloud: self.read_aloud,
         }
     }
@@ -240,6 +486,198 @@ impl VoiceState {
     /// The service tells the machine whether this session is the focused one.
     pub fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
+    }
+
+    /// The in-flight record request, if any (`true` means start).
+    #[must_use]
+    pub fn pending_record(&self) -> Option<bool> {
+        self.pending
+    }
+
+    fn set_phase(&mut self, phase: VoicePhase) {
+        if phase != VoicePhase::Recording {
+            self.clock = None;
+        } else if self.phase != VoicePhase::Recording {
+            self.clock = Some(Duration::ZERO);
+        }
+        if phase != VoicePhase::Transcribing || self.phase != VoicePhase::Transcribing {
+            self.transcribing_for = Duration::ZERO;
+        }
+        self.phase = phase;
+    }
+
+    fn off(&mut self) {
+        self.set_phase(VoicePhase::Off);
+        self.partial = None;
+        self.label = None;
+    }
+
+    fn disable_unavailable(&mut self, effects: &mut Vec<VoiceEffect>) {
+        if !self.unavailable {
+            effects.push(VoiceEffect::Notice(UNAVAILABLE.into()));
+        }
+        self.unavailable = true;
+        self.pending = None;
+        self.read_aloud = false;
+        self.off();
+    }
+
+    fn event(
+        &mut self,
+        event: VoiceEventKind,
+        composer_empty: bool,
+        effects: &mut Vec<VoiceEffect>,
+    ) {
+        use VoiceEffect as Effect;
+        match event {
+            VoiceEventKind::Status { state } => match state.as_str() {
+                "listening" => {
+                    self.label = None;
+                    if matches!(self.phase, VoicePhase::Starting | VoicePhase::Ready) {
+                        self.set_phase(VoicePhase::Recording);
+                    }
+                }
+                "transcribing" => {
+                    self.label = None;
+                    if matches!(self.phase, VoicePhase::Recording | VoicePhase::Stopping) {
+                        self.set_phase(VoicePhase::Transcribing);
+                    }
+                }
+                "idle" => {
+                    self.label = None;
+                    self.partial = None;
+                    if matches!(
+                        self.phase,
+                        VoicePhase::Starting
+                            | VoicePhase::Recording
+                            | VoicePhase::Stopping
+                            | VoicePhase::Transcribing
+                    ) {
+                        self.set_phase(VoicePhase::Ready);
+                    }
+                }
+                _ if !matches!(self.phase, VoicePhase::Unknown | VoicePhase::Off) => {
+                    let label: String = state
+                        .chars()
+                        .filter(|ch| !ch.is_control())
+                        .take(24)
+                        .collect();
+                    if !label.is_empty() {
+                        self.label = Some(label);
+                    }
+                }
+                _ => {}
+            },
+            VoiceEventKind::Partial { text }
+                if !self.detaching
+                    && !matches!(self.phase, VoicePhase::Unknown | VoicePhase::Off) =>
+            {
+                self.partial = Some(clean_transcript(&text));
+            }
+            VoiceEventKind::Partial { .. } => {}
+            VoiceEventKind::Transcript {
+                text,
+                stop_phrase,
+                typed,
+                no_speech,
+                focused,
+                session_id,
+            } => {
+                if self.detaching {
+                    return;
+                }
+                self.partial = None;
+                self.label = None;
+                if stop_phrase || typed {
+                    self.off();
+                    effects.push(Effect::Notice("Voice chat ended (stop phrase).".into()));
+                } else if no_speech {
+                    self.off();
+                    effects.push(Effect::Notice(
+                        "Voice turned off after three recordings with no speech.".into(),
+                    ));
+                } else {
+                    let text = clean_transcript(&text);
+                    if text.is_empty() {
+                        return;
+                    }
+                    if !focused {
+                        effects.push(Effect::NoticeIn {
+                            session_id,
+                            text: format!("Voice transcript (not sent): {text}"),
+                        });
+                    } else if self.submit_mode == SubmitMode::Direct
+                        && composer_empty
+                        && !self.capture_auto_submitted
+                    {
+                        self.capture_auto_submitted = true;
+                        effects.push(Effect::Submit(text));
+                    } else {
+                        effects.push(Effect::AppendToDraft(text));
+                        if self.submit_mode == SubmitMode::Direct {
+                            effects.push(Effect::Notice(
+                                "Transcript added to your draft. Press Enter to send.".into(),
+                            ));
+                        }
+                    }
+                }
+            }
+            VoiceEventKind::Interrupted => {
+                effects.push(Effect::Notice("Interrupted by voice.".into()))
+            }
+        }
+    }
+}
+
+const UNAVAILABLE: &str = "Voice is not available on this gateway.";
+const DROPPED: &str = "Recording state unknown: the connection dropped.";
+
+/// Clean untrusted transcript text before insertion or display.
+#[must_use]
+pub fn clean_transcript(text: &str) -> String {
+    text.chars()
+        .filter_map(|ch| match ch {
+            '\n' | '\r' | '\t' => Some(' '),
+            ch if ch.is_control() => None,
+            ch => Some(ch),
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+/// Clean a gateway message for a notice.
+#[must_use]
+pub fn clean_message(text: &str) -> String {
+    let text = clean_transcript(text);
+    let mut chars = text.chars();
+    let mut value: String = chars.by_ref().take(120).collect();
+    if chars.next().is_some() {
+        value.pop();
+        value.push('…');
+    }
+    if value.ends_with('.') {
+        value.pop();
+    }
+    if value.is_empty() {
+        "no message given".into()
+    } else {
+        value
+    }
+}
+
+fn record_error(code: Option<i64>, message: &str) -> String {
+    match code {
+        Some(4015) => "Voice is off for this session. Type /voice on.".into(),
+        Some(4016) => "Another session is recording. Stop it first.".into(),
+        Some(4019) => {
+            "Talaria sent a voice request Hermes did not understand (4019). Please report this."
+                .into()
+        }
+        _ => format!(
+            "Voice failed on the gateway: {}. Run /voice status.",
+            clean_message(message)
+        ),
     }
 }
 
@@ -477,6 +915,11 @@ mod tests {
         ready(&mut state);
         press(&mut state);
         status(&mut state, "listening");
+        assert!(
+            starts(&press(&mut state)).is_empty(),
+            "the start reply is still pending"
+        );
+        reply(&mut state, true, RecordStatus::Recording, None);
         press(&mut state);
         assert_eq!(state.phase(), VoicePhase::Stopping);
         let effects = failed(&mut state, false, Some(4016), "no", false);
@@ -492,6 +935,7 @@ mod tests {
         ready(&mut state);
         press(&mut state);
         status(&mut state, "listening");
+        reply(&mut state, true, RecordStatus::Recording, None);
         press(&mut state);
         let effects = state.update(
             VoiceInput::RecordReply {
@@ -557,6 +1001,7 @@ mod tests {
         ready(&mut state);
         press(&mut state);
         status(&mut state, "listening");
+        reply(&mut state, true, RecordStatus::Recording, None);
         press(&mut state);
         state.update(
             transcript(
@@ -590,6 +1035,7 @@ mod tests {
         ready(&mut state);
         press(&mut state);
         status(&mut state, "listening");
+        reply(&mut state, true, RecordStatus::Recording, None);
         press(&mut state);
         state.update(
             transcript("stop now", true, "fixture-session", true, false, false),
@@ -633,7 +1079,7 @@ mod tests {
         assert_eq!(state.phase(), VoicePhase::Transcribing);
         status(&mut state, "idle");
         assert_eq!(state.phase(), VoicePhase::Ready);
-        let raw = format!("warming\u{1b}[31m");
+        let raw = "warming\u{1b}[31m".to_string();
         status(&mut state, &raw);
         assert_eq!(state.view().label.as_deref(), Some("warming[31m"));
         assert_eq!(

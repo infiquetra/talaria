@@ -157,9 +157,10 @@ pub enum Segment {
 
 impl Segment {
     /// Every segment, from the one dropped last to the one dropped first.
-    pub const ALL: [Segment; 13] = [
+    pub const ALL: [Segment; 14] = [
         Segment::Connection,
         Segment::NeedsYou,
+        Segment::Voice,
         Segment::Approvals,
         Segment::Failed,
         Segment::Model,
@@ -178,18 +179,18 @@ impl Segment {
         match self {
             Segment::Connection => 1,
             Segment::NeedsYou => 2,
-            Segment::Approvals => 3,
-            Segment::Failed => 4,
-            Segment::Model => 5,
-            Segment::Context => 6,
-            Segment::Folder => 7,
-            Segment::Working => 8,
-            Segment::Done => 9,
-            Segment::Cost => 10,
-            Segment::PullRequest => 11,
-            Segment::External => 12,
-            Segment::Ultracode => 13,
-            Segment::Voice => 14,
+            Segment::Voice => 3,
+            Segment::Approvals => 4,
+            Segment::Failed => 5,
+            Segment::Model => 6,
+            Segment::Context => 7,
+            Segment::Folder => 8,
+            Segment::Working => 9,
+            Segment::Done => 10,
+            Segment::Cost => 11,
+            Segment::PullRequest => 12,
+            Segment::External => 13,
+            Segment::Ultracode => 14,
         }
     }
 
@@ -208,8 +209,8 @@ impl Segment {
             Segment::Working => 9,
             Segment::Done => 10,
             Segment::PullRequest => 11,
-            Segment::External => 12,
-            Segment::Voice => 13,
+            Segment::Voice => 12,
+            Segment::External => 13,
         }
     }
 }
@@ -275,6 +276,14 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
         &mut pieces,
         Segment::PullRequest,
         pull_request_segment(inputs),
+    );
+    add(
+        &mut pieces,
+        Segment::Voice,
+        inputs
+            .voice
+            .as_ref()
+            .map(|voice| (sanitize(&voice.text).into_owned(), voice.tone)),
     );
     add(&mut pieces, Segment::External, external_segment(external));
 
