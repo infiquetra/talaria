@@ -325,7 +325,50 @@ pub struct FleetHandle {
     join: tokio::task::JoinHandle<()>,
 }
 
+/// A cloneable reporting endpoint for an independently owned fleet backend.
+#[derive(Clone)]
+pub struct FleetReporter {
+    hub: Arc<Hub>,
+}
+
+impl FleetReporter {
+    /// Publish a complete external-session observation.
+    pub fn observe_external(&self, session: talaria_core::fleet::ExternalSession) {
+        self.hub.apply_from_handle(FleetInput::External(session));
+    }
+
+    /// Remove a session after its external owner has ended it.
+    pub fn remove_external(&self, key: RowKey) {
+        self.hub
+            .apply_from_handle(FleetInput::RemoveExternal { key });
+    }
+
+    /// Keep a stopped process's rows until the operator acknowledges them.
+    pub fn external_exited(&self, key: RowKey) {
+        self.hub
+            .apply_from_handle(FleetInput::ExternalExited { key });
+    }
+
+    /// Publish one sanitized diagnostic.
+    pub fn diagnostic(&self, text: &str) {
+        self.hub
+            .note(talaria_core::text::sanitize(text).into_owned());
+    }
+
+    /// Read the current fleet snapshot.
+    pub fn snapshot(&self) -> Arc<FleetSnapshot> {
+        self.hub.snapshot()
+    }
+}
+
 impl FleetHandle {
+    /// Create a reporting endpoint that does not own the fleet task.
+    pub fn reporter(&self) -> FleetReporter {
+        FleetReporter {
+            hub: Arc::clone(&self.hub),
+        }
+    }
+
     /// The latest snapshot.
     #[must_use]
     pub fn snapshot(&self) -> Arc<FleetSnapshot> {

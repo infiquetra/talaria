@@ -134,6 +134,22 @@ impl LaunchUi {
         self.status = Some((self.version, status));
     }
 
+    /// Show the status of an external-agent launch in the same dialog.
+    pub fn external_started(&mut self) {
+        self.set_status(DialogStatus::Progress("Starting agent…".into()));
+    }
+
+    /// Finish an external-agent launch without changing the Hermes launch path.
+    pub fn external_finished(&mut self, result: Result<(), String>) {
+        self.set_status(match result {
+            Ok(()) => DialogStatus::Close,
+            Err(what) => DialogStatus::Failed {
+                what,
+                next_step: "Check the configured agent and try again.".into(),
+            },
+        });
+    }
+
     /// The dialog was closed with Esc: its launch goes on and reports through a notice.
     pub fn closed(&mut self) {
         self.shown = None;

@@ -37,6 +37,10 @@ fn row(profile: &str, id: &str, title: &str, state: RowState, model: Option<&str
         unlisted: false,
         activity: None,
         cost_usd: None,
+        backend: talaria_core::fleet::FleetBackend::Hermes,
+        agent: None,
+        occupancy: None,
+        cost: None,
     }
 }
 
@@ -64,6 +68,7 @@ fn item(row_key: &RowKey, detail: NeedDetail) -> NeedItem {
         timeout_s: None,
         exact: true,
         foreground: false,
+        external_options: Vec::new(),
     }
 }
 

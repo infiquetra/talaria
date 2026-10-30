@@ -205,6 +205,8 @@ pub struct LaunchDialog {
     prompt: Composer,
     profile: String,
     folder: LineField,
+    agent_folder: Option<PathBuf>,
+    saved_folder: Option<String>,
     model: LineField,
     /// The worktree name once the operator has edited it; `None` follows the prompt.
     name: Option<LineField>,
@@ -238,6 +240,8 @@ impl LaunchDialog {
             prompt,
             profile,
             folder,
+            agent_folder: None,
+            saved_folder: None,
             model: LineField::default(),
             name: None,
             status: None,
@@ -246,6 +250,11 @@ impl LaunchDialog {
             text_width: Cell::new(0),
             scroll_top: Cell::new(0),
         }
+    }
+
+    /// The default working directory when an external agent is selected.
+    pub fn set_agent_launch_directory(&mut self, folder: PathBuf) {
+        self.agent_folder = Some(folder);
     }
 
     /// Where the box goes on a screen of this size.
@@ -731,7 +740,20 @@ impl LaunchDialog {
             Some(at) if forward => (at + 1) % profiles.len(),
             Some(at) => (at + profiles.len() - 1) % profiles.len(),
         };
+        let was_agent = self.profile.starts_with("acp:");
         self.profile.clone_from(&profiles[next]);
+        let is_agent = self.profile.starts_with("acp:");
+        if !was_agent && is_agent {
+            if let Some(folder) = &self.agent_folder {
+                self.saved_folder = Some(self.folder.text.clone());
+                self.folder = LineField::new(folder.to_string_lossy().into_owned());
+            }
+        } else if was_agent
+            && !is_agent
+            && let Some(folder) = self.saved_folder.take()
+        {
+            self.folder = LineField::new(folder);
+        }
     }
 
     /// The field a validation line is about, from its wording.
@@ -853,4 +875,66 @@ fn visible_controls(text: &str) -> String {
         }
     }
     out
+}
+
+/// Values collected for a session owned by an external agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcpLaunchSubmit {
+    pub agent_id: String,
+    pub cwd: PathBuf,
+    pub prompt: String,
+}
+
+/// The fleet launch affordance for an external agent.
+pub struct AcpLaunchDialog {
+    agents: Vec<(String, String)>,
+    selected: Option<String>,
+    cwd: PathBuf,
+    prompt: String,
+}
+
+impl AcpLaunchDialog {
+    pub fn from_fleet_action(
+        action: talaria_core::fleet_view::FleetAction,
+        agents: Vec<(String, String)>,
+        launch_directory: PathBuf,
+    ) -> Option<Self> {
+        matches!(action, talaria_core::fleet_view::FleetAction::New).then_some(Self {
+            agents,
+            selected: None,
+            cwd: launch_directory,
+            prompt: String::new(),
+        })
+    }
+    pub fn choose_agent(&mut self, agent_id: &str) {
+        self.selected = self
+            .agents
+            .iter()
+            .find(|(id, _)| id == agent_id)
+            .map(|(id, _)| id.clone());
+    }
+    pub fn set_prompt(&mut self, prompt: &str) {
+        self.prompt = prompt.to_owned();
+    }
+    pub fn set_cwd(&mut self, cwd: PathBuf) {
+        self.cwd = cwd;
+    }
+    pub fn submit(&self) -> Result<AcpLaunchSubmit, String> {
+        let agent_id = self
+            .selected
+            .clone()
+            .ok_or_else(|| "Choose an agent.".to_owned())?;
+        if !self.cwd.is_dir() {
+            return Err("The working directory does not exist.".into());
+        }
+        let cwd = self
+            .cwd
+            .canonicalize()
+            .map_err(|_| "The working directory cannot be read.".to_owned())?;
+        Ok(AcpLaunchSubmit {
+            agent_id,
+            cwd,
+            prompt: self.prompt.clone(),
+        })
+    }
 }
