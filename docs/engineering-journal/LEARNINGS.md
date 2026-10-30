@@ -21,6 +21,16 @@ usage reporting with file and terminal powers refused by default.
 Rule: keep protocol ownership and permission responders explicit when different backends share a
 fleet view, and refuse client filesystem and terminal powers unless explicitly enabled per agent.
 
+## 2026-10-29 — Release checks need an external test fixture and a stable tree
+
+**Evidence.** The release runner's temporary repositories contain gate definitions supplied by the test harness, while a separate case introduces a real untracked file and expects the runner to refuse it. A quiet grep also produced no output for the next process in a pipeline.
+
+**Mechanism.** Fixture configuration must be ignored explicitly in the temporary repository, and `grep -q` consumes its input without forwarding matching lines.
+
+**Rule.** Keep test-supplied gate files outside the dirty-tree signal and use a non-quiet producer when a later command must inspect its output.
+
+**Verification.** The original stub failed all 23 runner cases; the corrected implementation passed all 23. The source, scanner and test script also passed ShellCheck.
+
 ## 2026-10-29 — Probe replies and typed keys can arrive in the same read
 
 **Evidence.** The composer PTY regression reproduced lost text before and after a device-attributes reply; a buffered Unicode CSI-u key initially reappeared as the literal `233u`. Split replies, bracketed paste, arrow keys, key releases, and terminal reacquisition are exercised by the same harness.

@@ -1,1 +1,27 @@
 # id	required	class	command
+fmt	yes	ci	cargo fmt --check
+clippy	yes	ci	cargo clippy --locked --all-targets -- -D warnings
+tests	yes	ci	cargo test --workspace --locked
+release-build	yes	ci	cargo build --release --workspace --locked --bins --examples
+replay-fixtures	yes	ci	n=0; for f in fixtures/frames/*.jsonl; do cargo run -q --locked -p record-fixture -- replay "$f" > /dev/null || exit 1; n=$((n+1)); done; test "$n" -ge 7
+repo-scan	yes	ci	cargo run -q --locked -p record-fixture -- scan fixtures/frames
+doc-scan	yes	ci	sh tools/release/doc-scan.sh
+contract-check	yes	ci	command -v cargo-typify > /dev/null 2>&1 || { echo 'cargo-typify is not installed'; exit 77; }; CONTRACT_GEN_REQUIRE_TYPIFY=1 python3 -I tools/contract-gen/contract_gen.py check --require-typify
+contract-vendor	yes	ci	python3 -I tools/contract-gen/contract_gen.py verify-vendor
+contract-pinned-drift	yes	ci	python3 -I tools/contract-gen/contract_gen.py drift --tag "$(sed -n 's/^tag=//p' crates/hermes-contract/PINNED)"
+contract-latest-drift	no	ci	python3 -I tools/contract-gen/contract_gen.py drift --tag latest
+bench	yes	ci	cargo build --release --locked -p talaria-cli -p talaria-bench && "${CARGO_TARGET_DIR:-target}/release/talaria-bench" run --binary "${CARGO_TARGET_DIR:-target}/release/talaria"
+no-registry-publish	yes	ci	cargo metadata --locked --no-deps --format-version 1 | python3 -I -c 'import json,sys; bad=[p["name"] for p in json.load(sys.stdin)["packages"] if p["publish"]!=[]]; print("crates without publish = false: "+", ".join(bad)) if bad else None; sys.exit(1 if bad else 0)'
+no-unattended-flag	yes	ci	! git grep -nE '"unattended"[[:space:]]*:[[:space:]]*true|unattended[[:space:]]*[:=][[:space:]]*(Some\()?true|\.unattended\([[:space:]]*(Some\()?true' -- 'crates/*/src/**' 'tools/*/src/**' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' | grep .
+no-attribution-lines	yes	ci	git rev-parse -q --verify refs/tags/python-final > /dev/null && ! git log --format=%B python-final..HEAD | grep -iE '^co-authored-b[y]|^generated wit[h]'
+python-era-removed	yes	ci	test -z "$(git ls-files pyproject.toml uv.lock package.json 'talaria/*.py')"
+release-tooling-tests	yes	ci	sh tools/release/tests/rc.test.sh
+smoke-phase1	yes	live	TALARIA_LIVE_REQUIRE=1 cargo run -q --locked -p smoke -- run --suite phase1 --talaria "${CARGO_TARGET_DIR:-target}/release/talaria"
+smoke-phase2a	yes	live	TALARIA_LIVE_REQUIRE=1 cargo run -q --locked -p smoke -- run --suite phase2a --talaria "${CARGO_TARGET_DIR:-target}/release/talaria"
+smoke-phase2b	yes	live	TALARIA_LIVE_REQUIRE=1 cargo run -q --locked -p smoke -- run --suite phase2b --talaria "${CARGO_TARGET_DIR:-target}/release/talaria"
+smoke-phase3	yes	live	TALARIA_LIVE_REQUIRE=1 cargo run -q --locked -p smoke -- run --suite phase3 --talaria "${CARGO_TARGET_DIR:-target}/release/talaria"
+smoke-phase4a	yes	live	TALARIA_LIVE_REQUIRE=1 cargo run -q --locked -p smoke -- run --suite phase4a --talaria "${CARGO_TARGET_DIR:-target}/release/talaria"
+smoke-phase4b	yes	live	TALARIA_LIVE_REQUIRE=1 cargo run -q --locked -p smoke -- run --suite phase4b --talaria "${CARGO_TARGET_DIR:-target}/release/talaria"
+smoke-phase5	yes	live	TALARIA_LIVE_REQUIRE=1 cargo run -q --locked -p smoke -- run --suite phase5 --talaria "${CARGO_TARGET_DIR:-target}/release/talaria"
+live-tests	yes	live	out=$(TALARIA_LIVE_REQUIRE=1 cargo test --workspace --release --locked -- --ignored --nocapture --skip live_pause_blocks_new_spawns 2>&1); s=$?; printf '%s\n' "$out"; test "$s" -eq 0 && ! printf '%s\n' "$out" | grep -q '_RESULT: SKIPPED'
+live-pause	yes	operator	out=$(TALARIA_LIVE_REQUIRE=1 TALARIA_LIVE_PAUSE=1 cargo test --release --locked -p talaria-app --test live_subagents -- --ignored --nocapture --exact live_pause_blocks_new_spawns 2>&1); s=$?; printf '%s\n' "$out"; test "$s" -eq 0 && printf '%s\n' "$out" | grep -q 'LIVE_SUBAGENT_RESULT: PASSED'
