@@ -10,6 +10,9 @@ fn main() -> ExitCode {
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())
         .collect();
+    if args.first().is_some_and(|arg| arg == "remote") {
+        return ExitCode::from(talaria_cli::remote::run(&args));
+    }
     if talaria_cli::args::is_workflow_command(&args) {
         return ExitCode::from(talaria_cli::workflow::entry(&args));
     }
@@ -59,6 +62,9 @@ fn main() -> ExitCode {
     }
     match talaria_cli::args::Cli::try_parse() {
         Ok(cli) => {
+            if cli.remote.is_some() {
+                return talaria_cli::remote::attach(cli);
+            }
             if cli.bg || cli.worktree || cli.name.is_some() {
                 return ExitCode::from(talaria_cli::bg::run_bg(&cli, started));
             }
