@@ -214,6 +214,16 @@ async fn run_effect(peek: &mut PeekService, effect: FleetViewEffect) -> Vec<Flee
                 Ok(()) => peek.resend_unconfirmed(&key).await,
                 Err(reason) => ReplyOutcome::NotAttached { reason },
             };
+            // A locally unsent attempt does not settle the original unknown admission.
+            // Genuine remote refusals have already cleared the service's pending entry.
+            let outcome = match outcome {
+                ReplyOutcome::Refused { .. } if peek.has_unconfirmed_reply(&key) => {
+                    ReplyOutcome::Unknown {
+                        why: "connection dropped".to_owned(),
+                    }
+                }
+                other => other,
+            };
             vec![FleetViewInput::ReplyDone { key, outcome }]
         }
         FleetViewEffect::Stop(key) => {

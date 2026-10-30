@@ -7,9 +7,11 @@ mod mock_gateway;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use fake_fleet::{FakeFleetSink, FleetCall};
+use hermes_client::liveness::{LinkEvent, LinkState};
 use mock_gateway::{Behavior, MockGateway, Reply, StandaloneGateway, data_snapshot};
 use serde_json::{Value, json};
 use talaria_app::app::{self, AppEffect, AppMessage, AppState, UserAction};
@@ -19,9 +21,10 @@ use talaria_app::peek::{CardAnswer, PeekError, PeekService, PeekTimeouts};
 use talaria_core::directory::rows::RowKey;
 use talaria_core::fleet::{FleetRow, ProfileStatus, RowState};
 use talaria_core::fleet_view::{
-    FleetAction, FleetViewEffect, FleetViewInput, ReplyOutcome, StopOutcome,
+    self, FleetAction, FleetViewEffect, FleetViewInput, FleetViewState, ReplyOutcome, StopOutcome,
 };
 use talaria_core::session::{PromptKey, SessionId};
+use tokio::sync::{mpsc, oneshot};
 
 const NOW: f64 = 1_792_700_000.0;
 
@@ -377,6 +380,8 @@ async fn reply_failures_and_resend() {
     seed(&gateway, "local-3f2a", true, false);
     let (mut peek, _) = service(home.path());
     peek.open(key("fixture", "local-3f2a")).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    let (held, release) = gateway.hold_second_handshake();
     gateway.queue_behavior("prompt.submit", Behavior::Refuse("queue_full".to_owned()));
     let refused = peek.reply("one".to_owned()).await;
     assert!(
@@ -398,21 +403,30 @@ async fn reply_failures_and_resend() {
         matches!(dropped, ReplyOutcome::Unknown { .. }),
         "a dropped reply was not unknown: {dropped:?}"
     );
-    // The resend goes out once the link is back.
-    let started = Instant::now();
-    while gateway.websocket_connections() < 2 && started.elapsed() < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let mut again = ReplyOutcome::Unknown {
-        why: "not tried".to_owned(),
-    };
-    while started.elapsed() < Duration::from_secs(5) {
-        again = peek.resend_unconfirmed(&key("fixture", "local-3f2a")).await;
-        if !matches!(again, ReplyOutcome::Refused { ref reason } if reason == "not connected") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    wait_for_held_handshake(&mut peek, &mut events, held, deadline).await;
+    assert_eq!(gateway.requests("prompt.submit").len(), 3);
+    let disconnected = peek.resend_unconfirmed(&key("fixture", "local-3f2a")).await;
+    assert_eq!(
+        disconnected,
+        ReplyOutcome::Refused {
+            reason: "not connected".to_owned()
+        },
+        "a resend before handshake must be known unsent"
+    );
+    assert_eq!(
+        gateway.requests("prompt.submit").len(),
+        3,
+        "disconnected resend wrote a request"
+    );
+    release.send(()).expect("release handshake");
+    wait_for_connected(&mut peek, &mut events, 2, deadline).await;
+    assert_eq!(
+        gateway.requests("prompt.submit").len(),
+        3,
+        "reconnect automatically resent"
+    );
+    let again = peek.resend_unconfirmed(&key("fixture", "local-3f2a")).await;
     assert_eq!(again, ReplyOutcome::Sent, "the resend was answered");
     let submits = gateway.requests("prompt.submit");
     assert!(submits.len() >= 4, "the resend was not sent");
@@ -420,6 +434,508 @@ async fn reply_failures_and_resend() {
         submits[2].params,
         submits.last().expect("resend").params,
         "the resend repeats the dropped reply's params byte for byte"
+    );
+    assert_eq!(submits.len(), 4, "one explicit resend reached the gateway");
+    assert_eq!(
+        names(&submits[3].params),
+        ["session_id", "submission_id", "text"]
+    );
+    assert_eq!(
+        peek.resend_unconfirmed(&key("fixture", "local-3f2a")).await,
+        ReplyOutcome::Refused {
+            reason: "nothing to resend".to_owned()
+        },
+        "a confirmed reply clears the pending entry"
+    );
+    assert_eq!(gateway.requests("prompt.submit").len(), 4);
+}
+
+async fn wait_for_held_handshake(
+    peek: &mut PeekService,
+    events: &mut mpsc::Receiver<LinkEvent>,
+    mut held: oneshot::Receiver<()>,
+    deadline: tokio::time::Instant,
+) {
+    tokio::time::timeout_at(deadline, async {
+        loop {
+            tokio::select! {
+                result = &mut held => { result.expect("handshake barrier reached"); return; }
+                event = events.recv() => {
+                    peek.on_link_event(event.expect("link event stream remains open"));
+                }
+            }
+        }
+    })
+    .await
+    .expect("second handshake reached within the reconnect budget");
+}
+
+async fn wait_for_connected(
+    peek: &mut PeekService,
+    events: &mut mpsc::Receiver<LinkEvent>,
+    minimum_generation: u64,
+    deadline: tokio::time::Instant,
+) {
+    tokio::time::timeout_at(deadline, async {
+        loop {
+            let event = events.recv().await.expect("link event stream remains open");
+            let connected = matches!(&event,
+                LinkEvent::State(LinkState::Connected { generation }) if *generation >= minimum_generation);
+            peek.on_link_event(event);
+            if connected { return; }
+        }
+    }).await.expect("client connected within the reconnect budget");
+}
+
+#[tokio::test]
+async fn resend_unknown_keeps_original_payload() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "local-3f2a", true, false);
+    let (mut peek, _) = service(home.path());
+    let row = key("fixture", "local-3f2a");
+    peek.open(row.clone()).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    assert!(matches!(
+        peek.reply("keep me".to_owned()).await,
+        ReplyOutcome::Unknown { .. }
+    ));
+    wait_for_connected(
+        &mut peek,
+        &mut events,
+        2,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+    )
+    .await;
+    assert_eq!(gateway.requests("prompt.submit").len(), 1);
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    assert!(matches!(
+        peek.resend_unconfirmed(&row).await,
+        ReplyOutcome::Unknown { .. }
+    ));
+    wait_for_connected(
+        &mut peek,
+        &mut events,
+        3,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+    )
+    .await;
+    assert_eq!(gateway.requests("prompt.submit").len(), 2);
+    assert_eq!(peek.resend_unconfirmed(&row).await, ReplyOutcome::Sent);
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 3);
+    assert_eq!(submits[0].params, submits[1].params);
+    assert_eq!(submits[0].params, submits[2].params);
+}
+
+#[tokio::test]
+async fn resend_not_attached_keeps_original_row() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "local-3f2a", true, false);
+    seed(&gateway, "local-other", false, false);
+    let (mut peek, _) = service(home.path());
+    let row = key("fixture", "local-3f2a");
+    peek.open(row.clone()).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    assert!(matches!(
+        peek.reply("keep my row".to_owned()).await,
+        ReplyOutcome::Unknown { .. }
+    ));
+    wait_for_connected(
+        &mut peek,
+        &mut events,
+        2,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+    )
+    .await;
+    peek.open(key("fixture", "local-other"))
+        .await
+        .expect("other peek");
+    assert_eq!(
+        peek.resend_unconfirmed(&row).await,
+        ReplyOutcome::NotAttached {
+            reason: "the session is not open".to_owned()
+        }
+    );
+    assert_eq!(gateway.requests("prompt.submit").len(), 1);
+    peek.open(row.clone()).await.expect("original peek");
+    assert_eq!(peek.resend_unconfirmed(&row).await, ReplyOutcome::Sent);
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 2);
+    assert_eq!(submits[0].params, submits[1].params);
+}
+
+#[tokio::test]
+async fn resend_remote_not_connected_refusal_clears_entry() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "local-3f2a", true, false);
+    let (mut peek, _) = service(home.path());
+    let row = key("fixture", "local-3f2a");
+    peek.open(row.clone()).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    assert!(matches!(
+        peek.reply("server refusal".to_owned()).await,
+        ReplyOutcome::Unknown { .. }
+    ));
+    wait_for_connected(
+        &mut peek,
+        &mut events,
+        2,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+    )
+    .await;
+    gateway.queue_behavior(
+        "prompt.submit",
+        Behavior::Refuse("not connected".to_owned()),
+    );
+    assert_eq!(
+        peek.resend_unconfirmed(&row).await,
+        ReplyOutcome::Refused {
+            reason: "not connected".to_owned()
+        }
+    );
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 2, "remote refusal answered a real request");
+    assert_eq!(submits[0].params, submits[1].params);
+    assert_eq!(
+        peek.resend_unconfirmed(&row).await,
+        ReplyOutcome::Refused {
+            reason: "nothing to resend".to_owned()
+        }
+    );
+    assert_eq!(gateway.requests("prompt.submit").len(), 2);
+}
+
+/// Feed the actual worker completion back through the same reducer that consumes ReplyDone.
+async fn reduce_worker_result(
+    view: &mut FleetViewState,
+    worker: &PeekWorker,
+    effect: FleetViewEffect,
+) -> Vec<FleetViewInput> {
+    let inputs = tokio::time::timeout(Duration::from_secs(5), worker.run(effect))
+        .await
+        .expect("worker completed within the existing reconnect budget")
+        .expect("worker result");
+    for input in &inputs {
+        assert!(fleet_view::update(view, input.clone(), 4).is_empty());
+    }
+    inputs
+}
+
+fn enter_ui_resend(view: &mut FleetViewState, row: &RowKey) -> FleetViewEffect {
+    assert!(fleet_view::update(view, FleetViewInput::Action(FleetAction::Reply), 4).is_empty());
+    let effects = fleet_view::update(view, FleetViewInput::Enter, 4);
+    assert_eq!(
+        effects,
+        vec![FleetViewEffect::ResendReply(row.clone())],
+        "the next Enter must resend the original admission, never create a SendReply"
+    );
+    effects.into_iter().next().expect("one resend effect")
+}
+
+async fn unknown_ui_reply(
+    home: &Path,
+    gateway: &StandaloneGateway,
+) -> (
+    FleetViewState,
+    PeekWorker,
+    Arc<AtomicUsize>,
+    oneshot::Receiver<()>,
+    oneshot::Sender<()>,
+) {
+    let mut running = snapshot("local-3f2a", true, false);
+    // Keep the initial gateway.ready epoch across reconnect. Adopting the data
+    // fixture's epoch-1 would simulate a backend restart and suppress replay.
+    running["replay_epoch"] = json!("id-0002");
+    gateway.add_session_snapshot(running);
+    let ids = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&ids);
+    let worker = PeekWorker::start(PeekSetup {
+        launch: launch(),
+        home: home.to_path_buf(),
+        fleet: Arc::new(FakeFleetSink::new()),
+        next_submission_id: Box::new(move || {
+            format!(
+                "talaria-0123456789abcdef-{}",
+                counter.fetch_add(1, Ordering::SeqCst) + 1
+            )
+        }),
+        timeouts: PeekTimeouts::scaled_for_tests(),
+        reports: None,
+    });
+    let mut view = FleetViewState::new(None, NOW);
+    assert!(
+        fleet_view::update(
+            &mut view,
+            FleetViewInput::Snapshot {
+                version: 1,
+                rows: vec![fleet_row("local-3f2a", RowState::Working)],
+                queue: Vec::new(),
+                profiles: vec![(
+                    "fixture".to_owned(),
+                    ProfileStatus::Listed { truncated: false }
+                )],
+                scope_note: None,
+                link_note: None,
+            },
+            4
+        )
+        .is_empty()
+    );
+    let row = key("fixture", "local-3f2a");
+    let opening = fleet_view::update(&mut view, FleetViewInput::Action(FleetAction::Reply), 4);
+    assert_eq!(opening, vec![FleetViewEffect::OpenPeek(row.clone())]);
+    let mut opening_inputs = Vec::new();
+    for effect in opening {
+        opening_inputs.extend(reduce_worker_result(&mut view, &worker, effect).await);
+    }
+    assert!(
+        matches!(
+            opening_inputs.as_slice(),
+            [FleetViewInput::Peek {
+                status: talaria_core::fleet_view::PeekStatus::Open {
+                    running: true,
+                    has_open_prompt: false,
+                },
+                ..
+            }]
+        ),
+        "initial worker open failed: {opening_inputs:?}; requests={:?}; written={:?}",
+        gateway.seen(),
+        gateway.written()
+    );
+    // Preserve the barrier's assertion and original panic. Report only on failure;
+    // wire records distinguish a failed upgrade from an unexpected live connection.
+    let (held, release) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        gateway.hold_second_handshake()
+    }))
+    .unwrap_or_else(|failure| {
+        eprintln!(
+            "initial connection evidence: worker={opening_inputs:?}; requests={:?}; written={:?}; capability_http={:?}",
+            gateway.seen(),
+            gateway.written(),
+            gateway.capability_http_requests()
+        );
+        std::panic::resume_unwind(failure)
+    });
+    assert!(
+        fleet_view::update(
+            &mut view,
+            FleetViewInput::Paste("same admission".to_owned()),
+            4
+        )
+        .is_empty()
+    );
+    let effects = fleet_view::update(&mut view, FleetViewInput::Enter, 4);
+    assert_eq!(
+        effects,
+        vec![FleetViewEffect::SendReply {
+            key: row.clone(),
+            text: "same admission".to_owned()
+        }]
+    );
+    gateway.queue_behavior("prompt.submit", Behavior::DropBeforeReply);
+    let inputs = reduce_worker_result(
+        &mut view,
+        &worker,
+        effects.into_iter().next().expect("send"),
+    )
+    .await;
+    assert!(matches!(
+        inputs.as_slice(),
+        [FleetViewInput::ReplyDone {
+            outcome: ReplyOutcome::Unknown { .. },
+            ..
+        }]
+    ));
+    assert!(view.row_flags(&row).unconfirmed);
+    assert!(!view.row_flags(&row).reply_in_flight);
+    assert_eq!(ids.load(Ordering::SeqCst), 1);
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 1);
+    assert_eq!(
+        submits[0].params,
+        json!({
+            "session_id": "local-3f2a", "text": "same admission", "submission_id": "talaria-0123456789abcdef-1"
+        })
+    );
+    (view, worker, ids, held, release)
+}
+
+#[tokio::test]
+async fn fleet_resend_keeps_ui_and_backend_pending() {
+    let (home, gateway) = home_and_gateway();
+    let (mut view, worker, ids, held, release) = unknown_ui_reply(home.path(), &gateway).await;
+    let row = key("fixture", "local-3f2a");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    tokio::time::timeout_at(deadline, held)
+        .await
+        .expect("second handshake held")
+        .expect("barrier");
+    let effect = enter_ui_resend(&mut view, &row);
+    let inputs = reduce_worker_result(&mut view, &worker, effect).await;
+    assert_eq!(
+        gateway.requests("prompt.submit").len(),
+        1,
+        "known-unsent resend wrote a request"
+    );
+    assert_eq!(ids.load(Ordering::SeqCst), 1, "resend allocated a new ID");
+    assert!(
+        view.row_flags(&row).unconfirmed,
+        "worker completion cleared the UI's original unknown admission: {inputs:?}"
+    );
+    assert!(!view.row_flags(&row).reply_in_flight);
+    assert!(matches!(
+        inputs.as_slice(),
+        [FleetViewInput::ReplyDone {
+            outcome: ReplyOutcome::Unknown { .. },
+            ..
+        }]
+    ));
+    release.send(()).expect("release handshake");
+    // Reconnect replay uses the replaced client only after Connected is emitted. The
+    // worker drains its LinkEvents; this request is a client-readiness fence, not a socket count.
+    let resumed = tokio::time::timeout_at(deadline, gateway.wait_for_request("session.resume", 1))
+        .await
+        .expect("new client generation resumed the tracked session");
+    assert_eq!(resumed.params["session_id"], json!("local-3f2a"));
+    assert_eq!(
+        gateway.requests("prompt.submit").len(),
+        1,
+        "reconnect automatically resent"
+    );
+    assert_eq!(ids.load(Ordering::SeqCst), 1);
+    let effect = enter_ui_resend(&mut view, &row);
+    let inputs = reduce_worker_result(&mut view, &worker, effect).await;
+    assert!(matches!(
+        inputs.as_slice(),
+        [FleetViewInput::ReplyDone {
+            outcome: ReplyOutcome::Sent,
+            ..
+        }]
+    ));
+    assert!(!view.row_flags(&row).unconfirmed);
+    assert!(!view.row_flags(&row).reply_in_flight);
+    assert_eq!(
+        ids.load(Ordering::SeqCst),
+        1,
+        "the UI must keep the original ID"
+    );
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(
+        submits.len(),
+        2,
+        "only the explicit resumed send reached the gateway"
+    );
+    assert_eq!(
+        submits[0].params, submits[1].params,
+        "backend lost the original text or ID"
+    );
+    assert_eq!(
+        names(&submits[1].params),
+        ["session_id", "submission_id", "text"]
+    );
+    let cleared = reduce_worker_result(&mut view, &worker, FleetViewEffect::ResendReply(row)).await;
+    assert!(
+        matches!(cleared.as_slice(), [FleetViewInput::ReplyDone { outcome: ReplyOutcome::Refused { reason }, .. }] if reason == "nothing to resend")
+    );
+    assert_eq!(gateway.requests("prompt.submit").len(), 2);
+    assert_eq!(ids.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn fleet_resend_remote_refusal_clears_ui_and_backend() {
+    let (home, gateway) = home_and_gateway();
+    let (mut view, worker, ids, held, release) = unknown_ui_reply(home.path(), &gateway).await;
+    let row = key("fixture", "local-3f2a");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    tokio::time::timeout_at(deadline, held)
+        .await
+        .expect("second handshake held")
+        .expect("barrier");
+    release.send(()).expect("release handshake");
+    tokio::time::timeout_at(deadline, gateway.wait_for_request("session.resume", 1))
+        .await
+        .expect("new client generation resumed the tracked session");
+    assert_eq!(gateway.requests("prompt.submit").len(), 1);
+    gateway.queue_behavior(
+        "prompt.submit",
+        Behavior::Refuse("not connected".to_owned()),
+    );
+    let effect = enter_ui_resend(&mut view, &row);
+    let inputs = reduce_worker_result(&mut view, &worker, effect).await;
+    assert!(
+        matches!(inputs.as_slice(), [FleetViewInput::ReplyDone { outcome: ReplyOutcome::Refused { reason }, .. }] if reason == "not connected")
+    );
+    assert!(
+        !view.row_flags(&row).unconfirmed,
+        "a genuine remote refusal still clears the UI"
+    );
+    assert!(!view.row_flags(&row).reply_in_flight);
+    assert_eq!(ids.load(Ordering::SeqCst), 1);
+    let refused = gateway.requests("prompt.submit");
+    assert_eq!(
+        refused.len(),
+        2,
+        "remote refusal must answer an actual resend"
+    );
+    assert_eq!(refused[0].params, refused[1].params);
+    let cleared = reduce_worker_result(
+        &mut view,
+        &worker,
+        FleetViewEffect::ResendReply(row.clone()),
+    )
+    .await;
+    assert!(
+        matches!(cleared.as_slice(), [FleetViewInput::ReplyDone { outcome: ReplyOutcome::Refused { reason }, .. }] if reason == "nothing to resend")
+    );
+    assert_eq!(
+        gateway.requests("prompt.submit").len(),
+        2,
+        "remote refusal still clears the backend"
+    );
+    assert!(
+        fleet_view::update(&mut view, FleetViewInput::Action(FleetAction::Reply), 4).is_empty()
+    );
+    let effects = fleet_view::update(&mut view, FleetViewInput::Enter, 4);
+    assert_eq!(
+        effects,
+        vec![FleetViewEffect::SendReply {
+            key: row,
+            text: "same admission".to_owned()
+        }]
+    );
+    let inputs = reduce_worker_result(
+        &mut view,
+        &worker,
+        effects.into_iter().next().expect("fresh send"),
+    )
+    .await;
+    assert!(matches!(
+        inputs.as_slice(),
+        [FleetViewInput::ReplyDone {
+            outcome: ReplyOutcome::Sent,
+            ..
+        }]
+    ));
+    assert_eq!(
+        ids.load(Ordering::SeqCst),
+        2,
+        "a fresh reply uses the counting ID factory"
+    );
+    let submits = gateway.requests("prompt.submit");
+    assert_eq!(submits.len(), 3);
+    assert_eq!(
+        submits[2].params,
+        json!({
+            "session_id": "local-3f2a", "text": "same admission", "submission_id": "talaria-0123456789abcdef-2"
+        })
+    );
+    assert_ne!(
+        submits[0].params["submission_id"],
+        submits[2].params["submission_id"]
     );
 }
 

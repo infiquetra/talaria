@@ -2,6 +2,26 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 — Preserve an unknown admission through worker completion
+
+**Mechanism.** Backend retention alone is insufficient when a worker reports a refused resend: the fleet reducer clears its unconfirmed marker and a later Enter can allocate a new submission ID. The resend worker now reports the existing unknown outcome only when a refused attempt still has an authoritative pending service entry. A genuine remote refusal has already removed that entry, even when its reason is literally `not connected`. Fresh sends and direct service outcomes are unchanged; no reason-string classification or automatic resend is added.
+
+**Evidence.** Two new round trips drive the real reducer, effects, worker, service and wire with a counting, distinct-ID factory. Before the worker correction, the UI pending-state assertion fails while the genuine remote-refusal control passes. After the correction, the complete peek target passes all 19 cases; formatting and whitespace checks pass. The original 17 case bodies and assertions remain intact. Explicit resumed sends retain the original text and ID; a real refusal permits a different ID for a later fresh send.
+
+**Fixture limits.** The resumed snapshot must retain the initial gateway-ready replay epoch: changing it simulates a backend restart and suppresses replay. That fixture mismatch was corrected. An intermediate setup run also observed an unexplained extra initial connection and failed the unchanged barrier before either oracle; its failure is retained, with failure-only wire diagnostics added. The final before/control and 19-case after runs pass, without asserting repeated stability. The earlier hosted ensure I/O cause remains unresolved; full hosted OS and workspace coverage qualification is still required.
+
+**Rule.** Preserve uncertainty across every consumer of a completion, and distinguish it with typed state rather than presentation text.
+
+## 2026-10-30 — A known-unsent resend must preserve an earlier unknown reply
+
+**Mechanism.** A peek reply whose connection drops has an unknown result, so its text and submission ID remain available for explicit resend. During reconnect, the channel can return typed `CallError::NotConnected` before writing a request. Mapping that error to a public refusal previously cleared the earlier unconfirmed reply. The service now retains the entry for this typed transport error while preserving the public refusal and the existing treatment of genuine RPC refusals, including a remote reason literally saying `not connected`.
+
+**Regression.** The existing `reply_failures_and_resend` case now holds the mock's second connection before its handshake, checks that an explicit disconnected resend sends nothing, releases the barrier, and waits for the client's new `Connected` generation before one explicit resend. Its original refusal, unknown-result, success and identical-payload assertions remain. Controls cover another unknown resend, a different open row, and the same-text remote refusal. The barrier is disabled by default. No automatic resend is added.
+
+**Diagnostics and limits.** The ensure test's failure arm now records only its I/O error kind and bounded lifecycle counters. The original I/O cause remains unresolved. Initial native and instrumented attempts stopped at locked dependency resolution. After the cache was restored, the original-runtime peek binary compiled all 17 cases, but the focused regression stopped at the mock's port bind; a separate loopback probe returned `EPERM`. The repaired source was restored without changing the tests. Subsequent permission-capable execution at the same unprivileged UID reproduced the original `nothing to resend` failure, passed the same forced case with the repair, and passed all 17 native peek cases and all 26 instrumented connect cases. The tests, locked dependencies and test budgets were unchanged. Full workspace, native macOS, coverage-floor, benchmark and contract qualification remains required. Formatting and source/assertion inventory checks passed; no workspace coverage percentage is claimed.
+
+**Rule.** Preserve typed transport disposition through presentation mapping, and synchronize reconnect tests on client readiness rather than a server's accepted-socket count.
+
 ## 2026-10-30 — Historical recordings and active version values have different roles
 
 **Evidence.** The release metadata check found development-version literals in workflow test manifests and in three recorded doctor screens. The manifest values follow the workspace version, while the recordings retain the exact bytes captured at the time.
@@ -6630,3 +6650,17 @@ notification channel. The mapping, mixed-backend wire, and owner-routing tests c
 
 Rule: share a backend's reporting endpoint rather than cloning task ownership or creating a
 second registry when another fleet source is added.
+
+## 2026-10-30 — Cancellation groups must distinguish independent validation runs
+
+Successful native CI job `123864468292` took 46m58s and Bench job `123864467835` took
+18m1s. CI now has 90-minute ceilings; contract generation and drift have 30-minute ceilings.
+Bench retains its existing 30-minute ceiling and exact workflow assertion, with 11m59s above
+that successful sample. These samples do not establish a cold or warm execution maximum.
+Workflow name, workflow-file ref and PR number identify cancellable runs only when PR/ref
+metadata is present. Other events use run ID and attempt with cancellation disabled, keeping
+scheduled and manual drift independent. Release serialization stays unchanged. Workflow edits
+invalidate the existing workflow-bound cache identity without relaxing its inputs.
+
+Rule: cancel only superseded validation for the same PR and workflow/ref; give independent runs
+distinct groups and preserve measured deadline headroom without assuming a cache hit.
