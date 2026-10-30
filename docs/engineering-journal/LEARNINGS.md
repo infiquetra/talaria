@@ -6483,3 +6483,15 @@ unique cases and per-property budgets rather than treating registration counts a
 **Evidence.** The recorded `stream_tool_turn.frames.jsonl` includes `tool_call_id` and `is_error`, while the generated tool payload types omit those keys. The headless stream tests also exercise a stamped tool event with only the fallback identifier; typed decoding alone rejected that event before its raw payload reached the projector.
 
 **Rule.** Preserve the validated event envelope and original payload through live delivery and replay when projecting stream events; use the raw payload for tool identifiers and error flags.
+
+## 2026-10-29 — Cargo install compilation has its own cache identity
+
+Evidence: the cache policy tests bind both locked cargo-typify installs to one isolated target/build
+directory and preserve installation after cache miss, hit or error. The tool key includes the
+published crate and packaged-lock checksums, compiler, host image, flags and fixed install policy.
+Home Cargo configuration, unsupported overrides and unsafe paths disable only the optional cache.
+Compiler outputs remain executable input from trusted producers; a version check is functional
+qualification, not binary attestation. Actual fresh-state reuse and hosted transport need measurement.
+
+Rule: cache tool compilation separately from installed state, bind effective inputs, and keep the
+original locked installation and its failures mandatory.

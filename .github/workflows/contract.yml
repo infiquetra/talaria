@@ -35,7 +35,15 @@ jobs:
         uses: ./.github/actions/rust-cache
         with:
           role: contract-check-debug
+      - name: Restore disposable typify compilation cache
+        continue-on-error: true
+        uses: ./.github/actions/rust-cache
+        with:
+          role: typify-install-release
       - name: Install cargo-typify
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci-tools/cargo-typify-0.8.0
+          CARGO_BUILD_BUILD_DIR: ${{ github.workspace }}/target/ci-tools/cargo-typify-0.8.0
         run: cargo install cargo-typify --version 0.8.0 --locked
       - name: Generator tests
         run: python3 -I -m unittest discover -s tools/contract-gen/tests -t tools/contract-gen
@@ -58,7 +66,15 @@ jobs:
         uses: ./.github/actions/rust-cache
         with:
           role: contract-drift
+      - name: Restore disposable typify compilation cache
+        continue-on-error: true
+        uses: ./.github/actions/rust-cache
+        with:
+          role: typify-install-release
       - name: Install cargo-typify
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci-tools/cargo-typify-0.8.0
+          CARGO_BUILD_BUILD_DIR: ${{ github.workspace }}/target/ci-tools/cargo-typify-0.8.0
         run: cargo install cargo-typify --version 0.8.0 --locked
       - name: Clone newest stable Hermes release
         shell: bash
