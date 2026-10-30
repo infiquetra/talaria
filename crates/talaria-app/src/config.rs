@@ -104,6 +104,8 @@ pub struct Config {
     pub composer: ComposerConfig,
     /// Fleet poll timings from `[fleet]`.
     pub fleet: crate::fleet::FleetConfig,
+    /// Configured external agent executables.
+    pub acp: crate::acp::AcpConfig,
     /// How fleet sessions open in another multiplexer pane.
     pub panes: crate::panes::PaneSettings,
     /// Subagent poll and dock settings from `[subagents]`. Issue #242.
@@ -255,6 +257,7 @@ impl Default for Config {
             },
             composer: ComposerConfig::default(),
             fleet: crate::fleet::FleetConfig::default(),
+            acp: crate::acp::AcpConfig::default(),
             panes: crate::panes::PaneSettings::default(),
             subagents: crate::subagents::SubagentsConfig::default(),
             configure: None,
@@ -312,6 +315,7 @@ pub fn parse(text: &str) -> LoadedConfig {
         "ui",
         "composer",
         "fleet",
+        "acp",
         "panes",
         "subagents",
         "configure",
@@ -333,6 +337,7 @@ pub fn parse(text: &str) -> LoadedConfig {
             "ui" => config.ui = read_ui(section, &mut notices),
             "composer" => config.composer = read_composer(section, &mut notices),
             "fleet" => config.fleet = read_fleet(section, &mut notices),
+            "acp" => config.acp = crate::acp::parse_section(section, &mut notices),
             "panes" => config.panes = read_panes(section, &mut notices),
             "subagents" => config.subagents = read_subagents(section, &mut notices),
             "configure" => config.configure = read_configure(section, &mut notices),
@@ -353,6 +358,7 @@ pub fn parse(text: &str) -> LoadedConfig {
                 | "ui"
                 | "composer"
                 | "fleet"
+                | "acp"
                 | "panes"
                 | "subagents"
                 | "configure"

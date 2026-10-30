@@ -1,3 +1,4 @@
+pub mod acp_cmd;
 pub mod args;
 pub mod attach_cmd;
 pub mod bench_replay;

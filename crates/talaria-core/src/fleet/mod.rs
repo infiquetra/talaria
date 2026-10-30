@@ -2,6 +2,8 @@
 //!
 //! No clock, no input or output, and no terminal library.
 
+pub mod acp;
+mod external;
 mod queue;
 mod registry;
 mod row;
@@ -9,6 +11,7 @@ mod subscribed;
 
 pub use crate::attention::{AlertKind, NeedSummary};
 pub use crate::directory::rows::RowKey;
+pub use external::{ExternalNeed, ExternalOption, ExternalSession, FleetBackend};
 pub use queue::{NeedDetail, NeedId, NeedItem, NeedSlot};
 pub use registry::{
     CallError, FleetCounts, FleetEffect, FleetInput, FleetRegistry, PolledApproval, ProfileStatus,

@@ -1,6 +1,7 @@
 //! Fleet link: timings, the host dial, and the service that owns the registry.
 
 mod config;
+mod external;
 mod host_dial;
 mod schedule;
 mod service;
@@ -8,10 +9,11 @@ mod service;
 use talaria_core::fleet::{RowKey, SubscribedView};
 
 pub use config::FleetConfig;
+pub use external::{ExternalCommand, ExternalHandle, ExternalResult};
 pub use host_dial::HostDial;
 pub use service::{
-    FleetHandle, FleetLinkState, FleetListError, FleetNotice, FleetService, FleetSnapshot,
-    check_fleet_profile, list_once,
+    FleetHandle, FleetLinkState, FleetListError, FleetNotice, FleetReporter, FleetService,
+    FleetSnapshot, check_fleet_profile, list_once,
 };
 
 /// Whether an interactive launch attaches after its first frame.

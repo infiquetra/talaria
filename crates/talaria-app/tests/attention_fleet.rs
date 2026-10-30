@@ -60,6 +60,10 @@ fn row(
         unlisted: false,
         activity: None,
         cost_usd: None,
+        backend: talaria_core::fleet::FleetBackend::Hermes,
+        agent: None,
+        occupancy: None,
+        cost: None,
     }
 }
 
@@ -84,6 +88,7 @@ fn item(key: &RowKey, slot: &str, seq: u64, foreground: bool, detail: NeedDetail
         timeout_s: None,
         exact: true,
         foreground,
+        external_options: Vec::new(),
     }
 }
 

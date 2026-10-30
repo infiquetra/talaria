@@ -2,6 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-30 ACP adapter: one fleet for non-Hermes agents
+
+The Hermes v0.22.4 ACP server projects the gateway rather than owning an independent execution
+engine (`acp_adapter/entry.py`, `server.py`, `gateway_server.py`). Non-Hermes agents therefore use
+ACP directly as subprocesses while Hermes sessions remain on the native Hermes gateway. The
+external fleet seam (`S1..S6` in `feat(fleet-seam)` commit `be8c770cd505ea6e0a15c7a7c67fd334927531ce`,
+reviewed before the adapter commit) adds backend-tagged rows, responder-keyed permission items,
+external transcript peek cells, backend-routed answer/stop commands, external launch targets, and
+the single shared `talaria_core::text::sanitize_terminal_text` replacement table. ACP schema
+v1.27.0 (`2026-10-27`) pins wire `protocolVersion = 1` over subprocess stdio.
+
+2026-10-30 evidence: `live_acp_session_reaches_the_fleet` (`LIVE_ACP_RESULT: PASSED agent=opencode`)
+and the recorded real-agent fixture (`fixtures/acp/mock-agent-session.jsonl`, captured from
+`opencode acp` / OpenCode 2.1.2) verified end-to-end fleet row creation, streaming updates, and
+usage reporting with file and terminal powers refused by default.
+
+Rule: keep protocol ownership and permission responders explicit when different backends share a
+fleet view, and refuse client filesystem and terminal powers unless explicitly enabled per agent.
+
 ## 2026-10-29 — Probe replies and typed keys can arrive in the same read
 
 **Evidence.** The composer PTY regression reproduced lost text before and after a device-attributes reply; a buffered Unicode CSI-u key initially reappeared as the literal `233u`. Split replies, bracketed paste, arrow keys, key releases, and terminal reacquisition are exercised by the same harness.
@@ -66,7 +85,6 @@ The locked cargo-typify installation remains mandatory; no cached version string
 
 Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their
 writers, and keep qualification independent of cache state.
-
 
 ## 2026-10-28 — Waiting work and an answered pause need durable evidence
 

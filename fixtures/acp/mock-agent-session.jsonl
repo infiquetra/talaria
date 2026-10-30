@@ -1,0 +1,4 @@
+{"frame":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_recorded_1","update":{"sessionUpdate":"agent_message_chunk","messageId":"msg_18b582ec200103A355P6ZDZ4Xa","content":{"type":"text","text":"ready"}}}}}
+{"frame":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"ses_recorded_1","update":{"sessionUpdate":"usage_update","used":17729,"size":200000,"cost":{"amount":0,"currency":"USD"}}}}}
+{"frame":{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage":{"inputTokens":7102,"outputTokens":3,"totalTokens":17729,"cachedReadTokens":10624},"_meta":{}}}}
+{"expected":{"row":{"state":"done","title":null},"transcript":[{"type":"text","text":"ready"}],"usage":{"used":17729,"size":200000,"cost_amount":0.0,"cost_currency":"USD"}}}

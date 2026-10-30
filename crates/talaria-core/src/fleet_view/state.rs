@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::detail::{row_detail, title_or_untitled};
 use crate::directory::rows::{RowKey, format_age};
-use crate::fleet::{FleetRow, NeedItem, ProfileStatus, RowState};
+use crate::fleet::{FleetBackend, FleetRow, NeedItem, ProfileStatus, RowState};
 
 /// The longest title a notice names before it is cut.
 const TITLE_CHARS: usize = 40;
@@ -960,6 +960,13 @@ fn reply_start(state: &mut FleetViewState) -> Vec<FleetViewEffect> {
     let Some(key) = state.cursor.clone() else {
         return Vec::new();
     };
+    if state.row(&key).is_some_and(|row| {
+        row.backend() == FleetBackend::Acp
+            && matches!(row.state, RowState::Working | RowState::NeedsYou)
+    }) {
+        state.notice = Some("The agent is already working.".into());
+        return Vec::new();
+    }
     if state.in_flight.contains(&key) {
         state.notice = Some(SENDING.to_owned());
         return Vec::new();
@@ -1105,9 +1112,18 @@ fn stop_start(state: &mut FleetViewState) -> Vec<FleetViewEffect> {
         state.notice = Some(stop_text(&title, &StopOutcome::NothingRunning));
         return Vec::new();
     }
+    let external = state
+        .row(&key)
+        .is_some_and(|row| row.backend() == FleetBackend::Acp);
     state.target = Some(key);
     state.focus = Focus::ConfirmStop;
-    state.notice = Some(confirm_text(&title));
+    state.notice = Some(if external {
+        format!(
+            "Stop \"{title}\"? Open permissions will be cancelled. Press x again to stop, any other key to keep it running."
+        )
+    } else {
+        confirm_text(&title)
+    });
     Vec::new()
 }
 

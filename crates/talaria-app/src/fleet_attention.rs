@@ -469,6 +469,10 @@ mod tests {
             unlisted: false,
             activity: None,
             cost_usd: None,
+            backend: talaria_core::fleet::FleetBackend::Hermes,
+            agent: None,
+            occupancy: None,
+            cost: None,
         }];
         snap.queue = vec![NeedItem {
             id: need_id.clone(),
@@ -483,6 +487,7 @@ mod tests {
             timeout_s: None,
             exact: false,
             foreground: false,
+            external_options: Vec::new(),
         }];
         snap.counts = FleetCounts {
             needs_you: 1,

@@ -13,6 +13,9 @@ fn main() -> ExitCode {
     if args.first().is_some_and(|arg| arg == "remote") {
         return ExitCode::from(talaria_cli::remote::run(&args));
     }
+    if args.first().is_some_and(|arg| arg == "acp") {
+        return ExitCode::from(talaria_cli::acp_cmd::run(&args));
+    }
     if talaria_cli::args::is_workflow_command(&args) {
         return ExitCode::from(talaria_cli::workflow::entry(&args));
     }

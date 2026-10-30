@@ -1,13 +1,13 @@
 //! One-line row text. Not sanitized and not cut; the screen does both.
 
 use crate::attention::NeedSummary;
-use crate::fleet::{FleetRow, NeedDetail, NeedItem, Outcome, RowState};
+use crate::fleet::{FleetBackend, FleetRow, NeedDetail, NeedItem, Outcome, RowState};
 
 /// The one-line detail for a row: approval, question, sudo, secret, waiting, working,
 /// starting, failed, completed, interrupted, finished or idle.
 #[must_use]
 pub fn row_detail(row: &FleetRow, items_of_row: &[&NeedItem]) -> String {
-    match row.state {
+    let mut detail = match row.state {
         RowState::NeedsYou => items_of_row.first().map_or_else(
             || "waiting for an answer".to_owned(),
             |item| need_text(item),
@@ -26,7 +26,14 @@ pub fn row_detail(row: &FleetRow, items_of_row: &[&NeedItem]) -> String {
             Some(Outcome::Unknown) | None => "finished".to_owned(),
         },
         RowState::Idle => "idle".to_owned(),
+    };
+    if row.backend == FleetBackend::Acp {
+        detail.push_str(&format!(
+            " [acp {}]",
+            row.agent.as_deref().unwrap_or_default()
+        ));
     }
+    detail
 }
 
 fn need_text(item: &NeedItem) -> String {

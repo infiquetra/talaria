@@ -591,3 +591,41 @@ The `profiles` and `connections` tables, 0.6 settings this release does not know
 column settings and the 0.6 `[keys]` names (`toggle_inspector`, `agents`, `commands`, `models`,
 `profiles`, `config`, `follow`, `replay_*`) are ignored with notices. Remove an `interrupt` line
 set to Ctrl+S, or Esc stops interrupting. The repository file `./.talaria/config.toml` and the 0.6 `TALARIA_*` overrides are gone.
+
+## External ACP agents
+
+Talaria can start configured Agent Client Protocol (ACP) agents from the fleet view. Each agent
+runs as a subprocess of Talaria; Hermes sessions continue to use the Hermes gateway. Sessions
+started elsewhere and sessions from earlier Talaria runs are not reopened.
+
+Add one table per agent to `~/.talaria/config.toml`:
+
+```text
+[[acp.agents]]
+id = "example"
+display_name = "Example Agent"
+command = "example-acp"
+args = []
+# auth_method = "agent-login"
+allow_fs = false
+allow_terminal = false
+```
+
+The `id` is a unique lowercase letter or digit followed by lowercase letters, digits, or hyphens,
+up to 32 characters. The first valid entry with an id wins. An omitted or empty display name uses
+the id. `command` is an existing executable; `args` is a list of separate arguments. Talaria
+executes the configured command directly and never installs it or invokes a shell for it. Do not
+put credentials in this configuration. An optional `auth_method` names an agent-advertised,
+agent-mediated method; the agent manages its own credentials.
+
+Filesystem and terminal capabilities are off unless enabled for that agent. File access is confined
+to the selected session directory. Enabled terminal commands use that directory or a directory
+inside it, inherit only `PATH`, `HOME`, `TERM`, `LANG`, `LC_ALL`, and `TMPDIR` when present, and
+are stopped when the session ends. Agent permission requests appear in the fleet needs-you queue;
+Talaria does not answer them until you choose an offered option. Stopping a turn cancels pending
+permission requests.
+
+Use `talaria acp agents` to check executable availability, or `talaria acp agents --probe` to also
+check the version handshake without creating a session. From the fleet view, start a new session
+and choose an `acp:` agent in the profile selector. Set its working directory and an optional first
+prompt. Its row shows the agent name, and its peek shows its transcript and permission choices.

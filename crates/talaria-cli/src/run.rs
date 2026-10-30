@@ -67,7 +67,7 @@ use talaria_tui::context_view::{
     CompactingSection, ContextStyle, compact_block, context_block, error_block, notice_block,
     prebuild_block, usage_block,
 };
-use talaria_tui::fleet_view::{FleetTheme, FleetView, PeekPanel};
+use talaria_tui::fleet_view::{ExternalPeekPanel, FleetTheme, FleetView, PeekPanel};
 use talaria_tui::history::{CellLines, PlainCellLines};
 use talaria_tui::history_search::{HistorySearch, SearchOutcome};
 use talaria_tui::keys::{
@@ -279,6 +279,8 @@ pub struct TuiScreen {
     connectors_ssh: bool,
     /// The card of the peeked background session, while the fleet overlay shows it.
     peek_prompts: PromptStack,
+    acp_option: usize,
+    acp_responder: Option<String>,
     agents: Option<AgentsPanel>,
     agents_flash: Option<String>,
     agents_pause_pending: bool,
@@ -1281,6 +1283,48 @@ impl TuiScreen {
                 if is_ctrl_c(&key) {
                     return input(FleetViewInput::CtrlC);
                 }
+                if let Some(mapping) = view.acp_peek {
+                    if is_escape(&key) {
+                        return input(FleetViewInput::CtrlC);
+                    }
+                    let Some(need) = mapping.needs.first() else {
+                        return input(FleetViewInput::AnswerFocusEnded);
+                    };
+                    match key.code {
+                        KeyCode::Up => {
+                            self.acp_option = self.acp_option.saturating_sub(1);
+                            return vec![UserAction::AcpSelect];
+                        }
+                        KeyCode::Down => {
+                            self.acp_option = self
+                                .acp_option
+                                .saturating_add(1)
+                                .min(need.options.len().saturating_sub(1));
+                            return vec![UserAction::AcpSelect];
+                        }
+                        KeyCode::Char(ch) if ch.is_ascii_digit() && ch != '0' => {
+                            let selected = ch as usize - '1' as usize;
+                            if selected >= need.options.len() {
+                                return Vec::new();
+                            }
+                            self.acp_option = selected;
+                        }
+                        KeyCode::Enter => {}
+                        _ => return Vec::new(),
+                    }
+                    let Some(option) = need.options.get(self.acp_option) else {
+                        return Vec::new();
+                    };
+                    let Some((key, _)) = fleet.peek() else {
+                        return Vec::new();
+                    };
+                    return vec![UserAction::AcpAnswer {
+                        key: key.clone(),
+                        responder: need.responder.clone(),
+                        tool_call_id: need.tool_call_id.clone(),
+                        option_id: option.id.clone(),
+                    }];
+                }
                 let foreground = fleet.peek().is_some_and(|(peeked, _)| {
                     fleet_peek_is_foreground(peeked, view.profile, view.session_id)
                 });
@@ -1404,6 +1448,13 @@ impl TuiScreen {
         if !profiles.iter().any(|name| name == view.profile) {
             profiles.insert(0, view.profile.to_owned());
         }
+        if mode == DialogMode::Plain {
+            profiles.extend(
+                view.acp_agents
+                    .iter()
+                    .map(|(id, name)| format!("acp:{id} · {}", talaria_core::text::sanitize(name))),
+            );
+        }
         let folder = view
             .folder
             .and_then(|folder| folder.cwd.as_deref())
@@ -1418,7 +1469,9 @@ impl TuiScreen {
             model_placeholder: "profile default".to_owned(),
             slug: talaria_app::bg::slugify,
         };
-        self.launch_dialog = Some(LaunchDialog::open(mode, defaults));
+        let mut dialog = LaunchDialog::open(mode, defaults);
+        dialog.set_agent_launch_directory(view.launch_folder.to_path_buf());
+        self.launch_dialog = Some(dialog);
         // A status left from an earlier launch is not this dialog's.
         self.launch_seen = view.launch_status.map_or(0, |(version, _)| version);
         vec![UserAction::LaunchDialog(DialogEvent::Opened)]
@@ -3102,6 +3155,9 @@ impl StatusHost for TuiScreen {
 }
 
 impl Screen for TuiScreen {
+    fn acp_config(&self) -> talaria_app::acp::AcpConfig {
+        self.config.acp.clone()
+    }
     fn sync_providers(&mut self, view: Option<ProvidersView>) {
         if view.is_some() {
             self.open_overlay(Overlay::Providers);
@@ -3407,8 +3463,21 @@ impl Screen for TuiScreen {
         let theme = FleetTheme::with_key_map(&self.keymap);
         let dialog = self.launch_dialog.as_ref();
         let labels = &view.pr_labels;
+        let responder = view
+            .acp_peek
+            .and_then(|mapping| mapping.needs.first())
+            .map(|need| need.responder.clone());
+        if responder != self.acp_responder {
+            self.acp_responder = responder;
+            self.acp_option = 0;
+        }
+        let external = view.acp_peek.map(|mapping| ExternalPeekPanel {
+            mapping,
+            selected_option: self.acp_option,
+            now: clock,
+        });
         let _ = self.terminal.draw_overlay(|area, buf| {
-            FleetView::draw_with_labels(fleet, panel, area, buf, &theme, labels);
+            FleetView::draw_with_sources(fleet, panel, external, area, buf, &theme, labels);
             if let Some(dialog) = dialog {
                 dialog.draw(dialog.area(area), buf);
             }
@@ -4571,6 +4640,8 @@ fn session(
         connectors_ssh: std::env::var_os("SSH_CONNECTION").is_some()
             || std::env::var_os("SSH_TTY").is_some(),
         peek_prompts: PromptStack::new(),
+        acp_option: 0,
+        acp_responder: None,
         agents: None,
         agents_flash: None,
         agents_pause_pending: false,

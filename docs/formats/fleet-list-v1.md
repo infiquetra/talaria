@@ -36,11 +36,13 @@ Field values:
 | --- | --- |
 | profile `status` | `loading`, `listed`, `failed`, `parked`, `out_of_scope`. `reason` is set for `failed` and `parked`, is `"outside the profile-only view"` for `out_of_scope`, else `null`. `truncated` is true only for a `listed` profile whose list returned 200 sessions, Hermes's limit; a working session beyond them has no row. |
 | row `state` | `needs_you`, `working`, `failed`, `done`, `idle`. |
+| row `backend` | `hermes` for gateway sessions, `acp` for sessions owned by an external agent. |
+| row `agent` | The external agent's display name for ACP rows; `null` for Hermes. |
 | row `outcome` | `completed`, `interrupted`, `failed`, `unknown`, `null`. Only `done` and `failed` rows hold one. |
 | row `stale` | The last read of the row's profile failed, or the link dropped; the state is the last one known. |
 | row `gone` | The session left the list while its finished turn was not acknowledged. |
 | row `unlisted` | A waiting session the list does not show (hidden, or past the 200-row limit). |
-| need `slot` | `prompt`, `masked`, `waiting`. `prompt_id` is the prompt id for `prompt`, the request id for `masked`, `null` for `waiting`. |
+| need `slot` | `prompt`, `masked`, `external`, `waiting`. `prompt_id` is the prompt id for `prompt`, the request id for `masked`, the responder key for `external`, and `null` for `waiting`. |
 | need `kind` | `approval`, `question`, `sudo`, `secret`, `vault_code`, `vault_unlock`, `waiting`. |
 | need `summary` | The command (approval) or the question (question), raw text; `null` otherwise. |
 | need `exact` | True only while a Talaria view attached to the session reports the need; such a need has its `execution_generation`. A need with `exact: false` is never answered as it stands. |

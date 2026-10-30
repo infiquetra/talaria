@@ -184,6 +184,14 @@ pub struct FleetRow {
     pub activity: Option<String>,
     /// Usage cost from an owner. List calls do not carry a cost.
     pub cost_usd: Option<f64>,
+    /// The backend that owns this row.
+    pub backend: super::FleetBackend,
+    /// The display name of an external agent.
+    pub agent: Option<String>,
+    /// Context occupancy reported by an external agent.
+    pub occupancy: Option<(u64, u64)>,
+    /// External-agent cost with its original currency.
+    pub cost: Option<(f64, String)>,
 }
 
 /// A string field. Missing or null is empty; another type is malformed.
@@ -218,5 +226,22 @@ fn count_field(value: &Value, name: &str) -> Option<u64> {
     match value.get(name) {
         None | Some(Value::Null) => Some(0),
         Some(field) => field.as_u64(),
+    }
+}
+
+impl FleetRow {
+    pub fn backend(&self) -> super::FleetBackend {
+        self.backend
+    }
+    pub fn agent(&self) -> Option<&str> {
+        self.agent.as_deref()
+    }
+    pub fn occupancy(&self) -> Option<(u64, u64)> {
+        self.occupancy
+    }
+    pub fn cost(&self) -> Option<(f64, &str)> {
+        self.cost
+            .as_ref()
+            .map(|(amount, currency)| (*amount, currency.as_str()))
     }
 }
