@@ -6469,3 +6469,35 @@ unique cases and per-property budgets rather than treating registration counts a
 **Evidence.** The recorded `stream_tool_turn.frames.jsonl` includes `tool_call_id` and `is_error`, while the generated tool payload types omit those keys. The headless stream tests also exercise a stamped tool event with only the fallback identifier; typed decoding alone rejected that event before its raw payload reached the projector.
 
 **Rule.** Preserve the validated event envelope and original payload through live delivery and replay when projecting stream events; use the raw payload for tool identifiers and error flags.
+
+## 2026-10-29 — P6-03 kanban wire columns do not define a card's status
+
+**Evidence.** At Hermes `4d04303818b61bf3aa09278af48356315515965b`,
+`plugins/kanban/dashboard/plugin_api.py::get_board` files an unknown task status in
+`todo`; `kanban_workflow.py::DEFAULT_WORKFLOW` separately defines ordered columns and
+manual destinations. `kanban_db_context.py::_ctx_parent_results` skips archived parents,
+even though they satisfy the scheduler's dependency gate.
+
+**Rule.** Regroup cards by their own status, load move destinations from the workflow,
+and warn that archiving a parent releases children without a result handoff.
+
+## 2026-10-29 — Await order is part of the compiled graph
+
+**Evidence.** The engine exposes the canonical call ID on `AgentRequest`; a backend
+reply deferred by one yield distinguishes awaited sequential calls from outstanding
+parallel siblings. The compiler uses both those control batches and prompt markers,
+then completes an unassigned root only after every card and link exists.
+
+**Rule.** Preserve both data dependencies and awaited order, and gate root staging on
+the explicit `default_assignee`, never its resolved fallback.
+
+## 2026-10-29 — A paused clock does not complete socket input
+
+**Evidence.** `kanban_rest::tail_advances_cursor_and_reconnects` uses real loopback
+sockets and paused Tokio time. Its bounded `drive_until` polls input until the upgrade
+or ping is observed; one scheduler yield alone could leave the mock's read pending.
+The independent test author retained the 50 ms and 30 s advances and the exact ping
+count, and repeated the corrected test twenty times successfully.
+
+**Rule.** In paused-time transport tests, observe the socket operation before asserting
+a timer's effect; keep production connection deadlines intact.

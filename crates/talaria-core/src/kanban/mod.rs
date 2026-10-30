@@ -1,7 +1,3 @@
-//! Pure board state. Loading a workflow does not yet offer moves.
-
+//! Pure board state and immutable render projections.
 mod state;
-
-pub use state::{
-    BoardCard, CardComment, FrameCard, FrameColumn, KanbanBoardState, KanbanFrame, MoveTable,
-};
+pub use state::*;

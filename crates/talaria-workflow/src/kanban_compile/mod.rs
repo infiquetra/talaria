@@ -1,11 +1,14 @@
-//! Compile a static script to board cards. The entry point refuses until the compiler exists.
+//! Compile a conservative static workflow graph into durable board cards.
 
 mod capture;
+mod emit;
+mod guard;
 mod plan;
+mod sink;
 
 pub use capture::{CapturedCall, capture_twice};
 pub use futures::future::BoxFuture;
-pub use plan::{card_body, compile_id};
+pub use plan::{CallLine, card_body, compile_id};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,6 +43,17 @@ pub struct CompileReport {
     pub cards: Vec<PlannedCard>,
 }
 
+impl CompileReport {
+    pub fn nothing_to_compile() -> Self {
+        Self {
+            stdout: "nothing to compile: the script starts no agents\n".into(),
+            stderr: String::new(),
+            exit_code: 0,
+            cards: vec![],
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CompileFailure {
     pub exit_code: u8,
@@ -55,10 +69,10 @@ impl std::fmt::Display for CompileFailure {
 impl std::error::Error for CompileFailure {}
 
 impl CompileFailure {
-    pub fn stub() -> Self {
+    pub(super) fn new(exit_code: u8, stderr: impl Into<String>) -> Self {
         Self {
-            exit_code: 1,
-            stderr: String::new(),
+            exit_code,
+            stderr: stderr.into(),
         }
     }
 }
@@ -106,6 +120,17 @@ impl std::fmt::Display for SinkError {
 impl std::error::Error for SinkError {}
 
 pub trait CardSink: Send + Sync {
+    /// Default native read keeps older emission adapters compatible while exposing payload preflight.
+    fn read_task<'a>(
+        &'a self,
+        id: &'a str,
+        reader: &'a hermes_client::kanban::KanbanClient,
+    ) -> BoxFuture<'a, Result<hermes_client::kanban::TaskDetail, SinkError>> {
+        Box::pin(async move { reader.task(id).await.map_err(|e| SinkError(e.to_string())) })
+    }
+    fn warnings(&self) -> Vec<String> {
+        Vec::new()
+    }
     fn orchestration<'a>(&'a self) -> BoxFuture<'a, Result<String, SinkError>>;
     fn existing<'a>(&'a self) -> BoxFuture<'a, Result<Vec<ExistingCard>, SinkError>>;
     fn create<'a>(&'a self, card: &'a CreateCard) -> BoxFuture<'a, Result<CreatedCard, SinkError>>;
@@ -137,6 +162,14 @@ pub async fn compile(
     request: CompileRequest,
     sink: &dyn CardSink,
 ) -> Result<CompileReport, CompileFailure> {
-    let _ = (request, sink);
-    Err(CompileFailure::stub())
+    emit::compile(request, sink).await
+}
+
+/// Inspect the static calls before choosing the single roster snapshot for a command.
+pub async fn inspect_calls(
+    source: &str,
+    args: &Value,
+    base: PathBuf,
+) -> Result<Vec<CapturedCall>, String> {
+    Ok(capture::capture(source, args, base).await?.calls)
 }

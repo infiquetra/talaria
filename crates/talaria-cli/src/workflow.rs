@@ -19,6 +19,8 @@ use crate::args::{neutralise, required_path, required_text};
 
 #[path = "workflow_builtins.rs"]
 pub mod builtins;
+#[path = "workflow_compile.rs"]
+mod compile_command;
 
 #[derive(Clone, Debug, Parser)]
 #[command(name="talaria workflow",bin_name="talaria workflow",color=ColorChoice::Never,about="Run, resume, list, stop, and resolve durable workflow runs")]
@@ -569,11 +571,7 @@ pub async fn run(args: WorkflowArgs) -> u8 {
         }
         WorkflowCommand::Run(args) => run_command(args).await,
         WorkflowCommand::Builtins(args) => builtins::execute(args),
-        WorkflowCommand::Compile(args) => {
-            let _ = args;
-            eprintln!("compile is not available");
-            1
-        }
+        WorkflowCommand::Compile(args) => compile_command::execute(args).await,
     }
 }
 async fn run_command(args: RunArgs) -> u8 {

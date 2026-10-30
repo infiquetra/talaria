@@ -12,6 +12,8 @@ use crate::connectors::{ConnectorsOpen, ConnectorsTab};
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalAction {
+    /// View the shared task board.
+    Kanban,
     /// View a journaled workflow run.
     Workflows,
     /// Route substantive prompts through the workflow skill.
@@ -124,6 +126,15 @@ impl LocalCommand {
 
 /// The one table, in the order the palette lists it.
 const BUILTIN: &[LocalCommand] = &[
+    LocalCommand {
+        name: "kanban",
+        aliases: &[],
+        summary: "View a shared task board",
+        args_hint: "[board]",
+        takes_argument: true,
+        action: LocalAction::Kanban,
+        tag: "talaria",
+    },
     LocalCommand {
         name: "quit",
         aliases: &["exit"],

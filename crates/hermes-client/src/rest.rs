@@ -193,9 +193,10 @@ impl RestClient {
         opts: RequestOpts,
     ) -> Result<Vec<u8>, RestError> {
         validate_path(path)?;
-        if body
-            .as_ref()
-            .is_some_and(|bytes| bytes.len() > self.options.max_body)
+        if !path.starts_with("/api/plugins/kanban/")
+            && body
+                .as_ref()
+                .is_some_and(|bytes| bytes.len() > self.options.max_body)
         {
             return Err(RestError::BodyTooLarge);
         }
@@ -371,7 +372,11 @@ fn map_reply(
                     || text.to_owned(),
                     |ticket| text.replace(ticket, "<redacted>"),
                 );
-                text.chars().take(200).collect::<String>()
+                if path.starts_with("/api/plugins/kanban/") {
+                    text
+                } else {
+                    text.chars().take(200).collect::<String>()
+                }
             })
         })
     };

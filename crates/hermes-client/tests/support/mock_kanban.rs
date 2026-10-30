@@ -33,25 +33,13 @@ const COLUMNS: &[&str] = &[
     "done",
 ];
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MockOptions {
     pub parents_open: bool,
     pub default_assignee: String,
     pub tail_burst: bool,
     pub unauthorized: bool,
     pub fail_task_post: Option<u64>,
-}
-
-impl Default for MockOptions {
-    fn default() -> Self {
-        Self {
-            parents_open: false,
-            default_assignee: String::new(),
-            tail_burst: false,
-            unauthorized: false,
-            fail_task_post: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +62,9 @@ struct Inner {
     next_id: AtomicU64,
     drop_sockets: AtomicBool,
     dropped: Notify,
+    changed: Notify,
+    cursor: AtomicU64,
+    events: Mutex<Vec<Value>>,
     links: Mutex<Vec<(String, String)>>,
     comments: Mutex<Vec<(String, String, String)>>,
 }
@@ -99,6 +90,9 @@ impl MockKanban {
             next_id: AtomicU64::new(1),
             drop_sockets: AtomicBool::new(false),
             dropped: Notify::new(),
+            changed: Notify::new(),
+            cursor: AtomicU64::new(123),
+            events: Mutex::new(Vec::new()),
             links: Mutex::new(Vec::new()),
             comments: Mutex::new(Vec::new()),
         });
@@ -148,18 +142,31 @@ impl MockKanban {
     /// Finish the running fixture card and move the first ready card to running.
     pub fn advance(&self) {
         let mut tasks = self.inner.tasks.lock().expect("tasks");
-        if let Some(task) = tasks.iter_mut().find(|task| task["status"] == "running") {
-            if let Some(object) = task.as_object_mut() {
-                object.insert("status".into(), json!("done"));
-                object.insert("latest_summary".into(), json!("mock result"));
-                object.insert("result".into(), json!("mock result"));
-            }
+        let mut changed = Vec::new();
+        if let Some(task) = tasks.iter_mut().find(|task| task["status"] == "running")
+            && let Some(object) = task.as_object_mut()
+        {
+            changed.push(object.get("id").cloned().unwrap_or(Value::Null));
+            object.insert("status".into(), json!("done"));
+            object.insert("latest_summary".into(), json!("mock result"));
+            object.insert("result".into(), json!("mock result"));
         }
-        if let Some(task) = tasks.iter_mut().find(|task| task["status"] == "ready") {
-            if let Some(object) = task.as_object_mut() {
-                object.insert("status".into(), json!("running"));
-            }
+        if let Some(task) = tasks.iter_mut().find(|task| task["status"] == "ready")
+            && let Some(object) = task.as_object_mut()
+        {
+            changed.push(object.get("id").cloned().unwrap_or(Value::Null));
+            object.insert("status".into(), json!("running"));
         }
+        drop(tasks);
+        for task_id in changed {
+            let id = self.inner.cursor.fetch_add(1, Ordering::SeqCst) + 1;
+            self.inner
+                .events
+                .lock()
+                .expect("events")
+                .push(json!({"id":id,"task_id":task_id,"kind":"status"}));
+        }
+        self.inner.changed.notify_waiters();
     }
 }
 
@@ -394,7 +401,7 @@ fn board_body(inner: &Inner, archived: bool) -> Value {
         "columns": columns,
         "tenants": [],
         "assignees": ["fixture"],
-        "latest_event_id": 123,
+        "latest_event_id": inner.cursor.load(Ordering::SeqCst),
         "now": 1793000000
     })
 }
@@ -555,6 +562,10 @@ async fn upgrade(
     );
     socket.write_all(response.as_bytes()).await?;
     let (_path, query) = split_target(target);
+    let mut cursor = query
+        .get("since")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or_else(|| inner.cursor.load(Ordering::SeqCst));
     inner.hits.lock().expect("hits").push(Hit {
         method: "WS".into(),
         path: "/api/plugins/kanban/events".into(),
@@ -563,6 +574,7 @@ async fn upgrade(
         ticket: ticket.clone(),
     });
     if inner.options.tail_burst {
+        inner.cursor.fetch_max(125, Ordering::SeqCst);
         socket
             .write_all(&text_frame(
                 r#"{"events":[{"id":124,"task_id":"t_ready","kind":"status"}],"cursor":124}"#,
@@ -575,6 +587,9 @@ async fn upgrade(
             ))
             .await?;
     }
+    if inner.options.tail_burst {
+        cursor = 125;
+    }
     let dropped = inner.dropped.notified();
     tokio::pin!(dropped);
     let mut buf = Vec::new();
@@ -583,7 +598,28 @@ async fn upgrade(
         if inner.drop_sockets.load(Ordering::SeqCst) {
             break;
         }
+        let changed = inner.changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        let events: Vec<_> = inner
+            .events
+            .lock()
+            .expect("events")
+            .iter()
+            .filter(|e| e["id"].as_u64().is_some_and(|id| id > cursor))
+            .cloned()
+            .collect();
+        if let Some(last) = events.last() {
+            cursor = last["id"].as_u64().unwrap_or(cursor);
+            socket
+                .write_all(&text_frame(
+                    &json!({"events":events,"cursor":cursor}).to_string(),
+                ))
+                .await?;
+            continue;
+        }
         tokio::select! {
+            _ = &mut changed => continue,
             _ = &mut dropped => break,
             read = socket.read(&mut temp) => {
                 let n = read?;
@@ -699,7 +735,7 @@ fn sha1(message: &[u8]) -> [u8; 20] {
             words[i] = (words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16]).rotate_left(1);
         }
         let (mut a, mut b, mut c, mut d, mut e) = (h0, h1, h2, h3, h4);
-        for i in 0..80 {
+        for (i, word) in words.iter().enumerate() {
             let (f, k) = match i {
                 0..=19 => ((b & c) | ((!b) & d), 0x5A82_7999),
                 20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
@@ -711,7 +747,7 @@ fn sha1(message: &[u8]) -> [u8; 20] {
                 .wrapping_add(f)
                 .wrapping_add(e)
                 .wrapping_add(k)
-                .wrapping_add(words[i]);
+                .wrapping_add(*word);
             e = d;
             d = c;
             c = b.rotate_left(30);
