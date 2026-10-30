@@ -11,7 +11,7 @@ are plain text on standard error; standard output then holds nothing.
 {"format":"talaria.fleet.v1","kind":"snapshot","as_of":1792690000.5,
  "scope":{"host":true,"profile":null,"why":null},
  "profiles":[{"name":"fixture","status":"listed","truncated":false,"reason":null}],
- "rows":[{"profile":"fixture","session_id":"local-3f2a","title":"","model":"minimax-m3.1-flash",
+ "rows":[{"profile":"fixture","session_id":"local-3f2a","backend":"hermes","agent":null,"title":"","model":"minimax-m3.1-flash",
           "source":"tui","state":"needs_you","state_since":1792690010.0,"outcome":null,
           "message_count":4,"foreground":false,"stale":false,"gone":false,"unlisted":false}],
  "needs_you":[{"profile":"fixture","session_id":"local-3f2a","slot":"prompt","prompt_id":"a1b2",
@@ -35,10 +35,10 @@ Field values:
 | Field | Values |
 | --- | --- |
 | profile `status` | `loading`, `listed`, `failed`, `parked`, `out_of_scope`. `reason` is set for `failed` and `parked`, is `"outside the profile-only view"` for `out_of_scope`, else `null`. `truncated` is true only for a `listed` profile whose list returned 200 sessions, Hermes's limit; a working session beyond them has no row. |
+| row `backend` | `hermes`, `acp`, or `herdr`. Herdr identities use profile `herdr:<pane-id>` and the pane ID as `session_id`. |
+| row `agent` | External agent display name, or `null` for Hermes. |
 | row `state` | `needs_you`, `working`, `failed`, `done`, `idle`. |
-| row `backend` | `hermes` for gateway sessions, `acp` for sessions owned by an external agent. |
-| row `agent` | The external agent's display name for ACP rows; `null` for Hermes. |
-| row `outcome` | `completed`, `interrupted`, `failed`, `unknown`, `null`. Only `done` and `failed` rows hold one. |
+| row `outcome` | `completed`, `interrupted`, `failed`, `unknown`, `null`. An unknown Herdr state is `idle` with an `unknown` outcome; it is never reported as completed. |
 | row `stale` | The last read of the row's profile failed, or the link dropped; the state is the last one known. |
 | row `gone` | The session left the list while its finished turn was not acknowledged. |
 | row `unlisted` | A waiting session the list does not show (hidden, or past the 200-row limit). |
@@ -47,7 +47,7 @@ Field values:
 | need `summary` | The command (approval) or the question (question), raw text; `null` otherwise. |
 | need `exact` | True only while a Talaria view attached to the session reports the need; such a need has its `execution_generation`. A need with `exact: false` is never answered as it stands. |
 
-A one-shot listing has no history, so no row is `done` or `failed` in it.
+A one-shot Hermes listing has no history, so its rows are not `done` or `failed`. An external owner can report an already completed row.
 
 ## Watch lines
 

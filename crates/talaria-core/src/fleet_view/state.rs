@@ -125,6 +125,13 @@ pub enum FleetViewInput {
         key: RowKey,
         status: PeekStatus,
     },
+    /// Sanitized terminal output supplied by an external owner.
+    ExternalPeek {
+        key: RowKey,
+        text: String,
+        has_open_prompt: bool,
+        running: bool,
+    },
     PeekClosed,
     ReplyDone {
         key: RowKey,
@@ -197,6 +204,7 @@ pub struct FleetViewState {
     filter: String,
     profile_filter: ProfileFilter,
     peek: Option<(RowKey, PeekStatus)>,
+    external_peek: Option<(RowKey, String)>,
     notice: Option<String>,
     /// The row the reply editor or the stop confirmation is for.
     target: Option<RowKey>,
@@ -232,6 +240,7 @@ impl FleetViewState {
             filter: String::new(),
             profile_filter: ProfileFilter::All,
             peek: None,
+            external_peek: None,
             notice: None,
             target: None,
             drafts: HashMap::new(),
@@ -341,6 +350,12 @@ impl FleetViewState {
     #[must_use]
     pub fn peek(&self) -> Option<(&RowKey, &PeekStatus)> {
         self.peek.as_ref().map(|(key, status)| (key, status))
+    }
+
+    /// Visible output supplied by a terminal owner for the active peek.
+    pub fn external_peek(&self) -> Option<&str> {
+        let (key, text) = self.external_peek.as_ref()?;
+        (self.peek.as_ref().is_some_and(|(active, _)| active == key)).then_some(text.as_str())
     }
 
     /// The notice line. In the reply editor without a newer notice it is the prompt line,
@@ -684,7 +699,32 @@ pub fn update(
             }
             Vec::new()
         }
+        FleetViewInput::ExternalPeek {
+            key,
+            text,
+            has_open_prompt,
+            running,
+        } => {
+            if state
+                .peek
+                .as_ref()
+                .is_some_and(|(active, _)| *active == key)
+            {
+                state.external_peek =
+                    Some((key.clone(), crate::fleet::herdr::sanitize_visible(&text)));
+                state.peek = Some((
+                    key,
+                    PeekStatus::Open {
+                        has_open_prompt,
+                        running,
+                    },
+                ));
+                state.dirty = true;
+            }
+            Vec::new()
+        }
         FleetViewInput::PeekClosed => {
+            state.external_peek = None;
             if state.peek.take().is_some() {
                 state.dirty = true;
             }
@@ -1115,11 +1155,18 @@ fn stop_start(state: &mut FleetViewState) -> Vec<FleetViewEffect> {
     let external = state
         .row(&key)
         .is_some_and(|row| row.backend() == FleetBackend::Acp);
+    let terminal = state
+        .row(&key)
+        .is_some_and(|row| row.backend() == FleetBackend::Herdr);
     state.target = Some(key);
     state.focus = Focus::ConfirmStop;
     state.notice = Some(if external {
         format!(
             "Stop \"{title}\"? Open permissions will be cancelled. Press x again to stop, any other key to keep it running."
+        )
+    } else if terminal {
+        format!(
+            "Send Ctrl+C to \"{title}\"? Press x again to interrupt, any other key to keep it running."
         )
     } else {
         confirm_text(&title)
@@ -1164,6 +1211,13 @@ fn answer_start(state: &mut FleetViewState) -> Vec<FleetViewEffect> {
         state.notice = Some(NOTHING_TO_ANSWER.to_owned());
         return Vec::new();
     };
+    if state
+        .find_row(&key)
+        .is_some_and(|row| row.backend() == crate::fleet::FleetBackend::Herdr)
+    {
+        state.cursor = Some(key);
+        return reply_start(state);
+    }
     if state.is_foreground(&key) {
         // The foreground card takes the keys once the overlay is gone.
         return vec![FleetViewEffect::Close];

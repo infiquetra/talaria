@@ -180,6 +180,7 @@ async fn peek_moves_detach_without_end_reason() {
 
 fn fleet_row(id: &str, state: RowState) -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key: key("fixture", id),
         title: format!("title {id}"),
         model: Some("minimax-m3.1-flash".to_owned()),

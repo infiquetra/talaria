@@ -38,6 +38,7 @@ struct Marks {
 
 fn row(profile: &str, id: &str, title: &str, state: RowState, model: Option<&str>) -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key: RowKey {
             profile: profile.to_owned(),
             session_id: id.to_owned(),

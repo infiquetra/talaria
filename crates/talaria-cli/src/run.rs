@@ -4446,6 +4446,12 @@ fn run_selected(
     let home = hermes_client::default_home();
     let launch_id = new_launch_id();
     let mut setup = RunSetup {
+        herdr: loaded
+            .config
+            .herdr
+            .enabled
+            .then(|| loaded.config.herdr.fleet_config()),
+
         home: home.clone(),
         launch_id: launch_id.clone(),
         preopened: None,

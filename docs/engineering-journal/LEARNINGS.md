@@ -106,6 +106,12 @@ The locked cargo-typify installation remains mandatory; no cached version string
 Rule: bind disposable build caches to actual compiler, lockfile, platform and mode, restrict their
 writers, and keep qualification independent of cache state.
 
+## 2026-10-29 — Blocked terminal agents need explicit keys
+
+**Evidence.** The installed `herdr` CLI contract rejects prompt submission to a blocked agent before any input is sent. The terminal-agent wire tests retain that rejection and exercise the operator-selected key sequence separately.
+
+**Rule.** Use atomic prompt submission for follow-ups; answer a blocked terminal UI only through explicit, validated keys, and never report a rejected prompt as submitted.
+
 ## 2026-10-28 — Waiting work and an answered pause need durable evidence
 
 **Evidence.** Offline runner regressions reproduce a missing completed-replay recording, invisible parallel waiters, and a false unanswered pause after ten seconds. CLI regressions cover replay with an empty gateway home and the plain discovery failure. The runner regression holds pause for twelve seconds, lets its active call settle, and checks both queued cancellation and unchanged gateway submission counts.
@@ -6604,3 +6610,13 @@ The authentication tests combine real socket readiness with Tokio's paused clock
 clock advancement can otherwise fire a network deadline before the operating system reports
 ready I/O. A bounded test-support guard keeps the runtime active while HTTP I/O is pending;
 explicit `advance()` still exercises the timeout. Production builds have no such guard.
+
+## 2026-10-30 — Fleet backends report through one owner
+
+The merged ACP adapter owns `FleetHandle` and exposes a cloneable `FleetReporter`. Reconciling
+live terminal discovery against that seam retained ACP permission responders and transcript
+rendering while publishing Herdr observations through the same registry input and application
+notification channel. The mapping, mixed-backend wire, and owner-routing tests cover both paths.
+
+Rule: share a backend's reporting endpoint rather than cloning task ownership or creating a
+second registry when another fleet source is added.

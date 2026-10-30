@@ -60,6 +60,9 @@ fn main() -> ExitCode {
             }
         }
     }
+    if args.first().is_some_and(|arg| arg == "herdr") {
+        return ExitCode::from(talaria_cli::herdr_cmd::run(&args));
+    }
     if talaria_cli::args::is_fleet_command(&args) {
         return ExitCode::from(talaria_cli::fleet_cmd::run(&args));
     }

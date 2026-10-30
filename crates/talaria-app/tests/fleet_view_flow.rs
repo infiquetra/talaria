@@ -34,6 +34,7 @@ fn key(profile: &str, id: &str) -> RowKey {
 
 fn foreground_row() -> FleetRow {
     FleetRow {
+        terminal_location: None,
         key: key("fixture", "s-front"),
         title: "compile".to_owned(),
         model: Some("ollama-cloud/minimax-m3.1-flash".to_owned()),
