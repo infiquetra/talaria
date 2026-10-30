@@ -130,6 +130,14 @@ impl Dial for LaunchDial {
 pub struct ConnectionService;
 
 impl ConnectionService {
+    /// Open a connection using a caller-supplied dial.
+    pub async fn open_with_dial<D: hermes_client::liveness::Dial>(
+        _launch: &Launch,
+        _dial: D,
+    ) -> Result<OpenConnection, LaunchFailure> {
+        todo!("add remote gateway implementation")
+    }
+
     /// Discover (running `ensure` at most once, never with `--no-ensure`), resolve the profile,
     /// and start the link on an interactive, profile-scoped ticket.
     pub async fn open(

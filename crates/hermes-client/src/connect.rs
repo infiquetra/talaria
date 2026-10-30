@@ -29,6 +29,16 @@ pub type WsStreamInner = tokio_tungstenite::WebSocketStream<tokio::net::TcpStrea
 pub type WsSink = SplitSink<WsStreamInner, Message>;
 pub type WsStream = SplitStream<WsStreamInner>;
 
+/// Identity expectations for an opened session socket.
+#[derive(Debug, Clone)]
+pub enum ExpectedIdentity {
+    Unknown,
+    Known {
+        instance_id: String,
+        profile_id: Option<ProfileId>,
+    },
+}
+
 /// `http` becomes `ws` and gains `/api/ws`. `https` becomes `wss`.
 pub fn ws_url(api_origin: &str) -> String {
     format!("{}/api/ws", api_origin.replacen("http", "ws", 1))
@@ -330,6 +340,16 @@ impl std::fmt::Debug for Connection {
 }
 
 impl Connection {
+    /// Wrap an upgraded socket before its handshake.
+    pub fn from_websocket(
+        _socket: tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        _identity: ExpectedIdentity,
+    ) -> Self {
+        todo!("add remote gateway implementation")
+    }
+
     /// Record every handshake frame this connection reads or writes, tagged with
     /// `generation`. `GatewayDial::on_connect` calls this per connection.
     pub fn set_recorder(&mut self, recorder: Recorder, generation: u64) {

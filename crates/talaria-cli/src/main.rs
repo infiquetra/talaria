@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 mod bench_replay;
+mod remote;
 
 fn main() -> ExitCode {
     let started = std::time::Instant::now();

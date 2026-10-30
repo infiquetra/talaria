@@ -8,7 +8,12 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
+base64.workspace = true
+tokio-util.workspace = true
 http.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
@@ -33,6 +38,13 @@ tokio-tungstenite = { workspace = true, features = ["connect", "handshake"] }
 workspace = true
 
 [dev-dependencies]
+toml.workspace = true
+hermes-client = { path = ".", features = ["test-support"] }
+portable-pty.workspace = true
+rcgen = "=0.14.10"
+rustls-pemfile = "=2.2.0"
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 bytes.workspace = true
 rand.workspace = true
 futures-util = { workspace = true, features = ["sink"] }

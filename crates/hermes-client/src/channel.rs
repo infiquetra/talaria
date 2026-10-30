@@ -407,6 +407,10 @@ pub struct InboundStream {
 }
 
 impl Client {
+    /// Install a parameter injector for outbound calls.
+    pub fn set_param_injector(&self, _injector: Option<crate::remote::ParamInjector>) {
+        todo!("add remote gateway implementation")
+    }
     /// Start the actor on `parts`. The generation is 1. The id counter starts at `parts.next_request_id`.
     pub fn start(parts: ConnectionParts) -> (Self, InboundStream) {
         let (sender, receiver) = mpsc::unbounded_channel();
