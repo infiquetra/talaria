@@ -1,0 +1,55 @@
+{
+  "fixture_list": true,
+  "fixture_session_created": true,
+  "hermes_commit": "4d04303818b61bf3aa09278af48356315515965b",
+  "http": [
+    {
+      "body": {
+        "auth_flows": [
+          "cookie",
+          "native_pkce"
+        ],
+        "auth_providers": [
+          "basic"
+        ],
+        "auth_required": true
+      },
+      "headers": [],
+      "method": "GET",
+      "url": "http://gateway.example.com:60592/api/status"
+    },
+    {
+      "body": {
+        "access_token": "[redacted]",
+        "expires_at": 1793370711,
+        "provider": "basic",
+        "refresh_token": "[redacted]",
+        "token_type": "Bearer",
+        "user_id": "[redacted]"
+      },
+      "headers": [],
+      "method": "POST",
+      "url": "http://gateway.example.com:60592/auth/native/token"
+    },
+    {
+      "body": {
+        "ticket": "[redacted]",
+        "ttl_seconds": 30
+      },
+      "headers": [],
+      "method": "POST",
+      "url": "http://gateway.example.com:60592/api/auth/ws-ticket"
+    },
+    {
+      "body": null,
+      "headers": [],
+      "method": "GET",
+      "url": "ws://gateway.example.com:60592/api/ws?ticket=%5Bredacted%5D"
+    }
+  ],
+  "refusal_status": 403,
+  "session_authority": true,
+  "subprotocol_echo": null,
+  "verified": true,
+  "version": 1
+}
