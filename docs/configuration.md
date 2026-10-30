@@ -591,22 +591,3 @@ The `profiles` and `connections` tables, 0.6 settings this release does not know
 column settings and the 0.6 `[keys]` names (`toggle_inspector`, `agents`, `commands`, `models`,
 `profiles`, `config`, `follow`, `replay_*`) are ignored with notices. Remove an `interrupt` line
 set to Ctrl+S, or Esc stops interrupting. The repository file `./.talaria/config.toml` and the 0.6 `TALARIA_*` overrides are gone.
-
-## Remote gateways
-
-Remote entries live in `remotes.toml` under a nonempty `TALARIA_CONFIG_DIR`, otherwise
-`~/.talaria`. Add and validate an entry with `talaria remote add work
-https://gateway.example.com/hermes --provider basic`, sign in with `talaria remote login work`,
-and connect using `talaria --remote work --profile fixture`.
-
-```toml
-[remotes.work]
-url = "https://gateway.example.com/hermes"
-provider = "basic"
-```
-
-The provider is optional and path prefixes are kept. HTTPS uses the platform certificate
-roots. Plain HTTP is allowed only for the IP literals `127.0.0.1` and `[::1]`. Tokens are
-separate owner-only files in `remote-tokens/`; never add them to this configuration or share
-them. `remote list`, `status`, `logout` and `remove` manage saved remotes. See
-[Remote gateways](remote-gateways.md) for browserless sign-in, tunnels and troubleshooting.
