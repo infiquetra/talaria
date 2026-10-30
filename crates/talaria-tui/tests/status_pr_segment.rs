@@ -14,8 +14,8 @@ fn pr_segment_priority() {
     );
     assert_eq!(
         Segment::PullRequest.position() + 1,
-        Segment::External.position(),
-        "just before External on the line"
+        Segment::Voice.position(),
+        "just before Voice and External on the line"
     );
     for segment in Segment::ALL {
         if segment != Segment::External
