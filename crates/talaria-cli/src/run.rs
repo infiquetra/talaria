@@ -62,7 +62,7 @@ use talaria_tui::background::{BackgroundSection, BackgroundTheme, ProcessesView}
 use talaria_tui::checklist::{
     ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS, SHORT_TERMINAL_ROWS, committed_block_lines,
 };
-use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome, clean_text};
+use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome, VimMode, clean_text};
 use talaria_tui::context_view::{
     CompactingSection, ContextStyle, compact_block, context_block, error_block, notice_block,
     prebuild_block, usage_block,
@@ -898,8 +898,10 @@ fn composer_key_actions(
     if let ComposerOutcome::Submit(text) = outcome {
         return vec![UserAction::Submit(text)];
     }
-    let eligible =
-        outcome == ComposerOutcome::Unchanged && composer.is_empty() && !ctx.turn_running;
+    let eligible = outcome == ComposerOutcome::Unchanged
+        && composer.is_empty()
+        && !ctx.turn_running
+        && !composer.vim_enabled();
     let mut actions = match outcome {
         ComposerOutcome::Interrupt => vec![UserAction::Interrupt],
         ComposerOutcome::ExitRequested => vec![UserAction::Quit],
@@ -2358,6 +2360,23 @@ impl TuiScreen {
                 } else {
                     talaria_tui::comfort_route::Focus::Composer
                 };
+                if config::vim_redo_claim(
+                    action == Some(Action::HistorySearch),
+                    focus == talaria_tui::comfort_route::Focus::Composer
+                        && self.overlay == Overlay::Live
+                        && view.rewind.is_none()
+                        && !self.confirmation_takes_keys()
+                        && !view.palette.open
+                        && queue_view(view).is_none_or(|queue| {
+                            queue.selected.is_none() && queue.editing.is_none()
+                        }),
+                    matches!(
+                        self.composer.vim_mode(),
+                        Some(VimMode::Normal | VimMode::Visual | VimMode::VisualLine)
+                    ),
+                ) {
+                    return self.composer_key(key, view, now);
+                }
                 let route = talaria_tui::comfort_route::route(action, focus);
                 if route == talaria_tui::comfort_route::Route::Suspend {
                     let _ = self.composer.handle_key(
@@ -2423,6 +2442,17 @@ impl TuiScreen {
                 }
                 if let Some(actions) = self.queue_keys(raw, key, view, prefix) {
                     return actions;
+                }
+                if self
+                    .composer
+                    .vim_mode()
+                    .is_some_and(|mode| mode != VimMode::Insert)
+                    && focus == talaria_tui::comfort_route::Focus::Composer
+                    && !view.palette.open
+                    && route != talaria_tui::comfort_route::Route::OpenEditor
+                    && route != talaria_tui::comfort_route::Route::AttentionNext
+                {
+                    return self.composer_key(key, view, now);
                 }
                 // An open completion list takes its four keys before the composer does.
                 if view.palette.open
@@ -4359,7 +4389,11 @@ fn session(
     );
     let mut setup = setup;
     setup.notices.extend(history_notice);
-    let mut composer = Composer::with_history(keymap.clone(), history.composer_seed());
+    let mut composer = Composer::from_startup(
+        keymap.clone(),
+        history.composer_seed(),
+        config::composer_starts_with_vim(&config),
+    );
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     composer.set_style(theme.composer);
     let mut screen = TuiScreen {
