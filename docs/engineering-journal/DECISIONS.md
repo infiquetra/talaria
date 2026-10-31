@@ -2588,7 +2588,7 @@ it pops a stage.
   a window, and a provider is unauthenticated for a reason the operator can act
   on — skipping would make those rows unreachable *and* unexplained. The
   highlight lands, and `enter` names the reason it refuses.
-- *Movement is arrows and the page/home/end family only.* Emacs-style `ctrl+p`
+- *Movement is arrows and the page, home, and end family only.* Emacs-style `ctrl+p`
   is taken by Textual's own command palette (`App.COMMAND_PALETTE_BINDING`) and
   opens over the dialog; vim-style `j`/`k` are printable and belong to the
   filter, which is the wall Qwen Code's `disableVimNav` flag exists for. Both
