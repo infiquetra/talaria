@@ -186,7 +186,11 @@ fn screen_step_inner(run: &Run<'_>, name: &'static str) -> Result<Step, Abort> {
                     .flags
                     .iter()
                     .any(|s| s == SETTINGS_SET || s == SETTINGS_DEFAULT)
-                || !row.flags.iter().any(|s| s.contains(SETTINGS_RESTART_FLAG))
+                || !row.flags.iter().any(|s| {
+                    s.contains(SETTINGS_RESTART_FLAG)
+                        || (s.starts_with("may need a restar")
+                            && SETTINGS_RESTART_FLAG.starts_with(s.as_str()))
+                })
             {
                 return fail(
                     "display.compact row lacks a value, set or default, or \"may need a restart\"",

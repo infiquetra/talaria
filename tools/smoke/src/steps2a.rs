@@ -630,14 +630,30 @@ fn any_line(text: &str, needle: &str) -> bool {
     normalised(text).iter().any(|line| line.contains(needle))
 }
 
-/// Whether a line holds the text, or the composer's rows (the lines that start with `│`)
-/// joined with single spaces do: a narrow composer wraps a draft at its spaces.
+/// Whether a line holds the text, or the composer's rows (boxed `│` rows, or a `> ` prompt row
+/// and its indented continuation rows) joined with single spaces do: a narrow composer wraps a
+/// draft at its spaces.
 fn draft_holds(text: &str, needle: &str) -> bool {
-    let rows: Vec<&str> = text
-        .lines()
+    let lines: Vec<&str> = text.lines().collect();
+    let boxed: Vec<&str> = lines
+        .iter()
+        .copied()
         .filter(|line| line.trim_start().starts_with('│'))
         .collect();
-    any_line(text, needle) || normalised(&rows.join("\n")).join(" ").contains(needle)
+    let borderless: Vec<&str> = lines
+        .iter()
+        .rposition(|line| line.starts_with("> "))
+        .map(|start| {
+            lines[start..]
+                .iter()
+                .copied()
+                .take_while(|line| line.starts_with("> ") || line.starts_with("  "))
+                .collect()
+        })
+        .unwrap_or_default();
+    any_line(text, needle)
+        || normalised(&boxed.join("\n")).join(" ").contains(needle)
+        || without_marker(&normalised(&borderless.join("\n")).join(" ")).contains(needle)
 }
 
 /// How many normalised lines hold the text.
@@ -1076,16 +1092,23 @@ impl Run2a<'_> {
         let pane = self.base.pane.clone();
         let first = self.first_token();
         let needle = format!("{} and {}", first.word, first.number);
+        let prefix = format!("result: {}", first.word);
         let run = &mut self.base;
         let visible = run.visible(&pane)?;
-        let shown = lines_holding(&visible, &needle);
+        let holds_prompt = |text: &str| {
+            normalised(text)
+                .iter()
+                .filter(|line| line.contains(&needle) || line.contains(&prefix))
+                .count()
+        };
+        let shown = holds_prompt(&visible);
         // A match row holds the earlier prompt; the query row starts with what was typed, and
         // the box says so in its own line when nothing matches.
         let matched = |text: &str| {
             normalised(text)
                 .iter()
                 .filter(|line| {
-                    line.contains(&needle)
+                    (line.contains(&needle) || line.contains(&prefix))
                         && !without_marker(line).starts_with(&needle)
                         && !line.contains(HISTORY_NO_MATCH)
                 })
@@ -1104,13 +1127,13 @@ impl Run2a<'_> {
         }
         run.key(&pane, "enter")?;
         if !run.wait_until(&pane, HISTORY_LOAD, Reads::Visible, false, |seen| {
-            lines_holding(&seen.visible, &needle) == shown + 1
+            holds_prompt(&seen.visible) == shown + 1
         })? {
             return fail("Enter did not load the earlier prompt into the composer");
         }
         run.key(&pane, "ctrl+c")?;
         if !run.wait_until(&pane, HISTORY_CLEAR, Reads::Visible, false, |seen| {
-            lines_holding(&seen.visible, &needle) == shown
+            holds_prompt(&seen.visible) == shown
         })? {
             return fail("Ctrl+C did not clear the recalled draft");
         }

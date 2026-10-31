@@ -126,7 +126,14 @@ impl From<EnsureError> for LaunchFailure {
 
 impl From<ProfileLookupError> for LaunchFailure {
     fn from(value: ProfileLookupError) -> Self {
-        failure(value.to_string(), value.next_step(), FAILED)
+        match &value {
+            ProfileLookupError::NeverDiscovered { .. } => LaunchFailure {
+                what: scrub(&value.to_string()),
+                next_step: sentence(&scrub(value.next_step())),
+                exit_code: FAILED,
+            },
+            _ => failure(value.to_string(), value.next_step(), FAILED),
+        }
     }
 }
 
@@ -653,6 +660,14 @@ mod tests {
             unknown_id.render(),
             "talaria: no session with the id local-session-1 in the profile fixture.\n\
              Next step: Session ids belong to one profile. Check --profile, or list sessions with talaria --resume.\n"
+        );
+        let unknown_profile = LaunchFailure::from(ProfileLookupError::NeverDiscovered {
+            name: "nosuchprofile".to_string(),
+        });
+        assert_eq!(
+            unknown_profile.render(),
+            "talaria: the gateway never discovered a profile named nosuchprofile\n\
+             Next step: Create the profile, or check the name with `hermes profile list`. Talaria does not create profiles.\n"
         );
         assert_eq!(
             permission_denied().render(),
