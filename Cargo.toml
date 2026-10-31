@@ -99,3 +99,9 @@ incremental = false
 debug = 0
 strip = "none"
 incremental = false
+
+[profile.release]
+strip = "none"
+
+[profile.bench]
+strip = "none"

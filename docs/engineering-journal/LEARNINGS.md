@@ -3873,7 +3873,7 @@ The reason nothing caught it is narrower and more useful than "no test covered i
 
 **The fix, and the one design choice inside it worth keeping.** `record`'s positional is now optional and means the endpoint, never the credential; when present it is passed as `override=` to `AttachTarget.from_environment`, which is the same call the live launcher makes, so the two entry points are one code path instead of two that have to be kept in agreement. Resolution moved out of the dial loop into `resolve_record_target`, which returns an endpoint and a credential as separate halves.
 
-The choice worth keeping is that a credential-bearing URL is **refused**, not silently stripped. `AttachTarget.from_url` would have stripped it happily and the recording would have worked. But by the time `argparse` sees the argument the leak has already happened — the value is in the process table and in the shell history — so stripping it preserves the exact habit that leaked it and teaches the operator nothing. The refusal exits 2, names the two routes that do not involve a command line, and tells the operator to treat the value they just passed as exposed. Userinfo (`ws://user:pass@host/api/ws`) is refused on the same terms even though Hermes would never have authenticated it, because what it did do is put a secret in two places it does not belong.
+The choice worth keeping is that a credential-bearing URL is **refused**, not silently stripped. `AttachTarget.from_url` would have stripped it happily and the recording would have worked. But by the time `argparse` sees the argument the leak has already happened — the value is in the process table and in the shell history — so stripping it preserves the exact habit that leaked it and teaches the operator nothing. The refusal exits 2, names the two routes that do not involve a command line, and tells the operator to treat the value they just passed as exposed. Userinfo (`ws://%5Bredacted%5D@host/api/ws`) is refused on the same terms even though Hermes would never have authenticated it, because what it did do is put a secret in two places it does not belong.
 
 The refusal reproduces nothing it was given — not the value, not the URL, not a fragment of either. Adding a third copy in stderr, which in continuous integration is a log file in a public repository, would be a strange way to warn someone about the first two.
 
@@ -4707,8 +4707,8 @@ The table: a number that cannot be traced to the artifact it cites survives ever
 | --- | --- |
 | `{"method": "clarify.respond", "params": {"inner": {"answer": "..."}}}` | credential written verbatim |
 | the same frame inside a batch, or under any wrapping envelope | credential written verbatim |
-| `wss://operator:hunter2@gateway.local/attach?x=1` | round-tripped whole, including in the frame-log header |
-| `http://user:pass@cdp.example/` in a frame body | untouched — the URL check required a `?` before it would look |
+| `wss://%5Bredacted%5D@gateway.local/attach?x=1` | round-tripped whole, including in the frame-log header |
+| `http://%5Bredacted%5D@cdp.example/` in a frame body | untouched — the URL check required a `?` before it would look |
 
 **Mechanism.** Two independent causes. The deny-set — the rule covering `answer`, `value`, `text` and `password` on Hermes's four blocking bridges — was resolved once from the outermost object and then applied only where the walker's dotted path was *exactly* `params` or `params[...]`. That coupled a security decision to a string comparison on position, so every shape that moved the frame off the top level silently disarmed it. Those keys are deny-set-only by design: the key-name net is deliberately built not to catch `answer`, so nothing stood behind it. Separately, `redact_url` rewrote only the query and handed `parts.netloc` back to `urlunsplit` verbatim — and `netloc` is exactly where `user:password@host` lives.
 

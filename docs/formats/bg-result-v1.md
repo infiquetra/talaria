@@ -5,7 +5,7 @@ every exit except 2 (a usage error, which writes nothing on standard output). Wa
 printed on standard error.
 
 ```json
-{"format":"talaria.bg.v1","status":"launched","session_id":"local-3f2a","stored_session_id":"local-3f2a","profile":"fixture","admission_id":"adm-1","admission_status":"queued","model":"minimax-m3.1-flash","cwd":"/home/me/proj/.worktrees/talaria-add-a-test","worktree":{"path":"/home/me/proj/.worktrees/talaria-add-a-test","branch":"talaria/add-a-test","base_ref":"origin/main","base_commit":"0123456789abcdef0123456789abcdef01234567","base_fetched":true},"warnings":[],"error":null}
+{"format":"talaria.bg.v1","status":"launched","session_id":"local-3f2a","stored_session_id":"local-3f2a","profile":"fixture","admission_id":"adm-1","admission_status":"queued","model":"minimax-m3.1-flash","cwd":"/workspace/me/proj/.worktrees/talaria-add-a-test","worktree":{"path":"/workspace/me/proj/.worktrees/talaria-add-a-test","branch":"talaria/add-a-test","base_ref":"origin/main","base_commit":"0123456789abcdef0123456789abcdef01234567","base_fetched":true},"warnings":[],"error":null}
 ```
 
 Keys appear in exactly this order.

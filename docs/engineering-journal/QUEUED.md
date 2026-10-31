@@ -759,7 +759,7 @@ the release ships, because the failing assertion is R6: a credential that stops 
 must not throw away the text the operator already received.
 
 **Evidence.** `tests/transport/test_source.py::test_auth_failed_mid_stream_commits_the_partial_reply`
-failed `python-check (3.13)` — the macOS job, runner path `/Users/runner/...` — on pull request 71 at
+failed `python-check (3.13)` — the macOS job, runner path `<home>/runner/...` — on pull request 71 at
 commit `513da81`, with `AssertionError: the typed auth_failed cause did not reach the domain commit`
 and `assert [] == ['partial reply']`. The transcript held no assistant entry at all where it should
 have held the partial reply. That branch changes two files under `docs/engineering-journal/` and one

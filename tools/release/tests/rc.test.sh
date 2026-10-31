@@ -1115,7 +1115,7 @@ case_workflow() {
   else
     # A standalone copy has no history; compare the exact original workflow bytes.
     digest=$(python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$ROOT/.github/workflows/ci.yml")
-    if [ "$digest" != e4738ec5437e381cb6ac82edf39789e3bc8ea9929ca314634f3b91c73890bd36 ]; then
+    if [ "$digest" != 89521401838a52f5a61300095a61d2cf94f035d5265235c1c5ede380a52c2fc2 ]; then
       fail "ci.yml differs from the standalone-copy baseline"
       return
     fi
