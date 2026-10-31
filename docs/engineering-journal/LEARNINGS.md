@@ -2,6 +2,49 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-31 — Drift workspaces need recorded frames outside the crate
+
+**Evidence.** Diagnostic run 41137840436 on the logging repair built the contract,
+but binding tests failed to compile because `overrides.rs` includes the root
+`fixtures/frames/model-switch.jsonl`. The contract's session-info tests also read
+`queue-edit-remove.jsonl` from that root tree. Historical run 41000484149's cause
+remains unknown.
+
+**Mechanism.** The isolated drift workspace copied the crate but omitted its root
+recordings. Copying the frames tree preserves those relative paths; a focused
+synthetic regression checks nested, byte-preserved copies.
+
+**Historical qualification.** The 42-case native suite, four-phase drift run
+41142272881, contract/Bench and Linux/macOS/aggregate CI run 41142210734 passed
+for reviewed head `376380bbbab5d2bda7e5bc04645e312117251aa5` on base
+`749b0722ec31cb4db0381ab98aba9abcace72da7`. Those results are historical.
+This isolated carry-forward uses main `fcf3a1fb975b32e4bb2ead6408d0b2894841476c`;
+its native tests, current package checks, hosted and operational/policy
+qualification have not run.
+
+**Rule.** Include external test inputs when constructing isolated workspaces, and
+preserve the original test paths and contents.
+
+## 2026-10-30 — Drift failures need diagnostics in the job log
+
+**Evidence.** Inspection of `tools/contract-gen/contract_gen.py` found that drift
+captured combined Cargo output but retained only lines containing `FAILED` or
+`test result:`. Compiler source context and assertion details can contain neither.
+The assembled release, catalogue and phase report went only to the summary file,
+so an exit code alone could survive in the job log. This explains diagnostic loss;
+it does not establish the cause of an earlier failed run.
+
+**Mechanism.** Each phase now prints its label, exact argument vector and numeric
+return code, with the complete captured output on failure. The concise report is
+printed before its identical summary-file write, so a summary-write error leaves
+the report visible and still fails. Build, binding and documentation results keep
+their existing gate; recording failures remain informational. Behavioral tests
+cover these paths with temporary fixtures and mocked external boundaries.
+The historical qualification above does not qualify the current-base candidate.
+
+**Rule.** Emit actionable failure evidence through the job log before writing an
+optional presentation surface, and preserve the original failure semantics.
+
 ## 2026-10-30 — Release packages need runner and artifact checks
 
 **Evidence.** The packaging tests construct Mach-O and ELF headers, exercise the
