@@ -49,18 +49,49 @@ pub fn run_case(name: &str, variant: &str, make_script: impl FnOnce(&Path) -> Ve
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
+            if name == "failed_tool_then_recovery_stays_working_until_end" {
+                eprintln!("ACP_TRACE_INCOMPLETE timeout");
+                let _trace_complete = retain_fixture_trace(root);
+            }
             panic!("isolated test timed out");
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     let output = child.wait_with_output().expect("child output");
+    let mut trace_complete = true;
+    if name == "failed_tool_then_recovery_stays_working_until_end" {
+        eprintln!(
+            "ACP_TRACE_CHILD {}",
+            if output.status.success() {
+                "passed"
+            } else {
+                "failed"
+            }
+        );
+        trace_complete = retain_fixture_trace(root);
+    }
     if !output.status.success() {
-        let mut text = String::from_utf8_lossy(&output.stdout).to_string();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        let cap = if name == "failed_tool_then_recovery_stays_working_until_end" {
+            65536
+        } else {
+            usize::MAX
+        };
+        if output.stdout.len() > cap || output.stderr.len() > cap {
+            eprintln!("ACP_TRACE_INCOMPLETE child-output");
+        }
+        let mut text =
+            String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(cap)]).to_string();
+        text.push_str(&String::from_utf8_lossy(
+            &output.stderr[..output.stderr.len().min(cap)],
+        ));
         let root_text = root.to_string_lossy();
         let cleaned = text.replace(root_text.as_ref(), "<tmp>");
         panic!("isolated test failed:\n{cleaned}");
     }
+    assert!(
+        trace_complete,
+        "ACP trace capture incomplete (child passed)"
+    );
 }
 
 pub fn root() -> PathBuf {
@@ -102,6 +133,21 @@ impl Harness {
                         .lock()
                         .expect("snapshots")
                         .push((*snapshot).clone());
+                    if let Some(row) = snapshot
+                        .rows
+                        .iter()
+                        .find(|row| row.key.session_id == "session-1")
+                    {
+                        talaria_app::acp::trace_fixture_event(
+                            false,
+                            match row.state {
+                                talaria_core::fleet::RowState::Working => "fleet_working",
+                                talaria_core::fleet::RowState::Done => "fleet_done",
+                                talaria_core::fleet::RowState::Failed => "fleet_failed",
+                                _ => "fleet_other",
+                            },
+                        );
+                    }
                 }
             },
         );
@@ -120,6 +166,129 @@ impl Harness {
 pub fn expect(method: &str) -> Value {
     json!({"kind":"expect", "method":method})
 }
+
+// Temporary diagnostic output: fixed trace names and the existing public fixture log only.
+fn retain_fixture_trace(root: &Path) -> bool {
+    use std::io::Read;
+    fn bounded(path: &Path, cap: usize) -> std::io::Result<Vec<u8>> {
+        let meta = std::fs::symlink_metadata(path)?;
+        if !meta.is_file() || meta.len() > cap as u64 {
+            return Err(std::io::Error::other("invalid trace file"));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let owner = std::fs::metadata(path.parent().expect("fixture parent"))?.uid();
+            if meta.nlink() != 1 || meta.uid() != owner {
+                return Err(std::io::Error::other("trace custody"));
+            }
+        }
+        let mut data = Vec::new();
+        std::fs::File::open(path)?
+            .take((cap + 1) as u64)
+            .read_to_end(&mut data)?;
+        if data.len() > cap {
+            return Err(std::io::Error::other("trace oversize"));
+        }
+        Ok(data)
+    }
+    fn allowed(event: &str) -> bool {
+        matches!(
+            event,
+            "prompt_ack"
+                | "prompt_returned"
+                | "mock_write_begin"
+                | "mock_write_flushed"
+                | "app_update_received"
+                | "prompt_response_received"
+                | "prompt_finish_before"
+                | "prompt_finish_done"
+                | "prompt_finish_other"
+                | "fleet_working"
+                | "fleet_done"
+                | "fleet_failed"
+                | "fleet_other"
+                | "checkpoint_working"
+                | "checkpoint_done"
+                | "checkpoint_other"
+        )
+    }
+    let mut complete = true;
+    for role in ["app", "mock"] {
+        let mut valid = true;
+        let mut count = 0;
+        match bounded(&root.join(format!("acp-trace-{role}-status")), 64) {
+            Ok(data) => {
+                let text = String::from_utf8_lossy(&data);
+                let fields: Vec<_> = text.trim_end_matches('\n').split('\t').collect();
+                if fields.len() == 3
+                    && fields[0] == role
+                    && matches!(fields[2], "complete" | "incomplete")
+                    && text.ends_with('\n')
+                    && data.iter().filter(|&&b| b == b'\n').count() == 1
+                {
+                    count = fields[1].parse::<usize>().unwrap_or(0);
+                    valid &= fields[2] == "complete";
+                    valid &= (1..=32).contains(&count) && fields[1] == count.to_string();
+                } else {
+                    valid = false;
+                }
+            }
+            Err(_) => valid = false,
+        }
+        for suffix in ["incomplete", "pending"] {
+            match std::fs::symlink_metadata(root.join(format!("acp-trace-{role}-{suffix}"))) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                _ => valid = false,
+            }
+        }
+        let mut previous = 0u128;
+        for sequence in 0..32 {
+            match bounded(&root.join(format!("acp-trace-{role}-{sequence:02}")), 128) {
+                Ok(data) => {
+                    let text = String::from_utf8_lossy(&data);
+                    let fields: Vec<_> = text.trim_end_matches('\n').split('\t').collect();
+                    let micros = fields.get(2).and_then(|x| x.parse::<u128>().ok());
+                    let good = fields.len() == 4
+                        && fields[0] == role
+                        && fields[1] == sequence.to_string()
+                        && micros.is_some_and(|n| n >= previous && fields[2] == n.to_string())
+                        && allowed(fields[3])
+                        && text.ends_with('\n')
+                        && data.iter().filter(|&&b| b == b'\n').count() == 1;
+                    if good {
+                        valid &= sequence < count;
+                        previous = micros.unwrap_or(0);
+                        eprintln!("ACP_TRACE {}", text.trim_end());
+                    } else {
+                        valid = false;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && sequence >= count => {
+                }
+                Err(_) => valid = false,
+            }
+        }
+        eprintln!(
+            "ACP_TRACE_ROLE {role} {}",
+            if valid { "complete" } else { "incomplete" }
+        );
+        complete &= valid;
+    }
+    match bounded(&root.join("step-log.jsonl"), 64 * 1024) {
+        Ok(data) => eprintln!("ACP_PUBLIC_STEP_LOG {}", String::from_utf8_lossy(&data)),
+        Err(_) => {
+            complete = false;
+            eprintln!("ACP_TRACE_INCOMPLETE step-log");
+        }
+    }
+    eprintln!(
+        "ACP_TRACE_RETAINED {}",
+        if complete { "complete" } else { "incomplete" }
+    );
+    complete
+}
+
 pub fn response(id: i64) -> Value {
     json!({"kind":"expect", "response_id":id})
 }

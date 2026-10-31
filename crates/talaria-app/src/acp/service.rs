@@ -520,6 +520,7 @@ impl Worker {
             }
             WorkerCommand::Prompt { key, text, reply } => {
                 let result = self.begin_prompt(&key.session_id, &text).await;
+                super::trace_fixture_event(false, "prompt_ack");
                 let _ = reply.send(result);
             }
             WorkerCommand::Cancel { key, reply } => self.cancel(&key.session_id, reply).await,
@@ -676,6 +677,7 @@ impl Worker {
             let method = method.to_owned();
             let params = frame.get("params").cloned().unwrap_or(Value::Null);
             if method == "session/update" {
+                super::trace_fixture_event(false, "app_update_received");
                 if let Some(id) = params.get("sessionId").and_then(Value::as_str)
                     && let Some(session) = self.sessions.get_mut(id)
                 {
@@ -720,6 +722,7 @@ impl Worker {
                 }
             }
             Pending::Prompt(session_id) => {
+                super::trace_fixture_event(false, "prompt_response_received");
                 if self
                     .sessions
                     .get(&session_id)
@@ -747,7 +750,16 @@ impl Worker {
                     } else if let Some(reason) =
                         frame.pointer("/result/stopReason").and_then(Value::as_str)
                     {
+                        super::trace_fixture_event(false, "prompt_finish_before");
                         session.mapping.finish(reason);
+                        super::trace_fixture_event(
+                            false,
+                            if session.mapping.state == RowState::Done {
+                                "prompt_finish_done"
+                            } else {
+                                "prompt_finish_other"
+                            },
+                        );
                         if let Some(reply) = session.cancel_reply.take() {
                             let _ = reply.send(Ok(()));
                         }

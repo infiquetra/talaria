@@ -27,8 +27,13 @@ impl Mock {
     fn send(&self, value: Value) -> io::Result<()> {
         self.log(json!({"sent": value}))?;
         let mut stdout = io::stdout().lock();
+        talaria_app::acp::trace_fixture_event(true, "mock_write_begin");
         writeln!(stdout, "{value}")?;
-        stdout.flush()
+        let result = stdout.flush();
+        if result.is_ok() {
+            talaria_app::acp::trace_fixture_event(true, "mock_write_flushed");
+        }
+        result
     }
 
     fn receive(&mut self, input: &mut impl BufRead) -> io::Result<Option<Value>> {
@@ -157,6 +162,7 @@ impl Mock {
 }
 
 fn main() -> io::Result<()> {
+    let _trace_guard = talaria_app::acp::trace_fixture_guard(true);
     let mut mock = Mock {
         log: std::env::var_os("TALARIA_MOCK_ACP_LOG").map(PathBuf::from),
         new_count: 0,
