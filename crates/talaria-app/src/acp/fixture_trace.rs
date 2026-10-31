@@ -26,17 +26,17 @@ mod enabled {
     fn incomplete(root: Option<&Path>, mock: bool) {
         INCOMPLETE.store(true, Ordering::SeqCst);
         // Independent of the event mutex/counter; no repeated stderr channel.
-        if !MARKER_ATTEMPTED.swap(true, Ordering::SeqCst) {
-            if let Some(root) = root {
-                let role = if mock { "mock" } else { "app" };
-                if write_new(
-                    &root.join(format!("acp-trace-{role}-incomplete")),
-                    b"incomplete\n",
-                )
-                .is_err()
-                {
-                    INCOMPLETE.store(true, Ordering::SeqCst);
-                }
+        if !MARKER_ATTEMPTED.swap(true, Ordering::SeqCst)
+            && let Some(root) = root
+        {
+            let role = if mock { "mock" } else { "app" };
+            if write_new(
+                &root.join(format!("acp-trace-{role}-incomplete")),
+                b"incomplete\n",
+            )
+            .is_err()
+            {
+                INCOMPLETE.store(true, Ordering::SeqCst);
             }
         }
     }
