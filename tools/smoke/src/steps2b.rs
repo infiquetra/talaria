@@ -413,11 +413,12 @@ impl Run2b<'_> {
     ) -> Result<(), Abort> {
         self.submit(command)?;
         if self.wait(seconds, source, |screen| {
+            let unescaped = screen.replace("\\<", "<").replace("\\>", ">");
+            let lines = normalised(&unescaped);
             screen.contains(text)
-                || screen
-                    .replace("\\<", "<")
-                    .replace("\\>", ">")
-                    .contains(text)
+                || unescaped.contains(text)
+                || lines.join("").contains(text)
+                || lines.join(" ").contains(text)
         })? {
             let visible = self.read(ReadSource::Visible)?;
             let retained = visible
@@ -826,8 +827,13 @@ impl Run2b<'_> {
         let prefix = title_prefix.split("{}").next().unwrap_or_default();
         let mut filename = None;
         if !self.wait(15, ReadSource::RecentUnwrapped, |text| {
-            filename = normalised(text).iter().rev().find_map(|line| {
-                let rest = line.strip_prefix(prefix)?;
+            let lines = normalised(text);
+            filename = lines.iter().enumerate().rev().find_map(|(idx, line)| {
+                let joined = match lines.get(idx + 1) {
+                    Some(next) => format!("{line}{next} {next}"),
+                    None => line.clone(),
+                };
+                let rest = joined.strip_prefix(prefix)?;
                 if !rest.contains(EXPORTED_REDACTED) {
                     return None;
                 }

@@ -6823,3 +6823,11 @@ creation for the diagnostic fixture. The failed hosted runs did not record their
 mode, so this source-level mismatch does not establish the cause of their missing trace.
 
 Rule: request private directory permissions at creation when diagnostics depend on them.
+
+## 2026-10-30 — Release-candidate runner gates must isolate runner login names, Herdr tab environments, and narrow split-pane hints
+
+**Evidence.** GitHub Actions `release-candidate.yml` (`rc-linux` run `41153876185`), `tools/release/doc-scan.sh`, `tools/release/gates.tsv`, and `tools/smoke/src/{screen2a,steps2a,steps2b,steps4a,steps4b,screen5}.rs`.
+
+**Mechanism.** On Ubuntu GitHub Actions runners, `USER` and `LOGNAME` default to `runner` (six characters), which caused `doc-scan.sh` to match the ordinary English word `runner` across workflow documentation (`docs/workflows/runner.md`). Separately, when `smoke` creates a new Herdr tab (`herdr tab create`), the tab's shell inherits the Herdr daemon's environment rather than the caller's `HERMES_HOME`, so a gateway running in a dedicated test home requires `--talaria` to be wrapped in a non-`exec` launcher script that exports `HERMES_HOME` when unset. Finally, in a 107-column Herdr tab (and 53-column or 26-column split panes), prompts, notices, and file labels longer than the inner box width wrap across rows or truncate with `…`.
+
+**Generalizable rule.** Treat the GitHub Actions default login `runner` as unset during literal login scans, pass caller-scoped `HERMES_HOME` into newly spawned multiplexer tabs via a child-process launcher script, and match width-truncated or hard-wrapped terminal rows across normalised line joins when panes are narrow or split.

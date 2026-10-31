@@ -37,9 +37,6 @@ fn reject_bench(value: &str) -> Result<String, String> {
     after_long_help = "Print mode runs one finite prompt without a screen. -p takes a prompt, not a profile name.\nPass < /dev/null when standard input is an open pipe you do not mean to send.\nWithout --timeout, talaria -p waits as long as the turn runs; set --timeout in automated jobs.\nPrint exits: 0 completed, 1 failed or unknown, 2 usage, 3 input required, 4 not started,\n124 timed out, 129 hangup, 130 interrupted, 143 terminated.\nJSON format: docs/formats/print-result-v1.md\nStreaming JSON format: docs/formats/stream-v1.md (stream-json input and output).\n\n--bg starts a new session in the background and returns once Hermes has accepted the prompt.\nGive the prompt as an argument or on standard input, as for -p.\n--worktree (-w) first creates a git worktree for the session: a second checkout on a new\nbranch talaria/<name>, under .worktrees/ in the main checkout, cut from a freshly fetched\norigin. Folders listed in .worktreeinclude are shared with the main checkout by a link, so\nedits inside them reach the main checkout. Uncommitted changes in the main checkout are not\ncarried into the tree. --name sets the worktree's name and needs --worktree.\nBackground exits: 0 launched, 1 unknown (the prompt may have started), 2 usage, 4 not started,\n130 interrupted before the prompt was sent.\nJSON format: docs/formats/bg-result-v1.md"
 )]
 pub struct Cli {
-    /// Route substantive interactive prompts through workflow agents.
-    #[arg(long, global = true)]
-    pub ultracode: bool,
     #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
     pub continue_session: bool,
     #[arg(long, num_args = 0..=1, value_name = "ID", value_parser = required_text)]
@@ -52,14 +49,17 @@ pub struct Cli {
     pub effort: Option<String>,
     #[arg(long, value_parser = required_text, default_value = "default")]
     pub profile: String,
+    #[arg(short = 'p', long = "print")]
+    pub print: bool,
     #[arg(long, value_name = "PATH", value_parser = required_path)]
     pub record: Option<PathBuf>,
     #[arg(long)]
     pub no_ensure: bool,
     #[arg(long)]
     pub remote: Option<String>,
-    #[arg(short = 'p', long = "print")]
-    pub print: bool,
+    /// Route substantive interactive prompts through workflow agents.
+    #[arg(long, global = true)]
+    pub ultracode: bool,
     /// Start a session in the background and return.
     #[arg(long)]
     pub bg: bool,

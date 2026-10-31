@@ -347,9 +347,10 @@ fn command(run: &mut Run<'_>, line: &str, until: Duration) -> Result<String, Abo
             // Synthetic terminals do not echo the submitted shell command.
             delta.to_owned()
         };
-        if marker_count(&output) > 0 {
+        if let Some(end) = output.lines().position(|line| marker_exit(line).is_some()) {
             return Ok(output
                 .lines()
+                .take(end + 1)
                 .filter(|row| {
                     !row.contains("SMOKE_EXIT:$?") && !row.trim().is_empty() && row.trim() != "$"
                 })
@@ -377,15 +378,6 @@ fn appended<'a>(before: &str, after: &'a str) -> Option<&'a str> {
                 .flatten()
         })
         .next()
-}
-fn marker_count(text: &str) -> usize {
-    text.lines()
-        .filter(|line| {
-            line.trim()
-                .strip_prefix("SMOKE_EXIT:")
-                .is_some_and(|value| value.parse::<i32>().is_ok())
-        })
-        .count()
 }
 fn binary(run: &Run<'_>) -> String {
     quote(&run.cfg.talaria.to_string_lossy())

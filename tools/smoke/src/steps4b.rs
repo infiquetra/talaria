@@ -167,7 +167,11 @@ fn teardown(run: &Run<'_>, screen: &str, mut value: String) -> Result<String, Ab
 }
 fn plugin_empty(text: &str) -> bool {
     let pattern = regex::escape(&CAPABILITIES_PLUGINS_EMPTY_FMT.replace("<p>", "fixture"))
-        .replace("<n>", "[0-9]+");
+        .replace("<n>", "[0-9]+")
+        .replace(
+            ", or i to install one\\.",
+            "(?:, or i to install one\\.|[^\n]*…)",
+        );
     regex::Regex::new(&pattern).is_ok_and(|p| p.is_match(text))
 }
 pub(crate) fn screen_step(run: &mut Run<'_>, name: &'static str) -> Result<Step, Abort> {

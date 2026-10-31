@@ -245,9 +245,10 @@ pub fn idle_screen(text: &str) -> bool {
     .all(|title| !text.contains(title));
     no_overlay
         && normalised(&text).iter().any(|line| {
-            matches!(
-                line.trim(),
-                ">" | "> Type a message. Enter sends, Shift+Enter adds a line."
-            )
+            let trimmed = line.trim();
+            trimmed == ">"
+                || (trimmed.starts_with("> Type a message.")
+                    && "> Type a message. Enter sends, Shift+Enter adds a line."
+                        .starts_with(trimmed))
         })
 }

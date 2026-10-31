@@ -78,7 +78,11 @@ fn composer_line(line: &str) -> &str {
     line.trim().trim_matches('│').trim()
 }
 fn empty_composer(line: &str) -> bool {
-    line == COMPOSER || line == COMPOSER_HINT || line == COMPOSER_HINT_ALT
+    line == COMPOSER
+        || line == COMPOSER_HINT
+        || line == COMPOSER_HINT_ALT
+        || (line.starts_with("> Type a message.")
+            && (COMPOSER_HINT.starts_with(line) || COMPOSER_HINT_ALT.starts_with(line)))
 }
 pub(crate) fn turn_active(text: &str) -> bool {
     text.contains(THINKING)
@@ -100,4 +104,17 @@ pub(crate) fn toggle_on(text: &str) -> bool {
             || l.split(['·', '│'])
                 .any(|part| part.trim() == ULTRACODE_BADGE)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn narrow_split_pane_truncated_composer_hint_counts_as_empty_composer() {
+        let narrow = "│ > Type a message. Enter sends, Shift+Enter ad │\nfooter";
+        assert!(composer_found(narrow));
+        assert!(idle_screen(narrow));
+        assert!(!composer_found("│ > draft message │\nfooter"));
+    }
 }
