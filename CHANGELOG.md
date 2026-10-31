@@ -10,14 +10,38 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-02
+
+Talaria 0.7.0 is the first release of the Rust client for Hermes. It connects to a running Hermes gateway, keeps finished output in native terminal scrollback, and brings multi-session fleet management, full Hermes configuration, and multi-model workflows into one terminal interface. See the [v0.7.0 release notes](https://github.com/infiquetra/talaria/blob/v0.7.0/docs/release-notes/v0.7.0.md) and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.7.0/docs/migrating-from-0.6.5.md).
+
 ### Added
 
 - Release archives for macOS and Linux, verified checksums and provenance, and a Homebrew tap update workflow.
+- Sub-16 ms p95 keystroke echo under streaming load, zero idle frames and bytes, and resident memory under the 100 MB budget after a 2,000-cell session.
+- Native terminal scrollback for finished transcript cells, with one status line and on-demand overlays for pickers, fleet views, settings, and diff review that close cleanly.
+- Interactive coding sessions with streaming replies, tool-call cells, diffs, approval cards, permission and plan modes, queue and steer, file and image attachments, shell escape, slash commands, skills, checkpoints, rewind, Vim composer mode, and headless script modes.
+- Per-session, per-subagent, and per-workflow-step model selection across any provider configured on the Hermes gateway without altering the gateway's global default model.
+- Session attachment to the always-running Hermes session authority, including canonicalized evolved profile homes (`profiles/.gen/<name>/<generation>`), so closing and reopening Talaria resumes active turns and pending approval prompts without losing output.
+- Multi-session fleet view, Kanban board, Agent Client Protocol external-agent sessions, and a unified attention queue that surfaces pending approvals and questions across local and remote gateways.
+- Schema-driven Hermes configuration screens for providers, profiles, Model Context Protocol servers, skills, plugins, cron jobs, memory, and voice settings, plus a conversational configuration assistant.
+- Deterministic multi-agent workflow execution and natural-language workflow compilation with parallel and pipeline stages, schema-checked outputs, cost limits, and crash-safe resume.
+- Generated Hermes protocol bindings and automated contract-drift checks against both the pinned Hermes release and the latest upstream stable release.
+
+### Changed
+
+- Startup configuration reads `~/.talaria/config.toml` and prints explicit notices for retired 0.6.5 settings instead of silently ignoring them.
+- Theme selection follows the active Hermes skin (`/skin` and `/theme`), with local light, dark, and reduced-motion overrides in `~/.talaria/config.toml`.
+- Status-line commands run without a shell on a two-second timeout with a default-deny environment and accept plain text or version-2 JSON rows.
 
 ### Removed
 
-- Removed the Python client, its tests and process records from `main`. The last Python
-  commit is tagged `python-final`; the Rust workspace starts here.
+- Removed the Python client, its tests and process records from `main`. The last Python commit is tagged `python-final`; the Rust workspace starts here.
+- The old theme picker, marketplace, and Visual Studio Code importer: choose a Hermes skin instead.
+- The per-profile gateway map: use the Hermes gateway's served profiles.
+- Dashboard-token scraping: use the gateway's supported authentication.
+- User-facing replay pacing: use recorded fixtures for development.
+- The old repository-level configuration file: edit the user configuration instead.
+- The old acceptance-receipt scripts: use the current release checks.
 
 ## [0.6.5] — 2026-09-16
 
@@ -576,7 +600,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/infiquetra/talaria/releases/tag/v0.7.0
 [0.6.5]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.5.md
 [0.6.4]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.4.md
 [0.6.3]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.3.md
