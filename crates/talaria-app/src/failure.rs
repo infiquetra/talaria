@@ -114,7 +114,14 @@ impl From<UsageError> for LaunchFailure {
 
 impl From<DiscoveryError> for LaunchFailure {
     fn from(value: DiscoveryError) -> Self {
-        failure(value.to_string(), value.next_step(), FAILED)
+        match &value {
+            DiscoveryError::NoGateway => LaunchFailure {
+                what: scrub(&value.to_string()),
+                next_step: sentence(&scrub(value.next_step())),
+                exit_code: FAILED,
+            },
+            _ => failure(value.to_string(), value.next_step(), FAILED),
+        }
     }
 }
 
@@ -668,6 +675,12 @@ mod tests {
             unknown_profile.render(),
             "talaria: the gateway never discovered a profile named nosuchprofile\n\
              Next step: Create the profile, or check the name with `hermes profile list`. Talaria does not create profiles.\n"
+        );
+        let no_gateway = LaunchFailure::from(DiscoveryError::NoGateway);
+        assert_eq!(
+            no_gateway.render(),
+            "talaria: no Hermes gateway is running for this home\n\
+             Next step: Run `hermes gateway ensure --json` to start the Hermes gateway, then try again.\n"
         );
         assert_eq!(
             permission_denied().render(),

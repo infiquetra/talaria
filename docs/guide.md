@@ -71,7 +71,7 @@ These calls use the gateway and may incur model costs. The print command exits 0
 
 | What you see | Meaning | What to do |
 |---|---|---|
-| `talaria: no Hermes gateway is running for this home.` | No gateway was found. | Start the gateway using Hermes, then retry. |
+| `talaria: no Hermes gateway is running for this home` | No gateway was found. | Start the gateway using Hermes, then retry. |
 | talaria: the gateway never discovered a profile named <name> | The requested profile is not served. | Check its name and gateway configuration. |
 | `talaria: no earlier session found for this folder.` | Continue found no session for this folder. | Start a session or choose one with resume. |
 | `Talaria could not read ~/.talaria/config.toml (line <line>, column <column>): <message>. Using the default settings.` | The file has a syntax error; defaults are used. | Fix the line and restart. |
