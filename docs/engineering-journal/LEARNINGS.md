@@ -2,6 +2,18 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-10-31 — ACP completion needs observation at receipt and publication
+
+The current macOS ACP failure observed Working at the test's 300 ms checkpoint.
+Prompt acknowledgement only confirms sending; a mock sent record precedes flush
+and does not prove application receipt. Temporary fixture-only bounded traces
+now distinguish write/flush, receipt, finish, publication and checkpoint events.
+Per-process monotonic clocks are incomparable; incomplete traces prove no cause.
+No native execution or historical-cause qualification is claimed by this change.
+
+Rule: retain bounded boundary observations before fixture destruction, preserve
+the original assertions and deadlines, and distinguish observation from cause.
+
 ## 2026-10-30 — Cargo 1.98 release-profile debuginfo stripping corrupts `rquickjs-macro` on macOS
 
 **Evidence.** Running `cargo build --release --workspace` (`release-build` gate) and `cargo test --workspace --release` (`live-tests` gate) in `tools/release/gates.tsv` on macOS (`aarch64-apple-darwin`) failed in `rquickjs v0.14.0` with `E0463: can't find crate for rquickjs_macro`, and `dlopen` on `target/release/deps/librquickjs_macro-*.dylib` reported `mis-aligned LINKEDIT string pool`.
@@ -6801,6 +6813,16 @@ invalidate the existing workflow-bound cache identity without relaxing its input
 
 Rule: cancel only superseded validation for the same PR and workflow/ref; give independent runs
 distinct groups and preserve measured deadline headroom without assuming a cache hit.
+
+## 2026-10-31 — Create diagnostic fixture directories with private permissions
+
+The locked tempfile 3.27.0 Unix implementation defaults to directory mode 0777 subject to
+umask. A 022 umask therefore permits 0755, while the ACP fixture trace guard requires no
+group or other permissions. Requesting 0700 through the builder establishes that contract at
+creation for the diagnostic fixture. The failed hosted runs did not record their directory
+mode, so this source-level mismatch does not establish the cause of their missing trace.
+
+Rule: request private directory permissions at creation when diagnostics depend on them.
 
 ## 2026-10-30 — Release-candidate runner gates must isolate runner login names, Herdr tab environments, and narrow split-pane hints
 

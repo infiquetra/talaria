@@ -299,6 +299,7 @@ async fn failed_tool_then_recovery_stays_working_until_end() {
         });
         return;
     }
+    let _trace_guard = talaria_app::acp::trace_fixture_guard(false);
     let mut h = Harness::new(agent());
     let key = h
         .service
@@ -306,7 +307,23 @@ async fn failed_tool_then_recovery_stays_working_until_end() {
         .await
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
+    talaria_app::acp::trace_fixture_event(false, "prompt_returned");
     tokio::time::sleep(Duration::from_millis(300)).await;
+    let checkpoint = h.service.fleet_snapshot();
+    let state = checkpoint
+        .rows
+        .iter()
+        .find(|row| row.key.session_id == key.session_id)
+        .expect("row")
+        .state;
+    talaria_app::acp::trace_fixture_event(
+        false,
+        match state {
+            RowState::Working => "checkpoint_working",
+            RowState::Done => "checkpoint_done",
+            _ => "checkpoint_other",
+        },
+    );
     let snapshots = h.snapshots.lock().expect("snapshots").clone();
     assert!(
         !snapshots
