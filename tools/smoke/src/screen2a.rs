@@ -336,8 +336,9 @@ pub fn paste_labels(text: &str) -> Vec<PasteLabel> {
     else {
         return Vec::new();
     };
+    let joined = normalised(text).join(" ");
     label
-        .captures_iter(text)
+        .captures_iter(&joined)
         .filter_map(|found| {
             Some(PasteLabel {
                 number: found[1].parse().ok()?,
@@ -349,10 +350,10 @@ pub fn paste_labels(text: &str) -> Vec<PasteLabel> {
 
 /// Whether any line holds the dropped-file label for `name`.
 pub fn file_label(text: &str, name: &str) -> bool {
-    let Ok(label) = Regex::new(&format!(r"\[File #\d+: {}\]", regex::escape(name))) else {
+    let Ok(label) = Regex::new(&format!(r"\[File #\d+:\s*{}\]", regex::escape(name))) else {
         return false;
     };
-    text.lines().any(|line| label.is_match(line))
+    text.lines().any(|line| label.is_match(line)) || label.is_match(&normalised(text).join(""))
 }
 
 /// Whether the line starts something that ends a cell's output.
