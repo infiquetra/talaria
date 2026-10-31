@@ -18,6 +18,9 @@ if ! git -C "$scan_root" ls-files -- '*.md' '*.txt' > "$scan_tmp/files"; then
 fi
 scan_home=${HOME:-}
 scan_login=${USER:-${LOGNAME:-}}
+if [ "${GITHUB_ACTIONS:-}" = true ] && [ "$scan_login" = runner ]; then
+  scan_login=
+fi
 scan_host=$(hostname -s 2>/dev/null || :)
 for scan_item in home login host; do
   case $scan_item in

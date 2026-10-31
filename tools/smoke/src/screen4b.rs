@@ -313,10 +313,11 @@ pub fn idle_screen(text: &str) -> bool {
             })
             .rfind(|line| line.starts_with(COMPOSER))
             .is_some_and(|line| {
-                matches!(
-                    line.trim(),
-                    ">" | "> Type a message. Enter sends, Shift+Enter adds a line."
-                )
+                let trimmed = line.trim();
+                trimmed == ">"
+                    || (trimmed.starts_with("> Type a message.")
+                        && "> Type a message. Enter sends, Shift+Enter adds a line."
+                            .starts_with(trimmed))
             })
 }
 

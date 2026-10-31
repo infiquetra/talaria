@@ -6801,3 +6801,11 @@ invalidate the existing workflow-bound cache identity without relaxing its input
 
 Rule: cancel only superseded validation for the same PR and workflow/ref; give independent runs
 distinct groups and preserve measured deadline headroom without assuming a cache hit.
+
+## 2026-10-30 — Release-candidate runner gates must isolate runner login names, Herdr tab environments, and narrow split-pane hints
+
+**Evidence.** GitHub Actions `release-candidate.yml` (`rc-linux` run `41153876185`), `tools/release/doc-scan.sh`, `tools/release/gates.tsv`, and `tools/smoke/src/screen5.rs`.
+
+**Mechanism.** On Ubuntu GitHub Actions runners, `USER` and `LOGNAME` default to `runner` (six characters), which caused `doc-scan.sh` to match the ordinary English word `runner` across workflow documentation (`docs/workflows/runner.md`). Separately, when `smoke` creates a new Herdr tab (`herdr tab create`), the tab's shell inherits the Herdr daemon's environment rather than the caller's `HERMES_HOME`, so a gateway running in a dedicated test home requires `--talaria` to be wrapped in a non-`exec` launcher script that exports `HERMES_HOME` when unset. Finally, splitting a 101-column Herdr tab in `smoke-phase5`'s `resume` step produces a 50-column pane where the 55-character composer hint (`> Type a message. Enter sends, Shift+Enter adds a line.`) is truncated by the border to `> Type a message. Enter sends, Shift+Enter ad`.
+
+**Generalizable rule.** Treat the GitHub Actions default login `runner` as unset during literal login scans, pass caller-scoped `HERMES_HOME` into newly spawned multiplexer tabs via a child-process launcher script, and match width-truncated composer hints by prefix when panes are split.
