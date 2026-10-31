@@ -4,7 +4,7 @@ Small recorded frame fixtures will live here. P1-04 owns this folder; see the [r
 credential references, account labels, local paths, and other private values must be removed
 before committing it; replay and privacy tests verify the fixture.
 
-The inventory contains 31 JSONL fixtures. Journal fixtures use the workflow journal reader; the other fixtures use the gateway frame replay reader.
+The inventory contains 32 JSONL fixtures. Journal fixtures use the workflow journal reader; the other fixtures use the gateway frame replay reader.
 
 | Fixture | Reader |
 | --- | --- |
@@ -22,6 +22,7 @@ The inventory contains 31 JSONL fixtures. Journal fixtures use the workflow jour
 | [p5-02-idempotency.jsonl](p5-02-idempotency.jsonl) | Gateway frame replay |
 | [p5-04-model-options.jsonl](p5-04-model-options.jsonl) | Gateway frame replay |
 | [p5-05-progress.jsonl](p5-05-progress.jsonl) | Workflow journal |
+| [p5-09-ultracode-skill.jsonl](p5-09-ultracode-skill.jsonl) | Gateway frame replay |
 | [permissions-cd.jsonl](permissions-cd.jsonl) | Gateway frame replay |
 | [plain-answer.jsonl](plain-answer.jsonl) | Gateway frame replay |
 | [profiles.jsonl](profiles.jsonl) | Gateway frame replay |

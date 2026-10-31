@@ -172,6 +172,56 @@ fn only_allowed_profile_names() {
     );
 }
 
+/// The inventory the README keeps must name every recording in the directory, and no other.
+#[test]
+fn readme_inventory_matches_the_directory() {
+    let readme = std::fs::read_to_string(fixtures_dir().join("README.md"))
+        .unwrap_or_else(|_| panic!("fixtures/frames/README.md could not be read"));
+    let listed: Vec<String> = readme
+        .lines()
+        .filter_map(|line| {
+            let start = line.find("](")?;
+            let rest = &line[start + 2..];
+            let end = rest.find(')')?;
+            let target = &rest[..end];
+            target.strip_suffix(".jsonl").map(str::to_owned)
+        })
+        .collect();
+    let mut expected: Vec<String> = jsonl_files()
+        .iter()
+        .map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().trim_end_matches(".jsonl").to_owned())
+                .unwrap_or_default()
+        })
+        .collect();
+    expected.sort();
+    let mut sorted_listed = listed.clone();
+    sorted_listed.sort();
+    assert_eq!(
+        sorted_listed, expected,
+        "the README inventory does not match the files in fixtures/frames"
+    );
+    assert_eq!(
+        listed.len(),
+        expected.len(),
+        "the README lists a fixture more than once"
+    );
+
+    // The prose count must agree with the table it introduces.
+    let count = Regex::new(r"The inventory contains (\d+) JSONL fixtures")
+        .expect("inventory count pattern")
+        .captures(&readme)
+        .and_then(|caps| caps.get(1))
+        .and_then(|found| found.as_str().parse::<usize>().ok())
+        .expect("the README states no inventory count");
+    assert_eq!(
+        count,
+        expected.len(),
+        "the README inventory count does not match the files in fixtures/frames"
+    );
+}
+
 #[test]
 fn no_home_directory_shaped_paths() {
     let user_roots = Regex::new(r"^/(Users|home|root)(/|$)").expect("user directory root pattern");
