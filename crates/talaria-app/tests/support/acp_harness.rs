@@ -14,7 +14,17 @@ pub fn in_child(name: &str) -> bool {
 }
 
 pub fn run_case(name: &str, variant: &str, make_script: impl FnOnce(&Path) -> Vec<Value>) {
-    let tmp = tempfile::tempdir().expect("temporary test directory");
+    let builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    let builder = {
+        use std::os::unix::fs::PermissionsExt;
+        let mut builder = builder;
+        if name == "failed_tool_then_recovery_stays_working_until_end" {
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        builder
+    };
+    let tmp = builder.tempdir().expect("temporary test directory");
     let root = tmp.path();
     std::fs::create_dir(root.join("work")).expect("work directory");
     std::fs::create_dir(root.join("outside")).expect("outside directory");

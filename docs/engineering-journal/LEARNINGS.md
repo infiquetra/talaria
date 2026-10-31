@@ -6813,3 +6813,13 @@ invalidate the existing workflow-bound cache identity without relaxing its input
 
 Rule: cancel only superseded validation for the same PR and workflow/ref; give independent runs
 distinct groups and preserve measured deadline headroom without assuming a cache hit.
+
+## 2026-10-31 — Create diagnostic fixture directories with private permissions
+
+The locked tempfile 3.27.0 Unix implementation defaults to directory mode 0777 subject to
+umask. A 022 umask therefore permits 0755, while the ACP fixture trace guard requires no
+group or other permissions. Requesting 0700 through the builder establishes that contract at
+creation for the diagnostic fixture. The failed hosted runs did not record their directory
+mode, so this source-level mismatch does not establish the cause of their missing trace.
+
+Rule: request private directory permissions at creation when diagnostics depend on them.
