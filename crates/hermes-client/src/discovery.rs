@@ -189,9 +189,9 @@ impl Endpoint {
                 .as_str()
                 .filter(|s| !s.is_empty())
                 .ok_or(DiscoveryError::InvalidIdentity)?;
-            let name = if named_home(path) {
-                path.file_name()
-                    .and_then(|s| s.to_str())
+            let name = if let Some(profile_name) = named_profile_name(path) {
+                profile_name
+                    .to_str()
                     .ok_or(DiscoveryError::InvalidIdentity)?
                     .to_lowercase()
             } else {
@@ -920,10 +920,25 @@ pub(crate) fn ensure_command(program: &Path, canonical_home: &Path) -> tokio::pr
     command
 }
 
+fn named_profile_name(home: &Path) -> Option<&std::ffi::OsStr> {
+    let parent = home.parent()?;
+    if parent.file_name().is_some_and(|name| name == "profiles") {
+        return home.file_name().filter(|name| *name != ".gen");
+    }
+    let gen_dir = parent.parent()?;
+    if gen_dir.file_name().is_some_and(|name| name == ".gen")
+        && gen_dir
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "profiles")
+    {
+        return parent.file_name();
+    }
+    None
+}
+
 fn named_home(home: &Path) -> bool {
-    home.parent()
-        .and_then(Path::file_name)
-        .is_some_and(|name| name == "profiles")
+    named_profile_name(home).is_some()
 }
 
 fn valid_api_origin(origin: &str) -> bool {
@@ -1542,5 +1557,108 @@ mod tests {
             .collect();
         assert_eq!(args, ["gateway", "ensure", "--json"]);
         assert_eq!(view.get_program(), program);
+    }
+
+    #[test]
+    fn from_identify_recognizes_regular_and_evolved_profile_homes() {
+        let root = Path::new("/example-home/.hermes");
+        let regular = "/example-home/.hermes/profiles/mimir-engineer";
+        let evolved_a = "/example-home/.hermes/profiles/.gen/brokkr/000024";
+        let evolved_b = "/example-home/.hermes/profiles/.gen/sons-of-ivaldi/000003";
+
+        assert!(!named_home(root));
+        assert!(!named_home(Path::new(
+            "/example-home/.hermes/profiles/.gen"
+        )));
+        assert!(named_home(Path::new(regular)));
+        assert!(named_home(Path::new(evolved_a)));
+        assert!(named_home(Path::new(evolved_b)));
+        assert!(matches!(
+            absent(Path::new(evolved_a)),
+            DiscoveryError::NamedProfileHome
+        ));
+
+        let payload = json!({
+            "runtime_protocol": 1,
+            "state": "ready",
+            "capabilities": ["session-authority-v1"],
+            "authority_epoch": 1,
+            "instance_id": "inst-12345678",
+            "api_origin": "http://127.0.0.1:41234",
+            "supervisor": "launchd",
+            "served_profiles": [
+                {
+                    "profile_id": "/example-home/.hermes",
+                    "home": "/example-home/.hermes"
+                },
+                {
+                    "profile_id": regular,
+                    "home": regular
+                },
+                {
+                    "profile_id": evolved_a,
+                    "home": evolved_a
+                },
+                {
+                    "profile_id": evolved_b,
+                    "home": evolved_b
+                }
+            ]
+        });
+
+        let endpoint = Endpoint::from_identify(&payload, root).expect("identify succeeds");
+        let names: Vec<&str> = endpoint
+            .profiles()
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["default", "mimir-engineer", "brokkr", "sons-of-ivaldi"]
+        );
+        assert_eq!(
+            endpoint.resolve_profile("default").unwrap().as_ref(),
+            "/example-home/.hermes"
+        );
+        assert_eq!(
+            endpoint.resolve_profile("mimir-engineer").unwrap().as_ref(),
+            regular
+        );
+        assert_eq!(
+            endpoint.resolve_profile("brokkr").unwrap().as_ref(),
+            evolved_a
+        );
+        assert_eq!(
+            endpoint.resolve_profile("sons-of-ivaldi").unwrap().as_ref(),
+            evolved_b
+        );
+
+        let duplicate = json!({
+            "runtime_protocol": 1,
+            "state": "ready",
+            "capabilities": ["session-authority-v1"],
+            "authority_epoch": 1,
+            "instance_id": "inst-12345678",
+            "api_origin": "http://127.0.0.1:41234",
+            "supervisor": "launchd",
+            "served_profiles": [
+                {
+                    "profile_id": "/example-home/.hermes",
+                    "home": "/example-home/.hermes"
+                },
+                {
+                    "profile_id": "/example-home/.hermes/profiles/brokkr",
+                    "home": "/example-home/.hermes/profiles/brokkr"
+                },
+                {
+                    "profile_id": evolved_a,
+                    "home": evolved_a
+                }
+            ]
+        });
+        assert!(matches!(
+            Endpoint::from_identify(&duplicate, root),
+            Err(DiscoveryError::InvalidIdentity)
+        ));
     }
 }
