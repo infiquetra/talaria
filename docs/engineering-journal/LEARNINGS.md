@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-01 — Hermes evolved profile symlinks canonicalize into `profiles/.gen/<name>/<generation>`
+
+**Evidence.** Running `talaria` against a live Hermes gateway whose `profiles/` directory contains evolved profile symlinks (`profiles/<name> -> .gen/<name>/<generation>`) failed during discovery (`crates/hermes-client/src/discovery.rs`) with `DiscoveryError::InvalidIdentity` (`"the gateway reported an identity Talaria cannot use."`).
+
+**Mechanism.** Hermes `SessionAuthorities.served_profiles()` resolves each served profile home with `os.path.realpath(home)`, reporting `"home": "<root>/profiles/.gen/<name>/<generation>"` in the `identify` reply. Because `named_home(path)` in `crates/hermes-client/src/discovery.rs` checked only whether `path.parent()` was named `"profiles"`, it classified evolved profile generation paths as `"default"`, colliding with the root `"default"` entry and failing duplicate-name validation. Extracting the profile name from either `<root>/profiles/<name>` or `<root>/profiles/.gen/<name>/<generation>` (via `named_profile_name`) resolves evolved profiles under their public profile name while preserving duplicate detection and named-home `ensure` guards.
+
+**Generalizable rule.** When classifying or extracting profile names from canonicalized Hermes profile home paths, recognize both direct `<root>/profiles/<name>` directories and evolved `<root>/profiles/.gen/<name>/<generation>` targets.
+
 ## 2026-10-31 — ACP completion needs observation at receipt and publication
 
 The current macOS ACP failure observed Working at the test's 300 ms checkpoint.
