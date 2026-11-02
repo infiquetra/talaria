@@ -163,6 +163,40 @@ async fn skin_changed_redraws_once() {
 }
 
 #[tokio::test]
+async fn known_skin_is_saved_when_exact_completion_returns_nothing() {
+    let (mock, client, _inbound) = mock_gateway::MockGateway::start().await;
+    mock.set_skin_catalog(HashMap::from([
+        ("default".to_owned(), skin_data("default.json")),
+        ("ares".to_owned(), skin_data("ares.json")),
+    ]));
+    mock.set_skin_names(&["default", "ares", "mono"]);
+    let mut service = new_service();
+    let lines = service
+        .skin_command(&client, Some("ares"), None, "fixture")
+        .await;
+    assert_eq!(
+        lines,
+        ["Skin set to \"ares\" for profile fixture. \
+          Hermes windows with a session open on this profile change too."]
+    );
+    let sets = mock.requests("config.set");
+    assert_eq!(sets.len(), 1);
+    assert_eq!(
+        sets[0].params.get("value").and_then(Value::as_str),
+        Some("ares")
+    );
+    let listed = mock.requests("complete.slash").iter().any(|seen| {
+        seen.params.get("text").and_then(Value::as_str) == Some("/skin are")
+            && seen.index < sets[0].index
+    });
+    assert!(
+        listed,
+        "known skin ares was not checked against the shorter prefix; Hermes omits the exact match"
+    );
+    assert!(mock.violations().is_empty());
+}
+
+#[tokio::test]
 async fn skin_command_sets_then_describes() {
     let (mock, client, _inbound) = mock_gateway::MockGateway::start().await;
     mock.set_skin_catalog(HashMap::from([
