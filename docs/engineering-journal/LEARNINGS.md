@@ -2,6 +2,16 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-02 — Cache fixtures need canonical temporary paths
+
+Python's temporary-directory helper preserves a symlinked temporary-directory prefix. The tool
+cache deliberately rejects noncanonical workspace paths, so four policy tests failed with the
+default macOS temporary-directory alias. A regression using an explicit directory symlink failed
+at that same admission check. Resolving the fixture root makes all 22 checks pass without changing
+the production path guard or requiring an environment override.
+
+Rule: canonicalize temporary fixture roots before exercising policies that require physical paths.
+
 ## 2026-11-01 — Hermes evolved profile symlinks canonicalize into `profiles/.gen/<name>/<generation>`
 
 **Evidence.** Running `talaria` against a live Hermes gateway whose `profiles/` directory contains evolved profile symlinks (`profiles/<name> -> .gen/<name>/<generation>`) failed during discovery (`crates/hermes-client/src/discovery.rs`) with `DiscoveryError::InvalidIdentity` (`"the gateway reported an identity Talaria cannot use."`).
