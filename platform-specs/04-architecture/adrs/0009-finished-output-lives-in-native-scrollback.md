@@ -1,6 +1,6 @@
 # ADR-0009: Finished output lives in the terminal's native scrollback
 
-Status: `accepted`
+Status: `accepted; amended by ADR-0013`
 Date: 2026-10-22
 Accepted: 2026-10-23
 Deciders: operator
