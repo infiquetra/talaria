@@ -605,7 +605,8 @@ The default bindings are included in the `[keys]` table above.
 
 ## Voice
 
-Voice capture and speech playback run on the local Hermes gateway's machine. Enable
+Voice works with a local Hermes gateway only, for now. Capture and playback run on
+the gateway's machine, so remote gateway voice is refused. Enable
 voice for the current session with `/voice on`, then press `Alt+R` to start or stop
 push-to-talk. `/voice off` disables session capture, and `/voice status` reports the
 session mode, key binding, and gateway requirements. Configure the key with

@@ -4475,6 +4475,7 @@ fn run_selected(
     let home = hermes_client::default_home();
     let launch_id = new_launch_id();
     let mut setup = RunSetup {
+        remote_gateway: remote.is_some(),
         herdr: loaded
             .config
             .herdr

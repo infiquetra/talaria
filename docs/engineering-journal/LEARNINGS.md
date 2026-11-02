@@ -6839,3 +6839,10 @@ Rule: request private directory permissions at creation when diagnostics depend 
 **Mechanism.** On Ubuntu GitHub Actions runners, `USER` and `LOGNAME` default to `runner` (six characters), which caused `doc-scan.sh` to match the ordinary English word `runner` across workflow documentation (`docs/workflows/runner.md`). Separately, when `smoke` creates a new Herdr tab (`herdr tab create`), the tab's shell inherits the Herdr daemon's environment rather than the caller's `HERMES_HOME`, so a gateway running in a dedicated test home requires `--talaria` to be wrapped in a non-`exec` launcher script that exports `HERMES_HOME` when unset. Finally, in a 107-column Herdr tab (and 53-column or 26-column split panes), prompts, notices, and file labels longer than the inner box width wrap across rows or truncate with `…`.
 
 **Generalizable rule.** Treat the GitHub Actions default login `runner` as unset during literal login scans (without exporting empty `USER=""` or `LOGNAME=""` into workspace test processes where `"".contains("")` is true), pass caller-scoped `HERMES_HOME` into newly spawned multiplexer tabs via a child-process launcher script, and match width-truncated or hard-wrapped terminal rows across normalised line joins when panes are narrow or split.
+
+
+## 2026-11-02 — Remote voice includes automatic effects
+
+Hermes v0.22.4 `tui_gateway/methods_voice.py` owns one microphone and speaker per gateway process. Talaria also creates voice effects when a session opens and when a reply completes, independently of `/voice` and push-to-talk. The remote routing tests cover the explicit actions and repeated read-aloud.
+
+Rule: carry connection locality to the application and guard both user actions and background voice execution.
