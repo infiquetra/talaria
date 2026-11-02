@@ -73,6 +73,24 @@ pub struct QueuedRow {
 /// How long to wait for a fanout after a lost queue reply.
 pub const RECONCILE_WAIT: Duration = Duration::from_secs(5);
 
+const MINUTE_MS: u64 = 60_000;
+
+/// Whole minutes this Talaria process has observed a row waiting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WaitingAge {
+    /// Elapsed whole minutes.
+    pub minutes: u64,
+    /// The row was already waiting in its first snapshot.
+    pub minimum: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct WaitingSince {
+    // A snapshot is decoded before the application supplies its observation time.
+    first_seen_ms: Option<u64>,
+    minimum: bool,
+}
+
 /// One of this client's submits whose user cell is not drawn yet.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LedgerEntry {
@@ -148,9 +166,80 @@ pub struct QueueState {
     pub(crate) minted: u64,
     /// Steering rows whose steer the transcript already shows.
     pub(crate) steer_noted: BTreeSet<AdmissionId>,
+    waiting_since: BTreeMap<AdmissionId, WaitingSince>,
+    now_ms: u64,
 }
 
 impl QueueState {
+    /// Supply elapsed application time. Returns true only when a displayed age changes.
+    pub fn observe_time(&mut self, now_ms: u64) -> bool {
+        let mut changed = false;
+        for since in self.waiting_since.values_mut() {
+            let first = *since.first_seen_ms.get_or_insert(now_ms);
+            changed |= self.now_ms.saturating_sub(first) / MINUTE_MS
+                != now_ms.saturating_sub(first) / MINUTE_MS;
+        }
+        self.now_ms = now_ms;
+        changed
+    }
+
+    /// Keep observations for admissions still waiting in a rebuilt session snapshot.
+    pub fn carry_waiting_from(&mut self, old: &Self) {
+        for (id, since) in &mut self.waiting_since {
+            if let Some(previous) = old.waiting_since.get(id) {
+                *since = previous.clone();
+            }
+        }
+        self.now_ms = old.now_ms;
+    }
+
+    /// Next elapsed application millisecond at which a waiting age changes.
+    #[must_use]
+    pub fn next_waiting_tick(&self, now_ms: u64) -> Option<u64> {
+        self.waiting_since
+            .values()
+            .filter_map(|since| {
+                let first = since.first_seen_ms?;
+                let minutes = now_ms.saturating_sub(first) / MINUTE_MS;
+                first.checked_add(minutes.checked_add(1)?.checked_mul(MINUTE_MS)?)
+            })
+            .min()
+    }
+
+    fn sync_waiting(&mut self, snapshot: bool) {
+        self.waiting_since.retain(|id, _| {
+            self.rows.iter().any(|row| {
+                row.admission_id == *id && row.status == RowStatus::Queued && !row.steering
+            })
+        });
+        for row in &self.rows {
+            if row.status == RowStatus::Queued && !row.steering {
+                self.waiting_since
+                    .entry(row.admission_id.clone())
+                    .or_insert(WaitingSince {
+                        first_seen_ms: (!snapshot).then_some(self.now_ms),
+                        minimum: snapshot,
+                    });
+            }
+        }
+    }
+
+    fn waiting_ages(&self) -> BTreeMap<AdmissionId, WaitingAge> {
+        self.waiting_since
+            .iter()
+            .filter_map(|(id, since)| {
+                let minutes = self.now_ms.saturating_sub(since.first_seen_ms?) / MINUTE_MS;
+                (minutes > 0).then_some((
+                    id.clone(),
+                    WaitingAge {
+                        minutes,
+                        minimum: since.minimum,
+                    },
+                ))
+            })
+            .collect()
+    }
+
     /// Replace the rows from a snapshot and set both fences.
     ///
     /// Issue 232. Queue and steer.
@@ -163,6 +252,7 @@ impl QueueState {
         last_sequence: u64,
     ) {
         self.rows = sorted_rows(pending);
+        self.sync_waiting(true);
         self.generation_fence = Some((authority_epoch, execution_generation));
         self.seq_fence = Some((replay_epoch.to_string(), last_sequence));
         for row in &self.rows {
@@ -207,6 +297,7 @@ impl QueueState {
 
         let counted_before = self.counted_ids();
         let previous = std::mem::replace(&mut self.rows, sorted_rows(pending));
+        self.sync_waiting(false);
         for row in &self.rows {
             if row.status == RowStatus::Started && !row.steering {
                 if self.started_seen.insert(row.admission_id.clone()) {
@@ -276,6 +367,7 @@ impl QueueState {
             .as_ref()
             .and_then(|id| rows.iter().position(|row| row.admission_id == *id));
         QueueView {
+            waiting_ages: self.waiting_ages(),
             steering: self
                 .rows
                 .iter()
@@ -530,6 +622,8 @@ pub struct MovePlan {
 /// What the queue section draws.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueueView {
+    /// Observed waiting ages of at least one minute, keyed by admission id.
+    pub waiting_ages: BTreeMap<AdmissionId, WaitingAge>,
     /// Counted rows, in sequence order.
     pub rows: Vec<QueuedRow>,
     /// Steering rows. The newest is last.

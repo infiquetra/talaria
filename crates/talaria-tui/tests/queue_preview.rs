@@ -5,7 +5,9 @@
 
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use talaria_core::queue::{AdmissionId, Controls, QueueView, QueuedRow, RowStatus, SubmissionId};
+use talaria_core::queue::{
+    AdmissionId, Controls, QueueView, QueuedRow, RowStatus, SubmissionId, WaitingAge,
+};
 use talaria_tui::history::sanitize;
 use talaria_tui::queue::{composer_title, render_indicator, render_preview};
 use vt100::Callbacks;
@@ -37,6 +39,7 @@ fn row(id: &str, text: &str, seq: i64) -> QueuedRow {
 
 fn view(rows: Vec<QueuedRow>, selected: Option<usize>, paused: bool, running: bool) -> QueueView {
     QueueView {
+        waiting_ages: Default::default(),
         rows,
         steering: Vec::new(),
         selected,
@@ -262,5 +265,85 @@ fn live_region_height_bounded() {
             let row = u16::try_from(row_index).unwrap_or(u16::MAX);
             assert!(!parser.screen().row_wrapped(row), "width {width} wraps");
         }
+    }
+}
+
+#[test]
+fn waiting_age_wording_at_operator_screen_sizes() {
+    use ratatui::{Terminal, backend::TestBackend, widgets::Paragraph};
+
+    let mut shown = view(
+        vec![
+            row(
+                "measured",
+                "Background process completed. Review the output before continuing.",
+                1,
+            ),
+            row(
+                "minimum",
+                "Work already waiting when this session opened.",
+                2,
+            ),
+            row(
+                "hour",
+                "A longer queued request with details that give way to its waiting age.",
+                3,
+            ),
+        ],
+        None,
+        false,
+        true,
+    );
+    for (id, minutes, minimum) in [
+        ("measured", 27, false),
+        ("minimum", 27, true),
+        ("hour", 62, false),
+    ] {
+        shown
+            .waiting_ages
+            .insert(AdmissionId(id.into()), WaitingAge { minutes, minimum });
+    }
+    for (width, height, expected) in [
+        (
+            80,
+            24,
+            vec![
+                "Background process completed. Review the output befor… · waiting 27m  queued (3)",
+                "Work already waiting when this session opened. · waiting 27m+",
+                "A longer queued request with details that give way to its waiti… · waiting 1h02m",
+            ],
+        ),
+        (
+            120,
+            40,
+            vec![
+                "Background process completed. Review the output before continuing. · waiting 27m                              queued (3)",
+                "Work already waiting when this session opened. · waiting 27m+",
+                "A longer queued request with details that give way to its waiting age. · waiting 1h02m",
+            ],
+        ),
+    ] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    Paragraph::new(render_preview(&shown, width, false)),
+                    frame.area(),
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows: Vec<String> = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect();
+        println!("{width}x{height}:\n{}", rows[..3].join("\n"));
+        assert_eq!(rows[..3], expected);
+        assert!(rows[3..].iter().all(String::is_empty));
     }
 }

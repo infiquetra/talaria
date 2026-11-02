@@ -44,6 +44,39 @@ fn ids(state: &QueueState) -> Vec<String> {
 }
 
 #[test]
+fn waiting_clock_wakes_at_each_rows_minute_boundary_then_stops_when_empty() {
+    let mut state = QueueState::default();
+    state.observe_time(10_000);
+    state.apply_fanout(
+        &frame(vec![admission("a", 1, "queued", false)], 1, 1),
+        "e",
+        1,
+    );
+    assert_eq!(state.next_waiting_tick(10_000), Some(70_000));
+    assert!(!state.observe_time(69_999));
+    assert!(state.observe_time(70_000));
+    assert_eq!(state.next_waiting_tick(70_000), Some(130_000));
+    assert!(!state.observe_time(70_001));
+    state.apply_fanout(&frame(Vec::new(), 1, 1), "e", 2);
+    assert_eq!(state.next_waiting_tick(70_001), None);
+}
+
+#[test]
+fn snapshot_clock_starts_when_observed_and_repeated_frames_keep_the_count() {
+    let mut state = QueueState::default();
+    let rows = vec![admission("a", 1, "queued", false)];
+    state.apply_snapshot(&rows, 1, 1, "e", 1);
+    assert_eq!(state.next_waiting_tick(0), None);
+    state.observe_time(900_000);
+    assert_eq!(state.next_waiting_tick(900_000), Some(960_000));
+    state.observe_time(960_000);
+    let before = state.view(true).waiting_ages;
+    state.apply_fanout(&frame(rows, 1, 1), "e", 2);
+    assert_eq!(state.view(true).waiting_ages, before);
+    assert!(before.values().all(|age| age.minimum && age.minutes == 1));
+}
+
+#[test]
 fn rows_sorted_by_sequence() {
     let mut state = QueueState::default();
     let info = frame(

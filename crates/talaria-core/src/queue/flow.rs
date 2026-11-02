@@ -649,6 +649,7 @@ fn take_row(state: &mut SessionState, id: &AdmissionId) -> Option<String> {
         .find(|entry| entry.admission_id.as_ref() == Some(id))
         .map(|entry| entry.text.clone());
     state.queue.rows.retain(|row| row.admission_id != *id);
+    state.queue.sync_waiting(false);
     state.queue.known.remove(id);
     drop_entries_of(state, id);
     state.queue.fix_selection(&counted_before);
@@ -706,6 +707,7 @@ fn on_steer_queued_receipt(state: &mut SessionState, id: &AdmissionId) {
         row.status = RowStatus::Started;
         text = Some(row.text.clone());
     }
+    state.queue.sync_waiting(false);
     state.queue.steer_noted.insert(id.clone());
     // A steering row is no longer selectable.
     state.queue.fix_selection(&counted_before);

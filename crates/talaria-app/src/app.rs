@@ -2565,6 +2565,7 @@ fn rebuild_after_rewind(
     let mut old = state.opened.take();
     if let Some(old) = &mut old {
         carry_over(&mut old.state, &mut fresh.state);
+        fresh.state.queue.carry_waiting_from(&old.state.queue);
         fresh.carry_background_from(old);
     }
     let shown: &[Cell] = old.as_ref().map_or(&[], |old| {
@@ -3046,6 +3047,14 @@ fn connectors_input(
 /// Apply one message. No input or output: the effects say what to do.
 #[inline(never)]
 pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
+    let queue_now_ms = match &message {
+        AppMessage::Tick { now_ms } => *now_ms,
+        _ => state.now_ms,
+    };
+    let queue_age_changed = state
+        .opened
+        .as_mut()
+        .is_some_and(|opened| opened.state.queue.observe_time(queue_now_ms));
     let previous_capabilities_foreground = state
         .capabilities
         .as_ref()
@@ -4112,6 +4121,11 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
     }
 
+    redraw |= queue_age_changed;
+    if let Some(opened) = state.opened.as_mut() {
+        // Newly decoded snapshots first meet the application's clock here.
+        redraw |= opened.state.queue.observe_time(state.now_ms);
+    }
     // A prompt the queue handed back goes to an empty composer; the rest stay as notices.
     if let Some(text) = state
         .opened
@@ -8302,6 +8316,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         opened.cursor.last_sequence = opened.cursor.last_sequence.max(sequence);
                     }
                     opened.state.background_mut().observe_time(state.now_ms);
+                    opened.state.queue.observe_time(state.now_ms);
                     let produced =
                         apply_inbound(&mut opened.state, &session_id, inbound.frame, inbound.raw);
                     let background = produced
@@ -8536,6 +8551,7 @@ fn opened_session(
     if let Some(mut old) = state.opened.take() {
         if same_session {
             carry_over(&mut old.state, &mut opened.state);
+            opened.state.queue.carry_waiting_from(&old.state.queue);
             opened.carry_background_from(&old);
         } else {
             let key = RowKey {
@@ -8551,6 +8567,7 @@ fn opened_session(
     };
     if let Some(mut old) = state.retained_sessions.remove(&key) {
         carry_over(&mut old.state, &mut opened.state);
+        opened.state.queue.carry_waiting_from(&old.state.queue);
         opened.carry_background_from(&old);
     }
     state.opened_profile = Some(state.profile.clone());
@@ -8978,6 +8995,7 @@ fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> 
         return Vec::new();
     };
     carry_over(&mut old.state, &mut fresh.state);
+    fresh.state.queue.carry_waiting_from(&old.state.queue);
     fresh.carry_background_from(&old);
     let shown = state.committed_cells;
     let mut effects = Vec::new();
@@ -9077,7 +9095,9 @@ fn recover_retained(
         return Vec::new();
     };
     carry_over(&mut old.state, &mut fresh.state);
+    fresh.state.queue.carry_waiting_from(&old.state.queue);
     fresh.carry_background_from(&old);
+    fresh.state.queue.observe_time(now_ms);
     let mut effects = vec![AppEffect::Resync {
         session_id: fresh.session_id.clone(),
         cursor: fresh.cursor.clone(),
@@ -10567,6 +10587,19 @@ fn background_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
         return None;
     }
     let due = background::next_deadline(opened.state.background(), executor.now_ms())?;
+    executor.started.checked_add(Duration::from_millis(due))
+}
+
+fn queue_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
+    if state.session_gone {
+        return None;
+    }
+    let due = state
+        .opened
+        .as_ref()?
+        .state
+        .queue
+        .next_waiting_tick(executor.now_ms())?;
     executor.started.checked_add(Duration::from_millis(due))
 }
 
@@ -13688,6 +13721,7 @@ async fn run_inner<S: Screen>(
         let side_due = side_wake(&state, &executor);
         let background_due = background_wake(&state, &executor);
         let workflow_due = workflow_wake(&state, &executor);
+        let queue_due = queue_wake(&state, &executor);
         let deadline = earliest_of([
             screen.next_tick(),
             screen.next_wake(now),
@@ -13735,6 +13769,7 @@ async fn run_inner<S: Screen>(
         let deadline = earliest_of([deadline, cron_deadline]);
         let other_deadline = deadline;
         let deadline = earliest_of([deadline, workflow_due]);
+        let deadline = earliest_of([deadline, queue_due]);
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
@@ -13776,7 +13811,7 @@ async fn run_inner<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
-                if voice_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
+                if voice_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
                     redraw |= apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
