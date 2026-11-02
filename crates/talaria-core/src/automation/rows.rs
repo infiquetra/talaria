@@ -102,7 +102,16 @@ fn reason_part(reason: Option<&str>) -> Option<String> {
 }
 
 fn goal_row(goal: &GoalView, now_ms: u64) -> Option<AutomationRow> {
-    let mut parts = vec![format!("{}/{} turns", goal.turns_used, goal.max_turns)];
+    let turns = if goal.status == "active" && goal.wait.is_none() {
+        format!(
+            "turn {} of {}",
+            goal.turns_used.saturating_add(1).min(goal.max_turns),
+            goal.max_turns
+        )
+    } else {
+        format!("{} of {} turns used", goal.turns_used, goal.max_turns)
+    };
+    let mut parts = vec![turns];
     for (count, word) in [(goal.subgoals, "subgoal"), (goal.gates, "gate")] {
         if count > 0 {
             parts.push(plural(i64::try_from(count).unwrap_or(i64::MAX), word));
