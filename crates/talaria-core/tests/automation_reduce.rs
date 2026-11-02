@@ -487,6 +487,97 @@ fn goal_completion_without_verdict_or_reason_names_final_status() {
 }
 
 #[test]
+fn goal_completion_note_before_initial_read_does_not_duplicate() {
+    let mut state = AutomationState::default();
+    let effects = talaria_core::automation::update(&mut state, attached(SESSION));
+    let (token, _, _) = attach_tokens(&effects);
+    let effects = talaria_core::automation::update(&mut state, goal_completion_note());
+    assert_eq!(goal_completion_notices(&effects).len(), 1);
+    talaria_core::automation::update(
+        &mut state,
+        AutomationEvent::ControlRead {
+            token,
+            result: Ok(talaria_core::automation::ControlView::decode(&full_snapshot()).unwrap()),
+        },
+    );
+    let effects = talaria_core::automation::update(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r2")),
+    );
+    assert!(goal_completion_notices(&effects).is_empty());
+}
+
+#[test]
+fn goal_completion_tracking_preserves_other_goal_notes() {
+    let mut state = AutomationState::default();
+    talaria_core::automation::update(&mut state, attached(SESSION));
+    talaria_core::automation::update(&mut state, updated(SESSION, full_snapshot()));
+    for text in [
+        "↻ Continuing toward goal (3/20): still reviewing",
+        "⏸ Goal paused: waiting for input",
+    ] {
+        let effects = talaria_core::automation::update(
+            &mut state,
+            AutomationEvent::StatusNote {
+                session_id: SESSION.to_owned(),
+                kind: "goal".to_owned(),
+                text: text.to_owned(),
+            },
+        );
+        assert_eq!(goal_completion_notices(&effects), [text]);
+    }
+    talaria_core::automation::update(&mut state, goal_completion_note());
+    // A later active snapshot can precede the final snapshot without rearming the notice.
+    let mut active = full_snapshot();
+    active["revision"] = json!("r2");
+    talaria_core::automation::update(&mut state, updated(SESSION, active));
+    let effects = talaria_core::automation::update(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r3")),
+    );
+    assert!(goal_completion_notices(&effects).is_empty());
+}
+
+#[test]
+fn goal_completion_tracking_rearms_after_resume_clear_and_replacement() {
+    for change in ["resume", "clear", "replacement"] {
+        let mut state = AutomationState::default();
+        talaria_core::automation::update(&mut state, attached(SESSION));
+        talaria_core::automation::update(&mut state, updated(SESSION, full_snapshot()));
+        if change != "replacement" {
+            talaria_core::automation::update(
+                &mut state,
+                updated(SESSION, goal_completion_snapshot("done", "r2")),
+            );
+        } else {
+            talaria_core::automation::update(&mut state, goal_completion_note());
+        }
+        if change == "clear" {
+            let mut cleared = full_snapshot();
+            cleared["goal"] = Value::Null;
+            cleared["revision"] = json!("r3");
+            talaria_core::automation::update(&mut state, updated(SESSION, cleared));
+        }
+        let mut active = full_snapshot();
+        active["revision"] = json!("r4");
+        if change == "replacement" {
+            active["goal"]["created_at"] = json!(1790000100);
+        }
+        talaria_core::automation::update(&mut state, updated(SESSION, active.clone()));
+        active["goal"]["status"] = json!("done");
+        active["goal"]["last_verdict"] = json!("done");
+        active["goal"]["last_reason"] = json!("Second completion");
+        active["revision"] = json!("r5");
+        let effects = talaria_core::automation::update(&mut state, updated(SESSION, active));
+        assert_eq!(
+            goal_completion_notices(&effects),
+            ["✓ Goal done after 3 of 20 turns: Second completion"],
+            "{change} permits the next completion"
+        );
+    }
+}
+
+#[test]
 fn yolo_and_fast_read_back_unless_not_run() {
     for result in [
         CommandResult::Output,
