@@ -641,7 +641,7 @@ selected Hermes profile's speech services. Hermes's relay endpoints
 stores no speech-provider keys. Streaming routes are
 `/api/audio/transcribe-stream` and `/api/audio/speak-stream`, enabled only after
 their authenticated capability is established. Direct provider use through
-`GET /api/audio/voice-config` is a later latency improvement. That Hermes route
+`GET /api/audio/voice-config` is a later latency improvement. It would hand the profile's provider keys to Talaria, so it needs its own decision before it is built. That Hermes route
 is gated by `voice.client_direct` (true by default), and may return relay mode;
 it is not a new Talaria setting.
 

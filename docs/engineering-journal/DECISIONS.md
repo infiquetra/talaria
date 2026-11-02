@@ -29,7 +29,7 @@ the relay route first, with Talaria-owned local capture and playback helpers.
    `GET /api/audio/voice-config` exposes profile speech settings for direct
    provider use, gated by Hermes's `voice.client_direct` (default true), and
    reports relay mode per speech direction when direct use is unavailable. Direct mode is
-   a later latency improvement. Defer Talaria-side `[voice.stt]` and
+   a later latency improvement. Direct mode would put the profile's provider keys in Talaria's memory, which #279 deliberately avoided (P6-06 unit spec, section 1.9), so adopting it needs its own decision about where those keys may live. Defer Talaria-side `[voice.stt]` and
    `[voice.tts]` settings until Hermes cannot supply a needed provider.
    An external voice daemon may become an optional adapter once its job-scoped
    stop confirms output is quiet.
