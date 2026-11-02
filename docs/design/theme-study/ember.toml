@@ -1,0 +1,69 @@
+schema = 1
+name = "Ember"
+extends = "dark"
+follow_hermes_skin = false
+
+[palette]
+background = "#171411"
+surface = "#25201b"
+foreground = "#f5eadb"
+muted = "#c4b5a2"
+disabled = "#a19383"
+border = "#9c846b"
+primary = "#ffc078"
+accent = "#ffb86b"
+success = "#a8d08d"
+warning = "#ffd166"
+error = "#ff8b82"
+attention = "#ffd166"
+
+[roles.background]
+fg = "$palette.foreground"
+bg = "$palette.background"
+[roles.surface]
+fg = "$palette.foreground"
+bg = "$palette.surface"
+[roles.text]
+fg = "$palette.foreground"
+[roles.muted]
+fg = "$palette.muted"
+[roles.disabled]
+fg = "$palette.disabled"
+[roles.border]
+fg = "$palette.border"
+[roles.primary]
+fg = "$palette.primary"
+[roles.accent]
+fg = "$palette.accent"
+[roles.success]
+fg = "$palette.success"
+[roles.warning]
+fg = "$palette.warning"
+[roles.error]
+fg = "$palette.error"
+[roles.attention]
+fg = "$palette.attention"
+[roles.selection]
+fg = "$palette.background"
+bg = "$palette.accent"
+[roles.focus]
+fg = "$palette.background"
+bg = "$palette.accent"
+
+[chrome]
+border = "rounded"
+section_divider = "single"
+
+# All element defaults are specified by the catalogue; none need repetition.
+# These explicit examples have the same appearance as their inherited values.
+[elements."work.verdict.pending"]
+fg = "$palette.muted"
+bold = false
+dim = false
+[elements."transcript.heading.1"]
+fg = "$palette.primary"
+bold = true
+[elements."picker.row.selected"]
+fg = "$palette.background"
+bg = "$palette.accent"
+reverse = false
