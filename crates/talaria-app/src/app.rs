@@ -703,6 +703,8 @@ pub struct AppState {
     voice_connection_generation: u64,
     voice_submit_mode: Option<Option<String>>,
     voice_config_pending: bool,
+    /// The launch dialed a remote gateway. Voice must not ask that gateway to record or speak.
+    remote_gateway: bool,
     voice_submissions: BTreeMap<String, String>,
     pub workflow_views: crate::workflow_progress::ProgressViews,
     pub ultracode: crate::ultracode::UltracodeService,
@@ -991,6 +993,7 @@ impl AppState {
             voice_connection_generation: 0,
             voice_submit_mode: None,
             voice_config_pending: false,
+            remote_gateway: false,
             voice_submissions: BTreeMap::new(),
             configure: None,
             configure_service: None,
@@ -1360,6 +1363,7 @@ impl AppState {
         let mut copy = AppState::new(self.launch_id.clone());
         copy.service = self.service.clone();
         copy.voice = self.voice.clone();
+        copy.remote_gateway = self.remote_gateway;
         copy.connection_generation = self.connection_generation;
         copy.opened = self.opened.clone();
         copy.profile = self.profile.clone();
@@ -1374,6 +1378,14 @@ impl AppState {
         copy.connectors_open = self.connectors_open;
         copy.connectors_consent = self.connectors_consent.clone();
         copy
+    }
+
+    /// Record that this launch is attached through a remote gateway dial.
+    ///
+    /// Call this before a session opens. Gateway voice records and plays on
+    /// the gateway machine, so a remote attachment must refuse it.
+    pub fn attached_to_remote_gateway(&mut self) {
+        self.remote_gateway = true;
     }
 
     pub(crate) fn voice_detaching(&self, session_id: &str) {
