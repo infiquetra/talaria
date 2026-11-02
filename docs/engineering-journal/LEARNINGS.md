@@ -2,6 +2,19 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-01 — Persistent layout chrome crosses the native-scrollback boundary
+
+**Evidence.** The layout study for #473 found that `LiveView::layout` allocates
+full-width stacked sections and the terminal owns a bottom live viewport.
+Architecture decision record 0009 commits completed output once to native
+scrollback. A top-of-screen bar and a right panel beside that history cannot be
+implemented by inserting another live section. The offline `layout_study`
+example can prove cell placement, but does not exercise scrollback or mode changes.
+
+**Rule.** Obtain an explicit terminal-mode decision before implementing persistent
+chrome beside native history; keep offline screen evidence separate from terminal
+behavior evidence.
+
 ## 2026-11-01 — Hermes evolved profile symlinks canonicalize into `profiles/.gen/<name>/<generation>`
 
 **Evidence.** Running `talaria` against a live Hermes gateway whose `profiles/` directory contains evolved profile symlinks (`profiles/<name> -> .gen/<name>/<generation>`) failed during discovery (`crates/hermes-client/src/discovery.rs`) with `DiscoveryError::InvalidIdentity` (`"the gateway reported an identity Talaria cannot use."`).
