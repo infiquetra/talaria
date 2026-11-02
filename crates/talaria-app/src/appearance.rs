@@ -156,9 +156,9 @@ impl AppearanceService {
 
     /// Run `/skin` or `/skin <name>`, returning the notice lines.
     ///
-    /// With a name, `config.set` writes the profile's Hermes setting, then `runtime.describe`
-    /// shows what Hermes resolved it to. Without one, `config.get` reads the configured name and
-    /// `runtime.describe` the resolved skin. Nothing is retried.
+    /// With a name, check Hermes's completions before saving and describing the skin. If the
+    /// completion is inconclusive, preserve the previous setting for a possible rollback. Without
+    /// a name, read and describe the current setting and list the available skins.
     pub async fn skin_command(
         &mut self,
         client: &Client,
@@ -182,6 +182,42 @@ impl AppearanceService {
         if !valid_skin_name(name) {
             return vec![SKIN_USAGE.to_owned()];
         }
+        let exact = skin_names(client, &format!("/skin {name}"), session).await;
+        let validation = match exact {
+            Ok(names) if names.iter().any(|item| item == name) => Some(true),
+            Ok(_) => {
+                // Hermes omits an exact completion, so ask for the preceding prefix.
+                let prefix = &name[..name.len() - 1];
+                match skin_names(client, &format!("/skin {prefix}"), session).await {
+                    Ok(names) if names.iter().any(|item| item == name) => Some(true),
+                    Ok(names) if names.len() < 30 => Some(false),
+                    _ => None,
+                }
+            }
+            Err(_) => None,
+        };
+        if validation == Some(false) {
+            let mut lines = vec![format!("Hermes has no skin named \"{name}\".")];
+            match skin_names(client, "/skin ", session).await {
+                Ok(names) => lines.push(skins_line(&names, None)),
+                Err(_) => lines.push("The list of skins could not be fetched.".to_owned()),
+            }
+            return lines;
+        }
+        let previous = if validation.is_none() {
+            match configured_skin(client, session).await {
+                Ok(value) => Some(value),
+                Err(CallError::NotConnected) => return vec![NOT_REACHED.to_owned()],
+                Err(_) => {
+                    return vec![
+                        "Talaria could not read the previous skin, so nothing was changed."
+                            .to_owned(),
+                    ];
+                }
+            }
+        } else {
+            None
+        };
         let mut params = Map::new();
         if let Some(session) = session {
             params.insert("session_id".to_owned(), json!(session));
@@ -209,10 +245,11 @@ impl AppearanceService {
                 ];
             }
         };
-        let mut lines = vec![format!(
+        let success = format!(
             "Skin set to \"{value}\" for profile {profile}. Hermes windows with a session open on \
              this profile change too."
-        )];
+        );
+        let mut lines = Vec::new();
         let payload = match describe(client).await {
             Ok(payload) => payload,
             Err(error) => {
@@ -221,25 +258,48 @@ impl AppearanceService {
                     error if not_sent(error) => "not connected".to_owned(),
                     _ => "no answer".to_owned(),
                 };
-                lines.push(format!(
-                    "Talaria could not fetch the new skin ({why}). Run /skin to refresh."
-                ));
+                if validation == Some(true) {
+                    lines.push(success);
+                    lines.push(format!(
+                        "Talaria could not fetch the new skin ({why}). Run /skin to refresh."
+                    ));
+                } else {
+                    lines.push(format!("The skin may have been saved, but Talaria could not verify it ({why}). Run /skin to refresh."));
+                }
                 return lines;
             }
         };
+        let prior_state = self.state.clone();
         let change = self.update(AppearanceInput::Described {
             payload,
             requested: Some(value.clone()),
         });
+        let unknown = matches!(change, AppearanceChange::UnknownSkin { .. });
+        let unverified = validation.is_none() && self.skin().is_none();
         match (self.skin(), change) {
+            (_, AppearanceChange::UnknownSkin { requested, .. }) if previous.is_some() => {
+                let previous = previous.as_deref().unwrap_or("default");
+                let mut params = Map::new();
+                if let Some(session) = session {
+                    params.insert("session_id".to_owned(), json!(session));
+                }
+                params.insert("key".to_owned(), json!("skin"));
+                params.insert("value".to_owned(), json!(previous));
+                match call(client, "config.set", Value::Object(params)).await {
+                    Ok(result) if result.get("value").and_then(Value::as_str) == Some(previous) => {
+                        self.state = prior_state;
+                        lines.push(format!("The skin was not kept. Hermes has no skin named \"{requested}\", and the list of skins could not be fetched. The profile is still \"{previous}\"."));
+                    }
+                    _ => lines.push(format!("Hermes has no skin named \"{requested}\". Talaria could not confirm restoration of \"{previous}\"; run /skin to check.")),
+                }
+            }
             (
                 _,
                 AppearanceChange::UnknownSkin {
                     requested, using, ..
                 },
             ) => lines.push(format!(
-                "Hermes has no skin named \"{requested}\"; it is using \"{using}\". Run /skin \
-                 {using} to clear the setting."
+                "Hermes has no skin named \"{requested}\"; it is using \"{using}\"."
             )),
             (None, _) => lines.push(format!(
                 "Hermes sent no skin for \"{value}\", so Talaria uses its own colours."
@@ -248,6 +308,11 @@ impl AppearanceService {
                 lines.push(format!("Hermes calls this skin \"{}\".", skin.name));
             }
             _ => {}
+        }
+        if unverified {
+            lines.insert(0, "The skin may have been saved, but Talaria could not verify it. Run /skin to check.".to_owned());
+        } else if !unknown {
+            lines.insert(0, success);
         }
         lines
     }
@@ -303,7 +368,15 @@ impl AppearanceService {
             ),
             Some(skin) => format!("Skin: {} (Hermes profile {profile})", skin.name),
         };
-        vec![line]
+        let mut lines = vec![line];
+        match skin_names(client, "/skin ", session).await {
+            Ok(names) => lines.push(skins_line(
+                &names,
+                self.skin().map(|skin| skin.name.as_str()),
+            )),
+            Err(_) => lines.push("The list of skins could not be fetched.".to_owned()),
+        }
+        lines
     }
 
     /// Describe again after a reconnect, retrying once unless superseded.
@@ -361,6 +434,67 @@ async fn call(client: &Client, method: &str, params: Value) -> Result<Value, Cal
     client
         .call_raw(method, params, CallOptions { timeout: None })
         .await
+}
+
+async fn configured_skin(client: &Client, session: Option<&str>) -> Result<String, CallError> {
+    let mut params = Map::new();
+    params.insert("key".to_owned(), json!("skin"));
+    if let Some(session) = session {
+        params.insert("session_id".to_owned(), json!(session));
+    }
+    let result = call(client, "config.get", Value::Object(params)).await?;
+    result
+        .get("value")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or(CallError::Encode)
+}
+
+async fn skin_names(
+    client: &Client,
+    text: &str,
+    session: Option<&str>,
+) -> Result<Vec<String>, CallError> {
+    let mut params = Map::new();
+    params.insert("text".to_owned(), json!(text));
+    if let Some(session) = session {
+        params.insert("session_id".to_owned(), json!(session));
+    }
+    let result = call(client, "complete.slash", Value::Object(params)).await?;
+    let items = result
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or(CallError::Encode)?;
+    items
+        .iter()
+        .map(|item| {
+            item.get("text")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or(CallError::Encode)
+        })
+        .collect()
+}
+
+fn skins_line(names: &[String], current: Option<&str>) -> String {
+    let body = names
+        .iter()
+        .map(|name| {
+            if current == Some(name.as_str()) {
+                format!("{name} (current)")
+            } else {
+                name.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let partial = if names.len() == 30 {
+        " The list may be partial."
+    } else {
+        ""
+    };
+    format!("Skins Hermes has: {body}.{partial}")
 }
 
 /// `runtime.describe {}` and its `skin`, raw; `null` when the result has none.

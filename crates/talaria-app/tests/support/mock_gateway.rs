@@ -1090,7 +1090,11 @@ impl MockGateway {
     /// Skin payloads by configured name for `runtime.describe` and `skin.changed`.
     /// Empty by default, in which case describe carries no `skin` key.
     pub fn set_skin_catalog(&self, skins: HashMap<String, Value>) {
-        lock(&self.shared).sess.skin_catalog = skins;
+        let mut state = lock(&self.shared);
+        let mut names: Vec<String> = skins.keys().cloned().collect();
+        names.sort();
+        state.sess.skin_names = Some(names);
+        state.sess.skin_catalog = skins;
     }
 
     /// The name `config.get {key: "skin"}` reports.
@@ -3311,8 +3315,11 @@ fn plan_slash(
                 return;
             }
             if let Some(names) = &state.sess.skin_names {
+                let prefix = text.strip_prefix("/skin ").unwrap_or("").to_lowercase();
                 let items: Vec<Value> = names
                     .iter()
+                    .filter(|name| name.starts_with(&prefix) && name.as_str() != prefix)
+                    .take(30)
                     .map(|name| {
                         json!({
                             "text": name,

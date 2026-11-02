@@ -186,6 +186,14 @@ async fn skin_command_sets_then_describes() {
         ["Skin set to \"ares\" for profile fixture. \
           Hermes windows with a session open on this profile change too."]
     );
+    let completions = mock.requests("complete.slash");
+    assert_eq!(
+        completions
+            .iter()
+            .map(|seen| seen.params["text"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["/skin ares", "/skin are"]
+    );
     let sets = mock.requests("config.set");
     assert_eq!(sets.len(), 1);
     assert_eq!(
@@ -403,6 +411,26 @@ async fn skin_command_restores_the_previous_skin_when_the_list_cannot_be_fetched
         "the previous skin was not read before the change"
     );
     assert!(mock.violations().is_empty());
+}
+
+#[tokio::test]
+async fn skin_command_does_not_change_an_unrestorable_previous_value() {
+    let (mock, client, _inbound) = mock_gateway::MockGateway::start().await;
+    mock.set_skin_catalog(HashMap::from([(
+        "default".to_owned(),
+        skin_data("default.json"),
+    )]));
+    mock.set_config_skin_null();
+    mock.set_skin_list_unavailable(true);
+    let mut service = new_service();
+    let lines = service
+        .skin_command(&client, Some("nosuch"), None, "fixture")
+        .await;
+    assert_eq!(
+        lines,
+        ["Talaria could not read the previous skin, so nothing was changed."]
+    );
+    assert!(mock.requests("config.set").is_empty());
 }
 
 #[tokio::test]
