@@ -17,10 +17,11 @@ Read the architecture decision records before writing code. Their recorded statu
 | [0006](platform-specs/04-architecture/adrs/0006-block-rendering-is-bounded-by-work-and-height.md) | `superseded by ADR-0009` |
 | [0007](platform-specs/04-architecture/adrs/0007-attach-to-the-hermes-session-authority.md) | `accepted` |
 | [0008](platform-specs/04-architecture/adrs/0008-protocol-types-are-generated-from-the-hermes-contract.md) | `accepted` |
-| [0009](platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md) | `accepted` |
+| [0009](platform-specs/04-architecture/adrs/0009-finished-output-lives-in-native-scrollback.md) | `accepted; amended by ADR-0013` |
 | [0010](platform-specs/04-architecture/adrs/0010-rust-and-ratatui.md) | `accepted` |
 | [0011](platform-specs/04-architecture/adrs/0011-workflows-run-in-a-detachable-runner.md) | `accepted` |
 | [0012](platform-specs/04-architecture/adrs/0012-verification-is-proportionate.md) | `accepted` |
+| [0013](platform-specs/04-architecture/adrs/0013-optional-layout-uses-a-full-screen-workspace.md) | `accepted` |
 
 ## Rules for every unit
 
