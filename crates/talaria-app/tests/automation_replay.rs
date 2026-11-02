@@ -290,8 +290,9 @@ fn recorded_commands_reduce_to_expected_rows_and_cells() {
     assert!(first_update_decoded, "the recording holds a control update");
 
     // The rows the recording shows, in order.
-    let goal = "⊙ goal · 0/20 turns · reply with the word ok";
-    let goal_with_subgoal = "⊙ goal · 0/20 turns · 1 subgoal · reply with the word ok";
+    let goal = "⊙ goal · turn 1 of 20 · reply with the word ok";
+    let goal_with_subgoal =
+        "⏸ goal paused · user-paused · 0 of 20 turns used · 1 subgoal · reply with the word ok";
     let loop_row = "↻ loop · every 45m · 0 runs · deferred to the goal · talaria fixture check";
     let heartbeat_row = "♥ heartbeat · every 1h · 0 sent · next in 1h00m · talaria fixture ping";
     let yolo_row = "⚠ YOLO · commands run without approval in this session";
