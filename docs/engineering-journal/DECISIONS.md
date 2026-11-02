@@ -2,6 +2,157 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-01
+
+### Voice architecture: workstation devices and Hermes speech services
+
+**Context.** The operator locked issue #425 in comment 6568007530, adopting
+the findings in comment 6502018614 with amendments. The lock was checked against
+Talaria commit `3f6ea58e`, after #274, #275, #279 and #423 merged. The Hermes
+pin remains v0.22.4 (`4d04303818b61bf3aa09278af48356315515965b`). The gateway
+voice fallback from #279 uses the gateway's devices and cannot cancel speech
+already playing. Client voice must also serve remote connections, Herdr panes
+and Agent Client Protocol (ACP) sessions. This records planned v0.8.0 work,
+not functionality shipped in v0.7.0.
+
+**Decision.** Reuse Hermes's own voice stack for the selected profile. Build
+the relay route first, with Talaria-owned local capture and playback helpers.
+
+1. **Device boundary and speech service.** Talaria starts and owns small local
+   helper programs for microphone capture and speaker playback. Add no Rust
+   audio crates; retain the `no_audio_deps` guard. Speech recognition and
+   synthesis use Hermes's profile settings through `POST /api/audio/transcribe`
+   and `POST /api/audio/speak`. Hermes also offers WebSocket streaming at
+   `/api/audio/transcribe-stream` and `/api/audio/speak-stream`. Relay use
+   supports every provider Hermes supplies, including OpenAI and xAI for both
+   recognition and synthesis, without Talaria storing provider keys.
+   `GET /api/audio/voice-config` exposes profile speech settings for direct
+   provider use, gated by Hermes's `voice.client_direct` (default true), and
+   reports relay mode per speech direction when direct use is unavailable. Direct mode is
+   a later latency improvement. Direct mode would put the profile's provider keys in Talaria's memory, which #279 deliberately avoided (P6-06 unit spec, section 1.9), so adopting it needs its own decision about where those keys may live. Defer Talaria-side `[voice.stt]` and
+   `[voice.tts]` settings until Hermes cannot supply a needed provider.
+   An external voice daemon may become an optional adapter once its job-scoped
+   stop confirms output is quiet.
+2. **Cancellation.** Cut local output without a network call on the stop path;
+   invalidate pending synthesis and queued audio before opening the microphone.
+   Call the per-operation counter an **audio epoch**, distinct from the existing
+   connection generation. Only an output-quiet acknowledgement permits new
+   capture. The under-100 ms cutoff is a release check measured on a real macOS
+   device during the release session, not a claim established by this record.
+3. **Spoken rendering.** Preserve `strip`; add deterministic `digest`,
+   `/voice mode full|summary|alerts` and `/voice stop`, without another model
+   call. Full maps to `strip` plus reply speech; summary to `digest` plus reply
+   speech; alerts suppresses reply speech and retains the renderer. The
+   unknown-option notice in `crates/talaria-core/tests/voice_commands.rs` may
+   change to include `stop` and `mode`; #427's stop condition is amended.
+4. **Remote connections.** Microphone and speaker always stay on the workstation.
+   Sending audio to a remote gateway relay, or fetching its client voice
+   settings, requires opt-in. Refuse legacy `voice.record` / `voice.tts` on
+   remote connections. That refusal is not yet in the merged v0.7.0 code;
+   #476 owns the v0.7.1 correction.
+5. **Fleet routing.** Bind the target when recording starts: selected queue item,
+   else selected fleet row, else foreground session. Put the transcript in that
+   row's reply editor; Enter dispatches through the row's own backend. Reuse
+   the merged `FleetBackend`, `RowKey`, `NeedSlot::External`, `ExternalCommand`
+   and `HerdrClient` interfaces. Permission answers always require Enter.
+   A changed or stale target never redirects a transcript to the new focus.
+6. **Blocked Herdr panes.** After Enter, a transcript may answer a blocked pane
+   through the merged `HerdrClient::answer` path, exactly like a typed fleet
+   reply. Accept the Herdr pane id as the routing identity used by typed replies.
+7. **Spoken alerts.** Add a `speech` channel beside `bell` and `desktop` under
+   `[notifications]`. Reuse `FleetAttention`'s once-per-need alerting and quiet
+   windows. Do not add a separate `[voice] announce_needs_you` switch.
+8. **Transcripts and compatibility.** Client transcripts are drafts by default.
+   This contract names the client setting `client_submit_mode` to distinguish
+   it from the gateway's `voice.submit_mode`, whose behaviour stays unchanged.
+   Give the client path its own state machine; retain #279's gateway behaviour
+   and share the status display. A new `[voice] backend` key defaults to
+   `hermes-gateway` when absent; older binaries ignore it with a notice.
+   Correct #426, #427 and #428 to the merged interface names before they start.
+
+**Rationale and rejected alternatives.** The five design choices balance latency,
+dependency footprint, failure modes and cross-session use as follows.
+
+| Question | Selected approach and trade-off | Rejected or deferred alternative |
+|---|---|---|
+| Audio boundary | Managed local helpers plus Hermes relay keep Rust dependencies small and profile settings authoritative; executable/device preflight and an extra relay hop remain necessary. | Rust audio crates add native build dependencies and break the guard. Talaria provider adapters duplicate Hermes settings and credentials. A daemon awaits a proven stop contract. |
+| Barge-in | Local cutoff covers buffered audio even while synthesis is pending; helpers must prove quiet output within the budget. | Server-only cancellation depends on network latency and cannot flush local buffers. |
+| Speech | Deterministic strip/digest adds no model latency or dependency; digest must limit itself to observed content and reported outcomes. | Automatic model summaries add latency and can invent claims; raw Markdown stripping alone loses structured results. |
+| Remote | Workstation devices plus an explicitly selected relay reuse profile credentials; route authentication and availability still need verification. | Remote legacy methods operate the wrong devices. Direct provider mode is deferred until relay behaviour is established. |
+| Fleet | Capture-time binding and row-owned draft/Enter delivery reuse every backend's existing reply path; stale targets require a not-sent result. | Resolving focus after transcription risks misdelivery. A second voice fleet registry duplicates authority. |
+
+**Trait contract for the implementation issues.** These are planned interfaces,
+not existing compiled APIs. `talaria-core` owns pure client phases, target tokens,
+audio epochs, rendering and policy. `talaria-app::voice` owns device and service
+input/output; workers return correlated outcomes through the application event
+channel. Audio frames use bounded worker streams. The client state sequence is
+`Idle -> Recording -> Transcribing -> Submitting -> Speaking -> Idle`, with
+interruption invalidating the audio epoch; a draft returns to idle without
+submission. The legacy gateway state machine remains separate.
+
+The adopted signatures below use owned value types. `Job` carries the immutable
+fleet target, capture/utterance id and audio epoch. `AudioStream` carries signed
+16-bit pulse-code modulation (PCM) frames and the actual sample rate/channels.
+`VoiceFuture<T>` is a boxed, pinned, `Send + 'static` future returning
+`Result<T, VoiceError>`. `CancellationToken` is the worker cancellation token.
+
+```rust,ignore
+pub trait VoiceBackend: Send + Sync {
+    fn capabilities(&self) -> VoiceCapabilities;
+    fn dispatch(&self, job: Job, command: BackendCommand,
+        cancel: CancellationToken) -> VoiceFuture<()>;
+    fn close(&self) -> VoiceFuture<()>;
+}
+pub trait AudioTransport: Send + Sync {
+    fn probe(&self) -> VoiceFuture<AudioCapabilities>;
+    fn start_capture(&self, job: Job, spec: CaptureSpec,
+        cancel: CancellationToken) -> VoiceFuture<CaptureSession>;
+    fn start_playback(&self, job: Job, audio: AudioStream,
+        cancel: CancellationToken) -> VoiceFuture<Box<dyn PlaybackHandle>>;
+    fn close(&self) -> VoiceFuture<()>;
+}
+pub trait CaptureHandle: Send + Sync {
+    fn finish(&self) -> VoiceFuture<()>;
+    fn cancel(&self) -> VoiceFuture<()>;
+}
+pub trait SttProvider: Send + Sync {
+    fn transcribe(&self, job: Job, audio: AudioStream,
+        cancel: CancellationToken) -> VoiceFuture<Transcript>;
+}
+pub trait TtsProvider: Send + Sync {
+    fn synthesize(&self, job: Job, text: String,
+        cancel: CancellationToken) -> VoiceFuture<AudioStream>;
+}
+pub trait PlaybackHandle: Send + Sync {
+    fn stop(&self) -> VoiceFuture<Stopped>;
+    fn finished(&self) -> VoiceFuture<PlaybackOutcome>;
+}
+```
+
+`SttProvider` (speech-to-text) and `TtsProvider` (text-to-speech) initially adapt
+Hermes's relay, not independent Talaria provider configuration. Dispatch starts
+cancellable work and returns acceptance; it does not await a conversation.
+`CaptureSession` contains an audio stream and capture handle; finish closes it
+cleanly, while cancel discards it and reaps the helper. `PlaybackHandle::stop`
+signals cutoff immediately, independently of synthesis, and resolves `Stopped`
+only after output is quiet. Cancelling before a handle exists also invalidates
+the pending operation. Late results cannot recreate an interrupted operation.
+The gateway fallback never fabricates local instant-stop capability.
+
+The [planned configuration contract](../configuration.md#planned-client-voice-for-v080)
+contains the new keys and distinguishes them from v0.7.0 settings.
+
+**Outside this decision.** Full-duplex speech-to-speech, where one model listens
+and talks while handing requests to the agent, needs a separate exploration.
+Hermes already offers `voice.voice_chat_mode: gpt-live` for OpenAI live voice;
+its default is `chained`. NVIDIA PersonaPlex and xAI's Grok Voice Agent are
+candidates for that separate design.
+
+**Revisit when.** Hermes cannot supply a needed provider; relay latency warrants
+direct mode; helper latency or packaging warrants native audio dependencies; or
+an optional daemon proves job-scoped output-quiet cancellation. Those changes
+need a new decision. Implementation and real-device release checks remain open.
+
 ## 2026-10-29
 
 ### Distribute verified archives and review tap changes

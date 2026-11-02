@@ -626,6 +626,99 @@ speak_max_chars = 1500
 whole numbers from 100 to 10000; longer replies are shortened before being sent for
 speech. Invalid values produce a configuration notice and use the defaults.
 
+### Planned client voice for v0.8.0
+
+**Planned for v0.8.0 (not yet active in v0.7.0).** This is the configuration
+contract locked on issue #425 in comment 6568007530, recorded in the
+[voice architecture decision](engineering-journal/DECISIONS.md#voice-architecture-workstation-devices-and-hermes-speech-services).
+Every new key below is planned; none exists in v0.7.0. Keep using the two
+existing `[voice]` keys above for that release. Its loader ignores unknown keys
+with a notice; adding the planned settings does not enable client voice.
+
+The client path will own local microphone/player helper programs and reuse the
+selected Hermes profile's speech services. Hermes's relay endpoints
+`POST /api/audio/transcribe` and `POST /api/audio/speak` come first; Talaria
+stores no speech-provider keys. Streaming routes are
+`/api/audio/transcribe-stream` and `/api/audio/speak-stream`, enabled only after
+their authenticated capability is established. Direct provider use through
+`GET /api/audio/voice-config` is a later latency improvement. It would hand the profile's provider keys to Talaria, so it needs its own decision before it is built. That Hermes route
+is gated by `voice.client_direct` (true by default), and may return relay mode;
+it is not a new Talaria setting.
+
+The following tables specify the planned schema. `client_submit_mode` is the
+distinct client-side name required by the lock. The empty `notifications.speech`
+list carries forward opt-in announcements without the rejected separate switch.
+
+| New `[voice]` key | Planned value / contract | Availability |
+|---|---|---|
+| `backend` | `hermes-gateway` when omitted; opt-in `client-bridge` composes local helpers with the Hermes relay. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `transport` | `subprocess` for the first client implementation. An optional bridge awaits a job-scoped output-quiet stop contract. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `client_submit_mode` | `draft` by default; `direct` may submit an eligible ordinary prompt. Fleet transcripts enter the bound row's reply editor; permissions always need Enter. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `render_mode` | `strip` by default; `digest` gives deterministic spoken results without another model call. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `speech_scope` | `replies` by default; `alerts` suppresses completed-reply speech. | Planned for v0.8.0 (not yet active in v0.7.0) |
+
+`read_aloud = false` and `speak_max_chars = 1500` remain existing settings, with
+the existing 100–10000 character validation. The client submit setting never
+overrides the Hermes gateway's `voice.submit_mode`; the gateway fallback keeps
+its current submission and read-aloud behaviour.
+
+| New `[voice.audio]` key | Planned value / contract | Availability |
+|---|---|---|
+| `capture_program` | Declared capture executable, for example `ffmpeg`; no automatic installation. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `capture_preset` | Platform-specific argument preset, for example `macos-avfoundation`. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `capture_device` | Device selection, for example `default`. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `playback_program` | Declared local player, for example `ffplay`. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `playback_preset` | Player format preset, for example `pcm-stdin`. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `sample_rate` | Requested capture rate, for example 16000; actual audio rate is negotiated. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `channels` | Requested capture channels, for example 1. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `max_recording_seconds` | 120 by default; capture remains bounded. | Planned for v0.8.0 (not yet active in v0.7.0) |
+
+These helper names and presets are examples, not verified platform support or
+installation defaults. Presets build argument vectors without a shell. Missing
+executables, presets or devices disable voice with a diagnostic; text remains
+usable. No Rust audio crates are added.
+
+| New `[voice.hermes]` key | Planned value / contract | Availability |
+|---|---|---|
+| `origin` | `attached-gateway`; use the existing gateway connection and authentication context. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `profile` | `selected`; explicitly scope audio requests to the selected Hermes profile. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `audio_mode` | `batch` baseline; `stream-preferred` requires authenticated streaming capability. | Planned for v0.8.0 (not yet active in v0.7.0) |
+
+Capture and playback always stay on the workstation. Using a remote gateway's
+relay or fetching its client voice settings requires explicit opt-in to that
+audio route; merely attaching with `--remote` does not grant it. Reuse existing
+remote authentication and profile selection; do not silently change the backend
+or send audio elsewhere after a failure. The legacy `voice.record` / `voice.tts`
+path must be refused remotely, but that guard is a separate v0.7.1 correction
+(#476), not behaviour already present in v0.7.0.
+
+| New `[notifications]` key | Planned value / contract | Availability |
+|---|---|---|
+| `speech` | List of notification kinds, empty by default; opt in with `needs_you`, `done` and/or `failed`, using the existing channel filters and quiet windows. | Planned for v0.8.0 (not yet active in v0.7.0) |
+
+Spoken alerts also require read-aloud to be enabled. Reuse `FleetAttention`'s
+once-per-need identity and quiet windows instead of introducing a second alert
+queue. There is no `[voice] announce_needs_you` switch. Defer `[voice.stt]` and
+`[voice.tts]`, including provider, endpoint, model, voice and credential settings,
+until a needed provider cannot be supplied by Hermes. Optional external daemon
+configuration and direct-provider mode are deferred as well.
+
+The client commands `/voice stop` and `/voice mode full|summary|alerts` are also
+**Planned for v0.8.0 (not yet active in v0.7.0)**. Full selects `strip` and
+`replies`; summary selects `digest` and `replies`; alerts keeps the renderer and
+selects `alerts`. They change per-target runtime preferences, not the persisted
+file or Hermes configuration. Neither a mode command nor read-aloud alone opts
+in to spoken notifications. Stopping cuts local output and discards pending
+synthesis before any new recording; the under-100 ms cutoff still requires a
+real macOS device measurement during release verification.
+
+At recording start, bind the selected queue item, else the selected fleet row,
+else the foreground session. A fleet transcript becomes a draft in that row's
+reply editor and Enter uses its own Hermes, Herdr or Agent Client Protocol (ACP)
+backend. Permission answers always require Enter. Blocked Herdr replies use the
+same `HerdrClient::answer` path as typed replies. A focus change or stale target
+cannot redirect the transcript into another row.
+
 ## Coming from 0.6
 
 The `profiles` and `connections` tables, 0.6 settings this release does not know, the `[status]`
