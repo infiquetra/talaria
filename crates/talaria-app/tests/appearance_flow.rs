@@ -62,6 +62,25 @@ fn new_service() -> AppearanceService {
     AppearanceService::new(dark_terminal(), dark_polarity())
 }
 
+fn skins_line(names: &[&str], current: Option<&str>, partial: bool) -> String {
+    let body = names
+        .iter()
+        .map(|name| {
+            if current == Some(*name) {
+                format!("{name} (current)")
+            } else {
+                (*name).to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if partial {
+        format!("Skins Hermes has: {body}. The list may be partial.")
+    } else {
+        format!("Skins Hermes has: {body}.")
+    }
+}
+
 fn skin_data(name: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../talaria-tui/tests/data/skins")
@@ -150,6 +169,7 @@ async fn skin_command_sets_then_describes() {
         ("default".to_owned(), skin_data("default.json")),
         ("ares".to_owned(), skin_data("ares.json")),
     ]));
+    mock.set_skin_names(&["ares", "default"]);
     let mut service = new_service();
 
     // With a session the set carries its id, then a describe follows.
@@ -204,11 +224,18 @@ async fn skin_command_sets_then_describes() {
         "no session, no session id"
     );
 
-    // A bare /skin reads the configured name, then describes.
+    // A bare /skin reads the configured name, then describes, and lists Hermes's skins.
     let lines = service
         .skin_command(&client, None, Some(mock_gateway::SESSION_ID), "fixture")
         .await;
-    assert_eq!(lines, ["Skin: default (Hermes profile fixture)"]);
+    assert_eq!(
+        lines,
+        [
+            "Skin: default (Hermes profile fixture)".to_owned(),
+            skins_line(&["ares", "default"], Some("default"), false),
+        ],
+        "bare /skin did not list the available skins"
+    );
     let gets = mock.requests("config.get");
     assert_eq!(gets.len(), 1);
     assert_eq!(
@@ -238,24 +265,28 @@ async fn skin_command_names_and_unknown_skin() {
         ("nord".to_owned(), nord),
         ("broken".to_owned(), Value::Object(Default::default())),
     ]));
+    mock.set_skin_names(&["broken", "default", "nord"]);
     let mut service = new_service();
     service.update(AppearanceInput::Handshake {
         ready: None,
         describe: Some(skin_data("default.json")),
     });
 
-    // Hermes falls back to default for an unknown name: the unknown line, once.
+    // An unknown name is not saved. The reply names the skins Hermes has.
     let lines = service
         .skin_command(&client, Some("nosuch"), None, "fixture")
         .await;
     assert_eq!(
         lines,
         [
-            "Skin set to \"nosuch\" for profile fixture. \
-             Hermes windows with a session open on this profile change too.",
-            "Hermes has no skin named \"nosuch\"; it is using \"default\". \
-             Run /skin default to clear the setting.",
-        ]
+            "Hermes has no skin named \"nosuch\".".to_owned(),
+            skins_line(&["broken", "default", "nord"], None, false),
+        ],
+        "an unknown skin was saved"
+    );
+    assert!(
+        mock.requests("config.set").is_empty(),
+        "an unknown skin sent config.set"
     );
     assert_eq!(
         service.skin().map(|skin| skin.name.as_str()),
@@ -309,7 +340,14 @@ async fn skin_command_names_and_unknown_skin() {
     mock.set_config_skin("default");
     mock.set_config_skin_null();
     let lines = service.skin_command(&client, None, None, "fixture").await;
-    assert_eq!(lines, ["Skin: default (Hermes profile fixture)"]);
+    assert_eq!(
+        lines,
+        [
+            "Skin: default (Hermes profile fixture)".to_owned(),
+            skins_line(&["broken", "default", "nord"], Some("default"), false),
+        ],
+        "bare /skin did not list the available skins"
+    );
 
     // The profile asks for an unknown name while Hermes uses default.
     mock.set_config_skin("nosuch");
@@ -319,8 +357,77 @@ async fn skin_command_names_and_unknown_skin() {
         [
             "Skin: default. The profile asks for \"nosuch\", which Hermes could not find, \
           so it uses default."
-        ]
+                .to_owned(),
+            skins_line(&["broken", "default", "nord"], Some("default"), false),
+        ],
+        "bare /skin did not list the available skins"
     );
+    assert!(mock.violations().is_empty());
+}
+
+#[tokio::test]
+async fn skin_command_restores_the_previous_skin_when_the_list_cannot_be_fetched() {
+    let (mock, client, _inbound) = mock_gateway::MockGateway::start().await;
+    mock.set_skin_catalog(HashMap::from([
+        ("default".to_owned(), skin_data("default.json")),
+        ("ares".to_owned(), skin_data("ares.json")),
+    ]));
+    mock.set_config_skin("default");
+    mock.set_skin_list_unavailable(true);
+    let mut service = new_service();
+    service.update(AppearanceInput::Handshake {
+        ready: None,
+        describe: Some(skin_data("default.json")),
+    });
+    let lines = service
+        .skin_command(&client, Some("nosuch"), None, "fixture")
+        .await;
+    assert_eq!(
+        lines,
+        [
+            "The skin was not kept. Hermes has no skin named \"nosuch\", and the list of skins \
+          could not be fetched. The profile is still \"default\"."
+        ],
+        "an unknown skin was kept when the list could not be fetched"
+    );
+    let sets = mock.requests("config.set");
+    let saved = sets
+        .last()
+        .and_then(|seen| seen.params.get("value"))
+        .and_then(Value::as_str);
+    assert_eq!(saved, Some("default"), "the previous skin was not restored");
+    assert!(
+        mock.requests("config.get")
+            .iter()
+            .any(|seen| { seen.params.get("key").and_then(Value::as_str) == Some("skin") }),
+        "the previous skin was not read before the change"
+    );
+    assert!(mock.violations().is_empty());
+}
+
+#[tokio::test]
+async fn skin_command_reports_a_thirty_name_list_as_partial() {
+    let names: Vec<String> = std::iter::once("default".to_owned())
+        .chain((1..30).map(|index| format!("skin-{index:02}")))
+        .collect();
+    let shown: Vec<&str> = names.iter().map(String::as_str).collect();
+    let (mock, client, _inbound) = mock_gateway::MockGateway::start().await;
+    mock.set_skin_catalog(HashMap::from([(
+        "default".to_owned(),
+        skin_data("default.json"),
+    )]));
+    mock.set_skin_names(&shown);
+    let mut service = new_service();
+    let lines = service.skin_command(&client, None, None, "fixture").await;
+    assert_eq!(
+        lines,
+        vec![
+            "Skin: default (Hermes profile fixture)".to_owned(),
+            skins_line(&shown, Some("default"), true),
+        ],
+        "a 30-name skin list was not described as possibly partial"
+    );
+    assert_eq!(names.len(), 30);
     assert!(mock.violations().is_empty());
 }
 
