@@ -217,7 +217,7 @@ fn section_rows_at_80_columns() {
         .join("\n");
     for detail in [
         "commands run without approval",
-        "3/20 turns",
+        "turn 4 of 20",
         "every 45m",
         "every 1h",
     ] {
@@ -261,6 +261,60 @@ fn section_is_empty_when_nothing_stands() {
         theme: &theme,
     };
     assert_eq!(section.height(80), 0);
+}
+
+#[test]
+fn goal_turn_wording_stays_on_one_row_at_80_columns() {
+    for (status, used, wait, expected) in [
+        ("active", 0, Value::Null, "turn 1 of 20"),
+        ("active", 1, Value::Null, "turn 2 of 20"),
+        ("active", 19, Value::Null, "turn 20 of 20"),
+        ("active", 20, Value::Null, "turn 20 of 20"),
+        ("paused", 1, Value::Null, "1 of 20 turns used"),
+        (
+            "active",
+            1,
+            json!({"type": "pid", "target": 4242}),
+            "1 of 20 turns used",
+        ),
+    ] {
+        let mut raw = full_snapshot();
+        raw["loop"] = Value::Null;
+        raw["heartbeat"] = Value::Null;
+        raw["goal"]["status"] = json!(status);
+        raw["goal"]["turns_used"] = json!(used);
+        raw["goal"]["wait_barrier"] = wait;
+        let mut state = AutomationState::default();
+        update(
+            &mut state,
+            AutomationEvent::Attached {
+                session_id: SESSION.to_owned(),
+            },
+        );
+        update(
+            &mut state,
+            AutomationEvent::ControlUpdated {
+                session_id: SESSION.to_owned(),
+                raw,
+            },
+        );
+        let theme = explicit_theme();
+        let section = AutomationSection {
+            state: &state,
+            now_ms: NOW,
+            theme: &theme,
+        };
+        assert_eq!(section.height(80), 1);
+        let area = Rect::new(0, 0, 80, 2);
+        let mut buffer = Buffer::empty(area);
+        section.render(area, &mut buffer);
+        let text: String = (0..80).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(text.contains(expected), "{status}, used {used}: {text}");
+        assert!(
+            (0..80).all(|x| buffer[(x, 1)].symbol() == " "),
+            "no extra row"
+        );
+    }
 }
 
 #[test]

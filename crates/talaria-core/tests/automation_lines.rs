@@ -171,7 +171,7 @@ fn goal_rows() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].tone, Tone::Accent);
     assert_eq!(rows[0].label, "⊙ goal");
-    assert_eq!(rows[0].detail, "3/20 turns · 2 subgoals · 1 gate");
+    assert_eq!(rows[0].detail, "turn 4 of 20 · 2 subgoals · 1 gate");
     assert_eq!(rows[0].tail, "Write the release notes");
 
     let mut singular = goal("active");
@@ -180,7 +180,7 @@ fn goal_rows() {
     let state = state_with_view(snapshot(singular, Value::Null, Value::Null));
     assert_eq!(
         automation_rows(&state, NOW)[0].detail,
-        "3/20 turns · 1 subgoal"
+        "turn 4 of 20 · 1 subgoal"
     );
 
     let mut paused = goal("paused");
@@ -191,7 +191,7 @@ fn goal_rows() {
     assert_eq!(rows[0].label, "⏸ goal paused");
     assert_eq!(
         rows[0].detail,
-        "turn budget exhausted (20/20) · 3/20 turns · 2 subgoals · 1 gate"
+        "turn budget exhausted (20/20) · 3 of 20 turns used · 2 subgoals · 1 gate"
     );
 
     let mut parked = goal("active");
@@ -202,7 +202,7 @@ fn goal_rows() {
     assert_eq!(rows[0].label, "⏳ goal parked");
     assert_eq!(
         rows[0].detail,
-        "12m left · coffee · 3/20 turns · 2 subgoals · 1 gate"
+        "12m left · coffee · 3 of 20 turns used · 2 subgoals · 1 gate"
     );
 
     let mut past = goal("active");
@@ -231,6 +231,62 @@ fn goal_rows() {
         automation_rows(&state, NOW).is_empty(),
         "a done goal shows no row"
     );
+}
+
+#[test]
+fn active_goal_rows_name_the_running_turn() {
+    for (used, running) in [(0, 1), (1, 2), (19, 20)] {
+        let mut raw = goal("active");
+        raw["turns_used"] = json!(used);
+        let state = state_with_view(snapshot(raw, Value::Null, Value::Null));
+        let rows = automation_rows(&state, NOW);
+        assert!(
+            rows[0].detail.starts_with(&format!("turn {running} of 20")),
+            "{used} judged turns must name running turn {running}: {:?}",
+            rows[0].detail
+        );
+    }
+}
+
+#[test]
+fn active_goal_running_turn_never_exceeds_the_budget() {
+    for used in [20, 21, i64::MAX] {
+        let mut raw = goal("active");
+        raw["turns_used"] = json!(used);
+        let state = state_with_view(snapshot(raw, Value::Null, Value::Null));
+        let rows = automation_rows(&state, NOW);
+        assert!(
+            rows[0].detail.starts_with("turn 20 of 20"),
+            "running turn is capped even at {used} judged turns: {:?}",
+            rows[0].detail
+        );
+    }
+}
+
+#[test]
+fn paused_and_all_parked_goal_rows_name_turns_used() {
+    for (status, barrier) in [
+        ("paused", Value::Null),
+        ("active", json!({"type": "until", "until_at": 1790000720})),
+        ("active", json!({"type": "until", "until_at": 1789999000})),
+        (
+            "active",
+            json!({"type": "session", "target": "other-session"}),
+        ),
+        ("active", json!({"type": "pid", "target": 4242})),
+    ] {
+        let mut raw = goal(status);
+        raw["turns_used"] = json!(1);
+        raw["wait_barrier"] = barrier.clone();
+        let state = state_with_view(snapshot(raw, Value::Null, Value::Null));
+        let rows = automation_rows(&state, NOW);
+        assert!(
+            rows[0].detail.contains("1 of 20 turns used"),
+            "{status} / {barrier}: {:?}",
+            rows[0].detail
+        );
+        assert!(!rows[0].detail.contains("turn 2 of 20"));
+    }
 }
 
 #[test]
