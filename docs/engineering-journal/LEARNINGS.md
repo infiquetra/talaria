@@ -2,6 +2,18 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-02 — A goal's final snapshot can arrive without a verdict note
+
+**Evidence.** At pinned Hermes commit `4d04303818b61bf3aa09278af48356315515965b`,
+`gateway/session_viewer_automation.py:140-170` publishes the evaluated control snapshot without
+a status note. `gateway/run_goals.py:227-279` can defer a note until response delivery, whereas
+`tui_gateway/prompt_turn.py:375` emits it immediately. The completion tests in
+`crates/talaria-core/tests/automation_reduce.rs` failed for missing snapshot notices before
+the reducer retained `last_verdict` and `last_reason`.
+
+**Rule.** Use the observed goal lifecycle to report completion from its snapshot, deduplicate
+only Hermes's completion note, and reset the marker when a goal is cleared, replaced or resumed.
+
 ## 2026-11-01 — Hermes evolved profile symlinks canonicalize into `profiles/.gen/<name>/<generation>`
 
 **Evidence.** Running `talaria` against a live Hermes gateway whose `profiles/` directory contains evolved profile symlinks (`profiles/<name> -> .gen/<name>/<generation>`) failed during discovery (`crates/hermes-client/src/discovery.rs`) with `DiscoveryError::InvalidIdentity` (`"the gateway reported an identity Talaria cannot use."`).

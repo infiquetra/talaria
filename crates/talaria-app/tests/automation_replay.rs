@@ -21,6 +21,91 @@ fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames/hermes-commands.jsonl")
 }
 
+#[test]
+fn recorded_shared_gateway_goal_completion_writes_one_notice() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/frames/goal-completion-shared.jsonl");
+    let source = ReplaySource::open(&path).expect("the shared-gateway completion recording opens");
+    let recorded = steps(&source);
+    let session = recorded
+        .iter()
+        .find_map(|step| match step {
+            Step::Event { kind, params }
+                if kind == "session.control.update"
+                    && params["payload"]["control"]["goal"]["status"] == "active" =>
+            {
+                params["session_id"].as_str()
+            }
+            _ => None,
+        })
+        .expect("the recording shows an active goal");
+    let mut state = AutomationState::default();
+    update(
+        &mut state,
+        AutomationEvent::Attached {
+            session_id: session.to_owned(),
+        },
+    );
+    let mut notices = Vec::new();
+    let mut final_goal = None;
+    for step in &recorded {
+        let Step::Event { kind, params } = step else {
+            continue;
+        };
+        if params["session_id"] != session {
+            continue;
+        }
+        let payload = &params["payload"];
+        let event = match kind.as_str() {
+            "session.control.update" => {
+                let control = &payload["control"];
+                if control["goal"]["status"] == "done" {
+                    final_goal = Some(control["goal"].clone());
+                }
+                AutomationEvent::ControlUpdated {
+                    session_id: session.to_owned(),
+                    raw: control.clone(),
+                }
+            }
+            "status.update" => AutomationEvent::StatusNote {
+                session_id: session.to_owned(),
+                kind: payload["kind"].as_str().unwrap_or_default().to_owned(),
+                text: payload["text"].as_str().unwrap_or_default().to_owned(),
+            },
+            _ => continue,
+        };
+        notices.extend(
+            update(&mut state, event)
+                .into_iter()
+                .filter_map(|effect| match effect {
+                    AutomationEffect::Notice { text } => Some(text),
+                    _ => None,
+                }),
+        );
+    }
+    let goal = final_goal.expect("the shared gateway publishes a done goal");
+    let reason = goal["last_reason"]
+        .as_str()
+        .expect("the judge gives a reason");
+    assert!(!reason.trim().is_empty());
+    let completions: Vec<_> = notices
+        .iter()
+        .filter(|text| text.starts_with("✓ Goal "))
+        .collect();
+    assert_eq!(completions.len(), 1, "one lasting completion notice");
+    assert!(completions[0].contains(reason));
+    assert_eq!(
+        completions[0].as_str(),
+        "✓ Goal done after 1 of 20 turns: The agent replied with exactly the single word “ready” and stopped."
+    );
+    assert!(
+        rows(&state, 0)
+            .iter()
+            .all(|row| !row.label.contains("goal")),
+        "the finished goal has no standing row"
+    );
+}
+
 /// One step of the recorded run.
 enum Step {
     /// A request and its reply.

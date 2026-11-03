@@ -194,6 +194,12 @@ pub struct GoalView {
     pub title: String,
     /// `active`, `paused` or `done`.
     pub status: String,
+    /// When this goal was created, in epoch milliseconds, if supplied.
+    pub created_ms: Option<u64>,
+    /// The judge's most recent verdict.
+    pub last_verdict: Option<String>,
+    /// The judge's explanation of that verdict.
+    pub last_reason: Option<String>,
     /// Turns spent.
     pub turns_used: i64,
     /// The turn budget.
@@ -287,6 +293,16 @@ pub struct AutomationState {
     fast: ModeValue<FastMode>,
     pending_mode: [Option<PendingMode>; 2],
     plan_noted: BTreeSet<String>,
+    goal_progress: Option<GoalProgress>,
+    pending_goal_completion: bool,
+}
+
+#[derive(Clone, Debug)]
+struct GoalProgress {
+    created_ms: Option<u64>,
+    title: String,
+    shown: bool,
+    completion_noted: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -336,13 +352,56 @@ impl AutomationState {
     }
 
     /// Show `view`, keeping the held one when its revision is equal.
-    fn show(&mut self, view: ControlView) {
+    fn show(&mut self, view: ControlView) -> Option<String> {
         let same = self
             .view()
             .is_some_and(|held| held.revision == view.revision);
-        if !same {
-            self.control = ControlStatus::Ready(view);
+        if same {
+            return None;
         }
+        let notice = self.observe_goal(view.goal.as_ref());
+        self.control = ControlStatus::Ready(view);
+        notice
+    }
+
+    fn observe_goal(&mut self, goal: Option<&GoalView>) -> Option<String> {
+        let Some(goal) = goal else {
+            self.goal_progress = None;
+            self.pending_goal_completion = false;
+            return None;
+        };
+        let visible = shown(&goal.status);
+        let continuing = self.goal_progress.as_ref().is_some_and(|held| {
+            held.created_ms == goal.created_ms
+                && held.title == goal.title
+                && (held.shown || !visible)
+        });
+        if !continuing {
+            self.goal_progress = Some(GoalProgress {
+                created_ms: goal.created_ms,
+                title: goal.title.clone(),
+                shown: visible,
+                completion_noted: !visible || self.pending_goal_completion,
+            });
+            self.pending_goal_completion = false;
+            return None;
+        }
+        let held = self.goal_progress.as_mut()?;
+        let completed = held.shown && !visible && !held.completion_noted;
+        held.shown = visible;
+        if completed {
+            held.completion_noted = true;
+            Some(goal_completion_text(goal))
+        } else {
+            None
+        }
+    }
+
+    fn goal_completion_noted(&mut self) -> bool {
+        let Some(held) = self.goal_progress.as_mut() else {
+            return std::mem::replace(&mut self.pending_goal_completion, true);
+        };
+        std::mem::replace(&mut held.completion_noted, true)
     }
 
     fn pending(&self, key: ModeKey) -> Option<PendingMode> {
@@ -361,6 +420,31 @@ fn mode_index(key: ModeKey) -> usize {
 
 fn shown(status: &str) -> bool {
     status == "active" || status == "paused"
+}
+
+fn goal_completion_text(goal: &GoalView) -> String {
+    let mut text = if goal.status == "done" {
+        "✓ ".to_owned()
+    } else {
+        String::new()
+    };
+    text.push_str(&format!(
+        "Goal {} after {} of {} turns",
+        goal.status, goal.turns_used, goal.max_turns
+    ));
+    if let Some(verdict) = goal.last_verdict.as_deref().map(str::trim)
+        && !verdict.is_empty()
+        && verdict != goal.status
+    {
+        text.push_str(&format!(" (verdict: {verdict})"));
+    }
+    if let Some(reason) = goal.last_reason.as_deref().map(str::trim)
+        && !reason.is_empty()
+    {
+        text.push_str(": ");
+        text.push_str(reason);
+    }
+    text
 }
 
 impl ControlView {
@@ -404,9 +488,10 @@ fn epoch_ms(seconds: f64, field: &str) -> Result<u64, DecodeError> {
 }
 
 fn goal_view(goal: GoalSnapshot) -> Result<GoalView, DecodeError> {
-    if let Some(created_at) = goal.created_at {
-        epoch_ms(created_at, "goal.created_at")?;
-    }
+    let created_ms = goal
+        .created_at
+        .map(|created_at| epoch_ms(created_at, "goal.created_at"))
+        .transpose()?;
     let wait = match goal.wait_barrier {
         None => None,
         Some(GoalSnapshotWaitBarrier::Until(until)) => Some(WaitView::Until {
@@ -430,6 +515,9 @@ fn goal_view(goal: GoalSnapshot) -> Result<GoalView, DecodeError> {
     Ok(GoalView {
         title: goal.title,
         status: goal.status,
+        created_ms,
+        last_verdict: goal.last_verdict,
+        last_reason: goal.last_reason,
         turns_used: goal.turns_used,
         max_turns: goal.max_turns,
         subgoals: goal.subgoals.len(),
@@ -480,6 +568,8 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
         AutomationEvent::Attached { session_id } => {
             state.session_id = Some(session_id.clone());
             state.control = ControlStatus::Reading;
+            state.goal_progress = None;
+            state.pending_goal_completion = false;
             state.yolo = ModeValue::NotRead;
             state.fast = ModeValue::NotRead;
             let control = state.new_token();
@@ -507,6 +597,8 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
             let visible = !rows(state, 0).is_empty();
             state.session_id = None;
             state.control = ControlStatus::NotRead;
+            state.goal_progress = None;
+            state.pending_goal_completion = false;
             state.pending_control = None;
             state.yolo = ModeValue::NotRead;
             state.fast = ModeValue::NotRead;
@@ -523,7 +615,11 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
             state.pending_control = None;
             let visible = state.control_rows_visible();
             match result {
-                Ok(view) => state.show(view),
+                Ok(view) => {
+                    if let Some(text) = state.show(view) {
+                        effects.push(AutomationEffect::Notice { text });
+                    }
+                }
                 Err(ReadFailure::MethodMissing) => {
                     state.control = ControlStatus::Unavailable("unknown_method".to_owned());
                 }
@@ -549,7 +645,9 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
                 return effects;
             };
             state.pending_control = None;
-            state.show(view);
+            if let Some(text) = state.show(view) {
+                effects.push(AutomationEffect::Notice { text });
+            }
         }
         AutomationEvent::StatusNote {
             session_id,
@@ -559,6 +657,14 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
             let foreground = state.session_id.as_deref() == Some(session_id.as_str());
             let automation = matches!(kind.as_str(), "goal" | "loop" | "heartbeat");
             if foreground && automation && !text.trim().is_empty() {
+                // Hermes v0.22.4 goals.py emits this prefix only for a done verdict.
+                // Other goal notes include continuing, waiting and paused states.
+                if kind == "goal"
+                    && text.starts_with("✓ Goal achieved:")
+                    && state.goal_completion_noted()
+                {
+                    return effects;
+                }
                 effects.push(AutomationEffect::Notice { text });
             }
             return effects;
