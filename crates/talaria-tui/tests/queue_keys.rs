@@ -48,6 +48,7 @@ fn row(id: &str, text: &str, seq: i64) -> QueuedRow {
 
 fn counted(selected: Option<usize>) -> QueueView {
     QueueView {
+        waiting_ages: Default::default(),
         rows: vec![
             row("adm-a", "Reply with the word alpha in capital letters.", 1),
             row("adm-b", "Reply with the word bravo in capital letters.", 2),

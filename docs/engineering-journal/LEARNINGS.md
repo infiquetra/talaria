@@ -20,6 +20,20 @@ the reducer retained `last_verdict` and `last_reason`.
 **Rule.** Use the observed goal lifecycle to report completion from its snapshot, deduplicate
 only Hermes's completion note, and reset the marker when a goal is cleared, replaced or resumed.
 
+## 2026-11-02 — Queue observation time must survive snapshot replacement
+
+**Evidence.** The application regression tests in `crates/talaria-app/tests/queue_waiting_age.rs`
+rebuild a session after twenty minutes with an unchanged admission id and a newly discovered row.
+The original row must retain its measured age; only the new row has a minimum age.
+
+**Mechanism.** Reconnect, session reopening, rewind and retained-session recovery construct fresh
+queue state from snapshots. Carry first-seen observations by admission id into those snapshots,
+and start newly discovered rows when the application supplies its monotonic time, rather than
+when the snapshot is decoded. Schedule the next observed minute boundary even without network input.
+
+**Rule.** Preserve client observation times across snapshot rebuilds, and mark snapshot discoveries
+as minimum ages rather than claiming a server admission time.
+
 ## 2026-11-01 — Hermes evolved profile symlinks canonicalize into `profiles/.gen/<name>/<generation>`
 
 **Evidence.** Running `talaria` against a live Hermes gateway whose `profiles/` directory contains evolved profile symlinks (`profiles/<name> -> .gen/<name>/<generation>`) failed during discovery (`crates/hermes-client/src/discovery.rs`) with `DiscoveryError::InvalidIdentity` (`"the gateway reported an identity Talaria cannot use."`).

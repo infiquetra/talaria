@@ -4,7 +4,7 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use talaria_core::queue::{QueueView, QueuedRow, RowStatus};
+use talaria_core::queue::{QueueView, QueuedRow, RowStatus, WaitingAge};
 
 use crate::history::sanitize;
 use crate::tool_cell::{cut_to, spaces, text_width};
@@ -123,7 +123,13 @@ fn push_preview(lines: &mut Vec<Line<'static>>, view: &QueueView, columns: usize
     };
     for row in &rows[..shown] {
         let room = room_for(lines, columns, reserve);
-        lines.push(row_line("", row, dim(), room));
+        lines.push(row_line(
+            "",
+            row,
+            view.waiting_ages.get(&row.admission_id),
+            dim(),
+            room,
+        ));
     }
     if shown < rows.len() {
         let rest = rows.len() - shown;
@@ -148,10 +154,22 @@ fn push_selection(
         if index == selected {
             let style = Style::default().add_modifier(Modifier::BOLD);
             let room = room_for(lines, columns, reserve);
-            lines.push(row_line("› ", row, style, room));
+            lines.push(row_line(
+                "› ",
+                row,
+                view.waiting_ages.get(&row.admission_id),
+                style,
+                room,
+            ));
         } else {
             let room = room_for(lines, columns, reserve);
-            lines.push(row_line("  ", row, dim(), room));
+            lines.push(row_line(
+                "  ",
+                row,
+                view.waiting_ages.get(&row.admission_id),
+                dim(),
+                room,
+            ));
         }
     }
     let above = start;
@@ -181,16 +199,34 @@ fn room_for(lines: &[Line<'static>], columns: usize, reserve: usize) -> usize {
     }
 }
 
-fn row_line(prefix: &str, row: &QueuedRow, style: Style, columns: usize) -> Line<'static> {
+fn row_line(
+    prefix: &str,
+    row: &QueuedRow,
+    age: Option<&WaitingAge>,
+    style: Style,
+    columns: usize,
+) -> Line<'static> {
     if row.status == RowStatus::Unknown {
         return body_line(prefix, LOST_ROW, "", style, columns);
     }
     let extra = row.text.lines().count().saturating_sub(1);
-    let suffix = if extra > 0 {
+    let mut suffix = if extra > 0 {
         format!(" (+{extra} lines)")
     } else {
         String::new()
     };
+    if row.status == RowStatus::Queued
+        && !row.steering
+        && let Some(age) = age
+    {
+        let elapsed = if age.minutes < 60 {
+            format!("{}m", age.minutes)
+        } else {
+            format!("{}h{:02}m", age.minutes / 60, age.minutes % 60)
+        };
+        let minimum = if age.minimum { "+" } else { "" };
+        suffix.push_str(&format!(" · waiting {elapsed}{minimum}"));
+    }
     body_line(prefix, &first_line(row), &suffix, style, columns)
 }
 
