@@ -48,7 +48,7 @@ impl CellLines for ThemedCells<'_> {
             }
             _ => return PlainCellLines.lines(cell, width),
         };
-        render_markdown(
+        let mut lines = render_markdown(
             text,
             &MarkdownOptions {
                 width,
@@ -56,7 +56,14 @@ impl CellLines for ThemedCells<'_> {
                 color: self.theme.color,
                 base_style,
             },
-        )
+        );
+        if matches!(cell, Cell::Reasoning(_)) {
+            lines.insert(
+                0,
+                Line::styled("∴ thinking", base_style.add_modifier(Modifier::DIM)),
+            );
+        }
+        lines
     }
 }
 

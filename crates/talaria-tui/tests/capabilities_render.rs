@@ -6,8 +6,8 @@ use ratatui::{buffer::Buffer, layout::Rect};
 use serde_json::json;
 use support::{ByteSink, Vt, live_view_sections, probe};
 use talaria_core::capabilities::{
-    CapData, CapEffect, CapInput, CapListRow, CapTab, CapView, CapabilitiesState, KeyAction,
-    Provenance, SkillRow, redact_paths,
+    CapData, CapEffect, CapError, CapInput, CapListRow, CapTab, CapView, CapabilitiesState,
+    KeyAction, Provenance, SkillRow, ToolsetRow, WriteReceipt, redact_paths,
 };
 use talaria_tui::capabilities::draw_capabilities;
 use talaria_tui::live::{LiveSection, LiveView};
@@ -366,4 +366,215 @@ fn closing_restores_the_inline_view() {
     assert_eq!(vt.rows(), before);
     assert_eq!(vt.cursor(), cursor_before);
     assert!(!vt.alternate());
+}
+
+fn web_toolset(enabled: bool) -> ToolsetRow {
+    ToolsetRow {
+        name: "web".into(),
+        label: "Web".into(),
+        description: "Search the network.".into(),
+        platform: "cli".into(),
+        platform_label: String::new(),
+        enabled,
+        configured: true,
+        tools: vec!["search".into()],
+    }
+}
+
+fn toolsets_state(enabled: bool) -> CapabilitiesState {
+    let mut state = CapabilitiesState::new("fixture".into(), None, CapTab::Toolsets);
+    let effects = state.update(CapInput::Open(CapTab::Toolsets), 0);
+    let generation = effects
+        .iter()
+        .find_map(|effect| match effect {
+            CapEffect::Fetch { generation, .. } => Some(*generation),
+            _ => None,
+        })
+        .unwrap();
+    state.update(
+        CapInput::Loaded {
+            tab: CapTab::Toolsets,
+            generation,
+            result: Ok(CapData::Toolsets(vec![web_toolset(enabled)])),
+        },
+        1,
+    );
+    state
+}
+
+fn toggle_web(state: &mut CapabilitiesState, enabled: bool) -> u64 {
+    let effects = state.update(CapInput::Key(KeyAction::Toggle), 2);
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            CapEffect::ToggleToolset {
+                op_id,
+                name,
+                enabled: target,
+                ..
+            } if name == "web" && *target == enabled => Some(*op_id),
+            _ => None,
+        })
+        .expect("Space requests the selected toolset's new state")
+}
+
+fn message_rows(rows: &[String]) -> Vec<&str> {
+    let rule = rows
+        .iter()
+        .rposition(|row| row.contains('─'))
+        .expect("message separator");
+    rows[rule + 1..rows.len() - 1]
+        .iter()
+        .map(|row| row.trim())
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+#[test]
+fn toolset_toggle_confirmation_is_one_visible_line_at_80_columns() {
+    for enabled in [true, false] {
+        let mut state = toolsets_state(!enabled);
+        let op_id = toggle_web(&mut state, enabled);
+        state.update(
+            CapInput::WriteDone {
+                op_id,
+                result: Ok(WriteReceipt::default()),
+            },
+            3,
+        );
+        state.update(
+            CapInput::ReadBack {
+                op_id,
+                result: Ok(CapData::Toolsets(vec![web_toolset(enabled)])),
+            },
+            4,
+        );
+        let rows = screen(&state.view(), 80, 24);
+        let messages = message_rows(&rows);
+        assert_eq!(messages.len(), 1, "one confirmation line, got {messages:?}");
+        let text = messages[0].to_lowercase();
+        assert!(
+            text.contains("web"),
+            "confirmation names the toolset: {text}"
+        );
+        let status = if enabled { "on" } else { "off" };
+        assert!(
+            text.split(|ch: char| !ch.is_alphanumeric())
+                .any(|word| word == status),
+            "confirmation names the saved state: {text}"
+        );
+        let new_or_resumed = text.contains("new") && text.contains("resum");
+        let following_next_turn =
+            text.contains("next turn") && (text.contains("follow") || text.contains("unpinned"));
+        assert!(
+            new_or_resumed || following_next_turn,
+            "confirmation names when this saved configuration is adopted: {text}"
+        );
+        assert!(
+            !text.contains("open sessions keep"),
+            "resumed and profile-following sessions can adopt saved configuration: {text}"
+        );
+        assert!(
+            state
+                .view()
+                .rows
+                .iter()
+                .any(|row| row.name == "web" && row.marker == if enabled { "[x]" } else { "[ ]" })
+        );
+    }
+}
+
+#[test]
+fn toolset_write_failure_shows_reason_and_saved_state_at_80_columns() {
+    for saved in [true, false] {
+        let mut state = toolsets_state(saved);
+        let op_id = toggle_web(&mut state, !saved);
+        state.update(
+            CapInput::WriteDone {
+                op_id,
+                result: Err(CapError::Rpc {
+                    code: 5000,
+                    message: "profile is read only".into(),
+                    reason: None,
+                    log: None,
+                }),
+            },
+            3,
+        );
+        let rows = screen(&state.view(), 80, 24);
+        assert!(
+            message_rows(&rows)
+                .iter()
+                .any(|line| line.contains("profile is read only")),
+            "{rows:?}"
+        );
+        let row = rows
+            .iter()
+            .find(|row| row.contains("Web"))
+            .expect("saved toolset stays visible");
+        let marker = if saved { "[x]" } else { "[ ]" };
+        assert!(
+            row.contains(marker),
+            "failed write keeps saved state: {row}"
+        );
+    }
+}
+
+fn open_web_detail(state: &mut CapabilitiesState) {
+    let effects = state.update(CapInput::Key(KeyAction::Enter), 5);
+    let generation = effects
+        .iter()
+        .find_map(|effect| match effect {
+            CapEffect::FetchDetail {
+                tab: CapTab::Toolsets,
+                generation,
+                key,
+                ..
+            } if key == "web" => Some(*generation),
+            _ => None,
+        })
+        .expect("Enter reads toolset detail");
+    state.update(
+        CapInput::DetailLoaded {
+            tab: CapTab::Toolsets,
+            generation,
+            result: Ok("Search the network with the web toolset.".into()),
+        },
+        6,
+    );
+}
+
+#[test]
+fn toolset_enter_in_list_opens_detail_and_escape_preserves_existing_behavior() {
+    let mut state = toolsets_state(false);
+    let before = screen(&state.view(), 80, 24);
+    assert!(state.view().hints.contains("Enter detail"));
+    open_web_detail(&mut state);
+    assert!(state.view().detail_focus);
+    assert_ne!(screen(&state.view(), 80, 24), before);
+    let effects = state.update(CapInput::Key(KeyAction::Cancel), 7);
+    assert!(!state.view().detail_focus);
+    assert!(state.view().open);
+    assert!(!effects.contains(&CapEffect::Dispose));
+    let effects = state.update(CapInput::Key(KeyAction::Cancel), 8);
+    assert!(!state.view().open);
+    assert!(effects.contains(&CapEffect::Dispose));
+}
+
+#[test]
+fn toolset_detail_hint_names_enter_and_enter_has_a_visible_effect() {
+    let mut state = toolsets_state(false);
+    open_web_detail(&mut state);
+    let hints = state.view().hints;
+    assert!(
+        hints.split("  ").any(|part| part.starts_with("Enter ")),
+        "detail hint names Enter's action: {hints}"
+    );
+    let before = screen(&state.view(), 80, 24);
+    state.update(CapInput::Key(KeyAction::Enter), 7);
+    let after = screen(&state.view(), 80, 24);
+    assert_ne!(
+        after, before,
+        "Enter visibly performs the action named by {hints}"
+    );
 }

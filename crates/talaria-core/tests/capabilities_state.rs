@@ -352,7 +352,7 @@ fn toggle_reads_back_and_reports() {
     assert_eq!(
         notices(&back(&mut s, id, CapData::Toolsets(vec![tool(true)]))),
         [
-            "Turned on toolset Web in profile fixture. Sessions started from now on use this; open sessions keep their toolsets.\nHermes is installing what Web needs (install-key) in the background."
+            "Web on · new sessions; some on resume or next turn\nHermes is installing what Web needs (install-key) in the background."
         ]
     );
     for status in [PluginStatus::Disabled, PluginStatus::NotEnabled] {

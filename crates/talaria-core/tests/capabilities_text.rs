@@ -51,7 +51,7 @@ fn texts_are_exact() {
         ),
         (
             CapText::ToolsetChanged,
-            "Turned on toolset Web in profile fixture. Sessions started from now on use this; open sessions keep their toolsets.",
+            "Web on · new sessions; some on resume or next turn",
         ),
         (
             CapText::PostSetup,
@@ -220,7 +220,7 @@ fn texts_are_exact() {
     );
     assert_eq!(
         format_text(CapText::ToolsetChanged, &off),
-        "Turned off toolset Web in profile fixture. Sessions started from now on use this; open sessions keep their toolsets."
+        "Web off · new sessions; some on resume or next turn"
     );
     assert_eq!(
         format_text(CapText::PluginChanged, &off),
