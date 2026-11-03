@@ -1090,7 +1090,11 @@ impl MockGateway {
     /// Skin payloads by configured name for `runtime.describe` and `skin.changed`.
     /// Empty by default, in which case describe carries no `skin` key.
     pub fn set_skin_catalog(&self, skins: HashMap<String, Value>) {
-        lock(&self.shared).sess.skin_catalog = skins;
+        let mut state = lock(&self.shared);
+        let mut names: Vec<String> = skins.keys().cloned().collect();
+        names.sort();
+        state.sess.skin_names = Some(names);
+        state.sess.skin_catalog = skins;
     }
 
     /// The name `config.get {key: "skin"}` reports.
@@ -1103,6 +1107,17 @@ impl MockGateway {
     /// Make `config.get {key: "skin"}` answer `{value: null}`.
     pub fn set_config_skin_null(&self) {
         lock(&self.shared).sess.config_skin_null = true;
+    }
+
+    /// Names returned by `complete.slash` when the text starts with `/skin`.
+    pub fn set_skin_names(&self, names: &[&str]) {
+        lock(&self.shared).sess.skin_names =
+            Some(names.iter().map(|name| (*name).to_owned()).collect());
+    }
+
+    /// Refuse `complete.slash` for `/skin`, as when the list cannot be fetched.
+    pub fn set_skin_list_unavailable(&self, unavailable: bool) {
+        lock(&self.shared).sess.skin_list_unavailable = unavailable;
     }
 
     /// The `execution_generation` written on the envelope of built events. The default is 1.
@@ -2632,6 +2647,10 @@ struct SessionSide {
     skin_catalog: HashMap<String, Value>,
     config_skin: String,
     config_skin_null: bool,
+    /// Names `complete.slash` returns for a `/skin` query. `None` keeps the generic fixture.
+    skin_names: Option<Vec<String>>,
+    /// A `/skin` completion is refused, so the caller cannot see the list.
+    skin_list_unavailable: bool,
     // Permissions and moves (#237).
     approvals_mode: String,
     mode_read_denied: bool,
@@ -2739,6 +2758,8 @@ impl SessionSide {
             skin_catalog: HashMap::new(),
             config_skin: "default".to_owned(),
             config_skin_null: false,
+            skin_names: None,
+            skin_list_unavailable: false,
             approvals_mode: "manual".to_owned(),
             mode_read_denied: false,
             session_bypass: HashMap::new(),
@@ -3280,6 +3301,38 @@ fn plan_slash(
             let text = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
             outgoing.push((None, text, reply_meta(id, method)));
             return;
+        }
+    }
+    if method == "complete.slash" {
+        let text = params["text"].as_str().unwrap_or("");
+        if text.starts_with("/skin") {
+            if state.sess.skin_list_unavailable {
+                outgoing.push((
+                    None,
+                    refusal_text(id, "unavailable", None),
+                    reply_meta(id, method),
+                ));
+                return;
+            }
+            if let Some(names) = &state.sess.skin_names {
+                let prefix = text.strip_prefix("/skin ").unwrap_or("").to_lowercase();
+                let items: Vec<Value> = names
+                    .iter()
+                    .filter(|name| name.starts_with(&prefix) && name.as_str() != prefix)
+                    .take(30)
+                    .map(|name| {
+                        json!({
+                            "text": name,
+                            "display": name,
+                            "kind": "argument",
+                        })
+                    })
+                    .collect();
+                let result = json!({"items": items, "replace_from": 6});
+                let body = json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+                outgoing.push((None, body, reply_meta(id, method)));
+                return;
+            }
         }
     }
     let result = slash_result(method, params, state.turn_running);

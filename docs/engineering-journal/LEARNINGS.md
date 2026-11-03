@@ -2,6 +2,12 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-02 — Hermes skin completion omits the exact argument
+
+**Evidence.** A live `complete.slash` call against Hermes v0.22.4 at `4d04303818b61bf3aa09278af48356315515965b` listed `ares` for `/skin `, but returned no items for `/skin ares`. The pinned `hermes_cli/commands_completion.py::_prefix_completions` skips exact matches by default; the gateway caps argument completions at 30. See [issue #466](https://github.com/infiquetra/talaria/issues/466#issuecomment-6590208368).
+
+**Rule.** To validate a skin, check a shorter prefix for the exact name and treat an exhausted 30-item result as inconclusive.
+
 ## 2026-11-02 — A goal's final snapshot can arrive without a verdict note
 
 **Evidence.** At pinned Hermes commit `4d04303818b61bf3aa09278af48356315515965b`,
