@@ -10,6 +10,30 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-02
+
+Talaria 0.7.1 is a patch release on 0.7.0 that closes the three known issues listed in the 0.7.0 release notes and improves status clarity across goal tracking, model reasoning, `/skin` selection, toolset toggles, Ultracode workflow prerequisites, remote voice safety, and queued-message wait times. See the [v0.7.1 release notes](https://github.com/infiquetra/talaria/blob/v0.7.1/docs/release-notes/v0.7.1.md) and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.7.1/docs/migrating-from-0.6.5.md).
+
+### Added
+
+- Goal completion notices in the session transcript and status bar showing the finished goal's verdict, reason, and summary when a goal stops ([#463](https://github.com/infiquetra/talaria/issues/463)).
+- Waiting-time labels (`s`, `m`, `h`) on each entry in the queued-message strip above the composer ([#483](https://github.com/infiquetra/talaria/issues/483)).
+- Confirmation notice on the Capabilities overlay's Toolsets tab explaining that a toggled toolset takes effect on the next session, plus an `Enter` detail-view hint in the footer ([#467](https://github.com/infiquetra/talaria/issues/467)).
+- An inline explanation on the Ultracode screen describing why the `talaria-workflows` skill is required before running or compiling workflows ([#468](https://github.com/infiquetra/talaria/issues/468)).
+- Remote-gateway guard for `/voice` and `Alt+R` that refuses voice recording and playback on remote connections with a clear local-gateway explanation ([#476](https://github.com/infiquetra/talaria/issues/476)).
+
+### Changed
+
+- The active goal status row now displays the running turn count (`turn 1 of N`, advancing as turns complete) instead of staying at `0/N turns` while a goal works ([#464](https://github.com/infiquetra/talaria/issues/464)).
+- Model reasoning cells now carry a muted `∴ thinking` header label so the block's meaning does not depend on color alone ([#465](https://github.com/infiquetra/talaria/issues/465)).
+- `/skin` and `/theme` validate the requested skin name against the Hermes gateway's available skin list before saving and list the valid skin names when a name is omitted or unknown ([#466](https://github.com/infiquetra/talaria/issues/466)).
+- Continuous integration reuses isolated Rust build caches (`check-debug`, `coverage-debug`, `bench-release`) and pinned tool binaries (`cargo-llvm-cov`, `cargo-typify`) across workflow runs ([#438](https://github.com/infiquetra/talaria/issues/438), [#461](https://github.com/infiquetra/talaria/pull/461)).
+
+### Removed
+
+- Duplicate integration-test module targets in `talaria-tui`, keeping each shared test suite compiled once ([#432](https://github.com/infiquetra/talaria/issues/432)).
+- Unchecked `/skin` persistence of unknown skin names and unguarded remote-gateway `/voice` and `Alt+R` execution ([#466](https://github.com/infiquetra/talaria/issues/466), [#476](https://github.com/infiquetra/talaria/issues/476)).
+
 ## [0.7.0] — 2026-11-02
 
 Talaria 0.7.0 is the first release of the Rust client for Hermes. It connects to a running Hermes gateway, keeps finished output in native terminal scrollback, and brings multi-session fleet management, full Hermes configuration, and multi-model workflows into one terminal interface. See the [v0.7.0 release notes](https://github.com/infiquetra/talaria/blob/v0.7.0/docs/release-notes/v0.7.0.md) and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.7.0/docs/migrating-from-0.6.5.md).
@@ -600,7 +624,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/infiquetra/talaria/releases/tag/v0.7.1
 [0.7.0]: https://github.com/infiquetra/talaria/releases/tag/v0.7.0
 [0.6.5]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.5.md
 [0.6.4]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.4.md
