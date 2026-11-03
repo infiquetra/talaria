@@ -336,6 +336,247 @@ fn goal_status_note_becomes_one_notice() {
     assert!(effects.is_empty(), "another session: no notice");
 }
 
+fn goal_completion_snapshot(status: &str, revision: &str) -> Value {
+    let mut snapshot = full_snapshot();
+    snapshot["revision"] = json!(revision);
+    snapshot["goal"]["status"] = json!(status);
+    snapshot["goal"]["last_verdict"] = json!("done");
+    snapshot["goal"]["last_reason"] = json!("Release notes reviewed and shipped");
+    snapshot
+}
+
+fn goal_completion_notices(effects: &[AutomationEffect]) -> Vec<&str> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            AutomationEffect::Notice { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn goal_completion_note() -> AutomationEvent {
+    AutomationEvent::StatusNote {
+        session_id: SESSION.to_owned(),
+        kind: "goal".to_owned(),
+        text: "✓ Goal achieved: Release notes reviewed and shipped".to_owned(),
+    }
+}
+
+#[test]
+fn goal_completion_snapshot_emits_verdict_reason_and_turns_once() {
+    for initial_status in ["active", "paused"] {
+        let mut state = AutomationState::default();
+        talaria_core::automation::update(&mut state, attached(SESSION));
+        let mut initial = full_snapshot();
+        initial["goal"]["status"] = json!(initial_status);
+        talaria_core::automation::update(&mut state, updated(SESSION, initial));
+
+        let done = goal_completion_snapshot("done", "r2");
+        let effects = talaria_core::automation::update(&mut state, updated(SESSION, done.clone()));
+        let notices = goal_completion_notices(&effects);
+        assert_eq!(
+            notices.len(),
+            1,
+            "{initial_status} to done emits one notice"
+        );
+        for part in ["done", "Release notes reviewed and shipped", "3", "20"] {
+            assert!(
+                notices[0].contains(part),
+                "notice must contain {part:?}: {notices:?}"
+            );
+        }
+        assert!(
+            rows(&state, NOW_MS)
+                .iter()
+                .all(|row| !row.label.contains("goal")),
+            "the completed goal stays hidden"
+        );
+        let effects = talaria_core::automation::update(&mut state, updated(SESSION, done));
+        assert!(
+            goal_completion_notices(&effects).is_empty(),
+            "replayed snapshot is silent"
+        );
+    }
+}
+
+#[test]
+fn goal_completion_snapshot_before_status_note_does_not_duplicate() {
+    let mut state = AutomationState::default();
+    talaria_core::automation::update(&mut state, attached(SESSION));
+    talaria_core::automation::update(&mut state, updated(SESSION, full_snapshot()));
+    let effects = talaria_core::automation::update(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r2")),
+    );
+    assert_eq!(
+        goal_completion_notices(&effects).len(),
+        1,
+        "snapshot emits immediately"
+    );
+    let effects = talaria_core::automation::update(&mut state, goal_completion_note());
+    assert!(
+        goal_completion_notices(&effects).is_empty(),
+        "late Hermes note is a duplicate"
+    );
+}
+
+#[test]
+fn goal_completion_status_note_before_snapshot_does_not_duplicate() {
+    let mut state = AutomationState::default();
+    talaria_core::automation::update(&mut state, attached(SESSION));
+    talaria_core::automation::update(&mut state, updated(SESSION, full_snapshot()));
+    let effects = talaria_core::automation::update(&mut state, goal_completion_note());
+    assert_eq!(
+        goal_completion_notices(&effects).len(),
+        1,
+        "Hermes note emits immediately"
+    );
+    let effects = talaria_core::automation::update(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r2")),
+    );
+    assert!(
+        goal_completion_notices(&effects).is_empty(),
+        "later snapshot is a duplicate"
+    );
+}
+
+#[test]
+fn goal_completion_already_done_at_attach_is_silent() {
+    for use_read in [false, true] {
+        let mut state = AutomationState::default();
+        let effects = talaria_core::automation::update(&mut state, attached(SESSION));
+        let (token, _, _) = attach_tokens(&effects);
+        let done = goal_completion_snapshot("done", "r2");
+        let event = if use_read {
+            AutomationEvent::ControlRead {
+                token,
+                result: Ok(talaria_core::automation::ControlView::decode(&done).unwrap()),
+            }
+        } else {
+            updated(SESSION, done)
+        };
+        let effects = talaria_core::automation::update(&mut state, event);
+        assert!(
+            goal_completion_notices(&effects).is_empty(),
+            "attach must not announce old completion"
+        );
+    }
+}
+
+#[test]
+fn goal_completion_without_verdict_or_reason_names_final_status() {
+    let mut state = AutomationState::default();
+    talaria_core::automation::update(&mut state, attached(SESSION));
+    talaria_core::automation::update(&mut state, updated(SESSION, full_snapshot()));
+    let mut done = full_snapshot();
+    done["goal"]["status"] = json!("done");
+    done["revision"] = json!("r2");
+    let effects = talaria_core::automation::update(&mut state, updated(SESSION, done));
+    let notices = goal_completion_notices(&effects);
+    assert_eq!(
+        notices.len(),
+        1,
+        "missing judge fields still emits one notice"
+    );
+    assert!(
+        notices[0].contains("done"),
+        "fallback names final status: {notices:?}"
+    );
+}
+
+#[test]
+fn goal_completion_note_before_initial_read_does_not_duplicate() {
+    let mut state = AutomationState::default();
+    let effects = talaria_core::automation::update(&mut state, attached(SESSION));
+    let (token, _, _) = attach_tokens(&effects);
+    let effects = talaria_core::automation::update(&mut state, goal_completion_note());
+    assert_eq!(goal_completion_notices(&effects).len(), 1);
+    talaria_core::automation::update(
+        &mut state,
+        AutomationEvent::ControlRead {
+            token,
+            result: Ok(talaria_core::automation::ControlView::decode(&full_snapshot()).unwrap()),
+        },
+    );
+    let effects = talaria_core::automation::update(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r2")),
+    );
+    assert!(goal_completion_notices(&effects).is_empty());
+}
+
+#[test]
+fn goal_completion_tracking_preserves_other_goal_notes() {
+    let mut state = AutomationState::default();
+    talaria_core::automation::update(&mut state, attached(SESSION));
+    talaria_core::automation::update(&mut state, updated(SESSION, full_snapshot()));
+    for text in [
+        "↻ Continuing toward goal (3/20): still reviewing",
+        "⏸ Goal paused: waiting for input",
+    ] {
+        let effects = talaria_core::automation::update(
+            &mut state,
+            AutomationEvent::StatusNote {
+                session_id: SESSION.to_owned(),
+                kind: "goal".to_owned(),
+                text: text.to_owned(),
+            },
+        );
+        assert_eq!(goal_completion_notices(&effects), [text]);
+    }
+    talaria_core::automation::update(&mut state, goal_completion_note());
+    // A later active snapshot can precede the final snapshot without rearming the notice.
+    let mut active = full_snapshot();
+    active["revision"] = json!("r2");
+    talaria_core::automation::update(&mut state, updated(SESSION, active));
+    let effects = talaria_core::automation::update(
+        &mut state,
+        updated(SESSION, goal_completion_snapshot("done", "r3")),
+    );
+    assert!(goal_completion_notices(&effects).is_empty());
+}
+
+#[test]
+fn goal_completion_tracking_rearms_after_resume_clear_and_replacement() {
+    for change in ["resume", "clear", "replacement"] {
+        let mut state = AutomationState::default();
+        talaria_core::automation::update(&mut state, attached(SESSION));
+        talaria_core::automation::update(&mut state, updated(SESSION, full_snapshot()));
+        if change != "replacement" {
+            talaria_core::automation::update(
+                &mut state,
+                updated(SESSION, goal_completion_snapshot("done", "r2")),
+            );
+        } else {
+            talaria_core::automation::update(&mut state, goal_completion_note());
+        }
+        if change == "clear" {
+            let mut cleared = full_snapshot();
+            cleared["goal"] = Value::Null;
+            cleared["revision"] = json!("r3");
+            talaria_core::automation::update(&mut state, updated(SESSION, cleared));
+        }
+        let mut active = full_snapshot();
+        active["revision"] = json!("r4");
+        if change == "replacement" {
+            active["goal"]["created_at"] = json!(1790000100);
+        }
+        talaria_core::automation::update(&mut state, updated(SESSION, active.clone()));
+        active["goal"]["status"] = json!("done");
+        active["goal"]["last_verdict"] = json!("done");
+        active["goal"]["last_reason"] = json!("Second completion");
+        active["revision"] = json!("r5");
+        let effects = talaria_core::automation::update(&mut state, updated(SESSION, active));
+        assert_eq!(
+            goal_completion_notices(&effects),
+            ["✓ Goal done after 3 of 20 turns: Second completion"],
+            "{change} permits the next completion"
+        );
+    }
+}
+
 #[test]
 fn yolo_and_fast_read_back_unless_not_run() {
     for result in [

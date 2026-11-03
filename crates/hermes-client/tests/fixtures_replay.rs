@@ -2,7 +2,7 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected thirty-two fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected thirty-three fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch and the three queue recordings, covered by their own replay tests.
 
@@ -115,14 +115,16 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 32,
-        "expected thirty-two fixtures in fixtures/frames, found {}",
+        files.len() == 33,
+        "expected thirty-three fixtures in fixtures/frames, found {}",
         files.len()
     );
     // The progress journal has its own reader; the idempotency capture has its own checks.
     assert!(files.contains(&fixtures_dir().join("p5-04-model-options.jsonl")));
     assert!(files.contains(&fixtures_dir().join("p5-05-progress.jsonl")));
     assert!(files.contains(&fixtures_dir().join("p5-02-idempotency.jsonl")));
+    // The goal completion recording is reduced by talaria-app's automation replay test.
+    assert!(files.contains(&fixtures_dir().join("goal-completion-shared.jsonl")));
     NAMES
         .iter()
         .map(|name| {

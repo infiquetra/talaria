@@ -2,6 +2,18 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-02 — A goal's final snapshot can arrive without a verdict note
+
+**Evidence.** At pinned Hermes commit `4d04303818b61bf3aa09278af48356315515965b`,
+`gateway/session_viewer_automation.py:140-170` publishes the evaluated control snapshot without
+a status note. `gateway/run_goals.py:227-279` can defer a note until response delivery, whereas
+`tui_gateway/prompt_turn.py:375` emits it immediately. The completion tests in
+`crates/talaria-core/tests/automation_reduce.rs` failed for missing snapshot notices before
+the reducer retained `last_verdict` and `last_reason`.
+
+**Rule.** Use the observed goal lifecycle to report completion from its snapshot, deduplicate
+only Hermes's completion note, and reset the marker when a goal is cleared, replaced or resumed.
+
 ## 2026-11-01 — Hermes evolved profile symlinks canonicalize into `profiles/.gen/<name>/<generation>`
 
 **Evidence.** Running `talaria` against a live Hermes gateway whose `profiles/` directory contains evolved profile symlinks (`profiles/<name> -> .gen/<name>/<generation>`) failed during discovery (`crates/hermes-client/src/discovery.rs`) with `DiscoveryError::InvalidIdentity` (`"the gateway reported an identity Talaria cannot use."`).
@@ -6839,6 +6851,8 @@ Rule: request private directory permissions at creation when diagnostics depend 
 **Mechanism.** On Ubuntu GitHub Actions runners, `USER` and `LOGNAME` default to `runner` (six characters), which caused `doc-scan.sh` to match the ordinary English word `runner` across workflow documentation (`docs/workflows/runner.md`). Separately, when `smoke` creates a new Herdr tab (`herdr tab create`), the tab's shell inherits the Herdr daemon's environment rather than the caller's `HERMES_HOME`, so a gateway running in a dedicated test home requires `--talaria` to be wrapped in a non-`exec` launcher script that exports `HERMES_HOME` when unset. Finally, in a 107-column Herdr tab (and 53-column or 26-column split panes), prompts, notices, and file labels longer than the inner box width wrap across rows or truncate with `…`.
 
 **Generalizable rule.** Treat the GitHub Actions default login `runner` as unset during literal login scans (without exporting empty `USER=""` or `LOGNAME=""` into workspace test processes where `"".contains("")` is true), pass caller-scoped `HERMES_HOME` into newly spawned multiplexer tabs via a child-process launcher script, and match width-truncated or hard-wrapped terminal rows across normalised line joins when panes are narrow or split.
+
+- Hermes v0.22.4 toolset changes can reach some existing sessions on resume or a following session's next turn, while other policies stay frozen ([issue #467](https://github.com/infiquetra/talaria/issues/467#issuecomment-6590474428)). Rule: qualify existing-session timing when describing saved toolset changes.
 
 
 ## 2026-11-02 — Remote voice includes automatic effects
