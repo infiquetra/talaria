@@ -28,6 +28,16 @@ only Hermes's completion note, and reset the marker when a goal is cleared, repl
 
 **Generalizable rule.** When classifying or extracting profile names from canonicalized Hermes profile home paths, recognize both direct `<root>/profiles/<name>` directories and evolved `<root>/profiles/.gen/<name>/<generation>` targets.
 
+## 2026-11-02 — Cache fixtures need canonical temporary paths
+
+Python's temporary-directory helper preserves a symlinked temporary-directory prefix. The tool
+cache deliberately rejects noncanonical workspace paths, so four policy tests failed with the
+default macOS temporary-directory alias. A regression using an explicit directory symlink failed
+at that same admission check. Resolving the fixture root makes all 22 checks pass without changing
+the production path guard or requiring an environment override.
+
+Rule: canonicalize temporary fixture roots before exercising policies that require physical paths.
+
 ## 2026-10-31 — ACP completion needs observation at receipt and publication
 
 The current macOS ACP failure observed Working at the test's 300 ms checkpoint.

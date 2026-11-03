@@ -21,7 +21,7 @@ class CacheFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "Cargo.lock").write_text("locked dependencies\n")
         (self.root / "Cargo.toml").write_text("[workspace]\n")
         (self.root / "rust-toolchain.toml").write_text(
@@ -561,6 +561,28 @@ class TypifyCacheTests(CacheFixture):
             self.assertRaises(ValueError),
         ):
             self.tool(CARGO_HOME="")
+
+
+class TemporaryDirectoryTests(unittest.TestCase):
+    def test_symlinked_temporary_directory_preserves_tool_cache_admission(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory).resolve()
+            physical = parent / "physical"
+            physical.mkdir()
+            alias = parent / "alias"
+            alias.symlink_to(physical, target_is_directory=True)
+            with patch.object(tempfile, "tempdir", str(alias)):
+                fixture = TypifyCacheTests()
+                try:
+                    fixture.setUp()
+                    self.assertEqual(
+                        fixture.tool()["build-path"],
+                        "target/ci-tools/cargo-typify-0.8.0",
+                    )
+                    self.assertEqual(fixture.root, fixture.root.resolve())
+                    self.assertEqual(fixture.root.parent, physical)
+                finally:
+                    fixture.doCleanups()
 
 
 class WorkflowPolicyTests(unittest.TestCase):
