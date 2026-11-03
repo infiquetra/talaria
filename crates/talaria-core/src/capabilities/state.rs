@@ -1116,6 +1116,12 @@ impl CapabilitiesState {
         self.detail_scroll = 0;
     }
     fn enter(&mut self, effects: &mut Vec<CapEffect>) {
+        if self.tab == CapTab::Toolsets && self.detail_focus {
+            self.detail_focus = false;
+            self.detail.clear();
+            self.detail_scroll = 0;
+            return;
+        }
         let Some(name) = self.selected_name() else {
             return;
         };
@@ -1705,7 +1711,8 @@ impl CapabilitiesState {
             "Enter submit  Esc cancel"
         } else if self.detail_focus {
             match self.tab {
-                CapTab::Skills | CapTab::Toolsets => "Up/Down scroll  Space on/off  Esc back",
+                CapTab::Skills => "Up/Down scroll  Space on/off  Esc back",
+                CapTab::Toolsets => "Up/Down scroll  Space on/off  Enter back  Esc back",
                 CapTab::Hub => "Up/Down scroll  i install  Esc back",
                 CapTab::Plugins => "Up/Down scroll  Space on/off  x remove  Esc back",
             }

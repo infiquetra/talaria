@@ -163,7 +163,7 @@ pub fn format_text(kind: CapText, a: &TextArgs) -> String {
         CapText::NoSearchResults=>format!("No hub skills match \"{}\".",clean(&a.query)),
         CapText::SlowSources=>format!("Some hub sources did not answer in time: {}.",a.sources.iter().map(|s|clean(s)).collect::<Vec<_>>().join(", ")),
         CapText::SkillChanged=>format!("Turned {on} skill {n} in profile {p}. New sessions use this."),
-        CapText::ToolsetChanged=>format!("Turned {on} toolset {label} in profile {p}. Sessions started from now on use this; open sessions keep their toolsets."),
+        CapText::ToolsetChanged=>format!("{label} {on} · new sessions; some on resume or next turn"),
         CapText::PostSetup=>format!("Hermes is installing what {label} needs ({key}) in the background."),
         CapText::PluginChanged=>{let mut lines=vec![format!("Turned {on} plugin {n}.")];lines.extend(activation(a));lines.join("\n")},
         CapText::Mismatch=>format!("Hermes did not keep the change to {n}: it now reads {on}. Press r to refresh."),

@@ -4439,7 +4439,11 @@ three deliberate differences. Cadences use Hermes's `format_interval` wording (`
 wording of Hermes's own replies, where the terminal interface writes `every 90m`. A parked goal
 shows time left (`12m left`) instead of a clock time, because the pure core has no time zone. A
 heartbeat row and a modes row are added. Done goals and loops are hidden; their verdicts are in
-the transcript.
+the transcript. A goal observed as active or paused now gets a lasting completion notice from
+the next final snapshot's `last_verdict`, `last_reason` and turn counts, even if Hermes sends
+no status note. Hermes's `✓ Goal achieved:` note and that snapshot share one completion marker:
+the first arrival writes the notice, and the other is silent. Already-finished goals at attach
+are silent. Other goal notes and loop notices keep their existing behavior.
 
 **Two views of one YOLO value.** This unit draws the YOLO row from its own `config.get yolo`
 reads. The status-line unit (#237) reads the same key for its approvals segment; the planning

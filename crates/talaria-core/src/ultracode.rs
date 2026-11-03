@@ -115,22 +115,22 @@ pub mod notice {
     pub const USAGE: &str = "Usage: /ultracode [on|off|status]";
     pub fn missing(profile: &str) -> String {
         format!(
-            "Ultracode needs the talaria-workflows skill in profile {profile}. Install it with: talaria workflow skill install --profile {profile}"
+            "Ultracode needs the talaria-workflows skill in profile {profile}. Ultracode runs substantive prompts as Talaria workflows through that skill. Install it with: talaria workflow skill install --profile {profile}"
         )
     }
     pub fn unknown(reason: &str) -> String {
         format!(
-            "Cannot check for the talaria-workflows skill yet: {reason}. Try again once connected."
+            "Cannot check for the talaria-workflows skill yet: {reason}. Ultracode runs substantive prompts as Talaria workflows through that skill. Try again once connected."
         )
     }
     pub fn unavailable(profile: &str) -> String {
         format!(
-            "The talaria-workflows skill in profile {profile} could not be loaded. Reinstall it with: talaria workflow skill install --force --profile {profile}"
+            "The talaria-workflows skill in profile {profile} could not be loaded. Ultracode runs substantive prompts as Talaria workflows through that skill. Reinstall it with: talaria workflow skill install --force --profile {profile}"
         )
     }
     pub fn collision(profile: &str) -> String {
         format!(
-            "A quick or plugin command named /talaria-workflows in profile {profile} hides the skill, so nothing was sent. Rename that command, then try again."
+            "A quick or plugin command named /talaria-workflows in profile {profile} hides the skill, so nothing was sent. Ultracode runs substantive prompts as Talaria workflows through that skill. Rename that command, then try again."
         )
     }
     pub fn status(on: bool, profile: &str, skill: &SkillAvailability) -> String {
