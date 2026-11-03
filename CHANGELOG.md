@@ -16,9 +16,9 @@ Talaria 0.7.1 is a patch release on 0.7.0 that closes the three known issues lis
 
 ### Added
 
-- Goal completion notices in the session transcript and status bar showing the finished goal's verdict, reason, and summary when a goal stops ([#463](https://github.com/infiquetra/talaria/issues/463)).
-- Waiting-time labels (`s`, `m`, `h`) on each entry in the queued-message strip above the composer ([#483](https://github.com/infiquetra/talaria/issues/483)).
-- Confirmation notice on the Capabilities overlay's Toolsets tab explaining that a toggled toolset takes effect on the next session, plus an `Enter` detail-view hint in the footer ([#467](https://github.com/infiquetra/talaria/issues/467)).
+- Goal completion notices in the session transcript showing the finished goal's verdict, reason, and summary when a goal stops ([#463](https://github.com/infiquetra/talaria/issues/463)).
+- Waiting-time suffixes (`· waiting 27m`, `· waiting 1h02m`, with a `+` suffix when discovered from a session snapshot) on queued items after one minute in the queued-message strip above the composer ([#483](https://github.com/infiquetra/talaria/issues/483)).
+- Confirmation notice on the Capabilities overlay's Toolsets tab (`new sessions; some on resume or next turn`) after toggling a toolset, plus an `Enter` detail-view hint in the footer ([#467](https://github.com/infiquetra/talaria/issues/467)).
 - An inline explanation on the Ultracode screen describing why the `talaria-workflows` skill is required before running or compiling workflows ([#468](https://github.com/infiquetra/talaria/issues/468)).
 - Remote-gateway guard for `/voice` and `Alt+R` that refuses voice recording and playback on remote connections with a clear local-gateway explanation ([#476](https://github.com/infiquetra/talaria/issues/476)).
 
