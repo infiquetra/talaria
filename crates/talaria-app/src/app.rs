@@ -703,6 +703,9 @@ pub struct AppState {
     voice_connection_generation: u64,
     voice_submit_mode: Option<Option<String>>,
     voice_config_pending: bool,
+    /// The launch dialed a remote gateway. Voice must not ask that gateway to record or speak.
+    remote_gateway: bool,
+    remote_voice_noticed: BTreeSet<(String, String)>,
     voice_submissions: BTreeMap<String, String>,
     pub workflow_views: crate::workflow_progress::ProgressViews,
     pub ultracode: crate::ultracode::UltracodeService,
@@ -991,6 +994,8 @@ impl AppState {
             voice_connection_generation: 0,
             voice_submit_mode: None,
             voice_config_pending: false,
+            remote_gateway: false,
+            remote_voice_noticed: BTreeSet::new(),
             voice_submissions: BTreeMap::new(),
             configure: None,
             configure_service: None,
@@ -1360,6 +1365,7 @@ impl AppState {
         let mut copy = AppState::new(self.launch_id.clone());
         copy.service = self.service.clone();
         copy.voice = self.voice.clone();
+        copy.remote_gateway = self.remote_gateway;
         copy.connection_generation = self.connection_generation;
         copy.opened = self.opened.clone();
         copy.profile = self.profile.clone();
@@ -1374,6 +1380,14 @@ impl AppState {
         copy.connectors_open = self.connectors_open;
         copy.connectors_consent = self.connectors_consent.clone();
         copy
+    }
+
+    /// Record that this launch is attached through a remote gateway dial.
+    ///
+    /// Call this before a session opens. Gateway voice records and plays on
+    /// the gateway machine, so a remote attachment must refuse it.
+    pub fn attached_to_remote_gateway(&mut self) {
+        self.remote_gateway = true;
     }
 
     pub(crate) fn voice_detaching(&self, session_id: &str) {
@@ -5394,6 +5408,9 @@ fn local_effect(
         }];
     }
     if action == LocalAction::Voice {
+        if state.remote_gateway {
+            return notice_effect(state, REMOTE_VOICE_NOTICE.into());
+        }
         let Some(session) = state
             .opened
             .as_ref()
@@ -5974,6 +5991,9 @@ fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
+        UserAction::VoiceRecord if state.remote_gateway => {
+            notice_effect(state, REMOTE_VOICE_NOTICE.into())
+        }
         UserAction::VoiceRecord if state.switching => Vec::new(),
         UserAction::VoiceRecord => {
             let Some(session) = state
@@ -10188,6 +10208,8 @@ pub struct RunSetup {
     pub fleet: Option<crate::fleet::FleetConfig>,
     /// Optional live terminal-agent discovery.
     pub herdr: Option<crate::herdr::HerdrConfig>,
+    /// Whether the launch uses a remote gateway.
+    pub remote_gateway: bool,
 }
 
 fn held_text(held: &VecDeque<String>) -> String {
@@ -13605,6 +13627,9 @@ async fn run_inner<S: Screen>(
     default_ultracode: bool,
 ) -> Outcome {
     let mut state = AppState::new_boxed(setup.launch_id.clone());
+    if setup.remote_gateway {
+        state.attached_to_remote_gateway();
+    }
     state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
     let voice_config = screen.voice_config();
     state
@@ -15260,6 +15285,8 @@ mod external_fleet_route_tests {
     }
 }
 
+const REMOTE_VOICE_NOTICE: &str = "Voice needs a local Hermes gateway for now, because a remote gateway would record and play on its own machine.";
+
 fn voice_input(
     state: &mut AppState,
     session: &str,
@@ -15312,6 +15339,14 @@ fn voice_input(
                 state.draft.push_str(&text);
                 let draft = state.draft.clone();
                 effects.extend(load_draft(state, draft));
+            }
+            V::Speak(_) if state.remote_gateway => {
+                if state
+                    .remote_voice_noticed
+                    .insert((state.profile.clone(), session.to_owned()))
+                {
+                    effects.extend(voice_notice(state, session, REMOTE_VOICE_NOTICE.into()));
+                }
             }
             V::Notice(text) => effects.extend(voice_notice(state, session, text)),
             V::NoticeIn { session_id, text } => {
@@ -15495,6 +15530,9 @@ fn voice_error(error: &hermes_client::rpc::CallError) -> (Option<i64>, String, b
 }
 
 fn run_voice_status(state: &AppState, executor: &Executor, session_id: String) {
+    if state.remote_gateway {
+        return;
+    }
     let Some(client) = state
         .service
         .as_ref()
@@ -15528,6 +15566,9 @@ fn run_voice_effect(
     effect: talaria_core::voice::VoiceEffect,
 ) {
     use talaria_core::voice::{RecordStatus, VoiceEffect as V, VoiceInput as I};
+    if state.remote_gateway {
+        return;
+    }
     let Some(client) = state
         .service
         .as_ref()

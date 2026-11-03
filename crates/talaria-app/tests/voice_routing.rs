@@ -32,6 +32,68 @@ fn opened_state() -> AppState {
     state
 }
 
+const REMOTE_VOICE_NOTICE: &str = "Voice needs a local Hermes gateway for now, because a remote gateway would record and play on its own machine.";
+
+fn remote_opened(read_aloud: bool) -> AppState {
+    let snapshot: CanonicalSnapshot = serde_json::from_str(include_str!("data/running_turn.json"))
+        .expect("recorded session snapshot");
+    let mut state = AppState::new("voice-routing");
+    state.attached_to_remote_gateway();
+    state.voice.configure(read_aloud, 1500);
+    update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot),
+            notice: None,
+        },
+    );
+    update(
+        &mut state,
+        AppMessage::Voice {
+            session_id: "local-session-1".into(),
+            generation: 0,
+            input: VoiceInput::ModeRead(Some("voice_only".into())),
+        },
+    );
+    state
+}
+
+fn remote_voice_notices(state: &AppState) -> usize {
+    state
+        .opened
+        .as_ref()
+        .map(|opened| {
+            opened
+                .state
+                .cells()
+                .iter()
+                .filter(|cell| {
+                    matches!(
+                        cell,
+                        talaria_core::session::Cell::Notice(notice)
+                            if notice.text == REMOTE_VOICE_NOTICE
+                    )
+                })
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// `voice.record`, `voice.toggle`, `voice.tts`, or a voice `slash.exec`.
+fn sends_gateway_voice(effects: &[AppEffect]) -> bool {
+    effects.iter().any(|effect| match effect {
+        AppEffect::VoiceStatus { .. } => true,
+        AppEffect::Voice { effect, .. } => matches!(
+            effect,
+            VoiceEffect::Record { .. }
+                | VoiceEffect::SetMode { .. }
+                | VoiceEffect::Speak(_)
+                | VoiceEffect::ReadRequirements
+        ),
+        _ => false,
+    })
+}
+
 fn event(kind: &str, payload: Value) -> AppMessage {
     let raw = json!({"type":kind, "session_id":"local-session-1", "payload":payload});
     let frame = EventFrame::from_params(&raw).expect("contract event");
@@ -196,5 +258,99 @@ fn push_to_talk_cannot_start_during_a_session_switch() {
             .get("local-session-1")
             .map(talaria_core::voice::VoiceState::phase),
         Some(talaria_core::voice::VoicePhase::Ready)
+    );
+}
+
+#[test]
+fn remote_gateway_refuses_voice_commands_and_push_to_talk() {
+    let commands = [
+        "/voice",
+        "/voice on",
+        "/voice off",
+        "/voice status",
+        "/voice read",
+        "/voice read on",
+        "/voice read off",
+        "/voice tts",
+    ];
+    let mut failures = Vec::new();
+    for line in commands {
+        let mut state = remote_opened(false);
+        let before = remote_voice_notices(&state);
+        let effects = update(
+            &mut state,
+            AppMessage::User(UserAction::Submit(line.to_owned())),
+        );
+        if sends_gateway_voice(&effects) {
+            failures.push(format!("{line} sent a gateway voice request"));
+        }
+        let added = remote_voice_notices(&state).saturating_sub(before);
+        if added != 1 {
+            failures.push(format!(
+                "{line} showed {added} remote voice notices, want 1"
+            ));
+        }
+    }
+    let mut state = remote_opened(false);
+    let before = remote_voice_notices(&state);
+    let effects = update(&mut state, AppMessage::User(UserAction::VoiceRecord));
+    if sends_gateway_voice(&effects) {
+        failures.push("voice_record sent a gateway voice request".to_owned());
+    }
+    let added = remote_voice_notices(&state).saturating_sub(before);
+    if added != 1 {
+        failures.push(format!(
+            "voice_record showed {added} remote voice notices, want 1"
+        ));
+    }
+    assert!(
+        failures.is_empty(),
+        "remote gateway voice was not refused: {}",
+        failures.join("; ")
+    );
+}
+
+#[test]
+fn remote_read_aloud_speaks_nothing_and_notices_once_per_session() {
+    let mut state = remote_opened(true);
+    let speaks = |effects: &[AppEffect]| {
+        effects.iter().any(|effect| {
+            matches!(
+                effect,
+                AppEffect::Voice {
+                    effect: VoiceEffect::Speak(_),
+                    ..
+                }
+            )
+        })
+    };
+    let finished = |text: &str| AppMessage::Voice {
+        session_id: "local-session-1".into(),
+        generation: 0,
+        input: VoiceInput::TurnCompleted {
+            assistant_markdown: vec![text.to_owned()],
+            outcome: talaria_core::voice::TurnOutcome::Completed,
+            focused: true,
+        },
+    };
+    let first = update(&mut state, finished("The gateway answered."));
+    assert!(
+        !speaks(&first),
+        "a finished reply on a remote gateway sent voice.tts"
+    );
+    assert_eq!(
+        remote_voice_notices(&state),
+        1,
+        "the remote voice notice should appear once after the first reply"
+    );
+    let second = update(&mut state, finished("A second reply."));
+    assert!(
+        !speaks(&second),
+        "a second finished reply on a remote gateway sent voice.tts"
+    );
+    assert_eq!(
+        remote_voice_notices(&state),
+        1,
+        "the remote voice notice repeated on a later reply"
     );
 }

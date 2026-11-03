@@ -6883,3 +6883,10 @@ Rule: request private directory permissions at creation when diagnostics depend 
 **Generalizable rule.** Treat the GitHub Actions default login `runner` as unset during literal login scans (without exporting empty `USER=""` or `LOGNAME=""` into workspace test processes where `"".contains("")` is true), pass caller-scoped `HERMES_HOME` into newly spawned multiplexer tabs via a child-process launcher script, and match width-truncated or hard-wrapped terminal rows across normalised line joins when panes are narrow or split.
 
 - Hermes v0.22.4 toolset changes can reach some existing sessions on resume or a following session's next turn, while other policies stay frozen ([issue #467](https://github.com/infiquetra/talaria/issues/467#issuecomment-6590474428)). Rule: qualify existing-session timing when describing saved toolset changes.
+
+
+## 2026-11-02 — Remote voice includes automatic effects
+
+Hermes v0.22.4 `tui_gateway/methods_voice.py` owns one microphone and speaker per gateway process. Talaria also creates voice effects when a session opens and when a reply completes, independently of `/voice` and push-to-talk. The remote routing tests cover the explicit actions and repeated read-aloud.
+
+Rule: carry connection locality to the application and guard both user actions and background voice execution.

@@ -221,6 +221,7 @@ where
     static LAUNCHES: AtomicU64 = AtomicU64::new(0);
     let number = LAUNCHES.fetch_add(1, Ordering::Relaxed) + 1;
     let setup = RunSetup {
+        remote_gateway: false,
         herdr: None,
         home: hermes_home(),
         launch_id: format!("live-picker-{}-{number}", run_suffix()),
