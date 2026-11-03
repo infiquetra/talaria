@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-02 — Restoring `target/llvm-cov-target/debug` without `CACHEDIR.TAG` breaks Cargo 1.98 package cleaning
+
+**Evidence.** During v0.7.1 pull-request verification (`PR #493` run `41550281644` and `PR #498` run `41550273895`), `cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80` logged `error: cannot clean .../target/llvm-cov-target: missing or invalid CACHEDIR.TAG file` (`exit status: 101`) and then failed report generation with `warning: 128 functions have mismatched data`.
+
+**Mechanism.** When `actions/cache/restore` restores only `target/llvm-cov-target/debug`, it creates the parent directory `target/llvm-cov-target` without the root `CACHEDIR.TAG` file that Cargo writes when initializing a target directory. Cargo 1.98 refuses `cargo clean --package ... --target-dir target/llvm-cov-target` when `target/llvm-cov-target` is non-empty and lacks `CACHEDIR.TAG`, leaving stale workspace test binaries from an earlier commit alongside newly compiled binaries.
+
+**Generalizable rule.** Whenever caching a subdirectory under a Cargo target directory (such as `target/llvm-cov-target/debug`), ensure the parent target directory's `CACHEDIR.TAG` is preserved or recreated before `cargo-llvm-cov` runs `cargo clean`.
+
 ## 2026-11-02 — Hermes skin completion omits the exact argument
 
 **Evidence.** A live `complete.slash` call against Hermes v0.22.4 at `4d04303818b61bf3aa09278af48356315515965b` listed `ares` for `/skin `, but returned no items for `/skin ares`. The pinned `hermes_cli/commands_completion.py::_prefix_completions` skips exact matches by default; the gateway caps argument completions at 30. See [issue #466](https://github.com/infiquetra/talaria/issues/466#issuecomment-6590208368).

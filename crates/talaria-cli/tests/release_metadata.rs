@@ -34,6 +34,12 @@ fn workspace_version_has_one_source() {
         "{}",
         blame("Cargo.toml", 1, "workspace package has no version line")
     );
+    assert_eq!(
+        workspace_version(&root),
+        "0.7.1",
+        "{}",
+        blame("Cargo.toml", 1, "workspace version is not 0.7.1")
+    );
     for manifest_path in member_manifests(&root) {
         let rel = rel_to(&root, &manifest_path);
         let text = fs::read_to_string(&manifest_path).unwrap_or_default();
@@ -404,6 +410,21 @@ fn final_version_requires_release_notes() {
         "{}",
         blame(&rel, 1, "migration link is missing")
     );
+    if version == "0.7.1" {
+        for issue in [
+            "#463", "#464", "#465", "#466", "#467", "#468", "#476", "#483",
+        ] {
+            assert!(
+                text.contains(issue),
+                "{}",
+                blame(
+                    &rel,
+                    1,
+                    &format!("v0.7.1 user-visible issue {issue} is missing")
+                )
+            );
+        }
+    }
     assert!(
         text.lines().count() <= 400,
         "{}",
