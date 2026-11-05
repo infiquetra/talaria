@@ -4563,6 +4563,63 @@ cannot prove the resulting field values, provider activation, or the identity of
 **Rejected.** Trusting submitted values as saved state or retrying uncertain mutations.
 **Revisit when.** Hermes exposes transactional writes and stable per-run action identifiers.
 
+### Status effort reflects catalogue and session information
+
+**Decision.** Show the requested effort with `(not offered)` when the foreground provider and
+model's catalogue row offers no levels, except for `none`. Otherwise show the provider-adjusted
+level after an arrow when Hermes reports a different one. The marker wins over the arrow. Read the
+catalogue once without refresh when effort arrives and none is held; a missing route or failed read
+leaves the level unqualified. Clear a stored provider level when an effort change has no new one.
+**Rationale.** At the pinned Hermes revision, session information clamps to a provider vocabulary
+without proving what an individual request carried; provider profiles can also differ on whether
+they send effort for models without levels. **Revisit when.** Hermes reports the effort each request
+carried, or forwards the effort levels a model supports.
+
+## 2026-11-04 — Strict native theme files
+
+**Decision.** A theme file is a version-one TOML document with twelve palette slots, fourteen
+semantic roles and the study's 323 named elements, including thirty reserved picker names.
+Inheritance accepts only the complete `terminal`, `dark` and `light` bases. The file reader,
+strict parser and catalogue live in `talaria-app`; terminal styles, layering, field sources and
+contrast diagnostics live in `talaria-tui`. Separate file reports and a wrapper resolver preserve
+the existing `ThemeReport`, `ThemeInputs` and no-file presentation contracts. File changes are
+applied atomically through application effects and the event channel.
+
+The composer has one active frame, so it uses `composer.border.focused`, making the accepted
+minimal example visible. The other composer border token remains available to future views.
+Every field of today's five theme surfaces has an explicit binding. Backgrounds resolve for
+inspection but are removed when binding those inline surfaces. Each family uses `background`
+for transcript, composer, status, tool, diff and workspace; all other families use `surface`.
+The seventeen catalogue elements with role `border` are structural marks; no additions are made.
+
+The explicit base palettes are:
+
+| Slot | Dark | Light |
+| --- | --- | --- |
+| background | `#101014` | `#ffffff` |
+| surface | `#202024` | `#f0f0f0` |
+| foreground | `#f4f4f4` | `#161616` |
+| muted | `#c4c4c4` | `#484848` |
+| disabled | `#a8a8a8` | `#606060` |
+| border | `#a0a0a0` | `#707070` |
+| primary | `#aaccff` | `#174a8b` |
+| accent | `#80dcff` | `#005b70` |
+| success | `#a0e0a0` | `#236624` |
+| warning | `#ffe080` | `#714b00` |
+| error | `#ffa0a0` | `#9b2424` |
+| attention | `#ffe080` | `#714b00` |
+
+Against both area backgrounds, ordinary colours meet 4.5:1 and borders meet 3:1. An inline
+terminal with a different trusted background is measured separately. Selection/focus elements
+outside today's bound inline fields are measured as the catalogue's paired colours. ANSI palette colours and
+untrusted terminal defaults remain unknown; authored colours are never lifted.
+
+**Rejected.** File inheritance chains, executable expressions, editor-theme import, silent
+unknown-key acceptance, background painting in native scrollback and edits to Hermes files.
+They add ambiguity, security exposure or behaviour outside appearance. **Revisit when.** The
+catalogue needs a compatible schema extension, the picker names are finalized, or measured use
+justifies an offline import tool. File watching remains deferred.
+
 ### Work panel keeps the last finished goal
 
 **Decision.** Keep a finished goal and its explicit verdict in the focused session's work panel
@@ -4582,3 +4639,21 @@ fixture measurement. Shared width 1 met it; per-session width 1 failed foregroun
 **Revisit when.** The operator approves the default or a new measurement on the intended
 machine supports another value. The C tool observation and the real-provider error also
 need investigation before drawing broader conclusions.
+
+## 2026-11-04 — Use batch Hermes audio relay first
+
+**Decision.** Client voice uses the profile-scoped HTTP transcription and speech
+endpoints first. Local capture and playback use configured subprocesses; streaming
+and provider-direct access remain separate work.
+
+**Rationale.** The pinned Hermes contract supports both batch endpoints without
+putting provider keys in Talaria. Batch requests have their own audio-sized limits
+and deadlines rather than changing the limits used by other remote requests.
+
+### Skills and hub search counts
+
+**Decision.** Label the Skills tab with its installed count and put the enabled count in its
+footer, keeping the tab row compact. Request up to 50 hub search items and show the number
+fetched from sources before deduplication beside the number shown. If source counts are absent,
+show only the number shown. Fetched counts are not match totals.
+**Revisit when.** Hermes returns a true match total for search.

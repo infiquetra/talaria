@@ -1,5 +1,9 @@
 //! Gateway-side voice capture and per-session state.
 
+pub mod playback;
+pub mod relay;
+pub mod transport;
+
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::{Arc, Mutex};

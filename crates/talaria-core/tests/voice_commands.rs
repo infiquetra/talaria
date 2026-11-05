@@ -1,7 +1,7 @@
 //! `/voice` forms and the local command table.
 
 use talaria_core::commands::{LocalAction, LocalCommandTable};
-use talaria_core::voice::{VoiceCommand, command_outbound, parse_voice_args};
+use talaria_core::voice::{SpeechMode, VoiceCommand, command_outbound, parse_voice_args};
 
 #[test]
 fn voice_command_forms() {
@@ -43,12 +43,12 @@ fn voice_command_forms() {
     let banana = parse_voice_args("banana").expect_err("banana");
     assert_eq!(
         banana,
-        "Unknown /voice option \"banana\". Use /voice on, off, status, read on or read off."
+        "Unknown /voice option \"banana\". Use /voice on, off, status, stop, read on, read off, or mode full, summary or alerts."
     );
     let tts_on = parse_voice_args("tts on").expect_err("tts on");
     assert_eq!(
         tts_on,
-        "Unknown /voice option \"tts on\". Use /voice on, off, status, read on or read off."
+        "Unknown /voice option \"tts on\". Use /voice on, off, status, stop, read on, read off, or mode full, summary or alerts."
     );
 
     assert!(command_outbound(&VoiceCommand::Read(None)).is_empty());
@@ -56,4 +56,38 @@ fn voice_command_forms() {
     assert!(command_outbound(&VoiceCommand::Read(Some(false))).is_empty());
     assert!(!command_outbound(&VoiceCommand::On).is_empty());
     assert!(!command_outbound(&VoiceCommand::Status).is_empty());
+}
+
+#[test]
+fn voice_hint_lists_stop_and_mode() {
+    let table = LocalCommandTable::builtin();
+    let command = table.find("voice").expect("voice");
+    assert!(
+        command.args_hint.contains("stop") && command.args_hint.contains("mode"),
+        "the voice hint lists stop and mode: {}",
+        command.args_hint
+    );
+}
+
+#[test]
+fn voice_stop_and_mode_parse() {
+    assert_eq!(parse_voice_args("stop").ok(), Some(VoiceCommand::Stop));
+    assert_eq!(parse_voice_args("STOP").ok(), Some(VoiceCommand::Stop));
+    assert_eq!(
+        parse_voice_args("mode full").ok(),
+        Some(VoiceCommand::Mode(SpeechMode::Full))
+    );
+    assert_eq!(
+        parse_voice_args("Mode Summary").ok(),
+        Some(VoiceCommand::Mode(SpeechMode::Summary))
+    );
+    assert_eq!(
+        parse_voice_args("mode alerts").ok(),
+        Some(VoiceCommand::Mode(SpeechMode::Alerts))
+    );
+    assert!(
+        command_outbound(&VoiceCommand::Stop).is_empty(),
+        "stop sends nothing to the gateway"
+    );
+    assert!(command_outbound(&VoiceCommand::Mode(SpeechMode::Alerts)).is_empty());
 }

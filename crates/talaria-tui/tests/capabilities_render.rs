@@ -15,6 +15,29 @@ use talaria_tui::terminal::{InlineTerminal, RestoreLink};
 
 const SKILL_HINTS: &str = "Space on/off  Enter read  / filter  Tab next tab  r refresh  Esc close";
 
+#[test]
+fn three_digit_counts_fit_every_selected_tab_at_eighty_columns() {
+    for tab in [
+        CapTab::Skills,
+        CapTab::Hub,
+        CapTab::Toolsets,
+        CapTab::Plugins,
+    ] {
+        let mut view = sample();
+        view.tab = tab;
+        view.tabs = vec![
+            "Skills 999 installed".into(),
+            "Skill hub".into(),
+            "Toolsets 999/999 on".into(),
+            "Plugins 999 installed".into(),
+        ];
+        let row = &screen(&view, 80, 24)[1];
+        for label in &view.tabs {
+            assert!(row.contains(label), "{row}");
+        }
+    }
+}
+
 fn sample() -> CapView {
     let skill = |name: &str, description: &str, source: &str, enabled: bool, usage| CapListRow {
         name: name.into(),
@@ -34,7 +57,7 @@ fn sample() -> CapView {
         profile: "fixture".into(),
         title: "Capabilities · profile fixture".into(),
         tabs: vec![
-            "Skills 3/4 on".into(),
+            "Skills 4 installed".into(),
             "Skill hub".into(),
             "Toolsets".into(),
             "Plugins".into(),
@@ -117,7 +140,10 @@ fn snapshots_at_four_sizes() {
         (80, 24, include_str!("fixtures/capabilities/80x24.txt")),
         (39, 9, include_str!("fixtures/capabilities/39x9.txt")),
     ] {
-        let mut expected = golden.lines().map(str::to_owned).collect::<Vec<_>>();
+        let mut expected = golden
+            .lines()
+            .map(|line| line.replace("Skills 3/4 on", "Skills 4 installed"))
+            .collect::<Vec<_>>();
         assert!(
             expected.len() <= usize::from(rows),
             "golden height at {cols}x{rows}"
@@ -136,7 +162,7 @@ fn other_tabs_catalog_dialog_log_and_filter_have_fixed_rows() {
     let mut view = sample();
     view.tab = CapTab::Hub;
     view.tabs = vec![
-        "Skills 3/4 on".into(),
+        "Skills 4 installed".into(),
         "Skill hub".into(),
         "Toolsets".into(),
         "Plugins".into(),
@@ -153,7 +179,10 @@ fn other_tabs_catalog_dialog_log_and_filter_have_fixed_rows() {
     view.footer = "Page 1 of 2 · 25 skills".into();
     view.hints = "Enter preview  i install  / search  n/p page  r refresh  Esc close".into();
     let rows = screen(&view, 120, 40);
-    assert_eq!(rows[1], " Skills 3/4 on  [Skill hub]  Toolsets  Plugins");
+    assert_eq!(
+        rows[1],
+        " Skills 4 installed  [Skill hub]  Toolsets  Plugins"
+    );
     assert_eq!(
         rows[3],
         " > fixture-hub                   official   official    A shared skill.  installed"

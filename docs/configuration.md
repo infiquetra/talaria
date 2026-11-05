@@ -357,6 +357,9 @@ allowlist = []
 mode = "auto"
 follow_hermes_skin = true
 colors = "auto"
+# file = "quiet-amber"
+# [theme.profiles."fixture"]
+# file = "quiet-amber"
 [ui]
 reduced_motion = false
 work_panel = false
@@ -380,8 +383,13 @@ focus = false
 # model = "example-model"
 
 [voice]
+backend = "hermes-gateway"
 read_aloud = false
 speak_max_chars = 1500
+remote_audio = false
+client_submit_mode = "draft"
+render_mode = "strip"
+# capture_command and playback_command are not configured by default.
 ```
 
 ## Settings
@@ -402,6 +410,9 @@ remain idle with an unknown indicator.
 
 `status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees the default-deny environment described below plus `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
 (`/theme` overrides it for one session); `theme.follow_hermes_skin = false` keeps Talaria's colours; `theme.colors` is `auto`, `truecolor`, `256`, `16` or `none`.
+`theme.file` selects `themes/<id>.toml` beside `config.toml`; `[theme.profiles."<profile-id>"] file`
+overrides it for that profile. `/theme use <id>` overrides both for this session, `/theme use`
+returns to configuration, and `/theme reload` rereads the active file. None writes configuration.
 `ui.reduced_motion` stops timed changes except counters, which change at most once a second. A paste of `paste_collapse_lines` lines or `paste_collapse_chars` characters
 becomes a label (0 turns that rule off). `TALARIA_THEME` beats `theme.mode`, `TALARIA_REDUCED_MOTION` beats `ui.reduced_motion`, and a non-empty `NO_COLOR` turns colour
 off. See [themes](themes.md).
@@ -629,16 +640,37 @@ speak_max_chars = 1500
 whole numbers from 100 to 10000; longer replies are shortened before being sent for
 speech. Invalid values produce a configuration notice and use the defaults.
 
-### Planned client voice for v0.8.0
+### Client voice
 
-**Planned for v0.8.0 (not yet active in v0.7.0).** This is the configuration
-contract locked on issue #425 in comment 6568007530, recorded in the
+The client backend owns workstation helpers and uses the selected Hermes profile's
+speech services. The architecture is recorded in the
 [voice architecture decision](engineering-journal/DECISIONS.md#voice-architecture-workstation-devices-and-hermes-speech-services).
-Every new key below is planned; none exists in v0.7.0. Keep using the two
-existing `[voice]` keys above for that release. Its loader ignores unknown keys
-with a notice; adding the planned settings does not enable client voice.
 
-The client path will own local microphone/player helper programs and reuse the
+```text
+[voice]
+backend = "client-bridge"
+capture_command = ["my-capture-helper"]
+playback_command = ["my-playback-helper"]
+remote_audio = false
+client_submit_mode = "draft"
+```
+
+Command settings are argument arrays, executed directly without a shell. The capture
+helper writes WAV audio to standard output, accepts `stop` followed by a newline on
+standard input, then finalizes the recording and exits. Capture ends automatically
+after 120 seconds, and audio is capped at 16 MiB. The playback helper reads the
+audio returned by Hermes on standard input and exits at end of file. Install and
+configure both helpers separately; no platform preset is supplied. Empty commands
+or failed helpers produce a notice. Playback control uses a separate process-control
+path, not the audio stream.
+
+`remote_audio` defaults to false. Set it to true only to allow the client backend to
+send recordings to the attached remote gateway. Devices stay on the workstation.
+`client_submit_mode` defaults to `draft`; `direct` submits only when the composer is
+empty. The gateway backend retains its own submit setting. `/voice status` reports
+the selected backend, observed helper and relay status, and remote opt-in.
+
+The client path owns local microphone/player helper programs and reuses the
 selected Hermes profile's speech services. Hermes's relay endpoints
 `POST /api/audio/transcribe` and `POST /api/audio/speak` come first; Talaria
 stores no speech-provider keys. Streaming routes are
@@ -648,21 +680,24 @@ their authenticated capability is established. Direct provider use through
 is gated by `voice.client_direct` (true by default), and may return relay mode;
 it is not a new Talaria setting.
 
-The following tables specify the planned schema. `client_submit_mode` is the
+The following tables also describe later planned settings. `client_submit_mode` is the
 distinct client-side name required by the lock. The empty `notifications.speech`
 list carries forward opt-in announcements without the rejected separate switch.
 
 | New `[voice]` key | Planned value / contract | Availability |
 |---|---|---|
-| `backend` | `hermes-gateway` when omitted; opt-in `client-bridge` composes local helpers with the Hermes relay. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `backend` | `hermes-gateway` when omitted; `client-bridge` uses local helpers with the Hermes relay. | Available |
 | `transport` | `subprocess` for the first client implementation. An optional bridge awaits a job-scoped output-quiet stop contract. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `client_submit_mode` | `draft` by default; `direct` may submit an eligible ordinary prompt. Fleet transcripts enter the bound row's reply editor; permissions always need Enter. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `render_mode` | `strip` by default; `digest` gives deterministic spoken results without another model call. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `client_submit_mode` | `draft` by default; `direct` submits an eligible ordinary prompt when the composer is empty. | Available |
+| `capture_command` | Argument array for the local capture helper. | Available |
+| `playback_command` | Argument array for the local playback helper. | Available |
+| `remote_audio` | Explicitly permits client audio to the attached remote relay; false by default. | Available |
+| `render_mode` | `strip` by default; `digest` gives deterministic spoken results without another model call. | Available |
 | `speech_scope` | `replies` by default; `alerts` suppresses completed-reply speech. | Planned for v0.8.0 (not yet active in v0.7.0) |
 
 `read_aloud = false` and `speak_max_chars = 1500` remain existing settings, with
 the existing 100–10000 character validation. The client submit setting never
-overrides the Hermes gateway's `voice.submit_mode`; the gateway fallback keeps
+overrides the Hermes gateway's `voice.submit_mode`; the gateway backend keeps
 its current submission and read-aloud behaviour.
 
 | New `[voice.audio]` key | Planned value / contract | Availability |
@@ -833,6 +868,8 @@ The default block above is authoritative. Invalid values use the documented defa
 | `mode` | string | auto | auto, light, dark | auto |
 | `follow_hermes_skin` | boolean | true | true or false | true |
 | `colors` | string | auto | auto, truecolor, 256, 16, none | auto |
+| `file` | string | unset | theme identifier, at most 64 lower-case letters, digits, underscores or dashes; starts with a letter or digit | quiet-amber |
+| `profiles."<profile-id>".file` | string | unset | same identifier rules; overrides `file` for this profile | quiet-amber |
 
 ### `ui`
 
