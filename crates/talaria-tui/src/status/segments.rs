@@ -314,7 +314,12 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
                     .next()
                     .unwrap_or("")
                     .trim();
-                cut_to_width(&sanitize(name), available)
+                let sanitized = sanitize(name);
+                if UnicodeWidthStr::width(sanitized.as_ref()) <= available {
+                    sanitized.into_owned()
+                } else {
+                    cut_to_width(sanitized.as_ref(), available)
+                }
             } else {
                 cut_to_width(&text, available)
             };

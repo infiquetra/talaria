@@ -258,6 +258,22 @@ fn effort_marker_and_width_preserve_meaning() {
 }
 
 #[test]
+fn narrow_model_segment_keeps_a_fitting_name_without_ellipsis() {
+    let inputs = StatusInputs {
+        model: Some("wide-model".into()),
+        reasoning_effort: Some("max".into()),
+        effort_offered: Some(false),
+        ..base()
+    };
+    let model = plan(&inputs, None, 17)
+        .pieces
+        .into_iter()
+        .find(|(segment, _, _)| *segment == Segment::Model)
+        .map(|(_, text, _)| text);
+    assert_eq!(model.as_deref(), Some("wide-model"));
+}
+
+#[test]
 fn context_hidden_until_reported_estimate_marked_and_clamped() {
     assert_eq!(context_of(None, false), None);
     assert_eq!(context_of(None, true), None);
