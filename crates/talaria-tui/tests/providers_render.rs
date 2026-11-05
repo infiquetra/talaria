@@ -32,6 +32,7 @@ fn paint(shown: &ProvidersView, secret_len: usize, cols: u16, rows: u16) -> Stri
 
 fn base(tab: ProvidersTab) -> ProvidersView {
     ProvidersView {
+        browse: None,
         title: "Providers · profile fixture".into(),
         tab,
         rows: Vec::new(),
@@ -73,6 +74,7 @@ fn endpoint_form_shows_each_focused_field_after_a_wrapped_url() {
             })
             .collect();
         shown.card = Some(CardView {
+            step: None,
             kind: CardKind::EndpointForm,
             lines,
             footer: "ctrl+s save · esc close".into(),
@@ -125,9 +127,9 @@ fn real_endpoint_form_tracks_focus_after_editing_a_long_url() {
 fn loaded_keys() -> ProvidersView {
     let mut shown = base(ProvidersTab::Keys);
     shown.rows = vec![
-        "Ollama Cloud      OLLAMA_API_KEY        ready · 12 models · key …wxyz".into(),
+        "Ollama Cloud      OLLAMA_API_KEY        ready · 12 models · key saved".into(),
         "OpenRouter        OPENROUTER_API_KEY    no key".into(),
-        "Qwen Cloud        DASHSCOPE_API_KEY     key …abcd saved · not ready".into(),
+        "Qwen Cloud        DASHSCOPE_API_KEY     key saved · not ready".into(),
         "also used by Alibaba Cloud (Coding Plan)".into(),
     ];
     shown.footer =
@@ -137,85 +139,44 @@ fn loaded_keys() -> ProvidersView {
 
 #[test]
 fn tabs_snapshots() {
-    let loaded = paint(&loaded_keys(), 0, 160, 48);
-    assert!(
-        loaded.contains("[Keys]"),
-        "the keys tab is marked: {loaded}"
-    );
-    assert!(loaded.contains("Accounts"), "{loaded}");
-    assert!(loaded.contains("Endpoints"), "{loaded}");
-    assert!(loaded.contains("Providers · profile fixture"), "{loaded}");
-    assert!(
-        loaded.contains("ready · 12 models · key …wxyz"),
-        "a ready row is missing: {loaded}"
-    );
-    assert!(
-        loaded.contains("also used by Alibaba Cloud (Coding Plan)"),
-        "{loaded}"
-    );
-    assert!(loaded.contains("enter set key"), "{loaded}");
-
-    let mut loading = base(ProvidersTab::Keys);
-    loading.rows = vec!["Loading…".into()];
-    loading.selected = None;
-    assert!(
-        paint(&loading, 0, 160, 48).contains("Loading…"),
-        "a loading list is blank"
-    );
-
-    let mut failed = base(ProvidersTab::Keys);
-    failed.rows =
-        vec!["Could not load keys: the gateway refused the request. ctrl+r tries again.".into()];
-    assert!(
-        paint(&failed, 0, 160, 48).contains("ctrl+r tries again."),
-        "a failed list is blank"
-    );
-
-    let mut empty = base(ProvidersTab::Endpoints);
-    empty.rows = vec![
-        "+ Add an endpoint".into(),
-        "No custom endpoints in this profile.".into(),
-    ];
-    empty.footer = "enter edit · ctrl+d delete · ctrl+r reload · tab next tab".into();
-    let empty_text = paint(&empty, 0, 160, 48);
-    assert!(
-        empty_text.contains("No custom endpoints in this profile."),
-        "{empty_text}"
-    );
-    assert!(empty_text.contains("+ Add an endpoint"), "{empty_text}");
-
-    let mut unmatched = base(ProvidersTab::Keys);
-    unmatched.filter = "zzz".into();
-    unmatched.rows = vec!["No provider matches \"zzz\".".into()];
-    unmatched.selected = None;
-    assert!(
-        paint(&unmatched, 0, 160, 48).contains("No provider matches \"zzz\"."),
-        "a filter with no match is blank"
-    );
-
-    let mut banner = loaded_keys();
-    banner.banner =
-        Some("Not connected to Hermes. Changes are off until Talaria reconnects.".into());
-    assert!(
-        paint(&banner, 0, 160, 48)
-            .contains("Not connected to Hermes. Changes are off until Talaria reconnects."),
-        "the banner is missing"
-    );
-
-    let long = format!("OpenRouter {}", "x".repeat(70));
-    assert!(long.chars().count() > 80);
-    let mut wide_row = loaded_keys();
-    wide_row.rows.push(long.clone());
-    let wide = paint(&wide_row, 0, 160, 48);
-    let narrow = paint(&wide_row, 0, 80, 24);
-    assert!(
-        wide.contains(&long),
-        "the wide screen drops the row: {wide}"
-    );
-    assert!(
-        narrow.contains('…') && !narrow.contains(&long),
-        "the narrow screen does not truncate the middle column: {narrow}"
-    );
+    use talaria_core::providers::browse::{
+        BrowseCounts, BrowseKey, BrowseRow, BrowseView, ProviderStatus,
+    };
+    for tab in [
+        ProvidersTab::All,
+        ProvidersTab::Keys,
+        ProvidersTab::Accounts,
+        ProvidersTab::Endpoints,
+    ] {
+        let mut view = base(tab);
+        view.browse = Some(BrowseView {
+            rows: vec![BrowseRow {
+                key: Some(BrowseKey::Provider("example-00".into())),
+                label: "Example provider 00".into(),
+                status: Some(ProviderStatus::ListedReady),
+                methods: vec![],
+                details: vec!["Catalogue lists this provider as authenticated".into()],
+            }],
+            selected: Some(0),
+            counts: BrowseCounts {
+                providers: 1,
+                complete: true,
+            },
+            ..Default::default()
+        });
+        let text = paint(&view, 0, 80, 24);
+        for label in [
+            "All",
+            "Keys",
+            "Accounts",
+            "Endpoints",
+            "Example provider 00",
+            "listed ready",
+            "F2/Ctrl+E",
+        ] {
+            assert!(text.contains(label), "{label}: {text}");
+        }
+    }
 }
 
 #[test]
@@ -228,6 +189,7 @@ fn cards_snapshots() {
 
     let mut key = loaded_keys();
     key.card = Some(CardView {
+        step: Some("Step 1 of 3: Paste key".into()),
         kind: CardKind::Key,
         lines: vec![
             "API key for OpenRouter".into(),
@@ -237,6 +199,7 @@ fn cards_snapshots() {
     });
     key.secret_focus = true;
     let masked = paint(&key, 41, 160, 48);
+    assert!(masked.contains("Step 1 of 3: Paste key"), "{masked}");
     let bullets = "•".repeat(40);
     assert!(
         masked.contains(&format!("{bullets}…")),
@@ -253,6 +216,7 @@ fn cards_snapshots() {
 
     let mut waiting = base(ProvidersTab::Accounts);
     waiting.card = Some(CardView {
+        step: Some("Step 2 of 3: Approve in your browser".into()),
         kind: CardKind::Waiting,
         lines: vec![
             "1. Open https://example.invalid/device".into(),
@@ -262,6 +226,7 @@ fn cards_snapshots() {
         footer: "o open link · c copy code · esc cancel".into(),
     });
     let narrow = paint(&waiting, 0, 80, 24);
+    assert!(narrow.contains("Step 2 of 3: Approve in your browser"));
     assert!(
         narrow.contains("ABCD-1234"),
         "the sign-in code was truncated: {narrow}"
@@ -273,6 +238,7 @@ fn cards_snapshots() {
 
     let mut form = base(ProvidersTab::Endpoints);
     form.card = Some(CardView {
+        step: Some("Step 1 of 3: Fill in the endpoint".into()),
         kind: CardKind::EndpointForm,
         lines: vec![
             "Name".into(),
@@ -282,6 +248,7 @@ fn cards_snapshots() {
         footer: "ctrl+t test · ctrl+s save · tab next field · esc close".into(),
     });
     let form_text = paint(&form, 0, 160, 48);
+    assert!(form_text.contains("Step 1 of 3: Fill in the endpoint"));
     assert!(
         form_text.contains("ctrl+t test · ctrl+s save · tab next field · esc close"),
         "{form_text}"
@@ -297,6 +264,7 @@ fn cards_snapshots() {
     ] {
         let mut shown = base(ProvidersTab::Keys);
         shown.card = Some(CardView {
+            step: None,
             kind,
             lines: vec![line.into()],
             footer: "y confirm · n cancel".into(),

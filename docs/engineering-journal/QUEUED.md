@@ -4,6 +4,14 @@
 
 ## 2026-11-04
 
+### Bind the completed picker surfaces to the theme catalogue
+
+**Priority.** Existing view colour work (#486), after both picker cards.
+**Evidence.** The model and Providers frames now settle forty-three `picker.*` names in the
+decisions ledger. This stack precedes theme files, so the current terminal styles remain.
+**Worth it when.** The theme mechanism and both picker cards are integrated. Bind the shared
+elements and the three provider additions once, preserving their textual statuses and masking.
+
 ### Restyle the model-roles route picker with the shared frame
 
 **Priority.** Later; not part of the session model picker (#488).

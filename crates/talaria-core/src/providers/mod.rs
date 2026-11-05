@@ -8,7 +8,8 @@ use std::time::Instant;
 
 pub fn parse_providers_args(args: &str) -> Result<OpenTarget, &'static str> {
     match args.trim().to_ascii_lowercase().as_str() {
-        "" | "keys" => Ok(OpenTarget::Tab(ProvidersTab::Keys)),
+        "" => Ok(OpenTarget::Tab(ProvidersTab::All)),
+        "keys" => Ok(OpenTarget::Tab(ProvidersTab::Keys)),
         "accounts" => Ok(OpenTarget::Tab(ProvidersTab::Accounts)),
         "endpoints" => Ok(OpenTarget::Tab(ProvidersTab::Endpoints)),
         _ => Err(text::USAGE),
@@ -20,6 +21,41 @@ pub fn update(
     now: Instant,
 ) -> Vec<ProvidersEffect> {
     let mut effects = Vec::new();
+    let completed = match &input {
+        ProvidersInput::EnvLoaded(result) => Some((0, result.is_ok())),
+        ProvidersInput::OptionsLoaded(result) => Some((1, result.is_ok())),
+        ProvidersInput::OauthLoaded(result) => Some((2, result.is_ok())),
+        ProvidersInput::EndpointsLoaded(result) => Some((3, result.is_ok())),
+        _ => None,
+    };
+    let readback = match (&input, &state.busy) {
+        (
+            ProvidersInput::KeySaved(Err(Failure::Unknown | Failure::BadReply)),
+            Some(Busy::SaveKey(_)),
+        ) => Some(vec![0, 1]),
+        (
+            ProvidersInput::Disconnected(Err(Failure::Unknown | Failure::BadReply)),
+            Some(Busy::Disconnect(_)),
+        )
+        | (
+            ProvidersInput::SignedOut(Err(Failure::Unknown | Failure::BadReply)),
+            Some(Busy::SignOut(_)),
+        ) => Some(vec![0, 1, 2, 3]),
+        (
+            ProvidersInput::EndpointSaved(Err(Failure::Unknown | Failure::BadReply)),
+            Some(Busy::SaveEndpoint(_)),
+        )
+        | (
+            ProvidersInput::EndpointDeleted(Err(Failure::Unknown | Failure::BadReply)),
+            Some(Busy::DeleteEndpoint(_)),
+        ) => Some(vec![3]),
+        _ => None,
+    };
+    let starting_readback = readback.is_some();
+    if let Some(readback) = readback {
+        state.uncertain = true;
+        state.readback = readback;
+    }
     match input {
         ProvidersInput::Open {
             target,
@@ -34,6 +70,9 @@ pub fn update(
             state.connected = connected;
             state.filter.clear();
             state.selected = 0;
+            state.all_selected = None;
+            state.details_open = false;
+            state.details_scroll = 0;
             state.notice = None;
             match target {
                 OpenTarget::Tab(tab) => {
@@ -41,7 +80,7 @@ pub fn update(
                     state.target = None
                 }
                 OpenTarget::Provider { slug } => {
-                    state.tab = ProvidersTab::Keys;
+                    state.tab = ProvidersTab::All;
                     state.target = Some(slug)
                 }
             }
@@ -53,8 +92,10 @@ pub fn update(
                 load(state, 0, &mut effects);
                 load(state, 1, &mut effects);
                 load(state, 2, &mut effects);
+                load(state, 3, &mut effects);
             } else {
                 match state.tab {
+                    ProvidersTab::All => load_all(state, &mut effects),
                     ProvidersTab::Keys => {
                         load(state, 0, &mut effects);
                         load(state, 1, &mut effects);
@@ -63,11 +104,30 @@ pub fn update(
                     ProvidersTab::Endpoints => load(state, 3, &mut effects),
                 }
             }
+            for index in state.readback.clone() {
+                if !state.loads[index].running {
+                    load(state, index, &mut effects);
+                }
+            }
         }
         ProvidersInput::Close => close(state, &mut effects),
         ProvidersInput::Key(key) if state.open => key_input(state, key, now, &mut effects),
         ProvidersInput::Connection { connected } => {
             let was = state.connected;
+            if was && !connected {
+                let mut snapshot = state.clone();
+                snapshot.tab = ProvidersTab::All;
+                snapshot.filter.clear();
+                for row in browse::view(&snapshot).rows {
+                    if let (Some(browse::BrowseKey::Provider(slug)), Some(status)) =
+                        (row.key, row.status)
+                    {
+                        state
+                            .known_statuses
+                            .insert((state.profile.clone(), slug), status);
+                    }
+                }
+            }
             state.connected = connected;
             if connected && !was {
                 load_all(state, &mut effects)
@@ -189,6 +249,32 @@ pub fn update(
         _ => {}
     }
     target(state, &mut effects);
+    if starting_readback {
+        // Wait for overlapping old reads, then a final fresh read, before allowing another write.
+        for index in state.readback.clone() {
+            let effect = load_effect(index);
+            if !effects.contains(&effect) {
+                let load = &mut state.loads[index];
+                if load.running {
+                    load.overlapping = load.overlapping.saturating_add(1);
+                    load.again = true;
+                } else {
+                    load.running = true;
+                }
+                effects.push(effect);
+            }
+        }
+    }
+    if state.uncertain
+        && let Some((index, true)) = completed
+    {
+        if !state.loads[index].running {
+            state.readback.retain(|i| *i != index);
+        }
+        if state.readback.is_empty() {
+            state.uncertain = false;
+        }
+    }
     effects
 }
 fn load(state: &mut ProvidersState, index: usize, effects: &mut Vec<ProvidersEffect>) {
@@ -198,12 +284,15 @@ fn load(state: &mut ProvidersState, index: usize, effects: &mut Vec<ProvidersEff
         return;
     }
     load.running = true;
-    effects.push(match index {
+    effects.push(load_effect(index));
+}
+fn load_effect(index: usize) -> ProvidersEffect {
+    match index {
         0 => ProvidersEffect::LoadEnv,
         1 => ProvidersEffect::LoadOptions,
         2 => ProvidersEffect::LoadOauth,
         _ => ProvidersEffect::LoadEndpoints,
-    })
+    }
 }
 fn load_all(state: &mut ProvidersState, effects: &mut Vec<ProvidersEffect>) {
     for index in 0..4 {
@@ -217,9 +306,13 @@ fn loaded(
     effects: &mut Vec<ProvidersEffect>,
 ) {
     let entry = &mut state.loads[index];
-    entry.running = false;
     entry.done = true;
     entry.error = error;
+    if entry.overlapping > 0 {
+        entry.overlapping -= 1;
+        return;
+    }
+    entry.running = false;
     let again = std::mem::take(&mut entry.again);
     if again {
         load(state, index, effects)
@@ -261,7 +354,7 @@ fn close(state: &mut ProvidersState, effects: &mut Vec<ProvidersEffect>) {
     effects.push(ProvidersEffect::Close)
 }
 fn allowed(state: &mut ProvidersState) -> bool {
-    if !state.connected {
+    if !state.connected || state.uncertain {
         return false;
     }
     if state.busy.is_some() {
@@ -277,8 +370,27 @@ fn target(state: &mut ProvidersState, effects: &mut Vec<ProvidersEffect>) {
     let Some(slug) = state.target.take() else {
         return;
     };
+    state.all_selected = Some(browse::BrowseKey::Provider(slug.clone()));
+    let projected = browse::view(state);
+    let methods = projected
+        .rows
+        .iter()
+        .find(|row| row.key == Some(browse::BrowseKey::Provider(slug.clone())))
+        .map(|row| row.methods.clone())
+        .unwrap_or_default();
+    if methods.len() > 1 {
+        open_card(
+            state,
+            Card::Methods {
+                slug,
+                methods,
+                selected: 0,
+            },
+            effects,
+        );
+        return;
+    }
     if let Some(row) = state.keys.iter().find(|r| r.slug == slug).cloned() {
-        state.tab = ProvidersTab::Keys;
         state.selected = state
             .keys
             .iter()
@@ -288,7 +400,9 @@ fn target(state: &mut ProvidersState, effects: &mut Vec<ProvidersEffect>) {
         return;
     }
     if let Some(index) = state.accounts.iter().position(|a| a.id == slug) {
-        state.tab = ProvidersTab::Accounts;
+        if keys::option(state, &slug).is_none() {
+            state.tab = ProvidersTab::Accounts;
+        }
         state.selected = index;
         return;
     }
@@ -330,9 +444,144 @@ fn target(state: &mut ProvidersState, effects: &mut Vec<ProvidersEffect>) {
         ))
     }
 }
+fn open_method(
+    state: &mut ProvidersState,
+    slug: &str,
+    method: browse::SetupMethod,
+    effects: &mut Vec<ProvidersEffect>,
+) {
+    match method {
+        browse::SetupMethod::Key => {
+            if let Some(row) = browse::key(state, slug) {
+                keys::open(state, row, effects);
+            }
+        }
+        browse::SetupMethod::Account => {
+            if let Some(account) = state.accounts.iter().find(|a| a.id == slug).cloned() {
+                accounts::enter(state, account, effects);
+            }
+        }
+        browse::SetupMethod::Endpoint => {}
+    }
+}
+
+fn all_key(state: &mut ProvidersState, key: ProvidersKey, effects: &mut Vec<ProvidersEffect>) {
+    match key {
+        ProvidersKey::Tab | ProvidersKey::Action(ProvidersAction::NextTab) => {
+            change_tab(state, true, effects);
+            return;
+        }
+        ProvidersKey::BackTab | ProvidersKey::Action(ProvidersAction::PrevTab) => {
+            change_tab(state, false, effects);
+            return;
+        }
+        ProvidersKey::Char(c) if !c.is_control() => state.filter.push(c),
+        ProvidersKey::Paste(ref value) if text::clean(value) => state.filter.push_str(value),
+        ProvidersKey::Backspace => {
+            state.filter.pop();
+        }
+        ProvidersKey::Clear | ProvidersKey::CtrlU => state.filter.clear(),
+        _ => {}
+    }
+    let view = browse::view(state);
+    let selectable: Vec<_> = view
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| row.key.as_ref().map(|key| (i, key.clone())))
+        .collect();
+    if selectable.is_empty() {
+        state.all_selected = None;
+        return;
+    }
+    let position = selectable
+        .iter()
+        .position(|(i, _)| Some(*i) == view.selected)
+        .unwrap_or(0);
+    let next = match key {
+        ProvidersKey::Up => position.saturating_sub(1),
+        ProvidersKey::Down => (position + 1).min(selectable.len() - 1),
+        ProvidersKey::PageUp => position.saturating_sub(10),
+        ProvidersKey::PageDown => (position + 10).min(selectable.len() - 1),
+        ProvidersKey::Home => 0,
+        ProvidersKey::End => selectable.len() - 1,
+        _ => position,
+    };
+    state.all_selected = Some(selectable[next].1.clone());
+    let row = &view.rows[selectable[next].0];
+    if key == ProvidersKey::Enter {
+        match &row.key {
+            Some(browse::BrowseKey::Provider(slug)) => match row.methods.as_slice() {
+                [] if !state.loads[0].done
+                    || state.loads[0].error.is_some()
+                    || !state.loads[2].done
+                    || state.loads[2].error.is_some() =>
+                {
+                    state.notice = Some("Setup methods are unknown. Ctrl+R retries.".into());
+                }
+                [] => {
+                    let warning = keys::option(state, slug)
+                        .and_then(|p| p.warning.as_deref())
+                        .filter(|s| !s.is_empty())
+                        .map(|w| format!(": {w}"))
+                        .unwrap_or_default();
+                    state.notice = Some(text::sanitize(&format!(
+                        "{} is set up outside Talaria{warning}.",
+                        row.label
+                    )));
+                }
+                [method] => open_method(state, slug, *method, effects),
+                methods => open_card(
+                    state,
+                    Card::Methods {
+                        slug: slug.clone(),
+                        methods: methods.to_vec(),
+                        selected: 0,
+                    },
+                    effects,
+                ),
+            },
+            Some(browse::BrowseKey::AddEndpoint) => endpoints::open(state, None, effects),
+            Some(browse::BrowseKey::Endpoint(id)) => {
+                let endpoint = state
+                    .endpoints
+                    .endpoints
+                    .iter()
+                    .find(|e| &e.id == id)
+                    .cloned();
+                endpoints::open(state, endpoint, effects);
+            }
+            None => {}
+        }
+    } else if key == ProvidersKey::Action(ProvidersAction::Remove) {
+        match &row.key {
+            Some(browse::BrowseKey::Provider(slug)) => {
+                if let Some(row) = browse::key(state, slug) {
+                    keys::remove(state, row, effects);
+                } else if let Some(account) = state.accounts.iter().find(|a| &a.id == slug).cloned()
+                {
+                    accounts::remove(state, account, effects);
+                }
+            }
+            Some(browse::BrowseKey::Endpoint(id)) => {
+                if let Some(endpoint) = state
+                    .endpoints
+                    .endpoints
+                    .iter()
+                    .find(|e| &e.id == id)
+                    .cloned()
+                {
+                    endpoints::remove(state, endpoint, effects);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn indices(state: &ProvidersState) -> Vec<usize> {
     match state.tab {
-        ProvidersTab::Keys => state
+        ProvidersTab::All | ProvidersTab::Keys => state
             .keys
             .iter()
             .enumerate()
@@ -369,6 +618,21 @@ fn key_input(
     now: Instant,
     effects: &mut Vec<ProvidersEffect>,
 ) {
+    if state.details_open {
+        match key {
+            ProvidersKey::Esc => state.details_open = false,
+            ProvidersKey::Up => state.details_scroll = state.details_scroll.saturating_sub(1),
+            ProvidersKey::Down => state.details_scroll = state.details_scroll.saturating_add(1),
+            ProvidersKey::PageUp => state.details_scroll = state.details_scroll.saturating_sub(10),
+            ProvidersKey::PageDown => {
+                state.details_scroll = state.details_scroll.saturating_add(10)
+            }
+            ProvidersKey::Home => state.details_scroll = 0,
+            ProvidersKey::End => state.details_scroll = usize::MAX,
+            _ => {}
+        }
+        return;
+    }
     if key == ProvidersKey::Esc {
         if let Some(Card::Form(form)) = &state.card
             && state.busy.is_none()
@@ -389,6 +653,7 @@ fn key_input(
     }
     if let ProvidersKey::Action(ProvidersAction::Reload) = key {
         match state.tab {
+            ProvidersTab::All => load_all(state, effects),
             ProvidersTab::Keys => {
                 load(state, 0, effects);
                 load(state, 1, effects)
@@ -396,10 +661,24 @@ fn key_input(
             ProvidersTab::Accounts => load(state, 2, effects),
             ProvidersTab::Endpoints => load(state, 3, effects),
         }
+        for index in state.readback.clone() {
+            if !state.loads[index].running {
+                load(state, index, effects);
+            }
+        }
         return;
     }
     if state.card.is_some() {
         card_input(state, key, now, effects);
+        return;
+    }
+    if key == ProvidersKey::Action(ProvidersAction::Details) {
+        state.details_open = true;
+        state.details_scroll = 0;
+        return;
+    }
+    if state.tab == ProvidersTab::All {
+        all_key(state, key, effects);
         return;
     }
     match key {
@@ -453,7 +732,7 @@ fn key_input(
                 return;
             }
             match state.tab {
-                ProvidersTab::Keys => {
+                ProvidersTab::All | ProvidersTab::Keys => {
                     if let Some(row) = state.keys.get(state.selected).cloned() {
                         keys::open(state, row, effects)
                     }
@@ -478,7 +757,7 @@ fn key_input(
                 return;
             }
             match state.tab {
-                ProvidersTab::Keys => {
+                ProvidersTab::All | ProvidersTab::Keys => {
                     if let Some(row) = state.keys.get(state.selected).cloned() {
                         keys::remove(state, row, effects)
                     }
@@ -504,16 +783,22 @@ fn key_input(
     }
 }
 fn change_tab(state: &mut ProvidersState, next: bool, effects: &mut Vec<ProvidersEffect>) {
-    state.tab = match (state.tab, next) {
-        (ProvidersTab::Keys, true) | (ProvidersTab::Endpoints, false) => ProvidersTab::Accounts,
-        (ProvidersTab::Accounts, true) | (ProvidersTab::Keys, false) => ProvidersTab::Endpoints,
-        _ => ProvidersTab::Keys,
-    };
-    state.filter.clear();
+    let tabs = [
+        ProvidersTab::All,
+        ProvidersTab::Keys,
+        ProvidersTab::Accounts,
+        ProvidersTab::Endpoints,
+    ];
+    let index = tabs.iter().position(|tab| *tab == state.tab).unwrap_or(0);
+    state.tab = tabs[(index + if next { 1 } else { 3 }) % 4];
     state.selected = 0;
     state.notice = None;
+    if state.tab == ProvidersTab::All {
+        load_all(state, effects);
+        return;
+    }
     let index = match state.tab {
-        ProvidersTab::Keys => 0,
+        ProvidersTab::All | ProvidersTab::Keys => 0,
         ProvidersTab::Accounts => 2,
         ProvidersTab::Endpoints => 3,
     };
@@ -530,6 +815,35 @@ fn card_input(
     now: Instant,
     effects: &mut Vec<ProvidersEffect>,
 ) {
+    if let Some(Card::Methods {
+        slug,
+        methods,
+        selected,
+    }) = &mut state.card
+    {
+        match key {
+            ProvidersKey::Up
+            | ProvidersKey::BackTab
+            | ProvidersKey::Action(ProvidersAction::PrevTab) => {
+                *selected = selected.saturating_sub(1)
+            }
+            ProvidersKey::Down
+            | ProvidersKey::Tab
+            | ProvidersKey::Action(ProvidersAction::NextTab) => {
+                *selected = (*selected + 1).min(methods.len().saturating_sub(1))
+            }
+            ProvidersKey::Enter => {
+                let slug = slug.clone();
+                let method = methods.get(*selected).copied();
+                state.card = None;
+                if let Some(method) = method {
+                    open_method(state, &slug, method, effects);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
     if let Some(Card::Form(_)) = &state.card {
         match key {
             ProvidersKey::Action(ProvidersAction::Test) => {
@@ -663,7 +977,7 @@ fn card_input(
 }
 pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
     let index = match state.tab {
-        ProvidersTab::Keys => 0,
+        ProvidersTab::All | ProvidersTab::Keys => 0,
         ProvidersTab::Accounts => 2,
         ProvidersTab::Endpoints => 3,
     };
@@ -674,7 +988,7 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
         rows.push("Loading…".into())
     } else if let Some(error) = &load.error {
         let (tab, route) = match state.tab {
-            ProvidersTab::Keys => ("keys", "/api/env"),
+            ProvidersTab::All | ProvidersTab::Keys => ("keys", "/api/env"),
             ProvidersTab::Accounts => ("accounts", "/api/providers/oauth"),
             ProvidersTab::Endpoints => ("endpoints", "/api/providers/custom-endpoints"),
         };
@@ -685,7 +999,7 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
     } else {
         for i in &visible {
             rows.push(match state.tab {
-                ProvidersTab::Keys => {
+                ProvidersTab::All | ProvidersTab::Keys => {
                     let row = &state.keys[*i];
                     let shared = if row.shared_with.is_empty() {
                         String::new()
@@ -749,7 +1063,7 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
         }
     }
     let mut footer = match state.tab {
-        ProvidersTab::Keys => {
+        ProvidersTab::All | ProvidersTab::Keys => {
             "enter set key · ctrl+d remove · ctrl+r reload · tab next tab · type to filter".into()
         }
         ProvidersTab::Accounts => {
@@ -778,16 +1092,68 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
         }
     }
     let card = state.card.as_ref().map(|card| card_view(state, card, now));
+    let browse = browse::view(state);
+    if state.tab == ProvidersTab::All {
+        rows = browse
+            .rows
+            .iter()
+            .map(|row| match row.status {
+                Some(status) => format!("{} · {}", row.label, status.label()),
+                None => row.label.clone(),
+            })
+            .collect();
+        footer =
+            "Enter set up · Esc close · F2/Ctrl+E details\nTab view · Ctrl+R reload · Ctrl+U clear"
+                .into();
+    }
+    let banner = if !state.connected {
+        Some("Offline · Not connected to Hermes. Changes are off until Talaria reconnects.".into())
+    } else if state.uncertain {
+        Some("Outcome unknown; reloading without repeating the write. Ctrl+R retries.".into())
+    } else if state.card.is_some() {
+        None
+    } else if state.loads.iter().any(|load| load.error.is_some()) {
+        Some("Some provider inventory is unknown; cached data may be stale. Ctrl+R retries.".into())
+    } else if state.loads.iter().any(|load| load.running) {
+        Some(
+            if browse
+                .rows
+                .iter()
+                .any(|r| matches!(r.key, Some(browse::BrowseKey::Provider(_))))
+            {
+                "Refreshing…".into()
+            } else if state.tab != ProvidersTab::All {
+                "Loading…".into()
+            } else {
+                "Loading providers…".into()
+            },
+        )
+    } else if browse.rows.is_empty() {
+        Some(format!(
+            "No providers match \"{}\". Ctrl+U clears; Tab changes view; Esc clears then closes.",
+            text::sanitize(&state.filter)
+        ))
+    } else if state.tab == ProvidersTab::All
+        && browse.counts.providers == 0
+        && state.filter.is_empty()
+    {
+        Some("No providers listed. Ctrl+R reloads; Enter can add an endpoint.".into())
+    } else {
+        None
+    };
     let secret_focus = state.busy.is_none()
         && matches!(
             &state.card,
             Some(Card::Key(_)) | Some(Card::Form(Form { field: 2, .. }))
         );
     ProvidersView {
+        browse: Some(browse.clone()),
         title: format!("Providers · profile {}", text::sanitize(&state.profile)),
         tab: state.tab,
         rows: rows.into_iter().map(|s| text::sanitize(&s)).collect(),
-        selected: if load.done && load.error.is_none() {
+        selected: if state.tab == ProvidersTab::All {
+            browse.selected
+        } else if load.done && load.error.is_none() {
             visible.iter().position(|i| *i == state.selected)
         } else {
             None
@@ -795,19 +1161,55 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
         filter: text::sanitize(&state.filter),
         card,
         notice: state.notice.as_deref().map(text::sanitize),
-        banner: (!state.connected)
-            .then(|| "Not connected to Hermes. Changes are off until Talaria reconnects.".into()),
+        banner,
         secret_focus,
-        footer: text::sanitize(&footer),
+        footer: if state.tab == ProvidersTab::All {
+            footer
+        } else {
+            text::sanitize(&footer)
+        },
     }
 }
 fn card_view(state: &ProvidersState, card: &Card, now: Instant) -> ProvidersCard {
     let (kind, title, mut lines, footer, selected_field) = match card {
+        Card::Methods {
+            slug,
+            methods,
+            selected,
+        } => (
+            CardKind::External,
+            format!(
+                "Set up {}",
+                keys::option(state, slug)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or(slug)
+            ),
+            methods
+                .iter()
+                .enumerate()
+                .map(|(i, method)| {
+                    format!(
+                        "{}{}",
+                        if i == *selected { "› " } else { "  " },
+                        match method {
+                            browse::SetupMethod::Key => "API key",
+                            browse::SetupMethod::Account => "Account sign-in",
+                            browse::SetupMethod::Endpoint => "Endpoint",
+                        }
+                    )
+                })
+                .collect(),
+            "Up/Down choose · Enter open · Esc back".into(),
+            None,
+        ),
         Card::Key(card) => {
             let mut lines = vec![format!(
                 "Saved to profile {}'s key file as {}.",
                 state.profile, card.row.env_var
             )];
+            if let Some(tail) = card.row.tail.as_deref().filter(|s| s.chars().count() == 4) {
+                lines.push(format!("Saved key ends in {}", text::sanitize(tail)));
+            }
             if let Some(message) = &card.message {
                 lines.push(message.clone())
             }
@@ -946,6 +1348,30 @@ fn card_view(state: &ProvidersState, card: &Card, now: Instant) -> ProvidersCard
         lines.insert(0, title);
     }
     ProvidersCard {
+        step: match card {
+            Card::Key(_) => Some(
+                match state.busy {
+                    Some(Busy::CheckKey) => "Step 2 of 3: Check key",
+                    Some(Busy::SaveKey(_)) => "Step 3 of 3: Save and read back",
+                    _ => "Step 1 of 3: Paste key",
+                }
+                .into(),
+            ),
+            Card::Starting { .. } => Some("Step 1 of 3: Start sign-in".into()),
+            Card::Waiting { .. } => Some("Step 2 of 3: Approve in your browser".into()),
+            Card::Approved { .. } | Card::Ended { .. } => {
+                Some("Step 3 of 3: Confirm sign-in".into())
+            }
+            Card::Form(_) => Some(
+                match state.busy {
+                    Some(Busy::CheckEndpoint) => "Step 2 of 3: Test",
+                    Some(Busy::SaveEndpoint(_)) => "Step 3 of 3: Save and read back",
+                    _ => "Step 1 of 3: Fill in the endpoint",
+                }
+                .into(),
+            ),
+            _ => None,
+        },
         kind,
         lines: lines.into_iter().map(|s| text::sanitize(&s)).collect(),
         footer,
@@ -1179,3 +1605,4 @@ mod tests {
         );
     }
 }
+pub mod browse;

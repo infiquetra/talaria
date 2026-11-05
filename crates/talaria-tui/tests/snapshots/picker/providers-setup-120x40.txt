@@ -1,0 +1,4 @@
+Step 1 of 3: Paste key
+EXAMPLE_API_KEY
+••••••••
+Enter check and save · Esc cancel

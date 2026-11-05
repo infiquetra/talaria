@@ -57,6 +57,10 @@ fn secret_field_editing() {
 #[test]
 fn providers_keymap_defaults() {
     let map = KeyMap::defaults();
+    let details = ProvidersAction::ALL
+        .into_iter()
+        .find(|action| action.config_name() == "providers_details")
+        .expect("tenth provider action");
     let expected = [
         (ProvidersAction::NextTab, "providers_next_tab", "tab"),
         (ProvidersAction::PrevTab, "providers_prev_tab", "shift+tab"),
@@ -67,6 +71,7 @@ fn providers_keymap_defaults() {
         (ProvidersAction::ClearKey, "providers_clear_key", "ctrl+x"),
         (ProvidersAction::OpenLink, "providers_open_link", "o"),
         (ProvidersAction::Copy, "providers_copy", "c"),
+        (details, "providers_details", "f2"),
     ];
     assert_eq!(ProvidersAction::ALL.len(), expected.len());
     for (action, name, chord_text) in expected {

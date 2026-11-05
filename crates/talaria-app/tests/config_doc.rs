@@ -319,6 +319,7 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("providers_clear_key", &["ctrl+x"][..]),
         ("providers_open_link", &["o"][..]),
         ("providers_copy", &["c"][..]),
+        ("providers_details", &["f2", "ctrl+e"][..]),
         // Issue 253 adds the profiles keys to the documented file.
         ("profiles_up", &["up"][..]),
         ("profiles_down", &["down"][..]),

@@ -20,6 +20,32 @@ pub use layout::{PickerLayout, PickerMode, list_height};
 
 /// Draw a picker inside the supplied area.
 pub fn draw_picker_frame(view: &PickerView<'_>, area: Rect, buffer: &mut Buffer) {
+    draw_frame(view, None, area, buffer);
+}
+
+/// Labels supplied by a picker that shares the model picker's regions.
+pub struct FrameLabels<'a> {
+    pub scope: &'a str,
+    pub scopes: &'a [&'a str],
+    pub count: &'a str,
+}
+
+/// Draw the shared regions with caller-provided scope and count labels.
+pub fn draw_picker_frame_with_labels(
+    view: &PickerView<'_>,
+    labels: FrameLabels<'_>,
+    area: Rect,
+    buffer: &mut Buffer,
+) {
+    draw_frame(view, Some(labels), area, buffer);
+}
+
+fn draw_frame(
+    view: &PickerView<'_>,
+    labels: Option<FrameLabels<'_>>,
+    area: Rect,
+    buffer: &mut Buffer,
+) {
     let area = area.intersection(buffer.area);
     if area.is_empty() {
         return;
@@ -45,10 +71,11 @@ pub fn draw_picker_frame(view: &PickerView<'_>, area: Rect, buffer: &mut Buffer)
         view.title.to_owned()
     };
     if layout.mode == PickerMode::Compact {
-        let title = view.browse.map_or_else(
-            || title.clone(),
-            |browse| format!("[{}] {title}", browse.scope.label()),
-        );
+        let scope = labels
+            .as_ref()
+            .map(|labels| labels.scope)
+            .or_else(|| view.browse.map(|browse| browse.scope.label()));
+        let title = scope.map_or(title.clone(), |scope| format!("[{scope}] {title}"));
         paint(
             &title,
             Rect::new(area.x, area.y, area.width, 1),
@@ -71,21 +98,35 @@ pub fn draw_picker_frame(view: &PickerView<'_>, area: Rect, buffer: &mut Buffer)
     };
     paint(&filter, layout.filter, Style::default(), buffer);
     if !layout.chips.is_empty() {
-        let scope = view
-            .browse
-            .map(|browse| browse.scope.label())
-            .unwrap_or("All");
-        let chips = ["All", "Starred", "Configured", "Set up"]
-            .map(|label| {
+        let scope = labels
+            .as_ref()
+            .map(|labels| labels.scope)
+            .unwrap_or_else(|| {
+                view.browse
+                    .map(|browse| browse.scope.label())
+                    .unwrap_or("All")
+            });
+        let scopes = labels.as_ref().map(|labels| labels.scopes).unwrap_or(&[
+            "All",
+            "Starred",
+            "Configured",
+            "Set up",
+        ]);
+        let chips = scopes
+            .iter()
+            .map(|&label| {
                 if label == scope {
                     format!("[{label}]")
                 } else {
                     label.into()
                 }
             })
+            .collect::<Vec<String>>()
             .join(" ");
         paint(&chips, layout.chips, Style::default(), buffer);
-        if let Some(browse) = view.browse {
+        if let Some(labels) = &labels {
+            paint(labels.count, layout.count, Style::default().dim(), buffer);
+        } else if let Some(browse) = view.browse {
             paint(
                 &format!(
                     "{} models · {} providers",
@@ -97,7 +138,22 @@ pub fn draw_picker_frame(view: &PickerView<'_>, area: Rect, buffer: &mut Buffer)
             );
         }
     }
-    list::draw(view, layout.list, buffer);
+    if let Some(labels) = &labels
+        && view.rows.is_empty()
+        && !view.filter.is_empty()
+        && let Some(banner) = view.banner
+    {
+        let message = format!(
+            "{banner}\nView: {} · Ctrl+U clears · Tab changes view · Esc clears/closes",
+            labels.scope
+        );
+        let mut list_view = *view;
+        list_view.filter = "";
+        list_view.banner = Some(&message);
+        list::draw(&list_view, layout.list, buffer);
+    } else {
+        list::draw(view, layout.list, buffer);
+    }
     details::draw_summary(view, &layout, buffer);
     let (first_hint, second_hint) = view
         .hints

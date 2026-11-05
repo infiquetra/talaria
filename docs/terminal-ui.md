@@ -238,25 +238,46 @@ literal text; confirmation cards accept only their confirm, cancel, and close ac
 
 ## Providers
 
-`/providers` opens **Keys** for the connected Hermes profile. `/providers keys`,
-`/providers accounts` and `/providers endpoints` select a tab directly. Enter on a model
-picker row labelled `set up in /providers` opens the matching provider here.
+`/providers` opens **All** for the connected Hermes profile. `/providers keys`,
+`/providers accounts` and `/providers endpoints` select a scope directly; `/providers all` is
+not a command. All merges providers by slug: catalogue-authenticated providers first, providers
+needing setup next, and user endpoints last with `+ Add an endpoint` first in that group.
+Provider counts exclude endpoints and actions; partial inventories are labelled unknown.
+Two providers sharing a display name remain distinct. Keys retains its saved-first label order.
+
+The shared picker frame places details below the list, or beside it at least 112×28. Below 60×16
+the list is compact; below 40×10 a size message retains Escape. Enter opens the provider's one
+setup method, or a chooser when several are available. Headers cannot be selected. The scroll
+indicator reports the visible range and more above/below; statuses remain text in monochrome.
 
 On a list, type to filter, use arrows to select, and press Tab or Shift+Tab to switch tabs.
-Ctrl+R reloads. Esc closes a card first, then clears the filter, then returns to the transcript.
+The filter stays across scope changes. Ctrl+U clears and Ctrl+R reloads. F2 or Ctrl+E opens
+scrollable full details (`providers_details`); macOS may reserve F2. Escape closes full details,
+then a setup card, then clears the filter, then closes the dialog. Full details never write.
 The `providers_*` entries in `[keys]` above configure the tab, reload, removal, test, save,
-clear-key, browser and copy actions in this overlay. Printable keys such as `o` and `c` still
+clear-key, browser, copy and details actions in this overlay. Printable keys such as `o` and `c` still
 filter a list; they open or copy only when the displayed card offers that action.
 
 **Keys.** Enter opens a masked field. Paste a key and press Enter to check and save it.
 A rejected key stays in the card for correction. If the provider cannot be reached, the card
 asks for a second Enter to save unchecked; editing the key clears that confirmation.
-Ctrl+U clears the field. A saved key shows at most its last four characters.
+Ctrl+U clears the field. Only this key card shows a saved key's last four characters, on the
+`Saved key ends in` line. Rows, the summary and full details show no credential preview.
 
-`ready` means Hermes lists the provider as authenticated in its catalogue. It does not prove
+`listed ready` means Hermes lists the provider as authenticated in its catalogue. It does not prove
 that the saved key currently works. Ctrl+D confirms removal of every credential Hermes saves
 for that provider, including its account sign-in. The confirmation names known shared key
 variables and the other providers that would lose them.
+
+Other row statuses are `key saved`, `needs setup`, `checking` and `unknown`. A signed-in account
+does not establish catalogue readiness; account state appears separately in details. Failed reads
+make their dependent facts unknown while other inventory stays. Offline keeps last-known row
+statuses and disables changes. An uncertain write starts read-back without repeating the write.
+
+The cards show their existing states as named steps: Paste key, Check key, Save and read back;
+Start sign-in, Approve in your browser, Confirm sign-in; or Fill in the endpoint, Test, Save and
+read back. External sign-in instructions have no artificial step. While a card is open the browse
+rows and hints are hidden; secret editing stays masked.
 
 **Accounts.** Enter starts the provider's device-code sign-in or shows instructions for an
 external sign-in command. A device-code card shows the browser address, code and expiry.
@@ -278,6 +299,15 @@ of the endpoint's saved key. An endpoint set directly in model settings is read-
 
 While disconnected, the screen disables changes and reloads when Talaria reconnects. A change
 whose reply was lost is reported as uncertain and the list is reloaded; the change is not automatically repeated.
+
+Entering from a model picker setup stub remembers that picker's filter, list scope, selected route
+and requested effort. Closing a setup card stays in Providers so read-back remains visible.
+Closing Providers resumes and reloads the model picker without changing the model. A newly listed
+provider selects its first model; if the saved Set up scope would hide it, the picker changes to
+All while keeping the filter and requested effort. Without new models the saved selection remains.
+Opening Providers directly does not create this return path. If the original session has ended,
+the return reports that no session is open. Account-only targets absent from the model catalogue
+retain their existing Accounts landing and do not start sign-in automatically.
 
 ## Configure
 

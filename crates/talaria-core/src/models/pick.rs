@@ -87,6 +87,8 @@ pub struct ModelsState {
     sessions: BTreeMap<String, Session>,
     foreground: Option<String>,
     picker: Option<Picker>,
+    return_picker: Option<Picker>,
+    resume_provider: Option<String>,
     list_height: usize,
     display_zone: DisplayZone,
     offline: bool,
@@ -133,6 +135,8 @@ impl ModelsState {
             sessions: BTreeMap::new(),
             foreground: None,
             picker: None,
+            return_picker: None,
+            resume_provider: None,
             list_height: 10,
             display_zone: DisplayZone { minutes_east: 0 },
             offline: false,
@@ -188,6 +192,26 @@ impl ModelsState {
     pub fn update(&mut self, input: ModelsInput) -> Vec<ModelsEffect> {
         let mut effects = Vec::new();
         match input {
+            ModelsInput::ResumePicker { provider } => {
+                if let Some(mut picker) = self
+                    .return_picker
+                    .take()
+                    .filter(|p| self.foreground.as_deref() == Some(p.session_id.as_str()))
+                {
+                    picker.refreshing = true;
+                    picker.details_open = false;
+                    let session_id = picker.session_id.clone();
+                    self.picker = Some(picker);
+                    self.resume_provider = Some(provider);
+                    effects.push(ModelsEffect::OpenOverlay);
+                    effects.push(ModelsEffect::LoadOptions {
+                        session_id,
+                        refresh: true,
+                    });
+                } else {
+                    effects.push(notice("", NoticeLevel::Info, "No session is open yet."));
+                }
+            }
             ModelsInput::Connection { connected } => {
                 if self.offline == connected {
                     self.offline = !connected;
@@ -214,7 +238,11 @@ impl ModelsState {
             ModelsInput::OpenPicker {
                 session_id,
                 profile,
-            } => self.open(session_id, profile, &mut effects),
+            } => {
+                self.return_picker = None;
+                self.resume_provider = None;
+                self.open(session_id, profile, &mut effects);
+            }
             ModelsInput::Picker(key) => self.key(key, &mut effects),
             ModelsInput::Confirm(key) => self.confirm(key, &mut effects),
             ModelsInput::Command {
@@ -287,6 +315,20 @@ impl ModelsState {
                 }
             }
             ModelsInput::OptionsLoaded { session_id, result } => {
+                let ready_model = self
+                    .resume_provider
+                    .as_ref()
+                    .and_then(|slug| {
+                        result
+                            .providers
+                            .iter()
+                            .find(|p| &p.slug == slug && p.authenticated == Some(true))
+                    })
+                    .and_then(|p| {
+                        p.models
+                            .first()
+                            .map(|model| (p.slug.clone(), model.clone()))
+                    });
                 let session = self.sessions.entry(session_id.clone()).or_default();
                 session.model = Some(result.model.clone());
                 session.provider = Some(result.provider.clone());
@@ -304,6 +346,31 @@ impl ModelsState {
                     picker.failed = None;
                 }
                 self.rebuild();
+                if self
+                    .picker
+                    .as_ref()
+                    .is_some_and(|p| p.session_id == session_id)
+                    && self.resume_provider.take().is_some()
+                    && let Some((provider, model)) = ready_model
+                {
+                    if let Some(picker) = &mut self.picker
+                        && picker.list_scope == ListScope::SetUp
+                    {
+                        picker.list_scope = ListScope::All;
+                    }
+                    self.rebuild();
+                    let Some(picker) = &mut self.picker else {
+                        return effects;
+                    };
+                    let wanted = RowKey::Model { provider, model };
+                    if let Some(index) = picker.rows.iter().position(|row| {
+                        row.key
+                            .as_ref()
+                            .is_some_and(|key| browse::same_route(key, &wanted))
+                    }) {
+                        picker.selected = Some(index);
+                    }
+                }
             }
             ModelsInput::OptionsFailed {
                 session_id,
@@ -791,7 +858,7 @@ impl ModelsState {
         };
         let (provider, model) = match key {
             RowKey::NotSetUp { provider } => {
-                self.picker = None;
+                self.return_picker = self.picker.take();
                 effects.push(ModelsEffect::CloseOverlay);
                 effects.push(ModelsEffect::OpenProviders { slug: provider });
                 return;

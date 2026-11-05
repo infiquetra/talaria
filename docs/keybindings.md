@@ -267,6 +267,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Providers clear key | Ctrl+X | Use providers clear key. | `providers_clear_key` |
 | Providers open link | O | Use providers open link. | `providers_open_link` |
 | Providers copy | C | Use providers copy. | `providers_copy` |
+| Providers details | F2, Ctrl+E | Open full provider details. | `providers_details` |
 
 ## Mcp keys
 
