@@ -6,8 +6,8 @@
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use crate::attention::{Alert, AlertKind, NeedSummary, cut};
-use crate::fleet::{FleetRow, NeedDetail, NeedId, Outcome, RowKey, RowState};
+use crate::attention::{Alert, AlertKind, NeedSummary, cut, sanitize_alert_field};
+use crate::fleet::{FleetBackend, FleetRow, NeedDetail, NeedId, Outcome, RowKey, RowState};
 
 /// Which background rows may raise an alert.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +27,8 @@ pub struct FleetAttentionConfig {
     pub bell: Vec<AlertKind>,
     /// Kinds that send a desktop notification.
     pub desktop: Vec<AlertKind>,
+    /// Kinds that are spoken. Empty means spoken alerts are off.
+    pub speech: Vec<AlertKind>,
     /// A finished turn alerts only at or above this duration.
     pub done_after: Duration,
     /// Scope for needs-you alerts. Default is every background row.
@@ -274,17 +276,35 @@ impl FleetAttention {
         }
         let bell = self.config.bell.contains(&kind);
         let desktop = self.config.desktop.contains(&kind);
-        if !bell && !desktop {
+        let speech = self.config.speech.contains(&kind);
+        if !bell && !desktop && !speech {
             return None;
         }
         let title = row.map_or("", |row| row.title.as_str());
         let label = row_label(key, title, &self.foreground_profile);
         let outcome = row.and_then(|row| row.outcome);
-        let text = fleet_alert_text(kind, &label, detail, outcome)?;
+        let text = if speech {
+            let backend = match row.map(|row| row.backend) {
+                Some(FleetBackend::Hermes) => "Hermes",
+                Some(FleetBackend::Acp) => "ACP",
+                Some(FleetBackend::Herdr) => "Herdr",
+                None => "Session",
+            };
+            let label = sanitize_alert_field(&label, 32);
+            let action = match kind {
+                AlertKind::NeedsYou => "needs you",
+                AlertKind::Done => "done",
+                AlertKind::Failed => "failed",
+            };
+            format!("{backend} {label}: {action}")
+        } else {
+            fleet_alert_text(kind, &label, detail, outcome)?
+        };
         Some(Alert {
             kind,
             bell,
             desktop,
+            speech,
             text,
         })
     }

@@ -81,7 +81,7 @@ pub(crate) fn start(
                         },
                         _ => Err("Permission is unavailable.".into()),
                     };
-                    Some(ExternalResult::Answer { result })
+                    Some(ExternalResult::Answer { key, result })
                 }
                 ExternalCommand::Acknowledge { key } => {
                     if let Some(session) = session_key(&key) {

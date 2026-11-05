@@ -14,6 +14,7 @@ fn alert(kind: AlertKind) -> Alert {
         kind,
         bell: true,
         desktop: true,
+        speech: false,
         text: String::new(),
     }
 }

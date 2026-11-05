@@ -110,13 +110,15 @@ pub enum Activity {
     },
 }
 
-/// Which alert kinds ring the bell or raise a desktop notification.
+/// Which alert kinds use each notification channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttentionConfig {
     /// Kinds that ring the terminal bell.
     pub bell: Vec<AlertKind>,
     /// Kinds that send a desktop notification.
     pub desktop: Vec<AlertKind>,
+    /// Kinds that are spoken. Empty means spoken alerts are off.
+    pub speech: Vec<AlertKind>,
     /// A finished turn alerts only at or above this duration.
     pub done_after: Duration,
 }
@@ -130,6 +132,8 @@ pub struct Alert {
     pub bell: bool,
     /// Send a desktop notification.
     pub desktop: bool,
+    /// Read the alert aloud.
+    pub speech: bool,
     /// Text before the product prefix is added.
     pub text: String,
 }
@@ -240,7 +244,8 @@ impl AttentionTracker {
         let alert = candidate.and_then(|(kind, at, text)| {
             let bell = self.config.bell.contains(&kind);
             let desktop = self.config.desktop.contains(&kind);
-            if !bell && !desktop {
+            let speech = self.config.speech.contains(&kind);
+            if !bell && !desktop && !speech {
                 return None;
             }
             if self.last_alert.is_some_and(|(last, previous)| {
@@ -254,7 +259,18 @@ impl AttentionTracker {
                 kind,
                 bell,
                 desktop,
-                text,
+                speech,
+                text: if speech {
+                    let label = sanitize_alert_field(&self.label, 60);
+                    let action = match kind {
+                        AlertKind::NeedsYou => "needs you",
+                        AlertKind::Done => "done",
+                        AlertKind::Failed => "failed",
+                    };
+                    format!("Hermes {label}: {action}")
+                } else {
+                    text
+                },
             })
         });
         let after = self.pane();

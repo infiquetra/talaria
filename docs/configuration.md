@@ -346,6 +346,7 @@ save = true
 [notifications]
 bell = ["needs_you", "failed"]
 desktop = ["needs_you", "done", "failed"]
+speech = []
 done_after_seconds = 20
 fleet_needs_you = "all"
 fleet_finished = "watched"
@@ -758,9 +759,9 @@ path must be refused remotely, but that guard is a separate v0.7.1 correction
 
 | New `[notifications]` key | Planned value / contract | Availability |
 |---|---|---|
-| `speech` | List of notification kinds, empty by default; opt in with `needs_you`, `done` and/or `failed`, using the existing channel filters and quiet windows. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `speech` | List of notification kinds, empty by default; opt in with `needs_you`, `done` and/or `failed`, using the existing channel filters and quiet windows. | Available |
 
-Spoken alerts also require read-aloud to be enabled. Reuse `FleetAttention`'s
+Spoken alerts require the client voice backend to be enabled. They reuse `FleetAttention`'s
 once-per-need identity and quiet windows instead of introducing a second alert
 queue. There is no `[voice] announce_needs_you` switch. Defer `[voice.stt]` and
 `[voice.tts]`, including provider, endpoint, model, voice and credential settings,
@@ -856,6 +857,7 @@ The default block above is authoritative. Invalid values use the documented defa
 |---|---|---|---|---|
 | `bell` | list | needs_you, failed | see the section above | needs_you, failed |
 | `desktop` | list | needs_you, done, failed | see the section above | needs_you, done, failed |
+| `speech` | list | empty | needs_you, done, failed | needs_you |
 | `done_after_seconds` | integer | 20 | 0–86400 seconds | 20 |
 | `fleet_needs_you` | string | all | see the section above | all |
 | `fleet_finished` | string | watched | see the section above | watched |

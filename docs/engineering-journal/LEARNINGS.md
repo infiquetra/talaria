@@ -6950,6 +6950,12 @@ Record the measured value and device in the release evidence. The target is unde
 100 milliseconds; process exit and tests using fake helpers do not measure device
 buffer latency.
 
+## Fleet voice and terminal identity
+
+Herdr routes to the selected pane identifier and checks whether a pane remains blocked
+before answering; it does not identify the process currently occupying that pane.
+
+Rule: keep the recorded target fixed and require Enter before sending a fleet transcript.
 ## Work panel values need their own evidence
 
 **Evidence.** The pinned goal snapshot carries an explicit verdict, while child snapshots carry

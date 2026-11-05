@@ -31,6 +31,7 @@ fn all_channels() -> AttentionConfig {
     AttentionConfig {
         bell: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
         desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+        speech: vec![],
         done_after: Duration::from_secs(20),
     }
 }

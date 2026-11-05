@@ -287,6 +287,54 @@ impl FleetViewState {
         self.cursor.as_ref()
     }
 
+    /// Whether this row still has an unsent draft.
+    pub fn has_draft(&self, key: &RowKey) -> bool {
+        self.drafts.get(key).is_some_and(|draft| !draft.is_empty())
+    }
+
+    /// Bind voice to the selected need or row at the start of capture.
+    pub fn voice_target(&self) -> Option<crate::voice::target::RecordTarget> {
+        let key = match self.focus {
+            Focus::Answer => self.peek.as_ref().map(|(key, _)| key),
+            Focus::Reply => self.target.as_ref(),
+            _ => self.cursor.as_ref(),
+        }?;
+        let row = self.row(key)?;
+        let need = if self.focus == Focus::Answer {
+            let mut needs = self.queue.iter().filter(|item| item.id.key == *key);
+            let first = needs.next().map(|item| item.id.clone());
+            if row.backend() == FleetBackend::Hermes && needs.next().is_some() {
+                return None;
+            }
+            first
+        } else {
+            None
+        };
+        Some(crate::voice::target::RecordTarget {
+            key: key.clone(),
+            backend: row.backend(),
+            need,
+        })
+    }
+
+    /// Save a voice transcript on its original row and open its editor if still selected.
+    pub fn stage_voice(&mut self, key: &RowKey, text: &str) {
+        let draft = self.drafts.entry(key.clone()).or_default();
+        if !draft.is_empty() {
+            draft.push(' ');
+        }
+        draft.push_str(text);
+        if self.cursor.as_ref() == Some(key) {
+            self.target = Some(key.clone());
+            self.caret = draft.len();
+            self.focus = Focus::Reply;
+            self.refresh_reply_notice();
+        } else {
+            self.notice = Some("Voice transcript saved on its original row; not sent.".into());
+        }
+        self.dirty = true;
+    }
+
     /// The text filter, as typed.
     #[must_use]
     pub fn filter_text(&self) -> &str {

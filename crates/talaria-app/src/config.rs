@@ -185,13 +185,15 @@ pub struct HistoryConfig {
     pub save: bool,
 }
 
-/// Bell and desktop notification channels.
+/// Bell, desktop, and spoken notification channels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationsConfig {
     /// Kinds that ring the terminal bell.
     pub bell: Vec<AlertKind>,
     /// Kinds that send a desktop notification.
     pub desktop: Vec<AlertKind>,
+    /// Kinds that are spoken. Empty means spoken alerts are off.
+    pub speech: Vec<AlertKind>,
     /// A finished turn alerts only at or above these seconds.
     pub done_after_seconds: u64,
     /// Which background requests raise an alert. The default is every background row.
@@ -286,6 +288,7 @@ impl Default for Config {
             notifications: NotificationsConfig {
                 bell: vec![AlertKind::NeedsYou, AlertKind::Failed],
                 desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+                speech: Vec::new(),
                 done_after_seconds: DEFAULT_DONE_AFTER_SECONDS,
                 fleet_needs_you: FleetScope::All,
                 fleet_finished: FleetScope::Watched,
@@ -970,7 +973,7 @@ fn read_comforts(table: &str, section: &Table, config: &mut Config, notices: &mu
                 Some(n) if (0..=86400).contains(&n) => config.notifications.done_after_seconds=n as u64,
                 _ => notices.push("[notifications] done_after_seconds must be a whole number from 0 to 86400; using 20.".into()),
             },
-            ("notifications", "bell" | "desktop") => {
+            ("notifications", "bell" | "desktop" | "speech") => {
                 let Some(items)=value.as_array().filter(|items| items.iter().all(|v|v.as_str().is_some())) else {
                     notices.push(format!("[notifications] {key} must be a list of notification kinds; using the default.")); continue;
                 };
@@ -980,7 +983,7 @@ fn read_comforts(table: &str, section: &Table, config: &mut Config, notices: &mu
                     let kind=match text { "needs_you"=>AlertKind::NeedsYou,"done"=>AlertKind::Done,"failed"=>AlertKind::Failed,_=>{notices.push(format!("Unknown notification kind \"{text}\" in [notifications] {key}; it is ignored."));continue;} };
                     if !kinds.contains(&kind) { kinds.push(kind); }
                 }
-                if key=="bell" { config.notifications.bell=kinds; } else { config.notifications.desktop=kinds; }
+                match key.as_str() { "bell" => config.notifications.bell=kinds, "desktop" => config.notifications.desktop=kinds, _ => config.notifications.speech=kinds }
             }
             ("notifications", "fleet_needs_you" | "fleet_finished") => {
                 let scope = match value.as_str() {

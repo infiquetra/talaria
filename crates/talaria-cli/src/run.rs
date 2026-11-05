@@ -1334,6 +1334,9 @@ impl TuiScreen {
         if key.kind == KeyKind::Release {
             return Vec::new();
         }
+        if self.keymap.resolve_in(&key, KeyContext::Composer) == Some(Action::VoiceRecord) {
+            return vec![UserAction::VoiceRecord];
+        }
         let input = |input: FleetViewInput| vec![UserAction::Fleet(input)];
         match fleet.focus() {
             FleetFocus::Answer => {
@@ -4506,6 +4509,7 @@ impl Screen for TuiScreen {
         AttentionConfig {
             bell: self.config.notifications.bell.clone(),
             desktop: self.config.notifications.desktop.clone(),
+            speech: self.config.notifications.speech.clone(),
             done_after: Duration::from_secs(self.config.notifications.done_after_seconds),
         }
     }
@@ -4514,6 +4518,7 @@ impl Screen for TuiScreen {
         FleetAttentionConfig {
             bell: self.config.notifications.bell.clone(),
             desktop: self.config.notifications.desktop.clone(),
+            speech: self.config.notifications.speech.clone(),
             done_after: Duration::from_secs(self.config.notifications.done_after_seconds),
             needs_you: self.config.notifications.fleet_needs_you,
             finished: self.config.notifications.fleet_finished,
