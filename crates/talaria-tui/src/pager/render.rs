@@ -3,7 +3,7 @@
 //! Every cell the screen knows is drawn here. A cell kind this screen does not know is drawn by
 //! the renderer the application passes in, so a later kind never breaks the build.
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::{buffer::Buffer, layout::Rect};
 use talaria_core::session::{
@@ -12,7 +12,8 @@ use talaria_core::session::{
 };
 
 use crate::history::{CellLines, wrap_lines};
-use crate::markdown::{MarkdownOptions, render_markdown};
+use crate::markdown::{MarkdownOptions, render_markdown_with_theme};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// Expanded tool bodies, or the compact header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,7 +52,15 @@ impl CellLines for PagerCellLines<'_> {
     }
 }
 
-impl PagerCellLines<'_> {
+impl<'a> PagerCellLines<'a> {
+    /// Attach an explicit syntax and body palette without changing legacy fields.
+    pub fn with_theme(self, views: &ViewStyles) -> ThemedPagerCellLines<'a> {
+        ThemedPagerCellLines {
+            base: self,
+            views: views.clone(),
+        }
+    }
+
     /// The columns the text of a cell may use, leaving room for the indent.
     fn inner_width(&self, width: u16) -> u16 {
         width.saturating_sub(2).max(1)
@@ -87,12 +96,21 @@ impl PagerCellLines<'_> {
 
     /// One assistant segment.
     fn assistant_lines(&self, cell: &AssistantCell, width: u16) -> Vec<Line<'static>> {
+        self.assistant_lines_with_theme(cell, width, &ViewStyles::default())
+    }
+
+    fn assistant_lines_with_theme(
+        &self,
+        cell: &AssistantCell,
+        width: u16,
+        views: &ViewStyles,
+    ) -> Vec<Line<'static>> {
         let mut options = self.markdown.clone();
         options.width = self.inner_width(width);
         if cell.interim {
             options.base_style = options.base_style.patch(self.theme.dim);
         }
-        let rendered = render_markdown(&cell.text, &options);
+        let rendered = render_markdown_with_theme(&cell.text, &options, views);
         let mut out: Vec<Line<'static>> =
             rendered.into_iter().map(|line| indent(line, 2)).collect();
         if cell.interim {
@@ -103,10 +121,19 @@ impl PagerCellLines<'_> {
 
     /// One run of reasoning.
     fn reasoning_lines(&self, cell: &ReasoningCell, width: u16) -> Vec<Line<'static>> {
+        self.reasoning_lines_with_theme(cell, width, &ViewStyles::default())
+    }
+
+    fn reasoning_lines_with_theme(
+        &self,
+        cell: &ReasoningCell,
+        width: u16,
+        views: &ViewStyles,
+    ) -> Vec<Line<'static>> {
         let mut options = self.markdown.clone();
         options.width = self.inner_width(width);
         options.base_style = options.base_style.patch(self.theme.dim);
-        let rendered = render_markdown(&cell.text, &options);
+        let rendered = render_markdown_with_theme(&cell.text, &options, views);
         let body: Vec<Line<'static>> = rendered.into_iter().map(|line| indent(line, 2)).collect();
         let mut out = vec![Line::styled(
             "\u{2234} thinking".to_string(),
@@ -270,6 +297,67 @@ impl PagerCellLines<'_> {
     }
 }
 
+/// Legacy pager fields with explicit rendering context.
+pub struct ThemedPagerCellLines<'a> {
+    base: PagerCellLines<'a>,
+    views: ViewStyles,
+}
+
+impl<'a> ThemedPagerCellLines<'a> {
+    pub(super) fn new(
+        details: Details,
+        width: u16,
+        other: &'a dyn CellLines,
+        views: &ViewStyles,
+    ) -> Self {
+        PagerCellLines {
+            details,
+            markdown: MarkdownOptions {
+                width: width.saturating_sub(2).max(8),
+                color: views.color(),
+                theme: views.markdown_theme(),
+                base_style: views.inline(t::TRANSCRIPT_TEXT, Style::default()),
+            },
+            theme: views.pager_theme(),
+            other,
+        }
+        .with_theme(views)
+    }
+}
+
+impl CellLines for ThemedPagerCellLines<'_> {
+    fn lines(&self, cell: &Cell, width: u16) -> Vec<Line<'static>> {
+        let mut lines = match cell {
+            Cell::Assistant(cell) => self
+                .base
+                .assistant_lines_with_theme(cell, width, &self.views),
+            Cell::Reasoning(cell) => self
+                .base
+                .reasoning_lines_with_theme(cell, width, &self.views),
+            _ => self.base.lines(cell, width),
+        };
+        if self.views.active() {
+            let fallback = self.views.inline(t::TRANSCRIPT_TEXT, Style::default());
+            for line in &mut lines {
+                line.style = fallback.patch(line.style);
+                line.style.bg = None;
+                for span in &mut line.spans {
+                    span.style.bg = None;
+                    if !self.views.color() {
+                        span.style.fg = None;
+                        span.style.underline_color = None;
+                    }
+                }
+                if !self.views.color() {
+                    line.style.fg = None;
+                    line.style.underline_color = None;
+                }
+            }
+        }
+        lines
+    }
+}
+
 /// The state line of a prompt.
 fn prompt_state(state: &PromptState) -> String {
     match state {
@@ -321,22 +409,7 @@ pub struct PagerTheme {
 
 impl Default for PagerTheme {
     fn default() -> Self {
-        let reversed = Style::default().add_modifier(Modifier::REVERSED);
-        let bold = Style::default().add_modifier(Modifier::BOLD);
-        Self {
-            header: reversed,
-            footer: reversed,
-            banner: bold,
-            user: bold,
-            dim: Style::default().add_modifier(Modifier::DIM),
-            tool_ok: Style::default().fg(Color::Green),
-            tool_failed: Style::default().fg(Color::Red),
-            diff_add: Style::default().fg(Color::Green),
-            diff_del: Style::default().fg(Color::Red),
-            search_match: reversed,
-            search_current: reversed.add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-            gutter_mark: bold,
-        }
+        crate::theme::legacy::pager_theme()
     }
 }
 
@@ -367,6 +440,7 @@ pub enum TranscriptEntry<'a> {
 #[derive(Default)]
 pub struct TranscriptBody {
     document: super::doc::Document,
+    views: ViewStyles,
 }
 
 impl TranscriptBody {
@@ -384,6 +458,29 @@ impl TranscriptBody {
         buffer: &mut Buffer,
         other: &dyn CellLines,
     ) {
+        self.draw_with_theme(
+            entries,
+            details,
+            area,
+            buffer,
+            other,
+            &ViewStyles::default(),
+        );
+    }
+
+    pub fn draw_with_theme(
+        &mut self,
+        entries: &[TranscriptEntry<'_>],
+        details: Details,
+        area: Rect,
+        buffer: &mut Buffer,
+        other: &dyn CellLines,
+        views: &ViewStyles,
+    ) {
+        if self.views != *views {
+            self.document.clear();
+            self.views = views.clone();
+        }
         if area.is_empty() {
             return;
         }
@@ -397,6 +494,7 @@ impl TranscriptBody {
                 area.width,
                 details,
                 other,
+                views,
             )
             .len();
             if count >= remaining {
@@ -412,6 +510,7 @@ impl TranscriptBody {
             buffer,
             other,
             BodyPosition { details, anchor },
+            views,
             |_, line, lines| (lines[line].clone(), None),
         );
     }
@@ -435,6 +534,7 @@ pub(super) struct BodyPosition {
 
 /// Both views traverse, sanitize and place their transcript rows here. The pager's
 /// optional painter adds search highlighting without changing the underlying rows.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_rows(
     document: &mut super::doc::Document,
     entries: &[TranscriptEntry<'_>],
@@ -442,6 +542,7 @@ pub(super) fn draw_rows(
     buffer: &mut Buffer,
     other: &dyn CellLines,
     position: BodyPosition,
+    views: &ViewStyles,
     mut paint: impl FnMut(usize, usize, &[Line<'static>]) -> (Line<'static>, Option<Style>),
 ) {
     if area.is_empty() {
@@ -451,14 +552,25 @@ pub(super) fn draw_rows(
         buffer.set_line(
             area.x,
             area.y,
-            &Line::styled("No messages yet.", PagerTheme::default().dim),
+            &Line::styled(
+                "No messages yet.",
+                views.inline(t::WORKSPACE_EMPTY, PagerTheme::default().dim),
+            ),
             area.width,
         );
         return;
     }
     let mut row = area.y;
     for (index, entry) in entries.iter().enumerate().skip(position.anchor.0) {
-        let lines = entry_lines(document, entry, index, area.width, position.details, other);
+        let lines = entry_lines(
+            document,
+            entry,
+            index,
+            area.width,
+            position.details,
+            other,
+            views,
+        );
         let skip = if index == position.anchor.0 {
             position.anchor.1
         } else {
@@ -487,18 +599,11 @@ fn entry_lines(
     width: u16,
     details: Details,
     other: &dyn CellLines,
+    views: &ViewStyles,
 ) -> Vec<Line<'static>> {
     match entry {
         TranscriptEntry::Cell(cell) => {
-            let own = PagerCellLines {
-                details,
-                markdown: MarkdownOptions {
-                    width: width.saturating_sub(2).max(8),
-                    ..MarkdownOptions::default()
-                },
-                theme: PagerTheme::default(),
-                other,
-            };
+            let own = ThemedPagerCellLines::new(details, width, other, views);
             document.cell_lines(cell, index, width, details, other, &own)
         }
         TranscriptEntry::Lines(lines) => wrap_lines(

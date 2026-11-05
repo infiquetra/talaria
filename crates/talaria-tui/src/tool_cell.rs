@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::{Map, Value};
 use talaria_core::session::{Cell, CellId, OutcomeView, ToolCell, ToolStatus, ToolView, tool_view};
@@ -65,28 +65,7 @@ pub struct ToolTheme {
 
 impl Default for ToolTheme {
     fn default() -> Self {
-        let green = Style::default().fg(Color::Green);
-        let red = Style::default().fg(Color::Red);
-        let dim = Style::default().add_modifier(Modifier::DIM);
-        let bold = Style::default().add_modifier(Modifier::BOLD);
-        Self {
-            glyph_running: dim,
-            glyph_ok: green,
-            glyph_failed: red,
-            glyph_muted: dim,
-            title: bold,
-            subject: Style::default(),
-            meta: dim,
-            output: Style::default(),
-            error: red,
-            diff_added: green,
-            diff_removed: red,
-            diff_context: Style::default(),
-            diff_hunk: Style::default().fg(Color::Cyan),
-            diff_file: bold,
-            diff_note: dim,
-            line_number: dim,
-        }
+        crate::theme::legacy::tool_theme()
     }
 }
 

@@ -4771,3 +4771,48 @@ under Voice; settings, providers, MCP servers and profiles under Settings; and t
 health check under Help. Disabled actions give their existing refusal reason. The bar and
 panel preferences are independent, and a temporary menu does not save a preference.
 **Revisit when.** Existing action availability or the workspace layout changes.
+
+## 2026-11-05 — Route every view through the theme catalogue
+
+**Decision.** Keep the original per-view palettes in `theme/legacy.rs`. An inactive
+`ViewStyles` preserves them exactly; an explicitly selected file supplies typed catalogue
+tokens and frame presets. The existing 323 tokens cover this sweep, so no token is added.
+`Theme` retains the immutable view context, and renderers pass it explicitly, including
+Markdown syntax and retained pager/workspace caches. Public Markdown option and palette
+field lists remain compatible.
+
+**Mappings.** Automation uses `automation.*`; background processes use `background.*`;
+the checklist and work panel share `work.task.*`. Context categories use
+`context.section.*`; subagent rows use `agents.*`; workflow and rewind retain their own
+families. Scheduled jobs use `cron.*`, palette provenance uses `palette.origin`, profiles
+use `profiles.*`, and review labels use `review.label.*`. Markdown uses `transcript.*`
+and `code.syntax.*`; pager chrome uses `pager.*`, and search uses `transcript.search.*`.
+Provider, picker, menu and workspace drawing use their corresponding catalogue families.
+Connectors retain their existing status-tone mapping. Tool and diff cells retain `tool.*`
+and `diff.*` bindings. Normal shell metadata uses `side.metadata`.
+
+**Backgrounds.** A themed overlay or workspace paints its full owned rectangle. Inline
+renderers remove backgrounds after applying element styles. Menu painting owns its row
+and open dropdown only. Scheduled-job and workflow selection backgrounds remain unchanged
+without a file. Colour constraints remove foreground, background and underline colours
+without removing attributes or changing glyphs.
+
+**Chrome inventory.** Searching the starting source for literal box-drawing characters and
+escaped Unicode found frame/divider sites in background processes, capabilities, composer,
+fleet peek, history search, launch dialog, MCP, model roles, picker details, profiles,
+review, status and the work panel. Provider cards use a ratatui block. Workflow uses that
+shared block vocabulary. These drawing sites now receive the explicit presets. Markdown
+rules and table grids remain content and do not use chrome presets. `none` replaces each
+decoration with a space; it does not change geometry.
+
+**Scope exceptions.** Narrow forwarding changes in the palette, profiles and capabilities
+module exports, composer rendering, status segments, Markdown entry points/cells,
+`theme/cells.rs`, and pager state carry the context to existing consumers. The integrated
+picker, model-role and fleet modules need the same explicit frame context. They contain
+no new interaction or layout behaviour. These adjacent changes are necessary to make the
+owned renderers reachable from both the application and the frozen fixtures.
+
+**Rationale.** One explicit appearance context avoids hidden renderer state and keeps the
+no-file cell recordings meaningful. Syntax caches retain lexical categories rather than
+resolved file colours, and appearance changes invalidate final rendered cell caches.
+**Revisit when.** A new independently styled element has no suitable catalogue token.

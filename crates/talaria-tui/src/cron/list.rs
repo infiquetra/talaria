@@ -1,12 +1,10 @@
+use super::themed;
 use super::{columns, put};
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use talaria_core::cron::ListView;
 
-pub(super) fn draw(view: &ListView, area: Rect, buf: &mut Buffer) {
+pub(super) fn draw(view: &ListView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     let mut row = 0;
     if let Some(filter) = &view.filter {
         put(
@@ -40,7 +38,7 @@ pub(super) fn draw(view: &ListView, area: Rect, buf: &mut Buffer) {
                 .map(|(v, w)| (*v, *w))
                 .collect::<Vec<_>>(),
         ),
-        Style::default().fg(Color::Cyan),
+        themed(views, t::CRON_ACCENT, crate::theme::legacy::cron_accent()),
     );
     row += 1;
     let capacity = usize::from(area.height.saturating_sub(row));
@@ -58,7 +56,11 @@ pub(super) fn draw(view: &ListView, area: Rect, buf: &mut Buffer) {
                 .collect::<Vec<_>>(),
         );
         let style = if view.selected == Some(index) {
-            Style::default().bg(Color::DarkGray)
+            themed(
+                views,
+                t::CRON_SELECTED,
+                crate::theme::legacy::cron_selected(),
+            )
         } else {
             Style::default()
         };

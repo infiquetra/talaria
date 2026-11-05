@@ -8,9 +8,9 @@ use ratatui::text::Line;
 use talaria_core::session::{Cell, CellId};
 
 use super::Theme;
-use crate::automation::{AutomationTheme, hermes_command_lines_with_options};
+use crate::automation::hermes_command_lines_with_options_and_theme;
 use crate::history::{CellLines, PlainCellLines};
-use crate::markdown::{MarkdownOptions, render_markdown};
+use crate::markdown::{MarkdownOptions, render_markdown_with_theme};
 
 /// Draws Markdown cells with one theme; every other cell keeps its owner's look. A presented
 /// Hermes command's reply is Markdown too, drawn as the automation unit draws it.
@@ -34,21 +34,44 @@ impl CellLines for ThemedCells<'_> {
             Cell::Assistant(cell) => (&cell.text, Style::default()),
             Cell::Reasoning(cell) => (&cell.text, reasoning_base(self.theme)),
             Cell::HermesCommand(cell) => {
-                return hermes_command_lines_with_options(
+                return hermes_command_lines_with_options_and_theme(
                     cell,
                     width,
-                    &AutomationTheme::default(),
+                    &self.theme.views.automation_theme(),
                     &MarkdownOptions {
                         width,
                         theme: self.theme.markdown.clone(),
                         color: self.theme.color,
                         base_style: Style::default(),
                     },
+                    &self.theme.views,
+                );
+            }
+            Cell::Shell(cell) if self.theme.views.active() => {
+                return self.theme.views.inline_lines(
+                    crate::side::shell_cell_lines(cell, width, &self.theme.views.side_theme()),
+                    super::surfaces::tokens::SIDE_METADATA,
+                );
+            }
+            Cell::Side(cell) if self.theme.views.active() => {
+                return self.theme.views.inline_lines(
+                    crate::side::side_cell_lines(cell, width, &self.theme.views.side_theme()),
+                    super::surfaces::tokens::SIDE_METADATA,
+                );
+            }
+            Cell::Background(cell) if self.theme.views.active() => {
+                return self.theme.views.inline_lines(
+                    crate::background::background_cell_lines(
+                        cell,
+                        width,
+                        &self.theme.views.background_theme(),
+                    ),
+                    super::surfaces::tokens::BACKGROUND_TEXT,
                 );
             }
             _ => return PlainCellLines.lines(cell, width),
         };
-        let mut lines = render_markdown(
+        let mut lines = render_markdown_with_theme(
             text,
             &MarkdownOptions {
                 width,
@@ -56,6 +79,7 @@ impl CellLines for ThemedCells<'_> {
                 color: self.theme.color,
                 base_style,
             },
+            &self.theme.views,
         );
         if matches!(cell, Cell::Reasoning(_)) {
             lines.insert(

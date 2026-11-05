@@ -1,4 +1,5 @@
 use crate::history::{sanitize, wrap_lines};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Line};
 use talaria_core::capabilities::{CapListRow, CapTab, CapView};
 use unicode_segmentation::UnicodeSegmentation;
@@ -41,12 +42,18 @@ fn line(buf: &mut Buffer, area: Rect, y: u16, text: &str) {
         Style::default(),
     );
 }
-fn rule(buf: &mut Buffer, area: Rect, y: u16) {
+fn rule(buf: &mut Buffer, area: Rect, y: u16, views: Option<&ViewStyles>) {
     line(
         buf,
         area,
         y,
-        &format!(" {}", "─".repeat(usize::from(area.width.saturating_sub(1)))),
+        &format!(
+            " {}",
+            views.map_or_else(
+                || "─".repeat(usize::from(area.width.saturating_sub(1))),
+                |v| v.divider_text(&"─".repeat(usize::from(area.width.saturating_sub(1))))
+            )
+        ),
     );
 }
 fn row_text(row: &CapListRow, tab: CapTab, catalog: bool, selected: bool, width: usize) -> String {
@@ -143,11 +150,34 @@ fn row_text(row: &CapListRow, tab: CapTab, catalog: bool, selected: bool, width:
 
 /// Draw the overlay without writing terminal escape sequences.
 pub fn draw_capabilities(view: &CapView, area: Rect, buf: &mut Buffer) {
+    draw_inner(view, area, buf, None);
+}
+
+/// Draw with resolved view styles.
+pub fn draw_capabilities_with_theme(
+    view: &CapView,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
+    draw_inner(view, area, buf, Some(views));
+}
+
+fn draw_inner(view: &CapView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     if area.width < 40 || area.height < 10 {
         line(buf, area, 0, "Capabilities needs at least 40 by 10.");
+        if let Some(v) = views {
+            v.finish(area, buf, t::LIST_BACKGROUND, true);
+        }
         return;
     }
     line(buf, area, 0, &view.title);
+    if let Some(v) = views {
+        buf.set_style(
+            Rect::new(area.x, area.y, area.width, 1),
+            v.style(t::LIST_HEADER, Style::default()),
+        );
+    }
     let active = match view.tab {
         CapTab::Skills => 0,
         CapTab::Hub => 1,
@@ -168,7 +198,7 @@ pub fn draw_capabilities(view: &CapView, area: Rect, buf: &mut Buffer) {
         .collect::<Vec<_>>()
         .join("  ");
     line(buf, area, 1, &format!(" {tabs}"));
-    rule(buf, area, 2);
+    rule(buf, area, 2, views);
     let width = usize::from(area.width.saturating_sub(1));
     let list_notice = view.rows.first().is_some_and(|row| {
         row.is_header && !row.label.is_empty() && row.label == view.message.join("\n")
@@ -200,7 +230,7 @@ pub fn draw_capabilities(view: &CapView, area: Rect, buf: &mut Buffer) {
         + messages.len();
     let bottom_start = usize::from(area.height).saturating_sub(bottom);
     let bottom_rule = bottom_start.saturating_sub(1);
-    rule(buf, area, bottom_rule as u16);
+    rule(buf, area, bottom_rule as u16, views);
     let mut y = bottom_start as u16;
     for message in messages {
         line(buf, area, y, &format!(" {message}"));
@@ -223,7 +253,7 @@ pub fn draw_capabilities(view: &CapView, area: Rect, buf: &mut Buffer) {
     };
     let detail_y = 3 + list_height + 1;
     if wide {
-        rule(buf, area, (3 + list_height) as u16);
+        rule(buf, area, (3 + list_height) as u16, views);
     }
     let detail = wrap_lines(
         view.detail
@@ -268,5 +298,8 @@ pub fn draw_capabilities(view: &CapView, area: Rect, buf: &mut Buffer) {
                 line(buf, area, (detail_y + i) as u16, &format!(" {text}"));
             }
         }
+    }
+    if let Some(v) = views {
+        v.finish(area, buf, t::LIST_BACKGROUND, true);
     }
 }

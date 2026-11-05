@@ -1,14 +1,11 @@
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use talaria_core::profiles::{DetailView, Panel, ProfilesView, RowTone};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::form;
 use crate::history::sanitize;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 fn cut(text: &str, width: usize) -> String {
     let clean: String = sanitize(text).chars().take(300).collect();
@@ -124,7 +121,14 @@ fn detail(detail: &DetailView, area: Rect, buffer: &mut Buffer) {
     }
 }
 
-fn list(view: &ProfilesView, area: Rect, buffer: &mut Buffer, reserved: usize, top: &mut usize) {
+fn list(
+    view: &ProfilesView,
+    area: Rect,
+    buffer: &mut Buffer,
+    reserved: usize,
+    top: &mut usize,
+    views: Option<&ViewStyles>,
+) {
     if view.rows.is_empty() {
         if let Some(filter) = &view.filter {
             put(
@@ -181,7 +185,12 @@ fn list(view: &ProfilesView, area: Rect, buffer: &mut Buffer, reserved: usize, t
             line.push_str(&format!("  {}", row.next_step));
         }
         let style = if row.tone == RowTone::Warning {
-            Style::default().fg(Color::Yellow)
+            views.map_or_else(crate::theme::legacy::profiles_warning, |v| {
+                v.style(
+                    t::PROFILES_WARNING,
+                    crate::theme::legacy::profiles_warning(),
+                )
+            })
         } else {
             Style::default()
         };
@@ -195,6 +204,17 @@ pub fn draw(view: &ProfilesView, area: Rect, buffer: &mut Buffer) -> Option<(u16
     super::cursor_position(view, area)
 }
 
+/// Draw profiles with resolved view styles.
+pub fn draw_with_theme(
+    view: &ProfilesView,
+    area: Rect,
+    buffer: &mut Buffer,
+    views: &ViewStyles,
+) -> Option<(u16, u16)> {
+    ProfilesRenderer::default().draw_with_theme(view, area, buffer, views);
+    super::cursor_position(view, area)
+}
+
 /// Holds the list viewport between frames.
 #[derive(Debug, Default)]
 pub struct ProfilesRenderer {
@@ -204,6 +224,27 @@ pub struct ProfilesRenderer {
 impl ProfilesRenderer {
     /// Draw while preserving the least list scroll needed to show the selection.
     pub fn draw(&mut self, view: &ProfilesView, area: Rect, buffer: &mut Buffer) {
+        self.draw_inner(view, area, buffer, None);
+    }
+
+    /// Draw while preserving the viewport and using resolved styles.
+    pub fn draw_with_theme(
+        &mut self,
+        view: &ProfilesView,
+        area: Rect,
+        buffer: &mut Buffer,
+        views: &ViewStyles,
+    ) {
+        self.draw_inner(view, area, buffer, Some(views));
+    }
+
+    fn draw_inner(
+        &mut self,
+        view: &ProfilesView,
+        area: Rect,
+        buffer: &mut Buffer,
+        views: Option<&ViewStyles>,
+    ) {
         if area.width == 0 || area.height == 0 {
             return;
         }
@@ -284,6 +325,7 @@ impl ProfilesRenderer {
                 buffer,
                 0,
                 &mut self.top,
+                views,
             );
         } else {
             let list_height = list_height(view, area);
@@ -306,6 +348,7 @@ impl ProfilesRenderer {
                     buffer,
                     list_height.saturating_sub(list_page_size(view, area)),
                     &mut self.top,
+                    views,
                 );
             }
             let panel_area = if area.width >= 100 {
@@ -314,7 +357,8 @@ impl ProfilesRenderer {
                     buffer,
                     area,
                     separator,
-                    &"─".repeat(width),
+                    &views
+                        .map_or_else(|| "─".repeat(width), |v| v.divider_text(&"─".repeat(width))),
                     Style::default(),
                 );
                 let top = u16::try_from(separator + 1)
@@ -351,6 +395,9 @@ impl ProfilesRenderer {
                 .saturating_add(u16::try_from(top + i).unwrap_or(u16::MAX));
             buffer.set_stringn(area.x, y, " ".repeat(width), width, Style::default());
             put(buffer, area, top + i, line, Style::default());
+        }
+        if let Some(views) = views {
+            views.finish(area, buffer, t::LIST_BACKGROUND, true);
         }
     }
 }

@@ -1,21 +1,25 @@
 use super::put;
+use super::themed;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Line,
 };
 use talaria_core::cron::{FormField, FormView};
 
-pub(super) fn draw(view: &FormView, area: Rect, buf: &mut Buffer) {
+pub(super) fn draw(view: &FormView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     let mut lines: Vec<(String, Style)> = Vec::new();
     let mut cursor = None;
     let mut focused = 0;
     for field in &view.fields {
         let style = if field.field == view.focus {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+            themed(
+                views,
+                t::CRON_ACCENT,
+                crate::theme::legacy::cron_accent().add_modifier(Modifier::BOLD),
+            )
         } else {
             Style::default()
         };
@@ -68,14 +72,23 @@ pub(super) fn draw(view: &FormView, area: Rect, buf: &mut Buffer) {
             }
         }
         if let Some(hint) = &field.hint {
-            lines.push((hint.clone(), Style::default().fg(Color::DarkGray)));
+            lines.push((
+                hint.clone(),
+                themed(views, t::CRON_HINT, crate::theme::legacy::cron_hint()),
+            ));
         }
         if let Some(error) = &field.error {
-            lines.push((error.clone(), Style::default().fg(Color::Red)));
+            lines.push((
+                error.clone(),
+                themed(views, t::CRON_ERROR, crate::theme::legacy::cron_error()),
+            ));
         }
     }
     for status in &view.status {
-        lines.push((status.clone(), Style::default().fg(Color::Yellow)));
+        lines.push((
+            status.clone(),
+            themed(views, t::CRON_WARNING, crate::theme::legacy::cron_warning()),
+        ));
     }
     let focus_row = if view.focus == FormField::Deliver {
         focused
@@ -110,7 +123,11 @@ pub(super) fn draw(view: &FormView, area: Rect, buf: &mut Buffer) {
             put(buf, area, row as u16, &visible, *style);
             let x = cursor_col.saturating_sub(offset);
             if x < usize::from(area.width) {
-                buf[(area.x + x as u16, area.y + row as u16)].set_style(style.bg(Color::DarkGray));
+                buf[(area.x + x as u16, area.y + row as u16)].set_style(themed(
+                    views,
+                    t::CRON_SELECTED,
+                    style.patch(crate::theme::legacy::cron_selected()),
+                ));
             }
         } else {
             put(buf, area, row as u16, line, *style);

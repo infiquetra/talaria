@@ -49,11 +49,9 @@ through `"ansi:15"`, and `"index:0"` through `"index:255"`. Roles and elements m
 tokens, roles, slots, colour forms and values reject the whole file with the key, line and column.
 There are no expressions, wildcards, scripts, environment substitutions or blinking attributes.
 
-The [element catalogue](theme-tokens.md) lists all 323 names and their defaults. Its 30 `picker.*`
-names are reserved for the picker implementation. A file may set them; `/theme` warns that they
-do not yet draw. This first file implementation applies to Markdown, status, the composer,
-reasoning and tool/diff cells. Other views keep their existing palettes until they move onto the
-catalogue.
+The [element catalogue](theme-tokens.md) lists all 323 names and their defaults. A selected file
+styles the transcript, syntax highlighting, status, composer, tools, work panel, menus, pickers
+and overlays. Element overrides can change one part of a view without changing its role peers.
 
 The layers, from lowest to highest, are the built-in base, the eligible Hermes skin, the file's
 palette, its roles, its element fields, and the terminal's rendering constraints. An authored
@@ -62,15 +60,20 @@ remain. `follow_hermes_skin = false` in the file disables the bridge. The existi
 permission and colour-depth exclusions also apply.
 
 `[chrome] border` accepts `rounded`, `single`, `double`, `ascii` or `none` and changes the
-composer frame. `none` replaces frame glyphs with spaces while preserving its width. The active
-frame uses `composer.border.focused`. `section_divider` accepts `single`, `double`, `ascii` or
-`none`; its drawing is deferred with the other views. Themes never change motion, dimensions,
-keys or action meanings.
+frames throughout Talaria. `none` replaces frame glyphs with spaces while preserving their
+width. The active composer frame uses `composer.border.focused`. `section_divider` accepts
+`single`, `double`, `ascii` or `none` for Talaria's section separators. Markdown rules and table
+grids remain content and keep their glyphs. Themes never change motion, dimensions, keys or
+action meanings.
 
-All background colours resolve, but the five inline surfaces paint none. Text therefore sits on
-the terminal's own background. The contrast diagnostic uses a trusted startup background for
-inline text when available; otherwise it reports the pair as unknown. Catalogue selection/focus
-pairs, which are not drawn by these five inline surfaces, are measured against their paired
+The inline view does not paint the terminal's background or default body text colour. Without a
+theme file, scheduled-job and workflow selections retain their existing dark grey backgrounds.
+With a file selected, full-screen overlays and the workspace paint their whole owned area:
+transcript, composer, status, tools, diffs and workspace use `background`; menus, work panels,
+dialogs, pickers and alternate lists use `surface`. Inline surfaces omit backgrounds, including
+selection backgrounds, so native scrollback keeps the terminal's background. The contrast
+diagnostic uses a trusted startup background for inline text when available; otherwise it
+reports the pair as unknown. Selection/focus pairs are measured against their paired
 backgrounds. The diagnostic warns below 4.5:1 for text and 3:1
 for structural marks, names the affected tokens, and never rewrites an authored colour. ANSI
 palette colours and unknown terminal defaults cannot be measured reliably. Explicit colours
@@ -110,8 +113,8 @@ Colour off keeps bold, italic and underline.
 
 On the default skin path, body text keeps the terminal's own colour and skin colours that are
 too faint for the background are lifted to a readable contrast as in Hermes's terminal interface.
-Theme files instead preserve their authored colours and report contrast warnings. The five
-inline surfaces do not paint backgrounds.
+Theme files instead preserve their authored colours and report contrast warnings. Inline
+surfaces do not paint backgrounds.
 
 ## Commands
 

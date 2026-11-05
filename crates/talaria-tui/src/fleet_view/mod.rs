@@ -5,6 +5,7 @@
 mod peek;
 mod rows;
 
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use std::collections::BTreeMap;
 
 use ratatui::buffer::Buffer;
@@ -222,6 +223,27 @@ impl FleetView {
         Self::draw_with_labels(state, peek, area, buf, theme, &BTreeMap::new());
     }
 
+    /// Draw the fleet with resolved view styles.
+    pub fn draw_with_theme(
+        state: &FleetViewState,
+        peek: Option<PeekPanel<'_>>,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &FleetTheme,
+        views: &ViewStyles,
+    ) {
+        Self::draw_with_sources_and_theme(
+            state,
+            peek,
+            None,
+            area,
+            buf,
+            theme,
+            &BTreeMap::new(),
+            views,
+        );
+    }
+
     /// Draw like `draw`, with each row's pull-request label taken from `labels`. A row without
     /// a label leaves its cell blank, and the `PR` column shows only when a visible row has one.
     pub fn draw_with_labels(
@@ -246,6 +268,61 @@ impl FleetView {
         theme: &FleetTheme,
         labels: &BTreeMap<RowKey, PrLabel>,
     ) {
+        Self::draw_inner(state, peek, external, area, buf, theme, labels, None);
+    }
+
+    /// Draw the fleet and transcript sources with resolved view styles.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_with_sources_and_theme(
+        state: &FleetViewState,
+        peek: Option<PeekPanel<'_>>,
+        external: Option<ExternalPeekPanel<'_>>,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &FleetTheme,
+        labels: &BTreeMap<RowKey, PrLabel>,
+        views: &ViewStyles,
+    ) {
+        let mut resolved = theme.clone();
+        resolved.needs_you = views.style(t::FLEET_STATE_ATTENTION, theme.needs_you);
+        resolved.working = views.style(t::FLEET_STATE_WORKING, theme.working);
+        resolved.failed = views.style(t::FLEET_STATE_FAILED, theme.failed);
+        resolved.done = views.style(t::FLEET_STATE_DONE, theme.done);
+        resolved.idle = views.style(t::FLEET_STATE_IDLE, theme.idle);
+        resolved.dim = views.style(t::FLEET_SECONDARY, theme.dim);
+        resolved.header = views.style(t::FLEET_HEADER, theme.header);
+        resolved.footer = views.style(t::FLEET_SECONDARY, theme.footer);
+        resolved.cursor = views.style(t::FLEET_CURSOR, theme.cursor);
+        resolved.group = views.style(t::FLEET_GROUP, theme.group);
+        resolved.notice = views.style(t::FLEET_INPUT, theme.notice);
+        resolved.success = views.style(t::FLEET_LABEL_SUCCESS, theme.success);
+        resolved.error = views.style(t::FLEET_LABEL_ERROR, theme.error);
+        resolved.warning = views.style(t::FLEET_LABEL_WARNING, theme.warning);
+        resolved.muted = views.style(t::FLEET_LABEL_MUTED, theme.muted);
+        resolved.accent = views.style(t::FLEET_LABEL_ACCENT, theme.accent);
+        Self::draw_inner(
+            state,
+            peek,
+            external,
+            area,
+            buf,
+            &resolved,
+            labels,
+            Some(views),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_inner(
+        state: &FleetViewState,
+        peek: Option<PeekPanel<'_>>,
+        external: Option<ExternalPeekPanel<'_>>,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &FleetTheme,
+        labels: &BTreeMap<RowKey, PrLabel>,
+        views: Option<&ViewStyles>,
+    ) {
         let area = area.intersection(buf.area);
         if area.is_empty() {
             return;
@@ -257,6 +334,9 @@ impl FleetView {
         }
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             draw_too_small(area, buf, theme);
+            if let Some(v) = views {
+                v.finish(area, buf, t::LIST_BACKGROUND, true);
+            }
             return;
         }
         let width = usize::from(area.width);
@@ -267,7 +347,16 @@ impl FleetView {
         let has_card = panel_has_card(state, panel.as_ref());
 
         if state.seen_snapshot() {
-            draw_body(state, panel.as_ref(), area, buf, theme, notice_row, labels);
+            draw_body(
+                state,
+                panel.as_ref(),
+                area,
+                buf,
+                theme,
+                notice_row,
+                labels,
+                views,
+            );
         } else {
             draw_text(buf, area.x, area.y, LOOKING, width, theme.notice);
         }
@@ -281,6 +370,9 @@ impl FleetView {
             width,
             theme.footer,
         );
+        if let Some(v) = views {
+            v.finish(area, buf, t::LIST_BACKGROUND, true);
+        }
     }
 }
 
@@ -344,6 +436,7 @@ fn panel_has_card(state: &FleetViewState, panel: Option<&Panel<'_>>) -> bool {
 }
 
 /// The header, banners, list, peek panel and the profiles that are not listed.
+#[allow(clippy::too_many_arguments)]
 fn draw_body(
     state: &FleetViewState,
     panel: Option<&Panel<'_>>,
@@ -352,6 +445,7 @@ fn draw_body(
     theme: &FleetTheme,
     notice_row: u16,
     labels: &BTreeMap<RowKey, PrLabel>,
+    views: Option<&ViewStyles>,
 ) {
     let width = usize::from(area.width);
     let mut y = area.y;
@@ -405,7 +499,9 @@ fn draw_body(
 
     if let Some(panel) = panel {
         let room = avail - shown;
-        let used = peek::draw_panel(state, panel, area.x, next, area.width, room, buf, theme);
+        let used = peek::draw_panel(
+            state, panel, area.x, next, area.width, room, buf, theme, views,
+        );
         next += u16::try_from(used).unwrap_or(0);
     }
     for line in &unlisted {

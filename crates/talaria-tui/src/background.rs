@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Widget, Wrap};
 use talaria_core::background::{
@@ -38,13 +38,7 @@ pub struct BackgroundTheme {
 
 impl Default for BackgroundTheme {
     fn default() -> Self {
-        Self {
-            dim: Style::default().add_modifier(Modifier::DIM),
-            warning: Style::default().fg(Color::Yellow),
-            error: Style::default().fg(Color::Red),
-            ok: Style::default().fg(Color::Green),
-            selected: Style::default().add_modifier(Modifier::REVERSED),
-        }
+        crate::theme::legacy::background_theme()
     }
 }
 
@@ -71,6 +65,22 @@ impl LiveSection for BackgroundSection<'_> {
 }
 
 impl BackgroundSection<'_> {
+    /// Render the inline process rows with the catalogue's ordinary text style.
+    pub fn render_with_theme(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        views: &crate::theme::surfaces::ViewStyles,
+    ) {
+        let lines = views.inline_lines(
+            self.lines(area.width),
+            crate::theme::surfaces::tokens::BACKGROUND_TEXT,
+        );
+        for (offset, line) in (0..area.height).zip(lines) {
+            buf.set_line(area.x, area.y + offset, &line, area.width);
+        }
+    }
+
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         for task in self.work.bg_tasks().iter().take(2) {
@@ -375,6 +385,35 @@ impl ProcessesView {
         buf: &mut Buffer,
         theme: &BackgroundTheme,
     ) {
+        self.render_inner(work, now_ms, wall_s, area, buf, theme, None);
+    }
+
+    /// Draw the overlay with catalogue chrome.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_themed(
+        &self,
+        work: &BackgroundWork,
+        now_ms: u64,
+        wall_s: f64,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &BackgroundTheme,
+        styles: &crate::theme::surfaces::ViewStyles,
+    ) {
+        self.render_inner(work, now_ms, wall_s, area, buf, theme, Some(styles));
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_inner(
+        &self,
+        work: &BackgroundWork,
+        now_ms: u64,
+        wall_s: f64,
+        area: Rect,
+        buf: &mut Buffer,
+        theme: &BackgroundTheme,
+        styles: Option<&crate::theme::surfaces::ViewStyles>,
+    ) {
         Clear.render(area, buf);
         if area.width < 40 || area.height < 10 {
             Paragraph::new("Widen the terminal to at least 40 columns and 10 rows to see background processes. Esc closes.")
@@ -384,10 +423,19 @@ impl ProcessesView {
         }
         let rows: Vec<_> = work.rows().collect();
         let running = rows.iter().filter(|row| is_running(row)).count();
-        let mut header = Line::from(format!(
-            "Background processes · {running} running · {} finished",
-            rows.len() - running
-        ));
+        let header_style = styles.map_or(Style::default(), |views| {
+            views.style(
+                crate::theme::surfaces::tokens::BACKGROUND_TEXT,
+                Style::default(),
+            )
+        });
+        let mut header = Line::styled(
+            format!(
+                "Background processes · {running} running · {} finished",
+                rows.len() - running
+            ),
+            header_style,
+        );
         if let ListState::Stale { since_ms, .. } = work.list_state() {
             header.spans.push(Span::styled(
                 format!(
@@ -441,7 +489,7 @@ impl ProcessesView {
             );
         }
         let separator_y = area.y + 1 + list_height;
-        separator(area.x, separator_y, area.width, buf, theme.dim);
+        separator(area.x, separator_y, area.width, buf, theme.dim, styles);
         let pane = Rect::new(
             area.x,
             separator_y + 1,
@@ -468,7 +516,14 @@ impl ProcessesView {
             lines.extend(body_plain("When the agent runs a command with the terminal tool and background=true, it appears here with its output.", pane.width, theme.dim));
             draw_lines(lines, pane, buf);
         }
-        separator(area.x, area.bottom() - 3, area.width, buf, theme.dim);
+        separator(
+            area.x,
+            area.bottom() - 3,
+            area.width,
+            buf,
+            theme.dim,
+            styles,
+        );
         let own_note = self.note.as_deref().filter(|_| {
             self.confirm
                 .as_ref()
@@ -673,11 +728,23 @@ fn draw_lines(lines: Vec<Line<'static>>, area: Rect, buf: &mut Buffer) {
     }
 }
 
-fn separator(x: u16, y: u16, width: u16, buf: &mut Buffer, style: Style) {
+fn separator(
+    x: u16,
+    y: u16,
+    width: u16,
+    buf: &mut Buffer,
+    style: Style,
+    styles: Option<&crate::theme::surfaces::ViewStyles>,
+) {
     buf.set_line(
         x,
         y,
-        &Line::styled("─".repeat(usize::from(width)), style),
+        &Line::styled(
+            styles
+                .map_or("─", |s| s.divider_symbol("─"))
+                .repeat(usize::from(width)),
+            style,
+        ),
         width,
     );
 }

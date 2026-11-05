@@ -8,7 +8,7 @@ pub mod env;
 pub mod output;
 pub mod segments;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 
 pub use command::{
     CommandLimits, CommandResult, CommandSpec, Decision, ExternalDisplay, MIN_RERUN_GAP,
@@ -106,28 +106,33 @@ impl Tone {
 /// One style per tone.
 #[derive(Clone, Copy, Debug)]
 pub struct StatusPalette {
-    styles: [Style; 7],
-    accent: Style,
+    pub(crate) styles: [Style; 7],
+    pub(crate) accent: Style,
+    pub(crate) border: Option<crate::theme::BorderPreset>,
 }
 
 impl Default for StatusPalette {
     fn default() -> Self {
-        Self {
-            accent: Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            styles: [
-                Style::new(),
-                Style::new().add_modifier(Modifier::DIM),
-                Style::new().add_modifier(Modifier::DIM),
-                Style::new().fg(Color::Green),
-                Style::new().fg(Color::Yellow),
-                Style::new().fg(Color::Red),
-                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ],
-        }
+        crate::theme::legacy::status_palette()
     }
 }
 
 impl StatusPalette {
+    /// Select the separator glyph without changing the segment widths.
+    pub fn with_border(mut self, border: crate::theme::BorderPreset) -> Self {
+        self.border = Some(border);
+        self
+    }
+
+    pub(super) fn separator(&self) -> &'static str {
+        use crate::theme::BorderPreset;
+        match self.border {
+            Some(BorderPreset::Double) => " ║ ",
+            Some(BorderPreset::Ascii) => " | ",
+            Some(BorderPreset::None) => "   ",
+            _ => " │ ",
+        }
+    }
     /// The style of one tone.
     pub fn style(&self, tone: Tone) -> Style {
         if tone == Tone::Accent {
@@ -147,6 +152,7 @@ impl StatusPalette {
         Self {
             styles,
             accent: styles[0],
+            border: None,
         }
     }
 }

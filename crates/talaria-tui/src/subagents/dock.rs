@@ -3,7 +3,7 @@ use crate::{checklist::cut_to_width, history::sanitize, live::LiveSection};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
 };
 use talaria_core::subagents::{RowState, Spawning, SubagentCounts, SubagentRow, SubagentTree};
@@ -22,16 +22,7 @@ pub struct SubagentStyle {
 }
 impl Default for SubagentStyle {
     fn default() -> Self {
-        Self {
-            header: Style::new().bold(),
-            hint: Style::new().dim(),
-            running: Style::new().fg(Color::Cyan),
-            queued: Style::new().dim(),
-            completed: Style::new().fg(Color::Green),
-            failed: Style::new().fg(Color::Red),
-            interrupted: Style::new().fg(Color::Yellow),
-            gone: Style::new().dim(),
-        }
+        crate::theme::legacy::subagent_style()
     }
 }
 impl SubagentStyle {
@@ -140,6 +131,10 @@ pub struct SubagentDock<'a> {
     terminal_rows: u16,
 }
 impl<'a> SubagentDock<'a> {
+    /// Use resolved styles for the existing dock projection.
+    pub fn render_with_style(&self, area: Rect, buf: &mut Buffer, style: &SubagentStyle) {
+        SubagentDock { style, ..*self }.render(area, buf);
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         tree: &'a SubagentTree,

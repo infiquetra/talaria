@@ -16,6 +16,7 @@ pub use highlight::warm_up;
 pub use sanitize::sanitize_untrusted;
 pub use theme::MarkdownTheme;
 
+use crate::theme::surfaces::ViewStyles;
 use ratatui::style::Style;
 use ratatui::text::Line;
 
@@ -47,6 +48,7 @@ pub struct MarkdownStream {
     held_cr: bool,
     emitted_any: bool,
     code: highlight::CodeCache,
+    views: ViewStyles,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -65,6 +67,11 @@ impl StreamUpdate {
 impl MarkdownStream {
     #[must_use]
     pub fn new(options: MarkdownOptions) -> Self {
+        Self::new_with_theme(options, ViewStyles::default())
+    }
+
+    #[must_use]
+    pub fn new_with_theme(options: MarkdownOptions, views: ViewStyles) -> Self {
         Self {
             width: options.width.max(8),
             color: options.color,
@@ -74,6 +81,7 @@ impl MarkdownStream {
             held_cr: false,
             emitted_any: false,
             code: highlight::CodeCache::default(),
+            views,
         }
     }
 
@@ -104,8 +112,12 @@ impl MarkdownStream {
         let options = self.options();
         let mut committed = Vec::new();
         for block in blocks.iter().take(closed) {
-            let lines =
-                render::render(&self.pending[block.range.clone()], &options, &mut self.code);
+            let lines = render::render(
+                &self.pending[block.range.clone()],
+                &options,
+                &mut self.code,
+                &self.views,
+            );
             if !lines.is_empty() {
                 if self.emitted_any {
                     committed.push(Line::default());
@@ -179,7 +191,7 @@ impl MarkdownStream {
 
     fn tail(&mut self) -> Vec<Line<'static>> {
         let options = self.options();
-        let mut lines = render::render(&self.pending, &options, &mut self.code);
+        let mut lines = render::render(&self.pending, &options, &mut self.code, &self.views);
         self.code.retain_rendered();
         if self.emitted_any && !lines.is_empty() {
             lines.insert(0, Line::default());
@@ -190,9 +202,20 @@ impl MarkdownStream {
 
 #[must_use]
 pub fn render_markdown(text: &str, options: &MarkdownOptions) -> Vec<Line<'static>> {
+    render_markdown_with_theme(text, options, &ViewStyles::default())
+}
+
+/// Render with an explicit syntax palette, without changing the legacy options.
+#[must_use]
+pub fn render_markdown_with_theme(
+    text: &str,
+    options: &MarkdownOptions,
+    views: &ViewStyles,
+) -> Vec<Line<'static>> {
     render::render(
         &sanitize_untrusted(text),
         options,
         &mut highlight::CodeCache::default(),
+        views,
     )
 }

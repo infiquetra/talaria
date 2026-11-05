@@ -1,5 +1,6 @@
 //! Connectors and messaging overlay drawing.
 
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use crate::{
     history::sanitize,
     status::{StatusPalette, Tone as StatusTone},
@@ -62,6 +63,19 @@ pub fn draw_connectors(
     buf: &mut Buffer,
 ) {
     draw_connectors_with_palette(view, secret_lens, &StatusPalette::default(), area, buf);
+}
+
+/// Paint the overlay using resolved status and view styles.
+pub fn draw_connectors_with_theme(
+    view: &ConnectorsView,
+    secret_lens: &BTreeMap<String, usize>,
+    palette: &StatusPalette,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
+    draw_connectors_with_palette(view, secret_lens, palette, area, buf);
+    views.finish(area, buf, t::STATUS_BACKGROUND, true);
 }
 
 /// Paint the overlay using the caller's resolved status palette.

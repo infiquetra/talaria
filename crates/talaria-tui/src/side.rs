@@ -6,7 +6,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -47,11 +47,7 @@ pub struct SideTheme {
 
 impl Default for SideTheme {
     fn default() -> Self {
-        Self {
-            warning: Style::default().fg(Color::Yellow),
-            error: Style::default().fg(Color::Red),
-            dim: Style::default().add_modifier(Modifier::DIM),
-        }
+        crate::theme::legacy::side_theme()
     }
 }
 

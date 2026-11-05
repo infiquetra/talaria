@@ -2,6 +2,7 @@
 //!
 //! Pure view state; drawing is a live section. Behavior contract: issue 228.
 
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -132,7 +133,24 @@ impl HistorySearch {
 
     /// The box as a live section replacing the composer.
     pub fn section(&self, now: SystemTime) -> impl LiveSection + '_ {
-        HistorySection { search: self, now }
+        HistorySection {
+            search: self,
+            now,
+            views: None,
+        }
+    }
+
+    /// The search section with resolved view styles.
+    pub fn section_with_theme<'a>(
+        &'a self,
+        now: SystemTime,
+        views: &'a ViewStyles,
+    ) -> impl LiveSection + 'a {
+        HistorySection {
+            search: self,
+            now,
+            views: Some(views),
+        }
     }
 
     fn matches(&self) -> Vec<usize> {
@@ -156,6 +174,7 @@ impl HistorySearch {
 pub struct HistorySection<'a> {
     search: &'a HistorySearch,
     now: SystemTime,
+    views: Option<&'a ViewStyles>,
 }
 
 impl LiveSection for HistorySection<'_> {
@@ -172,6 +191,10 @@ impl LiveSection for HistorySection<'_> {
             return;
         }
         let s = self.search;
+        let border = |text: &str| {
+            self.views
+                .map_or_else(|| text.to_owned(), |v| v.border_symbol(text).to_owned())
+        };
         let narrow = area.width < 20;
         let scope = if s.scope == Scope::ThisFolder {
             "this folder · tab: all folders"
@@ -180,11 +203,18 @@ impl LiveSection for HistorySection<'_> {
         };
         let mut rows = Vec::new();
         if !narrow {
-            rows.push(Line::raw(format!("╭ search history · {scope}")));
+            rows.push(Line::raw(format!(
+                "{} search history · {scope}",
+                border("╭")
+            )));
         }
         rows.push(Line::raw(format!(
             "{}› {}▏",
-            if narrow { "" } else { "│ " },
+            if narrow {
+                String::new()
+            } else {
+                format!("{} ", border("│"))
+            },
             crate::history::sanitize(&s.query)
         )));
         let matches = s.matches();
@@ -225,11 +255,15 @@ impl LiveSection for HistorySection<'_> {
                 let prefix = if narrow {
                     ""
                 } else if position == s.selected {
-                    "│ ▸ "
+                    "▸ "
                 } else {
-                    "│   "
+                    "  "
                 };
-                let mut spans = vec![Span::raw(prefix)];
+                let mut spans = vec![Span::raw(if narrow {
+                    prefix.to_owned()
+                } else {
+                    format!("{} {prefix}", border("│"))
+                })];
                 let mut at = 0;
                 for c in first.chars() {
                     let end = at + c.to_lowercase().collect::<String>().len();
@@ -259,7 +293,10 @@ impl LiveSection for HistorySection<'_> {
             }
         }
         if !narrow {
-            rows.push(Line::raw("╰ enter: put in composer · esc: cancel"));
+            rows.push(Line::raw(format!(
+                "{} enter: put in composer · esc: cancel",
+                border("╰")
+            )));
         }
         for (i, line) in rows.iter().take(area.height as usize).enumerate() {
             let line = if narrow {
@@ -268,26 +305,29 @@ impl LiveSection for HistorySection<'_> {
                 let top = i == 0;
                 let bottom = i == rows.len() - 1;
                 let mut line = line.clone();
-                if !top && !bottom && !line.to_string().starts_with('│') {
-                    line.spans.insert(0, Span::raw("│ "));
+                if !top && !bottom && !line.to_string().starts_with(&border("│")) {
+                    line.spans.insert(0, Span::raw(format!("{} ", border("│"))));
                 }
                 let mut line = clip(&line, usize::from(area.width - 1));
                 let padding = usize::from(area.width - 1).saturating_sub(line.width());
                 line.spans.push(Span::raw(if top || bottom {
-                    "─".repeat(padding)
+                    border("─").repeat(padding)
                 } else {
                     " ".repeat(padding)
                 }));
                 line.spans.push(Span::raw(if top {
-                    "╮"
+                    border("╮")
                 } else if bottom {
-                    "╯"
+                    border("╯")
                 } else {
-                    "│"
+                    border("│")
                 }));
                 line
             };
             buf.set_line(area.x, area.y + i as u16, &line, area.width);
+        }
+        if let Some(v) = self.views {
+            v.finish(area, buf, t::TRANSCRIPT_SEARCH_MATCH, false);
         }
     }
 }

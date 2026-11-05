@@ -14,13 +14,24 @@ use talaria_core::models::PickerView;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::history::{grapheme_width, sanitize};
+use crate::theme::surfaces::{Token, ViewStyles, tokens as t};
 
 pub use details::details_line_count;
 pub use layout::{PickerLayout, PickerMode, list_height};
 
 /// Draw a picker inside the supplied area.
 pub fn draw_picker_frame(view: &PickerView<'_>, area: Rect, buffer: &mut Buffer) {
-    draw_frame(view, None, area, buffer);
+    draw_frame(view, None, area, buffer, None, t::PICKER_TITLE);
+}
+
+/// Draw a picker with resolved view styles.
+pub fn draw_picker_frame_with_theme(
+    view: &PickerView<'_>,
+    area: Rect,
+    buffer: &mut Buffer,
+    views: &ViewStyles,
+) {
+    draw_frame(view, None, area, buffer, Some(views), t::PICKER_TITLE);
 }
 
 /// Labels supplied by a picker that shares the model picker's regions.
@@ -37,7 +48,25 @@ pub fn draw_picker_frame_with_labels(
     area: Rect,
     buffer: &mut Buffer,
 ) {
-    draw_frame(view, Some(labels), area, buffer);
+    draw_frame(view, Some(labels), area, buffer, None, t::PICKER_TITLE);
+}
+
+/// Draw shared picker regions with caller labels and a provider title.
+pub fn draw_picker_frame_with_labels_and_theme(
+    view: &PickerView<'_>,
+    labels: FrameLabels<'_>,
+    area: Rect,
+    buffer: &mut Buffer,
+    views: &ViewStyles,
+) {
+    draw_frame(
+        view,
+        Some(labels),
+        area,
+        buffer,
+        Some(views),
+        t::PROVIDERS_TITLE,
+    );
 }
 
 fn draw_frame(
@@ -45,6 +74,8 @@ fn draw_frame(
     labels: Option<FrameLabels<'_>>,
     area: Rect,
     buffer: &mut Buffer,
+    views: Option<&ViewStyles>,
+    title_token: Token,
 ) {
     let area = area.intersection(buffer.area);
     if area.is_empty() {
@@ -63,6 +94,9 @@ fn draw_frame(
             Style::default(),
             buffer,
         );
+        if let Some(v) = views {
+            v.finish(area, buffer, t::PICKER_BACKGROUND, true);
+        }
         return;
     }
     let title = if view.refreshing && !view.title.contains("refreshing") {
@@ -79,16 +113,25 @@ fn draw_frame(
         paint(
             &title,
             Rect::new(area.x, area.y, area.width, 1),
-            Style::default().bold(),
+            views.map_or(Style::default().bold(), |v| {
+                v.style(title_token, Style::default().bold())
+            }),
             buffer,
         );
     } else {
-        Block::bordered()
-            .title(sanitize(&title).into_owned())
-            .render(area, buffer);
+        let mut block = Block::bordered().title(sanitize(&title).into_owned());
+        if let Some(v) = views {
+            block = block
+                .border_set(border_set(v))
+                .title_style(v.style(title_token, Style::default()));
+        }
+        block.render(area, buffer);
     }
     if view.browse.is_some_and(|browse| browse.details_open) {
         details::draw_full(view, area, buffer);
+        if let Some(v) = views {
+            v.finish(area, buffer, t::PICKER_BACKGROUND, true);
+        }
         return;
     }
     let filter = if view.filter.is_empty() {
@@ -154,7 +197,7 @@ fn draw_frame(
     } else {
         list::draw(view, layout.list, buffer);
     }
-    details::draw_summary(view, &layout, buffer);
+    details::draw_summary(view, &layout, buffer, views);
     let (first_hint, second_hint) = view
         .hints
         .split_once('\n')
@@ -176,6 +219,22 @@ fn draw_frame(
         Style::default(),
         buffer,
     );
+    if let Some(v) = views {
+        v.finish(area, buffer, t::PICKER_BACKGROUND, true);
+    }
+}
+
+fn border_set(views: &ViewStyles) -> ratatui::symbols::border::Set<'_> {
+    ratatui::symbols::border::Set {
+        top_left: views.border_symbol("┌"),
+        top_right: views.border_symbol("┐"),
+        bottom_left: views.border_symbol("└"),
+        bottom_right: views.border_symbol("┘"),
+        vertical_left: views.border_symbol("│"),
+        vertical_right: views.border_symbol("│"),
+        horizontal_top: views.border_symbol("─"),
+        horizontal_bottom: views.border_symbol("─"),
+    }
 }
 
 fn width(text: &str) -> u16 {

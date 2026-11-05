@@ -1,15 +1,17 @@
+use super::themed;
 use super::{columns, put};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::Line,
     widgets::{Paragraph, Widget, Wrap},
 };
 use talaria_core::cron::{CardFocus, DetailView, RunsView};
 
-pub(super) fn draw(view: &DetailView, area: Rect, buf: &mut Buffer) {
-    let accent = Style::default().fg(Color::Cyan);
+pub(super) fn draw(view: &DetailView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
+    let accent = themed(views, t::CRON_ACCENT, crate::theme::legacy::cron_accent());
     if let Some(card) = &view.run_card {
         let text = field_lines(card)
             .into_iter()
@@ -31,7 +33,11 @@ pub(super) fn draw(view: &DetailView, area: Rect, buf: &mut Buffer) {
             .enumerate()
             .map(|(index, line)| {
                 let style = if index == selected {
-                    Style::default().bg(Color::DarkGray)
+                    themed(
+                        views,
+                        t::CRON_SELECTED,
+                        crate::theme::legacy::cron_selected(),
+                    )
                 } else {
                     Style::default()
                 };
@@ -106,7 +112,11 @@ pub(super) fn draw(view: &DetailView, area: Rect, buf: &mut Buffer) {
                     (&run.title, usize::from(area.width).saturating_sub(67)),
                 ]);
                 let style = if *selected == Some(index) && view.focus == CardFocus::History {
-                    Style::default().bg(Color::DarkGray)
+                    themed(
+                        views,
+                        t::CRON_SELECTED,
+                        crate::theme::legacy::cron_selected(),
+                    )
                 } else {
                     Style::default()
                 };

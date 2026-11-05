@@ -3,7 +3,7 @@
 mod page;
 mod route_picker;
 
-pub use page::draw_model_roles;
+pub use page::{draw_model_roles, draw_model_roles_with_theme};
 pub use route_picker::draw_route_picker;
 pub use talaria_core::model_roles::{RolesKey, Section};
 

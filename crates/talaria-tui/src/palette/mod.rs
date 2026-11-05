@@ -6,10 +6,11 @@ mod render;
 
 use talaria_core::commands::PaletteState;
 
-pub use render::render_palette;
+pub use render::{render_palette, render_palette_with_theme};
 
 /// One frame of the slash palette.
 pub struct PaletteSection {
+    views: Option<crate::theme::surfaces::ViewStyles>,
     state: PaletteState,
     terminal_rows: u16,
 }
@@ -19,9 +20,16 @@ impl PaletteSection {
     #[must_use]
     pub fn new(state: &PaletteState, terminal_rows: u16) -> Self {
         Self {
+            views: None,
             state: state.clone(),
             terminal_rows,
         }
+    }
+
+    /// Retain the resolved appearance for a live palette section.
+    pub fn with_theme(mut self, views: crate::theme::surfaces::ViewStyles) -> Self {
+        self.views = Some(views);
+        self
     }
 
     /// The palette this frame draws.
