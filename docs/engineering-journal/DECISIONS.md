@@ -2,6 +2,45 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-04
+
+### Optional workspace: one transcript body and independent terminal ownership
+
+**Context.** The accepted layout decision in issue #473 and architecture decision
+record 0013 require a full-screen workspace only when a client layout preference is
+enabled. Finished output must still reach native scrollback once when it closes.
+
+**Decision.** Keep preferences, size thresholds, panel transitions and `/layout`
+argument parsing in the terminal-independent `talaria-core::layout` module. The
+application owns the runtime state and passes it in `View`; terminal rectangles and
+rendering remain in `talaria-tui`. Only `[ui] work_panel` is read in this change.
+The preference pair leaves a place for the independent menu preference, but this
+change draws no menu row and accepts no menu command.
+
+The pager and workspace share transcript body rendering. The pager retains its
+header, banners, search highlighting and footer. Ordered transcript entries can
+hold either cells or rendered local output, so plain command output, context blocks,
+checklists and subagent completions remain visible between cells in commit order.
+The screen records commit callbacks sequentially instead of inferring their order
+from the reducer's already-advanced commit counter. Uncommitted cells follow them.
+Finished entries mirror the inline commit stream across session reloads; a reload
+invalidates the render cache without dropping completed local output. Cache keys
+include the entry's position because separate session sources can reuse a cell id.
+
+Terminal workspace ownership is separate from temporary overlays. A picker or pager
+inside the workspace returns to it without leaving the alternate screen or flushing
+pending output. Returning inline, or an orderly quit, flushes finished output once.
+The terminal module alone owns mode bytes, frame diffs and the pending line queue.
+The workspace footer reuses today's live sections, excluding the streaming tail
+and, while visible in the panel, the checklist. The composer, other live sections
+and bottom status row retain their existing roles. Voice has no new location.
+
+**Costs and revisit conditions.** Native scrollback and terminal search do not cover
+the workspace's conversation. Pending output remains in memory until inline return
+or orderly shutdown; memory grows with completed output, and a process crash can
+lose that queue. Revisit if long workspace sessions need durable pending history.
+The workspace follows the end; the pager remains the place for scrolling and search.
+
 ## 2026-11-01
 
 ### Voice architecture: workstation devices and Hermes speech services

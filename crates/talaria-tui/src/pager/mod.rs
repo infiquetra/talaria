@@ -7,7 +7,7 @@
 mod doc;
 mod render;
 mod search;
-pub use render::{TranscriptEntry, draw_transcript_body};
+pub use render::{TranscriptBody, TranscriptEntry, draw_transcript_body};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -541,113 +541,93 @@ impl Pager {
             .current
             .and_then(|index| self.matches.get(index))
             .copied();
-        let details = self.details;
-        if ctx.cells.is_empty() {
-            let text = Line::styled("No messages yet.".to_string(), theme.dim);
-            buf.set_line(area.x, area.y, &text, area.width);
-            return;
-        }
-        let mut cell = self.cell_index;
-        let mut line = self.line_in_cell;
-        let mut row = area.y;
-        // One cell's rendered hits and its match count. The count is the width of that cell's
-        // slice in the ordered match list, so a long transcript is not scanned once per row.
+        let matches = &self.matches;
+        let entries = ctx
+            .cells
+            .iter()
+            .map(TranscriptEntry::Cell)
+            .collect::<Vec<_>>();
         let mut cached: Option<CachedCellHits> = None;
-        while row < area.y + area.height {
-            let Some(current_cell) = ctx.cells.get(cell) else {
-                break;
-            };
-            let own = self.internal_render(render);
-            let lines = self
-                .doc
-                .cell_lines(current_cell, cell, area.width, details, render, &own);
-            if line >= lines.len() {
-                cell += 1;
-                line = 0;
-                continue;
-            }
-            let refresh = match cached {
-                Some(ref paint) => paint.cell != cell,
-                None => true,
-            };
-            if refresh {
-                let mut occurrence = None;
-                let mut gutter = false;
-                let first = self.matches.partition_point(|item| item.cell_index < cell);
-                let last = self.matches.partition_point(|item| item.cell_index <= cell);
-                let user_hits = match current_cell {
-                    Cell::User(user) if query.is_some() => {
-                        user_match_positions(&user.text, &lines, &self.matches[first..last])
-                    }
-                    _ => None,
-                };
-                if let Some(found) = current
-                    && found.cell_index == cell
-                {
-                    if let Some(positions) = &user_hits {
-                        gutter = positions
-                            .first_rows
-                            .get(found.ordinal_in_cell)
-                            .copied()
-                            .flatten()
-                            .is_none();
-                    } else {
-                        let hits = rendered_hits(&lines, query.as_ref());
-                        if hits.total == last - first && found.ordinal_in_cell < hits.total {
-                            let mut left = found.ordinal_in_cell;
-                            for (row, occurrences) in hits.per_line.iter().enumerate() {
-                                if left < occurrences.len() {
-                                    occurrence = Some((row, occurrences[left].0));
-                                    break;
-                                }
-                                left -= occurrences.len();
-                            }
+        render::draw_rows(
+            &mut self.doc,
+            &entries,
+            area,
+            buf,
+            render,
+            render::BodyPosition {
+                details: self.details,
+                anchor: (self.cell_index, self.line_in_cell),
+            },
+            |cell, line, lines| {
+                let refresh = cached.as_ref().is_none_or(|paint| paint.cell != cell);
+                if refresh {
+                    let mut occurrence = None;
+                    let mut gutter = false;
+                    let first = matches.partition_point(|item| item.cell_index < cell);
+                    let last = matches.partition_point(|item| item.cell_index <= cell);
+                    let user_hits = match &ctx.cells[cell] {
+                        Cell::User(user) if query.is_some() => {
+                            user_match_positions(&user.text, lines, &matches[first..last])
+                        }
+                        _ => None,
+                    };
+                    if let Some(found) = current.filter(|found| found.cell_index == cell) {
+                        if let Some(positions) = &user_hits {
+                            gutter = positions
+                                .first_rows
+                                .get(found.ordinal_in_cell)
+                                .copied()
+                                .flatten()
+                                .is_none();
                         } else {
-                            gutter = true;
+                            let hits = rendered_hits(lines, query.as_ref());
+                            if hits.total == last - first && found.ordinal_in_cell < hits.total {
+                                let mut left = found.ordinal_in_cell;
+                                for (row, occurrences) in hits.per_line.iter().enumerate() {
+                                    if left < occurrences.len() {
+                                        occurrence = Some((row, occurrences[left].0));
+                                        break;
+                                    }
+                                    left -= occurrences.len();
+                                }
+                            } else {
+                                gutter = true;
+                            }
                         }
                     }
+                    cached = Some(CachedCellHits {
+                        cell,
+                        occurrence,
+                        gutter,
+                        user_hits,
+                    });
                 }
-                cached = Some(CachedCellHits {
-                    cell,
-                    occurrence,
-                    gutter,
-                    user_hits,
-                });
-            }
-            let paint = cached.as_ref().expect("the cell was just cached");
-            let current_offset = paint
-                .occurrence
-                .filter(|(row, _)| *row == line)
-                .map(|(_, column)| column);
-            let marked = paint.gutter && line == 0;
-            let drawn = &lines[line];
-            let painted = match (&query, &paint.user_hits) {
-                (Some(_), Some(positions)) => {
-                    let ordinal = current
-                        .filter(|found| found.cell_index == cell)
-                        .map(|found| found.ordinal_in_cell);
-                    let fragments = positions.rows[line]
-                        .iter()
-                        .map(|&(start, length, hit)| (start, length, ordinal == Some(hit)))
-                        .collect::<Vec<_>>();
-                    search::highlight_fragments(drawn, &fragments, theme)
-                }
-                (Some(query), None) => highlight_line(drawn, query, current_offset, theme),
-                (None, _) => drawn.clone(),
-            };
-            if marked {
-                buf.set_stringn(area.x, row, "\u{25b8}", 1, theme.gutter_mark);
-                buf.set_line(area.x + 1, row, &painted, area.width.saturating_sub(1));
-            } else {
-                buf.set_line(area.x, row, &painted, area.width);
-            }
-            line += 1;
-            if line >= lines.len() {
-                cell += 1;
-                line = 0;
-            }
-            row += 1;
-        }
+                // The cache is assigned immediately above for each new cell.
+                let paint = cached.as_ref().expect("the cell was just cached");
+                let current_offset = paint
+                    .occurrence
+                    .filter(|(row, _)| *row == line)
+                    .map(|(_, column)| column);
+                let painted = match (&query, &paint.user_hits) {
+                    (Some(_), Some(positions)) => {
+                        let ordinal = current
+                            .filter(|found| found.cell_index == cell)
+                            .map(|found| found.ordinal_in_cell);
+                        let fragments = positions.rows[line]
+                            .iter()
+                            .map(|&(start, length, hit)| (start, length, ordinal == Some(hit)))
+                            .collect::<Vec<_>>();
+                        search::highlight_fragments(&lines[line], &fragments, theme)
+                    }
+                    (Some(query), None) => {
+                        highlight_line(&lines[line], query, current_offset, theme)
+                    }
+                    (None, _) => lines[line].clone(),
+                };
+                let gutter = (paint.gutter && line == 0).then_some(theme.gutter_mark);
+                (painted, gutter)
+            },
+        );
     }
 
     /// The footer row: the key hints on the left, the position on the right.

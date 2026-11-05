@@ -709,6 +709,7 @@ impl Composer {
             | Action::PagerDetails
             | Action::PagerClose
             | Action::ToggleTasks
+            | Action::LayoutPanel
             | Action::ApprovalsToggle
             | Action::QueueEdit
             | Action::QueueRemove

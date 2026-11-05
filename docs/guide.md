@@ -46,6 +46,17 @@ Use the [keybinding reference](keybindings.md) for composer editing, approvals a
 
 ## Many sessions at once
 
+For a persistent view of tasks, use Alt+D or `/layout panel` to open the optional
+full-screen workspace. Ctrl+T expands or collapses the same checklist in its panel;
+Ctrl+O opens the transcript pager and returns to the workspace when closed. The panel
+docks at 112 columns by 28 rows or more, otherwise opens on demand. Esc dismisses
+that overlay without interrupting work. Both the workspace and its startup setting,
+`[ui] work_panel`, are off by default. Runtime toggles do not save configuration.
+While enabled, terminal scrollback and search do not cover the live conversation;
+turning the panel off restores inline rendering and commits finished output once.
+See [terminal views](terminal-ui.md#optional-workspace-and-work-panel) for size rules
+and the cost of holding finished output in memory.
+
 Use `/fleet` to find, peek at, answer, or attach to sessions. You can launch a background session with `--bg`, and add `--worktree` to create a separate checkout. Files shared through `.worktreeinclude` may remain linked to the main checkout; review changes before using them. Notifications highlight sessions needing attention.
 
 ## Settings

@@ -721,6 +721,8 @@ pub enum Action {
     PagerClose,
     /// Open or close the task checklist drawer.
     ToggleTasks,
+    /// Toggle the work panel, or reopen its dismissed overlay.
+    LayoutPanel,
     /// Switches this session's approvals off or back on (#237).
     ApprovalsToggle,
     /// Edit the selected queued row. Issue 232. Queue and steer.
@@ -978,7 +980,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 194] = [
+    pub const ALL: [Self; 195] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1048,6 +1050,7 @@ impl Action {
         Self::PagerDetails,
         Self::PagerClose,
         Self::ToggleTasks,
+        Self::LayoutPanel,
         Self::ApprovalsToggle,
         Self::QueueEdit,
         Self::QueueRemove,
@@ -1249,6 +1252,7 @@ impl Action {
             Self::PagerDetails => "pager_details",
             Self::PagerClose => "pager_close",
             Self::ToggleTasks => "toggle_tasks",
+            Self::LayoutPanel => "layout_panel",
             Self::ApprovalsToggle => "approvals_toggle",
             Self::QueueEdit => "queue_edit",
             Self::QueueRemove => "queue_remove",
@@ -1437,6 +1441,7 @@ impl Action {
             | Self::Suspend
             | Self::AttachClipboardImage
             | Self::ToggleTasks
+            | Self::LayoutPanel
             | Self::ApprovalsToggle
             | Self::ComposerSendNow
             | Self::ComposerSteer
@@ -1665,6 +1670,7 @@ impl Action {
             Self::PagerDetails => &["t"],
             Self::PagerClose => &["q"],
             Self::ToggleTasks => &["ctrl+t"],
+            Self::LayoutPanel => &["alt+d"],
             Self::ApprovalsToggle => &["shift+tab"],
             Self::QueueEdit => &["enter", "e"],
             Self::QueueRemove => &["d", "delete", "ctrl+x"],
