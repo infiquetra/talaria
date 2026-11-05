@@ -6,6 +6,13 @@ use hermes_client::{
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[test]
+fn audio_deadline_is_longer_than_the_json_helper_deadline() {
+    let json_deadline = Duration::from_secs(15);
+    assert_eq!(hermes_client::audio_api::DEADLINE, Duration::from_secs(120));
+    assert!(hermes_client::audio_api::DEADLINE > json_deadline);
+}
+
 struct Minter;
 impl TicketMinter for Minter {
     fn mint(&self) -> Pin<Box<dyn Future<Output = Result<Ticket, TicketError>> + Send + '_>> {

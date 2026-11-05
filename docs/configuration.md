@@ -378,8 +378,12 @@ focus = false
 # model = "example-model"
 
 [voice]
+backend = "hermes-gateway"
 read_aloud = false
 speak_max_chars = 1500
+remote_audio = false
+client_submit_mode = "draft"
+# capture_command and playback_command are not configured by default.
 ```
 
 ## Settings
@@ -633,7 +637,7 @@ The client backend owns workstation helpers and uses the selected Hermes profile
 speech services. The architecture is recorded in the
 [voice architecture decision](engineering-journal/DECISIONS.md#voice-architecture-workstation-devices-and-hermes-speech-services).
 
-```toml
+```text
 [voice]
 backend = "client-bridge"
 capture_command = ["my-capture-helper"]

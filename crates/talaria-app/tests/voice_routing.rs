@@ -244,6 +244,11 @@ fn voice_configuration_enforces_the_speech_limit() {
 fn voice_backend_defaults_to_gateway_and_rejects_unknown_values() {
     let defaults = talaria_app::config::parse("");
     assert_eq!(defaults.config.voice.backend, "hermes-gateway");
+    assert!(defaults.notices.is_empty());
+    let missing_backend =
+        talaria_app::config::parse("[voice]\nread_aloud = true\nspeak_max_chars = 200\n");
+    assert_eq!(missing_backend.config.voice.backend, "hermes-gateway");
+    assert!(missing_backend.notices.is_empty());
     let configured = talaria_app::config::parse(
         "[voice]\nbackend = 'client-bridge'\nread_aloud = true\nspeak_max_chars = 100\n",
     );
