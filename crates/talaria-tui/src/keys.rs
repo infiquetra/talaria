@@ -2904,6 +2904,15 @@ mod tests {
         }
         for action in Action::ALL {
             let wanted = match action {
+                Action::MenuLeft
+                | Action::MenuRight
+                | Action::MenuUp
+                | Action::MenuDown
+                | Action::MenuOpen
+                | Action::MenuActivate
+                | Action::MenuNext
+                | Action::MenuPrev
+                | Action::MenuClose => KeyContext::Menu,
                 Action::ProgressUp
                 | Action::ProgressDown
                 | Action::ProgressLeft
@@ -3069,6 +3078,15 @@ mod tests {
             let name = action.config_name();
             assert_eq!(Action::from_config_name(name), Some(action), "{name}");
             let context = match action {
+                Action::MenuLeft
+                | Action::MenuRight
+                | Action::MenuUp
+                | Action::MenuDown
+                | Action::MenuOpen
+                | Action::MenuActivate
+                | Action::MenuNext
+                | Action::MenuPrev
+                | Action::MenuClose => KeyContext::Menu,
                 Action::ProgressUp
                 | Action::ProgressDown
                 | Action::ProgressLeft
