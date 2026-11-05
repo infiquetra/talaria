@@ -4495,6 +4495,13 @@ fn run_selected(
         )
         .then(|| loaded.config.fleet.clone()),
     };
+    let remote_audio =
+        remote.as_ref().map(
+            |(cfg, store)| hermes_client::audio_api::AudioRelay::Remote {
+                config: cfg.clone(),
+                store: store.clone(),
+            },
+        );
     if let Some((cfg, store)) = remote {
         let dial = hermes_client::remote::RemoteDial::new(cfg, store, launch.profile.clone());
         let dial = match launch.record.as_deref() {
@@ -4530,7 +4537,10 @@ fn run_selected(
     let outcome = match session(
         &runtime,
         launch,
-        setup,
+        ConnectionSetup {
+            setup,
+            remote_audio,
+        },
         keymap,
         status,
         loaded.config,
@@ -4555,16 +4565,25 @@ struct ThemeSettings {
     look: Look,
 }
 
+struct ConnectionSetup {
+    setup: RunSetup,
+    remote_audio: Option<hermes_client::audio_api::AudioRelay>,
+}
+
 /// Acquire the terminal, run the loop, restore. The guard drops before the caller prints.
 fn session(
     runtime: &tokio::runtime::Runtime,
     launch: Launch,
-    setup: RunSetup,
+    connection: ConnectionSetup,
     keymap: KeyMap,
     status: Option<StatusCommandService>,
     config: config::Config,
     settings: ThemeSettings,
 ) -> Result<Outcome, TerminalError> {
+    let ConnectionSetup {
+        setup,
+        remote_audio,
+    } = connection;
     let attachment_rule = CollapseRule {
         lines: config.composer.paste_collapse_lines,
         chars: config.composer.paste_collapse_chars,
@@ -4710,12 +4729,13 @@ fn session(
     .map_err(TerminalError::Io)?;
     suspend::catch_interrupts_while_released().map_err(TerminalError::Io)?;
     screen.input = spawn_input(move |event| sender.send(ScreenInput::Terminal(event)).is_ok());
-    let outcome = runtime.block_on(app::run_with_ultracode(
+    let outcome = runtime.block_on(app::run_with_remote_audio(
         launch,
         setup,
         &mut screen,
         receiver,
         settings.ultracode,
+        remote_audio,
     ));
     screen.restore();
     drop(screen.input.take());

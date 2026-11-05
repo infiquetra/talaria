@@ -703,6 +703,14 @@ pub struct AppState {
     pub kanban: Option<talaria_core::kanban::KanbanBoardState>,
     kanban_service: Option<crate::kanban::KanbanService>,
     pub voice: crate::voice::VoiceService,
+    client_voice: talaria_core::voice::client::ClientVoice,
+    client_voice_config: crate::config::VoiceConfig,
+    client_voice_enabled: bool,
+    client_voice_worker: Option<Arc<crate::voice::relay::ClientAudio>>,
+    client_voice_closing: Vec<tokio::task::JoinHandle<()>>,
+    client_helper_status: &'static str,
+    client_playback_status: &'static str,
+    client_relay_status: &'static str,
     voice_last_tick_ms: u64,
     voice_connection_generation: u64,
     voice_submit_mode: Option<Option<String>>,
@@ -995,6 +1003,14 @@ impl AppState {
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
             voice: crate::voice::VoiceService::new(),
+            client_voice: talaria_core::voice::client::ClientVoice::default(),
+            client_voice_config: crate::config::VoiceConfig::default(),
+            client_voice_enabled: false,
+            client_voice_worker: None,
+            client_voice_closing: Vec::new(),
+            client_helper_status: "not checked",
+            client_playback_status: "not checked",
+            client_relay_status: "not checked",
             voice_last_tick_ms: 0,
             voice_connection_generation: 0,
             voice_submit_mode: None,
@@ -1228,9 +1244,16 @@ impl AppState {
                 .as_ref()
                 .and_then(|fleet| fleet.peek())
                 .and_then(|(key, _)| self.acp_views.get(key)),
-            voice: opened
-                .and_then(|session| self.voice.get(&session.session_id))
-                .map(talaria_core::voice::VoiceState::view),
+            voice: if self.client_voice_config.backend == "client-bridge" && opened.is_some() {
+                Some(self.client_voice.view(
+                    self.client_voice_enabled,
+                    self.client_voice_config.read_aloud,
+                ))
+            } else {
+                opened
+                    .and_then(|session| self.voice.get(&session.session_id))
+                    .map(talaria_core::voice::VoiceState::view)
+            },
             configure: self
                 .configure
                 .as_ref()
@@ -1379,6 +1402,8 @@ impl AppState {
         let mut copy = AppState::new(self.launch_id.clone());
         copy.service = self.service.clone();
         copy.voice = self.voice.clone();
+        copy.client_voice_config = self.client_voice_config.clone();
+        copy.client_voice_worker = self.client_voice_worker.clone();
         copy.remote_gateway = self.remote_gateway;
         copy.connection_generation = self.connection_generation;
         copy.opened = self.opened.clone();
@@ -1405,14 +1430,53 @@ impl AppState {
         self.remote_gateway = true;
     }
 
+    /// Select the configured backend for a newly started application.
+    pub fn configure_voice(&mut self, config: crate::config::VoiceConfig) {
+        self.voice
+            .configure(config.read_aloud, config.speak_max_chars);
+        self.client_voice_config = config;
+    }
+
     pub(crate) fn voice_detaching(&self, session_id: &str) {
         if let Some(sender) = &self.sender {
+            if self.client_voice_config.backend == "client-bridge" {
+                let _ = sender.send(AppMessage::ClientVoice {
+                    session_id: session_id.to_owned(),
+                    generation: self.connection_generation,
+                    input: talaria_core::voice::client::Input::Detach,
+                    notice: None,
+                });
+                return;
+            }
             let _ = sender.send(AppMessage::Voice {
                 session_id: session_id.to_owned(),
                 generation: self.connection_generation,
                 input: talaria_core::voice::VoiceInput::DetachBegins,
             });
         }
+    }
+
+    pub(crate) async fn close_client_voice(&self) {
+        if let Some(worker) = &self.client_voice_worker {
+            worker.close().await;
+        }
+    }
+
+    async fn close_client_voice_jobs(&mut self) {
+        if let Some(worker) = &self.client_voice_worker {
+            self.client_voice_closing.push(tokio::spawn(worker.close()));
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+        for mut task in self.client_voice_closing.drain(..) {
+            if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+                task.abort();
+                let _ = task.await;
+            }
+        }
+    }
+
+    pub(crate) fn uses_client_voice(&self) -> bool {
+        self.client_voice_config.backend == "client-bridge"
     }
 
     pub(crate) fn voice_warning(&self, session_id: &str, warning: String) {
@@ -1565,6 +1629,18 @@ pub enum AppMessage {
     VoiceFull {
         generation: u64,
         mode: Option<Option<String>>,
+    },
+    ClientVoice {
+        session_id: String,
+        generation: u64,
+        input: talaria_core::voice::client::Input,
+        notice: Option<String>,
+    },
+    ClientVoiceHealth {
+        session_id: String,
+        generation: u64,
+        source: &'static str,
+        ok: bool,
     },
     Voice {
         session_id: String,
@@ -1875,6 +1951,18 @@ pub enum AppEffect {
     VoiceStatus {
         session_id: String,
     },
+    ClientVoiceCapture {
+        session_id: String,
+        epoch: u64,
+    },
+    ClientVoiceFinish {
+        epoch: u64,
+    },
+    ClientVoiceSpeak {
+        session_id: String,
+        text: String,
+    },
+    ClientVoiceClose,
     WorkflowPrompt {
         run: PathBuf,
         key: String,
@@ -3569,6 +3657,59 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             user_action(state, UserAction::ToggleTasks)
         }
         AppMessage::User(action) => user_action(state, action),
+        AppMessage::ClientVoice {
+            session_id,
+            generation,
+            input,
+            notice,
+        } => {
+            if generation != state.connection_generation
+                || !is_open_session(state, &session_id)
+                || (state.switching && !matches!(input, talaria_core::voice::client::Input::Detach))
+            {
+                Vec::new()
+            } else {
+                if matches!(
+                    input,
+                    talaria_core::voice::client::Input::CaptureFinished { .. }
+                ) {
+                    state.client_helper_status = "started";
+                }
+                if matches!(input, talaria_core::voice::client::Input::Text { .. }) {
+                    state.client_relay_status = "answered";
+                }
+                if let Some(message) = &notice {
+                    if message.contains("helper") {
+                        state.client_helper_status = "failed";
+                    }
+                    if message.contains("relay") {
+                        state.client_relay_status = "failed";
+                    }
+                }
+                let mut effects = client_voice_input(state, &session_id, input);
+                if let Some(notice) = notice {
+                    effects.extend(voice_notice(state, &session_id, notice));
+                }
+                effects
+            }
+        }
+        AppMessage::ClientVoiceHealth {
+            session_id,
+            generation,
+            source,
+            ok,
+        } => {
+            if generation == state.connection_generation && is_open_session(state, &session_id) {
+                let result = if ok { "ready" } else { "failed" };
+                match source {
+                    "capture" => state.client_helper_status = result,
+                    "playback" => state.client_playback_status = result,
+                    "relay" => state.client_relay_status = result,
+                    _ => {}
+                }
+            }
+            Vec::new()
+        }
         AppMessage::VoiceFull { generation, mode } => {
             if generation != state.connection_generation {
                 Vec::new()
@@ -3685,13 +3826,30 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     .unwrap_or_default();
                 let last_user = cells.iter().rposition(|cell| matches!(cell, Cell::User(_)));
                 if let Some(index) = last_user {
-                    let assistant_markdown = cells[index + 1..]
+                    let assistant_markdown: Vec<String> = cells[index + 1..]
                         .iter()
                         .filter_map(|cell| match cell {
                             Cell::Assistant(cell) => Some(cell.text.clone()),
                             _ => None,
                         })
                         .collect();
+                    if state.client_voice_config.backend == "client-bridge"
+                        && state.client_voice_enabled
+                        && state.client_voice_config.read_aloud
+                        && crate::voice::transport::remote_audio_allowed(
+                            state.remote_gateway,
+                            state.client_voice_config.remote_audio,
+                        )
+                        && let Some(text) = talaria_core::voice::speakable::speakable_text(
+                            &assistant_markdown.join("\n\n"),
+                            state.client_voice_config.speak_max_chars,
+                        )
+                    {
+                        effects.push(AppEffect::ClientVoiceSpeak {
+                            session_id: session.clone(),
+                            text,
+                        });
+                    }
                     effects.extend(voice_input(
                         state,
                         &session,
@@ -5437,6 +5595,9 @@ fn local_effect(
         }];
     }
     if action == LocalAction::Voice {
+        if state.client_voice_config.backend == "client-bridge" {
+            return client_voice_command(state, &argument);
+        }
         if state.remote_gateway {
             return notice_effect(state, REMOTE_VOICE_NOTICE.into());
         }
@@ -6020,6 +6181,40 @@ fn cd_input(state: &mut AppState, input: CdInput) -> Vec<AppEffect> {
 
 fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
+        UserAction::VoiceRecord if state.client_voice_config.backend == "client-bridge" => {
+            if state.switching {
+                return Vec::new();
+            }
+            let Some(session) = state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.clone())
+            else {
+                return notice_effect(state, "No session is attached.".into());
+            };
+            if !state.client_voice_enabled {
+                return notice_effect(
+                    state,
+                    "Voice is off. Type /voice on to use the microphone.".into(),
+                );
+            }
+            if !crate::voice::transport::remote_audio_allowed(
+                state.remote_gateway,
+                state.client_voice_config.remote_audio,
+            ) {
+                return notice_effect(
+                    state,
+                    "Remote audio is off. Enable [voice] remote_audio to use this gateway's relay."
+                        .into(),
+                );
+            }
+            let input = if state.client_voice.recording() {
+                talaria_core::voice::client::Input::Finish
+            } else {
+                talaria_core::voice::client::Input::Start
+            };
+            client_voice_input(state, &session, input)
+        }
         UserAction::VoiceRecord if state.remote_gateway => {
             notice_effect(state, REMOTE_VOICE_NOTICE.into())
         }
@@ -8163,6 +8358,11 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .max(state.background_generation_base.saturating_add(generation));
             state.link_state = LinkView::Connected;
             let mut effects = vec![AppEffect::ConnectionOpened(generation)];
+            if state.uses_client_voice() {
+                let _ = state
+                    .client_voice
+                    .update(talaria_core::voice::client::Input::Reopen);
+            }
             let new_connection = state.voice_connection_generation != state.connection_generation;
             state.voice_connection_generation = state.connection_generation;
             if new_connection && !state.voice.session_ids().is_empty() {
@@ -8215,6 +8415,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             state.link_state = LinkView::Reconnecting;
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
+            client_voice_link_lost(state, &mut effects);
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
@@ -8231,6 +8432,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             state.link_state = LinkView::Closed;
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
+            client_voice_link_lost(state, &mut effects);
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
@@ -8248,6 +8450,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             state.link_failed = true;
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
+            client_voice_link_lost(state, &mut effects);
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
@@ -8691,6 +8894,16 @@ fn opened_session(
         .fences_mut(&session_id)
         .adopt(Some(opened.revision), Some(opened.execution_generation));
     state.opened = Some(opened);
+    if state.client_voice_config.backend == "client-bridge" {
+        if !same_session {
+            let _ = state
+                .client_voice
+                .update(talaria_core::voice::client::Input::Detach);
+        }
+        let _ = state
+            .client_voice
+            .update(talaria_core::voice::client::Input::Reopen);
+    }
     if state.draft.is_empty() {
         let returned = state
             .retry_returns
@@ -9432,12 +9645,15 @@ async fn quit_with_voice(
     err: &mut (dyn std::io::Write + Send),
 ) -> (DetachOutcome, u8, String) {
     state.quitting = true;
+    state.close_client_voice_jobs().await;
     let broken = state.session_gone || state.link_failed;
     let mut outcome = DetachOutcome::Skipped;
     if !broken
         && let (Some(opened), Some(service)) = (state.opened.as_ref(), state.service.as_ref())
     {
-        if let Some(client) = service.client() {
+        if !state.uses_client_voice()
+            && let Some(client) = service.client()
+        {
             state
                 .voice
                 .stop_before_detach(client, &opened.session_id, err)
@@ -12065,6 +12281,50 @@ fn apply<S: Screen>(
                 run_voice_effect(state, executor, session_id, effect)
             }
             AppEffect::VoiceStatus { session_id } => run_voice_status(state, executor, session_id),
+            AppEffect::ClientVoiceCapture { session_id, epoch } => {
+                if crate::voice::transport::remote_audio_allowed(
+                    state.remote_gateway,
+                    state.client_voice_config.remote_audio,
+                ) && let Some(worker) = &state.client_voice_worker
+                {
+                    worker.capture(
+                        state.client_voice_config.capture_command.clone(),
+                        state.profile.clone(),
+                        session_id,
+                        state.connection_generation,
+                        epoch,
+                    );
+                }
+            }
+            AppEffect::ClientVoiceFinish { epoch: _ } => {
+                if let Some(worker) = &state.client_voice_worker {
+                    worker.finish_capture();
+                }
+            }
+            AppEffect::ClientVoiceSpeak { session_id, text } => {
+                if crate::voice::transport::remote_audio_allowed(
+                    state.remote_gateway,
+                    state.client_voice_config.remote_audio,
+                ) && let Some(worker) = &state.client_voice_worker
+                {
+                    worker.speak(
+                        state.client_voice_config.playback_command.clone(),
+                        state.profile.clone(),
+                        session_id,
+                        state.connection_generation,
+                        text,
+                    );
+                }
+            }
+            AppEffect::ClientVoiceClose => {
+                if let Some(worker) = &state.client_voice_worker {
+                    let closing = worker.close();
+                    state
+                        .client_voice_closing
+                        .retain(|task| !task.is_finished());
+                    state.client_voice_closing.push(tokio::spawn(closing));
+                }
+            }
             AppEffect::ConnectionOpened(generation) => {
                 let Some(prompts) = &state.prompts else {
                     continue;
@@ -13636,7 +13896,7 @@ pub async fn run<S: Screen>(
     screen: &mut S,
     inputs: mpsc::UnboundedReceiver<S::Input>,
 ) -> Outcome {
-    Box::pin(run_inner(launch, setup, screen, inputs, false)).await
+    Box::pin(run_inner(launch, setup, screen, inputs, false, None)).await
 }
 
 pub async fn run_with_ultracode<S: Screen>(
@@ -13646,7 +13906,27 @@ pub async fn run_with_ultracode<S: Screen>(
     inputs: mpsc::UnboundedReceiver<S::Input>,
     default_on: bool,
 ) -> Outcome {
-    Box::pin(run_inner(launch, setup, screen, inputs, default_on)).await
+    Box::pin(run_inner(launch, setup, screen, inputs, default_on, None)).await
+}
+
+/// Run with the authenticated remote audio context from the connection handoff.
+pub async fn run_with_remote_audio<S: Screen>(
+    launch: Launch,
+    setup: RunSetup,
+    screen: &mut S,
+    inputs: mpsc::UnboundedReceiver<S::Input>,
+    default_on: bool,
+    remote_audio: Option<hermes_client::audio_api::AudioRelay>,
+) -> Outcome {
+    Box::pin(run_inner(
+        launch,
+        setup,
+        screen,
+        inputs,
+        default_on,
+        remote_audio,
+    ))
+    .await
 }
 
 async fn run_inner<S: Screen>(
@@ -13655,6 +13935,7 @@ async fn run_inner<S: Screen>(
     screen: &mut S,
     mut inputs: mpsc::UnboundedReceiver<S::Input>,
     default_ultracode: bool,
+    remote_audio: Option<hermes_client::audio_api::AudioRelay>,
 ) -> Outcome {
     let mut state = AppState::new_boxed(setup.launch_id.clone());
     if setup.remote_gateway {
@@ -13662,9 +13943,7 @@ async fn run_inner<S: Screen>(
     }
     state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
     let voice_config = screen.voice_config();
-    state
-        .voice
-        .configure(voice_config.read_aloud, voice_config.speak_max_chars);
+    state.configure_voice(voice_config);
     state.models = ModelsState::new(
         &format!("{}-model", setup.launch_id),
         crate::config::load_models(),
@@ -13723,6 +14002,13 @@ async fn run_inner<S: Screen>(
 
     let (sender, mut messages) = mpsc::unbounded_channel();
     let executor = Executor::new(sender);
+    state.client_voice_worker = Some(Arc::new(crate::voice::relay::ClientAudio::new(
+        setup.home.clone(),
+        remote_audio,
+        setup.remote_gateway,
+        state.client_voice_config.remote_audio,
+        executor.sender.clone(),
+    )));
     state.sender = Some(executor.sender.clone());
     state.subagents = Some(crate::subagents::SubagentHub::new(
         screen.subagents_config(),
@@ -13954,6 +14240,7 @@ async fn run_inner<S: Screen>(
     for (_, task) in std::mem::take(&mut state.profiles_ticks) {
         task.abort();
     }
+    state.close_client_voice_jobs().await;
     let provider_closing = state.provider_service.as_ref().map(|service| {
         let closing = service.close();
         tokio::spawn(async move {
@@ -13962,6 +14249,24 @@ async fn run_inner<S: Screen>(
     });
     screen.forget_provider_secret();
     let mut outcome = Outcome::default();
+    if state
+        .client_voice_worker
+        .as_ref()
+        .is_some_and(|worker| worker.capture_blocked())
+    {
+        outcome
+            .stderr
+            .push_str("The capture helper could not be confirmed stopped before exit.\n");
+    }
+    if state
+        .client_voice_worker
+        .as_ref()
+        .is_some_and(|worker| worker.playback_blocked())
+    {
+        outcome
+            .stderr
+            .push_str("The playback helper could not be confirmed stopped before exit.\n");
+    }
     screen.forget_mcp_secrets();
     if let Some(service) = state.mcp_service.take() {
         let _ = tokio::time::timeout(Duration::from_secs(1), service.close()).await;
@@ -15318,11 +15623,120 @@ mod external_fleet_route_tests {
 
 const REMOTE_VOICE_NOTICE: &str = "Voice needs a local Hermes gateway for now, because a remote gateway would record and play on its own machine.";
 
+fn client_voice_link_lost(state: &mut AppState, effects: &mut Vec<AppEffect>) {
+    if state.uses_client_voice() {
+        let _ = state
+            .client_voice
+            .update(talaria_core::voice::client::Input::Detach);
+        effects.push(AppEffect::ClientVoiceClose);
+    }
+}
+
+fn client_voice_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
+    use talaria_core::voice::{VoiceCommand, parse_voice_args};
+    match parse_voice_args(argument) {
+        Ok(VoiceCommand::On) => {
+            state.client_voice_enabled = true;
+            let _ = state
+                .client_voice
+                .update(talaria_core::voice::client::Input::Reopen);
+            notice_effect(state, "Client voice on.".into())
+        }
+        Ok(VoiceCommand::Off) => {
+            state.client_voice_enabled = false;
+            let _ = state
+                .client_voice
+                .update(talaria_core::voice::client::Input::Detach);
+            let mut effects = notice_effect(state, "Client voice off.".into());
+            effects.push(AppEffect::ClientVoiceClose);
+            effects
+        }
+        Ok(VoiceCommand::Read(value)) => {
+            state.client_voice_config.read_aloud =
+                value.unwrap_or(!state.client_voice_config.read_aloud);
+            notice_effect(
+                state,
+                if state.client_voice_config.read_aloud {
+                    "Read-aloud on."
+                } else {
+                    "Read-aloud off."
+                }
+                .into(),
+            )
+        }
+        Ok(VoiceCommand::Status) => notice_effect(
+            state,
+            format!(
+                "Voice backend: client-bridge. Capture helper: {}. Playback helper: {}. Relay: {}. Remote audio opt-in: {}.",
+                state.client_helper_status,
+                state.client_playback_status,
+                state.client_relay_status,
+                if state.client_voice_config.remote_audio {
+                    "on"
+                } else {
+                    "off"
+                }
+            ),
+        ),
+        Err(text) => notice_effect(state, text),
+    }
+}
+
+fn client_voice_input(
+    state: &mut AppState,
+    session: &str,
+    input: talaria_core::voice::client::Input,
+) -> Vec<AppEffect> {
+    use talaria_core::voice::client::Effect;
+    let mut effects = Vec::new();
+    for effect in state.client_voice.update(input) {
+        match effect {
+            Effect::Capture { epoch } => effects.push(AppEffect::ClientVoiceCapture {
+                session_id: session.to_owned(),
+                epoch,
+            }),
+            Effect::FinishCapture { epoch } => effects.push(AppEffect::ClientVoiceFinish { epoch }),
+            Effect::Transcribe { .. } => {}
+            Effect::Draft(text) if is_open_session(state, session) => {
+                if state.client_voice_config.client_submit_mode == "direct"
+                    && state.draft.is_empty()
+                {
+                    let submission_id = state.next_submission_id();
+                    effects.extend(reduce(
+                        state,
+                        Event::Submit {
+                            display: text.clone(),
+                            text,
+                            submission_id,
+                            attachments: Vec::new(),
+                        },
+                    ));
+                } else {
+                    let trimmed = state.draft.trim_end().len();
+                    state.draft.truncate(trimmed);
+                    if !state.draft.is_empty() {
+                        state.draft.push(' ');
+                    }
+                    state.draft.push_str(&text);
+                    let draft = state.draft.clone();
+                    effects.extend(load_draft(state, draft));
+                }
+            }
+            Effect::Draft(_) => {}
+        }
+    }
+    effects.push(AppEffect::Redraw);
+    effects
+}
+
 fn voice_input(
     state: &mut AppState,
     session: &str,
     input: talaria_core::voice::VoiceInput,
 ) -> Vec<AppEffect> {
+    if state.client_voice_config.backend == "client-bridge" {
+        return Vec::new();
+    }
     use talaria_core::voice::VoiceEffect as V;
     let is_tick = matches!(input, talaria_core::voice::VoiceInput::Tick(_));
     if matches!(input, talaria_core::voice::VoiceInput::Press) {
@@ -15561,7 +15975,7 @@ fn voice_error(error: &hermes_client::rpc::CallError) -> (Option<i64>, String, b
 }
 
 fn run_voice_status(state: &AppState, executor: &Executor, session_id: String) {
-    if state.remote_gateway {
+    if state.remote_gateway || state.client_voice_config.backend == "client-bridge" {
         return;
     }
     let Some(client) = state
@@ -15597,7 +16011,7 @@ fn run_voice_effect(
     effect: talaria_core::voice::VoiceEffect,
 ) {
     use talaria_core::voice::{RecordStatus, VoiceEffect as V, VoiceInput as I};
-    if state.remote_gateway {
+    if state.remote_gateway || state.client_voice_config.backend == "client-bridge" {
         return;
     }
     let Some(client) = state

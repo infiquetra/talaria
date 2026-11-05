@@ -4545,3 +4545,13 @@ fixture measurement. Shared width 1 met it; per-session width 1 failed foregroun
 **Revisit when.** The operator approves the default or a new measurement on the intended
 machine supports another value. The C tool observation and the real-provider error also
 need investigation before drawing broader conclusions.
+
+## 2026-11-04 — Use batch Hermes audio relay first
+
+**Decision.** Client voice uses the profile-scoped HTTP transcription and speech
+endpoints first. Local capture and playback use configured subprocesses; streaming
+and provider-direct access remain separate work.
+
+**Rationale.** The pinned Hermes contract supports both batch endpoints without
+putting provider keys in Talaria. Batch requests have their own audio-sized limits
+and deadlines rather than changing the limits used by other remote requests.
