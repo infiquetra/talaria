@@ -142,6 +142,34 @@ pub fn row_text(buf: &Buffer, y: u16) -> String {
         .to_string()
 }
 
+pub fn assert_shared_body_matches_pager(cells: &[Cell], width: u16, details: Details) {
+    use ratatui::layout::Rect;
+    use talaria_tui::pager::{Pager, PagerAction, SearchIndex, TranscriptEntry};
+    let context = context(cells);
+    let mut index = SearchIndex::new();
+    let mut pager = Pager::open(&context, width, 26, &mut index);
+    if details == Details::Compact {
+        pager.handle_action(PagerAction::ToggleDetails, &context, &mut index);
+    }
+    let mut full = Buffer::empty(Rect::new(0, 0, width, 26));
+    pager.draw(full.area, &mut full, &context, &PlainCellLines);
+    let entries = cells.iter().map(TranscriptEntry::Cell).collect::<Vec<_>>();
+    for paint in [
+        talaria_tui::pager::draw_transcript_body,
+        talaria_tui::workspace::draw_body,
+    ] {
+        let mut body = Buffer::empty(Rect::new(0, 0, width, 24));
+        paint(&entries, details, body.area, &mut body, &PlainCellLines);
+        for y in 0..24 {
+            assert_eq!(
+                row_text(&body, y),
+                row_text(&full, y + 1),
+                "body row {y}, width {width}, {details:?}"
+            );
+        }
+    }
+}
+
 pub fn replay_fixture(file: &str) -> SessionState {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/frames")

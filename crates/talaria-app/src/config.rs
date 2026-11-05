@@ -231,6 +231,8 @@ pub struct ThemeConfig {
 /// Interface settings from `[ui]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiConfig {
+    /// Start in the optional workspace. Runtime toggles do not save this setting.
+    pub work_panel: bool,
     /// Reduced motion. The default is false.
     pub reduced_motion: bool,
 }
@@ -301,6 +303,7 @@ impl Default for Config {
                 colors: ColorsSetting::Auto,
             },
             ui: UiConfig {
+                work_panel: false,
                 reduced_motion: false,
             },
             composer: ComposerConfig::default(),
@@ -700,6 +703,10 @@ fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
     let mut ui = Config::default().ui;
     for (name, value) in section {
         match name.as_str() {
+            "work_panel" => match value.as_bool() {
+                Some(enabled) => ui.work_panel = enabled,
+                None => notices.push("[ui] work_panel must be true or false; using false.".into()),
+            },
             "reduced_motion" => match value.as_bool() {
                 Some(reduced) => ui.reduced_motion = reduced,
                 None => {

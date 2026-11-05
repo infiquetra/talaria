@@ -47,6 +47,7 @@ completion_accept = ["tab"]
 completion_close = ["esc"]
 attach_clipboard_image = ["ctrl+v", "alt+v"]
 transcript_open = ["ctrl+o"]
+layout_panel = ["alt+d"]
 pager_line_up = ["up", "k"]
 pager_line_down = ["down", "j"]
 pager_page_up = ["pageup", "b"]
@@ -361,6 +362,7 @@ colors = "auto"
 # file = "quiet-amber"
 [ui]
 reduced_motion = false
+work_panel = false
 [fleet]
 enabled = true
 hot_poll_ms = 2000
@@ -874,6 +876,15 @@ The default block above is authoritative. Invalid values use the documented defa
 | Key | Type | Default | Range | Example |
 |---|---|---|---|---|
 | `reduced_motion` | boolean | false | true or false | false |
+| `work_panel` | boolean | false | true or false | false |
+
+`work_panel` enables the optional full-screen workspace at startup. Alt+D
+(`layout_panel`) and `/layout panel` change the current view without saving this
+file. An invalid value produces one notice and uses false. The menu bar has no
+configuration key in this version. See [terminal views](terminal-ui.md#optional-workspace-and-work-panel)
+for the docking thresholds and scrollback tradeoff. Set `layout_panel = []` under
+`[keys]` to unbind the shortcut, or replace its chord. Conflicts with another
+effective binding produce a notice; `/layout panel` remains available.
 
 ### `fleet`
 

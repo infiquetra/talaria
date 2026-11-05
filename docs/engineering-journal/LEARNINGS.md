@@ -2,6 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-04 — Persistent workspace ownership must outlive temporary overlays
+
+**Evidence.** The new workspace terminal tests initially failed on inert entry,
+draw and leave stubs. With workspace ownership separated from the temporary
+overlay, all nine tests pass, including a nested picker, resizing both ways,
+zero-byte idle frames, and equal streaming-frame byte counts after 3 and 5,000
+queued lines. The orderly-quit test retains 2,000 completed lines exactly once
+and in order. The existing inline overlay and scrollback tests remain unchanged.
+
+**Mechanism.** Closing a temporary overlay must invalidate the workspace frame
+without leaving the alternate screen or draining its queue. Only returning inline
+or orderly restoration drains finished output. The queue keeps logical lines in
+memory; it grows with completed output and is not durable across a process crash.
+Local output has no transcript cell, so its on-screen order comes from sequential
+commit callbacks, not the reducer's already-advanced committed-cell count.
+
+**Rule.** Keep persistent terminal ownership separate from temporary overlays,
+and preserve non-cell output in the same ordered presentation stream as cells.
+
 ## 2026-11-02 — Restoring `target/llvm-cov-target/debug` without `CACHEDIR.TAG` breaks Cargo 1.98 package cleaning
 
 **Evidence.** During v0.7.1 pull-request verification (`PR #493` run `41550281644` and `PR #498` run `41550273895`), `cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80` logged `error: cannot clean .../target/llvm-cov-target: missing or invalid CACHEDIR.TAG file` (`exit status: 101`) and then failed report generation with `warning: 128 functions have mismatched data`.

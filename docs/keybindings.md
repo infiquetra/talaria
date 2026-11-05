@@ -66,6 +66,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Attach clipboard image | Ctrl+V, Alt+V | Attach an image from the clipboard. | `attach_clipboard_image` |
 | Transcript open | Ctrl+O | Open or close the transcript pager. | `transcript_open` |
 | Toggle tasks | Ctrl+T | Show or hide the task checklist. | `toggle_tasks` |
+| Layout panel | Alt+D | Toggle the work panel, or reopen its dismissed overlay. | `layout_panel` |
 | Approvals toggle | Shift+Tab | Toggle this session’s approval bypass. | `approvals_toggle` |
 | Composer send now | Ctrl+Enter | Send the draft immediately. | `composer_send_now` |
 | Composer steer | none | Steer the active turn. | `composer_steer` |

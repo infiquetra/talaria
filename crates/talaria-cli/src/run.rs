@@ -220,6 +220,10 @@ fn memory_footer_key(label: &str) -> Option<talaria_core::memory::MemoryKey> {
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
 /// status line.
 pub struct TuiScreen {
+    workspace_history: Vec<WorkspaceCommit>,
+    workspace_source_epoch: u64,
+    workspace_committed_cells: usize,
+    workspace_renderer: talaria_tui::workspace::Workspace,
     providers: crate::providers_wiring::ProvidersWiring,
     providers_view: Option<ProvidersView>,
     cron: Option<talaria_core::cron::CronView>,
@@ -950,6 +954,13 @@ struct Transcript {
     dirty: bool,
 }
 
+/// Presentation-only commit order. Local output does not have a session cell, so
+/// the callback sequence, rather than a cell index, determines its position.
+enum WorkspaceCommit {
+    Cell(Box<Cell>),
+    Lines(Vec<Line<'static>>),
+}
+
 /// The key of one terminal event, in the form the application routes.
 fn input_key(event: &crossterm::event::KeyEvent) -> Option<InputKey> {
     let key = Key::from(*event);
@@ -1176,6 +1187,14 @@ fn approvals_segment(segment: &ApprovalSegmentText) -> ApprovalsSegment {
 }
 
 impl TuiScreen {
+    fn commit_workspace_lines(&mut self, lines: Vec<Line<'static>>) {
+        if !lines.is_empty() {
+            self.workspace_history
+                .push(WorkspaceCommit::Lines(lines.clone()));
+        }
+        let _ = self.terminal.commit_lines(lines);
+    }
+
     fn connectors_key(
         &mut self,
         key: Key,
@@ -1772,6 +1791,9 @@ impl TuiScreen {
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
     fn set_theme(&mut self, theme: Theme) {
+        if self.color != theme.color || self.tool_theme != theme.tool {
+            self.workspace_renderer.clear();
+        }
         if (self.color != theme.color || self.tool_theme != theme.tool)
             && let Some(transcript) = self.transcript.as_mut()
         {
@@ -2518,6 +2540,15 @@ impl TuiScreen {
                         .into_iter()
                         .collect();
                 }
+                if action == Some(Action::LayoutPanel) {
+                    return vec![UserAction::LayoutPanel];
+                }
+                if key.kind != KeyKind::Release
+                    && is_escape(&key)
+                    && view.layout.panel == talaria_core::layout::PanelVisibility::OverlayOpen
+                {
+                    return vec![UserAction::DismissWorkPanel];
+                }
                 if let Some(search) = &mut self.search {
                     let mut actions = Vec::new();
                     Self::close_palette(&mut actions);
@@ -2872,6 +2903,7 @@ impl TuiScreen {
             Event::Resize(cols, rows) => {
                 self.rows = rows;
                 let _ = self.terminal.resize(cols, rows);
+                self.workspace_renderer.clear();
                 view.profiles
                     .as_ref()
                     .map(|profiles| UserAction::ProfilesLayout {
@@ -3179,6 +3211,19 @@ impl StatusHost for TuiScreen {
 }
 
 impl Screen for TuiScreen {
+    fn work_panel(&self) -> bool {
+        self.config.ui.work_panel
+    }
+
+    fn sync_workspace_transcript(&mut self, source_epoch: u64, committed_cells: usize) {
+        if self.workspace_source_epoch != source_epoch {
+            // Finished output follows the inline commit stream across session reloads.
+            // Only the render cache changes; local output must not disappear on refresh.
+            self.workspace_renderer.clear();
+            self.workspace_source_epoch = source_epoch;
+        }
+        self.workspace_committed_cells = committed_cells;
+    }
     fn acp_config(&self) -> talaria_app::acp::AcpConfig {
         self.config.acp.clone()
     }
@@ -3572,6 +3617,11 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        if view.layout.workspace_enabled() {
+            let _ = self.terminal.enter_workspace();
+        } else {
+            let _ = self.terminal.leave_workspace();
+        }
         if let Some(board) = view.kanban {
             self.open_overlay(Overlay::Kanban);
             let _ = self.terminal.draw_overlay(|area, buf| {
@@ -3971,7 +4021,21 @@ impl Screen for TuiScreen {
             now_ms: view.automation_now_ms,
             theme: &automation_theme,
         };
-        let mut sections: Vec<&dyn LiveSection> = vec![&tail, &drafting];
+        let workspace_enabled = view.layout.workspace_enabled();
+        let panel_visible = workspace_enabled
+            && talaria_tui::workspace::geometry(
+                self.terminal.screen_area(),
+                0,
+                0,
+                view.layout.panel,
+            )
+            .panel
+            .is_some();
+        let mut sections: Vec<&dyn LiveSection> = if workspace_enabled {
+            vec![&drafting]
+        } else {
+            vec![&tail, &drafting]
+        };
         if let Some(prompts) = &prompts {
             sections.push(prompts);
         }
@@ -4001,7 +4065,9 @@ impl Screen for TuiScreen {
             if let Some(mention) = &mention {
                 sections.push(mention);
             }
-            if let Some(checklist) = &checklist {
+            if let Some(checklist) = &checklist
+                && !panel_visible
+            {
                 sections.push(checklist);
             }
             if let Some(subagents) = &subagents {
@@ -4023,7 +4089,49 @@ impl Screen for TuiScreen {
         }
         sections.push(&automation);
         sections.push(&status);
-        let _ = self.terminal.draw_live(&LiveView { sections });
+        if workspace_enabled {
+            let mut entries = self
+                .workspace_history
+                .iter()
+                .map(|entry| match entry {
+                    WorkspaceCommit::Cell(cell) => talaria_tui::pager::TranscriptEntry::Cell(cell),
+                    WorkspaceCommit::Lines(lines) => {
+                        talaria_tui::pager::TranscriptEntry::Lines(lines)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let cells = view.state.map_or(&[][..], |state| state.cells());
+            entries.extend(
+                cells
+                    .iter()
+                    .skip(self.workspace_committed_cells)
+                    .map(talaria_tui::pager::TranscriptEntry::Cell),
+            );
+            let footer = LiveView { sections };
+            let workspace = talaria_tui::workspace::WorkspaceView {
+                entries: &entries,
+                details: talaria_tui::pager::Details::Expanded,
+                panel: view.layout.panel,
+                checklist: if panel_visible { view.checklist } else { None },
+                checklist_expanded: view.checklist_expanded,
+                footer: &footer,
+            };
+            let body_width = view.layout.plan(width, self.rows).transcript_columns;
+            let renderer = transcript_tool_renderer(
+                talaria_tui::pager::Details::Expanded,
+                body_width,
+                self.color,
+                &self.tool_theme,
+            );
+            let render_workspace = &mut self.workspace_renderer;
+            let style = &self.checklist_style;
+            let hint = self.keymap.label(Action::ToggleTasks);
+            let _ = self.terminal.draw_workspace(|area, buffer| {
+                render_workspace.draw_with_style(&workspace, area, buffer, &renderer, style, hint);
+            });
+        } else {
+            let _ = self.terminal.draw_live(&LiveView { sections });
+        }
         if !self.compact_started {
             self.compact_started = true;
             let history = self.history.clone();
@@ -4047,9 +4155,7 @@ impl Screen for TuiScreen {
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
-        let _ = self
-            .terminal
-            .commit_lines(lines.into_iter().map(Line::from).collect());
+        self.commit_workspace_lines(lines.into_iter().map(Line::from).collect());
     }
 
     fn commit_context(&mut self, block: &ContextBlock) {
@@ -4073,13 +4179,13 @@ impl Screen for TuiScreen {
             } => error_block(typed, command, method, sid, error, width, &style),
             ContextBlock::Notice(notice) => notice_block(notice, width, &style),
         };
-        let _ = self.terminal.commit_lines(lines);
+        self.commit_workspace_lines(lines);
     }
 
     fn commit_checklist(&mut self, commit: &ChecklistCommit) {
         let width = self.terminal.viewport().width;
         let lines = committed_block_lines(commit, width, &self.checklist_style);
-        let _ = self.terminal.commit_lines(lines);
+        self.commit_workspace_lines(lines);
     }
 
     fn commit_subagent_batch(&mut self, batch: &FinishedBatch) {
@@ -4089,10 +4195,17 @@ impl Screen for TuiScreen {
             SubagentStyle::plain()
         };
         let lines = batch_block_lines(batch, self.terminal.viewport().width, &style);
-        let _ = self.terminal.commit_lines(lines);
+        self.commit_workspace_lines(lines);
     }
 
     fn commit_cells(&mut self, cells: &[Cell]) {
+        self.workspace_history.extend(
+            cells
+                .iter()
+                .cloned()
+                .map(Box::new)
+                .map(WorkspaceCommit::Cell),
+        );
         let render = CapturedCells {
             current: &self.theme,
             captured: &self.captured,
@@ -4664,6 +4777,10 @@ fn session(
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     composer.set_style(theme.composer);
     let mut screen = TuiScreen {
+        workspace_history: Vec::new(),
+        workspace_source_epoch: 0,
+        workspace_committed_cells: 0,
+        workspace_renderer: talaria_tui::workspace::Workspace::default(),
         providers: crate::providers_wiring::ProvidersWiring::new(),
         providers_view: None,
         guard,

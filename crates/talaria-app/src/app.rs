@@ -194,6 +194,10 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// Toggle or reopen the client work panel.
+    LayoutPanel,
+    /// Dismiss only the narrow work-panel overlay.
+    DismissWorkPanel,
     Kanban(talaria_core::kanban::BoardKey),
     /// Redraw an external permission selection.
     AcpSelect,
@@ -351,6 +355,7 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub layout: &'a talaria_core::layout::LayoutState,
     pub kanban: Option<&'a talaria_core::kanban::KanbanBoardState>,
     /// Configured external agents and the selected external transcript.
     pub acp_agents: &'a [(String, String)],
@@ -516,6 +521,13 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn pane_size(&self) -> (u16, u16) {
         (80, 24)
     }
+    /// Startup preference; later changes belong to the runtime view alone.
+    fn work_panel(&self) -> bool {
+        false
+    }
+    /// Identify the source before ordered commit effects reach the screen. The
+    /// counter locates the uncommitted tail; callback order locates local output.
+    fn sync_workspace_transcript(&mut self, _source_epoch: u64, _committed_cells: usize) {}
     fn subagents_config(&self) -> crate::subagents::SubagentsConfig {
         crate::subagents::SubagentsConfig::default()
     }
@@ -708,6 +720,7 @@ struct CronBinding {
 }
 
 pub struct AppState {
+    pub layout: talaria_core::layout::LayoutState,
     pub kanban: Option<talaria_core::kanban::KanbanBoardState>,
     kanban_service: Option<crate::kanban::KanbanService>,
     pub voice: crate::voice::VoiceService,
@@ -1021,6 +1034,7 @@ impl AppState {
             client_helper_status: "not checked",
             client_playback_status: "not checked",
             client_relay_status: "not checked",
+            layout: talaria_core::layout::LayoutState::default(),
             voice_last_tick_ms: 0,
             voice_connection_generation: 0,
             voice_submit_mode: None,
@@ -1248,6 +1262,7 @@ impl AppState {
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
+            layout: &self.layout,
             acp_agents: &self.acp_agents,
             acp_peek: self
                 .fleet
@@ -5664,6 +5679,14 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Layout {
+        return match talaria_core::layout::parse_layout_args(&argument) {
+            Ok(talaria_core::layout::LayoutAction::Panel) => {
+                user_action(state, UserAction::LayoutPanel)
+            }
+            Err(notice) => vec![AppEffect::CommitLines(vec![notice])],
+        };
+    }
     if action == LocalAction::Kanban {
         let board = if argument.trim().is_empty() {
             "default"
@@ -6678,6 +6701,19 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             attachment_effects(effects)
         }
         UserAction::Input(key) => input_key(state, key),
+        UserAction::LayoutPanel => {
+            state
+                .layout
+                .toggle_panel(state.pane_size.0, state.pane_size.1);
+            vec![AppEffect::Redraw]
+        }
+        UserAction::DismissWorkPanel => {
+            if state.layout.dismiss_panel() {
+                vec![AppEffect::Redraw]
+            } else {
+                Vec::new()
+            }
+        }
         UserAction::ToggleTasks => {
             // The panel form flips whatever has focus; the composer never sees the key.
             if !state.pager_open && state.checklist.toggle() {
@@ -8045,6 +8081,21 @@ fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
         && matches!(key.code, InputCode::Char('c'));
 
     if !state.pager_open {
+        if chords(state, "layout_panel", "alt+d")
+            .iter()
+            .any(|chord| chord.matches(&key))
+        {
+            return user_action(state, UserAction::LayoutPanel);
+        }
+        if key.code == InputCode::Esc
+            && !key.ctrl
+            && !key.alt
+            && !key.super_key
+            && !key.other
+            && state.layout.panel == talaria_core::layout::PanelVisibility::OverlayOpen
+        {
+            return user_action(state, UserAction::DismissWorkPanel);
+        }
         if is_open {
             state.pager_open = true;
             state.pager_typing = false;
@@ -11321,7 +11372,9 @@ fn apply<S: Screen>(
             executor,
         );
     }
-    for effect in update(state, message) {
+    let effects = update(state, message);
+    screen.sync_workspace_transcript(state.source_epoch, state.committed_cells);
+    for effect in effects {
         match effect {
             AppEffect::Configure {
                 generation,
@@ -14211,6 +14264,14 @@ async fn run_inner<S: Screen>(
     state.pane_settings = screen.pane_settings();
     state.configure_model = screen.configure_model();
     state.pane_size = screen.pane_size();
+    state.layout = talaria_core::layout::LayoutState::new(
+        talaria_core::layout::LayoutPreferences {
+            work_panel: screen.work_panel(),
+            ..Default::default()
+        },
+        state.pane_size.0,
+        state.pane_size.1,
+    );
     sync_models(&mut state, screen);
     sync_picker(&state, screen);
     draw_current_view(&state, screen);
@@ -14348,6 +14409,9 @@ async fn run_inner<S: Screen>(
                 state.now_ms = executor.now_ms();
                 let actions = route_screen_input(&state, screen, input, Instant::now());
                 state.pane_size = screen.pane_size();
+                let previous_layout = state.layout;
+                state.layout.resize(state.pane_size.0, state.pane_size.1);
+                redraw |= previous_layout != state.layout;
                 for action in actions {
                     redraw |= apply(&mut state, AppMessage::ForegroundKey(action), screen, &executor);
                 }
@@ -14430,6 +14494,9 @@ async fn run_inner<S: Screen>(
                 state.now_ms = executor.now_ms();
                 let actions = route_screen_input(&state, screen, input, Instant::now());
                 state.pane_size = screen.pane_size();
+                let previous_layout = state.layout;
+                state.layout.resize(state.pane_size.0, state.pane_size.1);
+                redraw |= previous_layout != state.layout;
                 for action in actions {
                     redraw |= apply(
                         &mut state,

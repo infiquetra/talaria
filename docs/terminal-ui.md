@@ -8,6 +8,32 @@ provider level, an arrow shows both, such as `max→high`. When the model's cata
 effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
 catalogue or provider level is unavailable, the requested level is shown without a claim about it.
 
+## Optional workspace and work panel
+
+Alt+D or `/layout panel` toggles the work panel for the current view. To start with
+the preference enabled, set `work_panel = true` under `[ui]` in Talaria's configuration.
+The default is false; runtime toggles never rewrite the configuration file.
+
+Enabling the panel opens a full-screen workspace. At 112 columns by 28 rows or more,
+the transcript sits beside a 32-column panel and a one-column divider. On smaller
+screens the panel opens only on request as an overlay. At startup it stays dismissed
+on those screens. Esc dismisses the panel without interrupting the running turn;
+Alt+D or `/layout panel` reopens it. Shrinking a docked panel dismisses it; growing
+past both thresholds docks it again. Below 16 rows the panel reserves no space.
+
+The panel hosts the existing task checklist. Ctrl+T expands or collapses those tasks.
+When the panel is dismissed, the checklist returns above the composer. The composer
+and bottom status row keep their existing behavior, including the voice segment.
+The top menu is separate planned work and is not enabled by this setting.
+
+The workspace follows the conversation's end. Ctrl+O opens the existing transcript
+pager for earlier output and search; closing it returns to the workspace. While the
+workspace is on, native terminal scrollback and search do not cover the conversation,
+and multiplexer pane reads see only the screen. Turning the panel off restores the
+inline view and writes output finished during the workspace to native scrollback once.
+Finished output waits in memory until then; a process crash can lose that pending text.
+Mouse capture remains off. If a terminal or multiplexer consumes Alt+D, use the command.
+
 ## Capabilities
 
 `/capabilities [skills|hub|toolsets|plugins]` opens the capabilities of the connected profile.
