@@ -125,6 +125,13 @@ pub enum LayoutAction {
     Panel,
 }
 
+/// Whether the inline subagent dock is drawn.
+/// The screen asks this before adding that dock: the work panel hosts the same summary.
+#[must_use]
+pub fn inline_subagent_dock_visible(panel_visible: bool) -> bool {
+    !panel_visible
+}
+
 /// Parse exactly one supported argument and return a single-line usage notice otherwise.
 pub fn parse_layout_args(argument: &str) -> Result<LayoutAction, String> {
     match argument.trim() {

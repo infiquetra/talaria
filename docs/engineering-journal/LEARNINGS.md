@@ -6949,3 +6949,10 @@ Measure the interval from the stop key event to quiet output on a real macOS dev
 Record the measured value and device in the release evidence. The target is under
 100 milliseconds; process exit and tests using fake helpers do not measure device
 buffer latency.
+
+## Work panel values need their own evidence
+
+**Evidence.** The pinned goal snapshot carries an explicit verdict, while child snapshots carry
+a model but no per-child effort. A later goal snapshot may omit a finished goal altogether.
+**Rule.** Retain an explicit finished verdict for the session and never infer child effort from a
+parent or a configured default.

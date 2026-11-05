@@ -8,6 +8,14 @@ provider level, an arrow shows both, such as `max→high`. When the model's cata
 effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
 catalogue or provider level is unavailable, the requested level is shown without a claim about it.
 
+The optional work panel shows the status row's attention count, the focused session's goal,
+turn and explicit verdict, its task checklist, and its agents. The waiting requests come from
+the fleet queue used by Alt+A; running and queued agents come from the focused session's tree.
+The panel counts omitted items as `+N more` and does not scroll. A child's model is shown only
+when Hermes reports it; otherwise it is `unknown`. Child effort is `unknown` because the pinned
+contract does not report it. A finished checklist is not a verdict. Ctrl+T still expands or
+collapses tasks, and Alt+S and Alt+A retain their existing actions.
+
 ## Optional workspace and work panel
 
 Alt+D or `/layout panel` toggles the work panel for the current view. To start with

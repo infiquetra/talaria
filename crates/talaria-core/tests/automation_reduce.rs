@@ -779,6 +779,60 @@ fn mode_read_failure_after_command_is_unknown() {
 }
 
 #[test]
+fn finished_verdict_stays_until_a_new_goal_or_a_session_switch() {
+    let mut done = full_snapshot();
+    done["goal"]["status"] = json!("done");
+    done["goal"]["last_verdict"] = json!("needs-revision");
+    done["goal"]["last_reason"] = json!("the notes shipped");
+    done["revision"] = json!("r2");
+
+    let mut state = AutomationState::default();
+    talaria_core::automation::update(&mut state, attached(SESSION));
+    talaria_core::automation::update(&mut state, updated(SESSION, full_snapshot()));
+    talaria_core::automation::update(&mut state, updated(SESSION, done));
+    assert_eq!(
+        state.panel_verdict().as_deref(),
+        Some("needs-revision"),
+        "a finished goal's explicit verdict is available to the panel"
+    );
+
+    let mut cleared = full_snapshot();
+    cleared["goal"] = Value::Null;
+    cleared["revision"] = json!("r3");
+    talaria_core::automation::update(&mut state, updated(SESSION, cleared));
+    assert_eq!(
+        state.panel_verdict().as_deref(),
+        Some("needs-revision"),
+        "the verdict stays after the goal leaves the snapshot"
+    );
+
+    let mut replacement = full_snapshot();
+    replacement["goal"]["title"] = json!("Plan the next release");
+    replacement["goal"]["created_at"] = json!(1790000100.0);
+    replacement["revision"] = json!("r4");
+    talaria_core::automation::update(&mut state, updated(SESSION, replacement));
+    assert_eq!(
+        state.panel_verdict(),
+        None,
+        "a new goal drops the previous verdict"
+    );
+
+    let mut state = AutomationState::default();
+    talaria_core::automation::update(&mut state, attached(SESSION));
+    let mut done = full_snapshot();
+    done["goal"]["status"] = json!("done");
+    done["goal"]["last_verdict"] = json!("needs-revision");
+    done["revision"] = json!("r2");
+    talaria_core::automation::update(&mut state, updated(SESSION, done));
+    talaria_core::automation::update(&mut state, attached("s2"));
+    assert_eq!(
+        state.panel_verdict(),
+        None,
+        "a session switch drops the previous verdict"
+    );
+}
+
+#[test]
 fn plan_note_once_per_session() {
     let mut state = AutomationState::default();
     talaria_core::automation::update(&mut state, attached(SESSION));

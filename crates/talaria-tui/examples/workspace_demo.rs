@@ -79,6 +79,7 @@ fn draw(
             checklist: None,
             checklist_expanded: false,
             footer: &footer,
+            work: None,
         };
         terminal.draw_workspace(|area, buffer| {
             workspace::draw(&view, area, buffer, &PlainCellLines);
