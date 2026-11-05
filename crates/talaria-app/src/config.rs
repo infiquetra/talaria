@@ -122,6 +122,10 @@ pub struct VoiceConfig {
     pub backend: String,
     pub read_aloud: bool,
     pub speak_max_chars: usize,
+    pub capture_command: Vec<String>,
+    pub playback_command: Vec<String>,
+    pub remote_audio: bool,
+    pub client_submit_mode: String,
 }
 
 impl Default for VoiceConfig {
@@ -130,6 +134,10 @@ impl Default for VoiceConfig {
             backend: "hermes-gateway".into(),
             read_aloud: false,
             speak_max_chars: 1_500,
+            capture_command: Vec::new(),
+            playback_command: Vec::new(),
+            remote_audio: false,
+            client_submit_mode: "draft".into(),
         }
     }
 }
@@ -419,6 +427,51 @@ fn read_voice(section: &Table, notices: &mut Vec<String>) -> VoiceConfig {
     let mut voice = VoiceConfig::default();
     for (name, value) in section {
         match name.as_str() {
+            "backend" => match value.as_str() {
+                Some("hermes-gateway" | "client-bridge") => {
+                    if let Some(backend) = value.as_str() {
+                        voice.backend = backend.to_owned();
+                    }
+                }
+                _ => notices.push(
+                    "[voice] backend must be hermes-gateway or client-bridge; using hermes-gateway."
+                        .into(),
+                ),
+            },
+            "capture_command" | "playback_command" => {
+                let command = value
+                    .as_array()
+                    .and_then(|values| {
+                        values
+                            .iter()
+                            .map(|value| value.as_str().map(str::to_owned))
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .filter(|values| !values.is_empty() && !values[0].is_empty());
+                if let Some(command) = command {
+                    if name == "capture_command" {
+                        voice.capture_command = command;
+                    } else {
+                        voice.playback_command = command;
+                    }
+                } else {
+                    notices.push(format!(
+                        "[voice] {name} must be a nonempty array of strings."
+                    ));
+                }
+            }
+            "remote_audio" => match value.as_bool() {
+                Some(enabled) => voice.remote_audio = enabled,
+                None => {
+                    notices.push("[voice] remote_audio must be true or false; using false.".into())
+                }
+            },
+            "client_submit_mode" => match value.as_str() {
+                Some(mode @ ("draft" | "direct")) => voice.client_submit_mode = mode.to_owned(),
+                _ => notices.push(
+                    "[voice] client_submit_mode must be draft or direct; using draft.".into(),
+                ),
+            },
             "read_aloud" => match value.as_bool() {
                 Some(enabled) => voice.read_aloud = enabled,
                 None => {
