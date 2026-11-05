@@ -7,10 +7,29 @@ pub mod color;
 mod contrast;
 pub mod detect;
 mod file;
+pub mod legacy;
 pub mod roles;
 pub mod surfaces;
 
-pub use file::{BorderPreset, ThemeFileResolution, resolve_with_theme_file};
+pub use file::{BorderPreset, ThemeFileResolution};
+
+/// Resolve all view styles and chrome alongside the existing surface fields.
+pub fn resolve_with_theme_file(
+    inputs: &ThemeInputs<'_>,
+    file: Option<&talaria_app::theme_file::ThemeFile>,
+) -> ThemeFileResolution {
+    let mut resolved = file::resolve_with_theme_file(inputs, file);
+    if let Some(file) = file {
+        resolved.theme.status = resolved.theme.status.with_border(file.chrome.border);
+        resolved.theme.views = surfaces::ViewStyles::new(
+            resolved.elements.clone(),
+            resolved.theme.color,
+            file.chrome.border,
+            file.chrome.section_divider,
+        );
+    }
+    resolved
+}
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,6 +89,8 @@ impl Default for ComposerStyle {
 /// Every themed surface, resolved once per change.
 #[derive(Clone, Debug)]
 pub struct Theme {
+    /// Catalogue styles and chrome for views outside the inline surface fields.
+    pub views: surfaces::ViewStyles,
     /// Markdown styles.
     pub markdown: MarkdownTheme,
     /// Status line styles.
@@ -121,6 +142,7 @@ pub fn resolve(inputs: &ThemeInputs<'_>) -> Theme {
         ignored: Vec::new(),
     };
     let mut theme = Theme {
+        views: surfaces::ViewStyles::default(),
         markdown: MarkdownTheme::default(),
         status: StatusPalette::default(),
         composer: ComposerStyle::default(),
@@ -362,5 +384,404 @@ fn strip_colours(theme: &mut Theme) {
         &mut tool.line_number,
     ] {
         *style = bare(*style);
+    }
+}
+
+// Explicit draw adapters share the same context as the application screen.
+mod view_hooks {
+    use std::time::SystemTime;
+
+    use crate::{
+        automation::AutomationTheme,
+        background::BackgroundTheme,
+        checklist::ChecklistStyle,
+        context_view::ContextStyle,
+        history::CellLines,
+        history_search::HistorySearch,
+        launch_dialog::LaunchDialog,
+        live::LiveSection,
+        markdown::MarkdownOptions,
+        pager::PagerTheme,
+        palette::PaletteSection,
+        rewind::RewindTheme,
+        side::SideTheme,
+        subagents::SubagentStyle,
+        theme::ThemeFileResolution,
+        workflow_view::WorkflowTheme,
+        workspace::{WorkspaceView, menu::MenuState, panel::WorkContents},
+    };
+    use ratatui::{
+        buffer::Buffer,
+        layout::Rect,
+        text::{Line, Span},
+    };
+    use talaria_core::{
+        capabilities::CapView,
+        cron::CronView,
+        mcp::{McpView, SecretSlot},
+        models::PickerView,
+        profiles::ProfilesView,
+        providers::ProvidersView,
+        review::PrLabel,
+    };
+
+    impl ThemeFileResolution {
+        pub fn draw_automation(
+            &self,
+            section: &crate::automation::AutomationSection<'_>,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            section.render_with_theme(area, buffer, &self.theme.views);
+        }
+        pub fn hermes_command_lines(
+            &self,
+            cell: &talaria_core::automation::HermesCommandCell,
+            width: u16,
+        ) -> Vec<Line<'static>> {
+            let lines = crate::automation::hermes_command_lines_with_options_and_theme(
+                cell,
+                width,
+                &self.automation_theme(),
+                &MarkdownOptions {
+                    width,
+                    theme: self.theme.markdown.clone(),
+                    color: self.theme.color,
+                    base_style: Default::default(),
+                },
+                &self.theme.views,
+            );
+            self.theme
+                .views
+                .inline_lines(lines, super::surfaces::tokens::AUTOMATION_METADATA)
+        }
+        pub fn background_cell_lines(
+            &self,
+            cell: &talaria_core::background::BackgroundCell,
+            width: u16,
+        ) -> Vec<Line<'static>> {
+            self.theme.views.inline_lines(
+                crate::background::background_cell_lines(cell, width, &self.background_theme()),
+                super::surfaces::tokens::BACKGROUND_TEXT,
+            )
+        }
+        pub fn draw_background_processes(
+            &self,
+            view: &crate::background::ProcessesView,
+            work: &talaria_core::background::BackgroundWork,
+            clock: (u64, f64),
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            view.render_themed(
+                work,
+                clock.0,
+                clock.1,
+                area,
+                buffer,
+                &self.background_theme(),
+                &self.theme.views,
+            );
+            self.theme
+                .views
+                .finish(area, buffer, super::surfaces::tokens::BACKGROUND_TEXT, true);
+        }
+        pub fn draw_checklist(
+            &self,
+            section: &crate::checklist::ChecklistSection<'_>,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            section.render_with_style(area, buffer, &self.checklist_style());
+            self.theme
+                .views
+                .finish(area, buffer, super::surfaces::tokens::WORK_TASK_TEXT, false);
+        }
+        pub fn draw_subagent_dock(
+            &self,
+            section: &crate::subagents::SubagentDock<'_>,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            section.render_with_style(area, buffer, &self.subagent_style());
+            self.theme
+                .views
+                .finish(area, buffer, super::surfaces::tokens::AGENTS_HEADER, false);
+        }
+        pub fn draw_connectors(
+            &self,
+            view: &talaria_core::connectors::ConnectorsView,
+            secret_lens: &std::collections::BTreeMap<String, usize>,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            crate::connectors::draw_connectors_with_theme(
+                view,
+                secret_lens,
+                &self.theme.status,
+                area,
+                buffer,
+                &self.theme.views,
+            );
+        }
+        pub fn context_block(
+            &self,
+            command: &str,
+            breakdown: &talaria_core::context::breakdown::Breakdown,
+            width: u16,
+        ) -> Vec<Line<'static>> {
+            self.theme.views.inline_lines(
+                crate::context_view::context_block(
+                    command,
+                    breakdown,
+                    width,
+                    &self.context_style(),
+                ),
+                super::surfaces::tokens::CONTEXT_TEXT,
+            )
+        }
+        pub fn draw_review(
+            &self,
+            view: &talaria_core::review::ReviewView<'_>,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            crate::review_view::draw_review_themed(
+                view,
+                &self.theme.tool,
+                area,
+                buffer,
+                &self.theme.views,
+            );
+            self.theme
+                .views
+                .finish(area, buffer, super::surfaces::tokens::LIST_BACKGROUND, true);
+        }
+        pub fn shell_cell_lines(
+            &self,
+            cell: &talaria_core::side::ShellCell,
+            width: u16,
+        ) -> Vec<Line<'static>> {
+            self.theme.views.inline_lines(
+                crate::side::shell_cell_lines(cell, width, &self.side_theme()),
+                super::surfaces::tokens::SIDE_METADATA,
+            )
+        }
+        pub fn tool_lines(
+            &self,
+            cell: &talaria_core::session::ToolCell,
+            options: &crate::tool_cell::ToolRenderOptions,
+        ) -> Vec<Line<'static>> {
+            crate::tool_cell::tool_lines(cell, options)
+        }
+        pub fn draw_workflow(
+            &self,
+            state: &talaria_workflow::progress::live::ProgressState,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            crate::workflow_view::WorkflowView::render_themed(
+                area,
+                buffer,
+                state,
+                &self.workflow_theme(),
+                &self.theme.views,
+            );
+            self.theme
+                .views
+                .finish(area, buffer, super::surfaces::tokens::WORKFLOW_TEXT, true);
+        }
+        pub fn draw_workflow_picker(
+            &self,
+            picker: &talaria_workflow::runner::ProgressPicker,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            crate::workflow_view::WorkflowView::render_picker_themed(
+                area,
+                buffer,
+                picker,
+                &self.workflow_theme(),
+                &self.theme.views,
+            );
+            self.theme
+                .views
+                .finish(area, buffer, super::surfaces::tokens::WORKFLOW_TEXT, true);
+        }
+        pub fn draw_rewind(
+            &self,
+            view: &talaria_core::rewind::RewindView<'_>,
+            legacy_color: bool,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            crate::rewind::draw_rewind(view, area, buffer, &self.rewind_theme(legacy_color));
+            self.theme
+                .views
+                .finish(area, buffer, super::surfaces::tokens::LIST_BACKGROUND, true);
+        }
+        pub fn draw_composer(
+            &self,
+            section: &crate::composer::ComposerSection<'_>,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            section.render_with_theme(area, buffer, &self.theme.views);
+        }
+        pub fn draw_pager(
+            &self,
+            pager: &mut crate::pager::Pager,
+            area: Rect,
+            buffer: &mut Buffer,
+            context: &crate::pager::PagerContext<'_>,
+            other: &dyn CellLines,
+        ) {
+            pager.draw_with_theme(area, buffer, context, other, &self.theme.views);
+        }
+        pub fn draw_model_roles(
+            &self,
+            view: &talaria_core::model_roles::RolesView,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            crate::model_roles::draw_model_roles_with_theme(view, area, buffer, &self.theme.views);
+        }
+        pub fn draw_fleet(
+            &self,
+            state: &talaria_core::fleet_view::FleetViewState,
+            peek: Option<crate::fleet_view::PeekPanel<'_>>,
+            area: Rect,
+            buffer: &mut Buffer,
+            palette: &crate::fleet_view::FleetTheme,
+        ) {
+            crate::fleet_view::FleetView::draw_with_theme(
+                state,
+                peek,
+                area,
+                buffer,
+                palette,
+                &self.theme.views,
+            );
+        }
+        pub fn automation_theme(&self) -> AutomationTheme {
+            self.theme.views.automation_theme()
+        }
+        pub fn background_theme(&self) -> BackgroundTheme {
+            self.theme.views.background_theme()
+        }
+        pub fn checklist_style(&self) -> ChecklistStyle {
+            self.theme.views.checklist_style()
+        }
+        pub fn context_style(&self) -> ContextStyle {
+            self.theme.views.context_style()
+        }
+        pub fn pager_theme(&self) -> PagerTheme {
+            self.theme.views.pager_theme()
+        }
+        pub fn side_theme(&self) -> SideTheme {
+            self.theme.views.side_theme()
+        }
+        pub fn subagent_style(&self) -> SubagentStyle {
+            self.theme.views.subagent_style()
+        }
+        pub fn workflow_theme(&self) -> WorkflowTheme {
+            self.theme.views.workflow_theme()
+        }
+        pub fn rewind_theme(&self, legacy_color: bool) -> RewindTheme {
+            self.theme.views.rewind_theme(legacy_color)
+        }
+        pub fn render_markdown(
+            &self,
+            source: &str,
+            options: &MarkdownOptions,
+        ) -> Vec<Line<'static>> {
+            crate::markdown::render_markdown_with_theme(source, options, &self.theme.views)
+        }
+        pub fn draw_cron(&self, view: &CronView, area: Rect, buffer: &mut Buffer) {
+            crate::cron::draw_cron_with_theme(view, area, buffer, &self.theme.views);
+        }
+        pub fn draw_profiles(
+            &self,
+            view: &ProfilesView,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) -> Option<(u16, u16)> {
+            crate::profiles::draw_with_theme(view, area, buffer, &self.theme.views)
+        }
+        pub fn draw_providers(
+            &self,
+            view: &ProvidersView,
+            secret_len: usize,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            crate::providers::draw_providers_with_theme(
+                view,
+                secret_len,
+                area,
+                buffer,
+                &self.theme.views,
+            );
+        }
+        pub fn draw_capabilities(&self, view: &CapView, area: Rect, buffer: &mut Buffer) {
+            crate::capabilities::draw_capabilities_with_theme(
+                view,
+                area,
+                buffer,
+                &self.theme.views,
+            );
+        }
+        pub fn draw_mcp(
+            &self,
+            view: &McpView,
+            secret_len: &dyn Fn(SecretSlot) -> usize,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            crate::mcp::draw_mcp_with_theme(view, secret_len, area, buffer, &self.theme.views);
+        }
+        pub fn draw_launch(&self, dialog: &LaunchDialog, area: Rect, buffer: &mut Buffer) {
+            dialog.draw_with_theme(area, buffer, &self.theme.views);
+        }
+        pub fn draw_menu(&self, menu: &MenuState, area: Rect, buffer: &mut Buffer) {
+            menu.draw_with_theme(area, buffer, &self.theme.views);
+        }
+        pub fn draw_workspace(
+            &self,
+            view: &WorkspaceView<'_>,
+            area: Rect,
+            buffer: &mut Buffer,
+            other: &dyn CellLines,
+        ) {
+            crate::workspace::draw_with_theme(view, area, buffer, other, &self.theme.views);
+        }
+        pub fn draw_work(&self, area: Rect, buffer: &mut Buffer, work: &WorkContents<'_>) {
+            crate::workspace::panel::draw_work_with_theme(area, buffer, work, &self.theme.views);
+        }
+        pub fn draw_history_search(
+            &self,
+            search: &HistorySearch,
+            now: SystemTime,
+            area: Rect,
+            buffer: &mut Buffer,
+        ) {
+            search
+                .section_with_theme(now, &self.theme.views)
+                .render(area, buffer);
+        }
+        pub fn draw_palette(&self, section: &PaletteSection, area: Rect, buffer: &mut Buffer) {
+            crate::palette::render_palette_with_theme(section, area, buffer, &self.theme.views);
+        }
+        pub fn draw_picker_frame(&self, view: &PickerView<'_>, area: Rect, buffer: &mut Buffer) {
+            crate::picker_frame::draw_picker_frame_with_theme(
+                view,
+                area,
+                buffer,
+                &self.theme.views,
+            );
+        }
+        pub fn draw_pr_label(&self, label: &PrLabel, width: u16) -> Span<'static> {
+            crate::review_view::draw_pr_label_themed(label, width, &self.theme.views)
+        }
     }
 }

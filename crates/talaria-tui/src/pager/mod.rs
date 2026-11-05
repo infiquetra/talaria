@@ -16,9 +16,11 @@ use talaria_core::session::Cell;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::history::{CellLines, PlainCellLines};
-use crate::markdown::MarkdownOptions;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
-pub use render::{Details, PagerCellLines, PagerTheme, format_duration_fallback};
+pub use render::{
+    Details, PagerCellLines, PagerTheme, ThemedPagerCellLines, format_duration_fallback,
+};
 pub use search::{Match, Query, SearchIndex, cell_search_text, find_all, fold, highlight_line};
 
 use doc::Document;
@@ -171,6 +173,7 @@ struct Typing {
 /// View state for one opening of the transcript.
 #[derive(Debug)]
 pub struct Pager {
+    views: ViewStyles,
     cols: u16,
     rows: u16,
     /// The cell at the top of the body.
@@ -208,6 +211,7 @@ impl Pager {
     #[must_use]
     pub fn open(ctx: &PagerContext<'_>, cols: u16, rows: u16, _index: &mut SearchIndex) -> Self {
         let mut pager = Self {
+            views: ViewStyles::default(),
             cols,
             rows,
             cell_index: 0,
@@ -436,7 +440,23 @@ impl Pager {
         ctx: &PagerContext<'_>,
         render: &dyn CellLines,
     ) {
-        let theme = PagerTheme::default();
+        self.draw_with_theme(area, buf, ctx, render, &ViewStyles::default());
+    }
+
+    /// Draw the pager with an explicit palette shared by movement and rendering.
+    pub fn draw_with_theme(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        ctx: &PagerContext<'_>,
+        render: &dyn CellLines,
+        views: &ViewStyles,
+    ) {
+        if self.views != *views {
+            self.doc.clear();
+            self.views = views.clone();
+        }
+        let theme = views.pager_theme();
         // The overlay always draws at the newest size, so the pager takes that size.
         self.resize(area.width, area.height);
         let cols = area.width;
@@ -447,6 +467,7 @@ impl Pager {
         if cols < 20 || body < 2 {
             let text = fit(TOO_SMALL, usize::from(cols));
             buf.set_stringn(area.x, area.y, text, usize::from(cols), theme.header);
+            views.finish(area, buf, t::TRANSCRIPT_BACKGROUND, true);
             return;
         }
 
@@ -484,6 +505,7 @@ impl Pager {
         };
         self.draw_body(body_area, buf, ctx, render, &theme);
         self.draw_footer(area, buf, ctx, &theme);
+        views.finish(area, buf, t::TRANSCRIPT_BACKGROUND, true);
     }
 
     /// The header row: the title on the left, the state on the right.
@@ -558,6 +580,7 @@ impl Pager {
                 details: self.details,
                 anchor: (self.cell_index, self.line_in_cell),
             },
+            &self.views,
             |cell, line, lines| {
                 let refresh = cached.as_ref().is_none_or(|paint| paint.cell != cell);
                 if refresh {
@@ -1157,16 +1180,8 @@ impl Pager {
     ///
     /// The cell kinds this screen does not know are drawn by the renderer the application
     /// passes in, which is the scrollback renderer.
-    fn internal_render<'a>(&self, other: &'a dyn CellLines) -> PagerCellLines<'a> {
-        PagerCellLines {
-            details: self.details,
-            markdown: MarkdownOptions {
-                width: self.cols.saturating_sub(2).max(8),
-                ..MarkdownOptions::default()
-            },
-            theme: PagerTheme::default(),
-            other,
-        }
+    fn internal_render<'a>(&self, other: &'a dyn CellLines) -> ThemedPagerCellLines<'a> {
+        ThemedPagerCellLines::new(self.details, self.cols, other, &self.views)
     }
 }
 

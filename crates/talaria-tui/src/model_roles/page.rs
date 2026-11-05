@@ -8,6 +8,7 @@ use talaria_core::model_roles::{DiffLine, ModalView, RolesView, RowView};
 
 use super::{Slot, columns, cut, paint, paint_rows, tail, window, wrap_words};
 use crate::history::sanitize;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// The most footer lines the page keeps, however many the view holds.
 const FOOTER_LINES: usize = 4;
@@ -22,6 +23,20 @@ const STALE: &str = "(stale)";
 /// Draw the page: title, tabs, notices, the section (or the preset list and its detail pane),
 /// the footer, and any dialog or picker on top.
 pub fn draw_model_roles(view: &RolesView, area: Rect, buf: &mut Buffer) {
+    draw_inner(view, area, buf, None);
+}
+
+/// Draw model roles with resolved view styles.
+pub fn draw_model_roles_with_theme(
+    view: &RolesView,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
+    draw_inner(view, area, buf, Some(views));
+}
+
+fn draw_inner(view: &RolesView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     let area = area.intersection(buf.area);
     if area.is_empty() {
         return;
@@ -32,6 +47,9 @@ pub fn draw_model_roles(view: &RolesView, area: Rect, buf: &mut Buffer) {
     let width = area.width.saturating_sub(2 * margin);
     paint(&view.title, x, area.y, width, Style::default().bold(), buf);
     if area.height < 4 {
+        if let Some(v) = views {
+            v.finish(area, buf, t::LIST_BACKGROUND, true);
+        }
         return;
     }
     draw_tabs(view, x, area.y + 1, width, buf);
@@ -61,14 +79,17 @@ pub fn draw_model_roles(view: &RolesView, area: Rect, buf: &mut Buffer) {
         width,
         footer_top.saturating_sub(1).saturating_sub(body_top),
     );
-    draw_body(view, body, buf);
+    draw_body(view, body, buf, views);
 
     let page = Rect::new(x, area.y, width, area.height);
     if let Some(picker) = &view.picker {
-        draw_picker_over(picker, area, buf);
+        draw_picker_over(picker, area, buf, views);
     }
     if let Some(modal) = &view.modal {
-        draw_modal(modal, page, buf);
+        draw_modal(modal, page, buf, views);
+    }
+    if let Some(v) = views {
+        v.finish(area, buf, t::LIST_BACKGROUND, true);
     }
 }
 
@@ -113,7 +134,7 @@ fn footer_lines(view: &RolesView, width: u16, height: u16) -> Vec<String> {
     lines
 }
 
-fn draw_body(view: &RolesView, body: Rect, buf: &mut Buffer) {
+fn draw_body(view: &RolesView, body: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     if body.is_empty() {
         return;
     }
@@ -141,7 +162,7 @@ fn draw_body(view: &RolesView, body: Rect, buf: &mut Buffer) {
         buf.set_stringn(
             body.x + left + 1,
             y,
-            "\u{2502}",
+            views.map_or("\u{2502}", |v| v.divider_symbol("\u{2502}")),
             1,
             Style::default().add_modifier(Modifier::DIM),
         );
@@ -153,6 +174,7 @@ fn draw_picker_over(
     picker: &talaria_core::model_roles::RoutePickerView,
     area: Rect,
     buf: &mut Buffer,
+    views: Option<&ViewStyles>,
 ) {
     let inset = u16::from(area.width > 8 && area.height > 8) * 2;
     let outer = Rect::new(
@@ -161,7 +183,10 @@ fn draw_picker_over(
         area.width - 2 * inset,
         area.height - 2 * inset,
     );
-    let block = Block::bordered();
+    let mut block = Block::bordered();
+    if let Some(v) = views {
+        block = block.border_set(border_set(v));
+    }
     let inner = block.inner(outer);
     Clear.render(outer, buf);
     block.render(outer, buf);
@@ -169,7 +194,13 @@ fn draw_picker_over(
 }
 
 /// A centred box with a border, cleared first. Returns the room inside its padding.
-fn dialog_box(title: Option<&str>, content: usize, page: Rect, buf: &mut Buffer) -> Rect {
+fn dialog_box(
+    title: Option<&str>,
+    content: usize,
+    page: Rect,
+    buf: &mut Buffer,
+    views: Option<&ViewStyles>,
+) -> Rect {
     let width = page.width.min(DIALOG_WIDTH);
     let height = u16::try_from(content.saturating_add(2))
         .unwrap_or(u16::MAX)
@@ -182,6 +213,9 @@ fn dialog_box(title: Option<&str>, content: usize, page: Rect, buf: &mut Buffer)
     );
     Clear.render(outer, buf);
     let mut block = Block::bordered();
+    if let Some(v) = views {
+        block = block.border_set(border_set(v));
+    }
     if let Some(title) = title {
         block = block.title(sanitize(title).into_owned());
     }
@@ -195,7 +229,7 @@ fn dialog_box(title: Option<&str>, content: usize, page: Rect, buf: &mut Buffer)
     )
 }
 
-fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer) {
+fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     // The most lines a dialog may show: the page less its border and a line above and below.
     let most = usize::from(page.height.saturating_sub(4));
     match modal {
@@ -206,7 +240,7 @@ fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer) {
                 .flat_map(|line| wrap_words(&sanitize(line), inner_width))
                 .collect();
             text.truncate(most);
-            let inner = dialog_box(None, text.len(), page, buf);
+            let inner = dialog_box(None, text.len(), page, buf, views);
             for (offset, line) in text.iter().enumerate() {
                 let y = inner.y + u16::try_from(offset).unwrap_or(0);
                 paint(line, inner.x, y, inner.width, Style::default(), buf);
@@ -218,7 +252,7 @@ fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer) {
             footer,
         } => {
             let shown = lines.len().min(most.saturating_sub(1));
-            let inner = dialog_box(Some(title), shown + 1, page, buf);
+            let inner = dialog_box(Some(title), shown + 1, page, buf, views);
             let rows = diff_rows(lines);
             let slots = window(rows.len(), None, shown);
             for (offset, slot) in slots.into_iter().enumerate() {
@@ -245,7 +279,7 @@ fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer) {
             value,
             error,
         } => {
-            let inner = dialog_box(None, 1 + usize::from(error.is_some()), page, buf);
+            let inner = dialog_box(None, 1 + usize::from(error.is_some()), page, buf, views);
             let label = sanitize(label);
             let room = inner.width.saturating_sub(columns(&label) + 1);
             let value = tail(&sanitize(value), room);
@@ -294,7 +328,7 @@ fn draw_modal(modal: &ModalView, page: Rect, buf: &mut Buffer) {
                 })
                 .collect();
             let shown = rows.len().min(most);
-            let inner = dialog_box(Some(title), shown, page, buf);
+            let inner = dialog_box(Some(title), shown, page, buf, views);
             let list = Rect::new(
                 inner.x,
                 inner.y,
@@ -318,6 +352,19 @@ fn diff_rows(lines: &[DiffLine]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn border_set(views: &ViewStyles) -> ratatui::symbols::border::Set<'_> {
+    ratatui::symbols::border::Set {
+        top_left: views.border_symbol("┌"),
+        top_right: views.border_symbol("┐"),
+        bottom_left: views.border_symbol("└"),
+        bottom_right: views.border_symbol("┘"),
+        vertical_left: views.border_symbol("│"),
+        vertical_right: views.border_symbol("│"),
+        horizontal_top: views.border_symbol("─"),
+        horizontal_bottom: views.border_symbol("─"),
+    }
 }
 
 #[cfg(test)]

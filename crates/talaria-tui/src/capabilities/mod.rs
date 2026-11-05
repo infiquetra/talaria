@@ -1,6 +1,6 @@
 mod render;
 
-pub use render::draw_capabilities;
+pub use render::{draw_capabilities, draw_capabilities_with_theme};
 
 use crate::keys::{Key, KeyCode, KeyContext, KeyKind, KeyMap};
 pub use talaria_core::capabilities::{CapInput, CapTab, CapView, KeyAction};

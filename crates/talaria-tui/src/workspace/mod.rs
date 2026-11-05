@@ -7,6 +7,7 @@ use crate::{
     history::CellLines,
     live::{LiveSection, LiveView, max_live_height},
     pager::{Details, TranscriptBody, TranscriptEntry},
+    theme::surfaces::{ViewStyles, tokens as t},
 };
 use ratatui::{buffer::Buffer, layout::Rect};
 use talaria_core::{
@@ -113,6 +114,40 @@ impl Workspace {
         style: &ChecklistStyle,
         hint: Option<String>,
     ) {
+        self.draw_with_style_and_theme(
+            view,
+            area,
+            buffer,
+            other,
+            style,
+            hint,
+            &ViewStyles::default(),
+        );
+    }
+
+    pub fn draw_with_theme(
+        &mut self,
+        view: &WorkspaceView<'_>,
+        area: Rect,
+        buffer: &mut Buffer,
+        other: &dyn CellLines,
+        views: &ViewStyles,
+    ) {
+        let style = panel::checklist_style(&ChecklistStyle::default(), views);
+        self.draw_with_style_and_theme(view, area, buffer, other, &style, None, views);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_with_style_and_theme(
+        &mut self,
+        view: &WorkspaceView<'_>,
+        area: Rect,
+        buffer: &mut Buffer,
+        other: &dyn CellLines,
+        style: &ChecklistStyle,
+        hint: Option<String>,
+        views: &ViewStyles,
+    ) {
         let visible = geometry(area, 0, 0, view.panel).panel.is_some();
         let max_rows = if area.height < SHORT_TERMINAL_ROWS {
             1
@@ -134,19 +169,35 @@ impl Workspace {
             .fold(0u16, |height, row| height.saturating_add(row.height));
         let menu_rows = u16::from(view.menu.visible && !view.menu.transient);
         let areas = geometry(area, footer_rows, menu_rows, view.panel);
-        self.transcript
-            .draw(view.entries, view.details, areas.transcript, buffer, other);
+        self.transcript.draw_with_theme(
+            view.entries,
+            view.details,
+            areas.transcript,
+            buffer,
+            other,
+            views,
+        );
+        if views.active() && view.entries.is_empty() && !areas.transcript.is_empty() {
+            buffer.set_stringn(
+                areas.transcript.x,
+                areas.transcript.y,
+                "No messages yet.",
+                usize::from(areas.transcript.width),
+                views.style(t::WORKSPACE_EMPTY, ratatui::style::Style::default()),
+            );
+        }
         if let Some(area) = areas.panel {
             if let Some(work) = view.work {
-                panel::draw_work(area, buffer, work);
+                panel::draw_work_with_theme(area, buffer, work, views);
             } else {
-                panel::draw(
+                panel::draw_with_theme(
                     area,
                     buffer,
                     view.checklist,
                     view.checklist_expanded,
                     style,
                     hint,
+                    views,
                 );
             }
         }
@@ -171,14 +222,26 @@ impl Workspace {
             } else {
                 Rect::default()
             };
-            view.menu.draw(menu_area, buffer);
+            view.menu.draw_with_theme(menu_area, buffer, views);
         }
+        views.finish(area, buffer, t::WORKSPACE_BACKGROUND, true);
     }
 }
 
 /// Draw a workspace without retaining its optional render cache.
 pub fn draw(view: &WorkspaceView<'_>, area: Rect, buffer: &mut Buffer, other: &dyn CellLines) {
     Workspace::default().draw(view, area, buffer, other);
+}
+
+/// Draw a workspace with an explicit resolved palette and no retained cache.
+pub fn draw_with_theme(
+    view: &WorkspaceView<'_>,
+    area: Rect,
+    buffer: &mut Buffer,
+    other: &dyn CellLines,
+    views: &ViewStyles,
+) {
+    Workspace::default().draw_with_theme(view, area, buffer, other, views);
 }
 
 /// The same following body used by the pager.

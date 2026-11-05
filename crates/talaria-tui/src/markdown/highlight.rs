@@ -1,13 +1,17 @@
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use syntect::highlighting::{
-    Color as SyntaxColor, FontStyle, HighlightIterator, HighlightState, Highlighter, StyleModifier,
-    Theme, ThemeItem, ThemeSettings,
+    HighlightState, Highlighter, RangedHighlightIterator, ScopeSelectors, Theme,
 };
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
+
+use crate::theme::{
+    legacy,
+    surfaces::{ViewStyles, tokens as t},
+};
 
 static RESOURCES: OnceLock<Resources> = OnceLock::new();
 static STARTED: AtomicBool = AtomicBool::new(false);
@@ -18,6 +22,7 @@ static LOAD_STARTS: AtomicU32 = AtomicU32::new(0);
 struct Resources {
     syntaxes: SyntaxSet,
     theme: Theme,
+    categories: Vec<(ScopeSelectors, SyntaxKind)>,
 }
 
 #[doc(hidden)]
@@ -50,7 +55,8 @@ pub fn warm_up() {
         .spawn(|| {
             let resources = Resources {
                 syntaxes: SyntaxSet::load_defaults_newlines(),
-                theme: terminal_theme(),
+                theme: legacy::syntax_theme(),
+                categories: syntax_categories(),
             };
             for (token, text) in [
                 ("rust", "let n = 42; // ready\n"),
@@ -84,11 +90,11 @@ pub(crate) struct CodeCache {
 struct CachedBlock {
     language: String,
     source: String,
-    lines: Vec<Line<'static>>,
+    lines: Vec<SyntaxLine>,
     parser: ParseState,
     state: HighlightState,
     plain_rest: bool,
-    partial: Option<(String, Line<'static>)>,
+    partial: Option<(String, SyntaxLine)>,
     used: bool,
 }
 
@@ -111,7 +117,12 @@ impl CodeCache {
         self.blocks.retain(|block| block.used);
     }
 
-    pub(crate) fn render(&mut self, info: Option<&str>, text: &str) -> Vec<Line<'static>> {
+    pub(crate) fn render(
+        &mut self,
+        info: Option<&str>,
+        text: &str,
+        views: &ViewStyles,
+    ) -> Vec<Line<'static>> {
         let language = language_token(info);
         let resources = if is_loaded() { RESOURCES.get() } else { None };
         let Some((resources, syntax)) = resources.and_then(|resources| {
@@ -121,7 +132,11 @@ impl CodeCache {
                 .filter(|_| !language.is_empty())
                 .map(|syntax| (resources, syntax))
         }) else {
-            return plain_lines(text);
+            return text
+                .split_inclusive('\n')
+                .map(plain_line)
+                .map(|line| line.resolve(views))
+                .collect();
         };
 
         // Content prefixes survive rendering a committed slice separately from its tail.
@@ -172,13 +187,13 @@ impl CodeCache {
             block.source.push_str(source);
             block.lines.push(line);
         }
-        let mut lines = block.lines.clone();
+        let mut lines: Vec<_> = block.lines.iter().map(|line| line.resolve(views)).collect();
         let partial = &text[complete_end..];
         if !partial.is_empty() {
             if let Some((previous, line)) = &block.partial
                 && previous == partial
             {
-                lines.push(line.clone());
+                lines.push(line.resolve(views));
                 return lines;
             }
             let line = if block.plain_rest || partial.chars().count() > 1_000 {
@@ -192,7 +207,7 @@ impl CodeCache {
                     .unwrap_or_else(|| plain_line(partial))
             };
             block.partial = Some((partial.to_owned(), line.clone()));
-            lines.push(line);
+            lines.push(line.resolve(views));
         } else {
             block.partial = None;
         }
@@ -211,12 +226,12 @@ fn language_token(info: Option<&str>) -> String {
     }
 }
 
-fn plain_lines(text: &str) -> Vec<Line<'static>> {
-    text.split_inclusive('\n').map(plain_line).collect()
-}
-
-fn plain_line(text: &str) -> Line<'static> {
-    Line::from(text.strip_suffix('\n').unwrap_or(text).to_owned())
+fn plain_line(text: &str) -> SyntaxLine {
+    SyntaxLine(vec![SyntaxSpan {
+        text: text.strip_suffix('\n').unwrap_or(text).to_owned(),
+        legacy: Style::default(),
+        kind: SyntaxKind::Variable,
+    }])
 }
 
 fn styled_line(
@@ -224,100 +239,142 @@ fn styled_line(
     parser: &mut ParseState,
     state: &mut HighlightState,
     text: &str,
-) -> Option<Line<'static>> {
+) -> Option<SyntaxLine> {
     let changes = parser.parse_line(text, &resources.syntaxes).ok()?;
     let highlighter = Highlighter::new(&resources.theme);
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    for (syntax_style, text) in HighlightIterator::new(state, &changes, text, &highlighter) {
+    let mut scopes = state.path.clone();
+    let mut spans: Vec<SyntaxSpan> = Vec::new();
+    let mut operation_index = 0;
+    for (syntax_style, text, range) in
+        RangedHighlightIterator::new(state, &changes, text, &highlighter)
+    {
+        // The highlighter skips empty regions. Apply all scope operations at
+        // this token's start instead of pairing iterators with different lengths.
+        while let Some((offset, operation)) = changes.get(operation_index)
+            && *offset <= range.start
+        {
+            scopes.apply(operation).ok()?;
+            operation_index += 1;
+        }
         let text = text.strip_suffix('\n').unwrap_or(text);
         if text.is_empty() {
             continue;
         }
-        let style = terminal_style(syntax_style);
+        let style = legacy::syntax_style(syntax_style);
+        let kind = resources
+            .categories
+            .iter()
+            .filter_map(|(selector, kind)| {
+                selector
+                    .does_match(&scopes.scopes)
+                    .map(|score| (score, *kind))
+            })
+            // Delimiters inside strings and comments belong to that lexical region.
+            .max_by(|a, b| {
+                let region = |kind| matches!(kind, SyntaxKind::String | SyntaxKind::Comment);
+                region(a.1).cmp(&region(b.1)).then_with(|| a.0.cmp(&b.0))
+            })
+            .map_or(SyntaxKind::Variable, |(_, kind)| kind);
         if let Some(previous) = spans.last_mut()
-            && previous.style == style
+            && previous.legacy == style
+            && previous.kind == kind
         {
-            previous.content.to_mut().push_str(text);
+            previous.text.push_str(text);
         } else {
-            spans.push(Span::styled(text.to_owned(), style));
-        }
-    }
-    Some(Line::from(spans))
-}
-
-const PALETTE: [(SyntaxColor, Color); 7] = [
-    (rgb(1), Color::DarkGray),
-    (rgb(2), Color::Green),
-    (rgb(3), Color::Yellow),
-    (rgb(4), Color::Magenta),
-    (rgb(5), Color::Cyan),
-    (rgb(6), Color::Blue),
-    (rgb(7), Color::Red),
-];
-
-const fn rgb(value: u8) -> SyntaxColor {
-    SyntaxColor {
-        r: value,
-        g: value,
-        b: value,
-        a: 255,
-    }
-}
-
-fn terminal_style(syntax_style: syntect::highlighting::Style) -> Style {
-    let mut style = Style::default();
-    if let Some((_, color)) = PALETTE
-        .iter()
-        .find(|(rgb, _)| *rgb == syntax_style.foreground)
-    {
-        style = style.fg(*color);
-    }
-    for (syntax_modifier, modifier) in [
-        (FontStyle::BOLD, Modifier::BOLD),
-        (FontStyle::ITALIC, Modifier::ITALIC),
-        (FontStyle::UNDERLINE, Modifier::UNDERLINED),
-    ] {
-        if syntax_style.font_style.contains(syntax_modifier) {
-            style = style.add_modifier(modifier);
-        }
-    }
-    style
-}
-
-fn terminal_theme() -> Theme {
-    let mut theme = Theme {
-        name: Some("Terminal palette".into()),
-        author: None,
-        settings: ThemeSettings::default(),
-        scopes: Vec::new(),
-    };
-    for (selector, colour, font_style) in [
-        ("comment", Some(0), None),
-        ("string", Some(1), None),
-        ("constant.numeric", Some(2), None),
-        ("constant.language, constant.character", Some(2), None),
-        ("keyword, storage.modifier", Some(3), None),
-        ("storage.type", Some(4), None),
-        ("entity.name.function, support.function", Some(5), None),
-        (
-            "entity.name.type, entity.name.class, support.type, support.class",
-            Some(4),
-            None,
-        ),
-        ("markup.heading", None, Some(FontStyle::BOLD)),
-        ("markup.inserted", Some(1), None),
-        ("markup.deleted, invalid", Some(6), None),
-    ] {
-        if let Ok(scope) = selector.parse() {
-            theme.scopes.push(ThemeItem {
-                scope,
-                style: StyleModifier {
-                    foreground: colour.map(|index| PALETTE[index].0),
-                    background: None,
-                    font_style,
-                },
+            spans.push(SyntaxSpan {
+                text: text.to_owned(),
+                legacy: style,
+                kind,
             });
         }
     }
-    theme
+    Some(SyntaxLine(spans))
+}
+
+#[derive(Clone)]
+struct SyntaxLine(Vec<SyntaxSpan>);
+
+#[derive(Clone)]
+struct SyntaxSpan {
+    text: String,
+    legacy: Style,
+    kind: SyntaxKind,
+}
+
+impl SyntaxLine {
+    fn resolve(&self, views: &ViewStyles) -> Line<'static> {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        for span in &self.0 {
+            let style = views.inline(
+                match span.kind {
+                    SyntaxKind::Keyword => t::CODE_SYNTAX_KEYWORD,
+                    SyntaxKind::String => t::CODE_SYNTAX_STRING,
+                    SyntaxKind::Number => t::CODE_SYNTAX_NUMBER,
+                    SyntaxKind::Comment => t::CODE_SYNTAX_COMMENT,
+                    SyntaxKind::Function => t::CODE_SYNTAX_FUNCTION,
+                    SyntaxKind::Type => t::CODE_SYNTAX_TYPE,
+                    SyntaxKind::Operator => t::CODE_SYNTAX_OPERATOR,
+                    SyntaxKind::Punctuation => t::CODE_SYNTAX_PUNCTUATION,
+                    SyntaxKind::Variable => t::CODE_SYNTAX_VARIABLE,
+                    SyntaxKind::Constant => t::CODE_SYNTAX_CONSTANT,
+                    SyntaxKind::Invalid => t::CODE_SYNTAX_INVALID,
+                },
+                span.legacy,
+            );
+            if let Some(previous) = spans.last_mut()
+                && previous.style == style
+            {
+                previous.content.to_mut().push_str(&span.text);
+            } else {
+                spans.push(Span::styled(span.text.clone(), style));
+            }
+        }
+        Line::from(spans)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SyntaxKind {
+    Keyword,
+    String,
+    Number,
+    Comment,
+    Function,
+    Type,
+    Operator,
+    Punctuation,
+    Variable,
+    Constant,
+    Invalid,
+}
+
+fn syntax_categories() -> Vec<(ScopeSelectors, SyntaxKind)> {
+    [
+        (
+            "keyword, storage.modifier, storage.type.function",
+            SyntaxKind::Keyword,
+        ),
+        ("string", SyntaxKind::String),
+        ("constant.numeric", SyntaxKind::Number),
+        ("comment", SyntaxKind::Comment),
+        (
+            "entity.name.function, support.function",
+            SyntaxKind::Function,
+        ),
+        (
+            "storage.type, entity.name.type, entity.name.class, support.type, support.class",
+            SyntaxKind::Type,
+        ),
+        ("keyword.operator", SyntaxKind::Operator),
+        ("punctuation", SyntaxKind::Punctuation),
+        ("variable", SyntaxKind::Variable),
+        (
+            "constant.language, constant.character, constant.other",
+            SyntaxKind::Constant,
+        ),
+        ("invalid", SyntaxKind::Invalid),
+    ]
+    .into_iter()
+    .filter_map(|(selector, kind)| selector.parse().ok().map(|selector| (selector, kind)))
+    .collect()
 }

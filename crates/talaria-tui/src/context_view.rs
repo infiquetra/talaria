@@ -2,7 +2,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use talaria_core::context::breakdown::{Breakdown, CategoryRow, GridCell, category_index};
 use talaria_core::context::compact::CompactResult;
@@ -32,24 +32,7 @@ pub struct ContextStyle {
 impl ContextStyle {
     /// The full-colour style.
     pub fn standard() -> Self {
-        ContextStyle {
-            header: Style::default().add_modifier(Modifier::BOLD),
-            dim: Style::default().add_modifier(Modifier::DIM),
-            error: Style::default().fg(Color::Red),
-            tick: Style::default().fg(Color::Green),
-            categories: [
-                Style::default().fg(Color::Blue),
-                Style::default().fg(Color::Magenta),
-                Style::default().fg(Color::Yellow),
-                Style::default().fg(Color::Cyan),
-                Style::default().fg(Color::LightMagenta),
-                Style::default().fg(Color::LightBlue),
-                Style::default().fg(Color::Green),
-                Style::default().fg(Color::LightCyan),
-                Style::default().fg(Color::White),
-            ],
-            free: Style::default().add_modifier(Modifier::DIM),
-        }
+        crate::theme::legacy::context_style()
     }
 
     /// No colours; bold and dim kept.

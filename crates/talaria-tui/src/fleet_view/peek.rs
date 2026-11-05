@@ -1,5 +1,6 @@
 //! The peek panel: the latest output of one session, or its open card, under the list.
 
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -44,13 +45,14 @@ pub(super) fn draw_panel(
     room: usize,
     buf: &mut Buffer,
     theme: &FleetTheme,
+    views: Option<&ViewStyles>,
 ) -> usize {
     let rows = u16::try_from(room).unwrap_or(u16::MAX);
     if rows == 0 || width == 0 {
         return 0;
     }
     let mut scratch = Buffer::empty(Rect::new(0, 0, width, rows));
-    let used = render(state, panel, &mut scratch, theme).min(room);
+    let used = render(state, panel, &mut scratch, theme, views).min(room);
     for row in 0..u16::try_from(used).unwrap_or(0) {
         for column in 0..width {
             buf[(x + column, y + row)] = scratch[(column, row)].clone();
@@ -78,6 +80,7 @@ fn render(
     panel: &Panel<'_>,
     scratch: &mut Buffer,
     theme: &FleetTheme,
+    views: Option<&ViewStyles>,
 ) -> usize {
     let width = usize::from(scratch.area.width);
     let height = usize::from(scratch.area.height);
@@ -95,7 +98,8 @@ fn render(
             *y += 1;
         }
     };
-    put(scratch, SEPARATOR, theme.dim, &mut y);
+    let separator = views.map_or_else(|| SEPARATOR.to_owned(), |v| v.divider_text(SEPARATOR));
+    put(scratch, &separator, theme.dim, &mut y);
     let header = match (row, key) {
         (Some(row), _) => header_line(row, now),
         (None, Some(key)) => format!(
@@ -132,9 +136,17 @@ fn render(
             }
         }
         Panel::Session(panel) => {
-            session_body(panel, row, scratch, theme, &mut y, height.max(CHROME_ROWS));
+            session_body(
+                panel,
+                row,
+                scratch,
+                theme,
+                &mut y,
+                height.max(CHROME_ROWS),
+                views,
+            );
         }
-        Panel::External(panel) => external_body(panel, scratch, theme, &mut y, height),
+        Panel::External(panel) => external_body(panel, scratch, theme, &mut y, height, views),
     }
     y.min(height)
 }
@@ -145,6 +157,7 @@ fn external_body(
     theme: &FleetTheme,
     y: &mut usize,
     height: usize,
+    views: Option<&ViewStyles>,
 ) {
     use talaria_core::fleet::acp::AcpCell;
     let width = usize::from(scratch.area.width);
@@ -155,7 +168,7 @@ fn external_body(
         {
             text.push_str(&format!(" - cost {amount} {currency}"));
         }
-        headers.push(text);
+        headers.push((text, theme.idle));
     }
     let mut capabilities = Vec::new();
     if let Some(mode) = &panel.mapping.mode {
@@ -165,7 +178,7 @@ fn external_body(
         capabilities.push(format!("commands: {}", panel.mapping.commands.join(", ")));
     }
     if !capabilities.is_empty() {
-        headers.push(capabilities.join(" - "));
+        headers.push((capabilities.join(" - "), theme.idle));
     }
     let mut lines = Vec::new();
     for cell in &panel.mapping.transcript {
@@ -181,13 +194,23 @@ fn external_body(
                 ..
             } => format!("{title}: {body} {}", status.as_deref().unwrap_or_default()),
         };
+        let style = views.map_or(theme.idle, |v| {
+            v.style(
+                if matches!(cell, AcpCell::Tool { .. }) {
+                    t::TOOL_OUTPUT
+                } else {
+                    t::FLEET_PEEK
+                },
+                theme.idle,
+            )
+        });
         lines.extend(
             wrap_lines(
                 vec![Line::raw(sanitize(&text).into_owned())],
                 width_u16(width),
             )
             .into_iter()
-            .map(|line| line.to_string()),
+            .map(|line| (line.to_string(), style)),
         );
     }
     let room = height.saturating_sub(*y);
@@ -208,7 +231,7 @@ fn external_body(
             .collect::<Vec<_>>();
         visible.reverse();
         if permission_rows > 0 {
-            visible.push(format!("Permission: {}", need.tool_title));
+            visible.push((format!("Permission: {}", need.tool_title), theme.idle));
         }
         let option_rows = permission_rows.saturating_sub(1);
         let start = panel
@@ -227,7 +250,10 @@ fn external_body(
             } else {
                 " "
             };
-            visible.push(format!("{marker} {}. {}", index + 1, option.name));
+            visible.push((
+                format!("{marker} {}. {}", index + 1, option.name),
+                theme.idle,
+            ));
         }
         lines = visible;
     } else {
@@ -235,13 +261,13 @@ fn external_body(
         lines.reverse();
     }
     headers.extend(lines);
-    for line in &headers {
+    for (line, style) in &headers {
         scratch.set_stringn(
             0,
             u16::try_from(*y).unwrap_or(0),
             cut(&sanitize(line), width, false),
             width,
-            theme.idle,
+            *style,
         );
         *y += 1;
     }
@@ -281,6 +307,7 @@ fn session_body(
     theme: &FleetTheme,
     y: &mut usize,
     height: usize,
+    views: Option<&ViewStyles>,
 ) {
     let width = scratch.area.width;
     let session = panel.session;
@@ -308,9 +335,14 @@ fn session_body(
             *y += shown;
         }
     } else {
-        let lines = tail_lines(session, width, ended.is_some());
+        let lines = tail_lines(session, width, ended.is_some(), views);
         let skip = lines.len().saturating_sub(room);
         for line in lines.into_iter().skip(skip) {
+            let line = if let Some(v) = views {
+                line.style(v.style(t::FLEET_PEEK, Style::default()))
+            } else {
+                line
+            };
             scratch.set_line(0, u16::try_from(*y).unwrap_or(0), &line, width);
             *y += 1;
         }
@@ -397,7 +429,12 @@ fn activity_line(session: &SessionState, width: usize) -> String {
 
 /// The cells of the latest turn as wrapped lines. When the turn has an outcome line, its own
 /// interrupted and error notices are left out because that line says the same.
-fn tail_lines(session: &SessionState, width: u16, ended: bool) -> Vec<Line<'static>> {
+fn tail_lines(
+    session: &SessionState,
+    width: u16,
+    ended: bool,
+    views: Option<&ViewStyles>,
+) -> Vec<Line<'static>> {
     let cells = session.cells();
     let start = cells
         .iter()
@@ -406,12 +443,41 @@ fn tail_lines(session: &SessionState, width: u16, ended: bool) -> Vec<Line<'stat
     let last_error = cells
         .iter()
         .rposition(|cell| matches!(cell, Cell::Notice(n) if n.kind == NoticeKind::Error));
+    let mut markdown = MarkdownTheme::default();
+    let mut tool = ToolTheme::default();
+    if let Some(v) = views {
+        macro_rules! apply { ($value:ident; $($field:ident => $token:ident),+ $(,)?) => { $( $value.$field = v.style(t::$token, $value.$field); )+ }; }
+        apply!(markdown;
+            heading1 => TRANSCRIPT_HEADING_1, heading2 => TRANSCRIPT_HEADING_2,
+            heading3 => TRANSCRIPT_HEADING_3, strong => TRANSCRIPT_STRONG,
+            emphasis => TRANSCRIPT_EMPHASIS, strikethrough => TRANSCRIPT_STRIKETHROUGH,
+            inline_code => CODE_INLINE, link_text => TRANSCRIPT_LINK_TEXT,
+            link_destination => TRANSCRIPT_LINK_DESTINATION, image_alt => TRANSCRIPT_IMAGE_ALT,
+            quote_bar => TRANSCRIPT_QUOTE_BAR, rule => TRANSCRIPT_RULE,
+            code_label => CODE_LABEL, table_border => TRANSCRIPT_TABLE_BORDER,
+            table_header => TRANSCRIPT_TABLE_HEADER
+        );
+        apply!(tool;
+            glyph_running => TOOL_RUNNING, glyph_ok => TOOL_SUCCESS,
+            glyph_failed => TOOL_FAILED, glyph_muted => TOOL_MUTED,
+            title => TOOL_TITLE, subject => TOOL_SUBJECT, meta => TOOL_METADATA,
+            output => TOOL_OUTPUT, error => TOOL_ERROR, diff_added => DIFF_ADDED,
+            diff_removed => DIFF_REMOVED, diff_context => DIFF_CONTEXT,
+            diff_hunk => DIFF_HUNK, diff_file => DIFF_FILE, diff_note => DIFF_NOTE,
+            line_number => DIFF_LINE_NUMBER
+        );
+    }
+    let color = views.is_none_or(|v| !v.active() || v.color());
     let renderer = ToolCellLines::new(
-        Box::new(MarkdownCellLines::new(true, MarkdownTheme::default())),
+        Box::new(MarkdownCellLines::new_with_theme(
+            color,
+            markdown,
+            views.cloned().unwrap_or_default(),
+        )),
         ToolRenderOptions {
             width,
-            theme: ToolTheme::default(),
-            color: true,
+            theme: tool,
+            color,
             detail: Detail::Compact,
             expand_hint: None,
             elapsed: None,

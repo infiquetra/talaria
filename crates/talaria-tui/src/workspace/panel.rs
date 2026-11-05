@@ -11,6 +11,7 @@ use talaria_core::checklist::Checklist;
 use crate::{
     checklist::{ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS},
     live::LiveSection,
+    theme::surfaces::{ViewStyles, tokens as t},
 };
 
 /// Draw an opaque panel over the transcript when necessary. Content starts after
@@ -23,12 +24,39 @@ pub fn draw(
     style: &ChecklistStyle,
     hint: Option<String>,
 ) {
+    draw_with_theme(
+        area,
+        buffer,
+        checklist,
+        expanded,
+        style,
+        hint,
+        &ViewStyles::default(),
+    );
+}
+
+/// Draw a checklist-hosting panel with an explicit resolved palette.
+pub fn draw_with_theme(
+    area: Rect,
+    buffer: &mut Buffer,
+    checklist: Option<&Checklist>,
+    expanded: bool,
+    style: &ChecklistStyle,
+    hint: Option<String>,
+    views: &ViewStyles,
+) {
     if area.is_empty() {
         return;
     }
     Clear.render(area, buffer);
     for row in area.y..area.bottom() {
-        buffer.set_stringn(area.x, row, "│", 1, Style::default());
+        buffer.set_stringn(
+            area.x,
+            row,
+            views.divider_symbol("│"),
+            1,
+            views.style(t::WORKSPACE_DIVIDER, Style::default()),
+        );
     }
     let content = Rect::new(
         area.x + 1,
@@ -37,6 +65,7 @@ pub fn draw(
         area.height,
     );
     if content.is_empty() {
+        views.finish(area, buffer, t::WORK_BACKGROUND, true);
         return;
     }
     buffer.set_stringn(
@@ -44,17 +73,32 @@ pub fn draw(
         content.y,
         "Work",
         usize::from(content.width),
-        Style::default().add_modifier(Modifier::BOLD),
+        views.style(t::WORK_TITLE, Style::default().add_modifier(Modifier::BOLD)),
     );
+    let style = checklist_style(style, views);
     if let Some(checklist) = checklist {
         let offset = if content.height > 2 { 2 } else { 1 };
         let height = content.height.saturating_sub(offset).min(PANEL_MAX_ROWS);
         if height > 0 {
-            ChecklistSection::new(checklist, expanded, height, hint, style).render(
+            ChecklistSection::new(checklist, expanded, height, hint, &style).render(
                 Rect::new(content.x, content.y + offset, content.width, height),
                 buffer,
             );
         }
+    }
+    views.finish(area, buffer, t::WORK_BACKGROUND, true);
+}
+
+pub(crate) fn checklist_style(style: &ChecklistStyle, views: &ViewStyles) -> ChecklistStyle {
+    ChecklistStyle {
+        header: views.inline(t::WORK_SECTION, style.header),
+        hint: views.inline(t::WORK_HELP, style.hint),
+        in_progress: views.inline(t::WORK_TASK_TEXT, style.in_progress),
+        pending: views.inline(t::WORK_TASK_TEXT, style.pending),
+        completed: views.inline(t::WORK_TASK_TEXT, style.completed),
+        cancelled: views.inline(t::WORK_TASK_CANCELLED, style.cancelled),
+        glyph_in_progress: views.inline(t::WORK_TASK_RUNNING, style.glyph_in_progress),
+        glyph_completed: views.inline(t::WORK_TASK_DONE, style.glyph_completed),
     }
 }
 
@@ -323,21 +367,143 @@ pub fn content_lines(work: &WorkContents<'_>, width: u16, height: u16) -> Vec<St
 
 /// Paint the panel, retaining the divider and limiting every row to its content area.
 pub fn draw_work(area: Rect, buffer: &mut Buffer, work: &WorkContents<'_>) {
+    draw_work_with_theme(area, buffer, work, &ViewStyles::default());
+}
+
+/// Paint each work field through its catalogue element.
+pub fn draw_work_with_theme(
+    area: Rect,
+    buffer: &mut Buffer,
+    work: &WorkContents<'_>,
+    views: &ViewStyles,
+) {
     if area.is_empty() {
         return;
     }
     Clear.render(area, buffer);
     for y in area.y..area.bottom() {
-        buffer.set_stringn(area.x, y, "│", 1, Style::default());
+        buffer.set_stringn(
+            area.x,
+            y,
+            views.divider_symbol("│"),
+            1,
+            views.style(t::WORKSPACE_DIVIDER, Style::default()),
+        );
     }
     let width = area.width.saturating_sub(1);
     for (y, line) in content_lines(work, width, area.height).iter().enumerate() {
-        buffer.set_stringn(
+        buffer.set_line(
             area.x + 1,
             area.y + y as u16,
-            line,
-            usize::from(width),
-            Style::default(),
+            &work_line(line, work, views),
+            width,
         );
     }
+    views.finish(area, buffer, t::WORK_BACKGROUND, true);
+}
+
+fn work_line(
+    line: &str,
+    work: &WorkContents<'_>,
+    views: &ViewStyles,
+) -> ratatui::text::Line<'static> {
+    use ratatui::text::{Line, Span};
+    if !views.active() {
+        return Line::from(line.to_owned());
+    }
+    let span =
+        |text: &str, token| Span::styled(text.to_owned(), views.style(token, Style::default()));
+    if let Some(attention) = line.strip_prefix("Work / ") {
+        return Line::from(vec![
+            span("Work / ", t::WORK_TITLE),
+            span(attention, t::WORK_ATTENTION),
+        ]);
+    }
+    if line == "Work" {
+        return Line::from(span(line, t::WORK_TITLE));
+    }
+    for (label, token) in [("Goal: ", t::WORK_GOAL), ("Turn: ", t::WORK_TURN)] {
+        if let Some(value) = line.strip_prefix(label) {
+            return Line::from(vec![span(label, t::WORK_LABEL), span(value, token)]);
+        }
+    }
+    if let Some(value) = line.strip_prefix("Verdict: ") {
+        let token = match work.goal.and_then(|goal| goal.panel_verdict()) {
+            Some("success" | "passed" | "passing") => t::WORK_VERDICT_SUCCESS,
+            Some("failure" | "failed" | "failing") => t::WORK_VERDICT_FAILURE,
+            _ => t::WORK_VERDICT_PENDING,
+        };
+        return Line::from(vec![span("Verdict: ", t::WORK_LABEL), span(value, token)]);
+    }
+    let trimmed = line.trim_start();
+    for (mark, token) in [
+        ("[ ]", t::WORK_TASK_PENDING),
+        ("[>]", t::WORK_TASK_RUNNING),
+        ("[x]", t::WORK_TASK_DONE),
+        ("[-]", t::WORK_TASK_CANCELLED),
+    ] {
+        if let Some(text) = trimmed.strip_prefix(mark) {
+            let indent = &line[..line.len() - trimmed.len()];
+            return Line::from(vec![
+                span(indent, t::WORK_TASK_TEXT),
+                span(mark, token),
+                span(
+                    text,
+                    if mark == "[-]" {
+                        t::WORK_TASK_CANCELLED
+                    } else {
+                        t::WORK_TASK_TEXT
+                    },
+                ),
+            ]);
+        }
+    }
+    for (prefix, token) in [
+        ("! ", t::WORK_AGENT_WAITING),
+        ("> ", t::WORK_AGENT_RUNNING),
+        ("✓ ", t::WORK_AGENT_DONE),
+    ] {
+        if let Some(text) = line.strip_prefix(prefix) {
+            let token = if text.ends_with(" / queued") {
+                t::WORK_AGENT_QUEUED
+            } else {
+                token
+            };
+            if let Some((name, state)) = text.rsplit_once(" / ") {
+                return Line::from(vec![
+                    span(prefix, token),
+                    span(name, t::WORK_AGENT_NAME),
+                    span(&format!(" / {state}"), token),
+                ]);
+            }
+            return Line::from(vec![span(prefix, token), span(text, t::WORK_AGENT_NAME)]);
+        }
+    }
+    for label in ["  model: ", "  effort: "] {
+        if let Some(value) = line.strip_prefix(label) {
+            return Line::from(vec![
+                span(label, t::WORK_AGENT_METADATA),
+                span(
+                    value,
+                    if value == "unknown" {
+                        t::WORK_AGENT_UNKNOWN
+                    } else {
+                        t::WORK_AGENT_METADATA
+                    },
+                ),
+            ]);
+        }
+    }
+    let token = if line.starts_with(['▾', '▸']) || line.starts_with("Agents /") {
+        t::WORK_SECTION
+    } else if line.starts_with('+') {
+        t::WORK_OVERFLOW
+    } else if line.starts_with("Alt+") {
+        t::WORK_HELP
+    } else if line.starts_with("parked:") || line.starts_with("paused:") {
+        t::WORK_GOAL
+    } else {
+        t::WORK_LABEL
+    };
+    Line::from(span(line, token))
 }

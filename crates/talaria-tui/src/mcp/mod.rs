@@ -1,3 +1,4 @@
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -54,6 +55,27 @@ pub fn draw_mcp(
     area: Rect,
     buf: &mut Buffer,
 ) {
+    draw_mcp_inner(view, secret_len, area, buf, None);
+}
+
+/// Draw the MCP overlay with resolved view styles.
+pub fn draw_mcp_with_theme(
+    view: &McpView,
+    secret_len: &dyn Fn(SecretSlot) -> usize,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
+    draw_mcp_inner(view, secret_len, area, buf, Some(views));
+}
+
+fn draw_mcp_inner(
+    view: &McpView,
+    secret_len: &dyn Fn(SecretSlot) -> usize,
+    area: Rect,
+    buf: &mut Buffer,
+    views: Option<&ViewStyles>,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -64,12 +86,23 @@ pub fn draw_mcp(
     };
     let title_width = usize::from(area.width).saturating_sub(UnicodeWidthStr::width(tabs));
     let title = column(&view.title, title_width);
-    line(buf, area, 0, &format!("{title}{tabs}"), Style::default());
+    line(
+        buf,
+        area,
+        0,
+        &format!("{title}{tabs}"),
+        views.map_or(Style::default(), |v| {
+            v.style(t::DIALOG_TITLE, Style::default())
+        }),
+    );
     line(
         buf,
         area,
         1,
-        &"─".repeat(usize::from(area.width)),
+        &views.map_or_else(
+            || "─".repeat(usize::from(area.width)),
+            |v| v.divider_text(&"─".repeat(usize::from(area.width))),
+        ),
         Style::default(),
     );
     let filter = if view.filter.is_empty() {
@@ -149,7 +182,10 @@ pub fn draw_mcp(
         }
     }
     if let Some(card) = &view.card {
-        draw_card(card, secret_len, area, buf);
+        draw_card(card, secret_len, area, buf, views);
+    }
+    if let Some(v) = views {
+        v.finish(area, buf, t::DIALOG_BACKGROUND, true);
     }
 }
 
@@ -158,6 +194,7 @@ fn draw_card(
     secret_len: &dyn Fn(SecretSlot) -> usize,
     area: Rect,
     buf: &mut Buffer,
+    views: Option<&ViewStyles>,
 ) {
     let width = if area.width < 60 {
         area.width
@@ -214,11 +251,27 @@ fn draw_card(
     Clear.render(rect, buf);
     let title = format!(" {} ", sanitize(&card.title));
     let footer = format!(" {} ", sanitize(&card.footer));
-    let block = Block::bordered()
+    let mut block = Block::bordered()
         .title(Line::from(title))
         .title_bottom(Line::from(footer).alignment(Alignment::Left));
+    if let Some(v) = views {
+        block = block.border_set(border_set(v));
+    }
     Paragraph::new(lines.join("\n"))
         .block(block)
         .wrap(Wrap { trim: false })
         .render(rect, buf);
+}
+
+fn border_set(views: &ViewStyles) -> ratatui::symbols::border::Set<'_> {
+    ratatui::symbols::border::Set {
+        top_left: views.border_symbol("┌"),
+        top_right: views.border_symbol("┐"),
+        bottom_left: views.border_symbol("└"),
+        bottom_right: views.border_symbol("┘"),
+        vertical_left: views.border_symbol("│"),
+        vertical_right: views.border_symbol("│"),
+        horizontal_top: views.border_symbol("─"),
+        horizontal_bottom: views.border_symbol("─"),
+    }
 }

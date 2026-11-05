@@ -4,7 +4,7 @@ mod form;
 mod render;
 
 pub use form::cursor_position;
-pub use render::{ProfilesRenderer, draw, list_page_size};
+pub use render::{ProfilesRenderer, draw, draw_with_theme, list_page_size};
 
 use talaria_core::profiles::KeyAction;
 

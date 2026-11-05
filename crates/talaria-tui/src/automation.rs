@@ -5,7 +5,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use talaria_core::automation::{AutomationRow, AutomationState, HermesCommandCell, Tone, rows};
 use unicode_width::UnicodeWidthChar;
@@ -29,11 +29,7 @@ pub struct AutomationTheme {
 
 impl Default for AutomationTheme {
     fn default() -> Self {
-        Self {
-            accent: Style::default().fg(Color::Cyan),
-            warning: Style::default().fg(Color::Yellow),
-            dim: Style::default().add_modifier(Modifier::DIM),
-        }
+        crate::theme::legacy::automation_theme()
     }
 }
 
@@ -62,6 +58,32 @@ impl LiveSection for AutomationSection<'_> {
             }
             let line = row_line(row, usize::from(area.width), self.theme);
             buf.set_line(area.x, area.y + offset, &line, area.width);
+        }
+    }
+}
+
+impl AutomationSection<'_> {
+    /// Draw the inline rows with the resolved catalogue styles.
+    pub fn render_with_theme(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        views: &crate::theme::surfaces::ViewStyles,
+    ) {
+        for (offset, row) in rows(self.state, self.now_ms).iter().enumerate() {
+            let Ok(offset) = u16::try_from(offset) else {
+                break;
+            };
+            if offset >= area.height {
+                break;
+            }
+            let lines = views.inline_lines(
+                vec![row_line(row, usize::from(area.width), self.theme)],
+                crate::theme::surfaces::tokens::AUTOMATION_METADATA,
+            );
+            if let Some(line) = lines.first() {
+                buf.set_line(area.x, area.y + offset, line, area.width);
+            }
         }
     }
 }
@@ -182,6 +204,30 @@ pub fn hermes_command_lines_with_options(
     theme: &AutomationTheme,
     markdown: &MarkdownOptions,
 ) -> Vec<Line<'static>> {
+    hermes_command_lines_inner(cell, width, theme, markdown, None)
+}
+
+/// Render a command and its Markdown reply with the resolved catalogue.
+pub fn hermes_command_lines_with_options_and_theme(
+    cell: &HermesCommandCell,
+    width: u16,
+    theme: &AutomationTheme,
+    markdown: &MarkdownOptions,
+    views: &crate::theme::surfaces::ViewStyles,
+) -> Vec<Line<'static>> {
+    if !views.active() {
+        return hermes_command_lines_with_options(cell, width, theme, markdown);
+    }
+    hermes_command_lines_inner(cell, width, theme, markdown, Some(views))
+}
+
+fn hermes_command_lines_inner(
+    cell: &HermesCommandCell,
+    width: u16,
+    theme: &AutomationTheme,
+    markdown: &MarkdownOptions,
+    views: Option<&crate::theme::surfaces::ViewStyles>,
+) -> Vec<Line<'static>> {
     let without_color = |mut style: Style| {
         if !markdown.color {
             style.fg = None;
@@ -200,7 +246,11 @@ pub fn hermes_command_lines_with_options(
         ..markdown.clone()
     };
     let mut warned = !cell.warning;
-    for body in render_markdown(&cell.body, &options) {
+    let body_lines = match views {
+        Some(views) => crate::markdown::render_markdown_with_theme(&cell.body, &options, views),
+        None => render_markdown(&cell.body, &options),
+    };
+    for body in body_lines {
         let mut spans = vec![Span::raw("  ")];
         for span in body.spans {
             if warned {
@@ -211,7 +261,12 @@ pub fn hermes_command_lines_with_options(
         }
         lines.push(Line::from(spans).style(body.style));
     }
-    lines
+    match views {
+        Some(views) => {
+            views.inline_lines(lines, crate::theme::surfaces::tokens::AUTOMATION_METADATA)
+        }
+        None => lines,
+    }
 }
 
 /// Push `span`, drawing its first non-space character in `warning`. False when the span held

@@ -655,7 +655,7 @@ impl<'a> StatusSection<'a> {
                 let (next, _) = buf.set_stringn(
                     x,
                     row,
-                    SEPARATOR,
+                    self.palette.separator(),
                     usize::MAX,
                     self.palette.style(Tone::Separator),
                 );

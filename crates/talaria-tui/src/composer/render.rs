@@ -38,6 +38,30 @@ impl<'a> ComposerSection<'a> {
         self
     }
 
+    /// Draw with the selected frame preset while retaining the prepared draft.
+    pub fn render_with_theme(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        views: &crate::theme::surfaces::ViewStyles,
+    ) {
+        let section = Self {
+            composer: self.composer,
+            border_preset: if views.active() {
+                views.border_preset()
+            } else {
+                self.border_preset
+            },
+        };
+        section.render(area, buf);
+        views.finish(
+            area,
+            buf,
+            crate::theme::surfaces::tokens::COMPOSER_TEXT,
+            false,
+        );
+    }
+
     fn border_glyphs(&self) -> [char; 6] {
         match self.border_preset {
             BorderPreset::Rounded => ['╭', '╮', '╰', '╯', '─', '│'],

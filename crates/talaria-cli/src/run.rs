@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use std::sync::{
     Arc,
@@ -58,15 +58,15 @@ use talaria_core::session::{
     AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
 };
 use talaria_core::subagents::{Clock as SubagentClock, FinishedBatch};
-use talaria_tui::automation::{AutomationSection, AutomationTheme};
+use talaria_tui::automation::AutomationSection;
 use talaria_tui::background::{BackgroundSection, BackgroundTheme, ProcessesView};
 use talaria_tui::checklist::{
     ChecklistSection, ChecklistStyle, PANEL_MAX_ROWS, SHORT_TERMINAL_ROWS, committed_block_lines,
 };
 use talaria_tui::composer::{Composer, ComposerContext, ComposerOutcome, VimMode, clean_text};
 use talaria_tui::context_view::{
-    CompactingSection, ContextStyle, compact_block, context_block, error_block, notice_block,
-    prebuild_block, usage_block,
+    CompactingSection, compact_block, context_block, error_block, notice_block, prebuild_block,
+    usage_block,
 };
 use talaria_tui::fleet_view::{ExternalPeekPanel, FleetTheme, FleetView, PeekPanel};
 use talaria_tui::history::{CellLines, PlainCellLines};
@@ -80,10 +80,10 @@ use talaria_tui::markdown::cells::MarkdownCellLines;
 use talaria_tui::markdown::section::MarkdownTailSection;
 use talaria_tui::markdown::{MarkdownOptions, MarkdownTheme};
 use talaria_tui::mention::MentionSection;
-use talaria_tui::model_picker::{ModelConfirmSection, draw_model_picker};
+use talaria_tui::model_picker::ModelConfirmSection;
 use talaria_tui::pager::{
-    ConnectionBanner, Details, Pager, PagerAction, PagerCellLines, PagerContext, PagerTheme,
-    SearchIndex, SearchInput,
+    ConnectionBanner, Details, Pager, PagerAction, PagerCellLines, PagerContext, SearchIndex,
+    SearchInput,
 };
 use talaria_tui::palette::PaletteSection;
 use talaria_tui::profiles::{
@@ -91,10 +91,10 @@ use talaria_tui::profiles::{
 };
 use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
 use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
-use talaria_tui::review_view::draw_review;
+use talaria_tui::review_view::draw_review_themed;
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
 use talaria_tui::session_picker::{PickerTheme, SessionPickerView};
-use talaria_tui::side::{SideTasksSection, SideTheme, shell_mode_title};
+use talaria_tui::side::{SideTasksSection, shell_mode_title};
 use talaria_tui::status::{
     ApprovalsSegment, CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay,
     SessionRef, StatusCommandService, StatusDocument, StatusInputs, StatusPalette, StatusSection,
@@ -186,7 +186,11 @@ enum Overlay {
     Configure,
 }
 
-fn background_theme(color: bool) -> BackgroundTheme {
+fn background_theme(current: &Theme) -> BackgroundTheme {
+    if current.views.active() {
+        return current.views.background_theme();
+    }
+    let color = current.color;
     let mut theme = BackgroundTheme::default();
     if !color {
         theme.warning = ratatui::style::Style::default();
@@ -194,6 +198,71 @@ fn background_theme(color: bool) -> BackgroundTheme {
         theme.ok = ratatui::style::Style::default();
     }
     theme
+}
+
+fn subagent_style(theme: &Theme) -> SubagentStyle {
+    if theme.views.active() {
+        theme.views.subagent_style()
+    } else if theme.color {
+        SubagentStyle::default()
+    } else {
+        SubagentStyle::plain()
+    }
+}
+
+fn checklist_style(theme: &Theme) -> ChecklistStyle {
+    if theme.views.active() {
+        theme.views.checklist_style()
+    } else if theme.color {
+        ChecklistStyle::default()
+    } else {
+        ChecklistStyle::plain()
+    }
+}
+
+struct ThemedComposer<'a> {
+    section: talaria_tui::composer::ComposerSection<'a>,
+    views: &'a talaria_tui::theme::surfaces::ViewStyles,
+}
+
+impl LiveSection for ThemedComposer<'_> {
+    fn height(&self, width: u16) -> u16 {
+        self.section.height(width)
+    }
+
+    fn render(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
+        self.section.render_with_theme(area, buf, self.views);
+    }
+}
+
+struct ThemedBackground<'a> {
+    section: BackgroundSection<'a>,
+    views: &'a talaria_tui::theme::surfaces::ViewStyles,
+}
+
+impl LiveSection for ThemedBackground<'_> {
+    fn height(&self, width: u16) -> u16 {
+        self.section.height(width)
+    }
+
+    fn render(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
+        self.section.render_with_theme(area, buf, self.views);
+    }
+}
+
+struct ThemedAutomation<'a> {
+    section: AutomationSection<'a>,
+    views: &'a talaria_tui::theme::surfaces::ViewStyles,
+}
+
+impl LiveSection for ThemedAutomation<'_> {
+    fn height(&self, width: u16) -> u16 {
+        self.section.height(width)
+    }
+
+    fn render(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
+        self.section.render_with_theme(area, buf, self.views);
+    }
 }
 
 fn memory_footer_key(label: &str) -> Option<talaria_core::memory::MemoryKey> {
@@ -831,7 +900,15 @@ impl Look {
 /// A cut preview names the key that opens the transcript, when one is bound.
 fn tool_cells(theme: &Theme, keymap: &KeyMap) -> ToolCellLines {
     ToolCellLines::new(
-        Box::new(MarkdownCellLines::new(true, MarkdownTheme::default())),
+        Box::new(MarkdownCellLines::new_with_theme(
+            true,
+            if theme.views.active() {
+                theme.markdown.clone()
+            } else {
+                MarkdownTheme::default()
+            },
+            theme.views.clone(),
+        )),
         ToolRenderOptions {
             width: 0,
             theme: theme.tool.clone(),
@@ -859,11 +936,15 @@ impl CellLines for CapturedCells<'_> {
             return self.tools.lines(cell, width);
         }
         if let Cell::Background(cell) = cell {
-            return talaria_tui::background::background_cell_lines(
+            let lines = talaria_tui::background::background_cell_lines(
                 cell,
                 width,
-                &background_theme(self.current.color),
+                &background_theme(self.current),
             );
+            return self
+                .current
+                .views
+                .inline_lines(lines, talaria_tui::theme::surfaces::tokens::BACKGROUND_TEXT);
         }
         let theme = themed_cell_id(cell)
             .and_then(|id| self.captured.get(&id))
@@ -1595,9 +1676,14 @@ impl TuiScreen {
     fn draw_picker(&mut self) {
         if let Some(picker) = &self.picker {
             let view = picker.view();
-            let _ = self
-                .terminal
-                .draw_overlay(|area, buf| draw_model_picker(&view, area, buf));
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                talaria_tui::picker_frame::draw_picker_frame_with_theme(
+                    &view,
+                    area,
+                    buf,
+                    &self.theme.views,
+                )
+            });
         }
     }
 
@@ -1638,11 +1724,21 @@ impl TuiScreen {
 
     /// The picker's own frame, over the whole screen.
     fn draw_session_picker(&mut self, state: &PickerState) {
-        let theme = PickerTheme::default();
+        use talaria_tui::theme::surfaces::tokens as t;
+        let mut theme = PickerTheme::default();
+        let styles = &self.theme.views;
+        theme.header = styles.style(t::LIST_HEADER, theme.header);
+        theme.group = styles.style(t::LIST_HEADER, theme.group);
+        theme.marker = styles.style(t::LIST_SELECTED, theme.marker);
+        theme.dim = styles.style(t::LIST_MUTED, theme.dim);
+        theme.notice = styles.style(t::LIST_EMPTY, theme.notice);
+        theme.footer = styles.style(t::LIST_MUTED, theme.footer);
+        theme.chosen = styles.style(t::LIST_SELECTED, theme.chosen);
         let now = unix_now();
-        let _ = self
-            .terminal
-            .draw_overlay(|area, buf| SessionPickerView::draw(state, area, buf, now, &theme));
+        let _ = self.terminal.draw_overlay(|area, buf| {
+            SessionPickerView::draw(state, area, buf, now, &theme);
+            styles.finish(area, buf, t::LIST_BACKGROUND, true);
+        });
     }
 
     fn sync_agents(&mut self, view: &View<'_>) {
@@ -1676,11 +1772,7 @@ impl TuiScreen {
             self.agents_pause_pending = false;
         }
         panel.set_keymap(&self.keymap);
-        panel.set_style(if self.color {
-            SubagentStyle::default()
-        } else {
-            SubagentStyle::plain()
-        });
+        panel.set_style(subagent_style(&self.theme));
         panel.set_spawning(hub.spawning(), hub.gateway_active());
         panel.tick(view.now_ms);
         if hub.pause_confirmation_pending() && !self.agents_pause_pending {
@@ -1738,6 +1830,12 @@ impl TuiScreen {
             {
                 buf.set_line(area.x, area.y + offset as u16, line, area.width);
             }
+            self.theme.views.finish(
+                area,
+                buf,
+                talaria_tui::theme::surfaces::tokens::LIST_BACKGROUND,
+                true,
+            );
         });
     }
 
@@ -1817,20 +1915,15 @@ impl TuiScreen {
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
     fn set_theme(&mut self, theme: Theme) {
-        if self.color != theme.color || self.tool_theme != theme.tool {
-            self.workspace_renderer.clear();
-        }
-        if (self.color != theme.color || self.tool_theme != theme.tool)
-            && let Some(transcript) = self.transcript.as_mut()
-        {
+        self.workspace_renderer.clear();
+        if let Some(transcript) = self.transcript.as_mut() {
             transcript.pager.invalidate_rendering();
         }
         self.color = theme.color;
-        self.checklist_style = if theme.color {
-            ChecklistStyle::default()
-        } else {
-            ChecklistStyle::plain()
-        };
+        self.checklist_style = checklist_style(&theme);
+        self.rewind_theme = theme
+            .views
+            .rewind_theme(std::env::var_os("NO_COLOR").is_none());
         self.composer.set_style(theme.composer);
         self.palette = theme.status;
         self.cells = tool_cells(&theme, &self.keymap);
@@ -3127,22 +3220,30 @@ fn transcript_tool_renderer(
     details: Details,
     width: u16,
     color: bool,
-    theme: &ToolTheme,
+    theme: &Theme,
 ) -> ToolCellLines {
     ToolCellLines::new(
-        Box::new(PagerCellLines {
-            details,
-            markdown: MarkdownOptions {
-                width: width.saturating_sub(2).max(8),
-                color,
-                ..MarkdownOptions::default()
-            },
-            theme: PagerTheme::default(),
-            other: &PLAIN_CELLS,
-        }),
+        Box::new(
+            PagerCellLines {
+                details,
+                markdown: MarkdownOptions {
+                    width: width.saturating_sub(2).max(8),
+                    color,
+                    theme: if theme.views.active() {
+                        theme.markdown.clone()
+                    } else {
+                        MarkdownTheme::default()
+                    },
+                    ..MarkdownOptions::default()
+                },
+                theme: theme.views.pager_theme(),
+                other: &PLAIN_CELLS,
+            }
+            .with_theme(&theme.views),
+        ),
         ToolRenderOptions {
             width,
-            theme: theme.clone(),
+            theme: theme.tool.clone(),
             color,
             detail: match details {
                 Details::Expanded => Detail::Full,
@@ -3224,7 +3325,7 @@ impl TuiScreen {
                             transcript.pager.details(),
                             width,
                             self.color,
-                            &self.tool_theme,
+                            &self.theme,
                         );
                         transcript.pager.handle_action_with_renderer(
                             action,
@@ -3256,10 +3357,12 @@ impl TuiScreen {
         let height = self.terminal.viewport().height;
         transcript.pager.resize(width, height);
         let details = transcript.pager.details();
-        let renderer = transcript_tool_renderer(details, width, self.color, &self.tool_theme);
-        let _ = self
-            .terminal
-            .draw_overlay(|area, buf| transcript.pager.draw(area, buf, &ctx, &renderer));
+        let renderer = transcript_tool_renderer(details, width, self.color, &self.theme);
+        let _ = self.terminal.draw_overlay(|area, buf| {
+            transcript
+                .pager
+                .draw_with_theme(area, buf, &ctx, &renderer, &self.theme.views)
+        });
     }
 }
 
@@ -3520,7 +3623,7 @@ impl Screen for TuiScreen {
         self.open_overlay(Overlay::Profiles);
         let renderer = &mut self.profiles;
         let _ = self.terminal.draw_overlay_with_cursor(|area, buffer| {
-            renderer.draw(view, area, buffer);
+            renderer.draw_with_theme(view, area, buffer, &self.theme.views);
             profiles_cursor(view, area)
         });
     }
@@ -3654,9 +3757,15 @@ impl Screen for TuiScreen {
         // A review opened from the fleet list draws in its place; Esc returns to the list.
         if let Some(review) = &view.review {
             let theme = &self.tool_theme;
-            let _ = self
-                .terminal
-                .draw_overlay(|area, buf| draw_review(review, theme, area, buf));
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                draw_review_themed(review, theme, area, buf, &self.theme.views);
+                self.theme.views.finish(
+                    area,
+                    buf,
+                    talaria_tui::theme::surfaces::tokens::DIALOG_BACKGROUND,
+                    true,
+                );
+            });
             return;
         }
         let theme = FleetTheme::with_key_map(&self.keymap);
@@ -3676,9 +3785,18 @@ impl Screen for TuiScreen {
             now: clock,
         });
         let _ = self.terminal.draw_overlay(|area, buf| {
-            FleetView::draw_with_sources(fleet, panel, external, area, buf, &theme, labels);
+            FleetView::draw_with_sources_and_theme(
+                fleet,
+                panel,
+                external,
+                area,
+                buf,
+                &theme,
+                labels,
+                &self.theme.views,
+            );
             if let Some(dialog) = dialog {
-                dialog.draw(dialog.area(area), buf);
+                dialog.draw_with_theme(dialog.area(area), buf, &self.theme.views);
             }
         });
     }
@@ -3759,17 +3877,41 @@ impl Screen for TuiScreen {
         self.close_overlay(Overlay::Kanban);
         if let Some(picker) = view.workflow_picker {
             self.open_overlay(Overlay::WorkflowProgress);
-            let theme = talaria_tui::workflow_view::WorkflowTheme::default();
+            let theme = self.theme.views.workflow_theme();
             let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::workflow_view::WorkflowView::render_picker(area, buf, picker, &theme)
+                talaria_tui::workflow_view::WorkflowView::render_picker_themed(
+                    area,
+                    buf,
+                    picker,
+                    &theme,
+                    &self.theme.views,
+                );
+                self.theme.views.finish(
+                    area,
+                    buf,
+                    talaria_tui::theme::surfaces::tokens::LIST_BACKGROUND,
+                    true,
+                )
             });
             return;
         }
         if let Some(progress) = view.workflow_progress {
             self.open_overlay(Overlay::WorkflowProgress);
-            let theme = talaria_tui::workflow_view::WorkflowTheme::default();
+            let theme = self.theme.views.workflow_theme();
             let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::workflow_view::WorkflowView::render(area, buf, progress, &theme)
+                talaria_tui::workflow_view::WorkflowView::render_themed(
+                    area,
+                    buf,
+                    progress,
+                    &theme,
+                    &self.theme.views,
+                );
+                self.theme.views.finish(
+                    area,
+                    buf,
+                    talaria_tui::theme::surfaces::tokens::LIST_BACKGROUND,
+                    true,
+                )
             });
             return;
         }
@@ -3778,7 +3920,13 @@ impl Screen for TuiScreen {
         if let Some(mcp) = &self.mcp_view {
             let wiring = &self.mcp_wiring;
             let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::mcp::draw_mcp(mcp, &|slot| wiring.secret_len(slot), area, buf);
+                talaria_tui::mcp::draw_mcp_with_theme(
+                    mcp,
+                    &|slot| wiring.secret_len(slot),
+                    area,
+                    buf,
+                    &self.theme.views,
+                );
             });
             return;
         }
@@ -3843,12 +3991,13 @@ impl Screen for TuiScreen {
             let palette = self.palette;
             self.open_overlay(Overlay::Connectors);
             let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::connectors::draw_connectors_with_palette(
+                talaria_tui::connectors::draw_connectors_with_theme(
                     &connectors,
                     &lens,
                     &palette,
                     area,
                     buf,
+                    &self.theme.views,
                 );
             });
             return;
@@ -3881,7 +4030,12 @@ impl Screen for TuiScreen {
         if let Some(capabilities) = &view.capabilities {
             self.open_overlay(Overlay::Capabilities);
             let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::capabilities::draw_capabilities(capabilities, area, buf);
+                talaria_tui::capabilities::draw_capabilities_with_theme(
+                    capabilities,
+                    area,
+                    buf,
+                    &self.theme.views,
+                );
             });
             return;
         }
@@ -3890,7 +4044,7 @@ impl Screen for TuiScreen {
             if self.cron_dirty || self.overlay != Overlay::Cron {
                 self.open_overlay(Overlay::Cron);
                 let _ = self.terminal.draw_overlay(|area, buf| {
-                    talaria_tui::cron::draw_cron(&cron, area, buf);
+                    talaria_tui::cron::draw_cron_with_theme(&cron, area, buf, &self.theme.views);
                 });
                 self.cron_dirty = false;
             }
@@ -3908,15 +4062,26 @@ impl Screen for TuiScreen {
         self.close_overlay(Overlay::Settings);
         if let Some(providers) = &self.providers_view {
             let wiring = &self.providers;
-            let _ = self
-                .terminal
-                .draw_overlay(|area, buffer| wiring.draw(providers, area, buffer));
+            let _ = self.terminal.draw_overlay(|area, buffer| {
+                talaria_tui::providers::draw_providers_with_theme(
+                    providers,
+                    wiring.secret_len(),
+                    area,
+                    buffer,
+                    &self.theme.views,
+                )
+            });
             return;
         }
         if let Some(roles) = &view.model_roles {
             self.open_overlay(Overlay::ModelRoles);
             let _ = self.terminal.draw_overlay(|area, buf| {
-                talaria_tui::model_roles::draw_model_roles(roles, area, buf);
+                talaria_tui::model_roles::draw_model_roles_with_theme(
+                    roles,
+                    area,
+                    buf,
+                    &self.theme.views,
+                );
             });
             return;
         }
@@ -3929,16 +4094,23 @@ impl Screen for TuiScreen {
                 self.open_overlay(Overlay::Processes);
             }
             if let Some(state) = view.state {
-                let theme = background_theme(self.color);
+                let theme = background_theme(&self.theme);
                 let processes = &self.processes;
                 let _ = self.terminal.draw_overlay(|area, buf| {
-                    processes.render(
+                    processes.render_themed(
                         state.background(),
                         view.now_ms,
                         state.background().wall_s(),
                         area,
                         buf,
                         &theme,
+                        &self.theme.views,
+                    );
+                    self.theme.views.finish(
+                        area,
+                        buf,
+                        talaria_tui::theme::surfaces::tokens::LIST_BACKGROUND,
+                        true,
                     );
                 });
             }
@@ -3950,9 +4122,15 @@ impl Screen for TuiScreen {
             (Some(review), None) => {
                 self.open_overlay(Overlay::Review);
                 let theme = &self.tool_theme;
-                let _ = self
-                    .terminal
-                    .draw_overlay(|area, buf| draw_review(review, theme, area, buf));
+                let _ = self.terminal.draw_overlay(|area, buf| {
+                    draw_review_themed(review, theme, area, buf, &self.theme.views);
+                    self.theme.views.finish(
+                        area,
+                        buf,
+                        talaria_tui::theme::surfaces::tokens::DIALOG_BACKGROUND,
+                        true,
+                    );
+                });
                 return;
             }
             _ => self.close_overlay(Overlay::Review),
@@ -3977,9 +4155,15 @@ impl Screen for TuiScreen {
                 self.rewind_open = true;
             }
             let theme = &self.rewind_theme;
-            let _ = self
-                .terminal
-                .draw_overlay(|area, buf| draw_rewind(rewind, area, buf, theme));
+            let _ = self.terminal.draw_overlay(|area, buf| {
+                draw_rewind(rewind, area, buf, theme);
+                self.theme.views.finish(
+                    area,
+                    buf,
+                    talaria_tui::theme::surfaces::tokens::DIALOG_BACKGROUND,
+                    true,
+                );
+            });
             return;
         }
         if self.rewind_open {
@@ -4050,7 +4234,8 @@ impl Screen for TuiScreen {
         let connecting = PlainTextSection::new(CONNECTING);
         let status = StatusSection::new(&self.inputs, self.external.segment(), &self.palette);
         let prompts = self.prompts.section();
-        let palette = PaletteSection::new(view.palette, self.rows);
+        let palette =
+            PaletteSection::new(view.palette, self.rows).with_theme(self.theme.views.clone());
         let confirmation = if prompts.is_none() {
             self.confirmation.as_ref().map(|card| {
                 let section =
@@ -4065,17 +4250,20 @@ impl Screen for TuiScreen {
             None
         };
         let composer_is_empty = self.composer.is_empty();
-        let side_theme = SideTheme::default();
+        let side_theme = self.theme.views.side_theme();
         let side = view.state.map(|state| SideTasksSection {
             tasks: state.side(),
             now_ms: view.now_ms,
             theme: &side_theme,
         });
-        let background_theme = background_theme(self.color);
-        let background = view.state.map(|state| BackgroundSection {
-            work: state.background(),
-            width_hint: width,
-            theme: &background_theme,
+        let background_theme = background_theme(&self.theme);
+        let background = view.state.map(|state| ThemedBackground {
+            section: BackgroundSection {
+                work: state.background(),
+                width_hint: width,
+                theme: &background_theme,
+            },
+            views: &self.theme.views,
         });
         let mention = self
             .attachments
@@ -4088,10 +4276,13 @@ impl Screen for TuiScreen {
                 .map(|queue| render_preview(&queue, width, self.composer.is_empty()))
                 .unwrap_or_default(),
         );
-        let composer = self
-            .composer
-            .section(width, COMPOSER_ROWS)
-            .with_border_preset(self.composer_border);
+        let composer = ThemedComposer {
+            section: self
+                .composer
+                .section(width, COMPOSER_ROWS)
+                .with_border_preset(self.composer_border),
+            views: &self.theme.views,
+        };
         let partial_text = view
             .voice
             .as_ref()
@@ -4122,11 +4313,7 @@ impl Screen for TuiScreen {
                 &self.checklist_style,
             )
         });
-        let subagent_style = if self.color {
-            SubagentStyle::default()
-        } else {
-            SubagentStyle::plain()
-        };
+        let subagent_style = subagent_style(&self.theme);
         let subagent_hint = self.keymap.label(Action::AgentsPanel);
         let subagents = view.subagents.and_then(|hub| {
             let key = hub.foreground_key()?;
@@ -4142,11 +4329,14 @@ impl Screen for TuiScreen {
                 self.rows,
             ))
         });
-        let automation_theme = AutomationTheme::default();
-        let automation = AutomationSection {
-            state: view.automation,
-            now_ms: view.automation_now_ms,
-            theme: &automation_theme,
+        let automation_theme = self.theme.views.automation_theme();
+        let automation = ThemedAutomation {
+            section: AutomationSection {
+                state: view.automation,
+                now_ms: view.automation_now_ms,
+                theme: &automation_theme,
+            },
+            views: &self.theme.views,
         };
         let workspace_enabled = view.layout.workspace_enabled() || view.layout.menu_transient;
         let panel_visible = workspace_enabled
@@ -4178,7 +4368,7 @@ impl Screen for TuiScreen {
         let search = self
             .search
             .as_ref()
-            .map(|s| s.section(std::time::SystemTime::now()));
+            .map(|s| s.section_with_theme(std::time::SystemTime::now(), &self.theme.views));
         if let Some(search) = &search {
             if let Some(side) = &side {
                 sections.push(side);
@@ -4312,13 +4502,21 @@ impl Screen for TuiScreen {
                 talaria_tui::pager::Details::Expanded,
                 body_width,
                 self.color,
-                &self.tool_theme,
+                &self.theme,
             );
             let render_workspace = &mut self.workspace_renderer;
             let style = &self.checklist_style;
             let hint = self.keymap.label(Action::ToggleTasks);
             let _ = self.terminal.draw_workspace(|area, buffer| {
-                render_workspace.draw_with_style(&workspace, area, buffer, &renderer, style, hint);
+                render_workspace.draw_with_style_and_theme(
+                    &workspace,
+                    area,
+                    buffer,
+                    &renderer,
+                    style,
+                    hint,
+                    &self.theme.views,
+                );
             });
         } else {
             let _ = self.terminal.draw_live(&LiveView { sections });
@@ -4351,7 +4549,7 @@ impl Screen for TuiScreen {
 
     fn commit_context(&mut self, block: &ContextBlock) {
         let width = self.terminal.viewport().width;
-        let style = ContextStyle::standard();
+        let style = self.theme.views.context_style();
         let lines = match block {
             ContextBlock::Breakdown { typed, breakdown } => {
                 context_block(typed, breakdown, width, &style)
@@ -4370,6 +4568,10 @@ impl Screen for TuiScreen {
             } => error_block(typed, command, method, sid, error, width, &style),
             ContextBlock::Notice(notice) => notice_block(notice, width, &style),
         };
+        let lines = self
+            .theme
+            .views
+            .inline_lines(lines, talaria_tui::theme::surfaces::tokens::CONTEXT_TEXT);
         self.commit_workspace_lines(lines);
     }
 
@@ -4380,11 +4582,7 @@ impl Screen for TuiScreen {
     }
 
     fn commit_subagent_batch(&mut self, batch: &FinishedBatch) {
-        let style = if self.color {
-            SubagentStyle::default()
-        } else {
-            SubagentStyle::plain()
-        };
+        let style = subagent_style(&self.theme);
         let lines = batch_block_lines(batch, self.terminal.viewport().width, &style);
         self.commit_workspace_lines(lines);
     }
@@ -4453,7 +4651,7 @@ impl Screen for TuiScreen {
                     (
                         range.clone(),
                         match style {
-                            LabelStyle::Accent => Style::default().fg(Color::Cyan),
+                            LabelStyle::Accent => self.theme.views.attachment_accent(),
                             LabelStyle::Dimmed => Style::default().add_modifier(Modifier::DIM),
                         },
                     )
@@ -4949,6 +5147,10 @@ fn session(
         .map_err(TerminalError::Io)?;
     let (sender, receiver) = mpsc::unbounded_channel();
     let color = theme.color;
+    let checklist_style = checklist_style(&theme);
+    let rewind_theme = theme
+        .views
+        .rewind_theme(std::env::var_os("NO_COLOR").is_none());
     let history_dir = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
@@ -5024,11 +5226,7 @@ fn session(
         composer_border: resolved.border,
         theme: Arc::new(theme),
         captured: HashMap::new(),
-        checklist_style: if color {
-            ChecklistStyle::default()
-        } else {
-            ChecklistStyle::plain()
-        },
+        checklist_style,
         color,
         sender: sender.clone(),
         connecting: true,
@@ -5061,7 +5259,7 @@ fn session(
         confirmation_focused: None,
         rewind_open: false,
         rewind_rows: 0,
-        rewind_theme: rewind_theme(),
+        rewind_theme,
         attachments: AttachmentView::default(),
         attachment_rule,
         transcript: None,
@@ -5093,26 +5291,6 @@ fn session(
     drop(screen.input.take());
     drop(screen);
     Ok(outcome)
-}
-
-/// Rewind overlay colours. Without colour the warning is bold and the accent plain.
-fn rewind_theme() -> RewindTheme {
-    use ratatui::style::{Color, Modifier, Style};
-    let color = std::env::var_os("NO_COLOR").is_none();
-    RewindTheme {
-        selected: Style::default().add_modifier(Modifier::REVERSED),
-        dim: Style::default().add_modifier(Modifier::DIM),
-        warning: if color {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().add_modifier(Modifier::BOLD)
-        },
-        accent: if color {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        },
-    }
 }
 
 fn sync_reported_draft(

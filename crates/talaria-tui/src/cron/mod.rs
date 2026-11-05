@@ -1,14 +1,23 @@
 //! Projection of scheduled jobs into the terminal buffer.
 
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::Line,
     widgets::{Paragraph, Widget, Wrap},
 };
 pub use talaria_core::cron::CronAction;
 use talaria_core::cron::{CronBody, CronView};
+
+fn themed(
+    views: Option<&ViewStyles>,
+    token: crate::theme::surfaces::Token,
+    legacy: Style,
+) -> Style {
+    views.map_or(legacy, |views| views.style(token, legacy))
+}
 
 mod detail;
 mod form;
@@ -35,6 +44,15 @@ impl CronFrameGate {
 
 /// Draw the overlay without changing domain state.
 pub fn draw_cron(view: &CronView, area: Rect, buf: &mut Buffer) {
+    draw_cron_inner(view, area, buf, None);
+}
+
+/// Draw the scheduled-job overlay with resolved view styles.
+pub fn draw_cron_with_theme(view: &CronView, area: Rect, buf: &mut Buffer, views: &ViewStyles) {
+    draw_cron_inner(view, area, buf, Some(views));
+}
+
+fn draw_cron_inner(view: &CronView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -43,12 +61,27 @@ pub fn draw_cron(view: &CronView, area: Rect, buf: &mut Buffer) {
         Paragraph::new("Make the terminal at least 60 by 12 to manage scheduled jobs.")
             .wrap(Wrap { trim: false })
             .render(area, buf);
+        if let Some(views) = views {
+            views.finish(area, buf, t::LIST_BACKGROUND, true);
+        }
         return;
     }
-    put(buf, area, 0, &view.title, Style::default().fg(Color::Cyan));
+    put(
+        buf,
+        area,
+        0,
+        &view.title,
+        themed(views, t::CRON_HEADING, crate::theme::legacy::cron_accent()),
+    );
     let mut top = 1;
     if let Some(banner) = &view.banner {
-        put(buf, area, top, banner, Style::default().fg(Color::Yellow));
+        put(
+            buf,
+            area,
+            top,
+            banner,
+            themed(views, t::CRON_WARNING, crate::theme::legacy::cron_warning()),
+        );
         top += 1;
     }
     let question_height = view.question.as_ref().map_or(0, |text| {
@@ -72,9 +105,9 @@ pub fn draw_cron(view: &CronView, area: Rect, buf: &mut Buffer) {
     let body = Rect::new(area.x, area.y + top, area.width, bottom.saturating_sub(top));
     match &view.body {
         CronBody::Message(text) => put(buf, body, 0, text, Style::default()),
-        CronBody::List(view) => list::draw(view, body, buf),
-        CronBody::Detail(view) => detail::draw(view, body, buf),
-        CronBody::Form(view) => form::draw(view, body, buf),
+        CronBody::List(view) => list::draw(view, body, buf, views),
+        CronBody::Detail(view) => detail::draw(view, body, buf, views),
+        CronBody::Form(view) => form::draw(view, body, buf, views),
     }
     if let Some(notice) = &view.notice {
         put(
@@ -82,20 +115,33 @@ pub fn draw_cron(view: &CronView, area: Rect, buf: &mut Buffer) {
             area,
             bottom,
             notice,
-            Style::default().fg(Color::Yellow),
+            themed(views, t::CRON_WARNING, crate::theme::legacy::cron_warning()),
         );
     }
     if let Some(question) = &view.question {
         let clean = crate::history::sanitize(question);
         Paragraph::new(clean.as_ref())
             .wrap(Wrap { trim: true })
-            .style(Style::default().fg(Color::Yellow))
+            .style(themed(
+                views,
+                t::CRON_WARNING,
+                crate::theme::legacy::cron_warning(),
+            ))
             .render(
                 Rect::new(area.x, area.y + bottom + 1, area.width, question_height),
                 buf,
             );
     }
-    put(buf, area, area.height - 1, &view.hints, Style::default());
+    put(
+        buf,
+        area,
+        area.height - 1,
+        &view.hints,
+        themed(views, t::CRON_HINT, Style::default()),
+    );
+    if let Some(views) = views {
+        views.finish(area, buf, t::LIST_BACKGROUND, true);
+    }
 }
 
 fn clipped(text: &str, width: usize) -> String {

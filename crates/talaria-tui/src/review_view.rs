@@ -4,12 +4,12 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Widget};
 use talaria_core::review::{
-    BranchHead, ChangedFile, DiffContent, EditorView, FileStatus, LabelTone, PrLabel,
-    ReviewDecision, ReviewFocus, ReviewView, Scope,
+    BranchHead, ChangedFile, DiffContent, EditorView, FileStatus, PrLabel, ReviewDecision,
+    ReviewFocus, ReviewView, Scope,
 };
 
 use crate::diff_view::{DiffRenderOptions, diff_lines};
@@ -31,6 +31,27 @@ const LOADING: &str = "Loading changes\u{2026}";
 
 /// Draw the review into `buf`.
 pub fn draw_review(view: &ReviewView<'_>, theme: &ToolTheme, area: Rect, buf: &mut Buffer) {
+    draw_review_inner(view, theme, area, buf, None);
+}
+
+/// Draw a review with catalogue chrome.
+pub fn draw_review_themed(
+    view: &ReviewView<'_>,
+    theme: &ToolTheme,
+    area: Rect,
+    buf: &mut Buffer,
+    styles: &crate::theme::surfaces::ViewStyles,
+) {
+    draw_review_inner(view, theme, area, buf, Some(styles));
+}
+
+fn draw_review_inner(
+    view: &ReviewView<'_>,
+    theme: &ToolTheme,
+    area: Rect,
+    buf: &mut Buffer,
+    styles: Option<&crate::theme::surfaces::ViewStyles>,
+) {
     Clear.render(area, buf);
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         put(buf, area.x, area.y, TOO_SMALL, area.width, theme.meta);
@@ -82,7 +103,7 @@ pub fn draw_review(view: &ReviewView<'_>, theme: &ToolTheme, area: Rect, buf: &m
     }
     let tall = area.height >= SPLIT_HEIGHT;
     if *view.focus == ReviewFocus::DiffOnly && !tall {
-        draw_diff_panel(view, theme, body, buf);
+        draw_diff_panel(view, theme, body, buf, styles);
     } else if tall {
         let list_height = body.height / 2;
         let list = Rect::new(body.x, body.y, body.width, list_height);
@@ -93,7 +114,7 @@ pub fn draw_review(view: &ReviewView<'_>, theme: &ToolTheme, area: Rect, buf: &m
             body.height - list_height,
         );
         draw_list(view, theme, list, buf);
-        draw_diff_panel(view, theme, panel, buf);
+        draw_diff_panel(view, theme, panel, buf, styles);
     } else {
         draw_list(view, theme, body, buf);
     }
@@ -101,14 +122,20 @@ pub fn draw_review(view: &ReviewView<'_>, theme: &ToolTheme, area: Rect, buf: &m
 
 /// Draw one pull-request label, cut to `width` columns.
 pub fn draw_pr_label(label: &PrLabel, width: u16) -> Span<'static> {
-    let style = match label.tone {
-        LabelTone::Success => Style::default().fg(Color::Green),
-        LabelTone::Error => Style::default().fg(Color::Red),
-        LabelTone::Warning => Style::default().fg(Color::Yellow),
-        LabelTone::Muted => Style::default().add_modifier(Modifier::DIM),
-        LabelTone::Accent => Style::default().fg(Color::Magenta),
-    };
+    let style = crate::theme::legacy::pr_label_style(label.tone);
     Span::styled(cut_to(&label.text, usize::from(width)), style)
+}
+
+/// Draw a pull-request label with the catalogue palette.
+pub fn draw_pr_label_themed(
+    label: &PrLabel,
+    width: u16,
+    styles: &crate::theme::surfaces::ViewStyles,
+) -> Span<'static> {
+    Span::styled(
+        cut_to(&label.text, usize::from(width)),
+        styles.pr_label_style(label.tone),
+    )
 }
 
 /// Write `text` at the position, cut to `width` columns.
@@ -331,12 +358,19 @@ fn draw_list(view: &ReviewView<'_>, theme: &ToolTheme, area: Rect, buf: &mut Buf
     }
 }
 
-fn draw_diff_panel(view: &ReviewView<'_>, theme: &ToolTheme, area: Rect, buf: &mut Buffer) {
+fn draw_diff_panel(
+    view: &ReviewView<'_>,
+    theme: &ToolTheme,
+    area: Rect,
+    buf: &mut Buffer,
+    styles: Option<&crate::theme::surfaces::ViewStyles>,
+) {
     if area.height == 0 {
         return;
     }
     if let Some(file) = view.cursor.and_then(|index| view.files.get(index)) {
-        let rule = format!("\u{2500}\u{2500} {} \u{2500}\u{2500}", sanitize(&file.path));
+        let glyph = styles.map_or("\u{2500}", |styles| styles.divider_symbol("\u{2500}"));
+        let rule = format!("{glyph}{glyph} {} {glyph}{glyph}", sanitize(&file.path));
         put(buf, area.x, area.y, &rule, area.width, theme.meta);
     }
     let body = Rect::new(
@@ -446,7 +480,9 @@ fn draw_editor(editor: &EditorView<'_>, theme: &ToolTheme, area: Rect, buf: &mut
 
 #[cfg(test)]
 mod tests {
+    use ratatui::style::Color;
     use std::path::PathBuf;
+    use talaria_core::review::LabelTone;
 
     use talaria_core::review::{
         BranchHead, GitAction, Listing, RecordView, ReviewInput, ReviewKey, ReviewState,

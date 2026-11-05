@@ -4,13 +4,14 @@
 //! composer; the other fields are small single-line editors. Drawing goes into a ratatui
 //! buffer and never writes an escape sequence.
 
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -430,6 +431,15 @@ impl LaunchDialog {
 
     /// Draw the box into `area`.
     pub fn draw(&self, area: Rect, buf: &mut Buffer) {
+        self.draw_inner(area, buf, None);
+    }
+
+    /// Draw the dialog with resolved view styles.
+    pub fn draw_with_theme(&self, area: Rect, buf: &mut Buffer, views: &ViewStyles) {
+        self.draw_inner(area, buf, Some(views));
+    }
+
+    fn draw_inner(&self, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
         let area = area.intersection(buf.area);
         if area.is_empty() {
             return;
@@ -440,11 +450,26 @@ impl LaunchDialog {
             }
         }
         if area.width < 24 || area.height < 8 {
+            if let Some(v) = views {
+                v.finish(area, buf, t::DIALOG_BACKGROUND, true);
+            }
             return;
         }
-        let dim = Style::default().add_modifier(Modifier::DIM);
-        let marker = Style::default().add_modifier(Modifier::BOLD);
-        let red = Style::default().fg(Color::Red);
+        let dim = views.map_or(Style::default().add_modifier(Modifier::DIM), |v| {
+            v.style(
+                t::LAUNCH_SECONDARY,
+                Style::default().add_modifier(Modifier::DIM),
+            )
+        });
+        let marker = views.map_or(Style::default().add_modifier(Modifier::BOLD), |v| {
+            v.style(
+                t::LAUNCH_MARKER,
+                Style::default().add_modifier(Modifier::BOLD),
+            )
+        });
+        let red = views.map_or_else(crate::theme::legacy::launch_error, |v| {
+            v.style(t::LAUNCH_ERROR, crate::theme::legacy::launch_error())
+        });
         let right = area.right() - 1;
         let value_width = value_width(area.width);
         let interior = usize::from(area.width) - 2;
@@ -456,8 +481,13 @@ impl LaunchDialog {
         };
         let title = cut(title, interior.saturating_sub(4));
         let head = format!(
-            "╭─ {title} {}╮",
-            "─".repeat(interior.saturating_sub(3 + title.width()))
+            "{}{} {title} {}{}",
+            views.map_or("╭", |v| v.border_symbol("╭")),
+            views.map_or("─", |v| v.border_symbol("─")),
+            views
+                .map_or("─", |v| v.border_symbol("─"))
+                .repeat(interior.saturating_sub(3 + title.width())),
+            views.map_or("╮", |v| v.border_symbol("╮"))
         );
         buf.set_string(area.x, area.y, head, Style::default());
 
@@ -481,7 +511,7 @@ impl LaunchDialog {
         for offset in 0..shown {
             let index = first + offset;
             let label = if offset == 0 { "Prompt" } else { "" };
-            self.frame_row(buf, area, y, label, focused && offset == 0, marker);
+            self.frame_row(buf, area, y, label, focused && offset == 0, marker, views);
             let row = &rows[index];
             let caret = (focused && caret_row == index).then(|| self.prompt.caret());
             put_text(
@@ -499,7 +529,7 @@ impl LaunchDialog {
 
         // Profile.
         let focused = self.focus == Field::Profile && editable;
-        self.frame_row(buf, area, y, "Profile", focused, marker);
+        self.frame_row(buf, area, y, "Profile", focused, marker, views);
         let value_end = area.x + VALUE_OFFSET + value_width;
         let hint = if self.defaults.profiles.len() > 1 {
             Some(PROFILE_HINT.to_owned())
@@ -529,7 +559,7 @@ impl LaunchDialog {
 
         // Folder.
         let focused = self.focus == Field::Folder && editable;
-        self.frame_row(buf, area, y, "Folder", focused, marker);
+        self.frame_row(buf, area, y, "Folder", focused, marker, views);
         put_text(
             buf,
             area.x + VALUE_OFFSET,
@@ -544,7 +574,7 @@ impl LaunchDialog {
 
         // Model.
         let focused = self.focus == Field::Model && editable;
-        self.frame_row(buf, area, y, "Model", focused, marker);
+        self.frame_row(buf, area, y, "Model", focused, marker, views);
         if self.model.text.is_empty() {
             let caret = focused.then_some(0);
             put_text(
@@ -574,7 +604,7 @@ impl LaunchDialog {
         // Worktree name.
         if self.mode == DialogMode::Worktree {
             let focused = self.focus == Field::Worktree && editable;
-            self.frame_row(buf, area, y, "Worktree", focused, marker);
+            self.frame_row(buf, area, y, "Worktree", focused, marker, views);
             let (name, caret) = match &self.name {
                 Some(field) => (field.text.clone(), focused.then_some(field.caret)),
                 None => {
@@ -597,7 +627,7 @@ impl LaunchDialog {
         }
 
         // The line above the hints.
-        self.frame_row_blank(buf, area, y);
+        self.frame_row_blank(buf, area, y, views);
         let (line, style) = match &self.status {
             Some(Status::Invalid(text) | Status::Failed(text)) => (Some(text.as_str()), red),
             None => (None, Style::default()),
@@ -617,7 +647,7 @@ impl LaunchDialog {
         y += 1;
 
         // The hint line.
-        self.frame_row_blank(buf, area, y);
+        self.frame_row_blank(buf, area, y, views);
         let (line, style) = if let Some(progress) = &self.progress {
             let elapsed = progress.since.elapsed();
             let frame = usize::try_from(elapsed.as_millis() / 100).unwrap_or(0) % SPINNER.len();
@@ -646,11 +676,20 @@ impl LaunchDialog {
         y += 1;
 
         // The bottom edge.
-        let foot = format!("╰{}╯", "─".repeat(interior));
+        let foot = format!(
+            "{}{}{}",
+            views.map_or("╰", |v| v.border_symbol("╰")),
+            views.map_or("─", |v| v.border_symbol("─")).repeat(interior),
+            views.map_or("╯", |v| v.border_symbol("╯"))
+        );
         buf.set_string(area.x, y, foot, Style::default());
+        if let Some(v) = views {
+            v.finish(area, buf, t::DIALOG_BACKGROUND, true);
+        }
     }
 
     /// The border, the label and the marker of one field row. The value is drawn by the caller.
+    #[allow(clippy::too_many_arguments)]
     fn frame_row(
         &self,
         buf: &mut Buffer,
@@ -659,8 +698,9 @@ impl LaunchDialog {
         label: &str,
         focused: bool,
         mark: Style,
+        views: Option<&ViewStyles>,
     ) {
-        self.frame_row_blank(buf, area, y);
+        self.frame_row_blank(buf, area, y, views);
         buf.set_string(
             area.x + 2,
             y,
@@ -673,9 +713,19 @@ impl LaunchDialog {
     }
 
     /// The two side borders of a row.
-    fn frame_row_blank(&self, buf: &mut Buffer, area: Rect, y: u16) {
-        buf.set_string(area.x, y, "│", Style::default());
-        buf.set_string(area.right() - 1, y, "│", Style::default());
+    fn frame_row_blank(&self, buf: &mut Buffer, area: Rect, y: u16, views: Option<&ViewStyles>) {
+        buf.set_string(
+            area.x,
+            y,
+            views.map_or("│", |v| v.border_symbol("│")),
+            Style::default(),
+        );
+        buf.set_string(
+            area.right() - 1,
+            y,
+            views.map_or("│", |v| v.border_symbol("│")),
+            Style::default(),
+        );
     }
 
     /// The Prompt text wrapped to a box of this width, with one cell held for the caret.

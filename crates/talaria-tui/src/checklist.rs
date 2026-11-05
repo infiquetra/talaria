@@ -2,7 +2,7 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use talaria_core::checklist::{
     Checklist, ChecklistCommit, CommitKind, TodoItem, TodoStatus, TreeRow,
@@ -45,20 +45,7 @@ impl ChecklistStyle {
     /// The full-colour styles.
     #[allow(clippy::should_implement_trait)]
     pub fn default() -> ChecklistStyle {
-        ChecklistStyle {
-            header: Style::default().add_modifier(Modifier::BOLD),
-            hint: Style::default().add_modifier(Modifier::DIM),
-            in_progress: Style::default().add_modifier(Modifier::BOLD),
-            pending: Style::default(),
-            completed: Style::default().add_modifier(Modifier::DIM),
-            cancelled: Style::default().add_modifier(Modifier::DIM),
-            glyph_in_progress: Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-            glyph_completed: Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::DIM),
-        }
+        crate::theme::legacy::checklist_style()
     }
 
     /// Bold and dim kept, every colour dropped.
@@ -86,6 +73,15 @@ pub struct ChecklistSection<'a> {
 }
 
 impl<'a> ChecklistSection<'a> {
+    /// Use resolved styles without changing the section's row budget or state.
+    pub fn render_with_style(&self, area: Rect, buf: &mut Buffer, style: &ChecklistStyle) {
+        ChecklistSection {
+            style,
+            hint: self.hint.clone(),
+            ..*self
+        }
+        .render(area, buf);
+    }
     /// Show this list in this form with this row budget.
     pub fn new(
         checklist: &'a Checklist,

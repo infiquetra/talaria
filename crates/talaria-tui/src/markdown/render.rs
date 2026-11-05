@@ -1,3 +1,4 @@
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -63,6 +64,7 @@ pub(crate) fn render(
     text: &str,
     options: &MarkdownOptions,
     cache: &mut CodeCache,
+    views: &ViewStyles,
 ) -> Vec<Line<'static>> {
     cache.begin_render();
     let parser = Parser::new_ext(
@@ -70,7 +72,12 @@ pub(crate) fn render(
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS,
     );
     let document = nodes(&mut parser.into_iter(), 0);
-    Renderer { options, cache }.sequence(
+    Renderer {
+        options,
+        cache,
+        views,
+    }
+    .sequence(
         &document,
         usize::from(options.width.max(8)),
         0,
@@ -81,12 +88,20 @@ pub(crate) fn render(
 struct Renderer<'a> {
     options: &'a MarkdownOptions,
     cache: &'a mut CodeCache,
+    views: &'a ViewStyles,
 }
 
 impl Renderer<'_> {
     fn style(&self, local: Style) -> Style {
-        let mut style = self.options.base_style.patch(local);
-        if !self.options.color {
+        let mut style = self
+            .views
+            .inline(t::TRANSCRIPT_TEXT, Style::default())
+            .patch(self.options.base_style)
+            .patch(local);
+        if self.views.active() {
+            style.bg = None;
+        }
+        if !self.options.color || (self.views.active() && !self.views.color()) {
             style.fg = None;
             style.bg = None;
             style.underline_color = None;
@@ -185,7 +200,7 @@ impl Renderer<'_> {
                         width,
                     ));
                 }
-                for line in self.cache.render(info, &text) {
+                for line in self.cache.render(info, &text, self.views) {
                     let spans = line
                         .spans
                         .into_iter()

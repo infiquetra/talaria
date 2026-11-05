@@ -6969,3 +6969,27 @@ The menu key tests and the running-turn layout test distinguish closing a dropdo
 returning focus; neither operation should reach the turn interrupt action.
 
 Rule: route focused menu input before composer and turn controls.
+
+## 2026-11-05 — Preserve the legacy empty NO_COLOR exception
+
+The `rewind_theme` call in `crates/talaria-cli/src/run.rs` uses
+`std::env::var_os("NO_COLOR").is_none()`. An empty variable therefore disables the original
+rewind colours. The `depth` function in `crates/talaria-tui/src/theme/detect.rs` checks for a
+non-empty `NO_COLOR`, so an empty variable does not disable other views. The frozen
+`view_colours_default::rewind_palette_follows_the_legacy_no_color_rule` check captures the
+original coloured palette and its bold-warning/plain-accent alternative. A selected theme
+file instead takes the resolved depth constraint consistently across all views.
+
+Rule: preserve a documented compatibility exception on the no-file path; normalising it
+requires a separate behaviour decision.
+
+## Theme coverage includes unstyled spans and decoration sites
+
+The colour sweep found raw spans in command replies, background output, shell output and
+context check marks that remained at terminal defaults after the semantic palette fields
+were mapped. The frozen themed-view checks exercise those cells as well as independent
+element overrides. The source inventory also found escaped composer glyphs and frames in
+shared picker/fleet modules, beyond a literal-glyph search of the original view list.
+
+Rule: apply a view's ordinary text style to raw spans, pass chrome at its drawing site, and
+keep Markdown content glyphs outside decoration transforms.

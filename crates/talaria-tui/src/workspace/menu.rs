@@ -2,6 +2,7 @@
 //!
 //! Drawing and key handling live here. The layout rules stay in the core crate.
 
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -270,8 +271,17 @@ impl MenuState {
 
     /// Paint the menu into `area`. The first row is the headings.
     pub fn draw(&self, area: Rect, buffer: &mut Buffer) {
+        self.draw_with_theme(area, buffer, &ViewStyles::default());
+    }
+
+    /// Draw the menu's row and open dropdown using an explicit palette.
+    pub fn draw_with_theme(&self, area: Rect, buffer: &mut Buffer, views: &ViewStyles) {
         if !self.visible || area.is_empty() {
             return;
+        }
+        let row = Rect::new(area.x, area.y, area.width, 1);
+        if views.active() {
+            buffer.set_style(row, views.style(t::MENU_BACKGROUND, Style::default()));
         }
         let heading = if area.width < 60 {
             "Talaria   Menu"
@@ -283,8 +293,17 @@ impl MenuState {
             area.y,
             heading,
             usize::from(area.width),
-            Style::default(),
+            views.style(t::MENU_ITEM, Style::default()),
         );
+        if views.active() {
+            buffer.set_stringn(
+                area.x,
+                area.y,
+                "Talaria",
+                usize::from(area.width),
+                views.style(t::MENU_BRAND, Style::default()),
+            );
+        }
         if self.focused {
             let name = if area.width < 60 {
                 "Menu"
@@ -292,12 +311,29 @@ impl MenuState {
                 HEADINGS[self.menu_index.min(5)]
             };
             if let Some(start) = heading.find(name) {
+                let mut focused = views.style(
+                    t::MENU_ITEM_FOCUSED,
+                    Style::default().add_modifier(Modifier::REVERSED),
+                );
+                let style = if views.active() {
+                    // A heading keeps the bar's item colours. Focus contributes
+                    // attributes while the dropdown owns selected-row colours.
+                    focused.fg = None;
+                    focused.bg = None;
+                    focused.underline_color = None;
+                    views
+                        .style(t::MENU_ITEM, Style::default())
+                        .patch(focused)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    focused
+                };
                 buffer.set_stringn(
                     area.x + start as u16,
                     area.y,
                     name,
                     usize::from(area.width.saturating_sub(start as u16)),
-                    Style::default().add_modifier(Modifier::REVERSED),
+                    style,
                 );
             }
         }
@@ -338,10 +374,24 @@ impl MenuState {
                     if item.enabled { "" } else { " (disabled)" }
                 )
             };
-            let style = if self.focused && index == self.item_index {
+            let style = if !item.enabled {
+                views.style(t::MENU_DROPDOWN_DISABLED, Style::default())
+            } else if self.focused && index == self.item_index {
+                views.style(
+                    t::MENU_DROPDOWN_SELECTED,
+                    Style::default().add_modifier(Modifier::REVERSED),
+                )
+            } else {
+                views.style(t::MENU_DROPDOWN_ITEM, Style::default())
+            };
+            let style = if views.active() {
+                views
+                    .style(t::MENU_DROPDOWN_BACKGROUND, Style::default())
+                    .patch(style)
+            } else if self.focused && index == self.item_index {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
-                Style::default()
+                style
             };
             buffer.set_stringn(
                 x,

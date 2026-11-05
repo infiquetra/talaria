@@ -5,6 +5,7 @@ use talaria_core::models::PickerView;
 
 use super::{PickerLayout, PickerMode, paint};
 use crate::history::{sanitize, split_lines, wrap_lines};
+use crate::theme::surfaces::ViewStyles;
 
 fn wrapped(view: &PickerView<'_>, width: u16) -> Vec<Line<'static>> {
     let details = view.browse.map(|browse| browse.details).unwrap_or(&[]);
@@ -49,7 +50,12 @@ pub(super) fn draw_wrapped(text: &str, area: Rect, buffer: &mut Buffer) {
     }
 }
 
-pub(super) fn draw_summary(view: &PickerView<'_>, layout: &PickerLayout, buffer: &mut Buffer) {
+pub(super) fn draw_summary(
+    view: &PickerView<'_>,
+    layout: &PickerLayout,
+    buffer: &mut Buffer,
+    views: Option<&ViewStyles>,
+) {
     if layout.mode == PickerMode::Compact {
         if let Some(banner) = view.banner.filter(|_| !view.rows.is_empty()) {
             let start = layout.list.y
@@ -75,7 +81,12 @@ pub(super) fn draw_summary(view: &PickerView<'_>, layout: &PickerLayout, buffer:
     }
     if layout.mode == PickerMode::Side {
         for y in area.y..area.bottom() {
-            paint("│", Rect::new(area.x, y, 1, 1), Style::default(), buffer);
+            paint(
+                views.map_or("│", |v| v.divider_symbol("│")),
+                Rect::new(area.x, y, 1, 1),
+                Style::default(),
+                buffer,
+            );
         }
         area.x += 1;
         area.width = area.width.saturating_sub(1);
@@ -84,7 +95,9 @@ pub(super) fn draw_summary(view: &PickerView<'_>, layout: &PickerLayout, buffer:
         paint(
             &format!(
                 "Details{}",
-                "─".repeat(usize::from(area.width.saturating_sub(7)))
+                views
+                    .map_or("─", |v| v.divider_symbol("─"))
+                    .repeat(usize::from(area.width.saturating_sub(7)))
             ),
             area,
             Style::default().bold(),

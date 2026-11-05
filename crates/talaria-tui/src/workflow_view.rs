@@ -3,7 +3,7 @@ use crate::history::sanitize;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::Line,
     widgets::{Block, Paragraph, Widget},
 };
@@ -22,12 +22,7 @@ pub struct WorkflowTheme {
 }
 impl Default for WorkflowTheme {
     fn default() -> Self {
-        Self {
-            normal: Style::default(),
-            selected: Style::default().bg(Color::DarkGray),
-            muted: Style::default().fg(Color::Gray),
-            warning: Style::default().fg(Color::Yellow),
-        }
+        crate::theme::legacy::workflow_theme()
     }
 }
 pub struct WorkflowView;
@@ -38,7 +33,25 @@ impl WorkflowView {
         picker: &talaria_workflow::runner::ProgressPicker,
         theme: &WorkflowTheme,
     ) {
-        let block = Block::bordered().title("Workflows").style(theme.normal);
+        Self::render_picker_inner(area, buf, picker, theme, None);
+    }
+    pub fn render_picker_themed(
+        area: Rect,
+        buf: &mut ratatui::buffer::Buffer,
+        picker: &talaria_workflow::runner::ProgressPicker,
+        theme: &WorkflowTheme,
+        styles: &crate::theme::surfaces::ViewStyles,
+    ) {
+        Self::render_picker_inner(area, buf, picker, theme, Some(styles));
+    }
+    fn render_picker_inner(
+        area: Rect,
+        buf: &mut ratatui::buffer::Buffer,
+        picker: &talaria_workflow::runner::ProgressPicker,
+        theme: &WorkflowTheme,
+        styles: Option<&crate::theme::surfaces::ViewStyles>,
+    ) {
+        let block = workflow_block(theme, styles);
         let inner = block.inner(area);
         block.render(area, buf);
         if let Some(message) = picker.empty_message() {
@@ -94,7 +107,25 @@ impl WorkflowView {
         state: &ProgressState,
         theme: &WorkflowTheme,
     ) {
-        let block = Block::bordered().title("Workflows").style(theme.normal);
+        Self::render_inner(area, buf, state, theme, None);
+    }
+    pub fn render_themed(
+        area: Rect,
+        buf: &mut ratatui::buffer::Buffer,
+        state: &ProgressState,
+        theme: &WorkflowTheme,
+        styles: &crate::theme::surfaces::ViewStyles,
+    ) {
+        Self::render_inner(area, buf, state, theme, Some(styles));
+    }
+    fn render_inner(
+        area: Rect,
+        buf: &mut ratatui::buffer::Buffer,
+        state: &ProgressState,
+        theme: &WorkflowTheme,
+        styles: Option<&crate::theme::surfaces::ViewStyles>,
+    ) {
+        let block = workflow_block(theme, styles);
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.height == 0 || inner.width == 0 {
@@ -404,4 +435,25 @@ pub fn key_input(
             _ => return None,
         },
     )
+}
+
+fn workflow_block<'a>(
+    theme: &WorkflowTheme,
+    styles: Option<&'a crate::theme::surfaces::ViewStyles>,
+) -> Block<'a> {
+    let mut block = Block::bordered().title("Workflows").style(theme.normal);
+    if let Some(styles) = styles {
+        let symbol = |s| styles.border_symbol(s);
+        block = block.border_set(ratatui::symbols::border::Set {
+            top_left: symbol("┌"),
+            top_right: symbol("┐"),
+            bottom_left: symbol("└"),
+            bottom_right: symbol("┘"),
+            vertical_left: symbol("│"),
+            vertical_right: symbol("│"),
+            horizontal_top: symbol("─"),
+            horizontal_bottom: symbol("─"),
+        });
+    }
+    block
 }

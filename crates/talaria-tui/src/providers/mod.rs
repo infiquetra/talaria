@@ -18,7 +18,10 @@ use ratatui::{
 use talaria_core::models::{BrowseCounts, BrowseView, ListScope, PickerRow, PickerView, RowKey};
 use talaria_core::providers::{CardKind, ProvidersTab, ProvidersView};
 
-use crate::picker_frame::{FrameLabels, draw_picker_frame_with_labels};
+use crate::picker_frame::{
+    FrameLabels, draw_picker_frame_with_labels, draw_picker_frame_with_labels_and_theme,
+};
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 fn safe(text: &str) -> String {
     crate::history::sanitize(text).into_owned()
@@ -34,19 +37,51 @@ fn mask(len: usize) -> String {
 
 /// Draw the providers overlay without exposing the secret value.
 pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: &mut Buffer) {
+    draw_providers_inner(view, secret_len, area, buf, None);
+}
+
+/// Draw providers with resolved view styles.
+pub fn draw_providers_with_theme(
+    view: &ProvidersView,
+    secret_len: usize,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
+    draw_providers_inner(view, secret_len, area, buf, Some(views));
+}
+
+fn draw_providers_inner(
+    view: &ProvidersView,
+    secret_len: usize,
+    area: Rect,
+    buf: &mut Buffer,
+    views: Option<&ViewStyles>,
+) {
     let area = area.intersection(buf.area);
     Clear.render(area, buf);
     if area.width == 0 || area.height == 0 {
         return;
     }
     if view.card.is_none() {
-        draw_browse(view, area, buf);
+        draw_browse(view, area, buf, views);
+        if let Some(v) = views {
+            v.finish(area, buf, t::LIST_BACKGROUND, true);
+        }
         return;
     }
-    let outer = Block::bordered().title(safe(&view.title));
+    let mut outer = Block::bordered().title(safe(&view.title));
+    if let Some(v) = views {
+        outer = outer
+            .border_set(border_set(v))
+            .title_style(v.style(t::PROVIDERS_TITLE, Style::default()));
+    }
     let inner = outer.inner(area);
     outer.render(area, buf);
     if inner.is_empty() {
+        if let Some(v) = views {
+            v.finish(area, buf, t::DIALOG_BACKGROUND, true);
+        }
         return;
     }
     if let Some(card) = &view.card {
@@ -95,10 +130,13 @@ pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: 
             height,
         );
         Clear.render(rect, buf);
-        let block = Block::default()
+        let mut block = Block::default()
             .title(title)
             .borders(Borders::ALL)
             .style(Style::default().add_modifier(Modifier::BOLD));
+        if let Some(v) = views {
+            block = block.border_set(border_set(v));
+        }
         let content = block.inner(rect);
         block.render(rect, buf);
         if content.height > 0 {
@@ -135,9 +173,25 @@ pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: 
             );
         }
     }
+    if let Some(v) = views {
+        v.finish(area, buf, t::DIALOG_BACKGROUND, true);
+    }
 }
 
-fn draw_browse(view: &ProvidersView, area: Rect, buf: &mut Buffer) {
+fn border_set(views: &ViewStyles) -> ratatui::symbols::border::Set<'_> {
+    ratatui::symbols::border::Set {
+        top_left: views.border_symbol("┌"),
+        top_right: views.border_symbol("┐"),
+        bottom_left: views.border_symbol("└"),
+        bottom_right: views.border_symbol("┘"),
+        vertical_left: views.border_symbol("│"),
+        vertical_right: views.border_symbol("│"),
+        horizontal_top: views.border_symbol("─"),
+        horizontal_bottom: views.border_symbol("─"),
+    }
+}
+
+fn draw_browse(view: &ProvidersView, area: Rect, buf: &mut Buffer, views: Option<&ViewStyles>) {
     let scope = match view.tab {
         ProvidersTab::All => "All",
         ProvidersTab::Keys => "Keys",
@@ -223,14 +277,14 @@ fn draw_browse(view: &ProvidersView, area: Rect, buf: &mut Buffer) {
         selected,
         banner: (!banner.is_empty()).then_some(banner.as_str()),
     };
-    draw_picker_frame_with_labels(
-        &picker,
-        FrameLabels {
-            scope,
-            scopes: &["All", "Keys", "Accounts", "Endpoints"],
-            count: &count,
-        },
-        area,
-        buf,
-    );
+    let labels = FrameLabels {
+        scope,
+        scopes: &["All", "Keys", "Accounts", "Endpoints"],
+        count: &count,
+    };
+    if let Some(views) = views {
+        draw_picker_frame_with_labels_and_theme(&picker, labels, area, buf, views);
+    } else {
+        draw_picker_frame_with_labels(&picker, labels, area, buf);
+    }
 }

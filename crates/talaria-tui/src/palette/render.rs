@@ -7,13 +7,14 @@ use std::ops::Range;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use talaria_core::commands::{CommandSource, PaletteRow, PaletteState, RowKind};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::PaletteSection;
 use crate::live::LiveSection;
 use crate::markdown::sanitize_untrusted;
+use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 /// Selectable rows the window may hold.
 const MAX_SELECTABLE: usize = 8;
@@ -33,6 +34,25 @@ const KEY_HINT: &str =
 
 /// The draw used by [`LiveSection::render`]. Issue #223.
 pub fn render_palette(section: &PaletteSection, area: Rect, buf: &mut Buffer) {
+    render_palette_inner(section, area, buf, section.views.as_ref());
+}
+
+/// Draw the palette using the resolved view styles.
+pub fn render_palette_with_theme(
+    section: &PaletteSection,
+    area: Rect,
+    buf: &mut Buffer,
+    views: &ViewStyles,
+) {
+    render_palette_inner(section, area, buf, Some(views));
+}
+
+fn render_palette_inner(
+    section: &PaletteSection,
+    area: Rect,
+    buf: &mut Buffer,
+    views: Option<&ViewStyles>,
+) {
     let state = section.state();
     let height = palette_height(state, section.terminal_rows());
     let lines = height.min(area.height);
@@ -51,7 +71,7 @@ pub fn render_palette(section: &PaletteSection, area: Rect, buf: &mut Buffer) {
     for (offset, index) in window.take(list_lines).enumerate() {
         let y = area.y + u16::try_from(offset).unwrap_or(0);
         let row = &state.rows[index];
-        draw_row(buf, area, y, row, name_column);
+        draw_row(buf, area, y, row, name_column, views);
         if index == state.selected && row.kind == RowKind::Command {
             buf.set_style(
                 Rect::new(area.x, y, area.width, 1),
@@ -60,6 +80,9 @@ pub fn render_palette(section: &PaletteSection, area: Rect, buf: &mut Buffer) {
         }
     }
     draw_footer(buf, area, area.y + lines - 1, state);
+    if let Some(views) = views {
+        views.finish(area, buf, t::LIST_ROW, false);
+    }
 }
 
 impl LiveSection for PaletteSection {
@@ -127,7 +150,14 @@ fn name_column(rows: &[PaletteRow], width: u16) -> usize {
         .min(usize::from(width).saturating_sub(2))
 }
 
-fn draw_row(buf: &mut Buffer, area: Rect, y: u16, row: &PaletteRow, name_column: usize) {
+fn draw_row(
+    buf: &mut Buffer,
+    area: Rect,
+    y: u16,
+    row: &PaletteRow,
+    name_column: usize,
+    views: Option<&ViewStyles>,
+) {
     let width = usize::from(area.width);
     let text_width = width.saturating_sub(2);
     let x = area.x.saturating_add(2);
@@ -142,11 +172,18 @@ fn draw_row(buf: &mut Buffer, area: Rect, y: u16, row: &PaletteRow, name_column:
             let text = fit(&clean(&row.name), text_width);
             buf.set_stringn(x, y, &text, text_width, style);
         }
-        RowKind::Command => draw_command(buf, area, y, row, name_column),
+        RowKind::Command => draw_command(buf, area, y, row, name_column, views),
     }
 }
 
-fn draw_command(buf: &mut Buffer, area: Rect, y: u16, row: &PaletteRow, name_column: usize) {
+fn draw_command(
+    buf: &mut Buffer,
+    area: Rect,
+    y: u16,
+    row: &PaletteRow,
+    name_column: usize,
+    views: Option<&ViewStyles>,
+) {
     let width = usize::from(area.width);
     let name = fit(&clean(&row.name), name_column);
     buf.set_stringn(
@@ -158,7 +195,7 @@ fn draw_command(buf: &mut Buffer, area: Rect, y: u16, row: &PaletteRow, name_col
     );
 
     let tag = if area.width >= TAG_MIN_WIDTH {
-        tag_for(row)
+        tag_for(row, views)
     } else {
         None
     };
@@ -186,13 +223,18 @@ fn draw_command(buf: &mut Buffer, area: Rect, y: u16, row: &PaletteRow, name_col
 }
 
 /// The tag text and style of a command row. An argument item has no source and no tag.
-fn tag_for(row: &PaletteRow) -> Option<(&str, Style)> {
+fn tag_for<'a>(row: &'a PaletteRow, views: Option<&ViewStyles>) -> Option<(&'a str, Style)> {
     let dim = Style::new().add_modifier(Modifier::DIM);
     if row.refused {
         return Some((REFUSED_TAG, dim));
     }
     match row.source.as_ref()? {
-        CommandSource::Talaria => Some(("talaria", Style::new().fg(Color::Cyan))),
+        CommandSource::Talaria => Some((
+            "talaria",
+            views.map_or_else(crate::theme::legacy::palette_origin, |v| {
+                v.inline(t::PALETTE_ORIGIN, crate::theme::legacy::palette_origin())
+            }),
+        )),
         other => Some((other.tag(), dim)),
     }
 }
