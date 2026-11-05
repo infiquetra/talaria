@@ -9,11 +9,13 @@ pub enum SpeechRender {
     Digest,
 }
 
-/// The starting render. Empty until `digest` is recognised.
+/// The starting render; an absent or unknown value retains the existing form.
 #[must_use]
 pub fn speech_render(value: Option<&str>) -> SpeechRender {
-    let _ = value;
-    SpeechRender::Strip
+    match value {
+        Some("digest") => SpeechRender::Digest,
+        _ => SpeechRender::Strip,
+    }
 }
 
 /// One sentence ready for playback.
@@ -27,18 +29,326 @@ pub struct SpeechChunk {
     pub text: String,
 }
 
-/// A deterministic digest. Empty until the summary exists.
+/// Extract a bounded structural digest without interpreting code or test tables.
 #[must_use]
 pub fn digest_text(markdown: &str, max_chars: usize) -> Option<String> {
-    let _ = (markdown, max_chars);
-    None
+    let mut digest = Digest::default();
+    let lines: Vec<_> = markdown.lines().collect();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        if let Some((marker, count)) = fence(container_line(line)) {
+            digest.code_blocks += 1;
+            let language = container_line(line)
+                .trim_start()
+                .chars()
+                .skip(count)
+                .collect::<String>();
+            let is_diff = matches!(language.trim(), "diff" | "patch");
+            digest.diffs += usize::from(is_diff);
+            index += 1;
+            while index < lines.len() && !closes_fence(lines[index], marker, count) {
+                if is_diff {
+                    digest.diff_path(lines[index]);
+                }
+                index += 1;
+            }
+            index += usize::from(index < lines.len());
+        } else if line.starts_with("    ") || line.starts_with('\t') {
+            digest.code_blocks += 1;
+            index += 1;
+            while index < lines.len()
+                && (lines[index].starts_with("    ") || lines[index].starts_with('\t'))
+            {
+                index += 1;
+            }
+        } else if line.starts_with("diff --git ")
+            || (line.starts_with("--- ")
+                && lines
+                    .get(index + 1)
+                    .is_some_and(|line| line.starts_with("+++ ")))
+        {
+            digest.diffs += 1;
+            while index < lines.len() && !lines[index].trim().is_empty() {
+                digest.diff_path(lines[index]);
+                index += 1;
+            }
+        } else if index + 1 < lines.len() && line.contains('|') && table_delimiter(lines[index + 1])
+        {
+            digest.tables += 1;
+            index += 2;
+            while index < lines.len()
+                && !lines[index].trim().is_empty()
+                && lines[index].contains('|')
+            {
+                digest.table_rows += 1;
+                index += 1;
+            }
+        } else {
+            digest.prose(line);
+            index += 1;
+        }
+    }
+    let mut sentences = Vec::new();
+    if let Some(result) = digest.result {
+        sentences.push(result);
+    }
+    sentences.extend(digest.headings);
+    sentences.extend(digest.bullets);
+    sentences.extend(digest.questions);
+    for (count, singular, plural) in [
+        (digest.code_blocks, "code block", "code blocks"),
+        (digest.diffs, "diff", "diffs"),
+        (digest.paths.len(), "diff path", "diff paths"),
+        (digest.tables, "table", "tables"),
+        (digest.table_rows, "table row", "table rows"),
+    ] {
+        if count > 0 {
+            sentences.push(format!(
+                "{count} {}.",
+                if count == 1 { singular } else { plural }
+            ));
+        }
+    }
+    if digest.code_blocks + digest.diffs + digest.tables > 0 {
+        sentences.push("Review it in the terminal.".to_owned());
+    }
+    let mut output = String::new();
+    for sentence in sentences {
+        // Every candidate is complete; an oversized candidate is never sliced.
+        let length =
+            output.chars().count() + usize::from(!output.is_empty()) + sentence.chars().count();
+        if length > max_chars {
+            break;
+        }
+        if !output.is_empty() {
+            output.push(' ');
+        }
+        output.push_str(&sentence);
+    }
+    (!output.is_empty()).then_some(output)
 }
 
-/// Split completed prose into sentences. Empty until chunking exists.
+/// Split completed prose into sentences, excluding fenced and indented code.
 #[must_use]
 pub fn sentence_chunks(text: &str, audio_epoch: u64) -> Vec<SpeechChunk> {
-    let _ = (text, audio_epoch);
-    Vec::new()
+    let mut prose = String::new();
+    let mut open = None;
+    for line in text.lines() {
+        if let Some((marker, count)) = open {
+            if closes_fence(line, marker, count) {
+                open = None;
+            }
+        } else if let Some(found) = fence(container_line(line)) {
+            open = Some(found);
+            prose.push('\n');
+        } else if !line.starts_with("    ") && !line.starts_with('\t') {
+            prose.push_str(line);
+            prose.push('\n');
+        }
+    }
+    sentences(&prose)
+        .into_iter()
+        .enumerate()
+        .map(|(seq, text)| SpeechChunk {
+            audio_epoch,
+            seq: seq as u64,
+            text,
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct Digest {
+    result: Option<String>,
+    headings: Vec<String>,
+    bullets: Vec<String>,
+    questions: Vec<String>,
+    code_blocks: usize,
+    diffs: usize,
+    paths: std::collections::BTreeSet<String>,
+    tables: usize,
+    table_rows: usize,
+}
+
+impl Digest {
+    fn diff_path(&mut self, line: &str) {
+        if let Some(path) = line
+            .strip_prefix("+++ ")
+            .or_else(|| line.strip_prefix("--- "))
+        {
+            let path = path.split_whitespace().next().unwrap_or_default();
+            let path = path
+                .strip_prefix("a/")
+                .or_else(|| path.strip_prefix("b/"))
+                .unwrap_or(path);
+            if !path.is_empty() && path != "/dev/null" {
+                self.paths.insert(path.to_owned());
+            }
+        }
+    }
+
+    fn prose(&mut self, line: &str) {
+        if reference_definition(line) || horizontal_rule(line) {
+            return;
+        }
+        let trimmed = line.trim_start();
+        let heading = trimmed.starts_with('#') && strip_line_marker(line) != trimmed;
+        let bullet = !heading && strip_line_marker(line) != trimmed;
+        let clean = digest_inline(strip_line_marker(line));
+        if !clean.chars().any(char::is_alphanumeric) {
+            return;
+        }
+        for sentence in sentences(&clean) {
+            let sentence = finish_sentence(sentence);
+            if sentence.ends_with('?') {
+                push_unique(&mut self.questions, sentence);
+            } else if heading {
+                push_unique(&mut self.headings, sentence);
+            } else if explicit_result(&sentence) {
+                if bullet {
+                    push_unique(&mut self.bullets, sentence);
+                } else if self.result.is_none() {
+                    self.result = Some(sentence);
+                }
+            }
+        }
+    }
+}
+
+fn push_unique(items: &mut Vec<String>, sentence: String) {
+    if items.len() < 3 && !items.contains(&sentence) {
+        items.push(sentence);
+    }
+}
+
+fn explicit_result(sentence: &str) -> bool {
+    let lower = sentence.to_lowercase();
+    let first = lower
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(|ch: char| !ch.is_alphabetic());
+    matches!(
+        first,
+        "done"
+            | "shipped"
+            | "fixed"
+            | "added"
+            | "updated"
+            | "implemented"
+            | "removed"
+            | "changed"
+            | "completed"
+            | "verified"
+            | "resolved"
+    ) || lower.contains(" is done")
+        || lower.contains(" are done")
+        || lower.contains(" is fixed")
+        || lower.contains(" is complete")
+        || lower.starts_with("result:")
+        || lower.starts_with("test result:")
+        || lower.starts_with("tests passed")
+        || lower.starts_with("tests failed")
+        || lower.starts_with("all tests pass")
+        || lower.starts_with("validation:")
+        || lower.starts_with("checks:")
+}
+
+fn closes_fence(line: &str, marker: char, count: usize) -> bool {
+    let line = container_line(line);
+    fence(line).is_some_and(|(found, length)| {
+        found == marker
+            && length >= count
+            && line
+                .trim_start()
+                .chars()
+                .skip(length)
+                .all(char::is_whitespace)
+    })
+}
+
+fn container_line(mut line: &str) -> &str {
+    // A quoted or list-nested fence still protects the entire code body.
+    while let Some(quoted) = line.trim_start().strip_prefix('>') {
+        line = quoted.strip_prefix(' ').unwrap_or(quoted);
+    }
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with('#') {
+        let stripped = strip_line_marker(line);
+        if stripped != trimmed {
+            return stripped;
+        }
+    }
+    line
+}
+
+fn digest_inline(line: &str) -> String {
+    // Inline code is content present, never a claim or prose to read aloud.
+    let mut without_code = String::new();
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            let mut width = 1;
+            while chars.peek() == Some(&'`') {
+                chars.next();
+                width += 1;
+            }
+            let mut run = 0;
+            for inner in chars.by_ref() {
+                run = if inner == '`' { run + 1 } else { 0 };
+                if run == width {
+                    break;
+                }
+            }
+            without_code.push(' ');
+        } else if !ch.is_control() {
+            without_code.push(ch);
+        }
+    }
+    inline_text(&without_code)
+        .split_whitespace()
+        .filter(|word| {
+            let lower = word.to_lowercase();
+            !word.contains("://")
+                && !lower.contains("www.")
+                && !lower.contains("mailto:")
+                && !lower.contains("tel:")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn finish_sentence(mut sentence: String) -> String {
+    if !sentence.ends_with(['.', '!', '?', '。', '！', '？']) {
+        sentence.push('.');
+    }
+    sentence
+}
+
+fn sentences(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut result = Vec::new();
+    let mut start = 0;
+    for (index, ch) in chars.iter().enumerate() {
+        let terminal = matches!(ch, '.' | '!' | '?' | '。' | '！' | '？');
+        let boundary = chars.get(index + 1).is_none_or(|next| next.is_whitespace())
+            || matches!(ch, '。' | '！' | '？');
+        if terminal && boundary {
+            let sentence = chars[start..=index].iter().collect::<String>();
+            let sentence = sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+            if sentence.chars().any(char::is_alphanumeric) {
+                result.push(sentence);
+            }
+            start = index + 1;
+        }
+    }
+    let tail = chars[start..].iter().collect::<String>();
+    let tail = tail.split_whitespace().collect::<Vec<_>>().join(" ");
+    if tail.chars().any(char::is_alphanumeric) {
+        result.push(tail);
+    }
+    result
 }
 
 /// Spoken form of `markdown`, or nothing when no letter or digit remains.
@@ -313,7 +623,108 @@ fn matching_close(chars: &[char], start: usize, open: char) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::speakable_text;
+    use super::{digest_text, sentence_chunks, speakable_text};
+
+    #[test]
+    fn digest_counts_content_without_claiming_edits_or_test_success() {
+        let markdown = "I will investigate.\n\nFixed the display.\n\n\
+```diff\n--- a/private.rs\n+++ b/private.rs\n-OLD_BODY\n+NEW_BODY\n```\n\
+| Suite | Result |\n| --- | --- |\n| core | passed |\n| app | failed |";
+        assert_eq!(
+            digest_text(markdown, 1500).as_deref(),
+            Some(
+                "Fixed the display. 1 code block. 1 diff. 1 diff path. 1 table. 2 table rows. Review it in the terminal."
+            )
+        );
+        assert_eq!(
+            digest_text("Tests passed: 12 checks.", 1500).as_deref(),
+            Some("Tests passed: 12 checks.")
+        );
+        assert_eq!(digest_text("I will run the tests.", 1500), None);
+    }
+
+    #[test]
+    fn digest_bounds_structural_items_and_omits_inline_code_and_urls() {
+        let markdown = "Updated `SECRET_COMMAND` and [the notes](https://host/secret).\n\
+## First\n## Second\n## Third\n## Fourth\n\
+- Fixed one.\n- Fixed two.\n- Fixed three.\n- Fixed four.\n\
+Is this ready?\nShould I proceed?\nWould you review?\nCan I finish?\n\
+## Visit ftp://host/private\n## Visit www.host/private";
+        let spoken = digest_text(markdown, 1500).expect("structural summary");
+        assert!(spoken.starts_with("Updated and the notes."), "{spoken}");
+        for omitted in [
+            "SECRET_COMMAND",
+            "host",
+            "private",
+            "Fourth",
+            "four",
+            "Can I finish",
+        ] {
+            assert!(!spoken.contains(omitted), "{spoken}");
+        }
+        assert!(spoken.contains("Fixed three."), "{spoken}");
+        assert!(spoken.contains("Would you review?"), "{spoken}");
+    }
+
+    #[test]
+    fn digest_limits_count_unicode_characters_and_never_cut_sentences() {
+        let markdown = "Fixed café.\n## Grüße\nShould I proceed?";
+        let full = digest_text(markdown, 1500).expect("digest");
+        for max_chars in 0..full.chars().count() + 2 {
+            if let Some(spoken) = digest_text(markdown, max_chars) {
+                assert!(spoken.chars().count() <= max_chars, "{max_chars}: {spoken}");
+                assert!(full.starts_with(&spoken));
+                assert!(spoken.ends_with(['.', '?']));
+                assert!(!spoken.chars().any(char::is_control));
+            }
+        }
+        assert_eq!(digest_text(markdown, 10), None);
+        assert_eq!(digest_text(markdown, 11).as_deref(), Some("Fixed café."));
+    }
+
+    #[test]
+    fn digest_and_chunks_treat_mismatched_fences_as_code() {
+        let markdown = "Done.\n````rust\nSECRET\n```\nSTILL_SECRET\n````\nReady?";
+        let digest = digest_text(markdown, 1500).expect("digest");
+        assert!(!digest.contains("SECRET"), "{digest}");
+        let chunks = sentence_chunks(markdown, 8);
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| chunk.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Done.", "Ready?"]
+        );
+        assert_eq!(chunks[1].audio_epoch, 8);
+        assert_eq!(chunks[1].seq, 1);
+        let unclosed = "Done.\n~~~diff\n--- a/private\n+++ b/private\n+SECRET";
+        assert_eq!(sentence_chunks(unclosed, 1).len(), 1);
+        let quoted = "> ```\n> Fixed SECRET.\n> ```\nDone.";
+        assert_eq!(sentence_chunks(quoted, 1)[0].text, "Done.");
+        assert!(
+            !digest_text(quoted, 1500)
+                .expect("digest")
+                .contains("SECRET")
+        );
+        assert!(
+            !digest_text(unclosed, 1500)
+                .expect("digest")
+                .contains("SECRET")
+        );
+    }
+
+    #[test]
+    fn chunks_handle_unicode_and_keep_completed_reply_tails() {
+        let chunks = sentence_chunks("完了。次です！ Café is ready? Final note", 3);
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| chunk.text.as_str())
+                .collect::<Vec<_>>(),
+            ["完了。", "次です！", "Café is ready?", "Final note"]
+        );
+        assert_eq!(sentence_chunks("  \n***\n", 2), []);
+    }
 
     #[test]
     fn urls_in_inline_code_and_delimited_prose_are_not_spoken() {

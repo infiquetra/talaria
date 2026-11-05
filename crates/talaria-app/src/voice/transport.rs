@@ -258,7 +258,7 @@ impl Playback {
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "playback closed"))?;
         let result = tokio::select! {
             _ = self.requests.recv() => {
-                if !kill_and_reap(&mut self.child, Duration::from_millis(450)).await {
+                if !kill_and_reap(&mut self.child, Duration::from_millis(100)).await {
                     return Err(io::Error::other(PlaybackUnreaped));
                 }
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "playback stopped"));
@@ -279,7 +279,7 @@ impl Playback {
 
     pub async fn close(&mut self) -> io::Result<()> {
         self.stdin.take();
-        if kill_and_reap(&mut self.child, Duration::from_millis(450)).await {
+        if kill_and_reap(&mut self.child, Duration::from_millis(100)).await {
             Ok(())
         } else {
             Err(io::Error::other(PlaybackUnreaped))

@@ -383,6 +383,7 @@ read_aloud = false
 speak_max_chars = 1500
 remote_audio = false
 client_submit_mode = "draft"
+render_mode = "strip"
 # capture_command and playback_command are not configured by default.
 ```
 
@@ -683,7 +684,7 @@ list carries forward opt-in announcements without the rejected separate switch.
 | `capture_command` | Argument array for the local capture helper. | Available |
 | `playback_command` | Argument array for the local playback helper. | Available |
 | `remote_audio` | Explicitly permits client audio to the attached remote relay; false by default. | Available |
-| `render_mode` | `strip` by default; `digest` gives deterministic spoken results without another model call. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `render_mode` | `strip` by default; `digest` gives deterministic spoken results without another model call. | Available |
 | `speech_scope` | `replies` by default; `alerts` suppresses completed-reply speech. | Planned for v0.8.0 (not yet active in v0.7.0) |
 
 `read_aloud = false` and `speak_max_chars = 1500` remain existing settings, with

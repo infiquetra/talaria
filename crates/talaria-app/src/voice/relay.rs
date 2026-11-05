@@ -18,7 +18,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::transport::{Capture, Playback};
+use super::{playback::SentencePlayback, transport::Capture};
 use crate::app::AppMessage;
 
 struct CaptureJob {
@@ -33,6 +33,29 @@ struct PlaybackJob {
     stop: Option<oneshot::Sender<()>>,
     device_active: Arc<AtomicBool>,
     task: JoinHandle<()>,
+}
+
+pub struct SpeechRequest {
+    pub command: Vec<String>,
+    pub profile: String,
+    pub session_id: String,
+    pub generation: u64,
+    pub audio_epoch: Option<u64>,
+    pub sentences: Vec<String>,
+}
+
+struct PendingSynthesis(JoinHandle<Result<Vec<u8>, String>>);
+
+impl Drop for PendingSynthesis {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+fn synthesize(relay: AudioRelay, profile: String, text: String) -> PendingSynthesis {
+    PendingSynthesis(tokio::spawn(
+        async move { relay.speak(&profile, &text).await },
+    ))
 }
 
 /// Owns the workers; only messages cross back into the application loop.
@@ -250,6 +273,57 @@ impl ClientAudio {
         }
     }
 
+    /// Cancel capture independently from the playback stop path.
+    pub fn cancel_capture(&self) {
+        if let Ok(mut current) = self.capture.lock()
+            && let Some(job) = current.as_mut()
+        {
+            job.cancelled.store(true, Ordering::Release);
+            if let Some(cancel) = job.cancel.take() {
+                let _ = cancel.send(());
+            }
+        }
+    }
+
+    /// Cancel pending synthesis and wait at most 100 ms for playback helpers to exit.
+    pub fn stop_playback(&self) -> impl std::future::Future<Output = bool> + Send + 'static {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(100);
+        let blocked = self.playback_blocked.clone();
+        let mut jobs = self
+            .playback
+            .lock()
+            .map(|mut jobs| std::mem::take(&mut *jobs))
+            .unwrap_or_default();
+        for job in &mut jobs {
+            if let Some(stop) = job.stop.take() {
+                let _ = stop.send(());
+            }
+        }
+        async move {
+            let mut quiet = !blocked.load(Ordering::Acquire);
+            for mut job in jobs {
+                match tokio::time::timeout_at(deadline, &mut job.task).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => {
+                        if job.device_active.load(Ordering::Acquire) {
+                            blocked.store(true, Ordering::Release);
+                        }
+                        quiet = false;
+                    }
+                    Err(_) => {
+                        if job.device_active.load(Ordering::Acquire) {
+                            blocked.store(true, Ordering::Release);
+                        }
+                        job.task.abort();
+                        let _ = job.task.await;
+                        quiet = false;
+                    }
+                }
+            }
+            quiet && !blocked.load(Ordering::Acquire)
+        }
+    }
+
     pub fn speak(
         &self,
         command: Vec<String>,
@@ -258,6 +332,25 @@ impl ClientAudio {
         generation: u64,
         text: String,
     ) {
+        self.speak_sentences(SpeechRequest {
+            command,
+            profile,
+            session_id,
+            generation,
+            audio_epoch: None,
+            sentences: vec![text],
+        });
+    }
+
+    pub fn speak_sentences(&self, request: SpeechRequest) {
+        let SpeechRequest {
+            command,
+            profile,
+            session_id,
+            generation,
+            audio_epoch,
+            sentences,
+        } = request;
         if !super::transport::remote_audio_allowed(self.remote_gateway, self.remote_audio) {
             return;
         }
@@ -271,6 +364,11 @@ impl ClientAudio {
         let active = device_active.clone();
         let (stop, mut stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
+            let epoch = audio_epoch.unwrap_or(1);
+            let mut player = SentencePlayback::for_audio(epoch);
+            for sentence in sentences {
+                player.enqueue(epoch, sentence);
+            }
             let health = |source, ok| {
                 let _ = sender.send(AppMessage::ClientVoiceHealth {
                     session_id: session_id.clone(),
@@ -280,28 +378,33 @@ impl ClientAudio {
                 });
             };
             let result = async {
+                let relay = tokio::select! {
+                    biased;
+                    _ = &mut stopped => { player.stop().await; return Ok(()); },
+                    result = relay_for(home, remote, remote_gateway, &profile) => match result { Ok(relay) => relay, Err(()) => { health("relay", false); return Err(()); } },
+                };
+                let Some(first) = player.next_sentence() else { return Ok(()); };
+                let mut pending = synthesize(relay.clone(), profile.clone(), first);
+                loop {
                 let audio = tokio::select! {
                     biased;
-                    _ = &mut stopped => return Ok(()),
-                    result = async {
-                        let relay = relay_for(home, remote, remote_gateway, &profile).await?;
-                        relay.speak(&profile, &text).await.map_err(|_| ())
-                    } => match result { Ok(audio) => audio, Err(()) => { health("relay", false); return Err(()); } },
+                    _ = &mut stopped => { player.stop().await; return Ok(()); },
+                    result = &mut pending.0 => match result { Ok(Ok(audio)) => audio, _ => { health("relay", false); return Err(()); } },
                 };
-                if stopped.try_recv().is_ok() { return Ok(()); }
+                let mut next = player.next_sentence().map(|text| synthesize(relay.clone(), profile.clone(), text));
+                if stopped.try_recv().is_ok() { player.stop().await; return Ok(()); }
                 let _device = tokio::select! {
                     biased;
-                    _ = &mut stopped => return Ok(()),
+                    _ = &mut stopped => { player.stop().await; return Ok(()); },
                     guard = barrier.lock() => guard,
                 };
                 active.store(true, Ordering::Release);
-                if stopped.try_recv().is_ok() { active.store(false, Ordering::Release); return Ok(()); }
+                if stopped.try_recv().is_ok() { player.stop().await; active.store(false, Ordering::Release); return Ok(()); }
                 if playback_blocked.load(Ordering::Acquire) { active.store(false, Ordering::Release); health("playback", false); return Err(()); }
                 health("relay", true);
-                let mut player = match Playback::start(&command) {
-                    Ok(player) => {
+                match player.start_audio(&command) {
+                    Ok(()) => {
                         health("playback", true);
-                        player
                     }
                     Err(_) => {
                         active.store(false, Ordering::Release);
@@ -309,24 +412,43 @@ impl ClientAudio {
                         return Err(());
                     }
                 };
-                let result = tokio::select! {
-                    _ = &mut stopped => Ok(()),
-                    result = player.play(&audio) => result.map_err(|_| ()),
+                let (result, cancelled) = tokio::select! {
+                    biased;
+                    _ = &mut stopped => (Ok(()), true),
+                    result = player.play_audio(&audio) => (result.map_err(|_| ()), false),
                 };
-                if player.close().await.is_err() {
+                if cancelled { drop(next.take()); }
+                let quiet = if cancelled {
+                    player.stop().await.quiet
+                } else {
+                    player.finish_audio().await.is_ok()
+                };
+                if !quiet {
                     playback_blocked.store(true, Ordering::Release);
                     health("playback", false);
                     return Err(());
                 }
+                if cancelled { player.confirm_quiet().await; }
                 active.store(false, Ordering::Release);
-                result
+                result?;
+                if cancelled { return Ok(()); }
+                match next { Some(next) => pending = next, None => return Ok(()) }
+                }
             }
             .await;
             if result.is_err() {
                 let _ = sender.send(AppMessage::VoiceNotice {
-                    session_id,
+                    session_id: session_id.clone(),
                     generation,
                     text: "Client read-aloud failed.".into(),
+                });
+            }
+            if let Some(audio_epoch) = audio_epoch {
+                let _ = sender.send(AppMessage::ClientVoice {
+                    session_id,
+                    generation,
+                    input: Input::SpeechFinished { audio_epoch },
+                    notice: None,
                 });
             }
         });

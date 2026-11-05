@@ -72,10 +72,14 @@ pub fn parse_voice_args(arg: &str) -> Result<VoiceCommand, String> {
         "read" | "tts" => Ok(VoiceCommand::Read(None)),
         "read on" => Ok(VoiceCommand::Read(Some(true))),
         "read off" => Ok(VoiceCommand::Read(Some(false))),
+        "stop" => Ok(VoiceCommand::Stop),
+        "mode full" => Ok(VoiceCommand::Mode(SpeechMode::Full)),
+        "mode summary" => Ok(VoiceCommand::Mode(SpeechMode::Summary)),
+        "mode alerts" => Ok(VoiceCommand::Mode(SpeechMode::Alerts)),
         _ => {
             let shown = clean_option(&collapsed);
             Err(format!(
-                "Unknown /voice option \"{shown}\". Use /voice on, off, status, read on or read off."
+                "Unknown /voice option \"{shown}\". Use /voice on, off, status, stop, read on, read off, or mode full, summary or alerts."
             ))
         }
     }
@@ -370,7 +374,12 @@ impl VoiceState {
                 VoiceCommand::Status => {
                     effects.extend([Effect::ReadMode, Effect::ReadRequirements])
                 }
-                VoiceCommand::Stop | VoiceCommand::Mode(_) => {}
+                VoiceCommand::Stop => effects.push(Effect::Notice(
+                    "Gateway speech cannot be stopped once it has started.".into(),
+                )),
+                VoiceCommand::Mode(_) => effects.push(Effect::Notice(
+                    "Speech modes are available on the client voice backend.".into(),
+                )),
                 VoiceCommand::Read(value) => {
                     let enabled = value.unwrap_or(!self.read_aloud);
                     if enabled && self.unavailable {

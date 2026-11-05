@@ -6907,3 +6907,10 @@ times out after 15 seconds; its limits are unsuitable for audio.
 
 Rule: give audio requests separate bounded sizes and deadlines without widening the
 limits of unrelated requests.
+
+## Client speech cutoff release check
+
+Measure the interval from the stop key event to quiet output on a real macOS device.
+Record the measured value and device in the release evidence. The target is under
+100 milliseconds; process exit and tests using fake helpers do not measure device
+buffer latency.
