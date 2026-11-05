@@ -4816,3 +4816,13 @@ owned renderers reachable from both the application and the frozen fixtures.
 no-file cell recordings meaningful. Syntax caches retain lexical categories rather than
 resolved file colours, and appearance changes invalidate final rendered cell caches.
 **Revisit when.** A new independently styled element has no suitable catalogue token.
+
+### Three built-in theme files
+
+**Decision.** Embed Terminal, Ember and Paper as strict theme files. Their identifiers are
+reserved; `dark` and `light` remain inheritance bases. Terminal follows the operator's Hermes
+skin setting, while Ember and Paper do not. Capture synthetic screens through the real resolver
+and renderers, including inline output on both terminal backgrounds.
+**Rationale.** The shared parser keeps the built-in and user formats consistent. Paper's disabled
+slot is `#716551`, which reaches the required contrast against its surface. **Revisit when.**
+The theme format or terminal background handling changes.

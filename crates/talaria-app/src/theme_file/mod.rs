@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 
+mod builtin;
 mod catalogue;
 mod load;
 mod parse;
+pub use builtin::builtin;
 pub use catalogue::{CatalogueEntry, PALETTE_SLOTS, ROLES, area_background, catalogue};
-pub use load::{builtin, load, reserved_id, valid_id};
+pub use load::{load, reserved_id, valid_id};
 pub use parse::parse;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

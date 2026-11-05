@@ -3,6 +3,15 @@
 Talaria follows the profile's Hermes skin by default. Choosing a theme file adds a palette,
 semantic roles and element overrides. With no file selected, the existing appearance is unchanged.
 
+## Built-in themes
+
+Choose `/theme use terminal`, `/theme use ember` or `/theme use paper`, or set `[theme] file` to
+one of those identifiers. Terminal uses terminal defaults and named colours. Ember is a warm dark
+theme; Paper is a light theme with blue and brown accents. Ember and Paper do not follow Hermes
+skins; Terminal follows the operator's skin setting. Inline output keeps the terminal background,
+so a light theme on a dark terminal, or a dark theme on a light terminal, may be hard to read.
+The identifiers are reserved. `dark` and `light` are inheritance bases for `extends`, not themes.
+
 ## Theme files
 
 Save a UTF-8 TOML file as `themes/<id>.toml` beside Talaria's `config.toml`. Files are shared

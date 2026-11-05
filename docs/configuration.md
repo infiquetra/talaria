@@ -896,7 +896,7 @@ The default block above is authoritative. Invalid values use the documented defa
 | `mode` | string | auto | auto, light, dark | auto |
 | `follow_hermes_skin` | boolean | true | true or false | true |
 | `colors` | string | auto | auto, truecolor, 256, 16, none | auto |
-| `file` | string | unset | theme identifier, at most 64 lower-case letters, digits, underscores or dashes; starts with a letter or digit | quiet-amber |
+| `file` | string | unset | built-in `terminal`, `ember` or `paper`, or a theme identifier of at most 64 lower-case letters, digits, underscores or dashes; starts with a letter or digit | quiet-amber |
 | `profiles."<profile-id>".file` | string | unset | same identifier rules; overrides `file` for this profile | quiet-amber |
 
 ### `ui`

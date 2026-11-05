@@ -13307,6 +13307,7 @@ fn apply<S: Screen>(
             AppEffect::ThemeReport => {
                 if let Some(report) = screen.theme_report() {
                     let mut lines = theme_lines(&report);
+                    lines.push("  Built-in themes: terminal, ember, paper".to_owned());
                     if let Some(file) = screen.theme_file_report() {
                         lines.extend(appearance::theme_file_lines(&file));
                     }
