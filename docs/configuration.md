@@ -714,13 +714,13 @@ list carries forward opt-in announcements without the rejected separate switch.
 | New `[voice]` key | Planned value / contract | Availability |
 |---|---|---|
 | `backend` | `hermes-gateway` when omitted; `client-bridge` uses local helpers with the Hermes relay. | Available |
-| `transport` | `subprocess` for the first client implementation. An optional bridge awaits a job-scoped output-quiet stop contract. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `transport` | `subprocess` for the first client implementation. An optional bridge awaits a job-scoped output-quiet stop contract. | Deferred to a later release |
 | `client_submit_mode` | `draft` by default; `direct` submits an eligible ordinary prompt when the composer is empty. | Available |
 | `capture_command` | Argument array for the local capture helper. | Available |
 | `playback_command` | Argument array for the local playback helper. | Available |
 | `remote_audio` | Explicitly permits client audio to the attached remote relay; false by default. | Available |
 | `render_mode` | `strip` by default; `digest` gives deterministic spoken results without another model call. | Available |
-| `speech_scope` | `replies` by default; `alerts` suppresses completed-reply speech. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `speech_scope` | `replies` by default; `alerts` suppresses completed-reply speech. | Deferred to a later release |
 
 `read_aloud = false` and `speak_max_chars = 1500` remain existing settings, with
 the existing 100–10000 character validation. The client submit setting never
@@ -729,14 +729,14 @@ its current submission and read-aloud behaviour.
 
 | New `[voice.audio]` key | Planned value / contract | Availability |
 |---|---|---|
-| `capture_program` | Declared capture executable, for example `ffmpeg`; no automatic installation. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `capture_preset` | Platform-specific argument preset, for example `macos-avfoundation`. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `capture_device` | Device selection, for example `default`. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `playback_program` | Declared local player, for example `ffplay`. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `playback_preset` | Player format preset, for example `pcm-stdin`. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `sample_rate` | Requested capture rate, for example 16000; actual audio rate is negotiated. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `channels` | Requested capture channels, for example 1. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `max_recording_seconds` | 120 by default; capture remains bounded. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `capture_program` | Declared capture executable, for example `ffmpeg`; no automatic installation. | Deferred to a later release |
+| `capture_preset` | Platform-specific argument preset, for example `macos-avfoundation`. | Deferred to a later release |
+| `capture_device` | Device selection, for example `default`. | Deferred to a later release |
+| `playback_program` | Declared local player, for example `ffplay`. | Deferred to a later release |
+| `playback_preset` | Player format preset, for example `pcm-stdin`. | Deferred to a later release |
+| `sample_rate` | Requested capture rate, for example 16000; actual audio rate is negotiated. | Deferred to a later release |
+| `channels` | Requested capture channels, for example 1. | Deferred to a later release |
+| `max_recording_seconds` | 120 by default; capture remains bounded. | Deferred to a later release |
 
 These helper names and presets are examples, not verified platform support or
 installation defaults. Presets build argument vectors without a shell. Missing
@@ -745,9 +745,9 @@ usable. No Rust audio crates are added.
 
 | New `[voice.hermes]` key | Planned value / contract | Availability |
 |---|---|---|
-| `origin` | `attached-gateway`; use the existing gateway connection and authentication context. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `profile` | `selected`; explicitly scope audio requests to the selected Hermes profile. | Planned for v0.8.0 (not yet active in v0.7.0) |
-| `audio_mode` | `batch` baseline; `stream-preferred` requires authenticated streaming capability. | Planned for v0.8.0 (not yet active in v0.7.0) |
+| `origin` | `attached-gateway`; use the existing gateway connection and authentication context. | Deferred to a later release |
+| `profile` | `selected`; explicitly scope audio requests to the selected Hermes profile. | Deferred to a later release |
+| `audio_mode` | `batch` baseline; `stream-preferred` requires authenticated streaming capability. | Deferred to a later release |
 
 Capture and playback always stay on the workstation. Using a remote gateway's
 relay or fetching its client voice settings requires explicit opt-in to that
@@ -768,8 +768,8 @@ queue. There is no `[voice] announce_needs_you` switch. Defer `[voice.stt]` and
 until a needed provider cannot be supplied by Hermes. Optional external daemon
 configuration and direct-provider mode are deferred as well.
 
-The client commands `/voice stop` and `/voice mode full|summary|alerts` are also
-**Planned for v0.8.0 (not yet active in v0.7.0)**. Full selects `strip` and
+The client commands `/voice stop` and `/voice mode full|summary|alerts` are available
+in v0.8.0. Full selects `strip` and
 `replies`; summary selects `digest` and `replies`; alerts keeps the renderer and
 selects `alerts`. They change per-target runtime preferences, not the persisted
 file or Hermes configuration. Neither a mode command nor read-aloud alone opts
