@@ -349,12 +349,20 @@ impl AttentionHub {
         let detail = need
             .and_then(|id| latest.queue.iter().find(|item| &item.id == id))
             .map(|item| &item.detail);
-        let Some(alert) = self
+        let Some(mut alert) = self
             .tracker
             .on_attention(kind, key, need, detail, false, row, at)
         else {
             return;
         };
+        if kind == AlertKind::NeedsYou
+            && need.is_some_and(|id| !latest.queue.iter().any(|item| &item.id == id))
+        {
+            alert.speech = false;
+            if !alert.bell && !alert.desktop {
+                return;
+            }
+        }
         if let Some(alert) = self.gate.admit(alert, at) {
             out.alerts.push(alert);
         }

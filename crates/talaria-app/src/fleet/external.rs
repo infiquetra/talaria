@@ -44,6 +44,7 @@ pub enum ExternalResult {
         result: Result<(), String>,
     },
     Answer {
+        key: RowKey,
         result: Result<(), String>,
     },
 }

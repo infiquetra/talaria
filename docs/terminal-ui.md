@@ -190,3 +190,8 @@ whose reply was lost is reported as uncertain and the list is reloaded; the chan
 Describe a change with `/configure <request>`, review the proposed rows, and confirm before applying.
 The dry-run command presents the same review without making changes. Selecting a memory provider
 opens `/memory-settings` so its owner can validate and activate it.
+# Fleet voice replies
+
+With client voice enabled, the configured push-to-talk key records for the selected
+fleet row. The transcript stays with that row as a draft; press Enter to send it.
+Speech notifications are opt-in under `[notifications] speech`.

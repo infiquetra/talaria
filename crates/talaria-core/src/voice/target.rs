@@ -58,8 +58,21 @@ pub enum TranscriptPlacement {
 /// chosen on its own.
 #[must_use]
 pub fn bind_record_target(queue: &[QueueCandidate], rows: &[RowCandidate]) -> Option<RecordTarget> {
-    let _ = (queue, rows);
-    None
+    if let Some(item) = queue.iter().find(|item| item.selected) {
+        return Some(RecordTarget {
+            key: item.id.key.clone(),
+            backend: item.backend,
+            need: Some(item.id.clone()),
+        });
+    }
+    rows.iter()
+        .find(|row| row.selected)
+        .or_else(|| rows.iter().find(|row| row.foreground))
+        .map(|row| RecordTarget {
+            key: row.key.clone(),
+            backend: row.backend,
+            need: None,
+        })
 }
 
 /// Keep a transcript on the row it was recorded for.
@@ -73,12 +86,16 @@ pub fn place_transcript(
     text: &str,
     mode: SubmitMode,
 ) -> TranscriptPlacement {
-    let _ = (recorded, selection_moved, text, mode);
-    TranscriptPlacement::Draft {
-        key: RowKey {
-            profile: String::new(),
-            session_id: String::new(),
-        },
-        text: String::new(),
+    let _ = mode;
+    if selection_moved {
+        TranscriptPlacement::NotSent {
+            key: recorded.key.clone(),
+            text: text.to_owned(),
+        }
+    } else {
+        TranscriptPlacement::Draft {
+            key: recorded.key.clone(),
+            text: text.to_owned(),
+        }
     }
 }

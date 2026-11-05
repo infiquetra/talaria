@@ -703,6 +703,9 @@ pub struct AppState {
     pub voice: crate::voice::VoiceService,
     client_voice: talaria_core::voice::client::ClientVoice,
     client_voice_config: crate::config::VoiceConfig,
+    client_voice_target: Option<talaria_core::voice::target::RecordTarget>,
+    client_voice_drafts: BTreeMap<RowKey, talaria_core::voice::target::RecordTarget>,
+    client_voice_inflight: BTreeSet<RowKey>,
     client_speech_modes: BTreeMap<(String, String), talaria_core::voice::SpeechMode>,
     client_voice_enabled: bool,
     client_voice_worker: Option<Arc<crate::voice::relay::ClientAudio>>,
@@ -1003,6 +1006,9 @@ impl AppState {
             voice: crate::voice::VoiceService::new(),
             client_voice: talaria_core::voice::client::ClientVoice::default(),
             client_voice_config: crate::config::VoiceConfig::default(),
+            client_voice_target: None,
+            client_voice_drafts: BTreeMap::new(),
+            client_voice_inflight: BTreeSet::new(),
             client_speech_modes: BTreeMap::new(),
             client_voice_enabled: false,
             client_voice_worker: None,
@@ -1245,10 +1251,16 @@ impl AppState {
                 .and_then(|fleet| fleet.peek())
                 .and_then(|(key, _)| self.acp_views.get(key)),
             voice: if self.client_voice_config.backend == "client-bridge" && opened.is_some() {
-                Some(self.client_voice.view(
+                let mut view = self.client_voice.view(
                     self.client_voice_enabled,
                     self.client_voice_config.read_aloud,
-                ))
+                );
+                if self.client_voice.active()
+                    && let Some(target) = &self.client_voice_target
+                {
+                    view.label = Some(target.key.session_id.clone());
+                }
+                Some(view)
             } else {
                 opened
                     .and_then(|session| self.voice.get(&session.session_id))
@@ -2075,6 +2087,11 @@ pub enum AppEffect {
     FleetInput(talaria_core::fleet_view::FleetViewInput),
     /// Answer the peek's card.
     FleetAnswer(crate::peek::CardAnswer),
+    /// Answer a recorded row's card and return the outcome to its editor.
+    FleetVoiceAnswer {
+        key: RowKey,
+        answer: crate::peek::CardAnswer,
+    },
     /// Run one review effect on the review service.
     Review(talaria_core::review::ReviewEffect),
     /// Find a session's folder for a review, off the loop.
@@ -3506,6 +3523,15 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     vec![AppEffect::Redraw]
                 }
                 ExternalResult::Prompt { key, result } => {
+                    state.client_voice_inflight.remove(&key);
+                    if result.is_ok()
+                        && state
+                            .fleet
+                            .as_ref()
+                            .is_none_or(|view| !view.has_draft(&key))
+                    {
+                        state.client_voice_drafts.remove(&key);
+                    }
                     let notice = result
                         .as_ref()
                         .err()
@@ -3543,7 +3569,24 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                     effects.extend(fleet_input(state, FleetViewInput::Notice(notice)));
                     effects
                 }
-                ExternalResult::Answer { result } => {
+                ExternalResult::Answer { key, result } => {
+                    state.client_voice_inflight.remove(&key);
+                    if state.client_voice_drafts.contains_key(&key) {
+                        let outcome = match result {
+                            Ok(()) => {
+                                if state
+                                    .fleet
+                                    .as_ref()
+                                    .is_none_or(|view| !view.has_draft(&key))
+                                {
+                                    state.client_voice_drafts.remove(&key);
+                                }
+                                ReplyOutcome::Sent
+                            }
+                            Err(reason) => ReplyOutcome::Refused { reason },
+                        };
+                        return fleet_input(state, FleetViewInput::ReplyDone { key, outcome });
+                    }
                     let mut effects = fleet_input(state, FleetViewInput::AnswerFocusEnded);
                     if let Err(reason) = result {
                         effects.extend(fleet_input(state, FleetViewInput::Notice(reason)));
@@ -3577,6 +3620,20 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         }
         AppMessage::FleetView(input) => {
             redraw = false;
+            if let talaria_core::fleet_view::FleetViewInput::ReplyDone { key, .. } = &input {
+                state.client_voice_inflight.remove(key);
+            }
+            if let talaria_core::fleet_view::FleetViewInput::ReplyDone {
+                key,
+                outcome:
+                    talaria_core::fleet_view::ReplyOutcome::Sent
+                    | talaria_core::fleet_view::ReplyOutcome::Queued
+                    | talaria_core::fleet_view::ReplyOutcome::AlreadyRan,
+            } = &input
+                && state.fleet.as_ref().is_none_or(|view| !view.has_draft(key))
+            {
+                state.client_voice_drafts.remove(key);
+            }
             fleet_input(state, input)
         }
         AppMessage::FleetOpenAt(key) => {
@@ -6229,6 +6286,57 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                     "Remote audio is off. Enable [voice] remote_audio to use this gateway's relay."
                         .into(),
                 );
+            }
+            if !state.client_voice.active() || state.client_voice.speaking() {
+                state.client_voice_target =
+                    state.fleet.as_ref().and_then(|fleet| fleet.voice_target());
+                if state.fleet.is_some() && state.client_voice_target.is_none() {
+                    return notice_effect(state, "Select a fleet row before recording.".into());
+                }
+                if state
+                    .client_voice_target
+                    .as_ref()
+                    .is_some_and(|target| state.client_voice_inflight.contains(&target.key))
+                {
+                    state.client_voice_target = None;
+                    return notice_effect(
+                        state,
+                        "Wait for the previous reply before recording for this row.".into(),
+                    );
+                }
+                if let Some(target) = state.client_voice_target.as_mut()
+                    && target.backend == talaria_core::fleet::FleetBackend::Acp
+                    && state.fleet.as_ref().is_some_and(|fleet| {
+                        *fleet.focus() == talaria_core::fleet_view::Focus::Answer
+                    })
+                {
+                    target.need = state
+                        .acp_views
+                        .get(&target.key)
+                        .and_then(|view| view.needs.first())
+                        .map(|need| talaria_core::fleet::NeedId {
+                            key: target.key.clone(),
+                            slot: talaria_core::fleet::NeedSlot::External(need.responder.clone()),
+                        });
+                    if target.need.is_none() {
+                        return notice_effect(
+                            state,
+                            "The selected permission is no longer available.".into(),
+                        );
+                    }
+                }
+                if let Some(target) = state.client_voice_target.as_mut()
+                    && target.backend == talaria_core::fleet::FleetBackend::Herdr
+                    && target.need.is_none()
+                {
+                    target.need = state.fleet_snapshot.as_ref().and_then(|snapshot| {
+                        snapshot
+                            .queue
+                            .iter()
+                            .find(|item| item.id.key == target.key)
+                            .map(|item| item.id.clone())
+                    });
+                }
             }
             let input = talaria_core::voice::client::Input::Cutoff(
                 talaria_core::voice::client::Cutoff::Record,
@@ -12705,9 +12813,27 @@ fn apply<S: Screen>(
                     .as_ref()
                     .and_then(crate::herdr::HerdrService::client)
                 else {
+                    if let FleetViewEffect::SendReply { key, .. } = &effect {
+                        state.client_voice_inflight.remove(key);
+                        let _ = executor.sender.send(AppMessage::FleetView(
+                            FleetViewInput::ReplyDone {
+                                key: key.clone(),
+                                outcome: ReplyOutcome::NotAttached {
+                                    reason: "the terminal agent is unavailable".into(),
+                                },
+                            },
+                        ));
+                    }
                     continue;
                 };
                 let snapshot = state.fleet_snapshot.clone();
+                let voice_blocked = match &effect {
+                    FleetViewEffect::SendReply { key, .. } => state
+                        .client_voice_drafts
+                        .get(key)
+                        .map(|target| target.need.is_some()),
+                    _ => None,
+                };
                 executor.send_later(async move {
                     let input = match effect {
                         FleetViewEffect::OpenPeek(key) => {
@@ -12742,7 +12868,21 @@ fn apply<S: Screen>(
                                         && row.state == talaria_core::fleet::RowState::NeedsYou
                                 })
                             });
-                            let outcome = if blocked {
+                            let outcome = if let Some(expected) = voice_blocked {
+                                match client.is_blocked(&key).await {
+                                    Ok(actual) if actual == expected => {
+                                        if expected {
+                                            client.answer(&key, &text).await
+                                        } else {
+                                            client.prompt(&key, &text).await
+                                        }
+                                    }
+                                    Ok(_) => Err(crate::herdr::HerdrError(
+                                        "terminal agent state changed since recording".into(),
+                                    )),
+                                    Err(error) => Err(error),
+                                }
+                            } else if blocked {
                                 client.answer(&key, &text).await
                             } else {
                                 client.prompt(&key, &text).await
@@ -12838,6 +12978,38 @@ fn apply<S: Screen>(
                     }
                 });
             }
+            AppEffect::FleetVoiceAnswer { key, answer } => {
+                use talaria_core::fleet_view::{FleetViewInput, ReplyOutcome};
+                let Some(worker) = &state.peek_worker else {
+                    let _ =
+                        executor
+                            .sender
+                            .send(AppMessage::FleetView(FleetViewInput::ReplyDone {
+                                key,
+                                outcome: ReplyOutcome::NotAttached {
+                                    reason: "the answer card is unavailable".into(),
+                                },
+                            }));
+                    continue;
+                };
+                let result = worker.answer(answer);
+                executor.send_later(async move {
+                    let outcome = match result.await {
+                        Ok(notices) if notices.is_empty() => ReplyOutcome::Sent,
+                        Ok(notices) => ReplyOutcome::Refused {
+                            reason: notices
+                                .into_iter()
+                                .map(|notice| notice.text)
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        },
+                        Err(_) => ReplyOutcome::Unknown {
+                            why: "the answer service stopped".into(),
+                        },
+                    };
+                    AppMessage::FleetView(FleetViewInput::ReplyDone { key, outcome })
+                });
+            }
             AppEffect::FleetInput(input) => {
                 let _ = executor.sender.send(AppMessage::FleetView(input));
             }
@@ -12858,7 +13030,39 @@ fn apply<S: Screen>(
                     .as_ref()
                     .map(|o| (o.session_id.as_str(), state.profile.as_str())),
             ),
-            AppEffect::Alert(alert) => screen.alert(&alert),
+            AppEffect::Alert(alert) => {
+                screen.alert(&alert);
+                if alert.speech
+                    && state.uses_client_voice()
+                    && state.client_voice_enabled
+                    && crate::voice::transport::remote_audio_allowed(
+                        state.remote_gateway,
+                        state.client_voice_config.remote_audio,
+                    )
+                    && !state.client_voice.active()
+                    && let (Some(opened), Some(worker)) =
+                        (&state.opened, &state.client_voice_worker)
+                {
+                    let _ = state
+                        .client_voice
+                        .update(talaria_core::voice::client::Input::SpeechStarted);
+                    let audio_epoch = state.client_voice.audio_epoch();
+                    let sentences =
+                        talaria_core::voice::speakable::sentence_chunks(&alert.text, audio_epoch)
+                            .into_iter()
+                            .map(|chunk| chunk.text)
+                            .collect();
+                    worker.speak_sentences(crate::voice::relay::SpeechRequest {
+                        command: state.client_voice_config.playback_command.clone(),
+                        profile: state.profile.clone(),
+                        session_id: opened.session_id.clone(),
+                        generation: state.connection_generation,
+                        audio_epoch: Some(audio_epoch),
+                        sentences,
+                    });
+                    redraw = true;
+                }
+            }
             AppEffect::Appearance => {
                 screen.appearance_changed(&state.appearance.view());
                 redraw = true;
@@ -13543,6 +13747,151 @@ pub(crate) fn fleet_effect(
     effect: talaria_core::fleet_view::FleetViewEffect,
 ) -> Vec<AppEffect> {
     use talaria_core::fleet_view::{FleetViewEffect, FleetViewInput, ReplyOutcome};
+    if let FleetViewEffect::SendReply { key, text } = &effect
+        && let Some(target) = state.client_voice_drafts.get(key).cloned()
+    {
+        let refuse = |reason: &str| {
+            vec![AppEffect::FleetInput(FleetViewInput::ReplyDone {
+                key: key.clone(),
+                outcome: ReplyOutcome::Refused {
+                    reason: reason.into(),
+                },
+            })]
+        };
+        let row = state
+            .fleet_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.rows.iter().find(|row| row.key == *key));
+        if row.is_none_or(|row| row.backend() != target.backend) {
+            return refuse("the recorded target is no longer available");
+        }
+        if target.backend == talaria_core::fleet::FleetBackend::Hermes
+            && let Some(need) = &target.need
+        {
+            if state
+                .fleet
+                .as_ref()
+                .and_then(|view| view.peek())
+                .is_none_or(|(peeked, _)| peeked != key)
+            {
+                return refuse("the recorded answer card is no longer open");
+            }
+            let Some(item) = state
+                .fleet_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.queue.iter().find(|item| &item.id == need))
+            else {
+                return refuse("the recorded request is no longer available");
+            };
+            let talaria_core::fleet::NeedSlot::Prompt(prompt_id) = &need.slot else {
+                return refuse("use the answer card for this request");
+            };
+            let Some(execution_generation) = item.execution_generation else {
+                return refuse("the recorded request identity is unavailable");
+            };
+            let prompt = talaria_core::session::PromptKey {
+                session_id: SessionId::new(&key.session_id),
+                prompt_id: prompt_id.clone(),
+                execution_generation,
+            };
+            let answer = match &item.detail {
+                talaria_core::fleet::NeedDetail::Known(
+                    talaria_core::attention::NeedSummary::Question(_),
+                ) => crate::peek::CardAnswer::Clarify {
+                    key: prompt,
+                    answer: text.clone(),
+                },
+                talaria_core::fleet::NeedDetail::Known(
+                    talaria_core::attention::NeedSummary::Approval { .. },
+                ) => {
+                    let normalize = |s: &str| {
+                        s.split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            .to_lowercase()
+                    };
+                    let spoken = normalize(text);
+                    let mut options = item
+                        .choices
+                        .iter()
+                        .filter(|choice| normalize(choice) == spoken);
+                    let (Some(choice), None) = (options.next(), options.next()) else {
+                        return refuse("speak one exact approval option");
+                    };
+                    crate::peek::CardAnswer::Approve {
+                        key: prompt,
+                        choice: choice.clone(),
+                        note: None,
+                    }
+                }
+                _ => return refuse("use the answer card for this request"),
+            };
+            state.client_voice_inflight.insert(key.clone());
+            return vec![AppEffect::FleetVoiceAnswer {
+                key: key.clone(),
+                answer,
+            }];
+        }
+        if target.backend == talaria_core::fleet::FleetBackend::Herdr {
+            let blocked =
+                row.is_some_and(|row| row.state == talaria_core::fleet::RowState::NeedsYou);
+            if blocked != target.need.is_some() {
+                return refuse("the terminal agent state changed since recording");
+            }
+            state.client_voice_inflight.insert(key.clone());
+        } else if target.backend == talaria_core::fleet::FleetBackend::Acp {
+            if let Some(need) = &target.need {
+                let talaria_core::fleet::NeedSlot::External(responder) = &need.slot else {
+                    return refuse("the recorded permission is no longer available");
+                };
+                let request = state
+                    .acp_views
+                    .get(key)
+                    .and_then(|view| view.needs.iter().find(|item| &item.responder == responder));
+                let Some(request) = request else {
+                    return refuse("the recorded permission is no longer available");
+                };
+                let normalize = |s: &str| {
+                    s.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase()
+                };
+                let spoken = normalize(text);
+                let mut options = request
+                    .options
+                    .iter()
+                    .filter(|option| normalize(&option.name) == spoken);
+                let (Some(option), None) = (options.next(), options.next()) else {
+                    return refuse("speak one exact permission option");
+                };
+                if let Some(manager) = &state.acp_manager {
+                    let sent = manager.send(crate::fleet::ExternalCommand::Answer {
+                        key: key.clone(),
+                        responder: request.responder.clone(),
+                        tool_call_id: request.tool_call_id.clone(),
+                        option_id: option.id.clone(),
+                    });
+                    if sent {
+                        state.client_voice_inflight.insert(key.clone());
+                        return Vec::new();
+                    }
+                    return refuse("the agent is unavailable");
+                }
+                return refuse("the agent is unavailable");
+            }
+            if row.is_some_and(|row| {
+                matches!(
+                    row.state,
+                    talaria_core::fleet::RowState::Working
+                        | talaria_core::fleet::RowState::NeedsYou
+                )
+            }) {
+                return refuse("the agent is already working");
+            }
+            state.client_voice_inflight.insert(key.clone());
+        }
+    }
     let external_key = match &effect {
         FleetViewEffect::OpenPeek(key)
         | FleetViewEffect::Open(key)
@@ -13728,6 +14077,7 @@ fn close_overlay(state: &mut AppState) -> Vec<AppEffect> {
     let Some(view) = state.fleet.take() else {
         return Vec::new();
     };
+    state.client_voice_drafts.clear();
     if let Some(pr) = state.review_pr.as_ref() {
         pr.want(crate::review::PrDemand::Fleet(false));
     }
@@ -15845,6 +16195,31 @@ fn client_voice_input(
             }),
             Effect::FinishCapture { epoch } => effects.push(AppEffect::ClientVoiceFinish { epoch }),
             Effect::Transcribe { .. } => {}
+            Effect::Draft(text) if state.client_voice_target.is_some() => {
+                let target = state.client_voice_target.take().expect("target checked");
+                if state.client_voice_inflight.contains(&target.key) {
+                    effects.extend(voice_notice(
+                        state,
+                        session,
+                        format!(
+                            "Voice transcript for {} was not sent: {}",
+                            target.key.session_id, text
+                        ),
+                    ));
+                } else if let Some(fleet) = state.fleet.as_mut() {
+                    fleet.stage_voice(&target.key, &text);
+                    state.client_voice_drafts.insert(target.key.clone(), target);
+                } else {
+                    effects.extend(voice_notice(
+                        state,
+                        session,
+                        format!(
+                            "Voice transcript for {} was not sent: {}",
+                            target.key.session_id, text
+                        ),
+                    ));
+                }
+            }
             Effect::Draft(text) if is_open_session(state, session) => {
                 if state.client_voice_config.client_submit_mode == "direct"
                     && state.draft.is_empty()

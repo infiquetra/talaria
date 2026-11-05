@@ -45,5 +45,47 @@ pub async fn commit_fleet_transcript(
     acp: Option<&mut AcpService>,
     herdr: Option<&mut HerdrService>,
 ) {
-    let _ = (commit, acp, herdr);
+    if !commit.entered {
+        return;
+    }
+    match &commit.delivery {
+        FleetVoiceDelivery::Prompt => {
+            if let Some(agent_id) = commit.key.profile.strip_prefix("acp:") {
+                if let Some(acp) = acp {
+                    let key = talaria_core::fleet::acp::AcpSessionKey {
+                        agent_id: agent_id.to_owned(),
+                        session_id: commit.key.session_id.clone(),
+                    };
+                    let _ = acp.prompt(&key, &commit.text).await;
+                }
+            } else if let Some(herdr) = herdr {
+                let _ = herdr.prompt(&commit.key, &commit.text).await;
+            }
+        }
+        FleetVoiceDelivery::Answer => {
+            if let Some(herdr) = herdr {
+                let _ = herdr.answer(&commit.key, &commit.text).await;
+            }
+        }
+        FleetVoiceDelivery::Permission { responder, options } => {
+            if commit.key.profile != format!("acp:{}", responder.key.agent_id)
+                || commit.key.session_id != responder.key.session_id
+            {
+                return;
+            }
+            let normalize = |text: &str| {
+                text.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase()
+            };
+            let spoken = normalize(&commit.text);
+            let mut matches = options
+                .iter()
+                .filter(|option| normalize(&option.name) == spoken);
+            if let (Some(option), None, Some(acp)) = (matches.next(), matches.next(), acp) {
+                let _ = acp.answer_permission(responder, &option.id).await;
+            }
+        }
+    }
 }

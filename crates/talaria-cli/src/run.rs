@@ -1280,6 +1280,9 @@ impl TuiScreen {
         if key.kind == KeyKind::Release {
             return Vec::new();
         }
+        if self.keymap.resolve_in(&key, KeyContext::Composer) == Some(Action::VoiceRecord) {
+            return vec![UserAction::VoiceRecord];
+        }
         let input = |input: FleetViewInput| vec![UserAction::Fleet(input)];
         match fleet.focus() {
             FleetFocus::Answer => {

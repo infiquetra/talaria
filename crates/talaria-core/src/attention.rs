@@ -110,7 +110,7 @@ pub enum Activity {
     },
 }
 
-/// Which alert kinds ring the bell or raise a desktop notification.
+/// Which alert kinds use each notification channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttentionConfig {
     /// Kinds that ring the terminal bell.
@@ -244,7 +244,8 @@ impl AttentionTracker {
         let alert = candidate.and_then(|(kind, at, text)| {
             let bell = self.config.bell.contains(&kind);
             let desktop = self.config.desktop.contains(&kind);
-            if !bell && !desktop {
+            let speech = self.config.speech.contains(&kind);
+            if !bell && !desktop && !speech {
                 return None;
             }
             if self.last_alert.is_some_and(|(last, previous)| {
@@ -258,8 +259,18 @@ impl AttentionTracker {
                 kind,
                 bell,
                 desktop,
-                speech: false,
-                text,
+                speech,
+                text: if speech {
+                    let label = sanitize_alert_field(&self.label, 60);
+                    let action = match kind {
+                        AlertKind::NeedsYou => "needs you",
+                        AlertKind::Done => "done",
+                        AlertKind::Failed => "failed",
+                    };
+                    format!("Hermes {label}: {action}")
+                } else {
+                    text
+                },
             })
         });
         let after = self.pane();

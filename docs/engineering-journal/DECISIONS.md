@@ -4543,3 +4543,15 @@ and provider-direct access remain separate work.
 **Rationale.** The pinned Hermes contract supports both batch endpoints without
 putting provider keys in Talaria. Batch requests have their own audio-sized limits
 and deadlines rather than changing the limits used by other remote requests.
+
+## 2026-11-05 — Bind fleet speech to its recorded target
+
+**Decision.** Bind a fleet voice transcript to the selected row and keep it in that
+row's editor until Enter. Spoken notifications use the existing attention gates.
+
+**Rationale.** Selection can change while transcription is running, and a permission
+answer must remain an explicit operator action.
+
+The terminal service exposes a read-only blocked-state check for the last check
+before a voice reply. The ACP answer result carries its row key back to the editor
+so a refusal keeps the original draft and routing identity.

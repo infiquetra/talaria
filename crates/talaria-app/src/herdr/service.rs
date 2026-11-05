@@ -173,6 +173,12 @@ impl HerdrClient {
         }
     }
 
+    /// Check the pane's current waiting state immediately before a voice reply.
+    pub async fn is_blocked(&self, key: &RowKey) -> Result<bool, HerdrError> {
+        let pane = self.target(key)?;
+        Ok(get(&self.inner.config, pane).await?.status == "blocked")
+    }
+
     pub async fn peek(&self, key: &RowKey) -> Result<String, HerdrError> {
         let pane = self.target(key)?;
         let text = run(
