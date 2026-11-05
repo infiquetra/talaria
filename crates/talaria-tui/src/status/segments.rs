@@ -302,7 +302,22 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
         }
         if pieces.len() == 1 {
             let (segment, text, tone) = pieces.remove(0);
-            let cut = cut_to_width(&text, available);
+            let cut = if segment == Segment::Model
+                && inputs.effort_offered == Some(false)
+                && text.contains(" (not offered)")
+            {
+                let name = inputs
+                    .model
+                    .as_deref()
+                    .unwrap_or("")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                cut_to_width(&sanitize(name), available)
+            } else {
+                cut_to_width(&text, available)
+            };
             if !cut.is_empty() {
                 pieces.push((segment, cut, tone));
             }
@@ -365,7 +380,9 @@ fn model_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
         text.push(' ');
         text.push_str(&effort);
         // The arrow appears only when the wire level differs from the effort.
-        if let Some(wire) = wire
+        if inputs.effort_offered == Some(false) && effort != "none" {
+            text.push_str(" (not offered)");
+        } else if let Some(wire) = wire
             && wire != effort
         {
             text.push('→');

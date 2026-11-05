@@ -390,6 +390,8 @@ pub struct View<'a> {
     pub effort: Option<&'a str>,
     /// The provider-adjusted effort, when known.
     pub effort_wire: Option<&'a str>,
+    /// Catalogue capability of the foreground route, when known.
+    pub effort_offered: Option<bool>,
     pub masked: &'a [MaskedRequestInfo],
     pub held: usize,
     /// The slash palette under the composer.
@@ -798,6 +800,7 @@ pub struct AppState {
     pub list_title: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub effort_wire: Option<String>,
     pub masked: Vec<MaskedRequestInfo>,
     /// Composer draft. The slash palette reads it. Issue #223.
     pub draft: String,
@@ -1103,6 +1106,7 @@ impl AppState {
             list_title: None,
             model: None,
             effort: None,
+            effort_wire: None,
             masked: Vec::new(),
             draft: String::new(),
             palette: PaletteState::closed(),
@@ -1283,7 +1287,14 @@ impl AppState {
                 .as_deref()
                 .or_else(|| opened.and_then(|opened| opened.info.model.as_deref())),
             effort: self.effort.as_deref(),
-            effort_wire: None,
+            effort_wire: self.effort_wire.as_deref(),
+            effort_offered: self.opened.as_ref().and_then(|opened| {
+                self.models.effort_offered(
+                    &opened.session_id,
+                    opened.info.provider.as_deref()?,
+                    self.model.as_deref()?,
+                )
+            }),
             masked: &self.masked,
             held: self.held.len(),
             palette: &self.palette,
@@ -1375,6 +1386,7 @@ impl AppState {
         copy.fleet_enabled = self.fleet_enabled;
         copy.model = self.model.clone();
         copy.effort = self.effort.clone();
+        copy.effort_wire = self.effort_wire.clone();
         copy.hermes_home = self.hermes_home.clone();
         copy.launch_folder = self.launch_folder.clone();
         copy.launch = self.launch.clone();
@@ -2457,6 +2469,7 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
         }
         ModelsInput::EffortRead { session_id, value } if Some(session_id.as_str()) == current => {
             state.effort = Some(value.clone().unwrap_or_else(|| "medium".into()));
+            state.effort_wire = None;
         }
         ModelsInput::SessionEvent {
             session_id,
@@ -2489,6 +2502,11 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
                 .and_then(Value::as_str)
             {
                 state.effort = Some(effort.into());
+                state.effort_wire = payload
+                    .get("reasoning_effort_wire")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned);
             }
         }
         ModelsInput::MutationReturned {
@@ -2500,6 +2518,14 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
             }
             if let Some(effort) = receipt.get("effort").and_then(Value::as_str) {
                 state.effort = Some(effort.into());
+                state.effort_wire = receipt
+                    .get("reasoning_effort_wire")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned);
+            } else if receipt.get("effort").is_some() {
+                state.effort = None;
+                state.effort_wire = None;
             }
             if let Some(provider) = receipt.get("provider").and_then(Value::as_str)
                 && let Some(opened) = &mut state.opened
@@ -8596,6 +8622,7 @@ fn opened_session(
     state.opened_profile = Some(state.profile.clone());
     state.model = opened.info.model.clone();
     state.effort = opened.effort.clone();
+    state.effort_wire = None;
     // The snapshot's fences are the ones a later mutation must present.
     state
         .ledger
@@ -13672,6 +13699,7 @@ async fn run_inner<S: Screen>(
     state.list_title = setup.list_title;
     state.model = launch.model.clone();
     state.effort = launch.effort.clone();
+    state.effort_wire = None;
     state.hermes_home = setup.home.clone();
     state.launch_folder = launch.folder.clone();
     state.launch = Some(launch.clone());
