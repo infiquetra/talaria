@@ -185,13 +185,15 @@ pub struct HistoryConfig {
     pub save: bool,
 }
 
-/// Bell and desktop notification channels.
+/// Bell, desktop, and spoken notification channels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationsConfig {
     /// Kinds that ring the terminal bell.
     pub bell: Vec<AlertKind>,
     /// Kinds that send a desktop notification.
     pub desktop: Vec<AlertKind>,
+    /// Kinds that are spoken. Empty means spoken alerts are off.
+    pub speech: Vec<AlertKind>,
     /// A finished turn alerts only at or above these seconds.
     pub done_after_seconds: u64,
     /// Which background requests raise an alert. The default is every background row.
@@ -280,6 +282,7 @@ impl Default for Config {
             notifications: NotificationsConfig {
                 bell: vec![AlertKind::NeedsYou, AlertKind::Failed],
                 desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+                speech: Vec::new(),
                 done_after_seconds: DEFAULT_DONE_AFTER_SECONDS,
                 fleet_needs_you: FleetScope::All,
                 fleet_finished: FleetScope::Watched,

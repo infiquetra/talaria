@@ -23,6 +23,7 @@ fn cfg() -> FleetAttentionConfig {
     FleetAttentionConfig {
         bell: vec![AlertKind::NeedsYou, AlertKind::Failed],
         desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+        speech: vec![],
         done_after: Duration::from_secs(20),
         needs_you: FleetScope::All,
         finished: FleetScope::Watched,
@@ -408,6 +409,7 @@ fn fleet_notice_becomes_one_alert_effect() {
             kind: AlertKind::NeedsYou,
             bell: true,
             desktop: true,
+            speech: false,
             text: "api-refactor: needs you: approval: rm -rf build/".into(),
         }
     );
@@ -547,6 +549,7 @@ fn foreground_and_fleet_alerts_share_one_gate() {
         kind: AlertKind::NeedsYou,
         bell: true,
         desktop: true,
+        speech: false,
         text: "front: needs you: approval: pwd".into(),
     };
     let admitted = hub.on_foreground_alert(foreground, base);
@@ -576,6 +579,7 @@ fn foreground_and_fleet_alerts_share_one_gate() {
                 kind: AlertKind::NeedsYou,
                 bell: true,
                 desktop: true,
+                speech: false,
                 text: "needs".into(),
             },
             base,
@@ -588,6 +592,7 @@ fn foreground_and_fleet_alerts_share_one_gate() {
                 kind: AlertKind::Failed,
                 bell: true,
                 desktop: true,
+                speech: false,
                 text: "failed".into(),
             },
             base + Duration::from_secs(3),
@@ -600,6 +605,7 @@ fn foreground_and_fleet_alerts_share_one_gate() {
                 kind: AlertKind::Done,
                 bell: false,
                 desktop: true,
+                speech: false,
                 text: "done".into(),
             },
             base + Duration::from_secs(6),

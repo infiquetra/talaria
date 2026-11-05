@@ -20,6 +20,7 @@ fn cfg(needs_you: FleetScope, finished: FleetScope) -> FleetAttentionConfig {
     FleetAttentionConfig {
         bell: vec![AlertKind::NeedsYou, AlertKind::Failed],
         desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+        speech: vec![],
         done_after: Duration::from_secs(20),
         needs_you,
         finished,
@@ -30,6 +31,7 @@ fn all_channels() -> AttentionConfig {
     AttentionConfig {
         bell: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
         desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+        speech: vec![],
         done_after: Duration::from_secs(20),
     }
 }
@@ -1229,6 +1231,85 @@ fn channels_follow_bell_and_desktop_lists() {
             start + Duration::from_secs(25),
         )
         .is_none()
+    );
+}
+
+#[test]
+fn speech_alerts_once_per_need_after_the_quiet_window() {
+    let base = Instant::now();
+    let mut spoken = cfg(FleetScope::All, FleetScope::All);
+    spoken.bell.clear();
+    spoken.desktop.clear();
+    spoken.speech = vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed];
+    let mut attn = FleetAttention::new(spoken, "fixture".into());
+    let end = attn.observe_link(true, base).expect("a window");
+    let id_key = key("fixture", "sess-speech");
+    let detail = known(approval("rm -rf build/", ""));
+    let seen = row(
+        id_key.clone(),
+        "api-refactor",
+        RowState::NeedsYou,
+        None,
+        false,
+        false,
+    );
+    // A suppressed alert still remembers its need, so the spoken alert is a second id.
+    assert!(
+        attn.on_attention(
+            AlertKind::NeedsYou,
+            &id_key,
+            Some(&prompt(&id_key, "quiet")),
+            Some(&detail),
+            false,
+            Some(&seen),
+            base + Duration::from_secs(1),
+        )
+        .is_none(),
+        "speech stays quiet until the window ends"
+    );
+    let alert = attn
+        .on_attention(
+            AlertKind::NeedsYou,
+            &id_key,
+            Some(&prompt(&id_key, "spoken")),
+            Some(&detail),
+            false,
+            Some(&seen),
+            end,
+        )
+        .expect("speech alerts once the window ends");
+    assert_eq!(alert.kind, AlertKind::NeedsYou);
+    assert!(alert.speech);
+    assert!(!alert.bell);
+    assert!(!alert.desktop);
+    let text = alert.text.to_ascii_lowercase();
+    assert!(
+        text.contains("hermes"),
+        "speech names the backend: {}",
+        alert.text
+    );
+    assert!(
+        alert.text.contains("api-refactor"),
+        "speech names the row: {}",
+        alert.text
+    );
+    assert!(
+        !alert.text.contains("rm -rf"),
+        "speech does not read the command: {}",
+        alert.text
+    );
+    assert!(
+        attn.on_attention(
+            AlertKind::NeedsYou,
+            &id_key,
+            Some(&prompt(&id_key, "spoken")),
+            Some(&detail),
+            false,
+            Some(&seen),
+            end + Duration::from_secs(1),
+        )
+        .is_none(),
+        "one speech alert per need"
     );
 }
 

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 pub mod client;
 pub mod speakable;
+pub mod target;
 
 /// Where one session is in a capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

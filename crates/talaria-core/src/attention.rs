@@ -117,6 +117,8 @@ pub struct AttentionConfig {
     pub bell: Vec<AlertKind>,
     /// Kinds that send a desktop notification.
     pub desktop: Vec<AlertKind>,
+    /// Kinds that are spoken. Empty means spoken alerts are off.
+    pub speech: Vec<AlertKind>,
     /// A finished turn alerts only at or above this duration.
     pub done_after: Duration,
 }
@@ -130,6 +132,8 @@ pub struct Alert {
     pub bell: bool,
     /// Send a desktop notification.
     pub desktop: bool,
+    /// Read the alert aloud.
+    pub speech: bool,
     /// Text before the product prefix is added.
     pub text: String,
 }
@@ -254,6 +258,7 @@ impl AttentionTracker {
                 kind,
                 bell,
                 desktop,
+                speech: false,
                 text,
             })
         });

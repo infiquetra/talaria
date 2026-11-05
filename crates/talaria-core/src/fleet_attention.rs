@@ -27,6 +27,8 @@ pub struct FleetAttentionConfig {
     pub bell: Vec<AlertKind>,
     /// Kinds that send a desktop notification.
     pub desktop: Vec<AlertKind>,
+    /// Kinds that are spoken. Empty means spoken alerts are off.
+    pub speech: Vec<AlertKind>,
     /// A finished turn alerts only at or above this duration.
     pub done_after: Duration,
     /// Scope for needs-you alerts. Default is every background row.
@@ -285,6 +287,7 @@ impl FleetAttention {
             kind,
             bell,
             desktop,
+            speech: false,
             text,
         })
     }

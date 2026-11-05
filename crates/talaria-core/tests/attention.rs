@@ -16,6 +16,7 @@ fn all_channels() -> AttentionConfig {
     AttentionConfig {
         bell: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
         desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+        speech: vec![],
         done_after: Duration::from_secs(20),
     }
 }
@@ -234,6 +235,7 @@ fn channels_follow_configuration_and_texts() {
     let mut tracker = AttentionTracker::new(AttentionConfig {
         bell: vec![AlertKind::NeedsYou],
         desktop: vec![AlertKind::Done],
+        speech: vec![],
         done_after: Duration::from_secs(20),
     });
     let base = Instant::now();
@@ -250,6 +252,7 @@ fn channels_follow_configuration_and_texts() {
     let mut tracker = AttentionTracker::new(AttentionConfig {
         bell: vec![],
         desktop: vec![AlertKind::Done],
+        speech: vec![],
         done_after: Duration::from_secs(20),
     });
     tracker.observe(Activity::TurnStarted { at: base });
@@ -264,6 +267,7 @@ fn channels_follow_configuration_and_texts() {
     let mut tracker = AttentionTracker::new(AttentionConfig {
         bell: vec![],
         desktop: vec![],
+        speech: vec![],
         done_after: Duration::from_secs(20),
     });
     tracker.observe(Activity::TurnStarted { at: base });
@@ -476,6 +480,7 @@ proptest! {
         let mut tracker = AttentionTracker::new(AttentionConfig {
             bell: vec![AlertKind::NeedsYou],
             desktop: vec![AlertKind::NeedsYou],
+            speech: vec![],
             done_after: Duration::from_secs(3600),
         });
         let base = Instant::now();

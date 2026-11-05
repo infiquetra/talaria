@@ -584,6 +584,7 @@ pub trait Screen: ComposerDeadline + StatusHost {
                 talaria_core::attention::AlertKind::Done,
                 talaria_core::attention::AlertKind::Failed,
             ],
+            speech: vec![],
             done_after: Duration::from_secs(20),
         }
     }
@@ -600,6 +601,7 @@ pub trait Screen: ComposerDeadline + StatusHost {
                 talaria_core::attention::AlertKind::Done,
                 talaria_core::attention::AlertKind::Failed,
             ],
+            speech: vec![],
             done_after: Duration::from_secs(20),
             needs_you: FleetScope::All,
             finished: FleetScope::Watched,
@@ -1068,6 +1070,7 @@ impl AppState {
                         talaria_core::attention::AlertKind::Done,
                         talaria_core::attention::AlertKind::Failed,
                     ],
+                    speech: vec![],
                     done_after: Duration::from_secs(20),
                 },
             ),
@@ -1083,6 +1086,7 @@ impl AppState {
                         talaria_core::attention::AlertKind::Done,
                         talaria_core::attention::AlertKind::Failed,
                     ],
+                    speech: vec![],
                     done_after: Duration::from_secs(20),
                     needs_you: FleetScope::All,
                     finished: FleetScope::Watched,
