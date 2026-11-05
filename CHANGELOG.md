@@ -10,6 +10,28 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-05
+
+Talaria 0.8.0 adds an optional workspace, menu bar, local themes, clearer pickers,
+and client-side voice. See the [release notes](https://github.com/infiquetra/talaria/blob/v0.8.0/docs/release-notes/v0.8.0.md)
+and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.8.0/docs/migrating-from-0.6.5.md).
+
+### Added
+
+- An opt-in full-screen workspace with a right work panel, session overview, and keyboard-driven menu bar (#480, #481, #482).
+- Local theme files, three built-in themes, and theme-aware colours throughout the interface (#485, #486, #487).
+- An opt-in client voice backend with local capture and playback helpers, spoken summaries, and fleet-aware voice routing (#424, #426, #427, #428).
+
+### Changed
+
+- The model picker starts with search and a details area, and the providers dialog uses the same frame (#488, #489).
+- The status bar distinguishes unsupported reasoning effort and shows when Hermes lowers the requested level (#502).
+- Skills now report installed and enabled counts separately; Hub searches request up to 50 items and distinguish shown from fetched counts (#503).
+
+### Removed
+
+- The misleading Hub search footer that presented the returned count as if it were the full result count, and the client-imposed 20-item search limit (#503).
+
 ## [0.7.1] — 2026-11-02
 
 Talaria 0.7.1 is a patch release on 0.7.0 that closes the three known issues listed in the 0.7.0 release notes and improves status clarity across goal tracking, model reasoning, `/skin` selection, toolset toggles, Ultracode workflow prerequisites, remote voice safety, and queued-message wait times. See the [v0.7.1 release notes](https://github.com/infiquetra/talaria/blob/v0.7.1/docs/release-notes/v0.7.1.md) and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.7.1/docs/migrating-from-0.6.5.md).
@@ -624,7 +646,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/infiquetra/talaria/releases/tag/v0.8.0
 [0.7.1]: https://github.com/infiquetra/talaria/releases/tag/v0.7.1
 [0.7.0]: https://github.com/infiquetra/talaria/releases/tag/v0.7.0
 [0.6.5]: https://github.com/infiquetra/talaria/blob/python-final/docs/releases/v0.6.5.md
