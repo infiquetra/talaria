@@ -530,7 +530,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     /// peeked background session.
     fn sync_fleet(&mut self, _view: &View<'_>) {}
     fn model_list_height(&self) -> usize {
-        10
+        9
+    }
+    fn model_details_scroll_limit(&self) -> Option<usize> {
+        None
     }
     /// One raw input: a key, a paste, a resize, or a status command result.
     type Input: Send + 'static;
@@ -2185,6 +2188,9 @@ fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
         return;
     }
     state.models.set_list_height(screen.model_list_height());
+    state
+        .models
+        .set_details_scroll_limit(screen.model_details_scroll_limit());
     screen.sync_models(
         state.models.view(),
         if model_card_blocked(state) {
@@ -2442,6 +2448,9 @@ fn cron_not_connected(effect: CronEffect) -> Option<CronInput> {
 }
 
 fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
+    state.models.update(ModelsInput::Connection {
+        connected: state.link_state == LinkView::Connected,
+    });
     let current = state.opened.as_ref().map(|s| s.session_id.as_str());
     match &input {
         ModelsInput::OptionsLoaded { session_id, result }
@@ -8166,6 +8175,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             }
             effects.extend(commands_follow(state, CommandsInput::Connected));
             effects.extend(permissions(state, PermissionsInput::ConnectionOpened));
+            effects.extend(models_input(
+                state,
+                ModelsInput::Connection { connected: true },
+            ));
             if state.providers.is_open() {
                 effects.extend(providers_input(
                     state,
@@ -8186,6 +8199,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             state.link_state = LinkView::Reconnecting;
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
+            effects.extend(models_input(
+                state,
+                ModelsInput::Connection { connected: false },
+            ));
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
@@ -8202,6 +8219,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             state.link_state = LinkView::Closed;
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
+            effects.extend(models_input(
+                state,
+                ModelsInput::Connection { connected: false },
+            ));
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
@@ -8219,6 +8240,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             state.link_failed = true;
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
+            effects.extend(models_input(
+                state,
+                ModelsInput::Connection { connected: false },
+            ));
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },

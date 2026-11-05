@@ -510,8 +510,16 @@ inside pasted text is kept. `toggle_tasks` shows the task checklist; `attach_cli
 attaches the clipboard's image. `attention_next` (Alt+A) jumps to the oldest background request
 that waits for an answer. The model picker keys are not in the block: `model_picker` Alt+P,
 `effort_down` and `effort_up` Left and Right, `model_scope` Ctrl+G (also new sessions),
-`model_favourite` Ctrl+F, `model_refresh` Ctrl+R. They resolve before composer keys while the picker
-is open; Esc clears the filter, then closes; a confirmation card takes Enter or Y, Esc or N.
+`model_favourite` Ctrl+F, `model_refresh` Ctrl+R, `model_chips_next` Tab,
+`model_chips_prev` Shift+Tab, and `model_details` F2 or Ctrl+E. The chips change the list view
+(All, Starred, Configured, Set up); Ctrl+G still changes whether a choice is saved for new sessions.
+These actions resolve before composer keys while the picker is open. Typing always filters,
+including letters and digits; Ctrl+U clears. Esc closes full details first, then clears the filter,
+then closes the picker. Full details only scroll and never confirm, star or save anything.
+macOS may reserve F2, so Ctrl+E is an equivalent, rebindable default. Conflicting bindings produce
+a notice. Plain typing, navigation, Enter, Escape, Ctrl+C and Ctrl+U are reserved in this picker;
+an override that would take one of those keys is refused with a notice. A confirmation card takes
+Enter or Y, Esc or N.
 
 The transcript (`transcript_open`, Ctrl+O, which also closes it) has its own key context: plain
 letters there never reach the draft. `transcript_open` is checked before the transcript keys, and

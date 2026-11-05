@@ -317,6 +317,11 @@ struct ModelOverlay {
     rows: Vec<PickerRow>,
     selected: Option<usize>,
     banner: Option<String>,
+    list_scope: Option<talaria_core::models::ListScope>,
+    counts: talaria_core::models::BrowseCounts,
+    details: Vec<String>,
+    details_open: bool,
+    details_scroll: usize,
 }
 
 impl ModelOverlay {
@@ -330,12 +335,25 @@ impl ModelOverlay {
             rows: view.rows.to_vec(),
             selected: view.selected,
             banner: view.banner.map(String::from),
+            list_scope: view.browse.map(|b| b.scope),
+            counts: view.browse.map(|b| b.counts).unwrap_or_default(),
+            details: view.browse.map(|b| b.details.to_vec()).unwrap_or_default(),
+            details_open: view.browse.is_some_and(|b| b.details_open),
+            details_scroll: view.browse.map_or(0, |b| b.details_scroll),
         }
     }
 
     fn view(&self) -> PickerView<'_> {
         PickerView {
-            browse: None,
+            browse: self
+                .list_scope
+                .map(|scope| talaria_core::models::BrowseView {
+                    scope,
+                    counts: self.counts,
+                    details: &self.details,
+                    details_open: self.details_open,
+                    details_scroll: self.details_scroll,
+                }),
             title: &self.title,
             filter: &self.filter,
             effort: &self.effort,
@@ -405,9 +423,9 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
             ModelAction::ModelFavourite => Some(PickerKey::ToggleFavourite),
             ModelAction::ModelRefresh => Some(PickerKey::Refresh),
             ModelAction::ModelPicker => None,
-            ModelAction::ModelChipsNext
-            | ModelAction::ModelChipsPrev
-            | ModelAction::ModelDetails => None,
+            ModelAction::ModelChipsNext => Some(PickerKey::ChipsNext),
+            ModelAction::ModelChipsPrev => Some(PickerKey::ChipsPrev),
+            ModelAction::ModelDetails => Some(PickerKey::Details),
         };
     }
     let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other;
@@ -3329,7 +3347,18 @@ impl Screen for TuiScreen {
     }
 
     fn model_list_height(&self) -> usize {
-        terminal_size().map_or(10, |(_, rows)| usize::from(rows.saturating_sub(3)).max(3))
+        terminal_size().map_or(9, |(cols, rows)| {
+            talaria_tui::picker_frame::list_height(ratatui::layout::Rect::new(0, 0, cols, rows))
+        })
+    }
+
+    fn model_details_scroll_limit(&self) -> Option<usize> {
+        let (width, height) = terminal_size().ok()?;
+        let view = self.picker.as_ref()?.view();
+        Some(
+            talaria_tui::picker_frame::details_line_count(&view, width)
+                .saturating_sub(usize::from(height.saturating_sub(3))),
+        )
     }
 
     fn sync_profiles(&mut self, view: Option<&ProfilesView>) {
