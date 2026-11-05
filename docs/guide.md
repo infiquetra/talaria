@@ -1,5 +1,10 @@
 # Talaria guide
 
+The optional menu bar gives keyboard access to existing actions. Use Alt+I or `/layout bar`
+to toggle it, and `/layout menu` to focus it temporarily. Use arrows, Tab and Enter to
+navigate, and Esc to return to the composer. Disabled items explain their refusal. Narrow
+screens collapse the headings, and short screens use a temporary menu.
+
 ## What Talaria is
 
 Talaria is a terminal client for the Hermes agent gateway. It presents sessions and terminal input. Hermes owns the agent logic and session authority.

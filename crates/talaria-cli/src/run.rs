@@ -220,6 +220,7 @@ fn memory_footer_key(label: &str) -> Option<talaria_core::memory::MemoryKey> {
 /// status line.
 pub struct TuiScreen {
     workspace_history: Vec<WorkspaceCommit>,
+    menu: talaria_tui::workspace::menu::MenuState,
     workspace_source_epoch: u64,
     workspace_committed_cells: usize,
     workspace_renderer: talaria_tui::workspace::Workspace,
@@ -2474,6 +2475,93 @@ impl TuiScreen {
                 }
                 let key = Key::from(raw);
                 let action = self.keymap.resolve(&key, KeyContext::Composer);
+                if action == Some(Action::ToggleMenuBar) {
+                    self.menu = talaria_tui::workspace::menu::MenuState::shown();
+                    return vec![UserAction::ToggleMenuBar];
+                }
+                if view.layout.menu_focused {
+                    use talaria_tui::workspace::menu::{MenuBinding, MenuKey};
+                    if key.kind == KeyKind::Release {
+                        return Vec::new();
+                    }
+                    if !self.menu.focused {
+                        self.menu.menu_index = 0;
+                        self.menu.item_index = 0;
+                    }
+                    self.menu.visible = true;
+                    self.menu.focused = true;
+                    self.menu.transient = view.layout.menu_transient;
+                    self.menu.dropdown_open = view.layout.menu_dropdown;
+                    self.menu.fleet_enabled = view.menu_fleet_enabled;
+                    self.menu.remote_gateway = view.menu_remote_gateway;
+                    self.menu.panel_on = view.layout.preferences.work_panel;
+                    self.menu.bar_on = view.layout.preferences.menu_bar;
+                    self.menu.compact = self.terminal.screen_area().width < 60;
+                    let menu_key = match self.keymap.resolve_in(&key, KeyContext::Menu) {
+                        Some(Action::MenuLeft) => Some(MenuKey::Left),
+                        Some(Action::MenuRight) => Some(MenuKey::Right),
+                        Some(Action::MenuUp) => Some(MenuKey::Up),
+                        Some(Action::MenuDown) => Some(MenuKey::Down),
+                        Some(Action::MenuOpen | Action::MenuActivate) => Some(MenuKey::Enter),
+                        Some(Action::MenuNext) => Some(MenuKey::Tab),
+                        Some(Action::MenuPrev) => Some(MenuKey::BackTab),
+                        Some(Action::MenuClose) => Some(MenuKey::Esc),
+                        _ => match key.code {
+                            KeyCode::Char(c) => Some(MenuKey::Letter(c)),
+                            _ => None,
+                        },
+                    };
+                    let Some(menu_key) = menu_key else {
+                        return Vec::new();
+                    };
+                    let outcome = self.menu.on_key(menu_key);
+                    let mut actions = vec![UserAction::MenuFocus {
+                        focused: self.menu.focused,
+                        dropdown: self.menu.dropdown_open,
+                        transient: self.menu.transient && self.menu.visible,
+                    }];
+                    if let Some(notice) = outcome.notice {
+                        actions.push(UserAction::Notice(notice));
+                    }
+                    if let Some(binding) = outcome.activated {
+                        let selected = match binding {
+                            MenuBinding::LocalCommand(name) => {
+                                Some(UserAction::MenuCommand(format!("/{name}")))
+                            }
+                            MenuBinding::VoiceRead => {
+                                Some(UserAction::MenuCommand("/voice read".into()))
+                            }
+                            MenuBinding::KeyAction(name) => match name {
+                                "session_picker_open" => {
+                                    Some(UserAction::MenuCommand("/resume".into()))
+                                }
+                                "fleet_view_open" => Some(UserAction::FleetOpen),
+                                "attention_next" => Some(UserAction::AttentionNext),
+                                "model_picker" => Some(UserAction::MenuCommand("/model".into())),
+                                "layout_panel" => Some(UserAction::LayoutPanel),
+                                "toggle_menu_bar" => Some(UserAction::ToggleMenuBar),
+                                "toggle_tasks" => Some(UserAction::ToggleTasks),
+                                "agents_panel" => Some(UserAction::ToggleAgents),
+                                "voice_record" => Some(UserAction::VoiceRecord),
+                                "transcript_open" => {
+                                    Some(UserAction::Input(talaria_app::app::InputKey {
+                                        code: talaria_app::app::InputCode::Char('o'),
+                                        ctrl: true,
+                                        alt: false,
+                                        shift: false,
+                                        super_key: false,
+                                        other: false,
+                                    }))
+                                }
+                                _ => None,
+                            },
+                        };
+                        if let Some(action) = selected {
+                            actions.push(action);
+                        }
+                    }
+                    return actions;
+                }
                 if action == Some(Action::FleetViewOpen) {
                     return vec![UserAction::FleetOpen];
                 }
@@ -3202,6 +3290,9 @@ impl Screen for TuiScreen {
     fn work_panel(&self) -> bool {
         self.config.ui.work_panel
     }
+    fn menu_bar(&self) -> bool {
+        self.config.ui.menu_bar
+    }
 
     fn sync_workspace_transcript(&mut self, source_epoch: u64, committed_cells: usize) {
         if self.workspace_source_epoch != source_epoch {
@@ -3605,7 +3696,7 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
-        if view.layout.workspace_enabled() {
+        if view.layout.workspace_enabled() || view.layout.menu_transient {
             let _ = self.terminal.enter_workspace();
         } else {
             let _ = self.terminal.leave_workspace();
@@ -4006,7 +4097,7 @@ impl Screen for TuiScreen {
             now_ms: view.automation_now_ms,
             theme: &automation_theme,
         };
-        let workspace_enabled = view.layout.workspace_enabled();
+        let workspace_enabled = view.layout.workspace_enabled() || view.layout.menu_transient;
         let panel_visible = workspace_enabled
             && talaria_tui::workspace::geometry(
                 self.terminal.screen_area(),
@@ -4099,7 +4190,19 @@ impl Screen for TuiScreen {
                 panel: view.layout.panel,
                 checklist: if panel_visible { view.checklist } else { None },
                 checklist_expanded: view.checklist_expanded,
-                menu: talaria_tui::workspace::menu::MenuState::hidden(),
+                menu: talaria_tui::workspace::menu::MenuState {
+                    visible: view.layout.preferences.menu_bar || view.layout.menu_transient,
+                    focused: view.layout.menu_focused,
+                    dropdown_open: view.layout.menu_dropdown,
+                    transient: view.layout.menu_transient,
+                    fleet_enabled: view.menu_fleet_enabled,
+                    remote_gateway: view.menu_remote_gateway,
+                    panel_on: view.layout.preferences.work_panel,
+                    bar_on: view.layout.preferences.menu_bar,
+                    compact: width < 60,
+                    color: self.color,
+                    ..self.menu.clone()
+                },
                 footer: &footer,
             };
             let body_width = view.layout.plan(width, self.rows).transcript_columns;
@@ -4721,6 +4824,7 @@ fn session(
     composer.set_style(theme.composer);
     let mut screen = TuiScreen {
         workspace_history: Vec::new(),
+        menu: talaria_tui::workspace::menu::MenuState::hidden(),
         workspace_source_epoch: 0,
         workspace_committed_cells: 0,
         workspace_renderer: talaria_tui::workspace::Workspace::default(),

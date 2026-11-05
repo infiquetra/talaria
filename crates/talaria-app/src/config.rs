@@ -615,6 +615,10 @@ fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
                 Some(enabled) => ui.work_panel = enabled,
                 None => notices.push("[ui] work_panel must be true or false; using false.".into()),
             },
+            "menu_bar" => match value.as_bool() {
+                Some(enabled) => ui.menu_bar = enabled,
+                None => notices.push("[ui] menu_bar must be true or false; using false.".into()),
+            },
             "reduced_motion" => match value.as_bool() {
                 Some(reduced) => ui.reduced_motion = reduced,
                 None => {

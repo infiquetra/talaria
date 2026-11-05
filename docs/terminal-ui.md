@@ -1,5 +1,10 @@
 # Terminal views
 
+The optional menu bar is enabled with Alt+I or `/layout bar`; `/layout menu` focuses it
+or opens a temporary menu. Arrow keys, Tab and Enter navigate and activate items. Esc
+closes the dropdown, then returns focus to the composer. Disabled items explain why they
+cannot run. Below 60 columns the headings collapse; below 16 rows the menu is temporary.
+
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
 

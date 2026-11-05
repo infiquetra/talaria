@@ -849,6 +849,9 @@ impl Composer {
             | Action::McpCopy
             | Action::McpPasteRedirect
             | Action::ToggleVim
+            | Action::ToggleMenuBar
+            | Action::MenuLeft | Action::MenuRight | Action::MenuUp | Action::MenuDown
+            | Action::MenuOpen | Action::MenuActivate | Action::MenuNext | Action::MenuPrev | Action::MenuClose
             | Action::VoiceRecord => {}
         }
         false

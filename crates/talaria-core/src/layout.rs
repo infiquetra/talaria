@@ -119,7 +119,7 @@ impl LayoutState {
         LayoutPlan {
             transcript_columns: columns.saturating_sub(panel_columns),
             panel_columns,
-            menu_rows: 0,
+            menu_rows: u16::from(self.preferences.menu_bar && rows >= MIN_ROWS),
         }
     }
 }
@@ -140,6 +140,8 @@ pub enum LayoutAction {
 pub fn parse_layout_args(argument: &str) -> Result<LayoutAction, String> {
     match argument.trim() {
         "panel" => Ok(LayoutAction::Panel),
-        _ => Err("Usage: /layout panel".into()),
+        "bar" => Ok(LayoutAction::Bar),
+        "menu" => Ok(LayoutAction::Menu),
+        _ => Err("Usage: /layout panel|bar|menu".into()),
     }
 }

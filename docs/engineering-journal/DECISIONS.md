@@ -4572,3 +4572,12 @@ fixture measurement. Shared width 1 met it; per-session width 1 failed foregroun
 **Revisit when.** The operator approves the default or a new measurement on the intended
 machine supports another value. The C tool observation and the real-provider error also
 need investigation before drawing broader conclusions.
+
+### The optional menu reuses existing actions
+
+**Decision.** The menu groups Sessions, Fleet and attention under Session; model and effort
+under Model; panel, bar, tasks, agents and transcript under View; recording and read-aloud
+under Voice; settings, providers, MCP servers and profiles under Settings; and the gateway
+health check under Help. Disabled actions give their existing refusal reason. The bar and
+panel preferences are independent, and a temporary menu does not save a preference.
+**Revisit when.** Existing action availability or the workspace layout changes.

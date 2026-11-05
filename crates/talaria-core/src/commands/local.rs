@@ -450,8 +450,8 @@ const BUILTIN: &[LocalCommand] = &[
     LocalCommand {
         name: "layout",
         aliases: &[],
-        summary: "Toggle the workspace work panel",
-        args_hint: "panel",
+        summary: "Change the workspace layout",
+        args_hint: "panel|bar|menu",
         takes_argument: true,
         action: LocalAction::Layout,
         tag: "talaria",

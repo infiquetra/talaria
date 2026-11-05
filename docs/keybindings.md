@@ -67,6 +67,7 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Transcript open | Ctrl+O | Open or close the transcript pager. | `transcript_open` |
 | Toggle tasks | Ctrl+T | Show or hide the task checklist. | `toggle_tasks` |
 | Layout panel | Alt+D | Toggle the work panel, or reopen its dismissed overlay. | `layout_panel` |
+| Toggle menu bar | Alt+I | Toggle and focus the menu bar. | `toggle_menu_bar` |
 | Approvals toggle | Shift+Tab | Toggle this session’s approval bypass. | `approvals_toggle` |
 | Composer send now | Ctrl+Enter | Send the draft immediately. | `composer_send_now` |
 | Composer steer | none | Steer the active turn. | `composer_steer` |
@@ -76,6 +77,20 @@ These are the built-in bindings. Configure them in [configuration](configuration
 | Attention next | Alt+A | Jump to the next waiting request. | `attention_next` |
 | Voice record | Alt+R | Start or stop push-to-talk recording. | `voice_record` |
 | Toggle Vim editing | none | Turn Vim editing on or off in the composer. | `toggle_vim` |
+
+## Menu keys
+
+| Action | Default keys | What it does | Config name |
+|---|---|---|---|
+| Menu left | Left | Move to the previous menu. | `menu_left` |
+| Menu right | Right | Move to the next menu. | `menu_right` |
+| Menu up | Up | Move to the previous item. | `menu_up` |
+| Menu down | Down | Open the dropdown or move to the next item. | `menu_down` |
+| Menu open | none | Open the dropdown. | `menu_open` |
+| Menu activate | Enter | Open the dropdown or activate the selected item. | `menu_activate` |
+| Menu next | Tab | Move to the next menu. | `menu_next` |
+| Menu prev | Shift+Tab | Move to the previous menu. | `menu_prev` |
+| Menu close | Esc | Close the dropdown or return to the composer. | `menu_close` |
 
 ## Completion keys
 

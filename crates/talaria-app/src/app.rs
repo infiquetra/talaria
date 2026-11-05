@@ -196,6 +196,18 @@ pub enum LinkView {
 pub enum UserAction {
     /// Toggle or reopen the client work panel.
     LayoutPanel,
+    /// Toggle the menu preference.
+    ToggleMenuBar,
+    /// Focus the menu without changing its preference.
+    FocusMenu,
+    /// Synchronize the menu focus and dropdown after a key.
+    MenuFocus {
+        focused: bool,
+        dropdown: bool,
+        transient: bool,
+    },
+    /// Run an existing local command without submitting the composer's draft.
+    MenuCommand(String),
     /// Dismiss only the narrow work-panel overlay.
     DismissWorkPanel,
     Kanban(talaria_core::kanban::BoardKey),
@@ -356,6 +368,8 @@ pub enum ToggleContext {
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
     pub layout: &'a talaria_core::layout::LayoutState,
+    pub menu_fleet_enabled: bool,
+    pub menu_remote_gateway: bool,
     pub kanban: Option<&'a talaria_core::kanban::KanbanBoardState>,
     /// Configured external agents and the selected external transcript.
     pub acp_agents: &'a [(String, String)],
@@ -519,6 +533,9 @@ pub trait Screen: ComposerDeadline + StatusHost {
     }
     /// Startup preference; later changes belong to the runtime view alone.
     fn work_panel(&self) -> bool {
+        false
+    }
+    fn menu_bar(&self) -> bool {
         false
     }
     /// Identify the source before ordered commit effects reach the screen. The
@@ -1231,6 +1248,8 @@ impl AppState {
         let opened = self.opened.as_ref();
         View {
             layout: &self.layout,
+            menu_fleet_enabled: self.fleet_enabled,
+            menu_remote_gateway: self.remote_gateway,
             acp_agents: &self.acp_agents,
             acp_peek: self
                 .fleet
@@ -5412,9 +5431,12 @@ fn local_effect(
             Ok(talaria_core::layout::LayoutAction::Panel) => {
                 user_action(state, UserAction::LayoutPanel)
             }
-            Ok(
-                talaria_core::layout::LayoutAction::Bar | talaria_core::layout::LayoutAction::Menu,
-            ) => Vec::new(),
+            Ok(talaria_core::layout::LayoutAction::Bar) => {
+                user_action(state, UserAction::ToggleMenuBar)
+            }
+            Ok(talaria_core::layout::LayoutAction::Menu) => {
+                user_action(state, UserAction::FocusMenu)
+            }
             Err(notice) => vec![AppEffect::CommitLines(vec![notice])],
         };
     }
@@ -6224,6 +6246,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             }
         }
         UserAction::Submit(text) => {
+            if let Some(Ok((LocalAction::Layout, argument))) = local_line(&text) {
+                return local_effect(state, LocalAction::Layout, argument, text);
+            }
             if state.opened.is_none()
                 && let Some(Ok((action, argument))) = local_line(&text)
                 && matches!(
@@ -6373,6 +6398,32 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 .toggle_panel(state.pane_size.0, state.pane_size.1);
             vec![AppEffect::Redraw]
         }
+        UserAction::ToggleMenuBar => {
+            state.layout.preferences.menu_bar = !state.layout.preferences.menu_bar;
+            state.layout.menu_focused = state.layout.preferences.menu_bar;
+            state.layout.menu_transient = state.layout.preferences.menu_bar
+                && state.pane_size.1 < talaria_core::layout::MIN_ROWS;
+            state.layout.menu_dropdown = false;
+            vec![AppEffect::Redraw]
+        }
+        UserAction::FocusMenu => {
+            state.layout.menu_focused = true;
+            state.layout.menu_transient = !state.layout.preferences.menu_bar
+                || state.pane_size.1 < talaria_core::layout::MIN_ROWS;
+            state.layout.menu_dropdown = false;
+            vec![AppEffect::Redraw]
+        }
+        UserAction::MenuFocus {
+            focused,
+            dropdown,
+            transient,
+        } => {
+            state.layout.menu_focused = focused;
+            state.layout.menu_dropdown = dropdown;
+            state.layout.menu_transient = transient;
+            vec![AppEffect::Redraw]
+        }
+        UserAction::MenuCommand(command) => submit(state, command),
         UserAction::DismissWorkPanel => {
             if state.layout.dismiss_panel() {
                 vec![AppEffect::Redraw]
@@ -7744,6 +7795,23 @@ fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
         && matches!(key.code, InputCode::Char('c'));
 
     if !state.pager_open {
+        if chords(state, "toggle_menu_bar", "alt+i")
+            .iter()
+            .any(|chord| chord.matches(&key))
+        {
+            return user_action(state, UserAction::ToggleMenuBar);
+        }
+        if state.layout.menu_focused {
+            if key.code == InputCode::Esc && !key.ctrl && !key.alt && !key.super_key && !key.other {
+                if state.layout.menu_dropdown {
+                    state.layout.menu_dropdown = false;
+                } else {
+                    state.layout.menu_focused = false;
+                    state.layout.menu_transient = false;
+                }
+            }
+            return vec![AppEffect::Redraw];
+        }
         if chords(state, "layout_panel", "alt+d")
             .iter()
             .any(|chord| chord.matches(&key))
@@ -13734,7 +13802,7 @@ async fn run_inner<S: Screen>(
     state.layout = talaria_core::layout::LayoutState::new(
         talaria_core::layout::LayoutPreferences {
             work_panel: screen.work_panel(),
-            ..Default::default()
+            menu_bar: screen.menu_bar(),
         },
         state.pane_size.0,
         state.pane_size.1,
