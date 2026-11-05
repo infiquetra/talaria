@@ -815,3 +815,39 @@ mod invariants {
         }
     }
 }
+
+#[test]
+fn recent_completions_are_bounded() {
+    let mut tree = SubagentTree::new();
+    for (id, at) in [("old", 1_000u64), ("mid", 2_000), ("new", 3_000)] {
+        tree.apply(&event("subagent.start", payload(id)), clock(at));
+        let done = with(payload(id), "status", json!("completed"));
+        tree.apply(&event("subagent.complete", done), clock(at + 10));
+    }
+    tree.apply(
+        &event("subagent.spawn_requested", payload("queued")),
+        clock(4_000),
+    );
+    tree.apply(&event("subagent.start", payload("live")), clock(5_000));
+
+    let recent = tree.recent_completions(2);
+    let ids: Vec<&str> = recent.iter().map(|item| item.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["mid", "new"],
+        "the two newest completions, oldest of that window first"
+    );
+    assert!(
+        recent
+            .iter()
+            .all(|item| item.goal == format!("goal {}", item.id)),
+        "the summary keeps each child's own goal: {recent:?}"
+    );
+    assert!(
+        tree.recent_completions(0).is_empty(),
+        "a zero bound spells none out"
+    );
+    let binding = tree.recent_completions(8);
+    let all: Vec<&str> = binding.iter().map(|item| item.id.as_str()).collect();
+    assert_eq!(all, ["old", "mid", "new"]);
+}

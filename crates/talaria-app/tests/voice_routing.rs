@@ -241,6 +241,27 @@ fn voice_configuration_enforces_the_speech_limit() {
 }
 
 #[test]
+fn voice_backend_defaults_to_gateway_and_rejects_unknown_values() {
+    let defaults = talaria_app::config::parse("");
+    assert_eq!(defaults.config.voice.backend, "hermes-gateway");
+    assert!(defaults.notices.is_empty());
+    let missing_backend =
+        talaria_app::config::parse("[voice]\nread_aloud = true\nspeak_max_chars = 200\n");
+    assert_eq!(missing_backend.config.voice.backend, "hermes-gateway");
+    assert!(missing_backend.notices.is_empty());
+    let configured = talaria_app::config::parse(
+        "[voice]\nbackend = 'client-bridge'\nread_aloud = true\nspeak_max_chars = 100\n",
+    );
+    assert_eq!(configured.config.voice.backend, "client-bridge");
+    assert!(configured.config.voice.read_aloud);
+    assert_eq!(configured.config.voice.speak_max_chars, 100);
+    let unknown = talaria_app::config::parse("[voice]\nbackend = 'unknown'\n");
+    assert_eq!(unknown.config.voice.backend, "hermes-gateway");
+    assert!(unknown.notices.iter().any(|notice| notice
+        == "[voice] backend must be hermes-gateway or client-bridge; using hermes-gateway."));
+}
+
+#[test]
 fn push_to_talk_cannot_start_during_a_session_switch() {
     let mut state = opened_state();
     state.switching = true;

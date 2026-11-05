@@ -8,6 +8,19 @@ cannot run. Below 60 columns the headings collapse; below 16 rows the menu is te
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
 
+The status bar's model segment shows the session's requested effort. If Hermes reports a lower
+provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no
+effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
+catalogue or provider level is unavailable, the requested level is shown without a claim about it.
+
+The optional work panel shows the status row's attention count, the focused session's goal,
+turn and explicit verdict, its task checklist, and its agents. The waiting requests come from
+the fleet queue used by Alt+A; running and queued agents come from the focused session's tree.
+The panel counts omitted items as `+N more` and does not scroll. A child's model is shown only
+when Hermes reports it; otherwise it is `unknown`. Child effort is `unknown` because the pinned
+contract does not report it. A finished checklist is not a verdict. Ctrl+T still expands or
+collapses tasks, and Alt+S and Alt+A retain their existing actions.
+
 ## Optional workspace and work panel
 
 Alt+D or `/layout panel` toggles the work panel for the current view. To start with
@@ -37,6 +50,7 @@ Mouse capture remains off. If a terminal or multiplexer consumes Alt+D, use the 
 ## Capabilities
 
 `/capabilities [skills|hub|toolsets|plugins]` opens the capabilities of the connected profile.
+The Skills tab counts installed skills; its footer shows how many are on.
 The title always names that profile. The same view is linked from the settings screen's More
 category as **Skills, toolsets and plugins**. Hermes's `/skills`, `/toolsets`, `/tools` and
 `/plugins` commands retain their Hermes meanings.
@@ -54,6 +68,9 @@ change and its target profile until it completes.
 and `n` and `p` change browse pages. `i` scans the selected skill and shows the findings. Only an
 allowed scan offers confirmation, and only `y` installs. A successful installation is checked
 against the installed list, then the foreground session reloads skills when it has the same profile.
+Search asks for up to 50 items. When Hermes supplies source counts, the footer shows how many
+items are shown out of the number fetched from sources before deduplication; this is not a match
+total. Older Hermes replies without source counts show only the number shown.
 
 In Plugins, `i` accepts a lowercase catalog name or an HTTPS repository address. Talaria shows
 the catalog source and commit, or identifies a repository outside the catalog, before confirmation.

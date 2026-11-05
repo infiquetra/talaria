@@ -195,3 +195,21 @@ fn rejects_bad_shapes_without_partial_apply() {
         );
     }
 }
+
+#[test]
+fn finished_goal_verdict_stays_readable() {
+    let mut done = full_snapshot();
+    done["goal"]["status"] = json!("done");
+    done["goal"]["last_verdict"] = json!("needs-revision");
+    done["goal"]["last_reason"] = json!("the notes shipped");
+    let view = ControlView::decode(&done).expect("a finished goal decodes");
+    let goal = view.goal.expect("the finished goal");
+    assert_eq!(goal.status, "done");
+    assert_eq!(goal.last_verdict.as_deref(), Some("needs-revision"));
+    assert_eq!(goal.last_reason.as_deref(), Some("the notes shipped"));
+    assert_eq!(
+        goal.panel_verdict(),
+        Some("needs-revision"),
+        "a finished goal's explicit verdict stays readable"
+    );
+}

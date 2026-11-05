@@ -1,9 +1,14 @@
 #[path = "pager_support.rs"]
 mod support;
 
+use hermes_contract::events::EventFrame;
 use ratatui::{buffer::Buffer, layout::Rect, style::Modifier, text::Line};
 use serde_json::json;
+use talaria_core::automation::GoalView;
+use talaria_core::subagents::{Clock, SubagentEvent, SubagentTree};
 use talaria_core::{checklist::Checklist, layout::PanelVisibility};
+use talaria_tui::status::TurnState;
+use talaria_tui::workspace::panel::{WaitingRequest, WorkContents};
 use talaria_tui::{
     history::PlainCellLines,
     live::{LiveView, PlainTextSection},
@@ -18,6 +23,46 @@ fn text(buffer: &Buffer) -> String {
         .join("\n")
 }
 
+fn child(tree: &mut SubagentTree, id: &str, goal: &str, model: Option<&str>, ms: u64) {
+    let mut payload = json!({
+        "subagent_id": id,
+        "goal": goal,
+        "task_index": 0,
+        "task_count": 1,
+    });
+    if let Some(model) = model {
+        payload["model"] = json!(model);
+    }
+    let frame = EventFrame::from_params(&json!({
+        "type": "subagent.start",
+        "session_id": "local-test",
+        "seq": 1,
+        "replay_epoch": "epoch",
+        "payload": payload,
+    }))
+    .expect("contract-shaped child");
+    let event = SubagentEvent::from_notification(&frame.notification).expect("child event");
+    tree.apply(
+        &event,
+        Clock {
+            mono_ms: ms,
+            wall_s: ms as f64 / 1000.0,
+        },
+    );
+}
+
+fn panel_column(buffer: &Buffer, divider: u16, rows: u16) -> Vec<String> {
+    let start = divider + 1;
+    (0..rows)
+        .map(|y| {
+            let line: String = (start..start + 32)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            line.trim_end().to_string()
+        })
+        .collect()
+}
+
 #[test]
 fn workspace_snapshots_at_80x24_and_120x40() {
     let section =
@@ -25,17 +70,68 @@ fn workspace_snapshots_at_80x24_and_120x40() {
     let footer = LiveView {
         sections: vec![&section],
     };
-    for (width, height, panel, expected) in [
+    let goal = GoalView {
+        title: "keep the interface light".to_owned(),
+        status: "active".to_owned(),
+        created_ms: Some(1),
+        last_verdict: None,
+        last_reason: None,
+        turns_used: 1,
+        max_turns: 20,
+        subgoals: 0,
+        gates: 0,
+        paused_reason: None,
+        wait: None,
+    };
+    let checklist = Checklist::from_values(
+        1,
+        &[
+            json!({"id": "1", "content": "Read inputs", "status": "completed"}),
+            json!({"id": "2", "content": "Compare layouts", "status": "in_progress"}),
+            json!({"id": "3", "content": "Review screens", "status": "pending"}),
+        ],
+    );
+    let waiting = [WaitingRequest {
+        seq: 1,
+        label: "review: needs you".to_owned(),
+        foreground: false,
+    }];
+    let mut agents = SubagentTree::new();
+    child(
+        &mut agents,
+        "layout",
+        "layout: compare",
+        Some("GPT-6.1 Terra"),
+        1_000,
+    );
+    let work = WorkContents {
+        needs_you: 1,
+        goal: Some(&goal),
+        turn: TurnState::Streaming,
+        verdict_previous_turn: false,
+        checklist: Some(&checklist),
+        checklist_expanded: true,
+        waiting: &waiting,
+        agents: &agents,
+        parent_model: Some("parent-model"),
+        recent_limit: 2,
+        voice_phase: Some("listening"),
+        read_aloud: Some("read-aloud"),
+        voice_target: Some("Herdr:review"),
+    };
+    for (width, height, panel, divider, expected) in [
         (
             80,
             24,
             PanelVisibility::OverlayOpen,
+            47,
             include_str!("snapshots/workspace/80x24.txt"),
         ),
         (
             120,
             40,
             PanelVisibility::Docked,
+            87,
             include_str!("snapshots/workspace/120x40.txt"),
         ),
     ] {
@@ -43,17 +139,38 @@ fn workspace_snapshots_at_80x24_and_120x40() {
             entries: &[],
             details: Details::Expanded,
             panel,
-            checklist: None,
-            checklist_expanded: false,
+            checklist: Some(&checklist),
+            checklist_expanded: true,
             menu: workspace::menu::MenuState::hidden(),
             footer: &footer,
+            work: Some(&work),
         };
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
         workspace::draw(&view, buffer.area, &mut buffer, &PlainCellLines);
         assert_eq!(
-            format!("{}\n", text(&buffer)),
-            expected,
-            "{width}x{height}: no menu row; four unchanged footer rows"
+            buffer[(divider, 0)].symbol(),
+            "│",
+            "divider at {width}x{height}"
+        );
+        let left: String = (0..divider).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert!(
+            left.trim_end().starts_with("No messages yet"),
+            "{width}x{height}: no menu row: {left}"
+        );
+        assert_eq!(support::row_text(&buffer, height - 4), "composer top");
+        assert_eq!(support::row_text(&buffer, height - 3), "composer draft");
+        assert_eq!(support::row_text(&buffer, height - 2), "composer bottom");
+        assert_eq!(support::row_text(&buffer, height - 1), "status voice");
+        let body = height - 4;
+        let mut rendered = panel_column(&buffer, divider, body);
+        assert_eq!(rendered.len(), usize::from(body));
+        while rendered.last().is_some_and(String::is_empty) {
+            rendered.pop();
+        }
+        assert_eq!(
+            rendered,
+            expected.lines().map(str::to_owned).collect::<Vec<_>>(),
+            "{width}x{height}: panel contents"
         );
     }
 }
@@ -156,6 +273,7 @@ fn panel_geometry_matches_wide_and_compact_screens() {
             checklist_expanded: false,
             menu: workspace::menu::MenuState::hidden(),
             footer: &footer,
+            work: None,
         };
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
         workspace::draw(&view, buffer.area, &mut buffer, &PlainCellLines);
@@ -186,6 +304,7 @@ fn footer_matches_the_inline_footer() {
         checklist_expanded: false,
         menu: workspace::menu::MenuState::hidden(),
         footer: &footer,
+        work: None,
     };
     let mut buffer = Buffer::empty(Rect::new(0, 0, 120, 40));
     workspace::draw(&view, buffer.area, &mut buffer, &PlainCellLines);
@@ -223,6 +342,7 @@ fn checklist_is_hosted_once() {
                 checklist_expanded: expanded,
                 menu: workspace::menu::MenuState::hidden(),
                 footer: &footer,
+                work: None,
             };
             let mut buffer = Buffer::empty(Rect::new(0, 0, 120, 40));
             workspace::draw(&view, buffer.area, &mut buffer, &PlainCellLines);
@@ -315,6 +435,7 @@ fn frame_with(
         checklist: None,
         checklist_expanded: false,
         footer: &footer,
+        work: None,
     };
     let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
     workspace::draw(&view, buffer.area, &mut buffer, &PlainCellLines);

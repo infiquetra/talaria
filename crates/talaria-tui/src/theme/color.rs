@@ -152,3 +152,100 @@ pub fn to_ansi256(color: Rgb) -> u8 {
     }
     best.0
 }
+
+/// Conventional reference colours used only to choose a 16-colour approximation.
+pub const ANSI16: [Rgb; 16] = [
+    Rgb(0, 0, 0),
+    Rgb(128, 0, 0),
+    Rgb(0, 128, 0),
+    Rgb(128, 128, 0),
+    Rgb(0, 0, 128),
+    Rgb(128, 0, 128),
+    Rgb(0, 128, 128),
+    Rgb(192, 192, 192),
+    Rgb(128, 128, 128),
+    Rgb(255, 0, 0),
+    Rgb(0, 255, 0),
+    Rgb(255, 255, 0),
+    Rgb(0, 0, 255),
+    Rgb(255, 0, 255),
+    Rgb(0, 255, 255),
+    Rgb(255, 255, 255),
+];
+
+/// A named ANSI colour keeps the terminal's configured palette effective.
+pub fn ansi_color(index: u8) -> ratatui::style::Color {
+    use ratatui::style::Color;
+    match index {
+        0 => Color::Black,
+        1 => Color::Red,
+        2 => Color::Green,
+        3 => Color::Yellow,
+        4 => Color::Blue,
+        5 => Color::Magenta,
+        6 => Color::Cyan,
+        7 => Color::Gray,
+        8 => Color::DarkGray,
+        9 => Color::LightRed,
+        10 => Color::LightGreen,
+        11 => Color::LightYellow,
+        12 => Color::LightBlue,
+        13 => Color::LightMagenta,
+        14 => Color::LightCyan,
+        15 => Color::White,
+        _ => Color::Indexed(index),
+    }
+}
+
+/// The xterm reference value for an index. ANSI entries remain user configurable in practice.
+pub fn indexed_rgb(index: u8) -> Rgb {
+    match index {
+        0..=15 => ANSI16[usize::from(index)],
+        16..=231 => {
+            let cube = index - 16;
+            Rgb(
+                CUBE[usize::from(cube / 36)],
+                CUBE[usize::from(cube / 6 % 6)],
+                CUBE[usize::from(cube % 6)],
+            )
+        }
+        _ => {
+            let level = 8 + 10 * (index - 232);
+            Rgb(level, level, level)
+        }
+    }
+}
+
+/// Nearest conventional ANSI colour by squared RGB distance; ties choose the lower index.
+pub fn to_ansi16(color: Rgb) -> u8 {
+    ANSI16
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, candidate)| {
+            let delta = |a: u8, b: u8| u32::from(a.abs_diff(b)).pow(2);
+            delta(color.0, candidate.0) + delta(color.1, candidate.1) + delta(color.2, candidate.2)
+        })
+        .map_or(0, |(index, _)| index as u8)
+}
+
+/// Apply the terminal's depth after file layering, to any style colour field.
+pub fn constrain_color(
+    color: ratatui::style::Color,
+    depth: talaria_core::appearance::ColorDepth,
+) -> Option<ratatui::style::Color> {
+    use ratatui::style::Color;
+    use talaria_core::appearance::ColorDepth;
+    match (depth, color) {
+        (ColorDepth::None, _) => None,
+        (ColorDepth::Ansi16, Color::Rgb(r, g, b)) => Some(ansi_color(to_ansi16(Rgb(r, g, b)))),
+        (ColorDepth::Ansi16, Color::Indexed(index)) => Some(ansi_color(if index < 16 {
+            index
+        } else {
+            to_ansi16(indexed_rgb(index))
+        })),
+        (ColorDepth::Ansi256, Color::Rgb(r, g, b)) => {
+            Some(Color::Indexed(to_ansi256(Rgb(r, g, b))))
+        }
+        (_, color) => Some(color),
+    }
+}

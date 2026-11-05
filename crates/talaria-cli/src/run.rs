@@ -22,7 +22,7 @@ use talaria_app::app::{
     self, AttachmentView, ComposerDeadline, InputCode, InputKey, LinkView, Outcome, RunSetup,
     Screen, StatusHost, ToggleContext, TranscriptAction, UserAction, View,
 };
-use talaria_app::appearance::AppearanceView;
+use talaria_app::appearance::{AppearanceView, ThemeFileSession};
 use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
 use talaria_app::bg::dialog::{DialogEvent, DialogStatus, LaunchSubmit};
 use talaria_app::comforts::{editor, herdr::HerdrReporter, prompt_history::PromptHistory, suspend};
@@ -34,6 +34,7 @@ use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::peek::CardAnswer;
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
 use talaria_app::subagents::SubagentAction;
+use talaria_app::theme_file::BorderPreset;
 use talaria_core::appearance::ThemeReport;
 use talaria_core::attachments::CollapseRule;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
@@ -261,6 +262,9 @@ pub struct TuiScreen {
     look: Look,
     /// The theme in force for the composer, the status line and cells that start now.
     theme: Arc<Theme>,
+    startup_theme_files: Option<ThemeFileSession>,
+    theme_file_report: Option<talaria_core::appearance::ThemeFileReport>,
+    composer_border: BorderPreset,
     /// The theme each assistant or reasoning cell started under, until it is committed.
     captured: HashMap<CellId, Arc<Theme>>,
     /// The checklist's styles: the same choice of colour the Markdown renderer makes.
@@ -781,16 +785,23 @@ struct Look {
 }
 
 impl Look {
-    fn resolve(&self, view: &AppearanceView<'_>) -> Theme {
-        talaria_tui::theme::resolve(&ThemeInputs {
-            skin: view.skin,
-            skipped: view.skipped,
-            follow_hermes_skin: self.follow_hermes_skin,
-            polarity: view.polarity,
-            depth: self.depth,
-            motion: self.motion,
-            terminal: self.terminal,
-        })
+    fn resolve(&self, view: &AppearanceView<'_>) -> talaria_tui::theme::ThemeFileResolution {
+        let mut resolved = talaria_tui::theme::resolve_with_theme_file(
+            &ThemeInputs {
+                skin: view.skin,
+                skipped: view.skipped,
+                follow_hermes_skin: self.follow_hermes_skin,
+                polarity: view.polarity,
+                depth: self.depth,
+                motion: self.motion,
+                terminal: self.terminal,
+            },
+            view.file,
+        );
+        if let Some(report) = &mut resolved.report {
+            report.file = view.file_id.unwrap_or_default().to_owned();
+        }
+        resolved
     }
 }
 
@@ -1133,7 +1144,8 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         },
         model: view.model.map(str::to_string),
         reasoning_effort: view.effort.map(str::to_string),
-        reasoning_effort_wire: view.effort.map(str::to_string),
+        reasoning_effort_wire: view.effort_wire.map(str::to_string),
+        effort_offered: view.effort_offered,
         // One folder for the foreground session, kept by the app and moved by `/cd` (#237).
         working_dir: view.folder.and_then(|folder| folder.cwd.clone()),
         home_dir,
@@ -4040,7 +4052,10 @@ impl Screen for TuiScreen {
                 .map(|queue| render_preview(&queue, width, self.composer.is_empty()))
                 .unwrap_or_default(),
         );
-        let composer = self.composer.section(width, COMPOSER_ROWS);
+        let composer = self
+            .composer
+            .section(width, COMPOSER_ROWS)
+            .with_border_preset(self.composer_border);
         let partial_text = view
             .voice
             .as_ref()
@@ -4146,7 +4161,9 @@ impl Screen for TuiScreen {
             {
                 sections.push(checklist);
             }
-            if let Some(subagents) = &subagents {
+            if let Some(subagents) = &subagents
+                && talaria_core::layout::inline_subagent_dock_visible(panel_visible)
+            {
                 sections.push(subagents);
             }
             if let Some(side) = &side {
@@ -4166,6 +4183,54 @@ impl Screen for TuiScreen {
         sections.push(&automation);
         sections.push(&status);
         if workspace_enabled {
+            let empty_agents = talaria_core::subagents::SubagentTree::new();
+            let agents = view
+                .subagents
+                .and_then(|hub| hub.foreground_key().and_then(|key| hub.tree(key)))
+                .unwrap_or(&empty_agents);
+            let waiting = view
+                .fleet_snapshot
+                .map(|snapshot| {
+                    snapshot
+                        .queue
+                        .iter()
+                        .map(|item| {
+                            let name = snapshot
+                                .rows
+                                .iter()
+                                .find(|row| row.key == item.id.key)
+                                .map(|row| row.title.as_str())
+                                .filter(|title| !title.is_empty())
+                                .unwrap_or("session");
+                            talaria_tui::workspace::panel::WaitingRequest {
+                                seq: item.seq,
+                                label: format!("{name}: needs you"),
+                                foreground: item.foreground,
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let goal = view.automation.panel_goal();
+            let work = talaria_tui::workspace::panel::WorkContents {
+                needs_you: self.inputs.needs_you,
+                goal,
+                turn: self.inputs.turn,
+                verdict_previous_turn: goal.is_some_and(|goal| {
+                    goal.status == "active"
+                        && goal.panel_verdict().is_some()
+                        && self.inputs.turn == TurnState::Streaming
+                }),
+                checklist: view.checklist,
+                checklist_expanded: view.checklist_expanded,
+                waiting: &waiting,
+                agents,
+                parent_model: None,
+                recent_limit: 4,
+                voice_phase: None,
+                read_aloud: None,
+                voice_target: None,
+            };
             let mut entries = self
                 .workspace_history
                 .iter()
@@ -4204,6 +4269,7 @@ impl Screen for TuiScreen {
                     ..self.menu.clone()
                 },
                 footer: &footer,
+                work: Some(&work),
             };
             let body_width = view.layout.plan(width, self.rows).transcript_columns;
             let renderer = transcript_tool_renderer(
@@ -4385,8 +4451,18 @@ impl Screen for TuiScreen {
     }
 
     fn appearance_changed(&mut self, view: &AppearanceView<'_>) {
-        let theme = self.look.resolve(view);
-        self.set_theme(theme);
+        let resolved = self.look.resolve(view);
+        self.composer_border = resolved.border;
+        self.theme_file_report = resolved.report;
+        self.set_theme(resolved.theme);
+    }
+
+    fn startup_theme_files(&self) -> Option<ThemeFileSession> {
+        self.startup_theme_files.clone()
+    }
+
+    fn theme_file_report(&self) -> Option<talaria_core::appearance::ThemeFileReport> {
+        self.theme_file_report.clone()
     }
 
     fn theme_report(&self) -> Option<ThemeReport> {
@@ -4711,6 +4787,13 @@ fn run_selected(
         )
         .then(|| loaded.config.fleet.clone()),
     };
+    let remote_audio =
+        remote.as_ref().map(
+            |(cfg, store)| hermes_client::audio_api::AudioRelay::Remote {
+                config: cfg.clone(),
+                store: store.clone(),
+            },
+        );
     if let Some((cfg, store)) = remote {
         let dial = hermes_client::remote::RemoteDial::new(cfg, store, launch.profile.clone());
         let dial = match launch.record.as_deref() {
@@ -4746,7 +4829,10 @@ fn run_selected(
     let outcome = match session(
         &runtime,
         launch,
-        setup,
+        ConnectionSetup {
+            setup,
+            remote_audio,
+        },
         keymap,
         status,
         loaded.config,
@@ -4771,20 +4857,39 @@ struct ThemeSettings {
     look: Look,
 }
 
+struct ConnectionSetup {
+    setup: RunSetup,
+    remote_audio: Option<hermes_client::audio_api::AudioRelay>,
+}
+
 /// Acquire the terminal, run the loop, restore. The guard drops before the caller prints.
 fn session(
     runtime: &tokio::runtime::Runtime,
     launch: Launch,
-    setup: RunSetup,
+    connection: ConnectionSetup,
     keymap: KeyMap,
     status: Option<StatusCommandService>,
     config: config::Config,
     settings: ThemeSettings,
 ) -> Result<Outcome, TerminalError> {
+    let ConnectionSetup {
+        setup,
+        remote_audio,
+    } = connection;
     let attachment_rule = CollapseRule {
         lines: config.composer.paste_collapse_lines,
         chars: config.composer.paste_collapse_chars,
     };
+    let mut theme_files = std::env::var_os("HOME").map(|home| {
+        ThemeFileSession::new(
+            config::user_config_path(&std::path::PathBuf::from(home)),
+            config.theme.clone(),
+            &launch.profile,
+        )
+    });
+    let theme_notices = theme_files
+        .as_mut()
+        .map_or_else(Vec::new, ThemeFileSession::startup);
     let guard = TerminalGuard::acquire()?;
     let probe = probe_startup(PROBE_DEADLINE)?;
     // Light or dark is decided once, from the start-up probe; `/theme` overrides it per session.
@@ -4793,11 +4898,14 @@ fn session(
         polarity: detect::polarity(None, &settings.env, settings.mode, &probe.colors),
         ..settings.look
     };
-    let theme = look.resolve(&AppearanceView {
+    let resolved = look.resolve(&AppearanceView {
         skin: None,
         skipped: &[],
         polarity: look.polarity,
+        file: theme_files.as_ref().and_then(ThemeFileSession::file),
+        file_id: theme_files.as_ref().and_then(ThemeFileSession::active_id),
     });
+    let theme = resolved.theme;
     let size = terminal_size().map_err(TerminalError::Io)?;
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
@@ -4814,6 +4922,7 @@ fn session(
         &workspace.to_string_lossy(),
     );
     let mut setup = setup;
+    setup.notices.extend(theme_notices);
     setup.notices.extend(history_notice);
     let mut composer = Composer::from_startup(
         keymap.clone(),
@@ -4872,6 +4981,9 @@ fn session(
         clock: ToolClock::new(),
         tool_theme: theme.tool.clone(),
         look,
+        startup_theme_files: theme_files,
+        theme_file_report: resolved.report,
+        composer_border: resolved.border,
         theme: Arc::new(theme),
         captured: HashMap::new(),
         checklist_style: if color {
@@ -4931,12 +5043,13 @@ fn session(
     .map_err(TerminalError::Io)?;
     suspend::catch_interrupts_while_released().map_err(TerminalError::Io)?;
     screen.input = spawn_input(move |event| sender.send(ScreenInput::Terminal(event)).is_ok());
-    let outcome = runtime.block_on(app::run_with_ultracode(
+    let outcome = runtime.block_on(app::run_with_remote_audio(
         launch,
         setup,
         &mut screen,
         receiver,
         settings.ultracode,
+        remote_audio,
     ));
     screen.restore();
     drop(screen.input.take());

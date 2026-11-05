@@ -14,6 +14,10 @@ pub fn notice_effort(level: &str) -> String {
     format!("Effort: {level} for this session.")
 }
 
+pub fn notice_effort_not_offered(level: &str) -> String {
+    format!("Effort: {level} for this session; this model does not offer effort levels.")
+}
+
 pub fn notice_effort_back() -> &'static str {
     "Effort: back to the profile's level for this session."
 }

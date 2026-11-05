@@ -4,6 +4,16 @@
 
 ## 2026-10-25
 
+### Watch selected theme files for changes
+
+**Priority.** P3. **Effort.** Small.
+
+Theme files reload manually with `/theme reload`. A future watcher must debounce filesystem
+events, validate the whole candidate before application, keep the last good theme on failure,
+and deliver changes through the existing application channel without idle repaints.
+
+**Worth it when.** Manual reload becomes a measured obstacle while authoring themes.
+
 ### Open `@` path completion inside `/` slash-command argument drafts (`#213` C-5)
 
 **Priority.** P2.

@@ -134,6 +134,18 @@ fn ctrl_t_still_toggles_the_checklist_in_the_workspace() {
     );
 }
 
+#[test]
+fn dock_is_suppressed_only_while_the_panel_is_visible() {
+    assert!(
+        talaria_core::layout::inline_subagent_dock_visible(false),
+        "the inline dock stays when the panel is hidden"
+    );
+    assert!(
+        !talaria_core::layout::inline_subagent_dock_visible(true),
+        "a visible work panel suppresses the inline subagent dock"
+    );
+}
+
 fn config_file(name: &str) -> (std::path::PathBuf, Vec<u8>) {
     let root = std::env::temp_dir().join(format!("talaria-menu-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -172,6 +184,37 @@ fn open_running(state: &mut AppState) {
             notice: None,
         },
     );
+}
+
+#[test]
+fn alt_s_and_alt_a_keep_their_jobs_with_the_panel_on() {
+    for panel in [PanelVisibility::Docked, PanelVisibility::Hidden] {
+        let mut state = AppState::new("0123456789abcdef");
+        state.layout.preferences.work_panel = panel != PanelVisibility::Hidden;
+        state.layout.panel = panel;
+        let agents = update(&mut state, AppMessage::User(UserAction::ToggleAgents));
+        assert!(
+            agents
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::Redraw)),
+            "agents toggle still redraws with the panel {panel:?}"
+        );
+        assert_eq!(state.layout.panel, panel);
+
+        let mut state = AppState::new("0123456789abcdef");
+        state.layout.preferences.work_panel = panel != PanelVisibility::Hidden;
+        state.layout.panel = panel;
+        let attention = update(&mut state, AppMessage::User(UserAction::AttentionNext));
+        assert!(
+            attention.iter().any(|effect| matches!(
+                effect,
+                AppEffect::CommitLines(lines)
+                    if lines.iter().any(|line| line.contains("still loading"))
+            )),
+            "the jump key still reports the fleet with the panel {panel:?}"
+        );
+        assert_eq!(state.layout.panel, panel);
+    }
 }
 
 #[test]

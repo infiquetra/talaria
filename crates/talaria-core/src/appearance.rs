@@ -380,6 +380,23 @@ pub struct ThemeReport {
     pub ignored: Vec<String>,
 }
 
+/// Additional inspection details when a theme file is selected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThemeFileReport {
+    /// Selected file identifier or display name before the caller assigns its identifier.
+    pub file: String,
+    /// Built-in inheritance base.
+    pub base: String,
+    /// Whether the eligible Hermes skin participates.
+    pub skin_participates: bool,
+    /// Per-element, per-field origin labels.
+    pub sources: BTreeMap<String, BTreeMap<String, String>>,
+    /// Measurable contrast failures and reserved-token notices.
+    pub warnings: Vec<String>,
+    /// Tokens whose contrast cannot be measured reliably.
+    pub unknown_contrast: Vec<String>,
+}
+
 impl AppearanceState {
     /// The current skin, if any.
     pub fn skin(&self) -> Option<&Skin> {

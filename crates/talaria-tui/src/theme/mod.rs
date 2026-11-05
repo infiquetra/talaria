@@ -4,8 +4,13 @@
 
 pub mod cells;
 pub mod color;
+mod contrast;
 pub mod detect;
+mod file;
 pub mod roles;
+pub mod surfaces;
+
+pub use file::{BorderPreset, ThemeFileResolution, resolve_with_theme_file};
 
 use std::collections::{BTreeMap, BTreeSet};
 

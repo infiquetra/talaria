@@ -80,6 +80,7 @@ fn draw(
             checklist_expanded: false,
             menu: workspace::menu::MenuState::hidden(),
             footer: &footer,
+            work: None,
         };
         terminal.draw_workspace(|area, buffer| {
             workspace::draw(&view, area, buffer, &PlainCellLines);
