@@ -380,8 +380,12 @@ fn write_new(path: &std::path::Path, content: &str) -> Result<(std::path::PathBu
 }
 
 async fn stop_voice(app: &mut AppState, service: &SessionService, session_id: &str) {
+    app.voice_detaching(session_id);
+    app.close_client_voice().await;
+    if app.uses_client_voice() {
+        return;
+    }
     if let Some(client) = service.client() {
-        app.voice_detaching(session_id);
         let mut warning = Vec::new();
         app.voice
             .stop_before_detach(client, session_id, &mut warning)

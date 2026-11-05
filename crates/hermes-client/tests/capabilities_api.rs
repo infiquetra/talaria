@@ -9,6 +9,17 @@ use mock_rest::{CountingMinter, MockRest};
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 
+#[test]
+fn search_counts_are_optional_and_decoded() {
+    let base = json!({"results": [], "timed_out": [], "installed": {}});
+    let old: api::HubSearchDto = serde_json::from_value(base.clone()).unwrap();
+    assert_eq!(old.source_counts, None);
+    let mut newer = base;
+    newer["source_counts"] = json!({"one": 1, "two": 2});
+    let decoded: api::HubSearchDto = serde_json::from_value(newer).unwrap();
+    assert_eq!(decoded.source_counts.unwrap().values().sum::<u64>(), 3);
+}
+
 async fn setup() -> (MockRest, RestClient, Arc<CountingMinter>) {
     let mock = MockRest::start()
         .await
@@ -87,7 +98,7 @@ async fn routes_decode_fixtures() {
         .unwrap();
     assert_eq!(
         search.path,
-        "/api/skills/hub/search?q=a%20%26%20b%2F%C3%A9&source=all&limit=20&profile=fixture"
+        "/api/skills/hub/search?q=a%20%26%20b%2F%C3%A9&source=all&limit=50&profile=fixture"
     );
     let toggle = requests
         .iter()
@@ -156,7 +167,7 @@ async fn hub_reads_use_a_forty_five_second_deadline() {
     let (_mock, rest, _) = setup().await;
     api::hub_search(&rest, "fixture", "fixture").await.unwrap();
     for route in [
-        "search?q=fixture&source=all&limit=20",
+        "search?q=fixture&source=all&limit=50",
         "preview?identifier=fixture",
         "scan?identifier=fixture",
     ] {

@@ -3,9 +3,15 @@
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
 
+The status bar's model segment shows the session's requested effort. If Hermes reports a lower
+provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no
+effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
+catalogue or provider level is unavailable, the requested level is shown without a claim about it.
+
 ## Capabilities
 
 `/capabilities [skills|hub|toolsets|plugins]` opens the capabilities of the connected profile.
+The Skills tab counts installed skills; its footer shows how many are on.
 The title always names that profile. The same view is linked from the settings screen's More
 category as **Skills, toolsets and plugins**. Hermes's `/skills`, `/toolsets`, `/tools` and
 `/plugins` commands retain their Hermes meanings.
@@ -23,6 +29,9 @@ change and its target profile until it completes.
 and `n` and `p` change browse pages. `i` scans the selected skill and shows the findings. Only an
 allowed scan offers confirmation, and only `y` installs. A successful installation is checked
 against the installed list, then the foreground session reloads skills when it has the same profile.
+Search asks for up to 50 items. When Hermes supplies source counts, the footer shows how many
+items are shown out of the number fetched from sources before deduplication; this is not a match
+total. Older Hermes replies without source counts show only the number shown.
 
 In Plugins, `i` accepts a lowercase catalog name or an HTTPS repository address. Talaria shows
 the catalog source and commit, or identifies a repository outside the catalog, before confirmation.

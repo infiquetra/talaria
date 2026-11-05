@@ -74,7 +74,8 @@ async fn fixture_reduces_to_expected_view() {
         assert_eq!(names, expected);
         assert!(!format!("{view:?}").contains("/redacted"));
         if tab == CapTab::Skills {
-            assert_eq!(view.tabs[0], "Skills 3/4 on");
+            assert_eq!(view.tabs[0], "Skills 4 installed");
+            assert_eq!(view.footer, "3 of 4 on");
             assert_eq!(
                 view.rows
                     .iter()

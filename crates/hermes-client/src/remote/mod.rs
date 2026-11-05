@@ -3,7 +3,7 @@
 pub mod capture;
 pub mod connect;
 pub mod dial;
-mod http;
+pub(crate) mod http;
 pub mod loopback;
 pub mod native_auth;
 pub mod pkce;
@@ -297,6 +297,48 @@ pub(crate) fn endpoint(base: &Url, path: &str) -> Url {
     url.set_query(None);
     url.set_fragment(None);
     url
+}
+
+pub(crate) async fn audio_request(
+    cfg: &RemoteConfig,
+    store: &TokenStore,
+    profile: &str,
+    path: &str,
+    body: Value,
+    max_body: usize,
+    deadline: std::time::Duration,
+) -> Result<Value, RemoteError> {
+    let mut tokens = native_auth::fresh(cfg, store, None).await?;
+    for attempt in 0..2 {
+        let (status, result) = http::request_limited(
+            &cfg.base_url,
+            path,
+            "POST",
+            Some(&tokens.access),
+            Some(body.clone()),
+            None,
+            http::Limits {
+                max_body,
+                deadline,
+                profile: Some(profile),
+            },
+        )
+        .await?;
+        if status == 200 {
+            return Ok(result);
+        }
+        if status != 401 {
+            return Err(RemoteError::Http(status));
+        }
+        if attempt == 0 {
+            tokens = native_auth::refresh_cached(cfg, store, &tokens, None)
+                .await
+                .map_err(RemoteError::Refresh)?;
+        }
+    }
+    Err(RemoteError::RefusedAfterRefresh {
+        name: cfg.name.as_str().to_owned(),
+    })
 }
 
 impl fmt::Debug for TokenSet {

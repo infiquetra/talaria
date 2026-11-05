@@ -6914,3 +6914,19 @@ Rule: presentation fallbacks must distinguish an untouched style from an authore
 Hermes v0.22.4 `tui_gateway/methods_voice.py` owns one microphone and speaker per gateway process. Talaria also creates voice effects when a session opens and when a reply completes, independently of `/voice` and push-to-talk. The remote routing tests cover the explicit actions and repeated read-aloud.
 
 Rule: carry connection locality to the application and guard both user actions and background voice execution.
+
+## 2026-11-04 — Audio relay requires its own request limits
+
+Hermes v0.22.4 accepts up to 25 MiB of captured audio and returns synthesized audio
+as a base64 data URL. The existing remote JSON request caps responses at 1 MiB and
+times out after 15 seconds; its limits are unsuitable for audio.
+
+Rule: give audio requests separate bounded sizes and deadlines without widening the
+limits of unrelated requests.
+
+## Client speech cutoff release check
+
+Measure the interval from the stop key event to quiet output on a real macOS device.
+Record the measured value and device in the release evidence. The target is under
+100 milliseconds; process exit and tests using fake helpers do not measure device
+buffer latency.

@@ -175,7 +175,7 @@ async fn wire_requests_are_exact() {
         ),
         (
             "GET",
-            "/api/skills/hub/search?q=fixture&source=all&limit=20&profile=fixture",
+            "/api/skills/hub/search?q=fixture&source=all&limit=50&profile=fixture",
             Value::Null,
         ),
         (
