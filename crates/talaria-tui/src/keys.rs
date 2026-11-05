@@ -394,10 +394,11 @@ pub enum ProvidersAction {
     ClearKey,
     OpenLink,
     Copy,
+    Details,
 }
 
 impl ProvidersAction {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::NextTab,
         Self::PrevTab,
         Self::Reload,
@@ -407,6 +408,7 @@ impl ProvidersAction {
         Self::ClearKey,
         Self::OpenLink,
         Self::Copy,
+        Self::Details,
     ];
 
     const fn action(self) -> Action {
@@ -420,6 +422,7 @@ impl ProvidersAction {
             Self::ClearKey => Action::ProvidersClearKey,
             Self::OpenLink => Action::ProvidersOpenLink,
             Self::Copy => Action::ProvidersCopy,
+            Self::Details => Action::ProvidersDetails,
         }
     }
 
@@ -430,7 +433,7 @@ impl ProvidersAction {
 
     #[must_use]
     pub const fn default_chord(self) -> &'static str {
-        // Each of these nine actions defines one nonempty default chord list.
+        // Each provider action defines a nonempty default chord list.
         self.action().default_chords()[0]
     }
 }
@@ -942,6 +945,7 @@ pub enum Action {
     ProvidersClearKey,
     ProvidersOpenLink,
     ProvidersCopy,
+    ProvidersDetails,
     McpNextTab,
     McpPrevTab,
     McpReload,
@@ -990,7 +994,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 194] = [
+    pub const ALL: [Self; 195] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1169,6 +1173,7 @@ impl Action {
         Self::ProvidersClearKey,
         Self::ProvidersOpenLink,
         Self::ProvidersCopy,
+        Self::ProvidersDetails,
         Self::McpNextTab,
         Self::McpPrevTab,
         Self::McpReload,
@@ -1370,6 +1375,7 @@ impl Action {
             Self::ProvidersClearKey => "providers_clear_key",
             Self::ProvidersOpenLink => "providers_open_link",
             Self::ProvidersCopy => "providers_copy",
+            Self::ProvidersDetails => "providers_details",
             Self::McpNextTab => "mcp_next_tab",
             Self::McpPrevTab => "mcp_prev_tab",
             Self::McpReload => "mcp_reload",
@@ -1579,7 +1585,8 @@ impl Action {
             | Self::ProvidersSave
             | Self::ProvidersClearKey
             | Self::ProvidersOpenLink
-            | Self::ProvidersCopy => KeyContext::Providers,
+            | Self::ProvidersCopy
+            | Self::ProvidersDetails => KeyContext::Providers,
             Self::McpNextTab
             | Self::McpPrevTab
             | Self::McpReload
@@ -1786,6 +1793,7 @@ impl Action {
             Self::ProvidersClearKey => &["ctrl+x"],
             Self::ProvidersOpenLink => &["o"],
             Self::ProvidersCopy => &["c"],
+            Self::ProvidersDetails => &["f2", "ctrl+e"],
             Self::McpNextTab => &["tab"],
             Self::McpPrevTab => &["shift+tab"],
             Self::McpReload => &["ctrl+r"],
@@ -2955,7 +2963,8 @@ mod tests {
                 | Action::ProvidersSave
                 | Action::ProvidersClearKey
                 | Action::ProvidersOpenLink
-                | Action::ProvidersCopy => KeyContext::Providers,
+                | Action::ProvidersCopy
+                | Action::ProvidersDetails => KeyContext::Providers,
                 Action::McpNextTab
                 | Action::McpPrevTab
                 | Action::McpReload
@@ -3119,7 +3128,8 @@ mod tests {
                 | Action::ProvidersSave
                 | Action::ProvidersClearKey
                 | Action::ProvidersOpenLink
-                | Action::ProvidersCopy => KeyContext::Providers,
+                | Action::ProvidersCopy
+                | Action::ProvidersDetails => KeyContext::Providers,
                 Action::McpNextTab
                 | Action::McpPrevTab
                 | Action::McpReload
@@ -3285,7 +3295,8 @@ mod tests {
                 let settled = matches!(
                     action,
                     Action::CommitSubmit | Action::ProvidersSave | Action::McpSave
-                ) && label == "Ctrl+S";
+                ) && label == "Ctrl+S"
+                    || action == Action::ProvidersDetails && label == "F2";
                 assert!(
                     settled || !risky.contains(&label.as_str()),
                     "{label} is bound to {}",

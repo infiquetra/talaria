@@ -47,17 +47,8 @@ pub(crate) fn rebuild(state: &mut ProvidersState) {
         .unwrap_or_else(|| state.selected.min(state.keys.len().saturating_sub(1)));
 }
 pub(crate) fn status(state: &ProvidersState, row: &EnvRow) -> String {
-    let key = row
-        .tail
-        .as_ref()
-        .filter(|tail| tail.chars().count() == 4)
-        .map(|t| format!("key …{t}"))
-        .unwrap_or_else(|| "key saved".into());
-    let saved = if row.tail.as_ref().is_some_and(|t| t.chars().count() == 4) {
-        format!("{key} saved")
-    } else {
-        key.clone()
-    };
+    let key = "key saved";
+    let saved = key.to_owned();
     if state.loads[1].running || !state.loads[1].done {
         return format!(
             "{} · checking…",

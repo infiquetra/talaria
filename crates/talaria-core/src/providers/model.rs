@@ -291,6 +291,7 @@ pub struct ProvidersView {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Load {
+    pub overlapping: usize,
     pub running: bool,
     pub again: bool,
     pub done: bool,
@@ -316,6 +317,11 @@ pub(crate) struct Form {
 }
 #[derive(Clone, Debug)]
 pub(crate) enum Card {
+    Methods {
+        slug: String,
+        methods: Vec<super::browse::SetupMethod>,
+        selected: usize,
+    },
     Key(KeyCard),
     Confirm {
         title: String,
@@ -365,6 +371,13 @@ pub(crate) enum Busy {
 }
 #[derive(Clone, Default)]
 pub struct ProvidersState {
+    pub(crate) known_statuses:
+        std::collections::BTreeMap<(String, String), super::browse::ProviderStatus>,
+    pub(crate) all_selected: Option<super::browse::BrowseKey>,
+    pub(crate) details_open: bool,
+    pub(crate) details_scroll: usize,
+    pub(crate) uncertain: bool,
+    pub(crate) readback: Vec<usize>,
     pub(crate) open: bool,
     pub(crate) profile: String,
     pub(crate) connected: bool,

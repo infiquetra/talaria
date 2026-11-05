@@ -833,6 +833,7 @@ impl Composer {
             | Action::ProvidersClearKey
             | Action::ProvidersOpenLink
             | Action::ProvidersCopy
+            | Action::ProvidersDetails
             | Action::McpNextTab
             | Action::McpPrevTab
             | Action::McpReload

@@ -740,6 +740,7 @@ pub struct AppState {
     profiles_ticks: BTreeMap<u64, JoinHandle<()>>,
     pub providers: ProvidersState,
     provider_service: Option<Arc<crate::providers::ProviderService>>,
+    providers_model_return: Option<String>,
     provider_generation: u64,
     provider_initializing: bool,
     provider_pending_loads: Vec<ProvidersEffect>,
@@ -1026,6 +1027,7 @@ impl AppState {
             profiles_ticks: BTreeMap::new(),
             providers: ProvidersState::new(),
             provider_service: None,
+            providers_model_return: None,
             provider_generation: 0,
             provider_initializing: false,
             provider_pending_loads: Vec::new(),
@@ -2208,6 +2210,9 @@ fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
 }
 
 fn providers_input(state: &mut AppState, input: ProvidersInput) -> Vec<AppEffect> {
+    if matches!(&input, ProvidersInput::Open { .. }) {
+        state.providers_model_return = None;
+    }
     if matches!(&input, ProvidersInput::Open { .. })
         && let Some(service) = &state.provider_service
     {
@@ -2218,6 +2223,13 @@ fn providers_input(state: &mut AppState, input: ProvidersInput) -> Vec<AppEffect
             .into_iter()
             .map(AppEffect::Providers)
             .collect();
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, AppEffect::Providers(ProvidersEffect::Close)))
+        && let Some(provider) = state.providers_model_return.take()
+    {
+        effects.extend(models_input(state, ModelsInput::ResumePicker { provider }));
+    }
     effects.push(AppEffect::Redraw);
     effects
 }
@@ -2518,6 +2530,7 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
     let mut effects = Vec::new();
     for effect in state.models.update(input) {
         if let ModelsEffect::OpenProviders { slug } = effect {
+            let provider = slug.clone();
             effects.extend(providers_input(
                 state,
                 ProvidersInput::Open {
@@ -2526,6 +2539,7 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
                     connected: state.link_state == LinkView::Connected,
                 },
             ));
+            state.providers_model_return = Some(provider);
         } else {
             effects.push(AppEffect::Models(effect));
         }

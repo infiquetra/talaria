@@ -115,6 +115,7 @@ providers_save = ['ctrl+s']
 providers_clear_key = ["ctrl+x"]
 providers_open_link = ["o"]
 providers_copy = ["c"]
+providers_details = ["f2", "ctrl+e"]
 fleet_filter = ["/"]
 fleet_profile_next = ["tab"]
 fleet_profile_prev = ["shift+tab"]
@@ -552,14 +553,20 @@ case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrow
 `pageup`, `pagedown`, `space`, `plus` or `f1` to `f24`. A printable key needs `ctrl`, `alt` or
 `super`; an uppercase letter means Shift. A key you wrote beats a default; between two you wrote,
 the earlier action keeps it and the other gets a notice. Shift+Enter needs the Kitty keyboard
-protocol, so Ctrl+J and Alt+Enter are the portable newline keys. No default uses F1, F2, Ctrl+B or
-Ctrl+S (macOS, nested Herdr, flow control), except `commit_submit` in the review's commit editor
-and `providers_save` in an endpoint form and `mcp_save` in an MCP form;
+protocol, so Ctrl+J and Alt+Enter are the portable newline keys. No default uses F1 or Ctrl+B.
+F2 opens `model_details` or `providers_details`; Ctrl+E is their portable alternative.
+Ctrl+S is reserved for `commit_submit` in the review's commit editor,
+`providers_save` in an endpoint form and `mcp_save` in an MCP form;
 binding them works, with a notice.
 
 ## Providers
 
-`/providers` manages keys, accounts, and endpoints; see the [terminal guide](terminal-ui.md#providers).
+`/providers` opens All; `/providers keys`, `/providers accounts` and `/providers endpoints`
+open those scopes. Tab and Shift+Tab keep the filter while changing scope. The configurable
+`providers_details` action opens read-only full details with F2 or Ctrl+E; macOS may reserve F2.
+Printable browse keys always filter. Escape closes details, a card, the filter and then the dialog
+in that order. Credential previews appear only inside a key card. See the
+[terminal guide](terminal-ui.md#providers) for setup steps and returning to the model picker.
 
 ## Approvals and working folder
 

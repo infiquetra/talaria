@@ -4,6 +4,33 @@
 
 ## 2026-11-04
 
+### Providers uses the shared picker and retains the setup state machines
+
+**Decision.** All merges inventories by slug in catalogue, key-inventory and account-inventory
+order; Keys keeps its existing saved-first label order. The frame shares geometry, row clipping,
+details and footer placement with the model picker. A multi-method provider opens a chooser.
+Existing card state derives the step text, and only a key card shows the saved key's last four
+characters. Read-back never repeats a write; pending old reads are followed by a fresh read before
+uncertainty clears. Failed inventory dependencies stay unknown, and offline retains known statuses.
+
+Returning from setup restores the model picker only when Providers closes. The operator clarified
+that successful read-back may change Set up to All when required to expose the first new model;
+the filter and requested effort remain. Account-only targets absent from the catalogue retain
+their earlier Accounts entry, so legacy direct entry and catalogue-backed model stubs stay distinct.
+
+The assigned stack has no theme-file module. Add these three names to the forty-name picker ledger:
+
+| Name | Role | Attributes |
+| --- | --- | --- |
+| `picker.badge.ready` | success | default |
+| `picker.badge.saved` | muted | dim |
+| `picker.setup.step` | primary | bold |
+
+Setup cards continue to use the established `dialog.*` names. **Rejected.** Merging by display name,
+key previews outside their card, automatically switching after setup, and changing credential write
+semantics for presentation. **Revisit when.** The view colour card binds the forty-three names to
+the theme catalogue, or Hermes changes the inventory identities and setup methods.
+
 ### Shared model picker frame and final element names
 
 **Decision.** Follow the accepted search-first grouped picker in #474: view chips, one list,
