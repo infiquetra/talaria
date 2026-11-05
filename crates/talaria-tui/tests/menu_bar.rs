@@ -86,6 +86,7 @@ fn row_has_no_voice_or_model_text() {
         checklist: None,
         checklist_expanded: false,
         footer: &footer,
+        work: None,
     };
     let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 24));
     workspace::draw(&view, buffer.area, &mut buffer, &PlainCellLines);
