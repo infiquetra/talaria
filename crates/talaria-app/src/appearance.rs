@@ -578,6 +578,44 @@ pub fn background_restored_line(polarity: Polarity, source_label: &str) -> Strin
 /// The `/theme` usage line.
 pub const THEME_USAGE: &str = "Usage: /theme [light|dark|auto]";
 
+/// The selected user theme file for one application run.
+#[derive(Clone, Debug, Default)]
+pub struct ThemeFileSession;
+
+impl ThemeFileSession {
+    pub fn new(
+        _config: std::path::PathBuf,
+        _theme: crate::config::ThemeConfig,
+        _profile: &str,
+    ) -> Self {
+        Self
+    }
+
+    pub fn selected_id(&self) -> Option<&str> {
+        None
+    }
+    pub fn active_id(&self) -> Option<&str> {
+        None
+    }
+    pub fn file(&self) -> Option<&crate::theme_file::ThemeFile> {
+        None
+    }
+    pub fn startup(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+    pub fn set_profile(&mut self, _profile: &str) -> bool {
+        false
+    }
+    pub fn command(&mut self, _argument: &str) -> (Vec<String>, AppearanceChange) {
+        (Vec::new(), AppearanceChange::Unchanged)
+    }
+}
+
+/// Additional report lines for an explicitly selected file.
+pub fn theme_file_lines(_report: &talaria_core::appearance::ThemeFileReport) -> Vec<String> {
+    Vec::new()
+}
+
 /// The reason a skin is not applied, if any, from a resolved report.
 pub fn not_applied(report: &ThemeReport) -> Option<NotAppliedReason> {
     report.not_applied
@@ -592,6 +630,10 @@ pub struct AppearanceView<'a> {
     pub skipped: &'a [SkippedValue],
     /// The session override, else the start-up decision.
     pub polarity: (Polarity, PolaritySource),
+    /// The last valid selected file, if any.
+    pub file: Option<&'a crate::theme_file::ThemeFile>,
+    /// The identifier of the last valid selected file.
+    pub file_id: Option<&'a str>,
 }
 
 impl AppearanceService {
@@ -601,6 +643,8 @@ impl AppearanceService {
             skin: self.skin(),
             skipped: self.skipped(),
             polarity: self.polarity(),
+            file: None,
+            file_id: None,
         }
     }
 }

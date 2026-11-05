@@ -614,11 +614,19 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn startup_appearance(&self) -> Option<(TerminalColors, (Polarity, PolaritySource))> {
         None
     }
+    /// Theme file selection prepared before the application starts.
+    fn startup_theme_files(&self) -> Option<appearance::ThemeFileSession> {
+        None
+    }
     /// The skin or the session polarity changed: resolve the theme again for the composer, the
     /// status line and cells that start from now on. Scrollback is never redrawn.
     fn appearance_changed(&mut self, _view: &AppearanceView<'_>) {}
     /// What the resolved theme reports, for `/theme`.
     fn theme_report(&self) -> Option<ThemeReport> {
+        None
+    }
+    /// Additional report only for a selected theme file.
+    fn theme_file_report(&self) -> Option<talaria_core::appearance::ThemeFileReport> {
         None
     }
     /// Apply one programmatic edit and report its sanitized draft and caret.
@@ -2061,6 +2069,8 @@ pub enum AppEffect {
     Appearance,
     /// Print the `/theme` report.
     ThemeReport,
+    /// Load a theme file away from the application reducer.
+    ThemeFileCommand(String),
     /// Run `/skin`, with its name argument if any.
     Skin(Option<String>),
     /// Describe again after a reconnect of this generation.
@@ -12482,6 +12492,7 @@ fn apply<S: Screen>(
                     screen.commit_lines(lines);
                 }
             }
+            AppEffect::ThemeFileCommand(_) => {}
             AppEffect::Skin(name) => {
                 let client = state
                     .service

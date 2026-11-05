@@ -27,6 +27,11 @@ impl<'a> ComposerSection<'a> {
         Self { composer }
     }
 
+    /// Select the frame glyph preset for this draw.
+    pub fn with_border_preset(self, _preset: talaria_app::theme_file::BorderPreset) -> Self {
+        self
+    }
+
     fn rows(&self) -> &[Row] {
         self.composer
             .cache

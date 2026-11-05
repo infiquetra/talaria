@@ -206,6 +206,8 @@ pub struct HerdrConfig {
 /// Theme settings from `[theme]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeConfig {
+    pub file: Option<String>,
+    pub profiles: std::collections::BTreeMap<String, String>,
     /// Light or dark preference. The default is auto.
     pub mode: ThemeMode,
     /// Follow the Hermes skin. The default is true.
@@ -280,6 +282,8 @@ impl Default for Config {
                 workspace_filter: None,
             },
             theme: ThemeConfig {
+                file: None,
+                profiles: std::collections::BTreeMap::new(),
                 mode: ThemeMode::Auto,
                 follow_hermes_skin: true,
                 colors: ColorsSetting::Auto,

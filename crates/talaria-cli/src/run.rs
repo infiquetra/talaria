@@ -4580,6 +4580,8 @@ fn session(
         skin: None,
         skipped: &[],
         polarity: look.polarity,
+        file: None,
+        file_id: None,
     });
     let size = terminal_size().map_err(TerminalError::Io)?;
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
