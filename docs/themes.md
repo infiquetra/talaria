@@ -1,7 +1,87 @@
 # Themes
 
-Talaria draws in the colours of the Hermes skin the profile already uses. It has no theme
-catalogue of its own: with no skin it draws exactly as before skins were supported.
+Talaria follows the profile's Hermes skin by default. Choosing a theme file adds a palette,
+semantic roles and element overrides. With no file selected, the existing appearance is unchanged.
+
+## Theme files
+
+Save a UTF-8 TOML file as `themes/<id>.toml` beside Talaria's `config.toml`. Files are shared
+across profiles. The identifier starts with a lower-case letter or digit, followed by up to
+63 lower-case letters, digits, underscores or dashes. Files cannot leave that folder, including
+through symbolic links, and cannot exceed 256 KiB. The identifiers `terminal`, `dark`, `light`,
+`ember` and `paper` are reserved for built-ins and cannot name user files.
+
+This minimal theme changes the accent and the active composer frame:
+
+```toml
+schema = 1
+name = "Quiet amber"
+extends = "dark"
+follow_hermes_skin = true
+
+[palette]
+accent = "#ffb86b"
+
+[elements."composer.border.focused"]
+fg = "$palette.accent"
+bold = true
+```
+
+Set `[theme] file = "quiet-amber"` in `config.toml` to select it at launch. A
+`[theme.profiles."fixture"]` table with `file = "quiet-amber"` selects it for that profile.
+Selection order is the session choice from `/theme use <id>`, the profile table, the global
+`[theme] file`, then the existing Hermes skin behaviour. `/theme use` clears the session choice.
+These commands never write configuration or Hermes files.
+
+`schema = 1` is required. `extends` defaults to `terminal` and accepts only `terminal`, `dark`
+or `light`, never another file or a URL. `name` is an optional display label. The twelve palette
+slots are `background`, `surface`, `foreground`, `muted`, `disabled`, `border`, `primary`,
+`accent`, `success`, `warning`, `error` and `attention`. Fourteen style roles use these colours:
+`background`, `surface`, `text`, `muted`, `disabled`, `border`, `primary`, `accent`, `success`,
+`warning`, `error`, `attention`, `selection` and `focus`.
+
+A role table such as `[roles.accent]`, or an element table such as
+`[elements."transcript.heading.1"]`, accepts `fg`, `bg`, `underline_color`, and the booleans
+`bold`, `dim`, `italic`, `underline`, `reverse` and `strikethrough`. Omission inherits the field;
+`false` clears an inherited attribute. Colours accept `"default"`, `"#RRGGBB"`, `"ansi:0"`
+through `"ansi:15"`, and `"index:0"` through `"index:255"`. Roles and elements may reference
+`"$palette.<slot>"`. Palette values are literal colours; references cannot chain. Unknown keys,
+tokens, roles, slots, colour forms and values reject the whole file with the key, line and column.
+There are no expressions, wildcards, scripts, environment substitutions or blinking attributes.
+
+The [element catalogue](theme-tokens.md) lists all 323 names and their defaults. Its 30 `picker.*`
+names are reserved for the picker implementation. A file may set them; `/theme` warns that they
+do not yet draw. This first file implementation applies to Markdown, status, the composer,
+reasoning and tool/diff cells. Other views keep their existing palettes until they move onto the
+catalogue.
+
+The layers, from lowest to highest, are the built-in base, the eligible Hermes skin, the file's
+palette, its roles, its element fields, and the terminal's rendering constraints. An authored
+role or palette slot wins over skin values for its bound elements. Unrelated skin distinctions
+remain. `follow_hermes_skin = false` in the file disables the bridge. The existing configuration
+permission and colour-depth exclusions also apply.
+
+`[chrome] border` accepts `rounded`, `single`, `double`, `ascii` or `none` and changes the
+composer frame. `none` replaces frame glyphs with spaces while preserving its width. The active
+frame uses `composer.border.focused`. `section_divider` accepts `single`, `double`, `ascii` or
+`none`; its drawing is deferred with the other views. Themes never change motion, dimensions,
+keys or action meanings.
+
+All background colours resolve, but the five inline surfaces paint none. Text therefore sits on
+the terminal's own background. The contrast diagnostic uses a trusted startup background for
+inline text when available; otherwise it reports the pair as unknown. Catalogue selection/focus
+pairs, which are not drawn by these five inline surfaces, are measured against their paired
+backgrounds. The diagnostic warns below 4.5:1 for text and 3:1
+for structural marks, names the affected tokens, and never rewrites an authored colour. ANSI
+palette colours and unknown terminal defaults cannot be measured reliably. Explicit colours
+convert to the available depth: true colour, the nearest indexed colour, or the nearest of the
+conventional sixteen colours. A non-empty `NO_COLOR` or `[theme] colors = "none"` removes all
+foreground, background and underline colours while retaining attributes.
+
+An invalid startup file gives one notice and uses the existing appearance. `/theme reload`
+rereads the selected file manually; an invalid reload retains the last good theme. There is no
+file watcher. New cells and chrome use a successful change. Streaming cells finish in their
+starting theme, and finished native scrollback keeps its colours.
 
 ## Where the skin comes from
 
@@ -28,9 +108,10 @@ Colour depth: a non-empty `NO_COLOR` turns colour off, then `[theme] colors`, th
 16-colour terminal, with `follow_hermes_skin = false`, or with colour off, the skin is not applied.
 Colour off keeps bold, italic and underline.
 
-Talaria never paints the terminal's background or its default text colour: body text stays in
-the terminal's own colour, and skin colours that are too faint for the background are lifted to
-a readable contrast the way Hermes's own terminal interface does it.
+On the default skin path, body text keeps the terminal's own colour and skin colours that are
+too faint for the background are lifted to a readable contrast as in Hermes's terminal interface.
+Theme files instead preserve their authored colours and report contrast warnings. The five
+inline surfaces do not paint backgrounds.
 
 ## Commands
 
@@ -40,6 +121,10 @@ a readable contrast the way Hermes's own terminal interface does it.
 - `/theme` shows the skin, the background, the colour depth and the motion setting, each with
   where it came from. `/theme light`, `/theme dark` and `/theme auto` change the background for
   this session only; nothing is written to disk.
+- `/theme use <id>` selects a file for this session. `/theme use` returns to the configured
+  selection. `/theme reload` rereads the active file. When a file is selected, `/theme` also
+  reports its identifier, base, skin participation, per-field sources and warnings. Without a
+  selected file, the report keeps its existing five lines.
 
 ## Reduced motion
 

@@ -356,6 +356,9 @@ allowlist = []
 mode = "auto"
 follow_hermes_skin = true
 colors = "auto"
+# file = "quiet-amber"
+# [theme.profiles."fixture"]
+# file = "quiet-amber"
 [ui]
 reduced_motion = false
 [fleet]
@@ -400,6 +403,9 @@ remain idle with an unknown indicator.
 
 `status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees the default-deny environment described below plus `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
 (`/theme` overrides it for one session); `theme.follow_hermes_skin = false` keeps Talaria's colours; `theme.colors` is `auto`, `truecolor`, `256`, `16` or `none`.
+`theme.file` selects `themes/<id>.toml` beside `config.toml`; `[theme.profiles."<profile-id>"] file`
+overrides it for that profile. `/theme use <id>` overrides both for this session, `/theme use`
+returns to configuration, and `/theme reload` rereads the active file. None writes configuration.
 `ui.reduced_motion` stops timed changes except counters, which change at most once a second. A paste of `paste_collapse_lines` lines or `paste_collapse_chars` characters
 becomes a label (0 turns that rule off). `TALARIA_THEME` beats `theme.mode`, `TALARIA_REDUCED_MOTION` beats `ui.reduced_motion`, and a non-empty `NO_COLOR` turns colour
 off. See [themes](themes.md).
@@ -831,6 +837,8 @@ The default block above is authoritative. Invalid values use the documented defa
 | `mode` | string | auto | auto, light, dark | auto |
 | `follow_hermes_skin` | boolean | true | true or false | true |
 | `colors` | string | auto | auto, truecolor, 256, 16, none | auto |
+| `file` | string | unset | theme identifier, at most 64 lower-case letters, digits, underscores or dashes; starts with a letter or digit | quiet-amber |
+| `profiles."<profile-id>".file` | string | unset | same identifier rules; overrides `file` for this profile | quiet-amber |
 
 ### `ui`
 

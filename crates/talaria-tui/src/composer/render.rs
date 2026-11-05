@@ -3,6 +3,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use talaria_app::theme_file::BorderPreset;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -20,16 +21,31 @@ type Cell = (String, Style);
 #[derive(Debug)]
 pub struct ComposerSection<'a> {
     composer: &'a super::Composer,
+    border_preset: BorderPreset,
 }
 
 impl<'a> ComposerSection<'a> {
     pub(crate) fn new(composer: &'a super::Composer) -> Self {
-        Self { composer }
+        Self {
+            composer,
+            border_preset: BorderPreset::Rounded,
+        }
     }
 
     /// Select the frame glyph preset for this draw.
-    pub fn with_border_preset(self, _preset: talaria_app::theme_file::BorderPreset) -> Self {
+    pub fn with_border_preset(mut self, preset: BorderPreset) -> Self {
+        self.border_preset = preset;
         self
+    }
+
+    fn border_glyphs(&self) -> [char; 6] {
+        match self.border_preset {
+            BorderPreset::Rounded => ['╭', '╮', '╰', '╯', '─', '│'],
+            BorderPreset::Single => ['┌', '┐', '└', '┘', '─', '│'],
+            BorderPreset::Double => ['╔', '╗', '╚', '╝', '═', '║'],
+            BorderPreset::Ascii => ['+', '+', '+', '+', '-', '|'],
+            BorderPreset::None => [' '; 6],
+        }
     }
 
     fn rows(&self) -> &[Row] {
@@ -183,6 +199,14 @@ impl<'a> ComposerSection<'a> {
     }
 
     fn render_boxed(&self, prepared: &Prepared, area: Rect, buf: &mut Buffer) {
+        let [
+            top_left,
+            top_right,
+            bottom_left,
+            bottom_right,
+            horizontal,
+            vertical,
+        ] = self.border_glyphs();
         let width = usize::from(prepared.width.min(area.width));
         let interior = width.saturating_sub(2);
         let dim = Style::default().add_modifier(Modifier::DIM);
@@ -197,7 +221,13 @@ impl<'a> ComposerSection<'a> {
             marker = marker.add_modifier(Modifier::DIM);
         }
 
-        let mut top = border_cells(interior, Self::top_hint(prepared).as_deref(), dim, border);
+        let mut top = border_cells(
+            interior,
+            Self::top_hint(prepared).as_deref(),
+            dim,
+            border,
+            horizontal,
+        );
         if let Some(title) = &self.composer.title {
             let hint_cells = Self::top_hint(prepared).map_or(0, |hint| hint.chars().count() + 1);
             let room = interior.saturating_sub(1 + hint_cells);
@@ -208,11 +238,11 @@ impl<'a> ComposerSection<'a> {
             }
         }
         let mut lines: Vec<Vec<Cell>> = Vec::new();
-        lines.push(framed('\u{256D}', top, '\u{256E}', border));
+        lines.push(framed(top_left, top, top_right, border));
 
         for offset in 0..prepared.shown {
             let mut line: Vec<Cell> = vec![
-                ("\u{2502}".to_string(), border),
+                (vertical.to_string(), border),
                 (" ".to_string(), Style::default()),
             ];
             if offset == 0 {
@@ -227,13 +257,19 @@ impl<'a> ComposerSection<'a> {
             line.extend(text);
             line.push((" ".to_string(), Style::default()));
             line.push((" ".to_string(), Style::default()));
-            line.push(("\u{2502}".to_string(), border));
+            line.push((vertical.to_string(), border));
             lines.push(line);
         }
 
-        let mut bottom = border_cells(interior, self.bottom_hint(prepared).as_deref(), dim, border);
+        let mut bottom = border_cells(
+            interior,
+            self.bottom_hint(prepared).as_deref(),
+            dim,
+            border,
+            horizontal,
+        );
         if let Some(mode) = self.mode_cells(interior.saturating_sub(1)) {
-            bottom = vec![("\u{2500}".to_string(), border); interior];
+            bottom = vec![(horizontal.to_string(), border); interior];
             if !bottom.is_empty() {
                 bottom[0] = (" ".to_string(), Style::default());
             }
@@ -241,7 +277,7 @@ impl<'a> ComposerSection<'a> {
                 *slot = cell;
             }
         }
-        lines.push(framed('\u{2570}', bottom, '\u{256F}', border));
+        lines.push(framed(bottom_left, bottom, bottom_right, border));
         draw_lines(&lines, area, buf);
     }
 
@@ -326,8 +362,9 @@ fn border_cells(
     hint: Option<&str>,
     hint_style: Style,
     border: Style,
+    horizontal: char,
 ) -> Vec<Cell> {
-    let mut cells: Vec<Cell> = vec![("\u{2500}".to_string(), border); interior];
+    let mut cells: Vec<Cell> = vec![(horizontal.to_string(), border); interior];
     if let Some(hint) = hint {
         let hint: Vec<char> = hint.chars().collect();
         let start = interior.saturating_sub(hint.len());

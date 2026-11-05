@@ -6893,6 +6893,22 @@ Rule: request private directory permissions at creation when diagnostics depend 
 - Hermes v0.22.4 toolset changes can reach some existing sessions on resume or a following session's next turn, while other policies stay frozen ([issue #467](https://github.com/infiquetra/talaria/issues/467#issuecomment-6590474428)). Rule: qualify existing-session timing when describing saved toolset changes.
 
 
+## 2026-11-04 — Keep TOML spans through semantic validation
+
+The pinned `toml` version reexports `Spanned` and supplies spans for map keys and values, including
+quoted dotted element names. Deserializing first into a plain table loses the information needed
+to identify a misspelled token's location. The theme parser retains spans until semantic validation
+so unknown keys and invalid values can name their key, line and column.
+
+Rule: preserve parser spans until strict configuration validation has finished.
+
+The reasoning renderer previously added dim whenever its foreground was unset. A focused
+runtime probe showed that colour-off therefore overrode a file's explicit `dim = false`.
+Applying that fallback only to an entirely default style preserves authored attributes and the
+legacy no-file look.
+
+Rule: presentation fallbacks must distinguish an untouched style from an authored colourless one.
+
 ## 2026-11-02 — Remote voice includes automatic effects
 
 Hermes v0.22.4 `tui_gateway/methods_voice.py` owns one microphone and speaker per gateway process. Talaria also creates voice effects when a session opens and when a reply completes, independently of `/voice` and push-to-talk. The remote routing tests cover the explicit actions and repeated read-aloud.

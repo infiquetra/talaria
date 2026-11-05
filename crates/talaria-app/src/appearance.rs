@@ -7,6 +7,8 @@
 //! so a colour that is not a string (an unquoted `#` in a skin file reads as `null`) is skipped
 //! rather than failing the whole result.
 
+use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -40,6 +42,10 @@ pub struct AppearanceService {
     /// The newest connection generation, shared by clones so an older reconnect describe drops
     /// its retry when a newer connection is up.
     generation: Arc<AtomicU64>,
+    files: Option<ThemeFileSession>,
+    file_generation: u64,
+    file_loading: bool,
+    file_commands: VecDeque<String>,
 }
 
 impl AppearanceService {
@@ -55,6 +61,10 @@ impl AppearanceService {
             startup_polarity,
             override_: None,
             generation: Arc::new(AtomicU64::new(0)),
+            files: None,
+            file_generation: 0,
+            file_loading: false,
+            file_commands: VecDeque::new(),
         }
     }
 
@@ -111,6 +121,77 @@ impl AppearanceService {
     /// The session polarity override, if any.
     pub fn polarity_override(&self) -> Option<Polarity> {
         self.override_
+    }
+
+    /// Adopt the selection prepared before the first frame.
+    pub fn set_theme_files(&mut self, files: ThemeFileSession) {
+        self.files = Some(files);
+    }
+
+    pub fn theme_files(&self) -> Option<&ThemeFileSession> {
+        self.files.as_ref()
+    }
+
+    /// Update profile selection without reading a file on the loop.
+    pub fn set_file_profile(&mut self, profile: &str) -> bool {
+        let Some(files) = &mut self.files else {
+            return false;
+        };
+        let before = files.selected_id().map(str::to_owned);
+        if !files.set_profile(profile) {
+            return false;
+        }
+        before.as_deref() != files.selected_id()
+    }
+
+    pub fn queue_file_command(&mut self, argument: String) {
+        self.file_commands.push_back(argument);
+    }
+
+    /// Start one queued command from the last adopted selection.
+    pub fn begin_file_request(&mut self) -> Option<(u64, ThemeFileSession, String)> {
+        if self.file_loading {
+            return None;
+        }
+        let files = self.files.clone()?;
+        let argument = self.file_commands.pop_front()?;
+        self.file_loading = true;
+        self.file_generation = self.file_generation.wrapping_add(1);
+        Some((self.file_generation, files, argument))
+    }
+
+    pub fn file_generation(&self) -> u64 {
+        self.file_generation
+    }
+
+    pub fn finish_file_request(&mut self, generation: u64) -> bool {
+        if generation != self.file_generation {
+            return false;
+        }
+        self.file_loading = false;
+        true
+    }
+
+    pub fn adopt_file_result(
+        &mut self,
+        generation: u64,
+        mut files: ThemeFileSession,
+    ) -> Option<AppearanceChange> {
+        if generation != self.file_generation {
+            return None;
+        }
+        let changed = self.files.as_ref().map(|old| &old.active) != Some(&files.active);
+        // A connection may change profiles while the file is read. Keep that newer identity;
+        // a queued profile refresh then inherits any session choice this command produced.
+        if let Some(current) = &self.files {
+            files.profile.clone_from(&current.profile);
+        }
+        self.files = Some(files);
+        Some(if changed {
+            AppearanceChange::Changed
+        } else {
+            AppearanceChange::Unchanged
+        })
     }
 
     /// The newest connection generation a reconnect describe was started for.
@@ -576,44 +657,135 @@ pub fn background_restored_line(polarity: Polarity, source_label: &str) -> Strin
 }
 
 /// The `/theme` usage line.
-pub const THEME_USAGE: &str = "Usage: /theme [light|dark|auto]";
+pub const THEME_USAGE: &str = "Usage: /theme [light|dark|auto|use [<id>]|reload]";
 
 /// The selected user theme file for one application run.
-#[derive(Clone, Debug, Default)]
-pub struct ThemeFileSession;
+#[derive(Clone, Debug)]
+pub struct ThemeFileSession {
+    config_path: PathBuf,
+    theme: crate::config::ThemeConfig,
+    profile: String,
+    session_file: Option<String>,
+    active: Option<(String, crate::theme_file::ThemeFile)>,
+}
 
 impl ThemeFileSession {
-    pub fn new(
-        _config: std::path::PathBuf,
-        _theme: crate::config::ThemeConfig,
-        _profile: &str,
-    ) -> Self {
-        Self
+    pub fn new(config: PathBuf, theme: crate::config::ThemeConfig, profile: &str) -> Self {
+        Self {
+            config_path: config,
+            theme,
+            profile: profile.to_owned(),
+            session_file: None,
+            active: None,
+        }
     }
 
     pub fn selected_id(&self) -> Option<&str> {
-        None
+        self.session_file
+            .as_deref()
+            .or_else(|| self.theme.profiles.get(&self.profile).map(String::as_str))
+            .or(self.theme.file.as_deref())
     }
     pub fn active_id(&self) -> Option<&str> {
-        None
+        self.active.as_ref().map(|(id, _)| id.as_str())
     }
     pub fn file(&self) -> Option<&crate::theme_file::ThemeFile> {
-        None
+        self.active.as_ref().map(|(_, file)| file)
     }
     pub fn startup(&mut self) -> Vec<String> {
-        Vec::new()
+        self.refresh().err().into_iter().collect()
     }
-    pub fn set_profile(&mut self, _profile: &str) -> bool {
-        false
+    pub fn set_profile(&mut self, profile: &str) -> bool {
+        if self.profile == profile {
+            return false;
+        }
+        self.profile = profile.to_owned();
+        true
     }
-    pub fn command(&mut self, _argument: &str) -> (Vec<String>, AppearanceChange) {
-        (Vec::new(), AppearanceChange::Unchanged)
+    pub fn command(&mut self, argument: &str) -> (Vec<String>, AppearanceChange) {
+        let words: Vec<_> = argument.split_whitespace().collect();
+        let before = self.active.clone();
+        let result = match words.as_slice() {
+            ["use", id] if crate::theme_file::valid_id(id) => {
+                match crate::theme_file::load(&self.config_path, id) {
+                    Ok(file) => {
+                        self.session_file = Some((*id).to_owned());
+                        self.active = Some(((*id).to_owned(), file));
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            ["use"] => {
+                self.session_file = None;
+                self.refresh()
+            }
+            ["reload"] => self.refresh(),
+            _ => return (vec![THEME_USAGE.to_owned()], AppearanceChange::Unchanged),
+        };
+        if let Err(error) = result {
+            return (vec![error], AppearanceChange::Unchanged);
+        }
+        let change = if self.active != before {
+            AppearanceChange::Changed
+        } else {
+            AppearanceChange::Unchanged
+        };
+        let line = self.active_id().map_or_else(
+            || "Theme file selection cleared; using the configured skin behaviour.".to_owned(),
+            |id| format!("Theme file: themes/{id}.toml."),
+        );
+        (vec![line], change)
+    }
+
+    fn refresh(&mut self) -> Result<(), String> {
+        self.active = match self.selected_id() {
+            Some(id) => Some((
+                id.to_owned(),
+                crate::theme_file::load(&self.config_path, id)?,
+            )),
+            None => None,
+        };
+        Ok(())
     }
 }
 
 /// Additional report lines for an explicitly selected file.
-pub fn theme_file_lines(_report: &talaria_core::appearance::ThemeFileReport) -> Vec<String> {
-    Vec::new()
+pub fn theme_file_lines(report: &talaria_core::appearance::ThemeFileReport) -> Vec<String> {
+    let mut lines = vec![
+        format!("  File: themes/{}.toml", report.file),
+        format!("  Base: {}", report.base),
+        format!(
+            "  Hermes skin: {}",
+            if report.skin_participates {
+                "participates"
+            } else {
+                "not applied"
+            }
+        ),
+        "  Sources:".to_owned(),
+    ];
+    for (token, fields) in &report.sources {
+        let fields = fields
+            .iter()
+            .map(|(field, source)| format!("{field}={source}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("    {token}: {fields}"));
+    }
+    lines.extend(
+        report
+            .warnings
+            .iter()
+            .map(|warning| format!("  Warning: {warning}")),
+    );
+    if !report.unknown_contrast.is_empty() {
+        lines.push(format!(
+            "  Contrast unknown: {}",
+            report.unknown_contrast.join(", ")
+        ));
+    }
+    lines
 }
 
 /// The reason a skin is not applied, if any, from a resolved report.
@@ -643,8 +815,8 @@ impl AppearanceService {
             skin: self.skin(),
             skipped: self.skipped(),
             polarity: self.polarity(),
-            file: None,
-            file_id: None,
+            file: self.files.as_ref().and_then(ThemeFileSession::file),
+            file_id: self.files.as_ref().and_then(ThemeFileSession::active_id),
         }
     }
 }

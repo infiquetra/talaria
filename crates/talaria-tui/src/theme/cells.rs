@@ -19,12 +19,12 @@ pub struct ThemedCells<'a> {
     pub theme: &'a Theme,
 }
 
-/// The base style of reasoning text: the skin's thinking colour, else dim as in phase 1.
+/// Preserve resolved reasoning attributes; an untouched default keeps the legacy dim fallback.
 pub fn reasoning_base(theme: &Theme) -> Style {
-    if theme.reasoning.fg.is_some() {
-        theme.reasoning
-    } else {
+    if theme.reasoning == Style::default() {
         theme.reasoning.add_modifier(Modifier::DIM)
+    } else {
+        theme.reasoning
     }
 }
 

@@ -85,7 +85,7 @@ impl std::fmt::Display for ThemeFileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} at {}:{}: {}",
+            "{} at line {}, column {}: {}",
             self.key, self.line, self.column, self.message
         )
     }

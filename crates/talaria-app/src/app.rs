@@ -1773,6 +1773,11 @@ pub enum AppMessage {
         /// The connection generation of a reconnect describe.
         generation: Option<u64>,
     },
+    /// A file read and whole-file validation completed off the application loop.
+    ThemeFileDone {
+        generation: u64,
+        result: Result<(Box<appearance::ThemeFileSession>, Vec<String>), String>,
+    },
     /// A clipboard, drop, or completion result.
     Attachment(crate::attachments::AttachmentEvent),
     AttachmentResult {
@@ -2071,6 +2076,8 @@ pub enum AppEffect {
     ThemeReport,
     /// Load a theme file away from the application reducer.
     ThemeFileCommand(String),
+    /// Start the next queued file command after adopting the preceding result.
+    ContinueThemeFiles,
     /// Run `/skin`, with its name argument if any.
     Skin(Option<String>),
     /// Describe again after a reconnect of this generation.
@@ -3954,6 +3961,27 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             {
                 effects.push(AppEffect::Appearance);
             }
+            effects
+        }
+        AppMessage::ThemeFileDone { generation, result } => {
+            if !state.appearance.finish_file_request(generation) {
+                return Vec::new();
+            }
+            let mut effects = match result {
+                Err(notice) => vec![notice_lines(&notice)],
+                Ok((files, lines)) => {
+                    let change = state.appearance.adopt_file_result(generation, *files);
+                    let mut effects = Vec::new();
+                    if !lines.is_empty() {
+                        effects.push(notice_lines(&lines.join("\n")));
+                    }
+                    if change == Some(AppearanceChange::Changed) {
+                        effects.push(AppEffect::Appearance);
+                    }
+                    effects
+                }
+            };
+            effects.push(AppEffect::ContinueThemeFiles);
             effects
         }
         AppMessage::Attachment(event) => attachment_event(state, event),
@@ -7285,6 +7313,9 @@ fn switched(
             let mut effects = vec![AppEffect::CommitLines(vec![notice])];
             if let Some(install) = install {
                 if let Some(target) = target {
+                    if state.appearance.set_file_profile(&target.profile) {
+                        effects.push(AppEffect::ThemeFileCommand("reload".into()));
+                    }
                     state.profile = target.profile;
                 }
                 effects.extend(install_session(state, install));
@@ -8074,6 +8105,9 @@ fn send_expanded(state: &mut AppState, payload: SubmittedAttachments) -> Vec<App
 fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     if argument.is_empty() {
         return vec![AppEffect::ThemeReport];
+    }
+    if matches!(argument.split_whitespace().next(), Some("use" | "reload")) {
+        return vec![AppEffect::ThemeFileCommand(argument.to_owned())];
     }
     let (lines, change) = state.appearance.theme_command(argument);
     let mut effects = vec![notice_lines(&lines.join("\n"))];
@@ -12485,14 +12519,20 @@ fn apply<S: Screen>(
                 redraw = true;
             }
             AppEffect::ThemeReport => {
-                if let Some(report) = screen.theme_report()
-                    && let AppEffect::CommitLines(lines) =
-                        notice_lines(&theme_lines(&report).join("\n"))
-                {
-                    screen.commit_lines(lines);
+                if let Some(report) = screen.theme_report() {
+                    let mut lines = theme_lines(&report);
+                    if let Some(file) = screen.theme_file_report() {
+                        lines.extend(appearance::theme_file_lines(&file));
+                    }
+                    if let AppEffect::CommitLines(lines) = notice_lines(&lines.join("\n")) {
+                        screen.commit_lines(lines);
+                    }
                 }
             }
-            AppEffect::ThemeFileCommand(_) => {}
+            AppEffect::ThemeFileCommand(argument) => {
+                run_theme_file_command(state, executor, argument)
+            }
+            AppEffect::ContinueThemeFiles => start_next_theme_file_command(state, executor),
             AppEffect::Skin(name) => {
                 let client = state
                     .service
@@ -12731,6 +12771,9 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         state.connectors = talaria_core::connectors::ConnectorsState::new();
     }
     state.profile = profile_name;
+    if state.appearance.set_file_profile(&state.profile) {
+        run_theme_file_command(state, executor, "reload".into());
+    }
     let mut commands = CommandService::new(link.client());
     if let Some(mut replies) = commands.take_replies() {
         let sender = executor.sender.clone();
@@ -12785,6 +12828,46 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         }
     });
     AppMessage::Opened { opened, notice }
+}
+
+fn run_theme_file_command(state: &mut AppState, executor: &Executor, argument: String) {
+    if state.appearance.theme_files().is_none() {
+        let Some(home) = &state.home else {
+            let _ = executor.sender.send(AppMessage::ThemeFileDone {
+                generation: state.appearance.file_generation(),
+                result: Err(
+                    "Theme files are unavailable because the home directory is unknown.".into(),
+                ),
+            });
+            return;
+        };
+        state
+            .appearance
+            .set_theme_files(appearance::ThemeFileSession::new(
+                crate::config::user_config_path(home),
+                crate::config::Config::default().theme,
+                &state.profile,
+            ));
+    }
+    state.appearance.queue_file_command(argument);
+    start_next_theme_file_command(state, executor);
+}
+
+fn start_next_theme_file_command(state: &mut AppState, executor: &Executor) {
+    let Some((generation, mut files, argument)) = state.appearance.begin_file_request() else {
+        return;
+    };
+    executor.send_later(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let (lines, _) = files.command(&argument);
+            (Box::new(files), lines)
+        })
+        .await
+        .map_err(|_| {
+            "The theme file could not be loaded; the last good theme is unchanged.".to_owned()
+        });
+        AppMessage::ThemeFileDone { generation, result }
+    });
 }
 
 fn start_provider_service(state: &mut AppState, executor: &Executor) {
@@ -13660,6 +13743,13 @@ async fn run_inner<S: Screen>(
     state.attention = talaria_core::attention::AttentionTracker::new(screen.attention_config());
     if let Some((colors, polarity)) = screen.startup_appearance() {
         state.appearance = AppearanceService::new(colors, polarity);
+    }
+    if let Some(files) = screen.startup_theme_files() {
+        let selected = files.file().is_some();
+        state.appearance.set_theme_files(files);
+        if selected {
+            screen.appearance_changed(&state.appearance.view());
+        }
     }
     state.attachments = AttachmentsState::new(screen.attachment_rule(), 16 * 1024 * 1024);
     state.attachment_home = std::env::var_os("HOME")
