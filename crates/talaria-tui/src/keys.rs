@@ -323,16 +323,22 @@ pub enum ModelAction {
     ModelScope,
     ModelFavourite,
     ModelRefresh,
+    ModelChipsNext,
+    ModelChipsPrev,
+    ModelDetails,
 }
 
 impl ModelAction {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::ModelPicker,
         Self::EffortDown,
         Self::EffortUp,
         Self::ModelScope,
         Self::ModelFavourite,
         Self::ModelRefresh,
+        Self::ModelChipsNext,
+        Self::ModelChipsPrev,
+        Self::ModelDetails,
     ];
 
     pub const fn config_name(self) -> &'static str {
@@ -343,6 +349,9 @@ impl ModelAction {
             Self::ModelScope => "model_scope",
             Self::ModelFavourite => "model_favourite",
             Self::ModelRefresh => "model_refresh",
+            Self::ModelChipsNext => "model_chips_next",
+            Self::ModelChipsPrev => "model_chips_prev",
+            Self::ModelDetails => "model_details",
         }
     }
 
@@ -367,6 +376,9 @@ impl ModelAction {
             Self::ModelScope => &["ctrl+g"],
             Self::ModelFavourite => &["ctrl+f"],
             Self::ModelRefresh => &["ctrl+r"],
+            Self::ModelChipsNext => &["tab"],
+            Self::ModelChipsPrev => &["shift+tab"],
+            Self::ModelDetails => &["f2", "ctrl+e"],
         }
     }
 }
@@ -2083,6 +2095,30 @@ impl KeyChord {
         chord.code == KeyCode::Esc || (chord.ctrl && chord.code == KeyCode::Char('c'))
     }
 
+    fn is_model_picker_reserved(&self) -> bool {
+        let plain = !self.ctrl && !self.alt && !self.super_key;
+        (plain
+            && (matches!(self.code, KeyCode::Char(_))
+                || (!self.shift
+                    && matches!(
+                        self.code,
+                        KeyCode::Enter
+                            | KeyCode::Esc
+                            | KeyCode::Backspace
+                            | KeyCode::Up
+                            | KeyCode::Down
+                            | KeyCode::PageUp
+                            | KeyCode::PageDown
+                            | KeyCode::Home
+                            | KeyCode::End
+                    ))))
+            || (self.ctrl
+                && !self.alt
+                && !self.shift
+                && !self.super_key
+                && matches!(self.code, KeyCode::Char('c' | 'u')))
+    }
+
     /// The key a press of this chord produces, for code that drives an editor with a chord.
     #[must_use]
     pub fn to_key(&self) -> Key {
@@ -2458,6 +2494,14 @@ impl KeyMap {
             let mut fixed = false;
             for text in texts {
                 match KeyChord::parse(text, parse_context(action)) {
+                    Ok(chord)
+                        if parse_context(action) == KeyContext::ModelPicker
+                            && chord.is_model_picker_reserved() =>
+                    {
+                        notices.push(format!("[keys] {name} in {FILE}: \"{text}\" is reserved for model picker text, navigation or closing; the default ({}) is kept.", map.labels_of(action)));
+                        fixed = true;
+                        break;
+                    }
                     Ok(chord) => {
                         // A written binding that only repeats the default needs no warning.
                         let is_default = action.default_chords().iter().any(|default| {

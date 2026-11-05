@@ -2,6 +2,17 @@
 
 > Future work with priority, rough effort, and worth-it-when triggers.
 
+## 2026-11-04
+
+### Restyle the model-roles route picker with the shared frame
+
+**Priority.** Later; not part of the session model picker (#488).
+**Evidence.** Accepted picker study #474 distinguishes the model-roles route picker from a
+session switch. A future restyle must retain its role-editing purpose, provider-then-model steps,
+exclusion of the virtual Mixture of Agents route, and the parent editor's review and save.
+**Worth it when.** The shared frame is established in both the model and Providers dialogs and
+the operator requests the role editor's presentation update. Do not change its save semantics.
+
 ## 2026-10-25
 
 ### Watch selected theme files for changes

@@ -41,6 +41,73 @@ or orderly shutdown; memory grows with completed output, and a process crash can
 lose that queue. Revisit if long workspace sessions need durable pending history.
 The workspace follows the end; the pager remains the place for scrolling and search.
 
+### Shared model picker frame and final element names
+
+**Decision.** Follow the accepted search-first grouped picker in #474: view chips, one list,
+below/side details, a scroll indicator and two footer rows. Keep the save `Scope` and `model_scope`
+names; the independent list scope is `ListScope` and its controls are view chips. Starred routes
+appear once, keyed by provider plus model. Badge priority is not listed, unavailable, rate limited,
+not offered, then effort unknown. Typed browse facts, rather than painted badge wording, govern
+availability and effort editing. `Catalog::rows` remains unchanged.
+
+**Theme state.** Theme files (#485) had not merged at this card's base. The renderer uses the
+existing terminal styles: bold headers, dim secondary text, reversed selection. The final forty
+names below are a binding ledger for the theme work; this card adds no theme loader or token file.
+The ten additions are marked added. Roles describe intent; attributes retain meaning without colour.
+
+| Name | Role | Attributes |
+| --- | --- | --- |
+| `picker.background` | surface | default |
+| `picker.border` | border | default |
+| `picker.title` | primary | bold |
+| `picker.title.qualifier` (added) | muted | dim |
+| `picker.filter.background` | surface | default |
+| `picker.filter.text` | primary | default |
+| `picker.filter.placeholder` | muted | dim |
+| `picker.filter.prompt` (added) | muted | dim |
+| `picker.filter.match` | accent | bold |
+| `picker.group.tab` | secondary | default |
+| `picker.group.tab.selected` | accent | bold |
+| `picker.group.header` | primary | bold |
+| `picker.row.text` | primary | default |
+| `picker.row.selected` | primary | reverse |
+| `picker.row.disabled` | disabled | dim |
+| `picker.row.description` | muted | dim |
+| `picker.row.match` | accent | bold |
+| `picker.badge` | secondary | default |
+| `picker.badge.current` | success | default |
+| `picker.badge.provider` | secondary | default |
+| `picker.badge.effort` | info | reserved; no unsupported effort claim |
+| `picker.badge.unknown` | muted | dim |
+| `picker.badge.unavailable` | disabled | dim |
+| `picker.badge.limited` (added) | warning | default |
+| `picker.badge.setup` (added) | attention | default |
+| `picker.marker.star` (added) | accent | default |
+| `picker.detail.background` | surface | default |
+| `picker.detail.divider` | border | default |
+| `picker.detail.label` | secondary | default |
+| `picker.detail.value` | primary | default |
+| `picker.detail.help` | muted | dim |
+| `picker.detail.warning` | warning | default |
+| `picker.detail.title` (added) | primary | bold |
+| `picker.detail.missing` (added) | muted | dim, italic |
+| `picker.empty` | muted | dim |
+| `picker.status.warning` (added) | warning | default |
+| `picker.status.error` (added) | error | bold |
+| `picker.scrollbar` | muted | dim |
+| `picker.footer` | secondary | default |
+| `picker.footer.key` (added) | accent | default |
+
+**Rationale.** One search focus scales without taking a rail out of model-name space. Provider
+identity, markers and warnings stay literal text. The pinned Hermes catalogue defaults reasoning
+to true and has no exact supported levels or context window, so support remains unverified and
+applied effort unknown. The side-details threshold is defined once in the picker geometry at
+112 columns and 28 rows because the workspace layout rules have not merged at this base.
+**Rejected.** Option B's provider rail, collapsible groups, duplicate starred routes, price ranking,
+and deriving switching behavior from translated badge text. **Revisit when.** Hermes supplies
+route-specific effort receipts, or the shared layout and theme catalogues merge and can own their
+respective constants and the forty names above.
+
 ## 2026-11-01
 
 ### Voice architecture: workstation devices and Hermes speech services

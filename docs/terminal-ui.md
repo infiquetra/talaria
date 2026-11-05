@@ -47,6 +47,54 @@ inline view and writes output finished during the workspace to native scrollback
 Finished output waits in memory until then; a process crash can lose that pending text.
 Mouse capture remains off. If a terminal or multiplexer consumes Alt+D, use the command.
 
+## Model picker
+
+`/model` or Alt+P opens a temporary full-screen model picker. Escape restores the previous view
+and composer draft, with the optional workspace and menu either off or on. Mouse capture stays off.
+Typing always searches: every whitespace-separated term must match the provider name, slug or
+model identifier, without regard to case. Ctrl+U clears the filter. Tab (`model_chips_next`) and
+Shift+Tab (`model_chips_prev`) cycle All, Starred, Configured and Set up without clearing it.
+Configured means Hermes lists the provider as authenticated; it does not verify the saved credential.
+
+All shows stars once in starring order, configured providers in Hermes order, then Needs setup
+stubs. Stubs never expand cached models. Enter on a stub closes the picker and opens `/providers`
+on that provider. A route is a provider plus a model, so identical model names can appear on different
+providers. Group headers cannot be selected. Arrow and page keys move; Home and End reach the ends.
+Search and reload preserve the selected route when it remains visible. The `>` selection pointer,
+`★` star and `●` current-route marker have separate meanings, including in monochrome.
+
+Each row keeps one badge, in this priority: not listed, unavailable, rate limited, not offered,
+effort unknown. Long identifiers end in an ellipsis without splitting a visible character or losing
+the badge. Details show requested effort, unverified support and unknown applied effort separately.
+`not offered` means the catalogue does not advertise reasoning. It does not prove how a provider
+handled a previous request. Context is unknown; prices appear only when Hermes supplies them.
+Deferred changes say pending turn end; lost write replies say outcome unknown and are not resent.
+
+At 80×24, details sit below the list; at least 112×28 places them beside it. Below 60×16 the list is
+compact with details on demand; below 40×10 a size message retains Escape. The scroll indicator
+names the visible range and whether more rows exist above or below. Two footer rows retain keys.
+F2 or Ctrl+E (`model_details`) opens full, wrapped details. Up/Down, PageUp/PageDown and Home/End
+scroll them. Escape returns to the same row. Other keys never switch, star or save from that layer.
+macOS may reserve F2, and both bindings are configurable.
+
+Ctrl+F stars, Ctrl+G toggles the save scope (this session versus this session and new sessions),
+Ctrl+R reloads, and Left/Right adjust requested effort. These retain their existing behavior,
+including confirmation, deferred changes and uncertain outcomes. Escape closes full details,
+then clears a non-empty filter, then closes the picker. Rebinding conflicts produce a notice.
+
+| State | Message and recovery |
+| --- | --- |
+| Initial loading | Loading models; Escape closes; no selectable placeholder. |
+| Refresh | Cached rows and selection remain; refreshing is shown; a failed read marks them stale. |
+| No matches | Query and view scope remain visible; Ctrl+U clears, Tab changes view, Escape clears then closes. |
+| No stars | No starred models; Tab for All and Ctrl+F to star a model. |
+| No configured providers | Setup stubs remain in All; Enter opens provider setup. |
+| Provider has no models | No models listed for this provider; Ctrl+R reloads. |
+| First load failed | Could not load models; Ctrl+R retries, Escape closes; no action in details. |
+| Partial load failed | Failed data is unknown; loaded data remains; Ctrl+R retries. |
+| Offline or lost write reply | Changes are disabled, selection and draft remain; reload without automatic write retries. |
+| Unavailable model | Badge and reason remain; Enter explains without claiming a switch. |
+
 ## Capabilities
 
 `/capabilities [skills|hub|toolsets|plugins]` opens the capabilities of the connected profile.
