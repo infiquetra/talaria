@@ -1,5 +1,6 @@
 //! Gateway-side voice capture and per-session state.
 
+pub mod playback;
 pub mod relay;
 pub mod transport;
 
