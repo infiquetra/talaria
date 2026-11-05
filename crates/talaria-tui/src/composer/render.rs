@@ -3,7 +3,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use talaria_app::theme_file::BorderPreset;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -13,6 +12,7 @@ use super::{Prepared, VimMode};
 use crate::history::sanitize;
 use crate::keys::Action;
 use crate::live::LiveSection;
+use crate::theme::BorderPreset;
 
 /// One drawn cell: its text and style.
 type Cell = (String, Style);

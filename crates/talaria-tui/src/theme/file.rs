@@ -3,9 +3,9 @@
 use super::{ColorDepth, Polarity, Theme, ThemeInputs, color, contrast, surfaces};
 use ratatui::style::{Color, Modifier, Style};
 use std::collections::BTreeMap;
+pub use talaria_app::theme_file::BorderPreset;
 use talaria_app::theme_file::{
-    Base, BorderPreset, CatalogueEntry, ColorValue, PALETTE_SLOTS, StyleFields, ThemeFile,
-    catalogue,
+    Base, CatalogueEntry, ColorValue, PALETTE_SLOTS, StyleFields, ThemeFile, catalogue,
 };
 use talaria_core::appearance::ThemeFileReport;
 
