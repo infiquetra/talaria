@@ -705,6 +705,7 @@ pub struct AppState {
     pub voice: crate::voice::VoiceService,
     client_voice: talaria_core::voice::client::ClientVoice,
     client_voice_config: crate::config::VoiceConfig,
+    client_speech_modes: BTreeMap<(String, String), talaria_core::voice::SpeechMode>,
     client_voice_enabled: bool,
     client_voice_worker: Option<Arc<crate::voice::relay::ClientAudio>>,
     client_voice_closing: Vec<tokio::task::JoinHandle<()>>,
@@ -1005,6 +1006,7 @@ impl AppState {
             voice: crate::voice::VoiceService::new(),
             client_voice: talaria_core::voice::client::ClientVoice::default(),
             client_voice_config: crate::config::VoiceConfig::default(),
+            client_speech_modes: BTreeMap::new(),
             client_voice_enabled: false,
             client_voice_worker: None,
             client_voice_closing: Vec::new(),
@@ -1437,17 +1439,16 @@ impl AppState {
         self.client_voice_config = config;
     }
 
-    pub(crate) fn voice_detaching(&self, session_id: &str) {
+    pub(crate) fn voice_detaching(&mut self, session_id: &str) {
+        if self.client_voice_config.backend == "client-bridge" {
+            let _ = self
+                .client_voice
+                .update(talaria_core::voice::client::Input::Cutoff(
+                    talaria_core::voice::client::Cutoff::TargetChanged,
+                ));
+            return;
+        }
         if let Some(sender) = &self.sender {
-            if self.client_voice_config.backend == "client-bridge" {
-                let _ = sender.send(AppMessage::ClientVoice {
-                    session_id: session_id.to_owned(),
-                    generation: self.connection_generation,
-                    input: talaria_core::voice::client::Input::Detach,
-                    notice: None,
-                });
-                return;
-            }
             let _ = sender.send(AppMessage::Voice {
                 session_id: session_id.to_owned(),
                 generation: self.connection_generation,
@@ -1961,7 +1962,13 @@ pub enum AppEffect {
     ClientVoiceSpeak {
         session_id: String,
         text: String,
+        audio_epoch: u64,
     },
+    ClientVoiceStop {
+        session_id: String,
+        audio_epoch: u64,
+    },
+    ClientVoiceCancelCapture,
     ClientVoiceClose,
     WorkflowPrompt {
         run: PathBuf,
@@ -3665,7 +3672,14 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         } => {
             if generation != state.connection_generation
                 || !is_open_session(state, &session_id)
-                || (state.switching && !matches!(input, talaria_core::voice::client::Input::Detach))
+                || (state.switching
+                    && !matches!(
+                        input,
+                        talaria_core::voice::client::Input::Detach
+                            | talaria_core::voice::client::Input::Cutoff(
+                                talaria_core::voice::client::Cutoff::TargetChanged
+                            )
+                    ))
             {
                 Vec::new()
             } else {
@@ -3833,6 +3847,33 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                             _ => None,
                         })
                         .collect();
+                    let speech_mode = state
+                        .client_speech_modes
+                        .get(&(state.profile.clone(), session.clone()))
+                        .copied()
+                        .unwrap_or_else(|| {
+                            if state.client_voice_config.render_mode == "digest" {
+                                talaria_core::voice::SpeechMode::Summary
+                            } else {
+                                talaria_core::voice::SpeechMode::Full
+                            }
+                        });
+                    let markdown = assistant_markdown.join("\n\n");
+                    let spoken = match speech_mode {
+                        talaria_core::voice::SpeechMode::Full => {
+                            talaria_core::voice::speakable::speakable_text(
+                                &markdown,
+                                state.client_voice_config.speak_max_chars,
+                            )
+                        }
+                        talaria_core::voice::SpeechMode::Summary => {
+                            talaria_core::voice::speakable::digest_text(
+                                &markdown,
+                                state.client_voice_config.speak_max_chars,
+                            )
+                        }
+                        talaria_core::voice::SpeechMode::Alerts => None,
+                    };
                     if state.client_voice_config.backend == "client-bridge"
                         && state.client_voice_enabled
                         && state.client_voice_config.read_aloud
@@ -3840,15 +3881,21 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                             state.remote_gateway,
                             state.client_voice_config.remote_audio,
                         )
-                        && let Some(text) = talaria_core::voice::speakable::speakable_text(
-                            &assistant_markdown.join("\n\n"),
-                            state.client_voice_config.speak_max_chars,
-                        )
+                        && let Some(text) = spoken
                     {
-                        effects.push(AppEffect::ClientVoiceSpeak {
-                            session_id: session.clone(),
-                            text,
-                        });
+                        let previous = state.client_voice.audio_epoch();
+                        let _ = state
+                            .client_voice
+                            .update(talaria_core::voice::client::Input::SpeechStarted);
+                        let audio_epoch = state.client_voice.audio_epoch();
+                        if audio_epoch != previous {
+                            effects.push(AppEffect::ClientVoiceSpeak {
+                                session_id: session.clone(),
+                                text,
+                                audio_epoch,
+                            });
+                            effects.push(AppEffect::Redraw);
+                        }
                     }
                     effects.extend(voice_input(
                         state,
@@ -6208,11 +6255,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                         .into(),
                 );
             }
-            let input = if state.client_voice.recording() {
-                talaria_core::voice::client::Input::Finish
-            } else {
-                talaria_core::voice::client::Input::Start
-            };
+            let input = talaria_core::voice::client::Input::Cutoff(
+                talaria_core::voice::client::Cutoff::Record,
+            );
             client_voice_input(state, &session, input)
         }
         UserAction::VoiceRecord if state.remote_gateway => {
@@ -6320,6 +6365,21 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Rewind(key) => rewind_input(state, RewindInput::Key(key)),
         UserAction::RewindViewport(rows) => rewind_input(state, RewindInput::Viewport(rows)),
         UserAction::Escape { eligible } => {
+            if state.uses_client_voice()
+                && state.client_voice.active()
+                && let Some(session) = state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.session_id.clone())
+            {
+                return client_voice_input(
+                    state,
+                    &session,
+                    talaria_core::voice::client::Input::Cutoff(
+                        talaria_core::voice::client::Cutoff::Escape,
+                    ),
+                );
+            }
             if state.double_esc.press(wall_ms(), eligible) && state.opened.is_some() {
                 rewind_input(
                     state,
@@ -6447,6 +6507,21 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             effects
         }
         UserAction::Interrupt => {
+            if state.uses_client_voice()
+                && state.client_voice.active()
+                && let Some(session) = state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.session_id.clone())
+            {
+                return client_voice_input(
+                    state,
+                    &session,
+                    talaria_core::voice::client::Input::Cutoff(
+                        talaria_core::voice::client::Cutoff::Escape,
+                    ),
+                );
+            }
             if state.interrupting {
                 return Vec::new();
             }
@@ -9645,6 +9720,13 @@ async fn quit_with_voice(
     err: &mut (dyn std::io::Write + Send),
 ) -> (DetachOutcome, u8, String) {
     state.quitting = true;
+    if state.uses_client_voice() {
+        let _ = state
+            .client_voice
+            .update(talaria_core::voice::client::Input::Cutoff(
+                talaria_core::voice::client::Cutoff::Quit,
+            ));
+    }
     state.close_client_voice_jobs().await;
     let broken = state.session_gone || state.link_failed;
     let mut outcome = DetachOutcome::Skipped;
@@ -12301,20 +12383,63 @@ fn apply<S: Screen>(
                     worker.finish_capture();
                 }
             }
-            AppEffect::ClientVoiceSpeak { session_id, text } => {
+            AppEffect::ClientVoiceSpeak {
+                session_id,
+                text,
+                audio_epoch,
+            } => {
                 if crate::voice::transport::remote_audio_allowed(
                     state.remote_gateway,
                     state.client_voice_config.remote_audio,
                 ) && let Some(worker) = &state.client_voice_worker
                 {
-                    worker.speak(
-                        state.client_voice_config.playback_command.clone(),
-                        state.profile.clone(),
+                    let sentences =
+                        talaria_core::voice::speakable::sentence_chunks(&text, audio_epoch)
+                            .into_iter()
+                            .map(|chunk| chunk.text)
+                            .collect();
+                    worker.speak_sentences(crate::voice::relay::SpeechRequest {
+                        command: state.client_voice_config.playback_command.clone(),
+                        profile: state.profile.clone(),
                         session_id,
-                        state.connection_generation,
-                        text,
-                    );
+                        generation: state.connection_generation,
+                        audio_epoch: Some(audio_epoch),
+                        sentences,
+                    });
                 }
+            }
+            AppEffect::ClientVoiceCancelCapture => {
+                if let Some(worker) = &state.client_voice_worker {
+                    worker.cancel_capture();
+                }
+            }
+            AppEffect::ClientVoiceStop {
+                session_id,
+                audio_epoch,
+            } => {
+                let closing = state
+                    .client_voice_worker
+                    .as_ref()
+                    .map(|worker| worker.stop_playback());
+                let sender = executor.sender.clone();
+                let generation = state.connection_generation;
+                tokio::spawn(async move {
+                    let quiet = match closing {
+                        Some(closing) => closing.await,
+                        None => false,
+                    };
+                    let input = if quiet {
+                        talaria_core::voice::client::Input::Quiet { audio_epoch }
+                    } else {
+                        talaria_core::voice::client::Input::QuietTimeout { audio_epoch }
+                    };
+                    let _ = sender.send(AppMessage::ClientVoice {
+                        session_id,
+                        generation,
+                        input,
+                        notice: None,
+                    });
+                });
             }
             AppEffect::ClientVoiceClose => {
                 if let Some(worker) = &state.client_voice_worker {
@@ -15633,7 +15758,8 @@ fn client_voice_link_lost(state: &mut AppState, effects: &mut Vec<AppEffect>) {
 }
 
 fn client_voice_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
-    use talaria_core::voice::{VoiceCommand, parse_voice_args};
+    use talaria_core::voice::client::{Cutoff, Input};
+    use talaria_core::voice::{SpeechMode, VoiceCommand, parse_voice_args};
     match parse_voice_args(argument) {
         Ok(VoiceCommand::On) => {
             state.client_voice_enabled = true;
@@ -15644,25 +15770,74 @@ fn client_voice_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> 
         }
         Ok(VoiceCommand::Off) => {
             state.client_voice_enabled = false;
-            let _ = state
-                .client_voice
-                .update(talaria_core::voice::client::Input::Detach);
             let mut effects = notice_effect(state, "Client voice off.".into());
-            effects.push(AppEffect::ClientVoiceClose);
+            if let Some(session) = state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.clone())
+            {
+                effects.extend(client_voice_input(
+                    state,
+                    &session,
+                    Input::Cutoff(Cutoff::Stop),
+                ));
+            }
             effects
         }
         Ok(VoiceCommand::Read(value)) => {
             state.client_voice_config.read_aloud =
                 value.unwrap_or(!state.client_voice_config.read_aloud);
-            notice_effect(
+            if state.client_voice_config.read_aloud {
+                notice_effect(state, "Read-aloud on.".into())
+            } else if let Some(session) = state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.clone())
+            {
+                client_voice_input(state, &session, Input::Cutoff(Cutoff::ReadOff))
+            } else {
+                notice_effect(state, "Read-aloud stopped.".into())
+            }
+        }
+        Ok(VoiceCommand::Stop) => {
+            if let Some(session) = state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.clone())
+            {
+                client_voice_input(state, &session, Input::Cutoff(Cutoff::Stop))
+            } else {
+                notice_effect(state, "No session is attached.".into())
+            }
+        }
+        Ok(VoiceCommand::Mode(mode)) => {
+            let Some(session) = state
+                .opened
+                .as_ref()
+                .map(|opened| opened.session_id.clone())
+            else {
+                return notice_effect(state, "No session is attached.".into());
+            };
+            state
+                .client_speech_modes
+                .insert((state.profile.clone(), session.clone()), mode);
+            let mut effects = if mode == SpeechMode::Alerts && state.client_voice.speaking() {
+                client_voice_input(state, &session, Input::Cutoff(Cutoff::Stop))
+            } else {
+                Vec::new()
+            };
+            effects.extend(notice_effect(
                 state,
-                if state.client_voice_config.read_aloud {
-                    "Read-aloud on."
-                } else {
-                    "Read-aloud off."
-                }
-                .into(),
-            )
+                format!(
+                    "Voice mode: {}.",
+                    match mode {
+                        SpeechMode::Full => "full",
+                        SpeechMode::Summary => "summary",
+                        SpeechMode::Alerts => "alerts",
+                    }
+                ),
+            ));
+            effects
         }
         Ok(VoiceCommand::Status) => notice_effect(
             state,
@@ -15722,6 +15897,13 @@ fn client_voice_input(
                     effects.extend(load_draft(state, draft));
                 }
             }
+            Effect::CancelCapture { .. } => effects.push(AppEffect::ClientVoiceCancelCapture),
+            Effect::StopPlayback { audio_epoch } => effects.push(AppEffect::ClientVoiceStop {
+                session_id: session.to_owned(),
+                audio_epoch,
+            }),
+            Effect::KillPlayback { .. } => effects.push(AppEffect::ClientVoiceClose),
+            Effect::Notice(text) => effects.extend(voice_notice(state, session, text)),
             Effect::Draft(_) => {}
         }
     }

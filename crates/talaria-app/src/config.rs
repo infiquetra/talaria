@@ -126,6 +126,7 @@ pub struct VoiceConfig {
     pub playback_command: Vec<String>,
     pub remote_audio: bool,
     pub client_submit_mode: String,
+    pub render_mode: String,
 }
 
 impl Default for VoiceConfig {
@@ -138,6 +139,7 @@ impl Default for VoiceConfig {
             playback_command: Vec::new(),
             remote_audio: false,
             client_submit_mode: "draft".into(),
+            render_mode: "strip".into(),
         }
     }
 }
@@ -471,6 +473,10 @@ fn read_voice(section: &Table, notices: &mut Vec<String>) -> VoiceConfig {
                 _ => notices.push(
                     "[voice] client_submit_mode must be draft or direct; using draft.".into(),
                 ),
+            },
+            "render_mode" => match value.as_str() {
+                Some(mode @ ("strip" | "digest")) => voice.render_mode = mode.to_owned(),
+                _ => notices.push("[voice] render_mode must be strip or digest; using strip.".into()),
             },
             "read_aloud" => match value.as_bool() {
                 Some(enabled) => voice.read_aloud = enabled,

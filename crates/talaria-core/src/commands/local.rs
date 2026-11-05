@@ -440,7 +440,7 @@ const BUILTIN: &[LocalCommand] = &[
         name: "voice",
         aliases: &[],
         summary: "Control push-to-talk and read-aloud",
-        args_hint: "[on|off|status|read]",
+        args_hint: "[on|off|status|stop|read|mode]",
         takes_argument: true,
         action: LocalAction::Voice,
         tag: "talaria",

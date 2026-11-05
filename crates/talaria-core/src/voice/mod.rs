@@ -44,6 +44,21 @@ pub enum VoiceCommand {
     Status,
     /// `None` toggles. `Some` sets the flag.
     Read(Option<bool>),
+    /// Cancel the active client voice operation.
+    Stop,
+    /// Choose what completed replies are allowed to say.
+    Mode(SpeechMode),
+}
+
+/// How completed replies are spoken on the client path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpeechMode {
+    /// Eligible prose, with code removed.
+    Full,
+    /// A short structural digest.
+    Summary,
+    /// Alerts only. Completed replies stay silent.
+    Alerts,
 }
 
 /// Recognise a `/voice` argument. The error is the unknown-option notice.
@@ -57,10 +72,14 @@ pub fn parse_voice_args(arg: &str) -> Result<VoiceCommand, String> {
         "read" | "tts" => Ok(VoiceCommand::Read(None)),
         "read on" => Ok(VoiceCommand::Read(Some(true))),
         "read off" => Ok(VoiceCommand::Read(Some(false))),
+        "stop" => Ok(VoiceCommand::Stop),
+        "mode full" => Ok(VoiceCommand::Mode(SpeechMode::Full)),
+        "mode summary" => Ok(VoiceCommand::Mode(SpeechMode::Summary)),
+        "mode alerts" => Ok(VoiceCommand::Mode(SpeechMode::Alerts)),
         _ => {
             let shown = clean_option(&collapsed);
             Err(format!(
-                "Unknown /voice option \"{shown}\". Use /voice on, off, status, read on or read off."
+                "Unknown /voice option \"{shown}\". Use /voice on, off, status, stop, read on, read off, or mode full, summary or alerts."
             ))
         }
     }
@@ -76,7 +95,7 @@ pub fn command_outbound(command: &VoiceCommand) -> &'static [&'static str] {
     match command {
         VoiceCommand::On | VoiceCommand::Off => &["slash.exec", "config.get"],
         VoiceCommand::Status => &["config.get", "voice.toggle"],
-        VoiceCommand::Read(_) => &[],
+        VoiceCommand::Read(_) | VoiceCommand::Stop | VoiceCommand::Mode(_) => &[],
     }
 }
 
@@ -179,6 +198,8 @@ pub struct VoiceView {
     pub partial: Option<String>,
     pub clock: Option<Duration>,
     pub read_aloud: bool,
+    /// Client playback is in progress. The gateway phase enum is unchanged.
+    pub speaking: bool,
 }
 
 /// One session's voice machine.
@@ -353,6 +374,12 @@ impl VoiceState {
                 VoiceCommand::Status => {
                     effects.extend([Effect::ReadMode, Effect::ReadRequirements])
                 }
+                VoiceCommand::Stop => effects.push(Effect::Notice(
+                    "Gateway speech cannot be stopped once it has started.".into(),
+                )),
+                VoiceCommand::Mode(_) => effects.push(Effect::Notice(
+                    "Speech modes are available on the client voice backend.".into(),
+                )),
                 VoiceCommand::Read(value) => {
                     let enabled = value.unwrap_or(!self.read_aloud);
                     if enabled && self.unavailable {
@@ -461,6 +488,7 @@ impl VoiceState {
                 self.clock
             },
             read_aloud: self.read_aloud,
+            speaking: false,
         }
     }
 
