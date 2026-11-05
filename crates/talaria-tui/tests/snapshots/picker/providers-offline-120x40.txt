@@ -1,0 +1,40 @@
+┌Providers · profile fixture───────────────────────────────────────────────────────────────────────────────────────────┐
+│> type to filter                                                                                                      │
+│[All] Keys Accounts Endpoints                                                                                         │
+│3 providers                                                                                                           │
+│Configured                                                            │Details                                        │
+│> Example provider 00                                     listed ready│Offline · cached rows                          │
+│Needs setup                                                           │Provider: Example provider 00                  │
+│  Example provider 01                                        key saved│Status: listed ready                           │
+│  Example provider 02                                      needs setup│Catalogue authentication; reachability unknown │
+│Endpoints                                                             │Methods: API key, account sign-in              │
+│  + Add an endpoint                                                   │F2/Ctrl+E full details                         │
+│  Example endpoint                                           key saved│                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│Rows 1–8 of 8                                                         │                                               │
+│Enter set up · Esc close · F2/Ctrl+E details                                                                          │
+│Tab view · Ctrl+R reload · Ctrl+U clear                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

@@ -27,6 +27,7 @@ pub mod model_picker;
 pub mod model_roles;
 pub mod pager;
 pub mod palette;
+pub mod picker_frame;
 pub mod profiles;
 pub mod prompts;
 pub mod providers;
@@ -42,6 +43,7 @@ pub mod theme;
 pub mod tool_cell;
 pub mod voice_view;
 pub mod workflow_view;
+pub mod workspace;
 
 pub mod capabilities;
 pub mod settings;

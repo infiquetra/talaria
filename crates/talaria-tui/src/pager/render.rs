@@ -5,6 +5,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
+use ratatui::{buffer::Buffer, layout::Rect};
 use talaria_core::session::{
     AssistantCell, Cell, NoticeCell, PromptCell, PromptState, ReasoningCell, Settlement, ToolCell,
     ToolStatus, UserCell,
@@ -354,5 +355,159 @@ pub fn format_duration_fallback(seconds: f64) -> Option<String> {
     } else {
         let whole = seconds.round() as u64;
         Some(format!("{}m{:02}s", whole / 60, whole % 60))
+    }
+}
+/// A cell or local output at its position in the conversation.
+pub enum TranscriptEntry<'a> {
+    Cell(&'a talaria_core::session::Cell),
+    Lines(&'a [ratatui::text::Line<'static>]),
+}
+
+/// Cache final cells while following an ordered transcript. Live cells are never cached.
+#[derive(Default)]
+pub struct TranscriptBody {
+    document: super::doc::Document,
+}
+
+impl TranscriptBody {
+    /// Forget cached cells when their source or rendering options change.
+    pub fn clear(&mut self) {
+        self.document.clear();
+    }
+
+    /// Draw only the rows at the end that fit, using the pager's cell renderer.
+    pub fn draw(
+        &mut self,
+        entries: &[TranscriptEntry<'_>],
+        details: Details,
+        area: Rect,
+        buffer: &mut Buffer,
+        other: &dyn CellLines,
+    ) {
+        if area.is_empty() {
+            return;
+        }
+        let mut remaining = usize::from(area.height);
+        let mut anchor = (0, 0);
+        for index in (0..entries.len()).rev() {
+            let count = entry_lines(
+                &mut self.document,
+                &entries[index],
+                index,
+                area.width,
+                details,
+                other,
+            )
+            .len();
+            if count >= remaining {
+                anchor = (index, count - remaining);
+                break;
+            }
+            remaining -= count;
+        }
+        draw_rows(
+            &mut self.document,
+            entries,
+            area,
+            buffer,
+            other,
+            BodyPosition { details, anchor },
+            |_, line, lines| (lines[line].clone(), None),
+        );
+    }
+}
+
+/// Draw a following transcript body without the pager's chrome.
+pub fn draw_transcript_body(
+    entries: &[TranscriptEntry<'_>],
+    details: Details,
+    area: Rect,
+    buffer: &mut Buffer,
+    other: &dyn CellLines,
+) {
+    TranscriptBody::default().draw(entries, details, area, buffer, other);
+}
+
+pub(super) struct BodyPosition {
+    pub details: Details,
+    pub anchor: (usize, usize),
+}
+
+/// Both views traverse, sanitize and place their transcript rows here. The pager's
+/// optional painter adds search highlighting without changing the underlying rows.
+pub(super) fn draw_rows(
+    document: &mut super::doc::Document,
+    entries: &[TranscriptEntry<'_>],
+    area: Rect,
+    buffer: &mut Buffer,
+    other: &dyn CellLines,
+    position: BodyPosition,
+    mut paint: impl FnMut(usize, usize, &[Line<'static>]) -> (Line<'static>, Option<Style>),
+) {
+    if area.is_empty() {
+        return;
+    }
+    if entries.is_empty() {
+        buffer.set_line(
+            area.x,
+            area.y,
+            &Line::styled("No messages yet.", PagerTheme::default().dim),
+            area.width,
+        );
+        return;
+    }
+    let mut row = area.y;
+    for (index, entry) in entries.iter().enumerate().skip(position.anchor.0) {
+        let lines = entry_lines(document, entry, index, area.width, position.details, other);
+        let skip = if index == position.anchor.0 {
+            position.anchor.1
+        } else {
+            0
+        };
+        for line in skip..lines.len() {
+            if row >= area.bottom() {
+                return;
+            }
+            let (painted, gutter) = paint(index, line, &lines);
+            if let Some(style) = gutter {
+                buffer.set_stringn(area.x, row, "▸", 1, style);
+                buffer.set_line(area.x + 1, row, &painted, area.width.saturating_sub(1));
+            } else {
+                buffer.set_line(area.x, row, &painted, area.width);
+            }
+            row += 1;
+        }
+    }
+}
+
+fn entry_lines(
+    document: &mut super::doc::Document,
+    entry: &TranscriptEntry<'_>,
+    index: usize,
+    width: u16,
+    details: Details,
+    other: &dyn CellLines,
+) -> Vec<Line<'static>> {
+    match entry {
+        TranscriptEntry::Cell(cell) => {
+            let own = PagerCellLines {
+                details,
+                markdown: MarkdownOptions {
+                    width: width.saturating_sub(2).max(8),
+                    ..MarkdownOptions::default()
+                },
+                theme: PagerTheme::default(),
+                other,
+            };
+            document.cell_lines(cell, index, width, details, other, &own)
+        }
+        TranscriptEntry::Lines(lines) => wrap_lines(
+            lines
+                .iter()
+                .cloned()
+                .map(crate::history::sanitize_line)
+                .collect(),
+            width,
+        ),
     }
 }

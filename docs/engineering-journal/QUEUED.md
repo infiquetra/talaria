@@ -2,7 +2,36 @@
 
 > Future work with priority, rough effort, and worth-it-when triggers.
 
+## 2026-11-04
+
+### Bind the completed picker surfaces to the theme catalogue
+
+**Priority.** Existing view colour work (#486), after both picker cards.
+**Evidence.** The model and Providers frames now settle forty-three `picker.*` names in the
+decisions ledger. This stack precedes theme files, so the current terminal styles remain.
+**Worth it when.** The theme mechanism and both picker cards are integrated. Bind the shared
+elements and the three provider additions once, preserving their textual statuses and masking.
+
+### Restyle the model-roles route picker with the shared frame
+
+**Priority.** Later; not part of the session model picker (#488).
+**Evidence.** Accepted picker study #474 distinguishes the model-roles route picker from a
+session switch. A future restyle must retain its role-editing purpose, provider-then-model steps,
+exclusion of the virtual Mixture of Agents route, and the parent editor's review and save.
+**Worth it when.** The shared frame is established in both the model and Providers dialogs and
+the operator requests the role editor's presentation update. Do not change its save semantics.
+
 ## 2026-10-25
+
+### Watch selected theme files for changes
+
+**Priority.** P3. **Effort.** Small.
+
+Theme files reload manually with `/theme reload`. A future watcher must debounce filesystem
+events, validate the whole candidate before application, keep the last good theme on failure,
+and deliver changes through the existing application channel without idle repaints.
+
+**Worth it when.** Manual reload becomes a measured obstacle while authoring themes.
 
 ### Open `@` path completion inside `/` slash-command argument drafts (`#213` C-5)
 
@@ -1880,3 +1909,8 @@ gateway.
 The research is done and both drafts are written in [docs/plans/2026-08-08-pypi-name-request.md](../plans/2026-08-08-pypi-name-request.md); neither was sent. The name belongs to an unrelated content management system, last uploaded **2010-06-19**, whose own metadata carries `Development Status :: 7 - Inactive` — but whose author is active and reachable, which is why the first step is a letter rather than a PEP 541 form. Reasoning and the reopen condition are in [DECISIONS.md](DECISIONS.md#the-talaria-name-on-the-python-package-index-is-not-asked-for-yet-because-the-project-cannot-yet-promise-it-will-keep-it).
 
 **Two things a repository cannot supply:** the letter has to be sent by a person under their own name, and the PEP 541 form validates a PyPI username that is not derivable from here.
+
+## Composer keyboard shortcuts view
+
+The settings help describes settings keys, not the composer's shortcuts. Consider a dedicated
+shortcuts view when a separate request defines its scope; the menu does not add one.

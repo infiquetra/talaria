@@ -1,9 +1,10 @@
 //! Pure per-session model choices and picker transitions.
 
+use super::browse::{self, RowFacts};
 use super::picker::*;
 use super::saved::SavedModels;
 use super::text::*;
-use super::{Catalog, CatalogKind, DisplayZone, Effort};
+use super::{BrowseCounts, BrowseView, Catalog, CatalogKind, DisplayZone, Effort, ListScope};
 use crate::mutation::{Confirmation, Fences, MutationLedger, MutationOutcome, MutationRequest};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -37,7 +38,9 @@ struct PendingConfirmation {
 struct Session {
     profile: String,
     catalog: Option<Catalog>,
+    catalog_attempted: bool,
     model: Option<String>,
+    provider: Option<String>,
     effort: Option<Effort>,
     show_effort: bool,
     active: Option<Active>,
@@ -46,6 +49,9 @@ struct Session {
     confirmation: Option<PendingConfirmation>,
     deferred: Option<Option<String>>,
     pending_save: Option<Pick>,
+    uncertain: bool,
+    readback_model: bool,
+    readback_effort: bool,
 }
 
 struct Picker {
@@ -64,6 +70,13 @@ struct Picker {
     effort_text: String,
     banner: Option<String>,
     feedback: Option<String>,
+    list_scope: ListScope,
+    counts: BrowseCounts,
+    facts: Vec<RowFacts>,
+    details: Vec<String>,
+    details_open: bool,
+    details_scroll: usize,
+    hints: String,
 }
 
 /// The picker, per-session requests, and saved choices for this launch.
@@ -74,8 +87,12 @@ pub struct ModelsState {
     sessions: BTreeMap<String, Session>,
     foreground: Option<String>,
     picker: Option<Picker>,
+    return_picker: Option<Picker>,
+    resume_provider: Option<String>,
     list_height: usize,
     display_zone: DisplayZone,
+    offline: bool,
+    details_scroll_limit: Option<usize>,
 }
 
 fn notice(session_id: &str, level: NoticeLevel, text: impl Into<String>) -> ModelsEffect {
@@ -95,6 +112,21 @@ fn effort_value(level: Option<Effort>) -> Value {
 }
 
 impl ModelsState {
+    /// Whether a catalogue route offers effort levels, when known.
+    pub fn effort_offered(&self, session_id: &str, provider: &str, model: &str) -> Option<bool> {
+        self.sessions
+            .get(session_id)?
+            .catalog
+            .as_ref()?
+            .rows(&[], self.display_zone)
+            .into_iter()
+            .find(|row| {
+                row.kind == CatalogKind::Model
+                    && row.provider_slug == provider
+                    && row.model == model
+            })
+            .map(|row| !row.badges.iter().any(|badge| badge == "no effort"))
+    }
     pub fn new(launch_id: &str, saved: Result<SavedModels, String>) -> Self {
         Self {
             ledger: MutationLedger::new(launch_id),
@@ -103,8 +135,12 @@ impl ModelsState {
             sessions: BTreeMap::new(),
             foreground: None,
             picker: None,
+            return_picker: None,
+            resume_provider: None,
             list_height: 10,
             display_zone: DisplayZone { minutes_east: 0 },
+            offline: false,
+            details_scroll_limit: None,
         }
     }
     pub fn confirm_keep(&self) -> Option<&str> {
@@ -133,10 +169,18 @@ impl ModelsState {
         )
     }
     pub fn set_list_height(&mut self, rows: usize) {
-        self.list_height = rows.max(3);
+        self.list_height = rows.max(1);
     }
     pub fn list_height(&self) -> usize {
         self.list_height
+    }
+
+    /// The screen reports the wrapped physical details viewport without domain I/O.
+    pub fn set_details_scroll_limit(&mut self, limit: Option<usize>) {
+        self.details_scroll_limit = limit;
+        if let (Some(picker), Some(limit)) = (&mut self.picker, limit) {
+            picker.details_scroll = picker.details_scroll.min(limit);
+        }
     }
 
     /// The application supplies its local offset; the reducer never reads a clock.
@@ -148,6 +192,32 @@ impl ModelsState {
     pub fn update(&mut self, input: ModelsInput) -> Vec<ModelsEffect> {
         let mut effects = Vec::new();
         match input {
+            ModelsInput::ResumePicker { provider } => {
+                if let Some(mut picker) = self
+                    .return_picker
+                    .take()
+                    .filter(|p| self.foreground.as_deref() == Some(p.session_id.as_str()))
+                {
+                    picker.refreshing = true;
+                    picker.details_open = false;
+                    let session_id = picker.session_id.clone();
+                    self.picker = Some(picker);
+                    self.resume_provider = Some(provider);
+                    effects.push(ModelsEffect::OpenOverlay);
+                    effects.push(ModelsEffect::LoadOptions {
+                        session_id,
+                        refresh: true,
+                    });
+                } else {
+                    effects.push(notice("", NoticeLevel::Info, "No session is open yet."));
+                }
+            }
+            ModelsInput::Connection { connected } => {
+                if self.offline == connected {
+                    self.offline = !connected;
+                    self.rebuild();
+                }
+            }
             ModelsInput::SessionOpened {
                 session_id,
                 revision,
@@ -168,7 +238,11 @@ impl ModelsState {
             ModelsInput::OpenPicker {
                 session_id,
                 profile,
-            } => self.open(session_id, profile, &mut effects),
+            } => {
+                self.return_picker = None;
+                self.resume_provider = None;
+                self.open(session_id, profile, &mut effects);
+            }
             ModelsInput::Picker(key) => self.key(key, &mut effects),
             ModelsInput::Confirm(key) => self.confirm(key, &mut effects),
             ModelsInput::Command {
@@ -241,9 +315,29 @@ impl ModelsState {
                 }
             }
             ModelsInput::OptionsLoaded { session_id, result } => {
+                let ready_model = self
+                    .resume_provider
+                    .as_ref()
+                    .and_then(|slug| {
+                        result
+                            .providers
+                            .iter()
+                            .find(|p| &p.slug == slug && p.authenticated == Some(true))
+                    })
+                    .and_then(|p| {
+                        p.models
+                            .first()
+                            .map(|model| (p.slug.clone(), model.clone()))
+                    });
                 let session = self.sessions.entry(session_id.clone()).or_default();
                 session.model = Some(result.model.clone());
+                session.provider = Some(result.provider.clone());
+                session.catalog_attempted = true;
                 session.catalog = Some(Catalog::from_result(&result));
+                session.readback_model = true;
+                if session.readback_effort {
+                    session.uncertain = false;
+                }
                 if let Some(picker) = &mut self.picker
                     && picker.session_id == session_id
                 {
@@ -252,6 +346,31 @@ impl ModelsState {
                     picker.failed = None;
                 }
                 self.rebuild();
+                if self
+                    .picker
+                    .as_ref()
+                    .is_some_and(|p| p.session_id == session_id)
+                    && self.resume_provider.take().is_some()
+                    && let Some((provider, model)) = ready_model
+                {
+                    if let Some(picker) = &mut self.picker
+                        && picker.list_scope == ListScope::SetUp
+                    {
+                        picker.list_scope = ListScope::All;
+                    }
+                    self.rebuild();
+                    let Some(picker) = &mut self.picker else {
+                        return effects;
+                    };
+                    let wanted = RowKey::Model { provider, model };
+                    if let Some(index) = picker.rows.iter().position(|row| {
+                        row.key
+                            .as_ref()
+                            .is_some_and(|key| browse::same_route(key, &wanted))
+                    }) {
+                        picker.selected = Some(index);
+                    }
+                }
             }
             ModelsInput::OptionsFailed {
                 session_id,
@@ -285,6 +404,10 @@ impl ModelsState {
                     .unwrap_or(Effort::Medium);
                 let session = self.sessions.entry(session_id.clone()).or_default();
                 session.effort = Some(effort);
+                session.readback_effort = true;
+                if session.readback_model {
+                    session.uncertain = false;
+                }
                 if std::mem::take(&mut session.show_effort) {
                     effects.push(notice(
                         &session_id,
@@ -352,6 +475,7 @@ impl ModelsState {
                 format!("Could not save model choices: {reason}."),
             )),
         }
+        self.rebuild();
         effects
     }
 
@@ -380,6 +504,7 @@ impl ModelsState {
         }
         self.warn_saved(&sid, effects);
         let session = self.sessions.entry(sid.clone()).or_default();
+        session.catalog_attempted = true;
         session.profile = profile.clone();
         let cached = session.catalog.is_some();
         self.picker = Some(Picker {
@@ -398,6 +523,13 @@ impl ModelsState {
             effort_text: String::new(),
             banner: None,
             feedback: None,
+            list_scope: ListScope::All,
+            counts: BrowseCounts::default(),
+            facts: Vec::new(),
+            details: Vec::new(),
+            details_open: false,
+            details_scroll: 0,
+            hints: String::new(),
         });
         self.rebuild();
         effects.extend([
@@ -418,10 +550,8 @@ impl ModelsState {
             .selected
             .and_then(|i| picker.rows.get(i))
             .and_then(|r| r.key.clone());
-        let catalog = self
-            .sessions
-            .get(&picker.session_id)
-            .and_then(|s| s.catalog.as_ref());
+        let session = self.sessions.get(&picker.session_id);
+        let catalog = session.and_then(|s| s.catalog.as_ref());
         let favourites = self
             .saved
             .as_ref()
@@ -433,100 +563,99 @@ impl ModelsState {
                 picker.profile
             ),
         };
-        picker.banner = picker.feedback.clone().or_else(|| picker.failed.clone());
+        picker.banner = picker.feedback.clone().or_else(|| {
+            picker.failed.as_ref().map(|reason| {
+                if catalog.is_some() {
+                    format!("Showing stale models; {reason}")
+                } else {
+                    reason.clone()
+                }
+            })
+        });
         picker.rows.clear();
-        let mut current_index = None;
+        picker.facts.clear();
         if let Some(catalog) = catalog {
-            let terms: Vec<_> = picker
-                .filter
-                .split_whitespace()
-                .map(str::to_lowercase)
-                .collect();
-            let mut header = None;
-            for row in catalog.rows(favourites, self.display_zone) {
-                if row.kind == CatalogKind::Header {
-                    header = Some(PickerRow {
-                        key: None,
-                        text: std::iter::once(row.text)
-                            .chain(row.segments)
-                            .collect::<Vec<_>>()
-                            .join(" · "),
-                        badges: Vec::new(),
-                        price: None,
-                        dim: false,
-                        header: true,
-                    });
-                    continue;
-                }
-                let text = format!("{} {} {}", row.provider_name, row.provider_slug, row.model)
-                    .to_lowercase();
-                if !terms.iter().all(|term| text.contains(term)) {
-                    continue;
-                }
-                if let Some(header) = header.take() {
-                    picker.rows.push(header);
-                }
-                let key = match row.kind {
-                    CatalogKind::Favourite => RowKey::Favourite {
-                        provider: row.provider_slug,
-                        model: row.model,
-                    },
-                    CatalogKind::Model => RowKey::Model {
-                        provider: row.provider_slug,
-                        model: row.model,
-                    },
-                    CatalogKind::NotSetUp => RowKey::NotSetUp {
-                        provider: row.provider_slug,
-                    },
-                    CatalogKind::Header => continue,
-                };
-                if row.current && row.kind == CatalogKind::Model {
-                    current_index = Some(picker.rows.len());
-                }
-                picker.rows.push(PickerRow {
-                    key: Some(key),
-                    text: row.text,
-                    badges: row.badges,
-                    price: row.price,
-                    dim: row.dim,
-                    header: false,
-                });
-            }
+            let result = browse::rows(
+                catalog,
+                favourites,
+                self.display_zone,
+                picker.list_scope,
+                &picker.filter,
+            );
+            picker.rows = result.rows;
+            picker.facts = result.facts;
+            picker.counts = result.counts;
             if picker.rows.is_empty() && picker.failed.is_none() {
-                picker.banner = Some(if picker.filter.is_empty() {
+                picker.banner = Some(if !picker.filter.is_empty() {
+                    notice_t18(&picker.filter)
+                } else if picker.list_scope == ListScope::Starred {
+                    "No starred models. Tab for All; Ctrl+F stars a model.".into()
+                } else {
                     "No models found. Set up a provider with hermes model, then press ctrl+r."
                         .into()
-                } else {
-                    notice_t18(&picker.filter)
                 });
+            } else if picker.failed.is_none()
+                && picker.feedback.is_none()
+                && let Some(warning) = catalog
+                    .result
+                    .providers
+                    .iter()
+                    .find_map(|p| p.warning.as_ref())
+            {
+                picker.banner = Some(format!(
+                    "Partial catalogue: {warning}; remaining availability unknown. Ctrl+R retries."
+                ));
             }
         } else if picker.loading {
-            picker.rows.push(PickerRow {
-                key: None,
-                text: "Loading models…".into(),
-                badges: Vec::new(),
-                price: None,
-                dim: true,
-                header: false,
-            });
+            picker.banner = Some("Loading models…".into());
+        }
+        let unknown = session.is_some_and(|s| s.uncertain);
+        if self.offline {
+            picker.banner = Some("Offline: changes disabled. Ctrl+R retries; Esc closes.".into());
+        } else if unknown {
+            picker.banner =
+                Some("Outcome unknown; reloading. Nothing is resent automatically.".into());
         }
         picker.selected = previous
             .as_ref()
             .and_then(|key| {
-                picker
-                    .rows
-                    .iter()
-                    .position(|row| row.key.as_ref() == Some(key))
+                picker.rows.iter().position(|row| {
+                    row.key
+                        .as_ref()
+                        .is_some_and(|other| browse::same_route(key, other))
+                })
             })
-            .or(current_index.filter(|_| previous.is_none()))
+            .or_else(|| {
+                previous
+                    .is_none()
+                    .then(|| picker.facts.iter().position(|facts| facts.current))
+                    .flatten()
+            })
             .or_else(|| picker.rows.iter().position(|r| r.key.is_some()));
+        picker.details = catalog.map_or_else(
+            || vec!["No action until a valid row is selected.".into()],
+            |catalog| {
+                browse::details(
+                    catalog,
+                    picker.selected.and_then(|i| picker.rows.get(i)),
+                    picker
+                        .selected
+                        .and_then(|i| picker.facts.get(i))
+                        .copied()
+                        .unwrap_or_default(),
+                    picker.chosen_effort,
+                    session.is_some_and(|s| s.deferred.is_some()),
+                    unknown,
+                )
+            },
+        );
         Self::footer(picker);
     }
     fn footer(picker: &mut Picker) {
         let offers = picker
             .selected
-            .and_then(|i| picker.rows.get(i))
-            .is_none_or(|r| !r.badges.iter().any(|b| b == "no effort"));
+            .and_then(|i| picker.facts.get(i))
+            .is_none_or(|facts| facts.offers_effort);
         picker.effort_text = if picker.current_effort.is_none() {
             "effort: could not be read".into()
         } else if !offers {
@@ -540,11 +669,52 @@ impl ModelsState {
                 format!("effort: {} → {}", current.as_wire(), chosen.as_wire())
             }
         };
+        picker.hints = format!(
+            "↑↓ move · Enter choose · Tab view · F2/Ctrl+E details · Esc clear/close\n{} · Ctrl+F star · Ctrl+G save · Ctrl+R reload · Ctrl+U clear",
+            picker.effort_text
+        );
     }
     fn key(&mut self, key: PickerKey, effects: &mut Vec<ModelsEffect>) {
+        let unknown = self
+            .picker
+            .as_ref()
+            .and_then(|p| self.sessions.get(&p.session_id))
+            .is_some_and(|s| s.uncertain);
         let Some(picker) = &mut self.picker else {
             return;
         };
+        if picker.details_open {
+            match key {
+                PickerKey::Escape => picker.details_open = false,
+                PickerKey::Up => picker.details_scroll = picker.details_scroll.saturating_sub(1),
+                PickerKey::Down => picker.details_scroll = picker.details_scroll.saturating_add(1),
+                PickerKey::PageUp => {
+                    picker.details_scroll = picker.details_scroll.saturating_sub(self.list_height)
+                }
+                PickerKey::PageDown => {
+                    picker.details_scroll = picker.details_scroll.saturating_add(self.list_height)
+                }
+                PickerKey::Home => picker.details_scroll = 0,
+                PickerKey::End => picker.details_scroll = usize::MAX,
+                _ => {}
+            }
+            if let Some(limit) = self.details_scroll_limit {
+                picker.details_scroll = picker.details_scroll.min(limit);
+            }
+            return;
+        }
+        if (self.offline || unknown)
+            && matches!(
+                key,
+                PickerKey::Enter
+                    | PickerKey::ToggleFavourite
+                    | PickerKey::ToggleScope
+                    | PickerKey::Left
+                    | PickerKey::Right
+            )
+        {
+            return;
+        }
         picker.feedback = None;
         picker.banner = picker.failed.clone();
         match key {
@@ -553,6 +723,14 @@ impl ModelsState {
                 picker.filter.pop();
             }
             PickerKey::ClearFilter => picker.filter.clear(),
+            PickerKey::ChipsNext | PickerKey::ChipsPrev => {
+                picker.list_scope = picker.list_scope.step(key == PickerKey::ChipsPrev);
+            }
+            PickerKey::Details => {
+                picker.details_open = true;
+                picker.details_scroll = 0;
+                return;
+            }
             PickerKey::Escape if !picker.filter.is_empty() => picker.filter.clear(),
             PickerKey::Escape | PickerKey::Close => {
                 self.close(effects);
@@ -571,8 +749,8 @@ impl ModelsState {
             PickerKey::Left | PickerKey::Right => {
                 if picker
                     .selected
-                    .and_then(|i| picker.rows.get(i))
-                    .is_none_or(|r| !r.badges.iter().any(|b| b == "no effort"))
+                    .and_then(|i| picker.facts.get(i))
+                    .is_none_or(|facts| facts.offers_effort)
                     && let Some(chosen) = picker.chosen_effort
                 {
                     picker.chosen_effort = Some(if key == PickerKey::Left {
@@ -603,13 +781,25 @@ impl ModelsState {
                         PickerKey::Home => 0,
                         PickerKey::End => indexes.len() - 1,
                         PickerKey::Up => pos.saturating_sub(1),
-                        PickerKey::PageUp => pos.saturating_sub(self.list_height),
-                        PickerKey::PageDown => (pos + self.list_height).min(indexes.len() - 1),
+                        PickerKey::PageUp => {
+                            let target = indexes[pos].saturating_sub(self.list_height);
+                            indexes
+                                .iter()
+                                .rposition(|index| *index <= target)
+                                .unwrap_or(0)
+                        }
+                        PickerKey::PageDown => {
+                            let target = indexes[pos].saturating_add(self.list_height);
+                            indexes
+                                .iter()
+                                .position(|index| *index >= target)
+                                .unwrap_or(indexes.len() - 1)
+                        }
                         _ => (pos + 1).min(indexes.len() - 1),
                     };
                     picker.selected = Some(indexes[next]);
                 }
-                Self::footer(picker);
+                self.rebuild();
                 return;
             }
             PickerKey::Refresh => {
@@ -618,6 +808,11 @@ impl ModelsState {
                     session_id: picker.session_id.clone(),
                     refresh: true,
                 });
+                if unknown {
+                    effects.push(ModelsEffect::ReadEffort {
+                        session_id: picker.session_id.clone(),
+                    });
+                }
             }
             PickerKey::ToggleFavourite => {
                 let selected = picker
@@ -663,7 +858,7 @@ impl ModelsState {
         };
         let (provider, model) = match key {
             RowKey::NotSetUp { provider } => {
-                self.picker = None;
+                self.return_picker = self.picker.take();
                 effects.push(ModelsEffect::CloseOverlay);
                 effects.push(ModelsEffect::OpenProviders { slug: provider });
                 return;
@@ -672,17 +867,22 @@ impl ModelsState {
                 (provider, model)
             }
         };
-        if row.badges.iter().any(|b| b == "not listed") {
+        let facts = picker
+            .selected
+            .and_then(|i| picker.facts.get(i))
+            .copied()
+            .unwrap_or_default();
+        if facts.not_listed {
             let text = notice_t37(&model, &name(&provider));
             self.picker_notice(&sid, text, effects);
             return;
         }
-        if row.badges.iter().any(|b| b == "unavailable") {
+        if facts.unavailable {
             let text = notice_t15(&model, &name(&provider));
             self.picker_notice(&sid, text, effects);
             return;
         }
-        let offers = !row.badges.iter().any(|b| b == "no effort");
+        let offers = facts.offers_effort;
         let changed = offers
             && picker.current_effort.is_some()
             && picker.current_effort != picker.chosen_effort;
@@ -845,12 +1045,26 @@ impl ModelsState {
                         .map_or(active.pick.effort.flatten(), |value| {
                             value.as_str().and_then(Effort::parse)
                         });
+                    let offered = self.sessions.get(&sid).and_then(|s| {
+                        let catalog = s.catalog.as_ref()?;
+                        self.effort_offered(
+                            &sid,
+                            s.provider.as_deref().unwrap_or(&catalog.result.provider),
+                            s.model.as_deref().unwrap_or(&catalog.result.model),
+                        )
+                    });
                     effects.push(notice(
                         &sid,
                         NoticeLevel::Info,
                         level.map_or_else(
                             || notice_effort_back().into(),
-                            |e| notice_effort(e.as_wire()),
+                            |e| {
+                                if offered == Some(false) {
+                                    notice_effort_not_offered(e.as_wire())
+                                } else {
+                                    notice_effort(e.as_wire())
+                                }
+                            },
                         ),
                     ));
                     self.sessions.entry(sid.clone()).or_default().effort = level;
@@ -925,6 +1139,11 @@ impl ModelsState {
             MutationOutcome::Unknown => {
                 self.failure(&sid, &active.pick, &outcome, effects);
                 self.sessions.entry(sid.clone()).or_default().unknown = Some(active);
+                self.readback(&sid, effects);
+            }
+            MutationOutcome::Unreadable => {
+                self.failure(&sid, &active.pick, &outcome, effects);
+                self.readback(&sid, effects);
             }
             _ => self.failure(&sid, &active.pick, &outcome, effects),
         }
@@ -950,13 +1169,38 @@ impl ModelsState {
         };
         match outcome {
             Ok(()) => {
-                effects.push(notice(sid, NoticeLevel::Info, level.map_or_else(|| notice_effort_held_profile().into(), |e| notice_t31_level(e.as_wire())))); self.save_pick(sid, &active.pick, None, effects);
+                effects.push(notice(
+                    sid,
+                    NoticeLevel::Info,
+                    level.map_or_else(
+                        || notice_effort_held_profile().into(),
+                        |e| notice_t31_level(e.as_wire()),
+                    ),
+                ));
+                self.save_pick(sid, &active.pick, None, effects);
             }
-            Err(MutationOutcome::Unknown | MutationOutcome::Unreadable) => effects.push(notice(sid, NoticeLevel::Warning, "The connection dropped before Hermes answered, so the effort may or may not change when the current turn ends. The status line shows what Hermes reports; setting the same effort again is safe.")),
+            Err(MutationOutcome::Unknown | MutationOutcome::Unreadable) => {
+                effects.push(notice(sid, NoticeLevel::Warning, "The connection dropped before Hermes answered, so the effort may or may not change when the current turn ends. The status line shows what Hermes reports; setting the same effort again is safe."));
+                self.readback(sid, effects);
+            }
             Err(outcome) => self.failure(sid, &active.pick, &outcome, effects),
         }
         self.drain(sid, effects);
     }
+    fn readback(&mut self, sid: &str, effects: &mut Vec<ModelsEffect>) {
+        let session = self.sessions.entry(sid.into()).or_default();
+        session.uncertain = true;
+        session.readback_model = false;
+        session.readback_effort = false;
+        effects.push(ModelsEffect::LoadOptions {
+            session_id: sid.into(),
+            refresh: false,
+        });
+        effects.push(ModelsEffect::ReadEffort {
+            session_id: sid.into(),
+        });
+    }
+
     fn failure(
         &self,
         sid: &str,
@@ -1072,10 +1316,11 @@ impl ModelsState {
                 catalog.result.model = model.into();
             }
         }
-        if let Some(provider) = receipt.get("provider").and_then(Value::as_str)
-            && let Some(catalog) = &mut session.catalog
-        {
-            catalog.result.provider = provider.into();
+        if let Some(provider) = receipt.get("provider").and_then(Value::as_str) {
+            session.provider = Some(provider.into());
+            if let Some(catalog) = &mut session.catalog {
+                catalog.result.provider = provider.into();
+            }
         }
     }
     fn event(
@@ -1123,6 +1368,22 @@ impl ModelsState {
                 session.deferred = None;
             }
             self.adopt_model(sid, body);
+            let session = self.sessions.entry(sid.into()).or_default();
+            if self.foreground.as_deref() == Some(sid)
+                && body
+                    .get("reasoning_effort")
+                    .or_else(|| body.get("reasoning"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|e| !e.is_empty())
+                && session.catalog.is_none()
+                && !session.catalog_attempted
+            {
+                session.catalog_attempted = true;
+                effects.push(ModelsEffect::LoadOptions {
+                    session_id: sid.into(),
+                    refresh: false,
+                });
+            }
             return;
         }
         if type_name != "session.updated" {
@@ -1272,7 +1533,23 @@ impl ModelsState {
     }
 
     pub fn view(&self) -> Option<PickerView<'_>> {
-        self.picker.as_ref().map(|p| PickerView { title: &p.title, filter: &p.filter, effort: &p.effort_text, hints: if p.refreshing { "refreshing all providers can take a few seconds; other actions wait until it finishes" } else { "enter switch · ctrl+g scope · ctrl+f ★ · ctrl+r refresh · esc" }, refreshing: p.refreshing, rows: &p.rows, selected: p.selected, banner: p.banner.as_deref() })
+        self.picker.as_ref().map(|p| PickerView {
+            browse: Some(BrowseView {
+                scope: p.list_scope,
+                counts: p.counts,
+                details: &p.details,
+                details_open: p.details_open,
+                details_scroll: p.details_scroll,
+            }),
+            title: &p.title,
+            filter: &p.filter,
+            effort: &p.effort_text,
+            hints: &p.hints,
+            refreshing: p.refreshing,
+            rows: &p.rows,
+            selected: p.selected,
+            banner: p.banner.as_deref(),
+        })
     }
     fn visible_confirmation(&self) -> Option<&PendingConfirmation> {
         if self.picker.is_some() {

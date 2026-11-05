@@ -22,7 +22,7 @@ use talaria_app::app::{
     self, AttachmentView, ComposerDeadline, InputCode, InputKey, LinkView, Outcome, RunSetup,
     Screen, StatusHost, ToggleContext, TranscriptAction, UserAction, View,
 };
-use talaria_app::appearance::AppearanceView;
+use talaria_app::appearance::{AppearanceView, ThemeFileSession};
 use talaria_app::attachments::{Action as AttachmentAction, LabelStyle};
 use talaria_app::bg::dialog::{DialogEvent, DialogStatus, LaunchSubmit};
 use talaria_app::comforts::{editor, herdr::HerdrReporter, prompt_history::PromptHistory, suspend};
@@ -34,6 +34,7 @@ use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::peek::CardAnswer;
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
 use talaria_app::subagents::SubagentAction;
+use talaria_app::theme_file::BorderPreset;
 use talaria_core::appearance::ThemeReport;
 use talaria_core::attachments::CollapseRule;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
@@ -219,6 +220,11 @@ fn memory_footer_key(label: &str) -> Option<talaria_core::memory::MemoryKey> {
 /// The terminal side of the loop: the inline terminal, the composer, the prompt cards and the
 /// status line.
 pub struct TuiScreen {
+    workspace_history: Vec<WorkspaceCommit>,
+    menu: talaria_tui::workspace::menu::MenuState,
+    workspace_source_epoch: u64,
+    workspace_committed_cells: usize,
+    workspace_renderer: talaria_tui::workspace::Workspace,
     providers: crate::providers_wiring::ProvidersWiring,
     providers_view: Option<ProvidersView>,
     cron: Option<talaria_core::cron::CronView>,
@@ -256,6 +262,9 @@ pub struct TuiScreen {
     look: Look,
     /// The theme in force for the composer, the status line and cells that start now.
     theme: Arc<Theme>,
+    startup_theme_files: Option<ThemeFileSession>,
+    theme_file_report: Option<talaria_core::appearance::ThemeFileReport>,
+    composer_border: BorderPreset,
     /// The theme each assistant or reasoning cell started under, until it is committed.
     captured: HashMap<CellId, Arc<Theme>>,
     /// The checklist's styles: the same choice of colour the Markdown renderer makes.
@@ -317,6 +326,11 @@ struct ModelOverlay {
     rows: Vec<PickerRow>,
     selected: Option<usize>,
     banner: Option<String>,
+    list_scope: Option<talaria_core::models::ListScope>,
+    counts: talaria_core::models::BrowseCounts,
+    details: Vec<String>,
+    details_open: bool,
+    details_scroll: usize,
 }
 
 impl ModelOverlay {
@@ -330,11 +344,25 @@ impl ModelOverlay {
             rows: view.rows.to_vec(),
             selected: view.selected,
             banner: view.banner.map(String::from),
+            list_scope: view.browse.map(|b| b.scope),
+            counts: view.browse.map(|b| b.counts).unwrap_or_default(),
+            details: view.browse.map(|b| b.details.to_vec()).unwrap_or_default(),
+            details_open: view.browse.is_some_and(|b| b.details_open),
+            details_scroll: view.browse.map_or(0, |b| b.details_scroll),
         }
     }
 
     fn view(&self) -> PickerView<'_> {
         PickerView {
+            browse: self
+                .list_scope
+                .map(|scope| talaria_core::models::BrowseView {
+                    scope,
+                    counts: self.counts,
+                    details: &self.details,
+                    details_open: self.details_open,
+                    details_scroll: self.details_scroll,
+                }),
             title: &self.title,
             filter: &self.filter,
             effort: &self.effort,
@@ -404,6 +432,9 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
             ModelAction::ModelFavourite => Some(PickerKey::ToggleFavourite),
             ModelAction::ModelRefresh => Some(PickerKey::Refresh),
             ModelAction::ModelPicker => None,
+            ModelAction::ModelChipsNext => Some(PickerKey::ChipsNext),
+            ModelAction::ModelChipsPrev => Some(PickerKey::ChipsPrev),
+            ModelAction::ModelDetails => Some(PickerKey::Details),
         };
     }
     let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other;
@@ -776,16 +807,23 @@ struct Look {
 }
 
 impl Look {
-    fn resolve(&self, view: &AppearanceView<'_>) -> Theme {
-        talaria_tui::theme::resolve(&ThemeInputs {
-            skin: view.skin,
-            skipped: view.skipped,
-            follow_hermes_skin: self.follow_hermes_skin,
-            polarity: view.polarity,
-            depth: self.depth,
-            motion: self.motion,
-            terminal: self.terminal,
-        })
+    fn resolve(&self, view: &AppearanceView<'_>) -> talaria_tui::theme::ThemeFileResolution {
+        let mut resolved = talaria_tui::theme::resolve_with_theme_file(
+            &ThemeInputs {
+                skin: view.skin,
+                skipped: view.skipped,
+                follow_hermes_skin: self.follow_hermes_skin,
+                polarity: view.polarity,
+                depth: self.depth,
+                motion: self.motion,
+                terminal: self.terminal,
+            },
+            view.file,
+        );
+        if let Some(report) = &mut resolved.report {
+            report.file = view.file_id.unwrap_or_default().to_owned();
+        }
+        resolved
     }
 }
 
@@ -937,6 +975,13 @@ struct Transcript {
     pager: Pager,
     index: SearchIndex,
     dirty: bool,
+}
+
+/// Presentation-only commit order. Local output does not have a session cell, so
+/// the callback sequence, rather than a cell index, determines its position.
+enum WorkspaceCommit {
+    Cell(Box<Cell>),
+    Lines(Vec<Line<'static>>),
 }
 
 /// The key of one terminal event, in the form the application routes.
@@ -1121,7 +1166,8 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         },
         model: view.model.map(str::to_string),
         reasoning_effort: view.effort.map(str::to_string),
-        reasoning_effort_wire: view.effort.map(str::to_string),
+        reasoning_effort_wire: view.effort_wire.map(str::to_string),
+        effort_offered: view.effort_offered,
         // One folder for the foreground session, kept by the app and moved by `/cd` (#237).
         working_dir: view.folder.and_then(|folder| folder.cwd.clone()),
         home_dir,
@@ -1164,6 +1210,14 @@ fn approvals_segment(segment: &ApprovalSegmentText) -> ApprovalsSegment {
 }
 
 impl TuiScreen {
+    fn commit_workspace_lines(&mut self, lines: Vec<Line<'static>>) {
+        if !lines.is_empty() {
+            self.workspace_history
+                .push(WorkspaceCommit::Lines(lines.clone()));
+        }
+        let _ = self.terminal.commit_lines(lines);
+    }
+
     fn connectors_key(
         &mut self,
         key: Key,
@@ -1763,6 +1817,9 @@ impl TuiScreen {
 
     /// Take a newly resolved theme for the composer, the status line and later cells.
     fn set_theme(&mut self, theme: Theme) {
+        if self.color != theme.color || self.tool_theme != theme.tool {
+            self.workspace_renderer.clear();
+        }
         if (self.color != theme.color || self.tool_theme != theme.tool)
             && let Some(transcript) = self.transcript.as_mut()
         {
@@ -2455,6 +2512,93 @@ impl TuiScreen {
                 }
                 let key = Key::from(raw);
                 let action = self.keymap.resolve(&key, KeyContext::Composer);
+                if action == Some(Action::ToggleMenuBar) {
+                    self.menu = talaria_tui::workspace::menu::MenuState::shown();
+                    return vec![UserAction::ToggleMenuBar];
+                }
+                if view.layout.menu_focused {
+                    use talaria_tui::workspace::menu::{MenuBinding, MenuKey};
+                    if key.kind == KeyKind::Release {
+                        return Vec::new();
+                    }
+                    if !self.menu.focused {
+                        self.menu.menu_index = 0;
+                        self.menu.item_index = 0;
+                    }
+                    self.menu.visible = true;
+                    self.menu.focused = true;
+                    self.menu.transient = view.layout.menu_transient;
+                    self.menu.dropdown_open = view.layout.menu_dropdown;
+                    self.menu.fleet_enabled = view.menu_fleet_enabled;
+                    self.menu.remote_gateway = view.menu_remote_gateway;
+                    self.menu.panel_on = view.layout.preferences.work_panel;
+                    self.menu.bar_on = view.layout.preferences.menu_bar;
+                    self.menu.compact = self.terminal.screen_area().width < 60;
+                    let menu_key = match self.keymap.resolve_in(&key, KeyContext::Menu) {
+                        Some(Action::MenuLeft) => Some(MenuKey::Left),
+                        Some(Action::MenuRight) => Some(MenuKey::Right),
+                        Some(Action::MenuUp) => Some(MenuKey::Up),
+                        Some(Action::MenuDown) => Some(MenuKey::Down),
+                        Some(Action::MenuOpen | Action::MenuActivate) => Some(MenuKey::Enter),
+                        Some(Action::MenuNext) => Some(MenuKey::Tab),
+                        Some(Action::MenuPrev) => Some(MenuKey::BackTab),
+                        Some(Action::MenuClose) => Some(MenuKey::Esc),
+                        _ => match key.code {
+                            KeyCode::Char(c) => Some(MenuKey::Letter(c)),
+                            _ => None,
+                        },
+                    };
+                    let Some(menu_key) = menu_key else {
+                        return Vec::new();
+                    };
+                    let outcome = self.menu.on_key(menu_key);
+                    let mut actions = vec![UserAction::MenuFocus {
+                        focused: self.menu.focused,
+                        dropdown: self.menu.dropdown_open,
+                        transient: self.menu.transient && self.menu.visible,
+                    }];
+                    if let Some(notice) = outcome.notice {
+                        actions.push(UserAction::Notice(notice));
+                    }
+                    if let Some(binding) = outcome.activated {
+                        let selected = match binding {
+                            MenuBinding::LocalCommand(name) => {
+                                Some(UserAction::MenuCommand(format!("/{name}")))
+                            }
+                            MenuBinding::VoiceRead => {
+                                Some(UserAction::MenuCommand("/voice read".into()))
+                            }
+                            MenuBinding::KeyAction(name) => match name {
+                                "session_picker_open" => {
+                                    Some(UserAction::MenuCommand("/resume".into()))
+                                }
+                                "fleet_view_open" => Some(UserAction::FleetOpen),
+                                "attention_next" => Some(UserAction::AttentionNext),
+                                "model_picker" => Some(UserAction::MenuCommand("/model".into())),
+                                "layout_panel" => Some(UserAction::LayoutPanel),
+                                "toggle_menu_bar" => Some(UserAction::ToggleMenuBar),
+                                "toggle_tasks" => Some(UserAction::ToggleTasks),
+                                "agents_panel" => Some(UserAction::ToggleAgents),
+                                "voice_record" => Some(UserAction::VoiceRecord),
+                                "transcript_open" => {
+                                    Some(UserAction::Input(talaria_app::app::InputKey {
+                                        code: talaria_app::app::InputCode::Char('o'),
+                                        ctrl: true,
+                                        alt: false,
+                                        shift: false,
+                                        super_key: false,
+                                        other: false,
+                                    }))
+                                }
+                                _ => None,
+                            },
+                        };
+                        if let Some(action) = selected {
+                            actions.push(action);
+                        }
+                    }
+                    return actions;
+                }
                 if action == Some(Action::FleetViewOpen) {
                     return vec![UserAction::FleetOpen];
                 }
@@ -2508,6 +2652,15 @@ impl TuiScreen {
                         .map(UserAction::ModelPicker)
                         .into_iter()
                         .collect();
+                }
+                if action == Some(Action::LayoutPanel) {
+                    return vec![UserAction::LayoutPanel];
+                }
+                if key.kind != KeyKind::Release
+                    && is_escape(&key)
+                    && view.layout.panel == talaria_core::layout::PanelVisibility::OverlayOpen
+                {
+                    return vec![UserAction::DismissWorkPanel];
                 }
                 if let Some(search) = &mut self.search {
                     let mut actions = Vec::new();
@@ -2863,6 +3016,7 @@ impl TuiScreen {
             Event::Resize(cols, rows) => {
                 self.rows = rows;
                 let _ = self.terminal.resize(cols, rows);
+                self.workspace_renderer.clear();
                 view.profiles
                     .as_ref()
                     .map(|profiles| UserAction::ProfilesLayout {
@@ -3170,6 +3324,22 @@ impl StatusHost for TuiScreen {
 }
 
 impl Screen for TuiScreen {
+    fn work_panel(&self) -> bool {
+        self.config.ui.work_panel
+    }
+    fn menu_bar(&self) -> bool {
+        self.config.ui.menu_bar
+    }
+
+    fn sync_workspace_transcript(&mut self, source_epoch: u64, committed_cells: usize) {
+        if self.workspace_source_epoch != source_epoch {
+            // Finished output follows the inline commit stream across session reloads.
+            // Only the render cache changes; local output must not disappear on refresh.
+            self.workspace_renderer.clear();
+            self.workspace_source_epoch = source_epoch;
+        }
+        self.workspace_committed_cells = committed_cells;
+    }
     fn acp_config(&self) -> talaria_app::acp::AcpConfig {
         self.config.acp.clone()
     }
@@ -3328,7 +3498,18 @@ impl Screen for TuiScreen {
     }
 
     fn model_list_height(&self) -> usize {
-        terminal_size().map_or(10, |(_, rows)| usize::from(rows.saturating_sub(3)).max(3))
+        terminal_size().map_or(9, |(cols, rows)| {
+            talaria_tui::picker_frame::list_height(ratatui::layout::Rect::new(0, 0, cols, rows))
+        })
+    }
+
+    fn model_details_scroll_limit(&self) -> Option<usize> {
+        let (width, height) = terminal_size().ok()?;
+        let view = self.picker.as_ref()?.view();
+        Some(
+            talaria_tui::picker_frame::details_line_count(&view, width)
+                .saturating_sub(usize::from(height.saturating_sub(3))),
+        )
     }
 
     fn sync_profiles(&mut self, view: Option<&ProfilesView>) {
@@ -3563,6 +3744,11 @@ impl Screen for TuiScreen {
     }
 
     fn draw(&mut self, view: &View<'_>) {
+        if view.layout.workspace_enabled() || view.layout.menu_transient {
+            let _ = self.terminal.enter_workspace();
+        } else {
+            let _ = self.terminal.leave_workspace();
+        }
         if let Some(board) = view.kanban {
             self.open_overlay(Overlay::Kanban);
             let _ = self.terminal.draw_overlay(|area, buf| {
@@ -3902,7 +4088,10 @@ impl Screen for TuiScreen {
                 .map(|queue| render_preview(&queue, width, self.composer.is_empty()))
                 .unwrap_or_default(),
         );
-        let composer = self.composer.section(width, COMPOSER_ROWS);
+        let composer = self
+            .composer
+            .section(width, COMPOSER_ROWS)
+            .with_border_preset(self.composer_border);
         let partial_text = view
             .voice
             .as_ref()
@@ -3959,7 +4148,21 @@ impl Screen for TuiScreen {
             now_ms: view.automation_now_ms,
             theme: &automation_theme,
         };
-        let mut sections: Vec<&dyn LiveSection> = vec![&tail, &drafting];
+        let workspace_enabled = view.layout.workspace_enabled() || view.layout.menu_transient;
+        let panel_visible = workspace_enabled
+            && talaria_tui::workspace::geometry(
+                self.terminal.screen_area(),
+                0,
+                0,
+                view.layout.panel,
+            )
+            .panel
+            .is_some();
+        let mut sections: Vec<&dyn LiveSection> = if workspace_enabled {
+            vec![&drafting]
+        } else {
+            vec![&tail, &drafting]
+        };
         if let Some(prompts) = &prompts {
             sections.push(prompts);
         }
@@ -3989,10 +4192,14 @@ impl Screen for TuiScreen {
             if let Some(mention) = &mention {
                 sections.push(mention);
             }
-            if let Some(checklist) = &checklist {
+            if let Some(checklist) = &checklist
+                && !panel_visible
+            {
                 sections.push(checklist);
             }
-            if let Some(subagents) = &subagents {
+            if let Some(subagents) = &subagents
+                && talaria_core::layout::inline_subagent_dock_visible(panel_visible)
+            {
                 sections.push(subagents);
             }
             if let Some(side) = &side {
@@ -4011,7 +4218,111 @@ impl Screen for TuiScreen {
         }
         sections.push(&automation);
         sections.push(&status);
-        let _ = self.terminal.draw_live(&LiveView { sections });
+        if workspace_enabled {
+            let empty_agents = talaria_core::subagents::SubagentTree::new();
+            let agents = view
+                .subagents
+                .and_then(|hub| hub.foreground_key().and_then(|key| hub.tree(key)))
+                .unwrap_or(&empty_agents);
+            let waiting = view
+                .fleet_snapshot
+                .map(|snapshot| {
+                    snapshot
+                        .queue
+                        .iter()
+                        .map(|item| {
+                            let name = snapshot
+                                .rows
+                                .iter()
+                                .find(|row| row.key == item.id.key)
+                                .map(|row| row.title.as_str())
+                                .filter(|title| !title.is_empty())
+                                .unwrap_or("session");
+                            talaria_tui::workspace::panel::WaitingRequest {
+                                seq: item.seq,
+                                label: format!("{name}: needs you"),
+                                foreground: item.foreground,
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let goal = view.automation.panel_goal();
+            let work = talaria_tui::workspace::panel::WorkContents {
+                needs_you: self.inputs.needs_you,
+                goal,
+                turn: self.inputs.turn,
+                verdict_previous_turn: goal.is_some_and(|goal| {
+                    goal.status == "active"
+                        && goal.panel_verdict().is_some()
+                        && self.inputs.turn == TurnState::Streaming
+                }),
+                checklist: view.checklist,
+                checklist_expanded: view.checklist_expanded,
+                waiting: &waiting,
+                agents,
+                parent_model: None,
+                recent_limit: 4,
+                voice_phase: None,
+                read_aloud: None,
+                voice_target: None,
+            };
+            let mut entries = self
+                .workspace_history
+                .iter()
+                .map(|entry| match entry {
+                    WorkspaceCommit::Cell(cell) => talaria_tui::pager::TranscriptEntry::Cell(cell),
+                    WorkspaceCommit::Lines(lines) => {
+                        talaria_tui::pager::TranscriptEntry::Lines(lines)
+                    }
+                })
+                .collect::<Vec<_>>();
+            let cells = view.state.map_or(&[][..], |state| state.cells());
+            entries.extend(
+                cells
+                    .iter()
+                    .skip(self.workspace_committed_cells)
+                    .map(talaria_tui::pager::TranscriptEntry::Cell),
+            );
+            let footer = LiveView { sections };
+            let workspace = talaria_tui::workspace::WorkspaceView {
+                entries: &entries,
+                details: talaria_tui::pager::Details::Expanded,
+                panel: view.layout.panel,
+                checklist: if panel_visible { view.checklist } else { None },
+                checklist_expanded: view.checklist_expanded,
+                menu: talaria_tui::workspace::menu::MenuState {
+                    visible: view.layout.preferences.menu_bar || view.layout.menu_transient,
+                    focused: view.layout.menu_focused,
+                    dropdown_open: view.layout.menu_dropdown,
+                    transient: view.layout.menu_transient,
+                    fleet_enabled: view.menu_fleet_enabled,
+                    remote_gateway: view.menu_remote_gateway,
+                    panel_on: view.layout.preferences.work_panel,
+                    bar_on: view.layout.preferences.menu_bar,
+                    compact: width < 60,
+                    color: self.color,
+                    ..self.menu.clone()
+                },
+                footer: &footer,
+                work: Some(&work),
+            };
+            let body_width = view.layout.plan(width, self.rows).transcript_columns;
+            let renderer = transcript_tool_renderer(
+                talaria_tui::pager::Details::Expanded,
+                body_width,
+                self.color,
+                &self.tool_theme,
+            );
+            let render_workspace = &mut self.workspace_renderer;
+            let style = &self.checklist_style;
+            let hint = self.keymap.label(Action::ToggleTasks);
+            let _ = self.terminal.draw_workspace(|area, buffer| {
+                render_workspace.draw_with_style(&workspace, area, buffer, &renderer, style, hint);
+            });
+        } else {
+            let _ = self.terminal.draw_live(&LiveView { sections });
+        }
         if !self.compact_started {
             self.compact_started = true;
             let history = self.history.clone();
@@ -4035,9 +4346,7 @@ impl Screen for TuiScreen {
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
-        let _ = self
-            .terminal
-            .commit_lines(lines.into_iter().map(Line::from).collect());
+        self.commit_workspace_lines(lines.into_iter().map(Line::from).collect());
     }
 
     fn commit_context(&mut self, block: &ContextBlock) {
@@ -4061,13 +4370,13 @@ impl Screen for TuiScreen {
             } => error_block(typed, command, method, sid, error, width, &style),
             ContextBlock::Notice(notice) => notice_block(notice, width, &style),
         };
-        let _ = self.terminal.commit_lines(lines);
+        self.commit_workspace_lines(lines);
     }
 
     fn commit_checklist(&mut self, commit: &ChecklistCommit) {
         let width = self.terminal.viewport().width;
         let lines = committed_block_lines(commit, width, &self.checklist_style);
-        let _ = self.terminal.commit_lines(lines);
+        self.commit_workspace_lines(lines);
     }
 
     fn commit_subagent_batch(&mut self, batch: &FinishedBatch) {
@@ -4077,10 +4386,17 @@ impl Screen for TuiScreen {
             SubagentStyle::plain()
         };
         let lines = batch_block_lines(batch, self.terminal.viewport().width, &style);
-        let _ = self.terminal.commit_lines(lines);
+        self.commit_workspace_lines(lines);
     }
 
     fn commit_cells(&mut self, cells: &[Cell]) {
+        self.workspace_history.extend(
+            cells
+                .iter()
+                .cloned()
+                .map(Box::new)
+                .map(WorkspaceCommit::Cell),
+        );
         let render = CapturedCells {
             current: &self.theme,
             captured: &self.captured,
@@ -4171,8 +4487,18 @@ impl Screen for TuiScreen {
     }
 
     fn appearance_changed(&mut self, view: &AppearanceView<'_>) {
-        let theme = self.look.resolve(view);
-        self.set_theme(theme);
+        let resolved = self.look.resolve(view);
+        self.composer_border = resolved.border;
+        self.theme_file_report = resolved.report;
+        self.set_theme(resolved.theme);
+    }
+
+    fn startup_theme_files(&self) -> Option<ThemeFileSession> {
+        self.startup_theme_files.clone()
+    }
+
+    fn theme_file_report(&self) -> Option<talaria_core::appearance::ThemeFileReport> {
+        self.theme_file_report.clone()
     }
 
     fn theme_report(&self) -> Option<ThemeReport> {
@@ -4592,6 +4918,16 @@ fn session(
         lines: config.composer.paste_collapse_lines,
         chars: config.composer.paste_collapse_chars,
     };
+    let mut theme_files = std::env::var_os("HOME").map(|home| {
+        ThemeFileSession::new(
+            config::user_config_path(&std::path::PathBuf::from(home)),
+            config.theme.clone(),
+            &launch.profile,
+        )
+    });
+    let theme_notices = theme_files
+        .as_mut()
+        .map_or_else(Vec::new, ThemeFileSession::startup);
     let guard = TerminalGuard::acquire()?;
     let probe = probe_startup(PROBE_DEADLINE)?;
     // Light or dark is decided once, from the start-up probe; `/theme` overrides it per session.
@@ -4600,11 +4936,14 @@ fn session(
         polarity: detect::polarity(None, &settings.env, settings.mode, &probe.colors),
         ..settings.look
     };
-    let theme = look.resolve(&AppearanceView {
+    let resolved = look.resolve(&AppearanceView {
         skin: None,
         skipped: &[],
         polarity: look.polarity,
+        file: theme_files.as_ref().and_then(ThemeFileSession::file),
+        file_id: theme_files.as_ref().and_then(ThemeFileSession::active_id),
     });
+    let theme = resolved.theme;
     let size = terminal_size().map_err(TerminalError::Io)?;
     let terminal = InlineTerminal::new(io::stdout(), size, LIVE_HEIGHT, probe, guard.link())
         .map_err(TerminalError::Io)?;
@@ -4621,6 +4960,7 @@ fn session(
         &workspace.to_string_lossy(),
     );
     let mut setup = setup;
+    setup.notices.extend(theme_notices);
     setup.notices.extend(history_notice);
     let mut composer = Composer::from_startup(
         keymap.clone(),
@@ -4630,6 +4970,11 @@ fn session(
     composer.set_keyboard_enhancement(probe.caps.keyboard_enhancement);
     composer.set_style(theme.composer);
     let mut screen = TuiScreen {
+        workspace_history: Vec::new(),
+        menu: talaria_tui::workspace::menu::MenuState::hidden(),
+        workspace_source_epoch: 0,
+        workspace_committed_cells: 0,
+        workspace_renderer: talaria_tui::workspace::Workspace::default(),
         providers: crate::providers_wiring::ProvidersWiring::new(),
         providers_view: None,
         guard,
@@ -4674,6 +5019,9 @@ fn session(
         clock: ToolClock::new(),
         tool_theme: theme.tool.clone(),
         look,
+        startup_theme_files: theme_files,
+        theme_file_report: resolved.report,
+        composer_border: resolved.border,
         theme: Arc::new(theme),
         captured: HashMap::new(),
         checklist_style: if color {
@@ -5108,6 +5456,35 @@ mod tests {
 
     #[test]
     fn picker_keys_use_the_overlay_configuration_and_keep_typed_text() {
+        let defaults = KeyMap::defaults();
+        let chord = |code, mods| Key::from(KeyEvent::new(code, mods));
+        for (code, mods, expected) in [
+            (KeyCode::Tab, KeyModifiers::NONE, PickerKey::ChipsNext),
+            (KeyCode::BackTab, KeyModifiers::SHIFT, PickerKey::ChipsPrev),
+            (KeyCode::F(2), KeyModifiers::NONE, PickerKey::Details),
+            (
+                KeyCode::Char('e'),
+                KeyModifiers::CONTROL,
+                PickerKey::Details,
+            ),
+        ] {
+            assert_eq!(picker_key(&defaults, chord(code, mods)), Some(expected));
+        }
+        let (rebound, notices) = KeyMap::from_entries(&BTreeMap::from([(
+            "model_details".to_string(),
+            vec!["ctrl+j".to_string()],
+        )]));
+        assert!(notices.is_empty());
+        assert_eq!(
+            picker_key(&rebound, chord(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+            Some(PickerKey::Details)
+        );
+        for c in ['o', 'c', '4'] {
+            assert_eq!(
+                picker_key(&rebound, chord(KeyCode::Char(c), KeyModifiers::NONE)),
+                Some(PickerKey::Char(c))
+            );
+        }
         let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
             "model_scope".to_string(),
             vec!["ctrl+r".to_string()],
@@ -5134,6 +5511,47 @@ mod tests {
             picker_key(&map, key(KeyCode::Char('p'), KeyModifiers::ALT)),
             None
         );
+    }
+
+    #[test]
+    fn picker_keys_route_chips_details_and_rebinding_without_stealing_text() {
+        let map = KeyMap::defaults();
+        for (code, mods, expected) in [
+            (KeyCode::Tab, KeyModifiers::NONE, PickerKey::ChipsNext),
+            (KeyCode::BackTab, KeyModifiers::SHIFT, PickerKey::ChipsPrev),
+            (KeyCode::F(2), KeyModifiers::NONE, PickerKey::Details),
+            (
+                KeyCode::Char('e'),
+                KeyModifiers::CONTROL,
+                PickerKey::Details,
+            ),
+        ] {
+            assert_eq!(
+                picker_key(&map, Key::from(KeyEvent::new(code, mods))),
+                Some(expected)
+            );
+        }
+        let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
+            "model_details".to_owned(),
+            vec!["alt+d".to_owned()],
+        )]));
+        assert!(notices.is_empty());
+        assert_eq!(
+            picker_key(
+                &map,
+                Key::from(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT))
+            ),
+            Some(PickerKey::Details)
+        );
+        for ch in ['o', 'c', '1'] {
+            assert_eq!(
+                picker_key(
+                    &map,
+                    Key::from(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+                ),
+                Some(PickerKey::Char(ch))
+            );
+        }
     }
 
     #[test]

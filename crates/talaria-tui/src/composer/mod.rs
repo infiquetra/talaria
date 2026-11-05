@@ -709,6 +709,7 @@ impl Composer {
             | Action::PagerDetails
             | Action::PagerClose
             | Action::ToggleTasks
+            | Action::LayoutPanel
             | Action::ApprovalsToggle
             | Action::QueueEdit
             | Action::QueueRemove
@@ -833,6 +834,7 @@ impl Composer {
             | Action::ProvidersClearKey
             | Action::ProvidersOpenLink
             | Action::ProvidersCopy
+            | Action::ProvidersDetails
             | Action::McpNextTab
             | Action::McpPrevTab
             | Action::McpReload
@@ -848,6 +850,9 @@ impl Composer {
             | Action::McpCopy
             | Action::McpPasteRedirect
             | Action::ToggleVim
+            | Action::ToggleMenuBar
+            | Action::MenuLeft | Action::MenuRight | Action::MenuUp | Action::MenuDown
+            | Action::MenuOpen | Action::MenuActivate | Action::MenuNext | Action::MenuPrev | Action::MenuClose
             | Action::VoiceRecord => {}
         }
         false

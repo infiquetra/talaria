@@ -220,6 +220,8 @@ pub struct HerdrConfig {
 /// Theme settings from `[theme]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeConfig {
+    pub file: Option<String>,
+    pub profiles: std::collections::BTreeMap<String, String>,
     /// Light or dark preference. The default is auto.
     pub mode: ThemeMode,
     /// Follow the Hermes skin. The default is true.
@@ -231,6 +233,10 @@ pub struct ThemeConfig {
 /// Interface settings from `[ui]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiConfig {
+    /// Start in the optional workspace. Runtime toggles do not save this setting.
+    pub work_panel: bool,
+    /// Start with the one-row menu. Runtime toggles do not save this setting.
+    pub menu_bar: bool,
     /// Reduced motion. The default is false.
     pub reduced_motion: bool,
 }
@@ -295,11 +301,15 @@ impl Default for Config {
                 workspace_filter: None,
             },
             theme: ThemeConfig {
+                file: None,
+                profiles: std::collections::BTreeMap::new(),
                 mode: ThemeMode::Auto,
                 follow_hermes_skin: true,
                 colors: ColorsSetting::Auto,
             },
             ui: UiConfig {
+                work_panel: false,
+                menu_bar: false,
                 reduced_motion: false,
             },
             composer: ComposerConfig::default(),
@@ -654,6 +664,36 @@ fn read_theme(section: &Table, notices: &mut Vec<String>) -> ThemeConfig {
                     "[theme] colors must be auto, truecolor, 256, 16 or none; using auto.".into(),
                 ),
             },
+            "file" => match value.as_str().filter(|id| crate::theme_file::valid_id(id)) {
+                Some(id) => theme.file = Some(id.to_owned()),
+                None => notices
+                    .push("[theme] file must be a valid theme identifier; ignoring it.".into()),
+            },
+            "profiles" => match value.as_table() {
+                Some(profiles) => {
+                    for (profile, value) in profiles {
+                        match value.as_table() {
+                            Some(settings) => {
+                                for (key, value) in settings {
+                                    if key != "file" {
+                                        notices.push(format!("[theme.profiles.{profile}] unknown setting {key}; ignoring it."));
+                                    } else if let Some(id) =
+                                        value.as_str().filter(|id| crate::theme_file::valid_id(id))
+                                    {
+                                        theme.profiles.insert(profile.clone(), id.to_owned());
+                                    } else {
+                                        notices.push(format!("[theme.profiles.{profile}] file must be a valid theme identifier; ignoring it."));
+                                    }
+                                }
+                            }
+                            None => notices.push(format!(
+                                "[theme.profiles.{profile}] must be a table; ignoring it."
+                            )),
+                        }
+                    }
+                }
+                None => notices.push("[theme] profiles must be a table; ignoring it.".into()),
+            },
             "name" => notices.push(
                 "theme.name is no longer used: Talaria follows the Hermes skin (see /skin and \
                  /theme)."
@@ -669,6 +709,14 @@ fn read_ui(section: &Table, notices: &mut Vec<String>) -> UiConfig {
     let mut ui = Config::default().ui;
     for (name, value) in section {
         match name.as_str() {
+            "work_panel" => match value.as_bool() {
+                Some(enabled) => ui.work_panel = enabled,
+                None => notices.push("[ui] work_panel must be true or false; using false.".into()),
+            },
+            "menu_bar" => match value.as_bool() {
+                Some(enabled) => ui.menu_bar = enabled,
+                None => notices.push("[ui] menu_bar must be true or false; using false.".into()),
+            },
             "reduced_motion" => match value.as_bool() {
                 Some(reduced) => ui.reduced_motion = reduced,
                 None => {

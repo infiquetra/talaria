@@ -70,14 +70,13 @@ fn with_favourites() -> SavedModels {
     saved
 }
 
-fn current_model() -> RowKey {
-    model_key("minimax-m3.1-flash")
-}
-
 #[test]
 fn filter_terms_and_selection() {
     let mut state = open_loaded(picker_catalog(), Some("high"), with_favourites());
-    assert_eq!(selected_key(&state), Some(current_model()));
+    assert_eq!(
+        selected_key(&state),
+        Some(favourite_key("minimax-m3.1-flash"))
+    );
     type_filter(&mut state, "oll glm");
     assert_eq!(selected_key(&state), Some(model_key("glm-5")));
     let (title, _effort, filter, banner) = view_parts(&state);
@@ -95,7 +94,12 @@ fn filter_terms_and_selection() {
 fn keys_navigate_and_skip() {
     let mut state = open_loaded(picker_catalog(), Some("high"), with_favourites());
     state.set_list_height(3);
-    assert_eq!(selected_key(&state), Some(current_model()));
+    assert_eq!(
+        selected_key(&state),
+        Some(favourite_key("minimax-m3.1-flash"))
+    );
+    press(&mut state, PickerKey::Down);
+    assert_eq!(selected_key(&state), Some(favourite_key("missing-model")));
     press(&mut state, PickerKey::Down);
     assert_eq!(selected_key(&state), Some(model_key("glm-5")));
     press(&mut state, PickerKey::Down);
@@ -337,7 +341,7 @@ fn not_set_up_and_unavailable_rows() {
             && effects.iter().any(|effect| {
                 matches!(effect, ModelsEffect::OpenProviders { slug } if slug == "anthropic")
             })
-            && label.contains("set up in /providers")
+            && label.contains("Anthropic")
             && notices(&effects).is_empty(),
         "not-set-up Enter still returns the old notice: {effects:?}; label {label:?}"
     );

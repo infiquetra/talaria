@@ -107,6 +107,7 @@ fn view<'a>(rows: &'a [PickerRow], banner: Option<&'a str>, refreshing: bool) ->
         rows,
         selected: Some(4),
         banner,
+        browse: None,
     }
 }
 
@@ -149,6 +150,10 @@ fn assert_in_order(rows: &[String], phrases: &[&str]) {
 /// Issue 230, scenario "layout at 100 columns".
 #[test]
 fn layout_at_100_columns() {
+    assert_eq!(
+        talaria_tui::picker_frame::PickerLayout::new(Rect::new(0, 0, 100, 30)).mode,
+        talaria_tui::picker_frame::PickerMode::Below
+    );
     let rows = picture_rows();
     let view = view(&rows, None, false);
     let (mut term, sink, mut vt) = open(100, 30);
@@ -156,6 +161,12 @@ fn layout_at_100_columns() {
     let _ = sink.take();
     paint(&mut term, &sink, &mut vt, &view);
     let screen = vt.rows();
+    for expected in ["Starred", "Configured", "Set up", "F2/Ctrl+E details"] {
+        assert!(
+            joined(&screen).contains(expected),
+            "missing {expected}: {screen:?}"
+        );
+    }
     assert_in_order(
         &screen,
         &[
@@ -174,18 +185,17 @@ fn layout_at_100_columns() {
         .find(|row| row.contains("glm-5"))
         .expect("glm row");
     assert!(glm.contains("fast"), "badges stay at 100 columns: {glm}");
-    assert!(glm.contains(PRICE), "the price stays at 100 columns: {glm}");
     assert!(
-        screen.iter().any(|row| row.contains("free")),
-        "the favourite price is on screen: {screen:?}"
+        !glm.contains(PRICE),
+        "the price belongs in details rather than the row: {glm}"
     );
-    let footer = screen
-        .iter()
-        .find(|row| row.contains(EFFORT))
-        .expect("effort footer");
     assert!(
-        footer.contains("enter switch"),
-        "the footer names the switch key: {footer}"
+        screen.iter().any(|row| row.contains(EFFORT)),
+        "effort footer: {screen:?}"
+    );
+    assert!(
+        screen.iter().any(|row| row.contains("enter switch")),
+        "the footer names the switch key: {screen:?}"
     );
 }
 
@@ -202,14 +212,19 @@ fn narrow_widths() {
     let screen = joined(&vt.rows());
     assert!(!screen.contains(PRICE), "60 columns drop prices: {screen}");
     assert!(screen.contains("fast"), "60 columns keep badges: {screen}");
+    assert!(screen.contains("F2"), "details remain reachable: {screen}");
 
     let (mut term, sink, mut vt) = open(40, 30);
     term.open_overlay().expect("open overlay");
     let _ = sink.take();
     paint(&mut term, &sink, &mut vt, &view);
     let screen = joined(&vt.rows());
-    assert!(!screen.contains("fast"), "40 columns drop badges: {screen}");
+    assert!(
+        screen.contains("fast"),
+        "40 columns reserve badge width: {screen}"
+    );
     assert!(!screen.contains(PRICE), "40 columns drop prices: {screen}");
+    assert!(screen.contains("F2"), "details remain reachable: {screen}");
     assert!(
         screen.contains('…'),
         "narrow text is cut with an ellipsis: {screen}"
@@ -225,6 +240,10 @@ fn states_loading_failed_empty_refreshing() {
     let _ = sink.take();
     paint(&mut term, &sink, &mut vt, &view(&loading_rows, None, false));
     assert!(joined(&vt.rows()).contains(LOADING));
+    assert!(
+        joined(&vt.rows()).contains("F2"),
+        "the second footer retains details"
+    );
 
     let failed = vec![row(T16, None, &[], None, false)];
     paint(&mut term, &sink, &mut vt, &view(&failed, Some(T16), false));

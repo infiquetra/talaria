@@ -1,5 +1,6 @@
 //! The model catalogue, the picker, and saved defaults. Issue 230.
 
+mod browse;
 mod catalog;
 mod effort;
 mod pick;
@@ -7,6 +8,7 @@ mod picker;
 mod saved;
 mod text;
 
+pub use browse::{BrowseCounts, BrowseView, ListScope};
 pub use catalog::{Catalog, CatalogKind, CatalogRow, DisplayZone, FilterRow, filter_row_indexes};
 pub use effort::Effort;
 pub use pick::ModelsState;

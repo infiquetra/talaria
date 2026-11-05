@@ -246,6 +246,7 @@ static CONFIGURE_BINDINGS: [(ConfigureKey, &str, &[&str]); 14] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
     WorkflowProgress,
+    Menu,
     /// The draft box at the bottom of the screen.
     Composer,
     /// An open completion list: the slash palette or the `@` list. Issue #223.
@@ -322,16 +323,22 @@ pub enum ModelAction {
     ModelScope,
     ModelFavourite,
     ModelRefresh,
+    ModelChipsNext,
+    ModelChipsPrev,
+    ModelDetails,
 }
 
 impl ModelAction {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::ModelPicker,
         Self::EffortDown,
         Self::EffortUp,
         Self::ModelScope,
         Self::ModelFavourite,
         Self::ModelRefresh,
+        Self::ModelChipsNext,
+        Self::ModelChipsPrev,
+        Self::ModelDetails,
     ];
 
     pub const fn config_name(self) -> &'static str {
@@ -342,6 +349,9 @@ impl ModelAction {
             Self::ModelScope => "model_scope",
             Self::ModelFavourite => "model_favourite",
             Self::ModelRefresh => "model_refresh",
+            Self::ModelChipsNext => "model_chips_next",
+            Self::ModelChipsPrev => "model_chips_prev",
+            Self::ModelDetails => "model_details",
         }
     }
 
@@ -366,6 +376,9 @@ impl ModelAction {
             Self::ModelScope => &["ctrl+g"],
             Self::ModelFavourite => &["ctrl+f"],
             Self::ModelRefresh => &["ctrl+r"],
+            Self::ModelChipsNext => &["tab"],
+            Self::ModelChipsPrev => &["shift+tab"],
+            Self::ModelDetails => &["f2", "ctrl+e"],
         }
     }
 }
@@ -382,10 +395,11 @@ pub enum ProvidersAction {
     ClearKey,
     OpenLink,
     Copy,
+    Details,
 }
 
 impl ProvidersAction {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::NextTab,
         Self::PrevTab,
         Self::Reload,
@@ -395,6 +409,7 @@ impl ProvidersAction {
         Self::ClearKey,
         Self::OpenLink,
         Self::Copy,
+        Self::Details,
     ];
 
     const fn action(self) -> Action {
@@ -408,6 +423,7 @@ impl ProvidersAction {
             Self::ClearKey => Action::ProvidersClearKey,
             Self::OpenLink => Action::ProvidersOpenLink,
             Self::Copy => Action::ProvidersCopy,
+            Self::Details => Action::ProvidersDetails,
         }
     }
 
@@ -418,7 +434,7 @@ impl ProvidersAction {
 
     #[must_use]
     pub const fn default_chord(self) -> &'static str {
-        // Each of these nine actions defines one nonempty default chord list.
+        // Each provider action defines a nonempty default chord list.
         self.action().default_chords()[0]
     }
 }
@@ -721,6 +737,18 @@ pub enum Action {
     PagerClose,
     /// Open or close the task checklist drawer.
     ToggleTasks,
+    /// Toggle the work panel, or reopen its dismissed overlay.
+    LayoutPanel,
+    ToggleMenuBar,
+    MenuLeft,
+    MenuRight,
+    MenuUp,
+    MenuDown,
+    MenuOpen,
+    MenuActivate,
+    MenuNext,
+    MenuPrev,
+    MenuClose,
     /// Switches this session's approvals off or back on (#237).
     ApprovalsToggle,
     /// Edit the selected queued row. Issue 232. Queue and steer.
@@ -930,6 +958,7 @@ pub enum Action {
     ProvidersClearKey,
     ProvidersOpenLink,
     ProvidersCopy,
+    ProvidersDetails,
     McpNextTab,
     McpPrevTab,
     McpReload,
@@ -978,7 +1007,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 194] = [
+    pub const ALL: [Self; 206] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1048,6 +1077,17 @@ impl Action {
         Self::PagerDetails,
         Self::PagerClose,
         Self::ToggleTasks,
+        Self::LayoutPanel,
+        Self::ToggleMenuBar,
+        Self::MenuLeft,
+        Self::MenuRight,
+        Self::MenuUp,
+        Self::MenuDown,
+        Self::MenuOpen,
+        Self::MenuActivate,
+        Self::MenuNext,
+        Self::MenuPrev,
+        Self::MenuClose,
         Self::ApprovalsToggle,
         Self::QueueEdit,
         Self::QueueRemove,
@@ -1157,6 +1197,7 @@ impl Action {
         Self::ProvidersClearKey,
         Self::ProvidersOpenLink,
         Self::ProvidersCopy,
+        Self::ProvidersDetails,
         Self::McpNextTab,
         Self::McpPrevTab,
         Self::McpReload,
@@ -1249,6 +1290,17 @@ impl Action {
             Self::PagerDetails => "pager_details",
             Self::PagerClose => "pager_close",
             Self::ToggleTasks => "toggle_tasks",
+            Self::LayoutPanel => "layout_panel",
+            Self::ToggleMenuBar => "toggle_menu_bar",
+            Self::MenuLeft => "menu_left",
+            Self::MenuRight => "menu_right",
+            Self::MenuUp => "menu_up",
+            Self::MenuDown => "menu_down",
+            Self::MenuOpen => "menu_open",
+            Self::MenuActivate => "menu_activate",
+            Self::MenuNext => "menu_next",
+            Self::MenuPrev => "menu_prev",
+            Self::MenuClose => "menu_close",
             Self::ApprovalsToggle => "approvals_toggle",
             Self::QueueEdit => "queue_edit",
             Self::QueueRemove => "queue_remove",
@@ -1358,6 +1410,7 @@ impl Action {
             Self::ProvidersClearKey => "providers_clear_key",
             Self::ProvidersOpenLink => "providers_open_link",
             Self::ProvidersCopy => "providers_copy",
+            Self::ProvidersDetails => "providers_details",
             Self::McpNextTab => "mcp_next_tab",
             Self::McpPrevTab => "mcp_prev_tab",
             Self::McpReload => "mcp_reload",
@@ -1389,6 +1442,15 @@ impl Action {
     #[must_use]
     pub const fn context(self) -> KeyContext {
         match self {
+            Self::MenuLeft
+            | Self::MenuRight
+            | Self::MenuUp
+            | Self::MenuDown
+            | Self::MenuOpen
+            | Self::MenuActivate
+            | Self::MenuNext
+            | Self::MenuPrev
+            | Self::MenuClose => KeyContext::Menu,
             Self::ProgressUp
             | Self::ProgressDown
             | Self::ProgressLeft
@@ -1437,6 +1499,8 @@ impl Action {
             | Self::Suspend
             | Self::AttachClipboardImage
             | Self::ToggleTasks
+            | Self::LayoutPanel
+            | Self::ToggleMenuBar
             | Self::ApprovalsToggle
             | Self::ComposerSendNow
             | Self::ComposerSteer
@@ -1567,7 +1631,8 @@ impl Action {
             | Self::ProvidersSave
             | Self::ProvidersClearKey
             | Self::ProvidersOpenLink
-            | Self::ProvidersCopy => KeyContext::Providers,
+            | Self::ProvidersCopy
+            | Self::ProvidersDetails => KeyContext::Providers,
             Self::McpNextTab
             | Self::McpPrevTab
             | Self::McpReload
@@ -1665,6 +1730,17 @@ impl Action {
             Self::PagerDetails => &["t"],
             Self::PagerClose => &["q"],
             Self::ToggleTasks => &["ctrl+t"],
+            Self::LayoutPanel => &["alt+d"],
+            Self::ToggleMenuBar => &["alt+i"],
+            Self::MenuLeft => &["left"],
+            Self::MenuRight => &["right"],
+            Self::MenuUp => &["up"],
+            Self::MenuDown => &["down"],
+            Self::MenuOpen => &[],
+            Self::MenuActivate => &["enter"],
+            Self::MenuNext => &["tab"],
+            Self::MenuPrev => &["shift+tab"],
+            Self::MenuClose => &["esc"],
             Self::ApprovalsToggle => &["shift+tab"],
             Self::QueueEdit => &["enter", "e"],
             Self::QueueRemove => &["d", "delete", "ctrl+x"],
@@ -1774,6 +1850,7 @@ impl Action {
             Self::ProvidersClearKey => &["ctrl+x"],
             Self::ProvidersOpenLink => &["o"],
             Self::ProvidersCopy => &["c"],
+            Self::ProvidersDetails => &["f2", "ctrl+e"],
             Self::McpNextTab => &["tab"],
             Self::McpPrevTab => &["shift+tab"],
             Self::McpReload => &["ctrl+r"],
@@ -2024,6 +2101,30 @@ impl KeyChord {
     /// Control-C closes the screen; neither may be bound to an action.
     fn is_pager_reserved(chord: &Self) -> bool {
         chord.code == KeyCode::Esc || (chord.ctrl && chord.code == KeyCode::Char('c'))
+    }
+
+    fn is_model_picker_reserved(&self) -> bool {
+        let plain = !self.ctrl && !self.alt && !self.super_key;
+        (plain
+            && (matches!(self.code, KeyCode::Char(_))
+                || (!self.shift
+                    && matches!(
+                        self.code,
+                        KeyCode::Enter
+                            | KeyCode::Esc
+                            | KeyCode::Backspace
+                            | KeyCode::Up
+                            | KeyCode::Down
+                            | KeyCode::PageUp
+                            | KeyCode::PageDown
+                            | KeyCode::Home
+                            | KeyCode::End
+                    ))))
+            || (self.ctrl
+                && !self.alt
+                && !self.shift
+                && !self.super_key
+                && matches!(self.code, KeyCode::Char('c' | 'u')))
     }
 
     /// The key a press of this chord produces, for code that drives an editor with a chord.
@@ -2401,6 +2502,14 @@ impl KeyMap {
             let mut fixed = false;
             for text in texts {
                 match KeyChord::parse(text, parse_context(action)) {
+                    Ok(chord)
+                        if parse_context(action) == KeyContext::ModelPicker
+                            && chord.is_model_picker_reserved() =>
+                    {
+                        notices.push(format!("[keys] {name} in {FILE}: \"{text}\" is reserved for model picker text, navigation or closing; the default ({}) is kept.", map.labels_of(action)));
+                        fixed = true;
+                        break;
+                    }
                     Ok(chord) => {
                         // A written binding that only repeats the default needs no warning.
                         let is_default = action.default_chords().iter().any(|default| {
@@ -2789,7 +2898,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 194);
+        assert_eq!(Action::ALL.len(), 206);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -2911,7 +3020,8 @@ mod tests {
                 | Action::ProvidersSave
                 | Action::ProvidersClearKey
                 | Action::ProvidersOpenLink
-                | Action::ProvidersCopy => KeyContext::Providers,
+                | Action::ProvidersCopy
+                | Action::ProvidersDetails => KeyContext::Providers,
                 Action::McpNextTab
                 | Action::McpPrevTab
                 | Action::McpReload
@@ -3075,7 +3185,8 @@ mod tests {
                 | Action::ProvidersSave
                 | Action::ProvidersClearKey
                 | Action::ProvidersOpenLink
-                | Action::ProvidersCopy => KeyContext::Providers,
+                | Action::ProvidersCopy
+                | Action::ProvidersDetails => KeyContext::Providers,
                 Action::McpNextTab
                 | Action::McpPrevTab
                 | Action::McpReload
@@ -3241,7 +3352,8 @@ mod tests {
                 let settled = matches!(
                     action,
                     Action::CommitSubmit | Action::ProvidersSave | Action::McpSave
-                ) && label == "Ctrl+S";
+                ) && label == "Ctrl+S"
+                    || action == Action::ProvidersDetails && label == "F2";
                 assert!(
                     settled || !risky.contains(&label.as_str()),
                     "{label} is bound to {}",
@@ -3375,7 +3487,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 194);
+        assert_eq!(Action::ALL.len(), 206);
     }
 
     #[test]

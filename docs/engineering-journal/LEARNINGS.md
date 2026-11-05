@@ -2,6 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-04 — Persistent workspace ownership must outlive temporary overlays
+
+**Evidence.** The new workspace terminal tests initially failed on inert entry,
+draw and leave stubs. With workspace ownership separated from the temporary
+overlay, all nine tests pass, including a nested picker, resizing both ways,
+zero-byte idle frames, and equal streaming-frame byte counts after 3 and 5,000
+queued lines. The orderly-quit test retains 2,000 completed lines exactly once
+and in order. The existing inline overlay and scrollback tests remain unchanged.
+
+**Mechanism.** Closing a temporary overlay must invalidate the workspace frame
+without leaving the alternate screen or draining its queue. Only returning inline
+or orderly restoration drains finished output. The queue keeps logical lines in
+memory; it grows with completed output and is not durable across a process crash.
+Local output has no transcript cell, so its on-screen order comes from sequential
+commit callbacks, not the reducer's already-advanced committed-cell count.
+
+**Rule.** Keep persistent terminal ownership separate from temporary overlays,
+and preserve non-cell output in the same ordered presentation stream as cells.
+
 ## 2026-11-02 — Restoring `target/llvm-cov-target/debug` without `CACHEDIR.TAG` breaks Cargo 1.98 package cleaning
 
 **Evidence.** During v0.7.1 pull-request verification (`PR #493` run `41550281644` and `PR #498` run `41550273895`), `cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80` logged `error: cannot clean .../target/llvm-cov-target: missing or invalid CACHEDIR.TAG file` (`exit status: 101`) and then failed report generation with `warning: 128 functions have mismatched data`.
@@ -6893,6 +6912,22 @@ Rule: request private directory permissions at creation when diagnostics depend 
 - Hermes v0.22.4 toolset changes can reach some existing sessions on resume or a following session's next turn, while other policies stay frozen ([issue #467](https://github.com/infiquetra/talaria/issues/467#issuecomment-6590474428)). Rule: qualify existing-session timing when describing saved toolset changes.
 
 
+## 2026-11-04 — Keep TOML spans through semantic validation
+
+The pinned `toml` version reexports `Spanned` and supplies spans for map keys and values, including
+quoted dotted element names. Deserializing first into a plain table loses the information needed
+to identify a misspelled token's location. The theme parser retains spans until semantic validation
+so unknown keys and invalid values can name their key, line and column.
+
+Rule: preserve parser spans until strict configuration validation has finished.
+
+The reasoning renderer previously added dim whenever its foreground was unset. A focused
+runtime probe showed that colour-off therefore overrode a file's explicit `dim = false`.
+Applying that fallback only to an entirely default style preserves authored attributes and the
+legacy no-file look.
+
+Rule: presentation fallbacks must distinguish an untouched style from an authored colourless one.
+
 ## 2026-11-02 — Remote voice includes automatic effects
 
 Hermes v0.22.4 `tui_gateway/methods_voice.py` owns one microphone and speaker per gateway process. Talaria also creates voice effects when a session opens and when a reply completes, independently of `/voice` and push-to-talk. The remote routing tests cover the explicit actions and repeated read-aloud.
@@ -6921,3 +6956,16 @@ Herdr routes to the selected pane identifier and checks whether a pane remains b
 before answering; it does not identify the process currently occupying that pane.
 
 Rule: keep the recorded target fixed and require Enter before sending a fleet transcript.
+## Work panel values need their own evidence
+
+**Evidence.** The pinned goal snapshot carries an explicit verdict, while child snapshots carry
+a model but no per-child effort. A later goal snapshot may omit a finished goal altogether.
+**Rule.** Retain an explicit finished verdict for the session and never infer child effort from a
+parent or a configured default.
+
+## Menu focus takes Escape before the composer
+
+The menu key tests and the running-turn layout test distinguish closing a dropdown from
+returning focus; neither operation should reach the turn interrupt action.
+
+Rule: route focused menu input before composer and turn controls.

@@ -66,6 +66,7 @@ pub fn key_for(view: &ProvidersView, map: &KeyMap, key: Key) -> Option<Providers
             Action::ProvidersClearKey => talaria_core::providers::ProvidersAction::ClearKey,
             Action::ProvidersOpenLink => talaria_core::providers::ProvidersAction::OpenLink,
             Action::ProvidersCopy => talaria_core::providers::ProvidersAction::Copy,
+            Action::ProvidersDetails => talaria_core::providers::ProvidersAction::Details,
             _ => return None,
         })
     });

@@ -194,6 +194,22 @@ pub enum LinkView {
 
 /// What a person asked for, after the screen routed a key or a paste.
 pub enum UserAction {
+    /// Toggle or reopen the client work panel.
+    LayoutPanel,
+    /// Toggle the menu preference.
+    ToggleMenuBar,
+    /// Focus the menu without changing its preference.
+    FocusMenu,
+    /// Synchronize the menu focus and dropdown after a key.
+    MenuFocus {
+        focused: bool,
+        dropdown: bool,
+        transient: bool,
+    },
+    /// Run an existing local command without submitting the composer's draft.
+    MenuCommand(String),
+    /// Dismiss only the narrow work-panel overlay.
+    DismissWorkPanel,
     Kanban(talaria_core::kanban::BoardKey),
     /// Redraw an external permission selection.
     AcpSelect,
@@ -351,6 +367,9 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub layout: &'a talaria_core::layout::LayoutState,
+    pub menu_fleet_enabled: bool,
+    pub menu_remote_gateway: bool,
     pub kanban: Option<&'a talaria_core::kanban::KanbanBoardState>,
     /// Configured external agents and the selected external transcript.
     pub acp_agents: &'a [(String, String)],
@@ -388,6 +407,10 @@ pub struct View<'a> {
     pub profile: &'a str,
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
+    /// The provider-adjusted effort, when known.
+    pub effort_wire: Option<&'a str>,
+    /// Catalogue capability of the foreground route, when known.
+    pub effort_offered: Option<bool>,
     pub masked: &'a [MaskedRequestInfo],
     pub held: usize,
     /// The slash palette under the composer.
@@ -512,6 +535,16 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn pane_size(&self) -> (u16, u16) {
         (80, 24)
     }
+    /// Startup preference; later changes belong to the runtime view alone.
+    fn work_panel(&self) -> bool {
+        false
+    }
+    fn menu_bar(&self) -> bool {
+        false
+    }
+    /// Identify the source before ordered commit effects reach the screen. The
+    /// counter locates the uncommitted tail; callback order locates local output.
+    fn sync_workspace_transcript(&mut self, _source_epoch: u64, _committed_cells: usize) {}
     fn subagents_config(&self) -> crate::subagents::SubagentsConfig {
         crate::subagents::SubagentsConfig::default()
     }
@@ -530,7 +563,10 @@ pub trait Screen: ComposerDeadline + StatusHost {
     /// peeked background session.
     fn sync_fleet(&mut self, _view: &View<'_>) {}
     fn model_list_height(&self) -> usize {
-        10
+        9
+    }
+    fn model_details_scroll_limit(&self) -> Option<usize> {
+        None
     }
     /// One raw input: a key, a paste, a resize, or a status command result.
     type Input: Send + 'static;
@@ -616,11 +652,19 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn startup_appearance(&self) -> Option<(TerminalColors, (Polarity, PolaritySource))> {
         None
     }
+    /// Theme file selection prepared before the application starts.
+    fn startup_theme_files(&self) -> Option<appearance::ThemeFileSession> {
+        None
+    }
     /// The skin or the session polarity changed: resolve the theme again for the composer, the
     /// status line and cells that start from now on. Scrollback is never redrawn.
     fn appearance_changed(&mut self, _view: &AppearanceView<'_>) {}
     /// What the resolved theme reports, for `/theme`.
     fn theme_report(&self) -> Option<ThemeReport> {
+        None
+    }
+    /// Additional report only for a selected theme file.
+    fn theme_file_report(&self) -> Option<talaria_core::appearance::ThemeFileReport> {
         None
     }
     /// Apply one programmatic edit and report its sanitized draft and caret.
@@ -698,6 +742,7 @@ struct CronBinding {
 }
 
 pub struct AppState {
+    pub layout: talaria_core::layout::LayoutState,
     pub kanban: Option<talaria_core::kanban::KanbanBoardState>,
     kanban_service: Option<crate::kanban::KanbanService>,
     pub voice: crate::voice::VoiceService,
@@ -751,6 +796,7 @@ pub struct AppState {
     profiles_ticks: BTreeMap<u64, JoinHandle<()>>,
     pub providers: ProvidersState,
     provider_service: Option<Arc<crate::providers::ProviderService>>,
+    providers_model_return: Option<String>,
     provider_generation: u64,
     provider_initializing: bool,
     provider_pending_loads: Vec<ProvidersEffect>,
@@ -810,6 +856,7 @@ pub struct AppState {
     pub list_title: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub effort_wire: Option<String>,
     pub masked: Vec<MaskedRequestInfo>,
     /// Composer draft. The slash palette reads it. Issue #223.
     pub draft: String,
@@ -1016,6 +1063,7 @@ impl AppState {
             client_helper_status: "not checked",
             client_playback_status: "not checked",
             client_relay_status: "not checked",
+            layout: talaria_core::layout::LayoutState::default(),
             voice_last_tick_ms: 0,
             voice_connection_generation: 0,
             voice_submit_mode: None,
@@ -1049,6 +1097,7 @@ impl AppState {
             profiles_ticks: BTreeMap::new(),
             providers: ProvidersState::new(),
             provider_service: None,
+            providers_model_return: None,
             provider_generation: 0,
             provider_initializing: false,
             provider_pending_loads: Vec::new(),
@@ -1129,6 +1178,7 @@ impl AppState {
             list_title: None,
             model: None,
             effort: None,
+            effort_wire: None,
             masked: Vec::new(),
             draft: String::new(),
             palette: PaletteState::closed(),
@@ -1244,6 +1294,9 @@ impl AppState {
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
+            layout: &self.layout,
+            menu_fleet_enabled: self.fleet_enabled,
+            menu_remote_gateway: self.remote_gateway,
             acp_agents: &self.acp_agents,
             acp_peek: self
                 .fleet
@@ -1322,6 +1375,14 @@ impl AppState {
                 .as_deref()
                 .or_else(|| opened.and_then(|opened| opened.info.model.as_deref())),
             effort: self.effort.as_deref(),
+            effort_wire: self.effort_wire.as_deref(),
+            effort_offered: self.opened.as_ref().and_then(|opened| {
+                self.models.effort_offered(
+                    &opened.session_id,
+                    opened.info.provider.as_deref()?,
+                    self.model.as_deref()?,
+                )
+            }),
             masked: &self.masked,
             held: self.held.len(),
             palette: &self.palette,
@@ -1415,6 +1476,7 @@ impl AppState {
         copy.fleet_enabled = self.fleet_enabled;
         copy.model = self.model.clone();
         copy.effort = self.effort.clone();
+        copy.effort_wire = self.effort_wire.clone();
         copy.hermes_home = self.hermes_home.clone();
         copy.launch_folder = self.launch_folder.clone();
         copy.launch = self.launch.clone();
@@ -1858,6 +1920,11 @@ pub enum AppMessage {
         /// The connection generation of a reconnect describe.
         generation: Option<u64>,
     },
+    /// A file read and whole-file validation completed off the application loop.
+    ThemeFileDone {
+        generation: u64,
+        result: Result<(Box<appearance::ThemeFileSession>, Vec<String>), String>,
+    },
     /// A clipboard, drop, or completion result.
     Attachment(crate::attachments::AttachmentEvent),
     AttachmentResult {
@@ -2177,6 +2244,10 @@ pub enum AppEffect {
     Appearance,
     /// Print the `/theme` report.
     ThemeReport,
+    /// Load a theme file away from the application reducer.
+    ThemeFileCommand(String),
+    /// Start the next queued file command after adopting the preceding result.
+    ContinueThemeFiles,
     /// Run `/skin`, with its name argument if any.
     Skin(Option<String>),
     /// Describe again after a reconnect of this generation.
@@ -2301,6 +2372,9 @@ fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
         return;
     }
     state.models.set_list_height(screen.model_list_height());
+    state
+        .models
+        .set_details_scroll_limit(screen.model_details_scroll_limit());
     screen.sync_models(
         state.models.view(),
         if model_card_blocked(state) {
@@ -2318,6 +2392,9 @@ fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
 }
 
 fn providers_input(state: &mut AppState, input: ProvidersInput) -> Vec<AppEffect> {
+    if matches!(&input, ProvidersInput::Open { .. }) {
+        state.providers_model_return = None;
+    }
     if matches!(&input, ProvidersInput::Open { .. })
         && let Some(service) = &state.provider_service
     {
@@ -2328,6 +2405,13 @@ fn providers_input(state: &mut AppState, input: ProvidersInput) -> Vec<AppEffect
             .into_iter()
             .map(AppEffect::Providers)
             .collect();
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, AppEffect::Providers(ProvidersEffect::Close)))
+        && let Some(provider) = state.providers_model_return.take()
+    {
+        effects.extend(models_input(state, ModelsInput::ResumePicker { provider }));
+    }
     effects.push(AppEffect::Redraw);
     effects
 }
@@ -2558,6 +2642,9 @@ fn cron_not_connected(effect: CronEffect) -> Option<CronInput> {
 }
 
 fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
+    state.models.update(ModelsInput::Connection {
+        connected: state.link_state == LinkView::Connected,
+    });
     let current = state.opened.as_ref().map(|s| s.session_id.as_str());
     match &input {
         ModelsInput::OptionsLoaded { session_id, result }
@@ -2570,6 +2657,7 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
         }
         ModelsInput::EffortRead { session_id, value } if Some(session_id.as_str()) == current => {
             state.effort = Some(value.clone().unwrap_or_else(|| "medium".into()));
+            state.effort_wire = None;
         }
         ModelsInput::SessionEvent {
             session_id,
@@ -2602,6 +2690,11 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
                 .and_then(Value::as_str)
             {
                 state.effort = Some(effort.into());
+                state.effort_wire = payload
+                    .get("reasoning_effort_wire")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned);
             }
         }
         ModelsInput::MutationReturned {
@@ -2613,6 +2706,14 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
             }
             if let Some(effort) = receipt.get("effort").and_then(Value::as_str) {
                 state.effort = Some(effort.into());
+                state.effort_wire = receipt
+                    .get("reasoning_effort_wire")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned);
+            } else if receipt.get("effort").is_some() {
+                state.effort = None;
+                state.effort_wire = None;
             }
             if let Some(provider) = receipt.get("provider").and_then(Value::as_str)
                 && let Some(opened) = &mut state.opened
@@ -2625,6 +2726,7 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
     let mut effects = Vec::new();
     for effect in state.models.update(input) {
         if let ModelsEffect::OpenProviders { slug } = effect {
+            let provider = slug.clone();
             effects.extend(providers_input(
                 state,
                 ProvidersInput::Open {
@@ -2633,6 +2735,7 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
                     connected: state.link_state == LinkView::Connected,
                 },
             ));
+            state.providers_model_return = Some(provider);
         } else {
             effects.push(AppEffect::Models(effect));
         }
@@ -4212,6 +4315,27 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             }
             effects
         }
+        AppMessage::ThemeFileDone { generation, result } => {
+            if !state.appearance.finish_file_request(generation) {
+                return Vec::new();
+            }
+            let mut effects = match result {
+                Err(notice) => vec![notice_lines(&notice)],
+                Ok((files, lines)) => {
+                    let change = state.appearance.adopt_file_result(generation, *files);
+                    let mut effects = Vec::new();
+                    if !lines.is_empty() {
+                        effects.push(notice_lines(&lines.join("\n")));
+                    }
+                    if change == Some(AppearanceChange::Changed) {
+                        effects.push(AppEffect::Appearance);
+                    }
+                    effects
+                }
+            };
+            effects.push(AppEffect::ContinueThemeFiles);
+            effects
+        }
         AppMessage::Attachment(event) => attachment_event(state, event),
         AppMessage::AttachmentResult { epoch, event } => {
             if epoch == state.attachment_epoch {
@@ -5658,6 +5782,20 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Layout {
+        return match talaria_core::layout::parse_layout_args(&argument) {
+            Ok(talaria_core::layout::LayoutAction::Panel) => {
+                user_action(state, UserAction::LayoutPanel)
+            }
+            Ok(talaria_core::layout::LayoutAction::Bar) => {
+                user_action(state, UserAction::ToggleMenuBar)
+            }
+            Ok(talaria_core::layout::LayoutAction::Menu) => {
+                user_action(state, UserAction::FocusMenu)
+            }
+            Err(notice) => vec![AppEffect::CommitLines(vec![notice])],
+        };
+    }
     if action == LocalAction::Kanban {
         let board = if argument.trim().is_empty() {
             "default"
@@ -6565,6 +6703,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             }
         }
         UserAction::Submit(text) => {
+            if let Some(Ok((LocalAction::Layout, argument))) = local_line(&text) {
+                return local_effect(state, LocalAction::Layout, argument, text);
+            }
             if state.opened.is_none()
                 && let Some(Ok((action, argument))) = local_line(&text)
                 && matches!(
@@ -6723,6 +6864,45 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             attachment_effects(effects)
         }
         UserAction::Input(key) => input_key(state, key),
+        UserAction::LayoutPanel => {
+            state
+                .layout
+                .toggle_panel(state.pane_size.0, state.pane_size.1);
+            vec![AppEffect::Redraw]
+        }
+        UserAction::ToggleMenuBar => {
+            state.layout.preferences.menu_bar = !state.layout.preferences.menu_bar;
+            state.layout.menu_focused = state.layout.preferences.menu_bar;
+            state.layout.menu_transient = state.layout.preferences.menu_bar
+                && state.pane_size.1 < talaria_core::layout::MIN_ROWS;
+            state.layout.menu_dropdown = false;
+            vec![AppEffect::Redraw]
+        }
+        UserAction::FocusMenu => {
+            state.layout.menu_focused = true;
+            state.layout.menu_transient = !state.layout.preferences.menu_bar
+                || state.pane_size.1 < talaria_core::layout::MIN_ROWS;
+            state.layout.menu_dropdown = false;
+            vec![AppEffect::Redraw]
+        }
+        UserAction::MenuFocus {
+            focused,
+            dropdown,
+            transient,
+        } => {
+            state.layout.menu_focused = focused;
+            state.layout.menu_dropdown = dropdown;
+            state.layout.menu_transient = transient;
+            vec![AppEffect::Redraw]
+        }
+        UserAction::MenuCommand(command) => submit(state, command),
+        UserAction::DismissWorkPanel => {
+            if state.layout.dismiss_panel() {
+                vec![AppEffect::Redraw]
+            } else {
+                Vec::new()
+            }
+        }
         UserAction::ToggleTasks => {
             // The panel form flips whatever has focus; the composer never sees the key.
             if !state.pager_open && state.checklist.toggle() {
@@ -7657,6 +7837,9 @@ fn switched(
             let mut effects = vec![AppEffect::CommitLines(vec![notice])];
             if let Some(install) = install {
                 if let Some(target) = target {
+                    if state.appearance.set_file_profile(&target.profile) {
+                        effects.push(AppEffect::ThemeFileCommand("reload".into()));
+                    }
                     state.profile = target.profile;
                 }
                 effects.extend(install_session(state, install));
@@ -8087,6 +8270,38 @@ fn input_key(state: &mut AppState, key: InputKey) -> Vec<AppEffect> {
         && matches!(key.code, InputCode::Char('c'));
 
     if !state.pager_open {
+        if chords(state, "toggle_menu_bar", "alt+i")
+            .iter()
+            .any(|chord| chord.matches(&key))
+        {
+            return user_action(state, UserAction::ToggleMenuBar);
+        }
+        if state.layout.menu_focused {
+            if key.code == InputCode::Esc && !key.ctrl && !key.alt && !key.super_key && !key.other {
+                if state.layout.menu_dropdown {
+                    state.layout.menu_dropdown = false;
+                } else {
+                    state.layout.menu_focused = false;
+                    state.layout.menu_transient = false;
+                }
+            }
+            return vec![AppEffect::Redraw];
+        }
+        if chords(state, "layout_panel", "alt+d")
+            .iter()
+            .any(|chord| chord.matches(&key))
+        {
+            return user_action(state, UserAction::LayoutPanel);
+        }
+        if key.code == InputCode::Esc
+            && !key.ctrl
+            && !key.alt
+            && !key.super_key
+            && !key.other
+            && state.layout.panel == talaria_core::layout::PanelVisibility::OverlayOpen
+        {
+            return user_action(state, UserAction::DismissWorkPanel);
+        }
         if is_open {
             state.pager_open = true;
             state.pager_typing = false;
@@ -8447,6 +8662,9 @@ fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     if argument.is_empty() {
         return vec![AppEffect::ThemeReport];
     }
+    if matches!(argument.split_whitespace().next(), Some("use" | "reload")) {
+        return vec![AppEffect::ThemeFileCommand(argument.to_owned())];
+    }
     let (lines, change) = state.appearance.theme_command(argument);
     let mut effects = vec![notice_lines(&lines.join("\n"))];
     if change != AppearanceChange::Unchanged {
@@ -8553,6 +8771,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             }
             effects.extend(commands_follow(state, CommandsInput::Connected));
             effects.extend(permissions(state, PermissionsInput::ConnectionOpened));
+            effects.extend(models_input(
+                state,
+                ModelsInput::Connection { connected: true },
+            ));
             if state.providers.is_open() {
                 effects.extend(providers_input(
                     state,
@@ -8574,6 +8796,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
             client_voice_link_lost(state, &mut effects);
+            effects.extend(models_input(
+                state,
+                ModelsInput::Connection { connected: false },
+            ));
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
@@ -8591,6 +8817,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
             client_voice_link_lost(state, &mut effects);
+            effects.extend(models_input(
+                state,
+                ModelsInput::Connection { connected: false },
+            ));
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
@@ -8609,6 +8839,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             let mut effects =
                 providers_input(state, ProvidersInput::Connection { connected: false });
             client_voice_link_lost(state, &mut effects);
+            effects.extend(models_input(
+                state,
+                ModelsInput::Connection { connected: false },
+            ));
             effects.extend(mcp_input(
                 state,
                 talaria_core::mcp::McpInput::Connection { connected: false },
@@ -8983,6 +9217,7 @@ fn opened_session(
     state.opened_profile = Some(state.profile.clone());
     state.model = opened.info.model.clone();
     state.effort = opened.effort.clone();
+    state.effort_wire = None;
     // The snapshot's fences are the ones a later mutation must present.
     state
         .ledger
@@ -11359,7 +11594,9 @@ fn apply<S: Screen>(
             executor,
         );
     }
-    for effect in update(state, message) {
+    let effects = update(state, message);
+    screen.sync_workspace_transcript(state.source_epoch, state.committed_cells);
+    for effect in effects {
         match effect {
             AppEffect::Configure {
                 generation,
@@ -13068,13 +13305,20 @@ fn apply<S: Screen>(
                 redraw = true;
             }
             AppEffect::ThemeReport => {
-                if let Some(report) = screen.theme_report()
-                    && let AppEffect::CommitLines(lines) =
-                        notice_lines(&theme_lines(&report).join("\n"))
-                {
-                    screen.commit_lines(lines);
+                if let Some(report) = screen.theme_report() {
+                    let mut lines = theme_lines(&report);
+                    if let Some(file) = screen.theme_file_report() {
+                        lines.extend(appearance::theme_file_lines(&file));
+                    }
+                    if let AppEffect::CommitLines(lines) = notice_lines(&lines.join("\n")) {
+                        screen.commit_lines(lines);
+                    }
                 }
             }
+            AppEffect::ThemeFileCommand(argument) => {
+                run_theme_file_command(state, executor, argument)
+            }
+            AppEffect::ContinueThemeFiles => start_next_theme_file_command(state, executor),
             AppEffect::Skin(name) => {
                 let client = state
                     .service
@@ -13313,6 +13557,9 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         state.connectors = talaria_core::connectors::ConnectorsState::new();
     }
     state.profile = profile_name;
+    if state.appearance.set_file_profile(&state.profile) {
+        run_theme_file_command(state, executor, "reload".into());
+    }
     let mut commands = CommandService::new(link.client());
     if let Some(mut replies) = commands.take_replies() {
         let sender = executor.sender.clone();
@@ -13367,6 +13614,46 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         }
     });
     AppMessage::Opened { opened, notice }
+}
+
+fn run_theme_file_command(state: &mut AppState, executor: &Executor, argument: String) {
+    if state.appearance.theme_files().is_none() {
+        let Some(home) = &state.home else {
+            let _ = executor.sender.send(AppMessage::ThemeFileDone {
+                generation: state.appearance.file_generation(),
+                result: Err(
+                    "Theme files are unavailable because the home directory is unknown.".into(),
+                ),
+            });
+            return;
+        };
+        state
+            .appearance
+            .set_theme_files(appearance::ThemeFileSession::new(
+                crate::config::user_config_path(home),
+                crate::config::Config::default().theme,
+                &state.profile,
+            ));
+    }
+    state.appearance.queue_file_command(argument);
+    start_next_theme_file_command(state, executor);
+}
+
+fn start_next_theme_file_command(state: &mut AppState, executor: &Executor) {
+    let Some((generation, mut files, argument)) = state.appearance.begin_file_request() else {
+        return;
+    };
+    executor.send_later(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let (lines, _) = files.command(&argument);
+            (Box::new(files), lines)
+        })
+        .await
+        .map_err(|_| {
+            "The theme file could not be loaded; the last good theme is unchanged.".to_owned()
+        });
+        AppMessage::ThemeFileDone { generation, result }
+    });
 }
 
 fn start_provider_service(state: &mut AppState, executor: &Executor) {
@@ -14408,6 +14695,13 @@ async fn run_inner<S: Screen>(
     if let Some((colors, polarity)) = screen.startup_appearance() {
         state.appearance = AppearanceService::new(colors, polarity);
     }
+    if let Some(files) = screen.startup_theme_files() {
+        let selected = files.file().is_some();
+        state.appearance.set_theme_files(files);
+        if selected {
+            screen.appearance_changed(&state.appearance.view());
+        }
+    }
     state.attachments = AttachmentsState::new(screen.attachment_rule(), 16 * 1024 * 1024);
     state.attachment_home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -14427,12 +14721,21 @@ async fn run_inner<S: Screen>(
     state.list_title = setup.list_title;
     state.model = launch.model.clone();
     state.effort = launch.effort.clone();
+    state.effort_wire = None;
     state.hermes_home = setup.home.clone();
     state.launch_folder = launch.folder.clone();
     state.launch = Some(launch.clone());
     state.pane_settings = screen.pane_settings();
     state.configure_model = screen.configure_model();
     state.pane_size = screen.pane_size();
+    state.layout = talaria_core::layout::LayoutState::new(
+        talaria_core::layout::LayoutPreferences {
+            work_panel: screen.work_panel(),
+            menu_bar: screen.menu_bar(),
+        },
+        state.pane_size.0,
+        state.pane_size.1,
+    );
     sync_models(&mut state, screen);
     sync_picker(&state, screen);
     draw_current_view(&state, screen);
@@ -14570,6 +14873,9 @@ async fn run_inner<S: Screen>(
                 state.now_ms = executor.now_ms();
                 let actions = route_screen_input(&state, screen, input, Instant::now());
                 state.pane_size = screen.pane_size();
+                let previous_layout = state.layout;
+                state.layout.resize(state.pane_size.0, state.pane_size.1);
+                redraw |= previous_layout != state.layout;
                 for action in actions {
                     redraw |= apply(&mut state, AppMessage::ForegroundKey(action), screen, &executor);
                 }
@@ -14652,6 +14958,9 @@ async fn run_inner<S: Screen>(
                 state.now_ms = executor.now_ms();
                 let actions = route_screen_input(&state, screen, input, Instant::now());
                 state.pane_size = screen.pane_size();
+                let previous_layout = state.layout;
+                state.layout.resize(state.pane_size.0, state.pane_size.1);
+                redraw |= previous_layout != state.layout;
                 for action in actions {
                     redraw |= apply(
                         &mut state,
@@ -15396,10 +15705,144 @@ mod providers_command_tests {
     use super::*;
     use talaria_core::providers::{OpenTarget, ProvidersTab};
 
+    fn model_setup_catalogue() -> hermes_contract::schemas::ModelOptionsResult {
+        serde_json::from_value(serde_json::json!({"provider":"example-current","model":"example-model","providers":[
+            {"slug":"example-current","name":"Example current","authenticated":true,"models":["example-model"]},
+            {"slug":"example-setup","name":"Example setup","authenticated":false,"models":[]}
+        ]})).unwrap()
+    }
+
+    #[test]
+    fn model_stub_returns_only_when_the_provider_dialog_closes() {
+        use talaria_core::models::{ModelsEffect, ModelsInput, PickerKey};
+        use talaria_core::providers::{EndpointList, EnvRow, ProvidersInput, ProvidersKey};
+        let recording = include_str!("../../talaria-core/tests/data/resume_snapshot.jsonl");
+        let mut snapshot = recording
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find_map(|line| line.get("frame").and_then(|f| f.get("result")).cloned())
+            .unwrap();
+        snapshot["prompts"] = serde_json::json!([]);
+        snapshot["running"] = serde_json::json!(false);
+        let opened = OpenedSession::from_snapshot(serde_json::from_value(snapshot).unwrap());
+        let sid = opened.session_id.clone();
+        let mut state = AppState::new("provider-return");
+        state.profile = "fixture".into();
+        state.link_state = LinkView::Connected;
+        update(
+            &mut state,
+            AppMessage::Opened {
+                opened,
+                notice: None,
+            },
+        );
+        models_input(
+            &mut state,
+            ModelsInput::OpenPicker {
+                session_id: Some(sid.clone()),
+                profile: "fixture".into(),
+            },
+        );
+        models_input(
+            &mut state,
+            ModelsInput::OptionsLoaded {
+                session_id: sid.clone(),
+                result: model_setup_catalogue(),
+            },
+        );
+        models_input(
+            &mut state,
+            ModelsInput::EffortRead {
+                session_id: sid.clone(),
+                value: Some("high".into()),
+            },
+        );
+        for ch in "Example setup".chars() {
+            models_input(&mut state, ModelsInput::Picker(PickerKey::Char(ch)));
+        }
+        models_input(&mut state, ModelsInput::Picker(PickerKey::Enter));
+        assert!(state.providers.is_open());
+        assert!(state.models.view().is_none());
+        providers_input(
+            &mut state,
+            ProvidersInput::EnvLoaded(Ok(vec![EnvRow {
+                env_var: "EXAMPLE_API_KEY".into(),
+                slug: "example-setup".into(),
+                label: "Example setup".into(),
+                primary: true,
+                is_password: true,
+                ..Default::default()
+            }])),
+        );
+        providers_input(
+            &mut state,
+            ProvidersInput::OptionsLoaded(Ok(model_setup_catalogue())),
+        );
+        providers_input(&mut state, ProvidersInput::OauthLoaded(Ok(vec![])));
+        providers_input(
+            &mut state,
+            ProvidersInput::EndpointsLoaded(Ok(EndpointList::default())),
+        );
+        if talaria_core::providers::view(&state.providers, Instant::now())
+            .card
+            .is_none()
+        {
+            providers_input(&mut state, ProvidersInput::Key(ProvidersKey::Enter));
+        }
+        assert!(
+            talaria_core::providers::view(&state.providers, Instant::now())
+                .card
+                .is_some()
+        );
+        providers_input(&mut state, ProvidersInput::Key(ProvidersKey::Esc));
+        assert!(state.providers.is_open());
+        assert!(
+            state.models.view().is_none(),
+            "closing a setup card must not return early"
+        );
+        let effects = providers_input(&mut state, ProvidersInput::Key(ProvidersKey::Esc));
+        assert!(!state.providers.is_open());
+        assert_eq!(
+            state
+                .models
+                .view()
+                .expect("dialog close resumes model picker")
+                .filter,
+            "Example setup"
+        );
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            AppEffect::Models(ModelsEffect::LoadOptions { refresh: true, .. })
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, AppEffect::Models(ModelsEffect::Mutate(_))))
+        );
+    }
+
+    #[test]
+    fn bare_providers_close_does_not_open_a_model_picker() {
+        let mut state = AppState::new("provider-command");
+        update(
+            &mut state,
+            AppMessage::User(UserAction::Submit("/providers".into())),
+        );
+        assert!(state.providers.is_open());
+        providers_input(
+            &mut state,
+            talaria_core::providers::ProvidersInput::Key(
+                talaria_core::providers::ProvidersKey::Esc,
+            ),
+        );
+        assert!(!state.providers.is_open());
+        assert!(state.models.view().is_none());
+    }
+
     #[test]
     fn provider_tabs_and_invalid_arguments_reach_the_application() {
         for (argument, tab) in [
-            ("", ProvidersTab::Keys),
+            ("", ProvidersTab::All),
             (" KeYs ", ProvidersTab::Keys),
             (" AcCoUnTs ", ProvidersTab::Accounts),
             (" EnDpOiNtS ", ProvidersTab::Endpoints),

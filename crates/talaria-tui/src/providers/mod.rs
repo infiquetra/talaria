@@ -15,7 +15,10 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
 };
+use talaria_core::models::{BrowseCounts, BrowseView, ListScope, PickerRow, PickerView, RowKey};
 use talaria_core::providers::{CardKind, ProvidersTab, ProvidersView};
+
+use crate::picker_frame::{FrameLabels, draw_picker_frame_with_labels};
 
 fn safe(text: &str) -> String {
     crate::history::sanitize(text).into_owned()
@@ -31,68 +34,20 @@ fn mask(len: usize) -> String {
 
 /// Draw the providers overlay without exposing the secret value.
 pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: &mut Buffer) {
+    let area = area.intersection(buf.area);
     Clear.render(area, buf);
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let outer = Block::default()
-        .title(safe(&view.title))
-        .borders(Borders::ALL);
-    let inner = outer.inner(area);
-    outer.render(area, buf);
-    if inner.width == 0 || inner.height == 0 {
+    if view.card.is_none() {
+        draw_browse(view, area, buf);
         return;
     }
-    let mut lines = Vec::new();
-    let tabs = [
-        ProvidersTab::Keys,
-        ProvidersTab::Accounts,
-        ProvidersTab::Endpoints,
-    ];
-    lines.push(Line::from(
-        tabs.into_iter()
-            .map(|tab| {
-                let name = match tab {
-                    ProvidersTab::Keys => "Keys",
-                    ProvidersTab::Accounts => "Accounts",
-                    ProvidersTab::Endpoints => "Endpoints",
-                };
-                if tab == view.tab {
-                    format!("[{name}] ")
-                } else {
-                    format!(" {name}  ")
-                }
-            })
-            .collect::<String>(),
-    ));
-    if let Some(banner) = &view.banner {
-        lines.push(Line::from(safe(banner)));
-    }
-    if !view.filter.is_empty() {
-        lines.push(Line::from(format!("Filter: {}", safe(&view.filter))));
-    }
-    let available = usize::from(inner.height)
-        .saturating_sub(lines.len() + usize::from(view.notice.is_some()) + 1);
-    let first = view
-        .selected
-        .unwrap_or(0)
-        .saturating_add(1)
-        .saturating_sub(available);
-    for (index, row) in view.rows.iter().enumerate().skip(first).take(available) {
-        let marker = if view.selected == Some(index) {
-            "› "
-        } else {
-            "  "
-        };
-        lines.push(Line::from(format!("{marker}{}", safe(row))));
-    }
-    if let Some(notice) = &view.notice {
-        lines.push(Line::from(safe(notice)));
-    }
-    Paragraph::new(lines).render(inner, buf);
-    if inner.height > 0 {
-        Paragraph::new(safe(&view.footer))
-            .render(Rect::new(inner.x, inner.bottom() - 1, inner.width, 1), buf);
+    let outer = Block::bordered().title(safe(&view.title));
+    let inner = outer.inner(area);
+    outer.render(area, buf);
+    if inner.is_empty() {
+        return;
     }
     if let Some(card) = &view.card {
         let width = inner.width.min(76);
@@ -102,6 +57,9 @@ pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: 
         } else {
             signin_card::lines(card, secret_len)
         };
+        if let Some(message) = view.banner.as_deref().or(view.notice.as_deref()) {
+            lines.push(safe(message));
+        }
         let title = if is_form {
             "Endpoint".to_string()
         } else {
@@ -109,6 +67,10 @@ pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: 
                 .first()
                 .map_or_else(String::new, |line| safe(line))
         };
+        let title = card
+            .step
+            .as_deref()
+            .map_or(title.clone(), |step| format!("{} · {title}", safe(step)));
         if Line::from(title.as_str()).width() > usize::from(width.saturating_sub(2)) {
             lines.insert(0, title.clone());
         }
@@ -173,4 +135,102 @@ pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: 
             );
         }
     }
+}
+
+fn draw_browse(view: &ProvidersView, area: Rect, buf: &mut Buffer) {
+    let scope = match view.tab {
+        ProvidersTab::All => "All",
+        ProvidersTab::Keys => "Keys",
+        ProvidersTab::Accounts => "Accounts",
+        ProvidersTab::Endpoints => "Endpoints",
+    };
+    let browse = view.browse.as_ref();
+    // Row identities here only mark selectable rows for the shared painter.
+    let rows: Vec<_> = if let Some(browse) = browse {
+        browse
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| PickerRow {
+                key: row.key.as_ref().map(|_| RowKey::NotSetUp {
+                    provider: index.to_string(),
+                }),
+                text: row.label.clone(),
+                badges: row
+                    .status
+                    .map(|status| vec![status.label().into()])
+                    .unwrap_or_default(),
+                price: None,
+                dim: false,
+                header: row.key.is_none(),
+            })
+            .collect()
+    } else {
+        view.rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| PickerRow {
+                key: Some(RowKey::NotSetUp {
+                    provider: index.to_string(),
+                }),
+                text: row.clone(),
+                badges: Vec::new(),
+                price: None,
+                dim: false,
+                header: false,
+            })
+            .collect()
+    };
+    let selected = browse.map_or(view.selected, |browse| browse.selected);
+    let details = browse
+        .and_then(|browse| selected.and_then(|index| browse.rows.get(index)))
+        .map_or(&[][..], |row| row.details.as_slice());
+    let banner = [view.banner.as_deref(), view.notice.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let count = browse.map_or_else(String::new, |browse| {
+        format!(
+            "{} providers{}",
+            browse.counts.providers,
+            if browse.counts.complete {
+                ""
+            } else {
+                " · count incomplete"
+            }
+        )
+    });
+    let hints = if view.footer.is_empty() {
+        "Enter set up · Esc close · F2/Ctrl+E details\nTab view · Ctrl+R reload · Ctrl+U clear"
+    } else {
+        &view.footer
+    };
+    let picker = PickerView {
+        browse: Some(BrowseView {
+            scope: ListScope::All,
+            counts: BrowseCounts::default(),
+            details,
+            details_open: browse.is_some_and(|browse| browse.details_open),
+            details_scroll: browse.map_or(0, |browse| browse.details_scroll),
+        }),
+        title: &view.title,
+        filter: &view.filter,
+        effort: "",
+        hints,
+        refreshing: false,
+        rows: &rows,
+        selected,
+        banner: (!banner.is_empty()).then_some(banner.as_str()),
+    };
+    draw_picker_frame_with_labels(
+        &picker,
+        FrameLabels {
+            scope,
+            scopes: &["All", "Keys", "Accounts", "Endpoints"],
+            count: &count,
+        },
+        area,
+        buf,
+    );
 }

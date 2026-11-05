@@ -707,6 +707,8 @@ pub struct InlineTerminal<W: io::Write> {
     /// The next live frame clears from the viewport top down before it paints.
     clear: bool,
     overlay: Option<Overlay>,
+    /// Persistent alternate-screen owner, independent of a temporary picker or pager.
+    workspace: Option<Overlay>,
     /// Lines held while an overlay is open or the screen is too small, sanitized, not wrapped.
     queued: Vec<Line<'static>>,
     /// A write failed; the next write starts by undoing whatever it left open.
@@ -756,6 +758,7 @@ impl<W: io::Write> InlineTerminal<W> {
             repaint: true,
             clear: true,
             overlay: None,
+            workspace: None,
             queued: Vec::new(),
             dirty: false,
             closed: false,
@@ -809,6 +812,66 @@ impl<W: io::Write> InlineTerminal<W> {
         self.commit_lines(lines)
     }
 
+    /// Enter a persistent workspace, retaining any temporary overlay above it.
+    pub fn enter_workspace(&mut self) -> io::Result<()> {
+        if self.closed || self.workspace.is_some() {
+            return Ok(());
+        }
+        if self.overlay.is_none() {
+            self.open_overlay()?;
+            self.workspace = self.overlay.take();
+        } else {
+            self.workspace = Some(Overlay {
+                previous: Buffer::empty(self.screen_area()),
+                clear: true,
+                cursor: None,
+            });
+        }
+        Ok(())
+    }
+
+    /// Return inline and commit pending output once. An open temporary overlay keeps
+    /// owning the alternate screen until it, too, closes.
+    pub fn leave_workspace(&mut self) -> io::Result<()> {
+        let Some(workspace) = self.workspace.take() else {
+            return Ok(());
+        };
+        if self.overlay.is_some() {
+            return Ok(());
+        }
+        self.overlay = Some(workspace);
+        self.close_overlay()?;
+        // Even a terminal too short for an inline viewport must retain orderly-quit output.
+        if !self.placed && !self.queued.is_empty() {
+            let lines = std::mem::take(&mut self.queued);
+            let mut batch = self.begin();
+            for row in wrap_lines(lines, self.cols.max(1)) {
+                batch.styled_row(&row)?;
+                batch.put(b"\r\n");
+            }
+            self.send(batch)?;
+        }
+        Ok(())
+    }
+
+    /// Diff a workspace frame using the same full-screen writer as temporary overlays.
+    /// A temporary overlay retains foreground ownership until it closes.
+    pub fn draw_workspace(
+        &mut self,
+        render: impl FnOnce(Rect, &mut Buffer),
+    ) -> io::Result<FrameStats> {
+        if self.overlay.is_some() {
+            return Ok(FrameStats::default());
+        }
+        let Some(workspace) = self.workspace.take() else {
+            return Ok(FrameStats::default());
+        };
+        self.overlay = Some(workspace);
+        let result = self.draw_overlay(render);
+        self.workspace = self.overlay.take();
+        result
+    }
+
     /// Write the lines into the scrollback above the viewport, once. Every span is sanitized
     /// and never split on a newline. While an overlay is open or the screen is too small, the
     /// lines wait and are written when that ends.
@@ -817,7 +880,7 @@ impl<W: io::Write> InlineTerminal<W> {
             return Ok(());
         }
         let lines: Vec<Line<'static>> = lines.into_iter().map(sanitize_line).collect();
-        if self.released || self.overlay.is_some() || !self.placed {
+        if self.released || self.overlay.is_some() || self.workspace.is_some() || !self.placed {
             self.queued.extend(lines);
             return Ok(());
         }
@@ -833,7 +896,12 @@ impl<W: io::Write> InlineTerminal<W> {
     /// Redraw the live region, writing only the cells that changed. Nothing changed, nothing
     /// written.
     pub fn draw_live(&mut self, view: &LiveView<'_>) -> io::Result<FrameStats> {
-        if self.closed || self.released || self.overlay.is_some() || !self.placed {
+        if self.closed
+            || self.released
+            || self.overlay.is_some()
+            || self.workspace.is_some()
+            || !self.placed
+        {
             return Ok(FrameStats::default());
         }
         let rects = view.layout(self.cols, max_live_height(self.rows));
@@ -917,7 +985,7 @@ impl<W: io::Write> InlineTerminal<W> {
             self.cols = cols;
             self.rows = rows;
             self.forget_frames();
-            if rows >= 3 && self.overlay.is_none() {
+            if rows >= 3 && self.overlay.is_none() && self.workspace.is_none() {
                 let mut batch = self.begin();
                 self.sync_on(&mut batch);
                 self.place_at_bottom(&mut batch);
@@ -975,7 +1043,7 @@ impl<W: io::Write> InlineTerminal<W> {
         }
         self.repaint = true;
         self.clear = true;
-        if self.overlay.is_some() {
+        if self.overlay.is_some() || self.workspace.is_some() {
             self.update_link();
             return Ok(());
         }
@@ -998,8 +1066,10 @@ impl<W: io::Write> InlineTerminal<W> {
         }
         let mut batch = self.begin();
         self.sync_on(&mut batch);
-        batch.put(ALTERNATE_ON);
-        batch.mark(Mark::OverlayOn);
+        if self.workspace.is_none() {
+            batch.put(ALTERNATE_ON);
+            batch.mark(Mark::OverlayOn);
+        }
         batch.put(CLEAR_SCREEN);
         self.sync_off(&mut batch);
         self.overlay = Some(Overlay {
@@ -1088,6 +1158,10 @@ impl<W: io::Write> InlineTerminal<W> {
         if self.closed || self.overlay.take().is_none() {
             return Ok(());
         }
+        if let Some(workspace) = &mut self.workspace {
+            workspace.clear = true;
+            return Ok(());
+        }
         let mut batch = self.begin();
         self.sync_on(&mut batch);
         batch.put(HIDE_CURSOR);
@@ -1111,6 +1185,10 @@ impl<W: io::Write> InlineTerminal<W> {
     /// Undo every mode this terminal set, once. Later calls, and any call after the link has
     /// restored, write nothing.
     pub fn restore(&mut self) -> io::Result<()> {
+        if self.workspace.is_some() {
+            self.close_overlay()?;
+            self.leave_workspace()?;
+        }
         self.closed = true;
         let claimed = RestoreLink::claim(&mut self.link.lock());
         let Some(state) = claimed else {
@@ -1141,6 +1219,10 @@ impl<W: io::Write> InlineTerminal<W> {
         if let Some(overlay) = &mut self.overlay {
             overlay.previous = Buffer::empty(screen);
             overlay.clear = true;
+        }
+        if let Some(workspace) = &mut self.workspace {
+            workspace.previous = Buffer::empty(screen);
+            workspace.clear = true;
         }
     }
 
@@ -1881,7 +1963,7 @@ impl<W: io::Write> InlineTerminal<W> {
             return Ok(());
         }
         let mut batch = self.begin();
-        if self.overlay.is_some() {
+        if self.overlay.is_some() || self.workspace.is_some() {
             batch.put(ALTERNATE_OFF);
             batch.mark(Mark::OverlayOff);
         }
@@ -1942,7 +2024,7 @@ impl<W: io::Write> InlineTerminal<W> {
         self.forget_frames();
         self.repaint = true;
         self.clear = true;
-        if self.overlay.is_some() {
+        if self.overlay.is_some() || self.workspace.is_some() {
             batch.put(ALTERNATE_ON);
             batch.mark(Mark::OverlayOn);
         } else if self.placed {

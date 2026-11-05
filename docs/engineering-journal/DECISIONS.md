@@ -2,6 +2,139 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-04
+
+### Optional workspace: one transcript body and independent terminal ownership
+
+**Context.** The accepted layout decision in issue #473 and architecture decision
+record 0013 require a full-screen workspace only when a client layout preference is
+enabled. Finished output must still reach native scrollback once when it closes.
+
+**Decision.** Keep preferences, size thresholds, panel transitions and `/layout`
+argument parsing in the terminal-independent `talaria-core::layout` module. The
+application owns the runtime state and passes it in `View`; terminal rectangles and
+rendering remain in `talaria-tui`. Only `[ui] work_panel` is read in this change.
+The preference pair leaves a place for the independent menu preference, but this
+change draws no menu row and accepts no menu command.
+
+The pager and workspace share transcript body rendering. The pager retains its
+header, banners, search highlighting and footer. Ordered transcript entries can
+hold either cells or rendered local output, so plain command output, context blocks,
+checklists and subagent completions remain visible between cells in commit order.
+The screen records commit callbacks sequentially instead of inferring their order
+from the reducer's already-advanced commit counter. Uncommitted cells follow them.
+Finished entries mirror the inline commit stream across session reloads; a reload
+invalidates the render cache without dropping completed local output. Cache keys
+include the entry's position because separate session sources can reuse a cell id.
+
+Terminal workspace ownership is separate from temporary overlays. A picker or pager
+inside the workspace returns to it without leaving the alternate screen or flushing
+pending output. Returning inline, or an orderly quit, flushes finished output once.
+The terminal module alone owns mode bytes, frame diffs and the pending line queue.
+The workspace footer reuses today's live sections, excluding the streaming tail
+and, while visible in the panel, the checklist. The composer, other live sections
+and bottom status row retain their existing roles. Voice has no new location.
+
+**Costs and revisit conditions.** Native scrollback and terminal search do not cover
+the workspace's conversation. Pending output remains in memory until inline return
+or orderly shutdown; memory grows with completed output, and a process crash can
+lose that queue. Revisit if long workspace sessions need durable pending history.
+The workspace follows the end; the pager remains the place for scrolling and search.
+
+### Providers uses the shared picker and retains the setup state machines
+
+**Decision.** All merges inventories by slug in catalogue, key-inventory and account-inventory
+order; Keys keeps its existing saved-first label order. The frame shares geometry, row clipping,
+details and footer placement with the model picker. A multi-method provider opens a chooser.
+Existing card state derives the step text, and only a key card shows the saved key's last four
+characters. Read-back never repeats a write; pending old reads are followed by a fresh read before
+uncertainty clears. Failed inventory dependencies stay unknown, and offline retains known statuses.
+
+Returning from setup restores the model picker only when Providers closes. The operator clarified
+that successful read-back may change Set up to All when required to expose the first new model;
+the filter and requested effort remain. Account-only targets absent from the catalogue retain
+their earlier Accounts entry, so legacy direct entry and catalogue-backed model stubs stay distinct.
+
+The assigned stack has no theme-file module. Add these three names to the forty-name picker ledger:
+
+| Name | Role | Attributes |
+| --- | --- | --- |
+| `picker.badge.ready` | success | default |
+| `picker.badge.saved` | muted | dim |
+| `picker.setup.step` | primary | bold |
+
+Setup cards continue to use the established `dialog.*` names. **Rejected.** Merging by display name,
+key previews outside their card, automatically switching after setup, and changing credential write
+semantics for presentation. **Revisit when.** The view colour card binds the forty-three names to
+the theme catalogue, or Hermes changes the inventory identities and setup methods.
+
+### Shared model picker frame and final element names
+
+**Decision.** Follow the accepted search-first grouped picker in #474: view chips, one list,
+below/side details, a scroll indicator and two footer rows. Keep the save `Scope` and `model_scope`
+names; the independent list scope is `ListScope` and its controls are view chips. Starred routes
+appear once, keyed by provider plus model. Badge priority is not listed, unavailable, rate limited,
+not offered, then effort unknown. Typed browse facts, rather than painted badge wording, govern
+availability and effort editing. `Catalog::rows` remains unchanged.
+
+**Theme state.** Theme files (#485) had not merged at this card's base. The renderer uses the
+existing terminal styles: bold headers, dim secondary text, reversed selection. The final forty
+names below are a binding ledger for the theme work; this card adds no theme loader or token file.
+The ten additions are marked added. Roles describe intent; attributes retain meaning without colour.
+
+| Name | Role | Attributes |
+| --- | --- | --- |
+| `picker.background` | surface | default |
+| `picker.border` | border | default |
+| `picker.title` | primary | bold |
+| `picker.title.qualifier` (added) | muted | dim |
+| `picker.filter.background` | surface | default |
+| `picker.filter.text` | primary | default |
+| `picker.filter.placeholder` | muted | dim |
+| `picker.filter.prompt` (added) | muted | dim |
+| `picker.filter.match` | accent | bold |
+| `picker.group.tab` | secondary | default |
+| `picker.group.tab.selected` | accent | bold |
+| `picker.group.header` | primary | bold |
+| `picker.row.text` | primary | default |
+| `picker.row.selected` | primary | reverse |
+| `picker.row.disabled` | disabled | dim |
+| `picker.row.description` | muted | dim |
+| `picker.row.match` | accent | bold |
+| `picker.badge` | secondary | default |
+| `picker.badge.current` | success | default |
+| `picker.badge.provider` | secondary | default |
+| `picker.badge.effort` | info | reserved; no unsupported effort claim |
+| `picker.badge.unknown` | muted | dim |
+| `picker.badge.unavailable` | disabled | dim |
+| `picker.badge.limited` (added) | warning | default |
+| `picker.badge.setup` (added) | attention | default |
+| `picker.marker.star` (added) | accent | default |
+| `picker.detail.background` | surface | default |
+| `picker.detail.divider` | border | default |
+| `picker.detail.label` | secondary | default |
+| `picker.detail.value` | primary | default |
+| `picker.detail.help` | muted | dim |
+| `picker.detail.warning` | warning | default |
+| `picker.detail.title` (added) | primary | bold |
+| `picker.detail.missing` (added) | muted | dim, italic |
+| `picker.empty` | muted | dim |
+| `picker.status.warning` (added) | warning | default |
+| `picker.status.error` (added) | error | bold |
+| `picker.scrollbar` | muted | dim |
+| `picker.footer` | secondary | default |
+| `picker.footer.key` (added) | accent | default |
+
+**Rationale.** One search focus scales without taking a rail out of model-name space. Provider
+identity, markers and warnings stay literal text. The pinned Hermes catalogue defaults reasoning
+to true and has no exact supported levels or context window, so support remains unverified and
+applied effort unknown. The side-details threshold is defined once in the picker geometry at
+112 columns and 28 rows because the workspace layout rules have not merged at this base.
+**Rejected.** Option B's provider rail, collapsible groups, duplicate starred routes, price ranking,
+and deriving switching behavior from translated badge text. **Revisit when.** Hermes supplies
+route-specific effort receipts, or the shared layout and theme catalogues merge and can own their
+respective constants and the forty names above.
+
 ## 2026-11-01
 
 ### Voice architecture: workstation devices and Hermes speech services
@@ -4524,6 +4657,73 @@ cannot prove the resulting field values, provider activation, or the identity of
 **Rejected.** Trusting submitted values as saved state or retrying uncertain mutations.
 **Revisit when.** Hermes exposes transactional writes and stable per-run action identifiers.
 
+### Status effort reflects catalogue and session information
+
+**Decision.** Show the requested effort with `(not offered)` when the foreground provider and
+model's catalogue row offers no levels, except for `none`. Otherwise show the provider-adjusted
+level after an arrow when Hermes reports a different one. The marker wins over the arrow. Read the
+catalogue once without refresh when effort arrives and none is held; a missing route or failed read
+leaves the level unqualified. Clear a stored provider level when an effort change has no new one.
+**Rationale.** At the pinned Hermes revision, session information clamps to a provider vocabulary
+without proving what an individual request carried; provider profiles can also differ on whether
+they send effort for models without levels. **Revisit when.** Hermes reports the effort each request
+carried, or forwards the effort levels a model supports.
+
+## 2026-11-04 — Strict native theme files
+
+**Decision.** A theme file is a version-one TOML document with twelve palette slots, fourteen
+semantic roles and the study's 323 named elements, including thirty reserved picker names.
+Inheritance accepts only the complete `terminal`, `dark` and `light` bases. The file reader,
+strict parser and catalogue live in `talaria-app`; terminal styles, layering, field sources and
+contrast diagnostics live in `talaria-tui`. Separate file reports and a wrapper resolver preserve
+the existing `ThemeReport`, `ThemeInputs` and no-file presentation contracts. File changes are
+applied atomically through application effects and the event channel.
+
+The composer has one active frame, so it uses `composer.border.focused`, making the accepted
+minimal example visible. The other composer border token remains available to future views.
+Every field of today's five theme surfaces has an explicit binding. Backgrounds resolve for
+inspection but are removed when binding those inline surfaces. Each family uses `background`
+for transcript, composer, status, tool, diff and workspace; all other families use `surface`.
+The seventeen catalogue elements with role `border` are structural marks; no additions are made.
+
+The explicit base palettes are:
+
+| Slot | Dark | Light |
+| --- | --- | --- |
+| background | `#101014` | `#ffffff` |
+| surface | `#202024` | `#f0f0f0` |
+| foreground | `#f4f4f4` | `#161616` |
+| muted | `#c4c4c4` | `#484848` |
+| disabled | `#a8a8a8` | `#606060` |
+| border | `#a0a0a0` | `#707070` |
+| primary | `#aaccff` | `#174a8b` |
+| accent | `#80dcff` | `#005b70` |
+| success | `#a0e0a0` | `#236624` |
+| warning | `#ffe080` | `#714b00` |
+| error | `#ffa0a0` | `#9b2424` |
+| attention | `#ffe080` | `#714b00` |
+
+Against both area backgrounds, ordinary colours meet 4.5:1 and borders meet 3:1. An inline
+terminal with a different trusted background is measured separately. Selection/focus elements
+outside today's bound inline fields are measured as the catalogue's paired colours. ANSI palette colours and
+untrusted terminal defaults remain unknown; authored colours are never lifted.
+
+**Rejected.** File inheritance chains, executable expressions, editor-theme import, silent
+unknown-key acceptance, background painting in native scrollback and edits to Hermes files.
+They add ambiguity, security exposure or behaviour outside appearance. **Revisit when.** The
+catalogue needs a compatible schema extension, the picker names are finalized, or measured use
+justifies an offline import tool. File watching remains deferred.
+
+### Work panel keeps the last finished goal
+
+**Decision.** Keep a finished goal and its explicit verdict in the focused session's work panel
+until a new goal appears or the session changes. Missing verdicts are pending or unknown; a
+checklist or child completion does not imply success. The fleet queue supplies waiting requests,
+while child model names come from the child records and child effort stays unknown.
+**Rationale.** A goal can leave the next control snapshot, and child defaults are not evidence of
+the settings a particular child used. **Revisit when.** Hermes reports per-child effort or an
+explicit lifecycle for retained goal results.
+
 ## 2026-10-28 — Workflow concurrency default proposed, awaiting the operator
 
 **Decision.** Proposed, awaiting the operator: use a shared connection and a default
@@ -4555,3 +4755,19 @@ answer must remain an explicit operator action.
 The terminal service exposes a read-only blocked-state check for the last check
 before a voice reply. The ACP answer result carries its row key back to the editor
 so a refusal keeps the original draft and routing identity.
+### Skills and hub search counts
+
+**Decision.** Label the Skills tab with its installed count and put the enabled count in its
+footer, keeping the tab row compact. Request up to 50 hub search items and show the number
+fetched from sources before deduplication beside the number shown. If source counts are absent,
+show only the number shown. Fetched counts are not match totals.
+**Revisit when.** Hermes returns a true match total for search.
+
+### The optional menu reuses existing actions
+
+**Decision.** The menu groups Sessions, Fleet and attention under Session; model and effort
+under Model; panel, bar, tasks, agents and transcript under View; recording and read-aloud
+under Voice; settings, providers, MCP servers and profiles under Settings; and the gateway
+health check under Help. Disabled actions give their existing refusal reason. The bar and
+panel preferences are independent, and a temporary menu does not save a preference.
+**Revisit when.** Existing action availability or the workspace layout changes.

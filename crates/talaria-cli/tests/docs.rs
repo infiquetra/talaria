@@ -208,6 +208,9 @@ fn keybinding_tables_equal_default_key_map() {
             );
             let lower = row.default_keys.to_lowercase();
             for banned in ["f1", "f2", "ctrl+b", "ctrl+s"] {
+                if banned == "f2" && config == "providers_details" {
+                    continue;
+                }
                 if banned == "ctrl+s"
                     && matches!(config, "commit_submit" | "providers_save" | "mcp_save")
                 {

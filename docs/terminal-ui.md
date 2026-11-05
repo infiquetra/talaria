@@ -1,11 +1,104 @@
 # Terminal views
 
+The optional menu bar is enabled with Alt+I or `/layout bar`; `/layout menu` focuses it
+or opens a temporary menu. Arrow keys, Tab and Enter navigate and activate items. Esc
+closes the dropdown, then returns focus to the composer. Disabled items explain why they
+cannot run. Below 60 columns the headings collapse; below 16 rows the menu is temporary.
+
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
+
+The status bar's model segment shows the session's requested effort. If Hermes reports a lower
+provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no
+effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
+catalogue or provider level is unavailable, the requested level is shown without a claim about it.
+
+The optional work panel shows the status row's attention count, the focused session's goal,
+turn and explicit verdict, its task checklist, and its agents. The waiting requests come from
+the fleet queue used by Alt+A; running and queued agents come from the focused session's tree.
+The panel counts omitted items as `+N more` and does not scroll. A child's model is shown only
+when Hermes reports it; otherwise it is `unknown`. Child effort is `unknown` because the pinned
+contract does not report it. A finished checklist is not a verdict. Ctrl+T still expands or
+collapses tasks, and Alt+S and Alt+A retain their existing actions.
+
+## Optional workspace and work panel
+
+Alt+D or `/layout panel` toggles the work panel for the current view. To start with
+the preference enabled, set `work_panel = true` under `[ui]` in Talaria's configuration.
+The default is false; runtime toggles never rewrite the configuration file.
+
+Enabling the panel opens a full-screen workspace. At 112 columns by 28 rows or more,
+the transcript sits beside a 32-column panel and a one-column divider. On smaller
+screens the panel opens only on request as an overlay. At startup it stays dismissed
+on those screens. Esc dismisses the panel without interrupting the running turn;
+Alt+D or `/layout panel` reopens it. Shrinking a docked panel dismisses it; growing
+past both thresholds docks it again. Below 16 rows the panel reserves no space.
+
+The panel hosts the existing task checklist. Ctrl+T expands or collapses those tasks.
+When the panel is dismissed, the checklist returns above the composer. The composer
+and bottom status row keep their existing behavior, including the voice segment.
+The top menu is separate planned work and is not enabled by this setting.
+
+The workspace follows the conversation's end. Ctrl+O opens the existing transcript
+pager for earlier output and search; closing it returns to the workspace. While the
+workspace is on, native terminal scrollback and search do not cover the conversation,
+and multiplexer pane reads see only the screen. Turning the panel off restores the
+inline view and writes output finished during the workspace to native scrollback once.
+Finished output waits in memory until then; a process crash can lose that pending text.
+Mouse capture remains off. If a terminal or multiplexer consumes Alt+D, use the command.
+
+## Model picker
+
+`/model` or Alt+P opens a temporary full-screen model picker. Escape restores the previous view
+and composer draft, with the optional workspace and menu either off or on. Mouse capture stays off.
+Typing always searches: every whitespace-separated term must match the provider name, slug or
+model identifier, without regard to case. Ctrl+U clears the filter. Tab (`model_chips_next`) and
+Shift+Tab (`model_chips_prev`) cycle All, Starred, Configured and Set up without clearing it.
+Configured means Hermes lists the provider as authenticated; it does not verify the saved credential.
+
+All shows stars once in starring order, configured providers in Hermes order, then Needs setup
+stubs. Stubs never expand cached models. Enter on a stub closes the picker and opens `/providers`
+on that provider. A route is a provider plus a model, so identical model names can appear on different
+providers. Group headers cannot be selected. Arrow and page keys move; Home and End reach the ends.
+Search and reload preserve the selected route when it remains visible. The `>` selection pointer,
+`★` star and `●` current-route marker have separate meanings, including in monochrome.
+
+Each row keeps one badge, in this priority: not listed, unavailable, rate limited, not offered,
+effort unknown. Long identifiers end in an ellipsis without splitting a visible character or losing
+the badge. Details show requested effort, unverified support and unknown applied effort separately.
+`not offered` means the catalogue does not advertise reasoning. It does not prove how a provider
+handled a previous request. Context is unknown; prices appear only when Hermes supplies them.
+Deferred changes say pending turn end; lost write replies say outcome unknown and are not resent.
+
+At 80×24, details sit below the list; at least 112×28 places them beside it. Below 60×16 the list is
+compact with details on demand; below 40×10 a size message retains Escape. The scroll indicator
+names the visible range and whether more rows exist above or below. Two footer rows retain keys.
+F2 or Ctrl+E (`model_details`) opens full, wrapped details. Up/Down, PageUp/PageDown and Home/End
+scroll them. Escape returns to the same row. Other keys never switch, star or save from that layer.
+macOS may reserve F2, and both bindings are configurable.
+
+Ctrl+F stars, Ctrl+G toggles the save scope (this session versus this session and new sessions),
+Ctrl+R reloads, and Left/Right adjust requested effort. These retain their existing behavior,
+including confirmation, deferred changes and uncertain outcomes. Escape closes full details,
+then clears a non-empty filter, then closes the picker. Rebinding conflicts produce a notice.
+
+| State | Message and recovery |
+| --- | --- |
+| Initial loading | Loading models; Escape closes; no selectable placeholder. |
+| Refresh | Cached rows and selection remain; refreshing is shown; a failed read marks them stale. |
+| No matches | Query and view scope remain visible; Ctrl+U clears, Tab changes view, Escape clears then closes. |
+| No stars | No starred models; Tab for All and Ctrl+F to star a model. |
+| No configured providers | Setup stubs remain in All; Enter opens provider setup. |
+| Provider has no models | No models listed for this provider; Ctrl+R reloads. |
+| First load failed | Could not load models; Ctrl+R retries, Escape closes; no action in details. |
+| Partial load failed | Failed data is unknown; loaded data remains; Ctrl+R retries. |
+| Offline or lost write reply | Changes are disabled, selection and draft remain; reload without automatic write retries. |
+| Unavailable model | Badge and reason remain; Enter explains without claiming a switch. |
 
 ## Capabilities
 
 `/capabilities [skills|hub|toolsets|plugins]` opens the capabilities of the connected profile.
+The Skills tab counts installed skills; its footer shows how many are on.
 The title always names that profile. The same view is linked from the settings screen's More
 category as **Skills, toolsets and plugins**. Hermes's `/skills`, `/toolsets`, `/tools` and
 `/plugins` commands retain their Hermes meanings.
@@ -23,6 +116,9 @@ change and its target profile until it completes.
 and `n` and `p` change browse pages. `i` scans the selected skill and shows the findings. Only an
 allowed scan offers confirmation, and only `y` installs. A successful installation is checked
 against the installed list, then the foreground session reloads skills when it has the same profile.
+Search asks for up to 50 items. When Hermes supplies source counts, the footer shows how many
+items are shown out of the number fetched from sources before deduplication; this is not a match
+total. Older Hermes replies without source counts show only the number shown.
 
 In Plugins, `i` accepts a lowercase catalog name or an HTTPS repository address. Talaria shows
 the catalog source and commit, or identifies a repository outside the catalog, before confirmation.
@@ -142,25 +238,46 @@ literal text; confirmation cards accept only their confirm, cancel, and close ac
 
 ## Providers
 
-`/providers` opens **Keys** for the connected Hermes profile. `/providers keys`,
-`/providers accounts` and `/providers endpoints` select a tab directly. Enter on a model
-picker row labelled `set up in /providers` opens the matching provider here.
+`/providers` opens **All** for the connected Hermes profile. `/providers keys`,
+`/providers accounts` and `/providers endpoints` select a scope directly; `/providers all` is
+not a command. All merges providers by slug: catalogue-authenticated providers first, providers
+needing setup next, and user endpoints last with `+ Add an endpoint` first in that group.
+Provider counts exclude endpoints and actions; partial inventories are labelled unknown.
+Two providers sharing a display name remain distinct. Keys retains its saved-first label order.
+
+The shared picker frame places details below the list, or beside it at least 112×28. Below 60×16
+the list is compact; below 40×10 a size message retains Escape. Enter opens the provider's one
+setup method, or a chooser when several are available. Headers cannot be selected. The scroll
+indicator reports the visible range and more above/below; statuses remain text in monochrome.
 
 On a list, type to filter, use arrows to select, and press Tab or Shift+Tab to switch tabs.
-Ctrl+R reloads. Esc closes a card first, then clears the filter, then returns to the transcript.
+The filter stays across scope changes. Ctrl+U clears and Ctrl+R reloads. F2 or Ctrl+E opens
+scrollable full details (`providers_details`); macOS may reserve F2. Escape closes full details,
+then a setup card, then clears the filter, then closes the dialog. Full details never write.
 The `providers_*` entries in `[keys]` above configure the tab, reload, removal, test, save,
-clear-key, browser and copy actions in this overlay. Printable keys such as `o` and `c` still
+clear-key, browser, copy and details actions in this overlay. Printable keys such as `o` and `c` still
 filter a list; they open or copy only when the displayed card offers that action.
 
 **Keys.** Enter opens a masked field. Paste a key and press Enter to check and save it.
 A rejected key stays in the card for correction. If the provider cannot be reached, the card
 asks for a second Enter to save unchecked; editing the key clears that confirmation.
-Ctrl+U clears the field. A saved key shows at most its last four characters.
+Ctrl+U clears the field. Only this key card shows a saved key's last four characters, on the
+`Saved key ends in` line. Rows, the summary and full details show no credential preview.
 
-`ready` means Hermes lists the provider as authenticated in its catalogue. It does not prove
+`listed ready` means Hermes lists the provider as authenticated in its catalogue. It does not prove
 that the saved key currently works. Ctrl+D confirms removal of every credential Hermes saves
 for that provider, including its account sign-in. The confirmation names known shared key
 variables and the other providers that would lose them.
+
+Other row statuses are `key saved`, `needs setup`, `checking` and `unknown`. A signed-in account
+does not establish catalogue readiness; account state appears separately in details. Failed reads
+make their dependent facts unknown while other inventory stays. Offline keeps last-known row
+statuses and disables changes. An uncertain write starts read-back without repeating the write.
+
+The cards show their existing states as named steps: Paste key, Check key, Save and read back;
+Start sign-in, Approve in your browser, Confirm sign-in; or Fill in the endpoint, Test, Save and
+read back. External sign-in instructions have no artificial step. While a card is open the browse
+rows and hints are hidden; secret editing stays masked.
 
 **Accounts.** Enter starts the provider's device-code sign-in or shows instructions for an
 external sign-in command. A device-code card shows the browser address, code and expiry.
@@ -182,6 +299,15 @@ of the endpoint's saved key. An endpoint set directly in model settings is read-
 
 While disconnected, the screen disables changes and reloads when Talaria reconnects. A change
 whose reply was lost is reported as uncertain and the list is reloaded; the change is not automatically repeated.
+
+Entering from a model picker setup stub remembers that picker's filter, list scope, selected route
+and requested effort. Closing a setup card stays in Providers so read-back remains visible.
+Closing Providers resumes and reloads the model picker without changing the model. A newly listed
+provider selects its first model; if the saved Set up scope would hide it, the picker changes to
+All while keeping the filter and requested effort. Without new models the saved selection remains.
+Opening Providers directly does not create this return path. If the original session has ended,
+the return reports that no session is open. Account-only targets absent from the model catalogue
+retain their existing Accounts landing and do not start sign-in automatically.
 
 ## Configure
 

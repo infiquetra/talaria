@@ -47,6 +47,17 @@ completion_accept = ["tab"]
 completion_close = ["esc"]
 attach_clipboard_image = ["ctrl+v", "alt+v"]
 transcript_open = ["ctrl+o"]
+layout_panel = ["alt+d"]
+toggle_menu_bar = ["alt+i"]
+menu_left = ["left"]
+menu_right = ["right"]
+menu_up = ["up"]
+menu_down = ["down"]
+menu_open = []
+menu_activate = ["enter"]
+menu_next = ["tab"]
+menu_prev = ["shift+tab"]
+menu_close = ["esc"]
 pager_line_up = ["up", "k"]
 pager_line_down = ["down", "j"]
 pager_page_up = ["pageup", "b"]
@@ -115,6 +126,7 @@ providers_save = ['ctrl+s']
 providers_clear_key = ["ctrl+x"]
 providers_open_link = ["o"]
 providers_copy = ["c"]
+providers_details = ["f2", "ctrl+e"]
 fleet_filter = ["/"]
 fleet_profile_next = ["tab"]
 fleet_profile_prev = ["shift+tab"]
@@ -357,8 +369,13 @@ allowlist = []
 mode = "auto"
 follow_hermes_skin = true
 colors = "auto"
+# file = "quiet-amber"
+# [theme.profiles."fixture"]
+# file = "quiet-amber"
 [ui]
 reduced_motion = false
+work_panel = false
+menu_bar = false
 [fleet]
 enabled = true
 hot_poll_ms = 2000
@@ -406,6 +423,9 @@ remain idle with an unknown indicator.
 
 `status.command` runs without a shell every `status.interval_seconds` (1 to 3600) and sees the default-deny environment described below plus `environment.allowlist`. `theme.mode` is `auto`, `light` or `dark`
 (`/theme` overrides it for one session); `theme.follow_hermes_skin = false` keeps Talaria's colours; `theme.colors` is `auto`, `truecolor`, `256`, `16` or `none`.
+`theme.file` selects `themes/<id>.toml` beside `config.toml`; `[theme.profiles."<profile-id>"] file`
+overrides it for that profile. `/theme use <id>` overrides both for this session, `/theme use`
+returns to configuration, and `/theme reload` rereads the active file. None writes configuration.
 `ui.reduced_motion` stops timed changes except counters, which change at most once a second. A paste of `paste_collapse_lines` lines or `paste_collapse_chars` characters
 becomes a label (0 turns that rule off). `TALARIA_THEME` beats `theme.mode`, `TALARIA_REDUCED_MOTION` beats `ui.reduced_motion`, and a non-empty `NO_COLOR` turns colour
 off. See [themes](themes.md).
@@ -516,8 +536,16 @@ inside pasted text is kept. `toggle_tasks` shows the task checklist; `attach_cli
 attaches the clipboard's image. `attention_next` (Alt+A) jumps to the oldest background request
 that waits for an answer. The model picker keys are not in the block: `model_picker` Alt+P,
 `effort_down` and `effort_up` Left and Right, `model_scope` Ctrl+G (also new sessions),
-`model_favourite` Ctrl+F, `model_refresh` Ctrl+R. They resolve before composer keys while the picker
-is open; Esc clears the filter, then closes; a confirmation card takes Enter or Y, Esc or N.
+`model_favourite` Ctrl+F, `model_refresh` Ctrl+R, `model_chips_next` Tab,
+`model_chips_prev` Shift+Tab, and `model_details` F2 or Ctrl+E. The chips change the list view
+(All, Starred, Configured, Set up); Ctrl+G still changes whether a choice is saved for new sessions.
+These actions resolve before composer keys while the picker is open. Typing always filters,
+including letters and digits; Ctrl+U clears. Esc closes full details first, then clears the filter,
+then closes the picker. Full details only scroll and never confirm, star or save anything.
+macOS may reserve F2, so Ctrl+E is an equivalent, rebindable default. Conflicting bindings produce
+a notice. Plain typing, navigation, Enter, Escape, Ctrl+C and Ctrl+U are reserved in this picker;
+an override that would take one of those keys is refused with a notice. A confirmation card takes
+Enter or Y, Esc or N.
 
 The transcript (`transcript_open`, Ctrl+O, which also closes it) has its own key context: plain
 letters there never reach the draft. `transcript_open` is checked before the transcript keys, and
@@ -550,14 +578,20 @@ case: a character, `enter`, `esc`, `tab`, `backspace`, `delete`, `insert`, arrow
 `pageup`, `pagedown`, `space`, `plus` or `f1` to `f24`. A printable key needs `ctrl`, `alt` or
 `super`; an uppercase letter means Shift. A key you wrote beats a default; between two you wrote,
 the earlier action keeps it and the other gets a notice. Shift+Enter needs the Kitty keyboard
-protocol, so Ctrl+J and Alt+Enter are the portable newline keys. No default uses F1, F2, Ctrl+B or
-Ctrl+S (macOS, nested Herdr, flow control), except `commit_submit` in the review's commit editor
-and `providers_save` in an endpoint form and `mcp_save` in an MCP form;
+protocol, so Ctrl+J and Alt+Enter are the portable newline keys. No default uses F1 or Ctrl+B.
+F2 opens `model_details` or `providers_details`; Ctrl+E is their portable alternative.
+Ctrl+S is reserved for `commit_submit` in the review's commit editor,
+`providers_save` in an endpoint form and `mcp_save` in an MCP form;
 binding them works, with a notice.
 
 ## Providers
 
-`/providers` manages keys, accounts, and endpoints; see the [terminal guide](terminal-ui.md#providers).
+`/providers` opens All; `/providers keys`, `/providers accounts` and `/providers endpoints`
+open those scopes. Tab and Shift+Tab keep the filter while changing scope. The configurable
+`providers_details` action opens read-only full details with F2 or Ctrl+E; macOS may reserve F2.
+Printable browse keys always filter. Escape closes details, a card, the filter and then the dialog
+in that order. Credential previews appear only inside a key card. See the
+[terminal guide](terminal-ui.md#providers) for setup steps and returning to the model picker.
 
 ## Approvals and working folder
 
@@ -862,12 +896,25 @@ The default block above is authoritative. Invalid values use the documented defa
 | `mode` | string | auto | auto, light, dark | auto |
 | `follow_hermes_skin` | boolean | true | true or false | true |
 | `colors` | string | auto | auto, truecolor, 256, 16, none | auto |
+| `file` | string | unset | theme identifier, at most 64 lower-case letters, digits, underscores or dashes; starts with a letter or digit | quiet-amber |
+| `profiles."<profile-id>".file` | string | unset | same identifier rules; overrides `file` for this profile | quiet-amber |
 
 ### `ui`
 
 | Key | Type | Default | Range | Example |
 |---|---|---|---|---|
 | `reduced_motion` | boolean | false | true or false | false |
+| `work_panel` | boolean | false | true or false | false |
+| `menu_bar` | boolean | false | true or false | false |
+
+`work_panel` enables the optional full-screen workspace at startup. Alt+D
+(`layout_panel`) and `/layout panel` change the current view without saving this
+file. An invalid value produces one notice and uses false. The optional `menu_bar`
+setting controls the startup menu. Alt+I and `/layout bar` toggle it for this view;
+`/layout menu` focuses it or opens a temporary menu. See [terminal views](terminal-ui.md#optional-workspace-and-work-panel)
+for the docking thresholds and scrollback tradeoff. Set `layout_panel = []` under
+`[keys]` to unbind the shortcut, or replace its chord. Conflicts with another
+effective binding produce a notice; `/layout panel` remains available.
 
 ### `fleet`
 
