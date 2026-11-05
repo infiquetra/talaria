@@ -31,6 +31,23 @@ fn command(argv: &[String]) -> io::Result<AsyncCommand> {
     Ok(command)
 }
 
+fn spawn_helper(mut command: AsyncCommand) -> io::Result<AsyncChild> {
+    for attempt in 0..10 {
+        match command.spawn() {
+            Ok(child) => return Ok(child),
+            Err(error)
+                if attempt < 9
+                    && (error.kind() == io::ErrorKind::ExecutableFileBusy
+                        || error.raw_os_error() == Some(26)) =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("loop returns on success or final attempt")
+}
+
 async fn kill_and_reap(child: &mut AsyncChild, budget: Duration) -> bool {
     let _ = child.start_kill();
     matches!(tokio::time::timeout(budget, child.wait()).await, Ok(Ok(_)))
@@ -94,10 +111,9 @@ impl CaptureStop {
 
 impl Capture {
     pub fn start(argv: &[String]) -> io::Result<Self> {
-        let mut child = command(argv)?
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()?;
+        let mut cmd = command(argv)?;
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
+        let mut child = spawn_helper(cmd)?;
         let mut stdout = child
             .stdout
             .take()
@@ -233,10 +249,9 @@ impl PlaybackStop {
 
 impl Playback {
     pub fn start(argv: &[String]) -> io::Result<Self> {
-        let mut child = command(argv)?
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .spawn()?;
+        let mut cmd = command(argv)?;
+        cmd.stdin(Stdio::piped()).stdout(Stdio::null());
+        let mut child = spawn_helper(cmd)?;
         let stdin = child.stdin.take();
         let (stop, requests) = mpsc::unbounded_channel();
         Ok(Self {
