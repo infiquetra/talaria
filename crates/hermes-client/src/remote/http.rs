@@ -60,11 +60,43 @@ pub(crate) async fn request(
     body: Option<Value>,
     root: Option<&[u8]>,
 ) -> Result<(u16, Value), RemoteError> {
+    request_limited(base, path, method, bearer, body, root, Limits::json()).await
+}
+
+pub(crate) struct Limits<'a> {
+    pub max_body: usize,
+    pub deadline: std::time::Duration,
+    pub profile: Option<&'a str>,
+}
+
+impl Limits<'_> {
+    fn json() -> Self {
+        Self {
+            max_body: 1024 * 1024,
+            deadline: std::time::Duration::from_secs(15),
+            profile: None,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn request_limited(
+    base: &Url,
+    path: &str,
+    method: &str,
+    bearer: Option<&Secret>,
+    body: Option<Value>,
+    root: Option<&[u8]>,
+    limits: Limits<'_>,
+) -> Result<(u16, Value), RemoteError> {
     validate_base(base)?;
     #[cfg(feature = "test-support")]
     let _network_clock = NetworkClock::hold().await;
-    tokio::time::timeout(std::time::Duration::from_secs(15), async {
-        let url = endpoint(base, path);
+    tokio::time::timeout(limits.deadline, async {
+        let mut url = endpoint(base, path);
+        if let Some(profile) = limits.profile {
+            url.query_pairs_mut().append_pair("profile", profile);
+        }
         let stream = socket(&url, root).await?;
         let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
@@ -99,7 +131,7 @@ pub(crate) async fn request(
                 .await
                 .map_err(|_| RemoteError::Other("response headers".into()))?;
             let status = response.status().as_u16();
-            let bytes = Limited::new(response.into_body(), 1024 * 1024)
+            let bytes = Limited::new(response.into_body(), limits.max_body)
                 .collect()
                 .await
                 .map_err(|_| RemoteError::Other("response body".into()))?

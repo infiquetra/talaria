@@ -3,6 +3,11 @@
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
 
+The status bar's model segment shows the session's requested effort. If Hermes reports a lower
+provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no
+effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
+catalogue or provider level is unavailable, the requested level is shown without a claim about it.
+
 ## Capabilities
 
 `/capabilities [skills|hub|toolsets|plugins]` opens the capabilities of the connected profile.

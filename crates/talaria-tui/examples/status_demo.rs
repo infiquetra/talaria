@@ -46,6 +46,7 @@ fn full() -> StatusInputs {
         model: Some("opus-5.5".to_string()),
         reasoning_effort: Some("high".to_string()),
         reasoning_effort_wire: Some("high".to_string()),
+        effort_offered: None,
         working_dir: Some(["", "h", "dev", "proj"].join("/")),
         home_dir: Some(fake_home()),
         branch: Some("main".to_string()),
