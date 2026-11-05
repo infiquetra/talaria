@@ -12,6 +12,8 @@ use crate::connectors::{ConnectorsOpen, ConnectorsTab};
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalAction {
+    /// Change client-owned layout preferences for the current view.
+    Layout,
     /// View a journaled workflow run.
     Workflows,
     /// Route substantive prompts through the workflow skill.
@@ -158,8 +160,8 @@ const BUILTIN: &[LocalCommand] = &[
     LocalCommand {
         name: "theme",
         aliases: &[],
-        summary: "Show colours, or set the background to light, dark or auto",
-        args_hint: "[light|dark|auto]",
+        summary: "Show appearance, select or reload a theme file, or set the background",
+        args_hint: "[light|dark|auto|use [<id>]|reload]",
         takes_argument: true,
         action: LocalAction::Theme,
         tag: "talaria",
@@ -440,9 +442,18 @@ const BUILTIN: &[LocalCommand] = &[
         name: "voice",
         aliases: &[],
         summary: "Control push-to-talk and read-aloud",
-        args_hint: "[on|off|status|read]",
+        args_hint: "[on|off|status|stop|read|mode]",
         takes_argument: true,
         action: LocalAction::Voice,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "layout",
+        aliases: &[],
+        summary: "Change the workspace layout",
+        args_hint: "panel|bar|menu",
+        takes_argument: true,
+        action: LocalAction::Layout,
         tag: "talaria",
     },
 ];

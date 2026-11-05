@@ -1,7 +1,51 @@
 # Terminal views
 
+The optional menu bar is enabled with Alt+I or `/layout bar`; `/layout menu` focuses it
+or opens a temporary menu. Arrow keys, Tab and Enter navigate and activate items. Esc
+closes the dropdown, then returns focus to the composer. Disabled items explain why they
+cannot run. Below 60 columns the headings collapse; below 16 rows the menu is temporary.
+
 Talaria keeps finished conversation output in native terminal scrollback. Full-screen views
 temporarily cover it; closing a view restores the conversation and the draft.
+
+The status bar's model segment shows the session's requested effort. If Hermes reports a lower
+provider level, an arrow shows both, such as `max→high`. When the model's catalogue row offers no
+effort levels, the segment instead shows `max (not offered)`; `none` remains unchanged. If the
+catalogue or provider level is unavailable, the requested level is shown without a claim about it.
+
+The optional work panel shows the status row's attention count, the focused session's goal,
+turn and explicit verdict, its task checklist, and its agents. The waiting requests come from
+the fleet queue used by Alt+A; running and queued agents come from the focused session's tree.
+The panel counts omitted items as `+N more` and does not scroll. A child's model is shown only
+when Hermes reports it; otherwise it is `unknown`. Child effort is `unknown` because the pinned
+contract does not report it. A finished checklist is not a verdict. Ctrl+T still expands or
+collapses tasks, and Alt+S and Alt+A retain their existing actions.
+
+## Optional workspace and work panel
+
+Alt+D or `/layout panel` toggles the work panel for the current view. To start with
+the preference enabled, set `work_panel = true` under `[ui]` in Talaria's configuration.
+The default is false; runtime toggles never rewrite the configuration file.
+
+Enabling the panel opens a full-screen workspace. At 112 columns by 28 rows or more,
+the transcript sits beside a 32-column panel and a one-column divider. On smaller
+screens the panel opens only on request as an overlay. At startup it stays dismissed
+on those screens. Esc dismisses the panel without interrupting the running turn;
+Alt+D or `/layout panel` reopens it. Shrinking a docked panel dismisses it; growing
+past both thresholds docks it again. Below 16 rows the panel reserves no space.
+
+The panel hosts the existing task checklist. Ctrl+T expands or collapses those tasks.
+When the panel is dismissed, the checklist returns above the composer. The composer
+and bottom status row keep their existing behavior, including the voice segment.
+The top menu is separate planned work and is not enabled by this setting.
+
+The workspace follows the conversation's end. Ctrl+O opens the existing transcript
+pager for earlier output and search; closing it returns to the workspace. While the
+workspace is on, native terminal scrollback and search do not cover the conversation,
+and multiplexer pane reads see only the screen. Turning the panel off restores the
+inline view and writes output finished during the workspace to native scrollback once.
+Finished output waits in memory until then; a process crash can lose that pending text.
+Mouse capture remains off. If a terminal or multiplexer consumes Alt+D, use the command.
 
 ## Model picker
 
@@ -54,6 +98,7 @@ then clears a non-empty filter, then closes the picker. Rebinding conflicts prod
 ## Capabilities
 
 `/capabilities [skills|hub|toolsets|plugins]` opens the capabilities of the connected profile.
+The Skills tab counts installed skills; its footer shows how many are on.
 The title always names that profile. The same view is linked from the settings screen's More
 category as **Skills, toolsets and plugins**. Hermes's `/skills`, `/toolsets`, `/tools` and
 `/plugins` commands retain their Hermes meanings.
@@ -71,6 +116,9 @@ change and its target profile until it completes.
 and `n` and `p` change browse pages. `i` scans the selected skill and shows the findings. Only an
 allowed scan offers confirmation, and only `y` installs. A successful installation is checked
 against the installed list, then the foreground session reloads skills when it has the same profile.
+Search asks for up to 50 items. When Hermes supplies source counts, the footer shows how many
+items are shown out of the number fetched from sources before deduplication; this is not a match
+total. Older Hermes replies without source counts show only the number shown.
 
 In Plugins, `i` accepts a lowercase catalog name or an HTTPS repository address. Talaria shows
 the catalog source and commit, or identifies a repository outside the catalog, before confirmation.

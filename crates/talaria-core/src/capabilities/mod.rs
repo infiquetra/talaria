@@ -161,6 +161,7 @@ pub enum KeyAction {
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HubPage {
+    pub fetched: Option<u64>,
     pub items: Vec<HubItem>,
     pub page: u64,
     pub total_pages: u64,

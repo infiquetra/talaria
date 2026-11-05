@@ -20,6 +20,9 @@ fn segment(text: String, tone: Tone, read_aloud: bool) -> VoiceSegment {
 #[must_use]
 pub fn segment_for(view: &talaria_core::voice::VoiceView) -> Option<VoiceSegment> {
     use talaria_core::voice::VoicePhase;
+    if view.speaking {
+        return Some(segment("speaking".into(), Tone::Muted, view.read_aloud));
+    }
     match view.phase {
         VoicePhase::Starting | VoicePhase::Recording => {
             recording_segment(view.clock.unwrap_or_default(), view.read_aloud)

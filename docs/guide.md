@@ -1,5 +1,10 @@
 # Talaria guide
 
+The optional menu bar gives keyboard access to existing actions. Use Alt+I or `/layout bar`
+to toggle it, and `/layout menu` to focus it temporarily. Use arrows, Tab and Enter to
+navigate, and Esc to return to the composer. Disabled items explain their refusal. Narrow
+screens collapse the headings, and short screens use a temporary menu.
+
 ## What Talaria is
 
 Talaria is a terminal client for the Hermes agent gateway. It presents sessions and terminal input. Hermes owns the agent logic and session authority.
@@ -45,6 +50,17 @@ talaria --resume <id>
 Use the [keybinding reference](keybindings.md) for composer editing, approvals and question cards. The transcript shows tool calls and diffs. Queue prompts behind a running turn, steer it when available, and use rewind to return to an earlier checkpoint. Use the model picker for the current session, `@` mentions for files, `!` for shell commands, and the transcript pager to search earlier output. Inspect commands before confirming an approval.
 
 ## Many sessions at once
+
+For a persistent view of tasks, use Alt+D or `/layout panel` to open the optional
+full-screen workspace. Ctrl+T expands or collapses the same checklist in its panel;
+Ctrl+O opens the transcript pager and returns to the workspace when closed. The panel
+docks at 112 columns by 28 rows or more, otherwise opens on demand. Esc dismisses
+that overlay without interrupting work. Both the workspace and its startup setting,
+`[ui] work_panel`, are off by default. Runtime toggles do not save configuration.
+While enabled, terminal scrollback and search do not cover the live conversation;
+turning the panel off restores inline rendering and commits finished output once.
+See [terminal views](terminal-ui.md#optional-workspace-and-work-panel) for size rules
+and the cost of holding finished output in memory.
 
 Use `/fleet` to find, peek at, answer, or attach to sessions. You can launch a background session with `--bg`, and add `--worktree` to create a separate checkout. Files shared through `.worktreeinclude` may remain linked to the main checkout; review changes before using them. Notifications highlight sessions needing attention.
 

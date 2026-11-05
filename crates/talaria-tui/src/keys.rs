@@ -246,6 +246,7 @@ static CONFIGURE_BINDINGS: [(ConfigureKey, &str, &[&str]); 14] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
     WorkflowProgress,
+    Menu,
     /// The draft box at the bottom of the screen.
     Composer,
     /// An open completion list: the slash palette or the `@` list. Issue #223.
@@ -736,6 +737,18 @@ pub enum Action {
     PagerClose,
     /// Open or close the task checklist drawer.
     ToggleTasks,
+    /// Toggle the work panel, or reopen its dismissed overlay.
+    LayoutPanel,
+    ToggleMenuBar,
+    MenuLeft,
+    MenuRight,
+    MenuUp,
+    MenuDown,
+    MenuOpen,
+    MenuActivate,
+    MenuNext,
+    MenuPrev,
+    MenuClose,
     /// Switches this session's approvals off or back on (#237).
     ApprovalsToggle,
     /// Edit the selected queued row. Issue 232. Queue and steer.
@@ -994,7 +1007,7 @@ impl CompletionAction {
 
 impl Action {
     /// Every action, in the order used for conflicts and notices.
-    pub const ALL: [Self; 195] = [
+    pub const ALL: [Self; 206] = [
         Self::ProgressUp,
         Self::ProgressDown,
         Self::ProgressLeft,
@@ -1064,6 +1077,17 @@ impl Action {
         Self::PagerDetails,
         Self::PagerClose,
         Self::ToggleTasks,
+        Self::LayoutPanel,
+        Self::ToggleMenuBar,
+        Self::MenuLeft,
+        Self::MenuRight,
+        Self::MenuUp,
+        Self::MenuDown,
+        Self::MenuOpen,
+        Self::MenuActivate,
+        Self::MenuNext,
+        Self::MenuPrev,
+        Self::MenuClose,
         Self::ApprovalsToggle,
         Self::QueueEdit,
         Self::QueueRemove,
@@ -1266,6 +1290,17 @@ impl Action {
             Self::PagerDetails => "pager_details",
             Self::PagerClose => "pager_close",
             Self::ToggleTasks => "toggle_tasks",
+            Self::LayoutPanel => "layout_panel",
+            Self::ToggleMenuBar => "toggle_menu_bar",
+            Self::MenuLeft => "menu_left",
+            Self::MenuRight => "menu_right",
+            Self::MenuUp => "menu_up",
+            Self::MenuDown => "menu_down",
+            Self::MenuOpen => "menu_open",
+            Self::MenuActivate => "menu_activate",
+            Self::MenuNext => "menu_next",
+            Self::MenuPrev => "menu_prev",
+            Self::MenuClose => "menu_close",
             Self::ApprovalsToggle => "approvals_toggle",
             Self::QueueEdit => "queue_edit",
             Self::QueueRemove => "queue_remove",
@@ -1407,6 +1442,15 @@ impl Action {
     #[must_use]
     pub const fn context(self) -> KeyContext {
         match self {
+            Self::MenuLeft
+            | Self::MenuRight
+            | Self::MenuUp
+            | Self::MenuDown
+            | Self::MenuOpen
+            | Self::MenuActivate
+            | Self::MenuNext
+            | Self::MenuPrev
+            | Self::MenuClose => KeyContext::Menu,
             Self::ProgressUp
             | Self::ProgressDown
             | Self::ProgressLeft
@@ -1455,6 +1499,8 @@ impl Action {
             | Self::Suspend
             | Self::AttachClipboardImage
             | Self::ToggleTasks
+            | Self::LayoutPanel
+            | Self::ToggleMenuBar
             | Self::ApprovalsToggle
             | Self::ComposerSendNow
             | Self::ComposerSteer
@@ -1684,6 +1730,17 @@ impl Action {
             Self::PagerDetails => &["t"],
             Self::PagerClose => &["q"],
             Self::ToggleTasks => &["ctrl+t"],
+            Self::LayoutPanel => &["alt+d"],
+            Self::ToggleMenuBar => &["alt+i"],
+            Self::MenuLeft => &["left"],
+            Self::MenuRight => &["right"],
+            Self::MenuUp => &["up"],
+            Self::MenuDown => &["down"],
+            Self::MenuOpen => &[],
+            Self::MenuActivate => &["enter"],
+            Self::MenuNext => &["tab"],
+            Self::MenuPrev => &["shift+tab"],
+            Self::MenuClose => &["esc"],
             Self::ApprovalsToggle => &["shift+tab"],
             Self::QueueEdit => &["enter", "e"],
             Self::QueueRemove => &["d", "delete", "ctrl+x"],
@@ -2841,7 +2898,7 @@ mod tests {
 
     #[test]
     fn defaults_are_safe_and_unambiguous() {
-        assert_eq!(Action::ALL.len(), 195);
+        assert_eq!(Action::ALL.len(), 206);
         for (index, action) in Action::ALL.iter().enumerate() {
             assert_eq!(action.index(), index, "{}", action.config_name());
         }
@@ -3430,7 +3487,7 @@ mod tests {
             Some(ModelAction::ModelPicker)
         );
         assert_eq!(map.resolve_model(KeyContext::ModelPicker, &open), None);
-        assert_eq!(Action::ALL.len(), 195);
+        assert_eq!(Action::ALL.len(), 206);
     }
 
     #[test]
