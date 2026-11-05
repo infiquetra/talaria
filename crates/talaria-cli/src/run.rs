@@ -1121,7 +1121,8 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         },
         model: view.model.map(str::to_string),
         reasoning_effort: view.effort.map(str::to_string),
-        reasoning_effort_wire: view.effort.map(str::to_string),
+        reasoning_effort_wire: view.effort_wire.map(str::to_string),
+        effort_offered: view.effort_offered,
         // One folder for the foreground session, kept by the app and moved by `/cd` (#237).
         working_dir: view.folder.and_then(|folder| folder.cwd.clone()),
         home_dir,

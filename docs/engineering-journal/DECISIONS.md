@@ -4524,6 +4524,18 @@ cannot prove the resulting field values, provider activation, or the identity of
 **Rejected.** Trusting submitted values as saved state or retrying uncertain mutations.
 **Revisit when.** Hermes exposes transactional writes and stable per-run action identifiers.
 
+### Status effort reflects catalogue and session information
+
+**Decision.** Show the requested effort with `(not offered)` when the foreground provider and
+model's catalogue row offers no levels, except for `none`. Otherwise show the provider-adjusted
+level after an arrow when Hermes reports a different one. The marker wins over the arrow. Read the
+catalogue once without refresh when effort arrives and none is held; a missing route or failed read
+leaves the level unqualified. Clear a stored provider level when an effort change has no new one.
+**Rationale.** At the pinned Hermes revision, session information clamps to a provider vocabulary
+without proving what an individual request carried; provider profiles can also differ on whether
+they send effort for models without levels. **Revisit when.** Hermes reports the effort each request
+carried, or forwards the effort levels a model supports.
+
 ## 2026-10-28 — Workflow concurrency default proposed, awaiting the operator
 
 **Decision.** Proposed, awaiting the operator: use a shared connection and a default
