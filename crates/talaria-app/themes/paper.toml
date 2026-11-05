@@ -1,0 +1,68 @@
+schema = 1
+name = "Paper"
+extends = "light"
+follow_hermes_skin = false
+
+[palette]
+background = "#fffcf5"
+surface = "#eee8dc"
+foreground = "#25231f"
+muted = "#665d50"
+disabled = "#716551"
+border = "#897a65"
+primary = "#714000"
+accent = "#005a80"
+success = "#285c2a"
+warning = "#704600"
+error = "#a01824"
+attention = "#704600"
+
+[roles.background]
+fg = "$palette.foreground"
+bg = "$palette.background"
+
+[roles.surface]
+fg = "$palette.foreground"
+bg = "$palette.surface"
+
+[roles.text]
+fg = "$palette.foreground"
+
+[roles.muted]
+fg = "$palette.muted"
+
+[roles.disabled]
+fg = "$palette.disabled"
+
+[roles.border]
+fg = "$palette.border"
+
+[roles.primary]
+fg = "$palette.primary"
+
+[roles.accent]
+fg = "$palette.accent"
+
+[roles.success]
+fg = "$palette.success"
+
+[roles.warning]
+fg = "$palette.warning"
+
+[roles.error]
+fg = "$palette.error"
+
+[roles.attention]
+fg = "$palette.attention"
+
+[roles.selection]
+fg = "$palette.background"
+bg = "$palette.accent"
+
+[roles.focus]
+fg = "$palette.background"
+bg = "$palette.accent"
+
+[chrome]
+border = "rounded"
+section_divider = "single"

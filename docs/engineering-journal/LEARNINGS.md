@@ -6993,3 +6993,10 @@ shared picker/fleet modules, beyond a literal-glyph search of the original view 
 
 Rule: apply a view's ordinary text style to raw spans, pass chrome at its drawing site, and
 keep Markdown content glyphs outside decoration transforms.
+
+### Inline themes inherit the terminal background
+
+Paper's disabled colour `#716551` measures approximately 4.67:1 against its `#eee8dc` surface
+using the theme contrast function. Inline rendering leaves the terminal background untouched.
+
+Rule: measure authored palette pairs, and inspect light and dark themes on both terminal backgrounds.

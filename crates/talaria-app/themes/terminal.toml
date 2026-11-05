@@ -1,0 +1,69 @@
+schema = 1
+name = "Terminal"
+extends = "terminal"
+
+[palette]
+background = "default"
+surface = "default"
+foreground = "default"
+muted = "ansi:7"
+disabled = "ansi:8"
+border = "ansi:7"
+primary = "ansi:3"
+accent = "ansi:6"
+success = "ansi:2"
+warning = "ansi:3"
+error = "ansi:1"
+attention = "ansi:3"
+
+[roles.background]
+fg = "$palette.foreground"
+bg = "$palette.background"
+
+[roles.surface]
+fg = "$palette.foreground"
+bg = "$palette.surface"
+
+[roles.text]
+fg = "$palette.foreground"
+
+[roles.muted]
+fg = "$palette.muted"
+
+[roles.disabled]
+fg = "$palette.disabled"
+
+[roles.border]
+fg = "$palette.border"
+
+[roles.primary]
+fg = "$palette.primary"
+
+[roles.accent]
+fg = "$palette.accent"
+
+[roles.success]
+fg = "$palette.success"
+
+[roles.warning]
+fg = "$palette.warning"
+
+[roles.error]
+fg = "$palette.error"
+
+[roles.attention]
+fg = "$palette.attention"
+
+[roles.selection]
+fg = "$palette.background"
+bg = "$palette.accent"
+reverse = true
+
+[roles.focus]
+fg = "$palette.background"
+bg = "$palette.accent"
+reverse = true
+
+[chrome]
+border = "rounded"
+section_divider = "single"

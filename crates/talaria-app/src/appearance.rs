@@ -693,7 +693,24 @@ impl ThemeFileSession {
         self.active.as_ref().map(|(_, file)| file)
     }
     pub fn startup(&mut self) -> Vec<String> {
-        self.refresh().err().into_iter().collect()
+        if let Err(error) = self.refresh() {
+            return vec![error];
+        }
+        self.active_id()
+            .and_then(|id| self.reserved_notice(id))
+            .into_iter()
+            .collect()
+    }
+    fn reserved_notice(&self, id: &str) -> Option<String> {
+        crate::theme_file::builtin(id)?;
+        let parent = self
+            .config_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        std::fs::symlink_metadata(parent.join("themes").join(format!("{id}.toml"))).ok()?;
+        Some(format!(
+            "themes/{id}.toml: reserved name; using the built-in theme."
+        ))
     }
     pub fn set_profile(&mut self, profile: &str) -> bool {
         if self.profile == profile {
@@ -706,16 +723,14 @@ impl ThemeFileSession {
         let words: Vec<_> = argument.split_whitespace().collect();
         let before = self.active.clone();
         let result = match words.as_slice() {
-            ["use", id] if crate::theme_file::valid_id(id) => {
-                match crate::theme_file::load(&self.config_path, id) {
-                    Ok(file) => {
-                        self.session_file = Some((*id).to_owned());
-                        self.active = Some(((*id).to_owned(), file));
-                        Ok(())
-                    }
-                    Err(error) => Err(error),
+            ["use", id] if crate::theme_file::valid_id(id) => match self.load_selection(id) {
+                Ok(file) => {
+                    self.session_file = Some((*id).to_owned());
+                    self.active = Some(((*id).to_owned(), file));
+                    Ok(())
                 }
-            }
+                Err(error) => Err(error),
+            },
             ["use"] => {
                 self.session_file = None;
                 self.refresh()
@@ -735,18 +750,29 @@ impl ThemeFileSession {
             || "Theme file selection cleared; using the configured skin behaviour.".to_owned(),
             |id| format!("Theme file: themes/{id}.toml."),
         );
-        (vec![line], change)
+        let mut lines = vec![line];
+        if let Some(notice) = self.active_id().and_then(|id| self.reserved_notice(id)) {
+            lines.push(notice);
+        }
+        (lines, change)
     }
 
     fn refresh(&mut self) -> Result<(), String> {
         self.active = match self.selected_id() {
-            Some(id) => Some((
-                id.to_owned(),
-                crate::theme_file::load(&self.config_path, id)?,
-            )),
+            Some(id) => Some((id.to_owned(), self.load_selection(id)?)),
             None => None,
         };
         Ok(())
+    }
+
+    fn load_selection(&self, id: &str) -> Result<crate::theme_file::ThemeFile, String> {
+        if let Some(file) = crate::theme_file::builtin(id) {
+            return Ok(file);
+        }
+        if matches!(id, "dark" | "light") {
+            return Err(format!("{id} is a base for extends, not a theme."));
+        }
+        crate::theme_file::load(&self.config_path, id)
     }
 }
 

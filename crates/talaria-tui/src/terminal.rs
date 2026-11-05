@@ -1798,6 +1798,12 @@ fn decode_probe_events(input: &[u8]) -> Vec<crossterm::event::Event> {
     events
 }
 
+pub(crate) fn push_sgr(out: &mut String, params: &str) {
+    out.push_str("\x1b[");
+    out.push_str(params);
+    out.push('m');
+}
+
 #[cfg(test)]
 mod probe_input_tests {
     use super::decode_probe_events;
