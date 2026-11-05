@@ -42,6 +42,7 @@ pub mod theme;
 pub mod tool_cell;
 pub mod voice_view;
 pub mod workflow_view;
+pub mod workspace;
 
 pub mod capabilities;
 pub mod settings;

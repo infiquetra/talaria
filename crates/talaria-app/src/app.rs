@@ -351,6 +351,7 @@ pub enum ToggleContext {
 
 /// Everything the screen draws from, borrowed for one draw.
 pub struct View<'a> {
+    pub layout: &'a talaria_core::layout::LayoutState,
     pub kanban: Option<&'a talaria_core::kanban::KanbanBoardState>,
     /// Configured external agents and the selected external transcript.
     pub acp_agents: &'a [(String, String)],
@@ -696,6 +697,7 @@ struct CronBinding {
 }
 
 pub struct AppState {
+    pub layout: talaria_core::layout::LayoutState,
     pub kanban: Option<talaria_core::kanban::KanbanBoardState>,
     kanban_service: Option<crate::kanban::KanbanService>,
     pub voice: crate::voice::VoiceService,
@@ -990,6 +992,7 @@ impl AppState {
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
             voice: crate::voice::VoiceService::new(),
+            layout: talaria_core::layout::LayoutState::default(),
             voice_last_tick_ms: 0,
             voice_connection_generation: 0,
             voice_submit_mode: None,
@@ -1216,6 +1219,7 @@ impl AppState {
     pub fn view(&self) -> View<'_> {
         let opened = self.opened.as_ref();
         View {
+            layout: &self.layout,
             acp_agents: &self.acp_agents,
             acp_peek: self
                 .fleet

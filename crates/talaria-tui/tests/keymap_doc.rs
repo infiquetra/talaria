@@ -7,6 +7,18 @@ use talaria_app::config::parse;
 use talaria_tui::keys::{Action, KeyMap};
 
 #[test]
+fn work_panel_action_and_default_are_documented() {
+    let action = Action::from_config_name("layout_panel").expect("configurable panel action");
+    assert_eq!(labels(&KeyMap::defaults(), action), ["Alt+D"]);
+    assert!(read_document().contains("layout_panel = [\"alt+d\"]"));
+    let keys = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/keybindings.md"),
+    )
+    .unwrap();
+    assert!(keys.contains("Alt+D"));
+}
+
+#[test]
 fn doc_keys_equal_defaults() {
     let blocks = toml_blocks(&read_document());
     assert_eq!(blocks.len(), 1, "found {} toml blocks", blocks.len());
@@ -40,6 +52,9 @@ fn labels(map: &KeyMap, action: Action) -> Vec<String> {
 }
 
 fn expected(action: Action, defaults: &KeyMap) -> Vec<String> {
+    if action.config_name() == "layout_panel" {
+        return vec!["Alt+D".to_owned()];
+    }
     // The last arm keeps a later action checked against the defaults until it is listed above.
     #[allow(unreachable_patterns)]
     let labels: &[&str] = match action {

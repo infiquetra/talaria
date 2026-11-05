@@ -217,6 +217,7 @@ pub struct ThemeConfig {
 /// Interface settings from `[ui]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiConfig {
+    pub work_panel: bool,
     /// Reduced motion. The default is false.
     pub reduced_motion: bool,
 }
@@ -285,6 +286,7 @@ impl Default for Config {
                 colors: ColorsSetting::Auto,
             },
             ui: UiConfig {
+                work_panel: false,
                 reduced_motion: false,
             },
             composer: ComposerConfig::default(),

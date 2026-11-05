@@ -7,6 +7,7 @@
 mod doc;
 mod render;
 mod search;
+pub use render::{TranscriptEntry, draw_transcript_body};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

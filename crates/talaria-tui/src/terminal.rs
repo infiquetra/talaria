@@ -809,6 +809,25 @@ impl<W: io::Write> InlineTerminal<W> {
         self.commit_lines(lines)
     }
 
+    /// Enter the optional persistent workspace.
+    pub fn enter_workspace(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn leave_workspace(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub fn draw_workspace(
+        &mut self,
+        _render: impl FnOnce(Rect, &mut Buffer),
+    ) -> io::Result<FrameStats> {
+        Ok(FrameStats {
+            drew: false,
+            bytes: 0,
+        })
+    }
+
     /// Write the lines into the scrollback above the viewport, once. Every span is sanitized
     /// and never split on a newline. While an overlay is open or the screen is too small, the
     /// lines wait and are written when that ends.

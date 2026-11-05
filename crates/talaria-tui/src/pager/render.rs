@@ -356,3 +356,18 @@ pub fn format_duration_fallback(seconds: f64) -> Option<String> {
         Some(format!("{}m{:02}s", whole / 60, whole % 60))
     }
 }
+/// A cell or local output at its position in the conversation.
+pub enum TranscriptEntry<'a> {
+    Cell(&'a talaria_core::session::Cell),
+    Lines(&'a [ratatui::text::Line<'static>]),
+}
+
+/// Draw the shared transcript body without the pager's chrome.
+pub fn draw_transcript_body(
+    _entries: &[TranscriptEntry<'_>],
+    _details: Details,
+    _area: ratatui::layout::Rect,
+    _buffer: &mut ratatui::buffer::Buffer,
+    _other: &dyn crate::history::CellLines,
+) {
+}
