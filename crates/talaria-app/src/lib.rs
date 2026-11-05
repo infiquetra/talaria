@@ -46,6 +46,7 @@ pub mod side;
 pub mod side_connection;
 pub mod subagents;
 pub mod switch;
+pub mod theme_file;
 pub mod workflow_progress;
 pub mod workspace;
 pub mod worktree;

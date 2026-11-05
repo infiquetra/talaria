@@ -51,6 +51,8 @@ pub struct StatusInputs {
     pub reasoning_effort: Option<String>,
     /// The effort actually sent on the wire.
     pub reasoning_effort_wire: Option<String>,
+    /// Whether the current model offers effort levels, when known.
+    pub effort_offered: Option<bool>,
     /// The working folder on the gateway's machine.
     pub working_dir: Option<String>,
     /// The client's own home folder, used to write `~`.
@@ -300,7 +302,27 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
         }
         if pieces.len() == 1 {
             let (segment, text, tone) = pieces.remove(0);
-            let cut = cut_to_width(&text, available);
+            let cut = if segment == Segment::Model
+                && inputs.effort_offered == Some(false)
+                && text.contains(" (not offered)")
+            {
+                let name = inputs
+                    .model
+                    .as_deref()
+                    .unwrap_or("")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let sanitized = sanitize(name);
+                if UnicodeWidthStr::width(sanitized.as_ref()) <= available {
+                    sanitized.into_owned()
+                } else {
+                    cut_to_width(sanitized.as_ref(), available)
+                }
+            } else {
+                cut_to_width(&text, available)
+            };
             if !cut.is_empty() {
                 pieces.push((segment, cut, tone));
             }
@@ -363,7 +385,9 @@ fn model_segment(inputs: &StatusInputs) -> Option<(String, Tone)> {
         text.push(' ');
         text.push_str(&effort);
         // The arrow appears only when the wire level differs from the effort.
-        if let Some(wire) = wire
+        if inputs.effort_offered == Some(false) && effort != "none" {
+            text.push_str(" (not offered)");
+        } else if let Some(wire) = wire
             && wire != effort
         {
             text.push('→');

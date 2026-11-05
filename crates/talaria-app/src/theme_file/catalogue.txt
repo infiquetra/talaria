@@ -1,0 +1,324 @@
+# token|role|attributes|surface
+transcript.background|background||Workspace conversation surface
+transcript.text|text||Assistant body and ordinary text
+transcript.user.label|accent|bold|User label
+transcript.user.text|text||User message
+transcript.assistant.label|primary|bold|Assistant label
+transcript.system|muted||System messages
+transcript.timestamp|muted||Message time
+transcript.reasoning|muted|italic|Reasoning text
+transcript.reasoning.label|muted|bold|Reasoning heading
+transcript.omission|muted||Folded or omitted text
+transcript.search.match|selection||Pager search match
+transcript.search.current|focus|bold|Current search match
+transcript.selection|selection||Selected transcript range
+transcript.heading.1|primary|bold|Markdown heading level one
+transcript.heading.2|primary|bold|Markdown heading level two
+transcript.heading.3|primary|bold|Markdown heading levels three through six
+transcript.strong|text|bold|Strong text
+transcript.emphasis|text|italic|Emphasized text
+transcript.strikethrough|muted|strikethrough|Deleted text
+transcript.link.text|accent|underline|Link label
+transcript.link.destination|muted||Link destination
+transcript.image.alt|muted|italic|Image description
+transcript.quote.bar|border||Quote marker
+transcript.quote.text|text||Quote body
+transcript.rule|border||Markdown horizontal rule
+transcript.list.marker|muted||Bullet or ordered list marker
+transcript.table.border|border||Markdown table grid
+transcript.table.header|primary|bold|Markdown table header
+transcript.table.cell|text||Markdown table body
+composer.background|background||Input surface
+composer.text|text||Editable draft
+composer.placeholder|muted||Empty draft hint
+composer.marker|accent|bold|Prompt marker
+composer.border|border||Unfocused composer border
+composer.border.focused|accent||Focused composer border
+composer.selection|selection||Draft selection
+composer.cursor|focus||Software caret when drawn
+composer.attachment|accent||Attachment chip
+composer.attachment.error|error|bold|Invalid attachment
+composer.paste|muted||Collapsed pasted text
+composer.completion.text|text||Completion candidate
+composer.completion.selected|selection||Selected completion
+composer.completion.description|muted||Completion description
+status.background|background||Bottom status surface
+status.text|text||Model effort session and ordinary fields
+status.muted|muted||Secondary status
+status.separator|border||Status separators
+status.accent|accent|bold|Workflow label
+status.success|success||Healthy or completed status
+status.warning|warning|bold|Budget warning or degraded status
+status.error|error|bold|Failure or critical budget
+status.attention|attention|bold|Waiting request count
+status.voice.phase|accent||Voice phase in bottom row only
+status.voice.read_aloud|muted||Read-aloud setting in bottom row only
+status.voice.target|text||Voice target in bottom row only
+status.connection|muted||Connection and reconnect state
+status.context|muted||Context tokens and limits
+status.cost|muted||Cost and usage
+queue.background|surface||Queued strip surface
+queue.label|muted|bold|Queued strip heading
+queue.text|text||Queued draft preview
+queue.selected|selection||Selected queued draft
+queue.index|muted||Queue position
+queue.action|accent||Queue action hint
+queue.overflow|muted||Additional queued drafts count
+dialog.background|surface||All modal surfaces
+dialog.border|border||Dialog frame
+dialog.title|primary|bold|Dialog title
+dialog.text|text||Dialog body
+dialog.muted|muted||Dialog help or metadata
+dialog.input|text||Text entry including masked secret cells
+dialog.placeholder|muted||Empty field hint
+dialog.selection|selection||Selected input or choice
+dialog.button|accent||Action button
+dialog.button.focused|focus|bold|Focused action button
+dialog.button.disabled|disabled||Unavailable action
+dialog.error|error|bold|Validation failure
+dialog.warning|warning||Approval risk or caution
+dialog.key|accent||Keyboard hint
+dialog.backdrop|background||Cleared rectangle behind modal
+dialog.approval.command|text||Literal command requiring approval
+dialog.approval.path|accent||Approval working directory
+dialog.clarification.option|text||Clarification answer
+dialog.clarification.selected|selection||Selected answer
+dialog.secret.mask|muted||Masked credential input
+dialog.confirm.destructive|error|bold|Stop delete or destructive confirmation
+picker.background|surface||Picker surface
+picker.border|border||Picker frame
+picker.title|primary|bold|Picker heading
+picker.filter.background|surface||Filter bar surface
+picker.filter.text|text||Filter query
+picker.filter.placeholder|muted||Empty filter hint
+picker.filter.match|accent|bold|Matching substring
+picker.group.tab|muted||Group tab
+picker.group.tab.selected|focus|bold|Active group tab
+picker.group.header|primary|bold|Group heading
+picker.row.text|text||Ordinary result
+picker.row.selected|selection||Selected row
+picker.row.disabled|disabled||Unavailable result
+picker.row.description|muted||Secondary row text
+picker.row.match|accent|bold|Matched text outside selection
+picker.badge|muted||Generic row badge
+picker.badge.current|success|bold|Current model or profile
+picker.badge.provider|accent||Provider badge
+picker.badge.effort|muted||Known effort value
+picker.badge.unknown|warning||Unknown capability or effort
+picker.badge.unavailable|disabled||Unavailable capability
+picker.detail.background|surface||Detail pane surface
+picker.detail.divider|border||Detail pane divider
+picker.detail.label|muted||Detail field name
+picker.detail.value|text||Detail field value
+picker.detail.help|muted||Explanatory detail text
+picker.detail.warning|warning||Detail limitation
+picker.empty|muted||No results or loading text
+picker.scrollbar|border||Visible list position
+picker.footer|muted||Navigation help
+menu.background|surface||One-row top menu surface
+menu.brand|primary|bold|Talaria label
+menu.item|text||Unfocused menu heading
+menu.item.focused|focus|bold|Focused menu heading
+menu.item.disabled|disabled||Unavailable menu heading
+menu.dropdown.background|surface||Open menu surface
+menu.dropdown.border|border||Dropdown border
+menu.dropdown.item|text||Menu action
+menu.dropdown.selected|selection||Selected menu action
+menu.dropdown.disabled|disabled||Unavailable action
+menu.dropdown.key|muted||Action shortcut
+menu.dropdown.separator|border||Menu section divider
+work.background|surface||Compact work panel surface
+work.title|primary|bold|Work panel heading
+work.attention|attention|bold|Attention count
+work.label|muted||Goal turn verdict field label
+work.goal|text||Explicit goal
+work.turn|accent||Running turn
+work.verdict.pending|muted||Explicit pending or unknown verdict
+work.verdict.success|success|bold|Explicit successful verdict
+work.verdict.failure|error|bold|Explicit failed verdict
+work.section|primary|bold|Tasks or agents heading
+work.divider|border||Section divider
+work.task.text|text||Checklist item
+work.task.pending|muted||Pending checkbox
+work.task.running|accent|bold|In-progress checkbox
+work.task.done|success||Completed checkbox
+work.task.cancelled|disabled|strikethrough|Cancelled checklist item
+work.task.selected|selection||Focused checklist item
+work.agent.waiting|attention|bold|Waiting request first
+work.agent.running|accent||Running agent
+work.agent.queued|muted||Queued agent
+work.agent.done|success||Recent completion
+work.agent.failed|error||Failed agent
+work.agent.name|text||Agent name or goal
+work.agent.metadata|muted||Authoritative model and effort
+work.agent.unknown|warning||Unknown model or effort
+work.overflow|muted||Explicit plus N more count
+work.help|muted||Detail and next-request shortcuts
+workspace.background|background||Opt-in full-screen surface
+workspace.divider|border||One-column work panel divider
+workspace.overlay.border|accent||On-demand panel overlay edge
+workspace.empty|muted||Empty conversation hint
+border.normal|border||Shared ordinary border
+border.focused|accent||Shared focused border
+border.disabled|disabled||Shared disabled border
+border.divider|border||Shared section separator
+code.background|surface||Fenced code surface
+code.text|text||Unclassified code text
+code.inline|accent||Inline code
+code.label|muted||Language and filename label
+code.line_number|muted||Code line number
+code.syntax.keyword|primary|bold|Syntax keyword
+code.syntax.string|success||Syntax string
+code.syntax.number|warning||Syntax numeric literal
+code.syntax.comment|muted|italic|Syntax comment
+code.syntax.function|accent||Syntax function
+code.syntax.type|primary||Syntax type
+code.syntax.operator|text||Syntax operator
+code.syntax.punctuation|muted||Syntax punctuation
+code.syntax.variable|text||Syntax variable
+code.syntax.constant|warning||Syntax constant
+code.syntax.invalid|error|underline|Invalid syntax
+diff.background|background||Diff surface
+diff.added|success||Added line including plus marker
+diff.removed|error||Removed line including minus marker
+diff.context|text||Unchanged line
+diff.hunk|accent||Hunk header
+diff.file|primary|bold|Diff filename
+diff.note|muted||Truncation or no-newline note
+diff.line_number|muted||Diff gutter
+diff.added.word|success|bold|Added word emphasis
+diff.removed.word|error|bold|Removed word emphasis
+diff.selection|selection||Selected review range
+tool.background|background||Tool output surface
+tool.running|accent||Running tool glyph
+tool.success|success||Successful tool glyph
+tool.failed|error|bold|Failed tool glyph
+tool.muted|muted||Cancelled or unknown tool glyph
+tool.title|primary|bold|Tool title
+tool.subject|text||Tool subject
+tool.metadata|muted||Duration path and count
+tool.output|text||Tool result text
+tool.error|error||Tool error text
+alert.info|accent||Informational notice
+alert.success|success||Success notice
+alert.warning|warning|bold|Warning notice
+alert.error|error|bold|Error notice
+alert.attention|attention|bold|Action needed notice
+alert.background|surface||Notice surface
+badge.text|text||Generic badge label
+badge.background|surface||Generic badge surface
+badge.success|success|bold|Success badge
+badge.warning|warning|bold|Warning badge
+badge.error|error|bold|Error badge
+badge.attention|attention|bold|Attention badge
+badge.disabled|disabled||Unavailable badge
+list.background|surface||Fleet subagent background cron and settings surfaces
+list.header|primary|bold|List or table heading
+list.row|text||Ordinary table or list row
+list.selected|selection||Selected table or list row
+list.muted|muted||Metadata table header details and hints
+list.disabled|disabled||Unavailable row
+list.success|success||Completed or connected row
+list.warning|warning||Degraded row
+list.error|error||Failed or disconnected row
+list.attention|attention|bold|Waiting request row
+list.running|accent||Running or focused row
+list.divider|border||Table or list boundary
+list.scrollbar|border||List position indicator
+list.empty|muted||Loading empty or no-results state
+transcript.banner|primary|bold|Startup banner
+transcript.command|text|bold|Submitted command
+transcript.notice|muted||Plain history notice
+automation.heading|primary|bold|Automation heading
+automation.accent|accent||Automation command decoration
+automation.warning|warning||Automation warning
+automation.metadata|muted||Automation metadata
+side.warning|warning||Shell or side-task warning
+side.error|error||Shell or side-task error
+side.metadata|muted||Shell or side-task metadata
+context.header|primary|bold|Context view heading
+context.text|text||Context values
+context.free|muted||Unused context capacity
+context.error|error||Context error
+context.tick|success||Context tick mark
+context.section.system_prompt|primary||System prompt context section
+context.section.tool_definitions|accent||Tools context section
+context.section.rules|warning||Rules context section
+context.section.skills|primary||Skills context section
+context.section.mcp|success||Model Context Protocol context section
+context.section.subagent_definitions|accent||Agent definition context section
+context.section.memory|muted||Memory context section
+context.section.conversation|accent||Conversation context section
+context.section.other|muted||Other context section
+fleet.header|primary|bold|Fleet table header
+fleet.group|primary|bold|Fleet group heading
+fleet.cursor|selection||Fleet cursor row
+fleet.state.attention|attention|bold|Fleet needs-attention state
+fleet.state.working|accent||Fleet working state
+fleet.state.failed|error||Fleet failed state
+fleet.state.done|success||Fleet done state
+fleet.state.idle|muted||Fleet idle state
+fleet.label.success|success||Fleet success label
+fleet.label.error|error||Fleet error label
+fleet.label.warning|warning||Fleet warning label
+fleet.label.muted|muted||Fleet muted label
+fleet.label.accent|accent||Fleet accent label
+fleet.secondary|muted||Fleet metadata stale values and footer
+fleet.peek|text||Fleet peek body uses transcript code and tool tokens
+fleet.input|text||Fleet notice entry
+agents.header|primary|bold|Full agent panel and inline dock heading
+agents.running|accent||Running agent in existing views
+agents.queued|muted||Queued agent in existing views
+agents.done|success||Completed agent in existing views
+agents.failed|error||Failed agent in existing views
+agents.interrupted|warning||Interrupted agent in existing views
+agents.gone|disabled||Gone agent in existing views
+agents.help|muted||Agent panel metadata and hints
+agents.input|text||Agent steering entry
+background.text|text||Background process body
+background.selected|selection||Background selected process
+background.metadata|muted||Background process metadata
+background.warning|warning||Background process warning
+background.error|error||Background process failure
+background.success|success||Background process completion
+pager.header|selection||Transcript pager header
+pager.footer|selection||Transcript pager footer
+pager.search|selection||Pager search entry
+pager.gutter_mark|accent|bold|Current search-match gutter marker
+review.header|primary|bold|Review heading
+review.selection|selection||Review selected row
+review.input|text||Review comment input
+review.label.success|success||Review accepted label
+review.label.error|error||Review rejected label
+review.label.warning|warning||Review warning label
+review.label.other|accent||Other review label
+review.label.muted|muted||Muted review label
+rewind.selected|selection||Rewind selected row
+rewind.metadata|muted||Rewind details
+rewind.warning|warning||Rewind caution
+rewind.accent|accent||Rewind action
+workflow.text|text||Workflow normal row
+workflow.selected|selection||Workflow selected row
+workflow.metadata|muted||Workflow detail
+workflow.warning|warning||Workflow warning
+cron.heading|primary|bold|Scheduled-job heading
+cron.accent|accent||Scheduled-job action
+cron.warning|warning||Scheduled-job status or banner
+cron.error|error||Scheduled-job failure
+cron.hint|muted||Scheduled-job help
+cron.selected|selection||Scheduled-job selected row
+cron.input|surface||Scheduled-job input surface
+palette.origin|accent||Command palette Talaria-origin badge
+profiles.warning|warning||Profile warning
+profiles.attention|attention||Profile waiting state
+launch.error|error||Launch dialog error
+launch.marker|primary|bold|Launch dialog field marker
+launch.secondary|muted||Launch dialog secondary text
+configure.selection|selection||Configuration selected field
+doctor.selection|selection||Doctor selected check
+doctor.header|primary|bold|Doctor heading
+mention.selection|selection||Selected mention candidate
+mention.metadata|muted||Mention candidate detail
+editor.selection|selection||External editor selection
+providers.title|primary|bold|Provider editor title
+settings.selection|selection|bold|Selected settings action
