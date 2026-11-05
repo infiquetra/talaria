@@ -119,6 +119,7 @@ pub struct Config {
 /// Voice preferences for newly attached sessions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceConfig {
+    pub backend: String,
     pub read_aloud: bool,
     pub speak_max_chars: usize,
 }
@@ -126,6 +127,7 @@ pub struct VoiceConfig {
 impl Default for VoiceConfig {
     fn default() -> Self {
         Self {
+            backend: "hermes-gateway".into(),
             read_aloud: false,
             speak_max_chars: 1_500,
         }

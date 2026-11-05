@@ -241,6 +241,21 @@ fn voice_configuration_enforces_the_speech_limit() {
 }
 
 #[test]
+fn voice_backend_defaults_to_gateway_and_rejects_unknown_values() {
+    let defaults = talaria_app::config::parse("");
+    assert_eq!(defaults.config.voice.backend, "hermes-gateway");
+    let configured = talaria_app::config::parse(
+        "[voice]\nbackend = 'hermes-relay'\nread_aloud = true\nspeak_max_chars = 100\n",
+    );
+    assert_eq!(configured.config.voice.backend, "hermes-relay");
+    assert!(configured.config.voice.read_aloud);
+    assert_eq!(configured.config.voice.speak_max_chars, 100);
+    let unknown = talaria_app::config::parse("[voice]\nbackend = 'unknown'\n");
+    assert_eq!(unknown.config.voice.backend, "hermes-gateway");
+    assert!(!unknown.notices.is_empty());
+}
+
+#[test]
 fn push_to_talk_cannot_start_during_a_session_switch() {
     let mut state = opened_state();
     state.switching = true;

@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+pub mod client;
 pub mod speakable;
 
 /// Where one session is in a capture.
