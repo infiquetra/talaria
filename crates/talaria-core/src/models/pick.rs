@@ -95,6 +95,10 @@ fn effort_value(level: Option<Effort>) -> Value {
 }
 
 impl ModelsState {
+    /// Whether a catalogue route offers effort levels, when known.
+    pub fn effort_offered(&self, _session_id: &str, _provider: &str, _model: &str) -> Option<bool> {
+        None
+    }
     pub fn new(launch_id: &str, saved: Result<SavedModels, String>) -> Self {
         Self {
             ledger: MutationLedger::new(launch_id),

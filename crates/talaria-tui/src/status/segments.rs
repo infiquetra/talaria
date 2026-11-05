@@ -51,6 +51,8 @@ pub struct StatusInputs {
     pub reasoning_effort: Option<String>,
     /// The effort actually sent on the wire.
     pub reasoning_effort_wire: Option<String>,
+    /// Whether the current model offers effort levels, when known.
+    pub effort_offered: Option<bool>,
     /// The working folder on the gateway's machine.
     pub working_dir: Option<String>,
     /// The client's own home folder, used to write `~`.

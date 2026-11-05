@@ -224,6 +224,40 @@ fn model_label_strips_provider_path_and_joins_effort() {
 }
 
 #[test]
+fn effort_marker_and_width_preserve_meaning() {
+    let mut inputs = StatusInputs {
+        model: Some("model".into()),
+        reasoning_effort: Some("max".into()),
+        effort_offered: Some(false),
+        ..base()
+    };
+    for wire in [None, Some("high")] {
+        inputs.reasoning_effort_wire = wire.map(Into::into);
+        assert_eq!(
+            piece(&inputs, Segment::Model).as_deref(),
+            Some("model max (not offered)")
+        );
+    }
+    for width in 1..24 {
+        let line = line_at(&inputs, None, width);
+        assert!(!line.trim_end().ends_with("max"), "width {width}: {line}");
+    }
+    inputs.reasoning_effort = Some("none".into());
+    inputs.reasoning_effort_wire = None;
+    assert_eq!(
+        piece(&inputs, Segment::Model).as_deref(),
+        Some("model none")
+    );
+    inputs.effort_offered = Some(true);
+    inputs.reasoning_effort = Some("max".into());
+    inputs.reasoning_effort_wire = Some("high".into());
+    assert_eq!(
+        piece(&inputs, Segment::Model).as_deref(),
+        Some("model max→high")
+    );
+}
+
+#[test]
 fn context_hidden_until_reported_estimate_marked_and_clamped() {
     assert_eq!(context_of(None, false), None);
     assert_eq!(context_of(None, true), None);

@@ -388,6 +388,8 @@ pub struct View<'a> {
     pub profile: &'a str,
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
+    /// The provider-adjusted effort, when known.
+    pub effort_wire: Option<&'a str>,
     pub masked: &'a [MaskedRequestInfo],
     pub held: usize,
     /// The slash palette under the composer.
@@ -1281,6 +1283,7 @@ impl AppState {
                 .as_deref()
                 .or_else(|| opened.and_then(|opened| opened.info.model.as_deref())),
             effort: self.effort.as_deref(),
+            effort_wire: None,
             masked: &self.masked,
             held: self.held.len(),
             palette: &self.palette,
