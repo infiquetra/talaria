@@ -129,7 +129,17 @@ impl CapData {
                     _ => return Err(CapError::BadBody),
                 };
                 Ok(Self::Hub(HubPage {
-                    fetched: None,
+                    fetched: match value.get("source_counts") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::Object(counts)) if search => {
+                            Some(counts.values().try_fold(0u64, |sum, count| {
+                                sum.checked_add(count.as_u64().ok_or(CapError::BadBody)?)
+                                    .ok_or(CapError::BadBody)
+                            })?)
+                        }
+                        Some(Value::Object(_)) => None,
+                        Some(_) => return Err(CapError::BadBody),
+                    },
                     items,
                     page: number(value, "page")?,
                     total_pages: number(value, "total_pages")?,

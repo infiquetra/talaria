@@ -166,7 +166,7 @@ pub async fn hub_search(
     read(
         rest,
         format!(
-            "/api/skills/hub/search?q={}&source=all&limit=20&profile={}",
+            "/api/skills/hub/search?q={}&source=all&limit=50&profile={}",
             encode(q),
             encode(profile)
         ),

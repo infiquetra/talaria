@@ -4533,3 +4533,11 @@ fixture measurement. Shared width 1 met it; per-session width 1 failed foregroun
 **Revisit when.** The operator approves the default or a new measurement on the intended
 machine supports another value. The C tool observation and the real-provider error also
 need investigation before drawing broader conclusions.
+
+### Skills and hub search counts
+
+**Decision.** Label the Skills tab with its installed count and put the enabled count in its
+footer, keeping the tab row compact. Request up to 50 hub search items and show the number
+fetched from sources before deduplication beside the number shown. If source counts are absent,
+show only the number shown. Fetched counts are not match totals.
+**Revisit when.** Hermes returns a true match total for search.
