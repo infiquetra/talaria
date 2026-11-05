@@ -44,22 +44,20 @@ impl SentencePlayback {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        let mut attempt = 0;
         let child = loop {
-            let mut attempt = 0;
-            break loop {
-                match command.spawn() {
-                    Ok(child) => break child,
-                    Err(error)
-                        if attempt < 9
-                            && (error.kind() == std::io::ErrorKind::ExecutableFileBusy
-                                || error.raw_os_error() == Some(26)) =>
-                    {
-                        attempt += 1;
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(error) => return Err(error),
+            match command.spawn() {
+                Ok(child) => break child,
+                Err(error)
+                    if attempt < 9
+                        && (error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                            || error.raw_os_error() == Some(26)) =>
+                {
+                    attempt += 1;
+                    std::thread::sleep(Duration::from_millis(5));
                 }
-            };
+                Err(error) => return Err(error),
+            }
         };
         Ok(Self {
             queued: Vec::new(),
