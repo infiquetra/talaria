@@ -9,6 +9,7 @@ pub mod detect;
 mod file;
 pub mod legacy;
 pub mod roles;
+pub mod screens;
 pub mod surfaces;
 
 pub use file::{BorderPreset, ThemeFileResolution};

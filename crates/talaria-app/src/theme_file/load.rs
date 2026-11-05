@@ -16,6 +16,15 @@ pub fn reserved_id(id: &str) -> bool {
     matches!(id, "terminal" | "dark" | "light" | "ember" | "paper")
 }
 
+/// The built-in theme for `id`, already parsed by the strict parser.
+///
+/// `terminal`, `ember` and `paper` are the only built-ins. A user file of the
+/// same name is never returned here.
+#[must_use]
+pub fn builtin(_id: &str) -> Option<ThemeFile> {
+    None
+}
+
 pub fn load(config: &Path, id: &str) -> Result<ThemeFile, String> {
     if !valid_id(id) {
         return Err("invalid theme identifier".into());
