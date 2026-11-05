@@ -23,6 +23,7 @@ pub struct SkillToggleDto {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HubSearchDto {
+    pub source_counts: Option<std::collections::BTreeMap<String, u64>>,
     pub results: Vec<Value>,
     pub timed_out: Vec<String>,
     pub installed: Value,

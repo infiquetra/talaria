@@ -108,6 +108,31 @@ fn ready(tab: CapTab, data: CapData) -> CapabilitiesState {
 fn ready_skill() -> CapabilitiesState {
     ready(CapTab::Skills, CapData::Skills(vec![skill("guide", true)]))
 }
+#[test]
+fn skills_count_installed_and_enabled_separately() {
+    let s = ready(
+        CapTab::Skills,
+        CapData::Skills(vec![skill("a", true), skill("b", false)]),
+    );
+    assert_eq!(s.view().tabs[0], "Skills 2 installed");
+    assert_eq!(s.view().footer, "1 of 2 on");
+}
+#[test]
+fn search_without_source_counts_shows_only_returned_count() {
+    let mut s = ready(CapTab::Hub, hub());
+    key(&mut s, KeyAction::Filter);
+    type_line(&mut s, "older");
+    let effects = key(&mut s, KeyAction::Enter);
+    s.update(
+        CapInput::Loaded {
+            tab: CapTab::Hub,
+            generation: generation(&effects, CapTab::Hub),
+            result: Ok(hub()),
+        },
+        3,
+    );
+    assert_eq!(s.view().footer, "Search: \"older\" · 1 shown");
+}
 fn key(state: &mut CapabilitiesState, action: KeyAction) -> Vec<CapEffect> {
     state.update(CapInput::Key(action), 1)
 }
@@ -884,6 +909,7 @@ fn hub_browse_search_and_marks() {
         unreachable!()
     };
     page.query = Some("guide".into());
+    page.fetched = Some(3);
     page.timed_out = vec!["github".into(), "gitlab".into()];
     page.installed = vec!["official/guide".into()];
     s.update(
@@ -899,7 +925,10 @@ fn hub_browse_search_and_marks() {
         vec!["Some hub sources did not answer in time: github, gitlab."]
     );
     assert!(s.view().rows[0].installed);
-    assert_eq!(s.view().footer, "Search: \"guide\" · 1 results");
+    assert_eq!(
+        s.view().footer,
+        "Search: \"guide\" · showing 1 of 3 fetched"
+    );
     assert!(key(&mut s, KeyAction::NextPage).is_empty());
     assert_eq!(
         key(&mut s, KeyAction::Enter),

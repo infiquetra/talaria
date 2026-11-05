@@ -129,6 +129,7 @@ impl CapData {
                     _ => return Err(CapError::BadBody),
                 };
                 Ok(Self::Hub(HubPage {
+                    fetched: None,
                     items,
                     page: number(value, "page")?,
                     total_pages: number(value, "total_pages")?,
