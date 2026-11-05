@@ -171,6 +171,7 @@ impl ModelsState {
     pub fn update(&mut self, input: ModelsInput) -> Vec<ModelsEffect> {
         let mut effects = Vec::new();
         match input {
+            ModelsInput::ResumePicker { .. } => {}
             ModelsInput::Connection { connected } => {
                 if self.offline == connected {
                     self.offline = !connected;

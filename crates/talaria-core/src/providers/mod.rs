@@ -55,7 +55,7 @@ pub fn update(
                 load(state, 2, &mut effects);
             } else {
                 match state.tab {
-                    ProvidersTab::Keys => {
+                    ProvidersTab::All | ProvidersTab::Keys => {
                         load(state, 0, &mut effects);
                         load(state, 1, &mut effects);
                     }
@@ -332,7 +332,7 @@ fn target(state: &mut ProvidersState, effects: &mut Vec<ProvidersEffect>) {
 }
 fn indices(state: &ProvidersState) -> Vec<usize> {
     match state.tab {
-        ProvidersTab::Keys => state
+        ProvidersTab::All | ProvidersTab::Keys => state
             .keys
             .iter()
             .enumerate()
@@ -389,7 +389,7 @@ fn key_input(
     }
     if let ProvidersKey::Action(ProvidersAction::Reload) = key {
         match state.tab {
-            ProvidersTab::Keys => {
+            ProvidersTab::All | ProvidersTab::Keys => {
                 load(state, 0, effects);
                 load(state, 1, effects)
             }
@@ -453,7 +453,7 @@ fn key_input(
                 return;
             }
             match state.tab {
-                ProvidersTab::Keys => {
+                ProvidersTab::All | ProvidersTab::Keys => {
                     if let Some(row) = state.keys.get(state.selected).cloned() {
                         keys::open(state, row, effects)
                     }
@@ -478,7 +478,7 @@ fn key_input(
                 return;
             }
             match state.tab {
-                ProvidersTab::Keys => {
+                ProvidersTab::All | ProvidersTab::Keys => {
                     if let Some(row) = state.keys.get(state.selected).cloned() {
                         keys::remove(state, row, effects)
                     }
@@ -513,7 +513,7 @@ fn change_tab(state: &mut ProvidersState, next: bool, effects: &mut Vec<Provider
     state.selected = 0;
     state.notice = None;
     let index = match state.tab {
-        ProvidersTab::Keys => 0,
+        ProvidersTab::All | ProvidersTab::Keys => 0,
         ProvidersTab::Accounts => 2,
         ProvidersTab::Endpoints => 3,
     };
@@ -663,7 +663,7 @@ fn card_input(
 }
 pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
     let index = match state.tab {
-        ProvidersTab::Keys => 0,
+        ProvidersTab::All | ProvidersTab::Keys => 0,
         ProvidersTab::Accounts => 2,
         ProvidersTab::Endpoints => 3,
     };
@@ -674,7 +674,7 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
         rows.push("Loading…".into())
     } else if let Some(error) = &load.error {
         let (tab, route) = match state.tab {
-            ProvidersTab::Keys => ("keys", "/api/env"),
+            ProvidersTab::All | ProvidersTab::Keys => ("keys", "/api/env"),
             ProvidersTab::Accounts => ("accounts", "/api/providers/oauth"),
             ProvidersTab::Endpoints => ("endpoints", "/api/providers/custom-endpoints"),
         };
@@ -685,7 +685,7 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
     } else {
         for i in &visible {
             rows.push(match state.tab {
-                ProvidersTab::Keys => {
+                ProvidersTab::All | ProvidersTab::Keys => {
                     let row = &state.keys[*i];
                     let shared = if row.shared_with.is_empty() {
                         String::new()
@@ -749,7 +749,7 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
         }
     }
     let mut footer = match state.tab {
-        ProvidersTab::Keys => {
+        ProvidersTab::All | ProvidersTab::Keys => {
             "enter set key · ctrl+d remove · ctrl+r reload · tab next tab · type to filter".into()
         }
         ProvidersTab::Accounts => {
@@ -784,6 +784,7 @@ pub fn view(state: &ProvidersState, now: Instant) -> ProvidersView {
             Some(Card::Key(_)) | Some(Card::Form(Form { field: 2, .. }))
         );
     ProvidersView {
+        browse: Some(browse::view(state)),
         title: format!("Providers · profile {}", text::sanitize(&state.profile)),
         tab: state.tab,
         rows: rows.into_iter().map(|s| text::sanitize(&s)).collect(),
@@ -946,6 +947,7 @@ fn card_view(state: &ProvidersState, card: &Card, now: Instant) -> ProvidersCard
         lines.insert(0, title);
     }
     ProvidersCard {
+        step: None,
         kind,
         lines: lines.into_iter().map(|s| text::sanitize(&s)).collect(),
         footer,
@@ -1179,3 +1181,4 @@ mod tests {
         );
     }
 }
+pub mod browse;

@@ -53,6 +53,7 @@ pub fn draw_providers(view: &ProvidersView, secret_len: usize, area: Rect, buf: 
         tabs.into_iter()
             .map(|tab| {
                 let name = match tab {
+                    ProvidersTab::All => "All",
                     ProvidersTab::Keys => "Keys",
                     ProvidersTab::Accounts => "Accounts",
                     ProvidersTab::Endpoints => "Endpoints",

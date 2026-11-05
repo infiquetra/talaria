@@ -154,6 +154,9 @@ pub enum ModelsEffect {
 /// One fact the app feeds the picker.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModelsInput {
+    ResumePicker {
+        provider: String,
+    },
     Connection {
         connected: bool,
     },

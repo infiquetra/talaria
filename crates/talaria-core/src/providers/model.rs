@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ProvidersTab {
+    All,
     #[default]
     Keys,
     Accounts,
@@ -140,6 +141,7 @@ pub enum Failure {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProvidersAction {
+    Details,
     NextTab,
     PrevTab,
     Reload,
@@ -266,6 +268,7 @@ pub enum CardKind {
 }
 #[derive(Clone, PartialEq, Eq)]
 pub struct CardView {
+    pub step: Option<String>,
     pub kind: CardKind,
     pub lines: Vec<String>,
     pub footer: String,
@@ -273,6 +276,7 @@ pub struct CardView {
 pub type ProvidersCard = CardView;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProvidersView {
+    pub browse: Option<super::browse::BrowseView>,
     pub title: String,
     pub tab: ProvidersTab,
     pub rows: Vec<String>,

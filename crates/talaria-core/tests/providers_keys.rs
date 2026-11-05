@@ -108,7 +108,7 @@ fn status_joins_model_options_by_slug() {
     let _ = load_env(&mut state, vec![ready, saved, odd, missing, outside]);
     let loading = joined(&state);
     assert!(
-        loading.contains("key …wxyz saved · checking…"),
+        loading.contains("key saved · checking…"),
         "a set row checks while options load: {loading}"
     );
     assert!(
@@ -116,6 +116,10 @@ fn status_joins_model_options_by_slug() {
         "an unset row checks while options load: {loading}"
     );
     assert!(!loading.contains("abcd...wxyz"), "{loading}");
+    assert!(
+        !loading.contains("wxyz"),
+        "a browse row contains no key preview"
+    );
 
     let _ = step(
         &mut state,
@@ -132,8 +136,8 @@ fn status_joins_model_options_by_slug() {
         ]))),
     );
     let text = joined(&state);
-    assert!(text.contains("ready · 12 models · key …wxyz"), "{text}");
-    assert!(text.contains("key …abcd saved · not ready"), "{text}");
+    assert!(text.contains("ready · 12 models · key saved"), "{text}");
+    assert!(text.contains("key saved · not ready"), "{text}");
     assert!(
         text.contains("ready · key saved") && !text.contains("ready · 0 models"),
         "a zero model count is omitted: {text}"
@@ -163,7 +167,7 @@ fn status_joins_model_options_by_slug() {
         ProvidersInput::OptionsLoaded(Err(Failure::NotSent("socket down".into()))),
     );
     let text = joined(&failed);
-    assert!(text.contains("key …wxyz saved"), "{text}");
+    assert!(text.contains("key saved"), "{text}");
     assert!(text.contains("no key"), "{text}");
     assert!(
         text.contains("Could not check readiness: socket down. ctrl+r tries again."),
@@ -188,7 +192,11 @@ fn preview_shows_only_the_tail() {
         ProvidersInput::OptionsLoaded(Err(Failure::NotSent("down".into()))),
     );
     let text = joined(&state);
-    assert!(text.contains("key …wxyz"), "{text}");
+    assert!(text.contains("key saved"), "{text}");
+    assert!(
+        !text.contains("wxyz"),
+        "preview belongs only in the key card"
+    );
     assert!(!text.contains("abcd"), "the first four stay hidden: {text}");
     assert!(text.contains("key saved"), "{text}");
     assert!(!text.contains("«redacted:"), "{text}");
@@ -197,6 +205,17 @@ fn preview_shows_only_the_tail() {
         "{text}"
     );
     assert!(!text.contains("0123456789abcdef"), "{text}");
+    step(&mut state, ProvidersInput::Key(ProvidersKey::Enter));
+    let card = screen(&state)
+        .card
+        .expect("saved key card")
+        .lines
+        .join("\n");
+    assert!(
+        card.contains("Saved key ends in") && card.contains("wxyz"),
+        "{card}"
+    );
+    assert!(!card.contains("abcd"));
 }
 
 #[test]
@@ -843,7 +862,7 @@ fn one_write_at_a_time_and_key_scope() {
 fn open_args_esc_order_and_filter() {
     assert!(matches!(
         talaria_core::providers::parse_providers_args(""),
-        Ok(OpenTarget::Tab(ProvidersTab::Keys))
+        Ok(OpenTarget::Tab(ProvidersTab::All))
     ));
     assert!(matches!(
         talaria_core::providers::parse_providers_args("keys"),
