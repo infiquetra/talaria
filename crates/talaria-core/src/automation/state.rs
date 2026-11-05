@@ -214,6 +214,16 @@ pub struct GoalView {
     pub wait: Option<WaitView>,
 }
 
+impl GoalView {
+    /// The explicit verdict the work panel shows for this goal.
+    /// Empty until the panel reads the stored verdict.
+    #[must_use]
+    pub fn panel_verdict(&self) -> Option<&str> {
+        let _ = self;
+        None
+    }
+}
+
 /// What a parked goal waits on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WaitView {
@@ -322,6 +332,14 @@ impl AutomationState {
     /// Both mode values, for the rows and for sibling readers.
     pub fn modes(&self) -> (ModeValue<bool>, ModeValue<FastMode>) {
         (self.yolo, self.fast)
+    }
+
+    /// The explicit verdict the work panel keeps for the focused session.
+    /// Empty until a finished verdict is retained.
+    #[must_use]
+    pub fn panel_verdict(&self) -> Option<String> {
+        let _ = self;
+        None
     }
 
     /// The shown view, when one is ready.

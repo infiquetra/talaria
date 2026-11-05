@@ -23,6 +23,8 @@ pub struct WorkspaceView<'a> {
     pub checklist: Option<&'a Checklist>,
     pub checklist_expanded: bool,
     pub footer: &'a LiveView<'a>,
+    /// Session rows for the panel. Absent on the frame-only path.
+    pub work: Option<&'a panel::WorkContents<'a>>,
 }
 
 /// Full-width footer and independent body allocations. The menu allocation is

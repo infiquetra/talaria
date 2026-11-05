@@ -4100,6 +4100,7 @@ impl Screen for TuiScreen {
                 checklist: if panel_visible { view.checklist } else { None },
                 checklist_expanded: view.checklist_expanded,
                 footer: &footer,
+                work: None,
             };
             let body_width = view.layout.plan(width, self.rows).transcript_columns;
             let renderer = transcript_tool_renderer(

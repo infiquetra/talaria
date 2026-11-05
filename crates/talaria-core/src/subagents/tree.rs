@@ -23,6 +23,15 @@ pub struct TreeRow {
     pub depth: u8,
 }
 
+/// One recent completion the work panel may spell out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentCompletion {
+    /// The child id.
+    pub id: String,
+    /// The child's goal, as reported.
+    pub goal: String,
+}
+
 /// Row counts for the status line and the dock header.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SubagentCounts {
@@ -336,6 +345,14 @@ impl SubagentTree {
                 row.state.is_live().then(|| row.id.clone())
             })
             .collect()
+    }
+
+    /// The newest completions, oldest of that window first, at most `limit`.
+    /// Empty until the summary exists.
+    #[must_use]
+    pub fn recent_completions(&self, limit: usize) -> Vec<RecentCompletion> {
+        let _ = (self, limit);
+        Vec::new()
     }
 
     #[must_use]
