@@ -18,7 +18,7 @@ use crate::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::Line,
 };
 use std::collections::HashSet;
@@ -235,35 +235,7 @@ fn render(
         crate::theme::surfaces::tokens::TRANSCRIPT_BACKGROUND,
         !inline,
     );
-    let mut text = String::new();
-    let mut ansi = String::new();
-    for row in 0..height {
-        for col in 0..width {
-            let cell = &buffer[(col, row)];
-            text.push_str(cell.symbol());
-            ansi.push_str("\x1b[0m");
-            if let Some(bg) = background {
-                ansi.push_str(&format!("\x1b[48;2;{};{};{}m", bg.0, bg.1, bg.2));
-            }
-            sgr(&mut ansi, cell.fg, false);
-            sgr(&mut ansi, cell.bg, true);
-            if cell.modifier.contains(Modifier::BOLD) {
-                ansi.push_str("\x1b[1m");
-            }
-            if cell.modifier.contains(Modifier::ITALIC) {
-                ansi.push_str("\x1b[3m");
-            }
-            if cell.modifier.contains(Modifier::UNDERLINED) {
-                ansi.push_str("\x1b[4m");
-            }
-            if cell.modifier.contains(Modifier::REVERSED) {
-                ansi.push_str("\x1b[7m");
-            }
-            ansi.push_str(cell.symbol());
-        }
-        text.push('\n');
-        ansi.push_str("\x1b[0m\n");
-    }
+    let (text, ansi) = crate::terminal::buffer_to_ansi(&buffer, width, height, background);
     ThemeScreenFrame {
         theme_id: id,
         width,
@@ -274,36 +246,5 @@ fn render(
         code_colours: code_colours.len(),
         paints_background: buffer[(0, 0)].bg != Color::Reset,
         ansi,
-    }
-}
-
-fn sgr(out: &mut String, color: Color, background: bool) {
-    let prefix = if background { 48 } else { 38 };
-    match color {
-        Color::Rgb(r, g, b) => out.push_str(&format!("\x1b[{prefix};2;{r};{g};{b}m")),
-        Color::Indexed(n) => out.push_str(&format!("\x1b[{prefix};5;{n}m")),
-        Color::Reset => {}
-        named => {
-            let n = match named {
-                Color::Black => 0,
-                Color::Red => 1,
-                Color::Green => 2,
-                Color::Yellow => 3,
-                Color::Blue => 4,
-                Color::Magenta => 5,
-                Color::Cyan => 6,
-                Color::Gray => 7,
-                Color::DarkGray => 8,
-                Color::LightRed => 9,
-                Color::LightGreen => 10,
-                Color::LightYellow => 11,
-                Color::LightBlue => 12,
-                Color::LightMagenta => 13,
-                Color::LightCyan => 14,
-                Color::White => 15,
-                _ => return,
-            };
-            out.push_str(&format!("\x1b[{prefix};5;{n}m"));
-        }
     }
 }

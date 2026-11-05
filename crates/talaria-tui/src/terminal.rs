@@ -1798,6 +1798,79 @@ fn decode_probe_events(input: &[u8]) -> Vec<crossterm::event::Event> {
     events
 }
 
+pub(crate) fn buffer_to_ansi(
+    buffer: &ratatui::buffer::Buffer,
+    width: u16,
+    height: u16,
+    background: Option<talaria_core::appearance::Rgb>,
+) -> (String, String) {
+    use ratatui::style::Modifier;
+
+    let mut text = String::new();
+    let mut ansi = String::new();
+    for row in 0..height {
+        for col in 0..width {
+            let cell = &buffer[(col, row)];
+            text.push_str(cell.symbol());
+            ansi.push_str("\x1b[0m");
+            if let Some(bg) = background {
+                ansi.push_str(&format!("\x1b[48;2;{};{};{}m", bg.0, bg.1, bg.2));
+            }
+            sgr_color(&mut ansi, cell.fg, false);
+            sgr_color(&mut ansi, cell.bg, true);
+            if cell.modifier.contains(Modifier::BOLD) {
+                ansi.push_str("\x1b[1m");
+            }
+            if cell.modifier.contains(Modifier::ITALIC) {
+                ansi.push_str("\x1b[3m");
+            }
+            if cell.modifier.contains(Modifier::UNDERLINED) {
+                ansi.push_str("\x1b[4m");
+            }
+            if cell.modifier.contains(Modifier::REVERSED) {
+                ansi.push_str("\x1b[7m");
+            }
+            ansi.push_str(cell.symbol());
+        }
+        text.push('\n');
+        ansi.push_str("\x1b[0m\n");
+    }
+    (text, ansi)
+}
+
+fn sgr_color(out: &mut String, color: ratatui::style::Color, background: bool) {
+    use ratatui::style::Color;
+
+    let prefix = if background { 48 } else { 38 };
+    match color {
+        Color::Rgb(r, g, b) => out.push_str(&format!("\x1b[{prefix};2;{r};{g};{b}m")),
+        Color::Indexed(n) => out.push_str(&format!("\x1b[{prefix};5;{n}m")),
+        Color::Reset => {}
+        named => {
+            let n = match named {
+                Color::Black => 0,
+                Color::Red => 1,
+                Color::Green => 2,
+                Color::Yellow => 3,
+                Color::Blue => 4,
+                Color::Magenta => 5,
+                Color::Cyan => 6,
+                Color::Gray => 7,
+                Color::DarkGray => 8,
+                Color::LightRed => 9,
+                Color::LightGreen => 10,
+                Color::LightYellow => 11,
+                Color::LightBlue => 12,
+                Color::LightMagenta => 13,
+                Color::LightCyan => 14,
+                Color::White => 15,
+                _ => return,
+            };
+            out.push_str(&format!("\x1b[{prefix};5;{n}m"));
+        }
+    }
+}
+
 #[cfg(test)]
 mod probe_input_tests {
     use super::decode_probe_events;
