@@ -1,4 +1,5 @@
 //! Optional full-screen workspace presentation.
+pub mod menu;
 pub mod panel;
 
 use crate::{
@@ -20,6 +21,8 @@ pub struct WorkspaceView<'a> {
     pub entries: &'a [TranscriptEntry<'a>],
     pub details: Details,
     pub panel: PanelVisibility,
+    /// Top menu state for this frame.
+    pub menu: menu::MenuState,
     pub checklist: Option<&'a Checklist>,
     pub checklist_expanded: bool,
     pub footer: &'a LiveView<'a>,

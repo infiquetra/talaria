@@ -1,7 +1,7 @@
 #[path = "pager_support.rs"]
 mod support;
 
-use ratatui::{buffer::Buffer, layout::Rect, text::Line};
+use ratatui::{buffer::Buffer, layout::Rect, style::Modifier, text::Line};
 use serde_json::json;
 use talaria_core::{checklist::Checklist, layout::PanelVisibility};
 use talaria_tui::{
@@ -45,6 +45,7 @@ fn workspace_snapshots_at_80x24_and_120x40() {
             panel,
             checklist: None,
             checklist_expanded: false,
+            menu: workspace::menu::MenuState::hidden(),
             footer: &footer,
         };
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
@@ -153,6 +154,7 @@ fn panel_geometry_matches_wide_and_compact_screens() {
             panel,
             checklist: None,
             checklist_expanded: false,
+            menu: workspace::menu::MenuState::hidden(),
             footer: &footer,
         };
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
@@ -182,6 +184,7 @@ fn footer_matches_the_inline_footer() {
         panel: PanelVisibility::Docked,
         checklist: None,
         checklist_expanded: false,
+        menu: workspace::menu::MenuState::hidden(),
         footer: &footer,
     };
     let mut buffer = Buffer::empty(Rect::new(0, 0, 120, 40));
@@ -218,6 +221,7 @@ fn checklist_is_hosted_once() {
                 panel,
                 checklist: Some(&checklist),
                 checklist_expanded: expanded,
+                menu: workspace::menu::MenuState::hidden(),
                 footer: &footer,
             };
             let mut buffer = Buffer::empty(Rect::new(0, 0, 120, 40));
@@ -285,5 +289,116 @@ fn reused_cell_ids_from_separate_sources_stay_distinct() {
         let at = actual.find(wanted).unwrap();
         assert!(previous.is_none_or(|before| before < at), "{actual}");
         previous = Some(at);
+    }
+}
+
+const MENU_HEADING: &str = "Talaria   Session   Model   View   Voice   Settings   Help";
+
+fn raw_row(buffer: &Buffer, y: u16) -> String {
+    (0..buffer.area.width)
+        .map(|x| buffer[(x, y)].symbol())
+        .collect()
+}
+
+fn frame_with(
+    width: u16,
+    height: u16,
+    panel: PanelVisibility,
+    menu: workspace::menu::MenuState,
+) -> Buffer {
+    let footer = LiveView { sections: vec![] };
+    let view = WorkspaceView {
+        entries: &[],
+        details: Details::Expanded,
+        panel,
+        menu,
+        checklist: None,
+        checklist_expanded: false,
+        footer: &footer,
+    };
+    let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
+    workspace::draw(&view, buffer.area, &mut buffer, &PlainCellLines);
+    buffer
+}
+
+#[test]
+fn menu_bar_frames_at_80x24_and_120x40() {
+    for (width, height, panel) in [
+        (80, 24, PanelVisibility::OverlayOpen),
+        (80, 24, PanelVisibility::Hidden),
+        (120, 40, PanelVisibility::Docked),
+        (120, 40, PanelVisibility::Hidden),
+    ] {
+        let buffer = frame_with(width, height, panel, workspace::menu::MenuState::shown());
+        let row = raw_row(&buffer, 0);
+        assert!(
+            row.starts_with(MENU_HEADING),
+            "{width}x{height} {panel:?}: {row}"
+        );
+        assert!(
+            row[MENU_HEADING.len()..].chars().all(|ch| ch == ' '),
+            "{row}"
+        );
+        if matches!(
+            panel,
+            PanelVisibility::Docked | PanelVisibility::OverlayOpen
+        ) {
+            assert!(
+                raw_row(&buffer, 1).contains("Work"),
+                "{width}x{height} {panel:?}: the panel starts under the bar"
+            );
+            let divider = if width == 120 { 87 } else { 47 };
+            let heading_at_divider = MENU_HEADING.chars().nth(divider as usize).unwrap_or(' ');
+            assert_eq!(
+                buffer[(divider, 0)].symbol(),
+                heading_at_divider.to_string(),
+                "the bar covers the panel column"
+            );
+            assert_eq!(
+                buffer[(divider, 1)].symbol(),
+                "│",
+                "the divider starts on the next row"
+            );
+        }
+    }
+}
+
+#[test]
+fn view_menu_open_and_focused() {
+    for (width, height, panel) in [
+        (80, 24, PanelVisibility::OverlayOpen),
+        (80, 24, PanelVisibility::Hidden),
+        (120, 40, PanelVisibility::Docked),
+        (120, 40, PanelVisibility::Hidden),
+    ] {
+        let mut menu = workspace::menu::MenuState::shown();
+        menu.dropdown_open = true;
+        menu.menu_index = 2;
+        menu.panel_on = matches!(
+            panel,
+            PanelVisibility::Docked | PanelVisibility::OverlayOpen
+        );
+        let buffer = frame_with(width, height, panel, menu.clone());
+        let frame = text(&buffer);
+        assert!(
+            frame.contains("Right work panel"),
+            "{width}x{height} {panel:?}: {frame}"
+        );
+        let line = frame
+            .lines()
+            .find(|line| line.contains("Right work panel"))
+            .expect("item line");
+        let checked = line.contains('✓') || line.contains("[x]") || line.contains("[X]");
+        assert_eq!(checked, menu.panel_on, "{line}");
+        let row = raw_row(&buffer, 0);
+        let start = row.find("View").unwrap_or(0);
+        let marked = row.contains('>')
+            || row.contains('▸')
+            || (start..start + "View".len()).any(|index| {
+                buffer[(index as u16, 0)]
+                    .modifier
+                    .contains(Modifier::REVERSED)
+            });
+        assert!(marked, "focus needs reverse video or a text marker: {row}");
     }
 }

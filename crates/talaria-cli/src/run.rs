@@ -4099,6 +4099,7 @@ impl Screen for TuiScreen {
                 panel: view.layout.panel,
                 checklist: if panel_visible { view.checklist } else { None },
                 checklist_expanded: view.checklist_expanded,
+                menu: talaria_tui::workspace::menu::MenuState::hidden(),
                 footer: &footer,
             };
             let body_width = view.layout.plan(width, self.rows).transcript_columns;

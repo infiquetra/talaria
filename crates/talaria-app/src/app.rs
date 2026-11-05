@@ -5412,6 +5412,9 @@ fn local_effect(
             Ok(talaria_core::layout::LayoutAction::Panel) => {
                 user_action(state, UserAction::LayoutPanel)
             }
+            Ok(
+                talaria_core::layout::LayoutAction::Bar | talaria_core::layout::LayoutAction::Menu,
+            ) => Vec::new(),
             Err(notice) => vec![AppEffect::CommitLines(vec![notice])],
         };
     }

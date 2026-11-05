@@ -133,3 +133,173 @@ fn ctrl_t_still_toggles_the_checklist_in_the_workspace() {
             .any(|effect| matches!(effect, AppEffect::Redraw))
     );
 }
+
+fn config_file(name: &str) -> (std::path::PathBuf, Vec<u8>) {
+    let root = std::env::temp_dir().join(format!("talaria-menu-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("config.toml");
+    let bytes = b"# preserve this comment\n[ui]\nwork_panel = false\n".to_vec();
+    std::fs::write(&path, &bytes).unwrap();
+    (path, bytes)
+}
+
+fn state_from_file(path: &std::path::Path) -> AppState {
+    let loaded = config::load_file(path);
+    let mut state = AppState::new("0123456789abcdef");
+    state.layout = LayoutState::new(
+        LayoutPreferences {
+            work_panel: loaded.config.ui.work_panel,
+            menu_bar: loaded.config.ui.menu_bar,
+        },
+        80,
+        24,
+    );
+    state.draft = "keep this draft".into();
+    state
+}
+
+fn open_running(state: &mut AppState) {
+    let mut snapshot = mock_gateway::recorded_resume_snapshot();
+    snapshot["running"] = serde_json::json!(true);
+    let opened = talaria_app::sessions::OpenedSession::from_snapshot(
+        serde_json::from_value(snapshot).unwrap(),
+    );
+    update(
+        state,
+        AppMessage::Opened {
+            opened,
+            notice: None,
+        },
+    );
+}
+
+#[test]
+fn menu_bar_defaults_false_and_rejects_other_values() {
+    let enabled = config::parse("[ui]\nmenu_bar = true\n");
+    assert!(enabled.notices.is_empty(), "{:?}", enabled.notices);
+    assert!(enabled.config.ui.menu_bar);
+    let disabled = config::parse("[ui]\nmenu_bar = false\n");
+    assert!(disabled.notices.is_empty(), "{:?}", disabled.notices);
+    assert!(!disabled.config.ui.menu_bar);
+    assert!(!config::parse("").config.ui.menu_bar);
+    for value in ["1", "'yes'", "[]", "{}"] {
+        let loaded = config::parse(&format!("[ui]\nmenu_bar = {value}\n"));
+        assert!(!loaded.config.ui.menu_bar);
+        assert_eq!(loaded.notices.len(), 1, "{:?}", loaded.notices);
+        assert!(
+            loaded.notices[0].contains("menu_bar") && loaded.notices[0].contains("true or false"),
+            "{:?}",
+            loaded.notices
+        );
+    }
+}
+
+#[test]
+fn alt_i_shows_focuses_and_hides() {
+    let (path, bytes) = config_file("alt-i");
+    let mut state = state_from_file(&path);
+    update(&mut state, key(InputCode::Char('i'), true, false));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    assert!(state.layout.preferences.menu_bar, "Alt+I shows the menu");
+    assert!(state.layout.menu_focused, "Alt+I focuses the menu");
+    assert_eq!(state.draft, "keep this draft");
+    update(&mut state, key(InputCode::Char('i'), true, false));
+    assert!(!state.layout.preferences.menu_bar, "Alt+I hides the menu");
+    assert!(!state.layout.menu_focused);
+    assert_eq!(state.draft, "keep this draft");
+}
+
+#[test]
+fn layout_bar_and_menu_forms() {
+    let (path, bytes) = config_file("layout-bar");
+    let mut state = state_from_file(&path);
+    update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/layout bar".into())),
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(
+        state.layout.preferences.menu_bar,
+        "/layout bar shows the menu"
+    );
+    assert!(state.layout.menu_focused);
+    assert_eq!(state.draft, "keep this draft");
+    update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/layout bar".into())),
+    );
+    assert!(
+        !state.layout.preferences.menu_bar,
+        "/layout bar hides the menu"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+
+    let mut hidden = state_from_file(&path);
+    update(
+        &mut hidden,
+        AppMessage::User(UserAction::Submit("/layout menu".into())),
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    assert!(
+        !hidden.layout.preferences.menu_bar,
+        "/layout menu leaves a hidden bar hidden"
+    );
+    assert!(
+        hidden.layout.menu_transient,
+        "/layout menu opens a transient menu"
+    );
+    assert!(hidden.layout.menu_focused);
+    assert_eq!(hidden.draft, "keep this draft");
+
+    let mut shown = AppState::new("0123456789abcdef");
+    shown.layout.preferences.menu_bar = true;
+    shown.draft = "keep this draft".into();
+    update(
+        &mut shown,
+        AppMessage::User(UserAction::Submit("/layout menu".into())),
+    );
+    assert!(shown.layout.preferences.menu_bar);
+    assert!(!shown.layout.menu_transient);
+    assert!(
+        shown.layout.menu_focused,
+        "/layout menu focuses a shown bar"
+    );
+    assert_eq!(shown.draft, "keep this draft");
+}
+
+#[test]
+fn esc_in_the_menu_does_not_interrupt_a_running_turn() {
+    let mut state = AppState::new("0123456789abcdef");
+    open_running(&mut state);
+    state.draft = "keep this draft".into();
+    state.layout.preferences.menu_bar = true;
+    state.layout.menu_focused = true;
+    state.layout.menu_dropdown = true;
+    state.layout.panel = PanelVisibility::Hidden;
+    let effects = update(&mut state, key(InputCode::Esc, false, false));
+    assert!(!state.layout.menu_dropdown, "Esc closes the dropdown first");
+    assert!(state.layout.menu_focused);
+    assert!(state.layout.preferences.menu_bar);
+    assert_eq!(state.draft, "keep this draft");
+    assert!(
+        effects
+            .iter()
+            .all(|effect| matches!(effect, AppEffect::Redraw)),
+        "Esc in the menu must not interrupt the turn"
+    );
+    let effects = update(&mut state, key(InputCode::Esc, false, false));
+    assert!(
+        !state.layout.menu_focused,
+        "the second Esc returns to the composer"
+    );
+    assert!(state.layout.preferences.menu_bar);
+    assert!(
+        effects
+            .iter()
+            .all(|effect| matches!(effect, AppEffect::Redraw)),
+        "the second Esc must not interrupt the turn"
+    );
+}

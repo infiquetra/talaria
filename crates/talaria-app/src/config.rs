@@ -219,6 +219,8 @@ pub struct ThemeConfig {
 pub struct UiConfig {
     /// Start in the optional workspace. Runtime toggles do not save this setting.
     pub work_panel: bool,
+    /// Start with the one-row menu. Runtime toggles do not save this setting.
+    pub menu_bar: bool,
     /// Reduced motion. The default is false.
     pub reduced_motion: bool,
 }
@@ -288,6 +290,7 @@ impl Default for Config {
             },
             ui: UiConfig {
                 work_panel: false,
+                menu_bar: false,
                 reduced_motion: false,
             },
             composer: ComposerConfig::default(),

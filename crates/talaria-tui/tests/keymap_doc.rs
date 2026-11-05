@@ -19,6 +19,44 @@ fn work_panel_action_and_default_are_documented() {
 }
 
 #[test]
+fn menu_bar_action_and_default_are_documented() {
+    let document = read_document();
+    assert!(
+        document.contains("toggle_menu_bar = [\"alt+i\"]"),
+        "documented keys block"
+    );
+    assert!(
+        document.contains("menu_bar = false"),
+        "documented ui default"
+    );
+    let keys = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/keybindings.md"),
+    )
+    .unwrap();
+    assert!(keys.contains("Alt+I"), "keybindings mention the menu chord");
+    for name in [
+        "toggle_menu_bar",
+        "menu_left",
+        "menu_right",
+        "menu_up",
+        "menu_down",
+        "menu_open",
+        "menu_activate",
+        "menu_next",
+        "menu_prev",
+        "menu_close",
+    ] {
+        assert!(document.contains(name), "{name} is a documented key action");
+        assert!(
+            Action::from_config_name(name).is_some(),
+            "configurable {name} action"
+        );
+    }
+    let action = Action::from_config_name("toggle_menu_bar").unwrap();
+    assert_eq!(labels(&KeyMap::defaults(), action), ["Alt+I"]);
+}
+
+#[test]
 fn doc_keys_equal_defaults() {
     let blocks = toml_blocks(&read_document());
     assert_eq!(blocks.len(), 1, "found {} toml blocks", blocks.len());

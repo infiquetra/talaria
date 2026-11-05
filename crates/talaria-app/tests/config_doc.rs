@@ -25,6 +25,24 @@ fn work_panel_is_in_the_documented_ui_defaults_and_table() {
 }
 
 #[test]
+fn menu_bar_is_in_the_documented_ui_defaults_and_table() {
+    let document = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/configuration.md"),
+    )
+    .unwrap();
+    assert!(
+        document.contains("menu_bar = false"),
+        "document the opt-in default"
+    );
+    assert!(
+        document
+            .lines()
+            .any(|line| line.starts_with('|') && line.contains("menu_bar")),
+        "document the ui setting in the table"
+    );
+}
+
+#[test]
 fn pane_settings_accept_each_option_and_fall_back_independently() {
     use talaria_app::panes::{DirectionSetting, MultiplexerSetting, PaneSettings};
     for (name, expected) in [
@@ -123,6 +141,16 @@ fn default_keys() -> BTreeMap<String, Vec<String>> {
         ("doctor_right", &["right"][..]),
         ("voice_record", &["alt+r"][..]),
         ("layout_panel", &["alt+d"][..]),
+        ("toggle_menu_bar", &["alt+i"][..]),
+        ("menu_left", &["left"][..]),
+        ("menu_right", &["right"][..]),
+        ("menu_up", &["up"][..]),
+        ("menu_down", &["down"][..]),
+        ("menu_open", &[][..]),
+        ("menu_activate", &["enter"][..]),
+        ("menu_next", &["tab"][..]),
+        ("menu_prev", &["shift+tab"][..]),
+        ("menu_close", &["esc"][..]),
         ("submit", &["enter"][..]),
         ("newline", &["shift+enter", "alt+enter", "ctrl+j"][..]),
         ("interrupt", &["esc"][..]),
