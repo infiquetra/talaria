@@ -129,8 +129,7 @@ pub enum LayoutAction {
 /// The screen asks this before adding that dock: the work panel hosts the same summary.
 #[must_use]
 pub fn inline_subagent_dock_visible(panel_visible: bool) -> bool {
-    let _ = panel_visible;
-    true
+    !panel_visible
 }
 
 /// Parse exactly one supported argument and return a single-line usage notice otherwise.

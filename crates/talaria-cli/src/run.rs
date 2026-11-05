@@ -4055,7 +4055,9 @@ impl Screen for TuiScreen {
             {
                 sections.push(checklist);
             }
-            if let Some(subagents) = &subagents {
+            if let Some(subagents) = &subagents
+                && talaria_core::layout::inline_subagent_dock_visible(panel_visible)
+            {
                 sections.push(subagents);
             }
             if let Some(side) = &side {
@@ -4075,6 +4077,54 @@ impl Screen for TuiScreen {
         sections.push(&automation);
         sections.push(&status);
         if workspace_enabled {
+            let empty_agents = talaria_core::subagents::SubagentTree::new();
+            let agents = view
+                .subagents
+                .and_then(|hub| hub.foreground_key().and_then(|key| hub.tree(key)))
+                .unwrap_or(&empty_agents);
+            let waiting = view
+                .fleet_snapshot
+                .map(|snapshot| {
+                    snapshot
+                        .queue
+                        .iter()
+                        .map(|item| {
+                            let name = snapshot
+                                .rows
+                                .iter()
+                                .find(|row| row.key == item.id.key)
+                                .map(|row| row.title.as_str())
+                                .filter(|title| !title.is_empty())
+                                .unwrap_or("session");
+                            talaria_tui::workspace::panel::WaitingRequest {
+                                seq: item.seq,
+                                label: format!("{name}: needs you"),
+                                foreground: item.foreground,
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let goal = view.automation.panel_goal();
+            let work = talaria_tui::workspace::panel::WorkContents {
+                needs_you: self.inputs.needs_you,
+                goal,
+                turn: self.inputs.turn,
+                verdict_previous_turn: goal.is_some_and(|goal| {
+                    goal.status == "active"
+                        && goal.panel_verdict().is_some()
+                        && self.inputs.turn == TurnState::Streaming
+                }),
+                checklist: view.checklist,
+                checklist_expanded: view.checklist_expanded,
+                waiting: &waiting,
+                agents,
+                parent_model: None,
+                recent_limit: 4,
+                voice_phase: None,
+                read_aloud: None,
+                voice_target: None,
+            };
             let mut entries = self
                 .workspace_history
                 .iter()
@@ -4100,7 +4150,7 @@ impl Screen for TuiScreen {
                 checklist: if panel_visible { view.checklist } else { None },
                 checklist_expanded: view.checklist_expanded,
                 footer: &footer,
-                work: None,
+                work: Some(&work),
             };
             let body_width = view.layout.plan(width, self.rows).transcript_columns;
             let renderer = transcript_tool_renderer(

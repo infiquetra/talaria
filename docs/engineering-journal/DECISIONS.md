@@ -4563,6 +4563,16 @@ cannot prove the resulting field values, provider activation, or the identity of
 **Rejected.** Trusting submitted values as saved state or retrying uncertain mutations.
 **Revisit when.** Hermes exposes transactional writes and stable per-run action identifiers.
 
+### Work panel keeps the last finished goal
+
+**Decision.** Keep a finished goal and its explicit verdict in the focused session's work panel
+until a new goal appears or the session changes. Missing verdicts are pending or unknown; a
+checklist or child completion does not imply success. The fleet queue supplies waiting requests,
+while child model names come from the child records and child effort stays unknown.
+**Rationale.** A goal can leave the next control snapshot, and child defaults are not evidence of
+the settings a particular child used. **Revisit when.** Hermes reports per-child effort or an
+explicit lifecycle for retained goal results.
+
 ## 2026-10-28 — Workflow concurrency default proposed, awaiting the operator
 
 **Decision.** Proposed, awaiting the operator: use a shared connection and a default

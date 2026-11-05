@@ -133,14 +133,18 @@ impl Workspace {
         self.transcript
             .draw(view.entries, view.details, areas.transcript, buffer, other);
         if let Some(area) = areas.panel {
-            panel::draw(
-                area,
-                buffer,
-                view.checklist,
-                view.checklist_expanded,
-                style,
-                hint,
-            );
+            if let Some(work) = view.work {
+                panel::draw_work(area, buffer, work);
+            } else {
+                panel::draw(
+                    area,
+                    buffer,
+                    view.checklist,
+                    view.checklist_expanded,
+                    style,
+                    hint,
+                );
+            }
         }
         for (section, row) in footer.sections.iter().zip(rows) {
             if row.height > 0 {

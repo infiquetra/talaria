@@ -6917,3 +6917,10 @@ Rule: request private directory permissions at creation when diagnostics depend 
 Hermes v0.22.4 `tui_gateway/methods_voice.py` owns one microphone and speaker per gateway process. Talaria also creates voice effects when a session opens and when a reply completes, independently of `/voice` and push-to-talk. The remote routing tests cover the explicit actions and repeated read-aloud.
 
 Rule: carry connection locality to the application and guard both user actions and background voice execution.
+
+## Work panel values need their own evidence
+
+**Evidence.** The pinned goal snapshot carries an explicit verdict, while child snapshots carry
+a model but no per-child effort. A later goal snapshot may omit a finished goal altogether.
+**Rule.** Retain an explicit finished verdict for the session and never infer child effort from a
+parent or a configured default.

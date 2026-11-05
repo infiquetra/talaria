@@ -216,11 +216,11 @@ pub struct GoalView {
 
 impl GoalView {
     /// The explicit verdict the work panel shows for this goal.
-    /// Empty until the panel reads the stored verdict.
     #[must_use]
     pub fn panel_verdict(&self) -> Option<&str> {
-        let _ = self;
-        None
+        self.last_verdict
+            .as_deref()
+            .filter(|verdict| !verdict.trim().is_empty())
     }
 }
 
@@ -305,6 +305,7 @@ pub struct AutomationState {
     plan_noted: BTreeSet<String>,
     goal_progress: Option<GoalProgress>,
     pending_goal_completion: bool,
+    panel_goal: Option<GoalView>,
 }
 
 #[derive(Clone, Debug)]
@@ -335,11 +336,17 @@ impl AutomationState {
     }
 
     /// The explicit verdict the work panel keeps for the focused session.
-    /// Empty until a finished verdict is retained.
     #[must_use]
     pub fn panel_verdict(&self) -> Option<String> {
-        let _ = self;
-        None
+        self.panel_goal
+            .as_ref()
+            .and_then(GoalView::panel_verdict)
+            .map(str::to_owned)
+    }
+
+    /// The current or most recently finished goal for the focused session.
+    pub fn panel_goal(&self) -> Option<&GoalView> {
+        self.panel_goal.as_ref()
     }
 
     /// The shown view, when one is ready.
@@ -378,6 +385,15 @@ impl AutomationState {
             return None;
         }
         let notice = self.observe_goal(view.goal.as_ref());
+        if let Some(goal) = &view.goal {
+            self.panel_goal = Some(goal.clone());
+        } else if self
+            .panel_goal
+            .as_ref()
+            .is_some_and(|goal| shown(&goal.status))
+        {
+            self.panel_goal = None;
+        }
         self.control = ControlStatus::Ready(view);
         notice
     }
@@ -584,6 +600,9 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
     let mut effects = Vec::new();
     match event {
         AutomationEvent::Attached { session_id } => {
+            if state.session_id.as_deref() != Some(session_id.as_str()) {
+                state.panel_goal = None;
+            }
             state.session_id = Some(session_id.clone());
             state.control = ControlStatus::Reading;
             state.goal_progress = None;
@@ -614,6 +633,7 @@ pub fn update(state: &mut AutomationState, event: AutomationEvent) -> Vec<Automa
         AutomationEvent::Detached => {
             let visible = !rows(state, 0).is_empty();
             state.session_id = None;
+            state.panel_goal = None;
             state.control = ControlStatus::NotRead;
             state.goal_progress = None;
             state.pending_goal_completion = false;

@@ -75,6 +75,7 @@ pub const QUEUED_EXPIRY_MS: u64 = 600_000;
 /// Rows by id, insertion order, the retired set, list-miss counters, version.
 pub struct SubagentTree {
     rows: Vec<SubagentRow>,
+    recent: VecDeque<(u64, RecentCompletion)>,
     indices: HashMap<String, usize>,
     misses: HashMap<String, u8>,
     retired: HashSet<String>,
@@ -90,6 +91,7 @@ impl SubagentTree {
     pub fn new() -> SubagentTree {
         Self {
             rows: Vec::new(),
+            recent: VecDeque::new(),
             indices: HashMap::new(),
             misses: HashMap::new(),
             retired: HashSet::new(),
@@ -259,7 +261,19 @@ impl SubagentTree {
         for row in &self.rows {
             if remove.contains(&row.id) {
                 remember(&mut self.retired, &mut self.retired_order, row.id.clone());
+                if row.state != RowState::Gone {
+                    self.recent.push_back((
+                        row.last_event_ms,
+                        RecentCompletion {
+                            id: row.id.clone(),
+                            goal: row.goal.clone(),
+                        },
+                    ));
+                }
             }
+        }
+        while self.recent.len() > 32 {
+            self.recent.pop_front();
         }
         self.remove_ids(&remove)
     }
@@ -348,11 +362,43 @@ impl SubagentTree {
     }
 
     /// The newest completions, oldest of that window first, at most `limit`.
-    /// Empty until the summary exists.
     #[must_use]
     pub fn recent_completions(&self, limit: usize) -> Vec<RecentCompletion> {
-        let _ = (self, limit);
-        Vec::new()
+        let mut rows: Vec<_> = self.recent.iter().cloned().collect();
+        rows.extend(
+            self.rows
+                .iter()
+                .filter(|row| row.state.is_terminal() && row.state != RowState::Gone)
+                .map(|row| {
+                    (
+                        row.last_event_ms,
+                        RecentCompletion {
+                            id: row.id.clone(),
+                            goal: row.goal.clone(),
+                        },
+                    )
+                }),
+        );
+        rows.sort_by_key(|(time, _)| *time);
+        rows.into_iter()
+            .rev()
+            .take(limit)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|(_, row)| row)
+            .collect()
+    }
+
+    /// Number of retained or unpruned recent completions.
+    #[must_use]
+    pub fn recent_completion_count(&self) -> usize {
+        self.recent.len()
+            + self
+                .rows
+                .iter()
+                .filter(|row| row.state.is_terminal() && row.state != RowState::Gone)
+                .count()
     }
 
     #[must_use]
