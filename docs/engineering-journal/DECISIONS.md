@@ -4555,3 +4555,11 @@ and provider-direct access remain separate work.
 **Rationale.** The pinned Hermes contract supports both batch endpoints without
 putting provider keys in Talaria. Batch requests have their own audio-sized limits
 and deadlines rather than changing the limits used by other remote requests.
+
+### Skills and hub search counts
+
+**Decision.** Label the Skills tab with its installed count and put the enabled count in its
+footer, keeping the tab row compact. Request up to 50 hub search items and show the number
+fetched from sources before deduplication beside the number shown. If source counts are absent,
+show only the number shown. Fetched counts are not match totals.
+**Revisit when.** Hermes returns a true match total for search.

@@ -2,6 +2,20 @@ use proptest::prelude::*;
 use serde_json::{Value, json};
 use talaria_core::capabilities::*;
 
+#[test]
+fn hub_search_fetched_counts_are_optional() {
+    let mut reply = json!({"results": [], "installed": {}, "source_counts": {"a": 1, "b": 2}});
+    let CapData::Hub(page) = CapData::from_json(CapTab::Hub, &reply).unwrap() else {
+        panic!("hub expected")
+    };
+    assert_eq!(page.fetched, Some(3));
+    reply.as_object_mut().unwrap().remove("source_counts");
+    let CapData::Hub(page) = CapData::from_json(CapTab::Hub, &reply).unwrap() else {
+        panic!("hub expected")
+    };
+    assert_eq!(page.fetched, None);
+}
+
 fn skills(value: Value) -> Vec<SkillRow> {
     match CapData::from_json(CapTab::Skills, &value).unwrap() {
         CapData::Skills(rows) => rows,

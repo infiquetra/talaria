@@ -1642,11 +1642,7 @@ impl CapabilitiesState {
         }
         let tabs = (0..4)
             .map(|i| match &self.slots[i].data {
-                Some(CapData::Skills(r)) => format!(
-                    "Skills {}/{} on",
-                    r.iter().filter(|r| r.enabled).count(),
-                    r.len()
-                ),
+                Some(CapData::Skills(r)) => format!("Skills {} installed", r.len()),
                 Some(CapData::Toolsets(r)) => format!(
                     "Toolsets {}/{} on",
                     r.iter().filter(|r| r.enabled).count(),
@@ -1688,11 +1684,19 @@ impl CapabilitiesState {
             match &slot.data {
                 Some(CapData::Hub(page)) => {
                     if let Some(q) = &self.query {
-                        format!(
-                            "Search: \"{}\" · {} results",
-                            self.display(q),
-                            page.items.len()
-                        )
+                        match page.fetched {
+                            Some(fetched) => format!(
+                                "Search: \"{}\" · showing {} of {} fetched",
+                                self.display(q),
+                                page.items.len(),
+                                fetched
+                            ),
+                            None => format!(
+                                "Search: \"{}\" · {} shown",
+                                self.display(q),
+                                page.items.len()
+                            ),
+                        }
                     } else {
                         format!(
                             "Page {} of {} · {} skills",
@@ -1700,6 +1704,15 @@ impl CapabilitiesState {
                         )
                     }
                 }
+                _ => String::new(),
+            }
+        } else if self.tab == CapTab::Skills {
+            match &slot.data {
+                Some(CapData::Skills(rows)) => format!(
+                    "{} of {} on",
+                    rows.iter().filter(|r| r.enabled).count(),
+                    rows.len()
+                ),
                 _ => String::new(),
             }
         } else {
