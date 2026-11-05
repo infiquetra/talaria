@@ -218,6 +218,8 @@ pub struct HerdrConfig {
 /// Theme settings from `[theme]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThemeConfig {
+    pub file: Option<String>,
+    pub profiles: std::collections::BTreeMap<String, String>,
     /// Light or dark preference. The default is auto.
     pub mode: ThemeMode,
     /// Follow the Hermes skin. The default is true.
@@ -292,6 +294,8 @@ impl Default for Config {
                 workspace_filter: None,
             },
             theme: ThemeConfig {
+                file: None,
+                profiles: std::collections::BTreeMap::new(),
                 mode: ThemeMode::Auto,
                 follow_hermes_skin: true,
                 colors: ColorsSetting::Auto,
@@ -650,6 +654,36 @@ fn read_theme(section: &Table, notices: &mut Vec<String>) -> ThemeConfig {
                 _ => notices.push(
                     "[theme] colors must be auto, truecolor, 256, 16 or none; using auto.".into(),
                 ),
+            },
+            "file" => match value.as_str().filter(|id| crate::theme_file::valid_id(id)) {
+                Some(id) => theme.file = Some(id.to_owned()),
+                None => notices
+                    .push("[theme] file must be a valid theme identifier; ignoring it.".into()),
+            },
+            "profiles" => match value.as_table() {
+                Some(profiles) => {
+                    for (profile, value) in profiles {
+                        match value.as_table() {
+                            Some(settings) => {
+                                for (key, value) in settings {
+                                    if key != "file" {
+                                        notices.push(format!("[theme.profiles.{profile}] unknown setting {key}; ignoring it."));
+                                    } else if let Some(id) =
+                                        value.as_str().filter(|id| crate::theme_file::valid_id(id))
+                                    {
+                                        theme.profiles.insert(profile.clone(), id.to_owned());
+                                    } else {
+                                        notices.push(format!("[theme.profiles.{profile}] file must be a valid theme identifier; ignoring it."));
+                                    }
+                                }
+                            }
+                            None => notices.push(format!(
+                                "[theme.profiles.{profile}] must be a table; ignoring it."
+                            )),
+                        }
+                    }
+                }
+                None => notices.push("[theme] profiles must be a table; ignoring it.".into()),
             },
             "name" => notices.push(
                 "theme.name is no longer used: Talaria follows the Hermes skin (see /skin and \

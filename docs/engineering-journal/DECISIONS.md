@@ -4536,6 +4536,51 @@ without proving what an individual request carried; provider profiles can also d
 they send effort for models without levels. **Revisit when.** Hermes reports the effort each request
 carried, or forwards the effort levels a model supports.
 
+## 2026-11-04 — Strict native theme files
+
+**Decision.** A theme file is a version-one TOML document with twelve palette slots, fourteen
+semantic roles and the study's 323 named elements, including thirty reserved picker names.
+Inheritance accepts only the complete `terminal`, `dark` and `light` bases. The file reader,
+strict parser and catalogue live in `talaria-app`; terminal styles, layering, field sources and
+contrast diagnostics live in `talaria-tui`. Separate file reports and a wrapper resolver preserve
+the existing `ThemeReport`, `ThemeInputs` and no-file presentation contracts. File changes are
+applied atomically through application effects and the event channel.
+
+The composer has one active frame, so it uses `composer.border.focused`, making the accepted
+minimal example visible. The other composer border token remains available to future views.
+Every field of today's five theme surfaces has an explicit binding. Backgrounds resolve for
+inspection but are removed when binding those inline surfaces. Each family uses `background`
+for transcript, composer, status, tool, diff and workspace; all other families use `surface`.
+The seventeen catalogue elements with role `border` are structural marks; no additions are made.
+
+The explicit base palettes are:
+
+| Slot | Dark | Light |
+| --- | --- | --- |
+| background | `#101014` | `#ffffff` |
+| surface | `#202024` | `#f0f0f0` |
+| foreground | `#f4f4f4` | `#161616` |
+| muted | `#c4c4c4` | `#484848` |
+| disabled | `#a8a8a8` | `#606060` |
+| border | `#a0a0a0` | `#707070` |
+| primary | `#aaccff` | `#174a8b` |
+| accent | `#80dcff` | `#005b70` |
+| success | `#a0e0a0` | `#236624` |
+| warning | `#ffe080` | `#714b00` |
+| error | `#ffa0a0` | `#9b2424` |
+| attention | `#ffe080` | `#714b00` |
+
+Against both area backgrounds, ordinary colours meet 4.5:1 and borders meet 3:1. An inline
+terminal with a different trusted background is measured separately. Selection/focus elements
+outside today's bound inline fields are measured as the catalogue's paired colours. ANSI palette colours and
+untrusted terminal defaults remain unknown; authored colours are never lifted.
+
+**Rejected.** File inheritance chains, executable expressions, editor-theme import, silent
+unknown-key acceptance, background painting in native scrollback and edits to Hermes files.
+They add ambiguity, security exposure or behaviour outside appearance. **Revisit when.** The
+catalogue needs a compatible schema extension, the picker names are finalized, or measured use
+justifies an offline import tool. File watching remains deferred.
+
 ## 2026-10-28 — Workflow concurrency default proposed, awaiting the operator
 
 **Decision.** Proposed, awaiting the operator: use a shared connection and a default
