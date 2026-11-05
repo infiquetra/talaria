@@ -6956,3 +6956,10 @@ buffer latency.
 a model but no per-child effort. A later goal snapshot may omit a finished goal altogether.
 **Rule.** Retain an explicit finished verdict for the session and never infer child effort from a
 parent or a configured default.
+
+## Menu focus takes Escape before the composer
+
+The menu key tests and the running-turn layout test distinguish closing a dropdown from
+returning focus; neither operation should reach the turn interrupt action.
+
+Rule: route focused menu input before composer and turn controls.

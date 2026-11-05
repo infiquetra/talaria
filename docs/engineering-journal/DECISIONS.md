@@ -4657,3 +4657,12 @@ footer, keeping the tab row compact. Request up to 50 hub search items and show 
 fetched from sources before deduplication beside the number shown. If source counts are absent,
 show only the number shown. Fetched counts are not match totals.
 **Revisit when.** Hermes returns a true match total for search.
+
+### The optional menu reuses existing actions
+
+**Decision.** The menu groups Sessions, Fleet and attention under Session; model and effort
+under Model; panel, bar, tasks, agents and transcript under View; recording and read-aloud
+under Voice; settings, providers, MCP servers and profiles under Settings; and the gateway
+health check under Help. Disabled actions give their existing refusal reason. The bar and
+panel preferences are independent, and a temporary menu does not save a preference.
+**Revisit when.** Existing action availability or the workspace layout changes.

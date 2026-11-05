@@ -78,6 +78,7 @@ fn draw(
             panel: layout.panel,
             checklist: None,
             checklist_expanded: false,
+            menu: workspace::menu::MenuState::hidden(),
             footer: &footer,
             work: None,
         };

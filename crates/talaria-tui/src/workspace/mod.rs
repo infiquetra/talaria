@@ -1,4 +1,5 @@
 //! Optional full-screen workspace presentation.
+pub mod menu;
 pub mod panel;
 
 use crate::{
@@ -20,6 +21,8 @@ pub struct WorkspaceView<'a> {
     pub entries: &'a [TranscriptEntry<'a>],
     pub details: Details,
     pub panel: PanelVisibility,
+    /// Top menu state for this frame.
+    pub menu: menu::MenuState,
     pub checklist: Option<&'a Checklist>,
     pub checklist_expanded: bool,
     pub footer: &'a LiveView<'a>,
@@ -129,7 +132,8 @@ impl Workspace {
         let footer_rows = rows
             .iter()
             .fold(0u16, |height, row| height.saturating_add(row.height));
-        let areas = geometry(area, footer_rows, 0, view.panel);
+        let menu_rows = u16::from(view.menu.visible && !view.menu.transient);
+        let areas = geometry(area, footer_rows, menu_rows, view.panel);
         self.transcript
             .draw(view.entries, view.details, areas.transcript, buffer, other);
         if let Some(area) = areas.panel {
@@ -158,6 +162,16 @@ impl Workspace {
                     buffer,
                 );
             }
+        }
+        if view.menu.visible {
+            let menu_area = if view.menu.transient {
+                area
+            } else if areas.menu.height > 0 {
+                Rect::new(area.x, area.y, area.width, area.height)
+            } else {
+                Rect::default()
+            };
+            view.menu.draw(menu_area, buffer);
         }
     }
 }

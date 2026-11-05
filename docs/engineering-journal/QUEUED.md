@@ -1890,3 +1890,8 @@ gateway.
 The research is done and both drafts are written in [docs/plans/2026-08-08-pypi-name-request.md](../plans/2026-08-08-pypi-name-request.md); neither was sent. The name belongs to an unrelated content management system, last uploaded **2010-06-19**, whose own metadata carries `Development Status :: 7 - Inactive` — but whose author is active and reachable, which is why the first step is a letter rather than a PEP 541 form. Reasoning and the reopen condition are in [DECISIONS.md](DECISIONS.md#the-talaria-name-on-the-python-package-index-is-not-asked-for-yet-because-the-project-cannot-yet-promise-it-will-keep-it).
 
 **Two things a repository cannot supply:** the letter has to be sent by a person under their own name, and the PEP 541 form validates a PyPI username that is not derivable from here.
+
+## Composer keyboard shortcuts view
+
+The settings help describes settings keys, not the composer's shortcuts. Consider a dedicated
+shortcuts view when a separate request defines its scope; the menu does not add one.

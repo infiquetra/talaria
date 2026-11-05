@@ -31,6 +31,12 @@ pub enum PanelVisibility {
 pub struct LayoutState {
     pub preferences: LayoutPreferences,
     pub panel: PanelVisibility,
+    /// The menu row has keyboard focus.
+    pub menu_focused: bool,
+    /// A dropdown is open.
+    pub menu_dropdown: bool,
+    /// The menu is visible while its preference stays off.
+    pub menu_transient: bool,
 }
 
 /// Pure column allocation. A later menu can use the separate row allocation.
@@ -47,6 +53,9 @@ impl LayoutState {
         let mut state = Self {
             preferences,
             panel: PanelVisibility::Hidden,
+            menu_focused: false,
+            menu_dropdown: false,
+            menu_transient: false,
         };
         state.resize(columns, rows);
         state
@@ -110,7 +119,7 @@ impl LayoutState {
         LayoutPlan {
             transcript_columns: columns.saturating_sub(panel_columns),
             panel_columns,
-            menu_rows: 0,
+            menu_rows: u16::from(self.preferences.menu_bar && rows >= MIN_ROWS),
         }
     }
 }
@@ -119,10 +128,12 @@ fn docked(columns: u16, rows: u16) -> bool {
     columns >= DOCK_COLUMNS && rows >= DOCK_ROWS
 }
 
-/// A local layout command. Menu actions are added with the menu itself.
+/// A local layout command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutAction {
     Panel,
+    Bar,
+    Menu,
 }
 
 /// Whether the inline subagent dock is drawn.
@@ -136,6 +147,8 @@ pub fn inline_subagent_dock_visible(panel_visible: bool) -> bool {
 pub fn parse_layout_args(argument: &str) -> Result<LayoutAction, String> {
     match argument.trim() {
         "panel" => Ok(LayoutAction::Panel),
-        _ => Err("Usage: /layout panel".into()),
+        "bar" => Ok(LayoutAction::Bar),
+        "menu" => Ok(LayoutAction::Menu),
+        _ => Err("Usage: /layout panel|bar|menu".into()),
     }
 }

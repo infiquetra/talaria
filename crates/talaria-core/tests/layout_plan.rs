@@ -83,6 +83,51 @@ fn panel_transitions() {
 }
 
 #[test]
+fn menu_row_follows_the_bar_preference_and_the_height() {
+    for (columns, rows) in [(60, 16), (59, 24), (80, 24), (120, 40)] {
+        let plan = LayoutState::new(
+            LayoutPreferences {
+                menu_bar: true,
+                ..LayoutPreferences::default()
+            },
+            columns,
+            rows,
+        )
+        .plan(columns, rows);
+        assert_eq!(plan.menu_rows, 1, "{columns}x{rows} reserves the menu row");
+        assert_eq!(plan.panel_columns, 0, "{columns}x{rows}");
+    }
+    let both = LayoutState::new(
+        LayoutPreferences {
+            work_panel: true,
+            menu_bar: true,
+        },
+        120,
+        40,
+    )
+    .plan(120, 40);
+    assert_eq!(
+        both.menu_rows, 1,
+        "the bar and the panel reserve separately"
+    );
+    assert_eq!(both.panel_columns, 33);
+    assert_eq!(both.transcript_columns, 87);
+
+    let short = LayoutState::new(
+        LayoutPreferences {
+            menu_bar: true,
+            ..LayoutPreferences::default()
+        },
+        80,
+        15,
+    )
+    .plan(80, 15);
+    assert_eq!(short.menu_rows, 0, "fifteen rows reserve no menu row");
+    let off = LayoutState::new(LayoutPreferences::default(), 120, 40).plan(120, 40);
+    assert_eq!(off.menu_rows, 0);
+}
+
+#[test]
 fn short_terminal_reserves_no_space_even_after_an_explicit_action() {
     let mut state = LayoutState::new(LayoutPreferences::default(), 100, 15);
     state.toggle_panel(100, 15);
