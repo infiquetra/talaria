@@ -18,7 +18,7 @@ use crate::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::Line,
 };
 use std::collections::HashSet;
@@ -235,7 +235,36 @@ fn render(
         crate::theme::surfaces::tokens::TRANSCRIPT_BACKGROUND,
         !inline,
     );
-    let (text, ansi) = crate::terminal::buffer_to_ansi(&buffer, width, height, background);
+    let mut text = String::new();
+    let mut ansi = String::new();
+    for row in 0..height {
+        for col in 0..width {
+            let cell = &buffer[(col, row)];
+            text.push_str(cell.symbol());
+            crate::terminal::push_sgr(&mut ansi, "0");
+            if let Some(bg) = background {
+                crate::terminal::push_sgr(&mut ansi, &format!("48;2;{};{};{}", bg.0, bg.1, bg.2));
+            }
+            sgr(&mut ansi, cell.fg, false);
+            sgr(&mut ansi, cell.bg, true);
+            if cell.modifier.contains(Modifier::BOLD) {
+                crate::terminal::push_sgr(&mut ansi, "1");
+            }
+            if cell.modifier.contains(Modifier::ITALIC) {
+                crate::terminal::push_sgr(&mut ansi, "3");
+            }
+            if cell.modifier.contains(Modifier::UNDERLINED) {
+                crate::terminal::push_sgr(&mut ansi, "4");
+            }
+            if cell.modifier.contains(Modifier::REVERSED) {
+                crate::terminal::push_sgr(&mut ansi, "7");
+            }
+            ansi.push_str(cell.symbol());
+        }
+        text.push('\n');
+        crate::terminal::push_sgr(&mut ansi, "0");
+        ansi.push('\n');
+    }
     ThemeScreenFrame {
         theme_id: id,
         width,
@@ -246,5 +275,40 @@ fn render(
         code_colours: code_colours.len(),
         paints_background: buffer[(0, 0)].bg != Color::Reset,
         ansi,
+    }
+}
+
+fn sgr(out: &mut String, color: Color, background: bool) {
+    let prefix = if background { 48 } else { 38 };
+    match color {
+        Color::Rgb(r, g, b) => {
+            crate::terminal::push_sgr(out, &format!("{prefix};2;{r};{g};{b}"));
+        }
+        Color::Indexed(n) => {
+            crate::terminal::push_sgr(out, &format!("{prefix};5;{n}"));
+        }
+        Color::Reset => {}
+        named => {
+            let n = match named {
+                Color::Black => 0,
+                Color::Red => 1,
+                Color::Green => 2,
+                Color::Yellow => 3,
+                Color::Blue => 4,
+                Color::Magenta => 5,
+                Color::Cyan => 6,
+                Color::Gray => 7,
+                Color::DarkGray => 8,
+                Color::LightRed => 9,
+                Color::LightGreen => 10,
+                Color::LightYellow => 11,
+                Color::LightBlue => 12,
+                Color::LightMagenta => 13,
+                Color::LightCyan => 14,
+                Color::White => 15,
+                _ => return,
+            };
+            crate::terminal::push_sgr(out, &format!("{prefix};5;{n}"));
+        }
     }
 }
