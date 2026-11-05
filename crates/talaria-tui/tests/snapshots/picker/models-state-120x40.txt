@@ -1,0 +1,40 @@
+┌Switch model · this session───────────────────────────────────────────────────────────────────────────────────────────┐
+│> type to filter                                                                                                      │
+│[All] Starred Configured Set up                                                                                       │
+│1 models · 1 providers                                                                                                │
+│Example provider 00                                                   │Details                                        │
+│>  ● reasoner-large                                           effort ?│Selected: Example provider 00 / reasoner-large │
+│                                                                      │Requested: high                                │
+│                                                                      │Support: unverified for this route             │
+│                                                                      │Applied: unknown                               │
+│                                                                      │Context: unknown                               │
+│                                                                      │Provider: catalogue-authenticated; credential …│
+│                                                                      │F2/Ctrl+E details; Esc back                    │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│                                                                      │                                               │
+│Rows 1–2 of 2                                                         │                                               │
+│↑↓ move · Enter choose · Tab view · F2/Ctrl+E details · Esc clear/close                                               │
+│effort: high · Ctrl+F star · Ctrl+G save · Ctrl+R reload · Ctrl+U clear                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

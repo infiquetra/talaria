@@ -335,6 +335,7 @@ impl ModelOverlay {
 
     fn view(&self) -> PickerView<'_> {
         PickerView {
+            browse: None,
             title: &self.title,
             filter: &self.filter,
             effort: &self.effort,
@@ -404,6 +405,9 @@ fn picker_key(keymap: &KeyMap, key: Key) -> Option<PickerKey> {
             ModelAction::ModelFavourite => Some(PickerKey::ToggleFavourite),
             ModelAction::ModelRefresh => Some(PickerKey::Refresh),
             ModelAction::ModelPicker => None,
+            ModelAction::ModelChipsNext
+            | ModelAction::ModelChipsPrev
+            | ModelAction::ModelDetails => None,
         };
     }
     let plain = !key.mods.ctrl && !key.mods.alt && !key.mods.super_key && !key.mods.other;
@@ -5083,6 +5087,35 @@ mod tests {
 
     #[test]
     fn picker_keys_use_the_overlay_configuration_and_keep_typed_text() {
+        let defaults = KeyMap::defaults();
+        let chord = |code, mods| Key::from(KeyEvent::new(code, mods));
+        for (code, mods, expected) in [
+            (KeyCode::Tab, KeyModifiers::NONE, PickerKey::ChipsNext),
+            (KeyCode::BackTab, KeyModifiers::SHIFT, PickerKey::ChipsPrev),
+            (KeyCode::F(2), KeyModifiers::NONE, PickerKey::Details),
+            (
+                KeyCode::Char('e'),
+                KeyModifiers::CONTROL,
+                PickerKey::Details,
+            ),
+        ] {
+            assert_eq!(picker_key(&defaults, chord(code, mods)), Some(expected));
+        }
+        let (rebound, notices) = KeyMap::from_entries(&BTreeMap::from([(
+            "model_details".to_string(),
+            vec!["ctrl+j".to_string()],
+        )]));
+        assert!(notices.is_empty());
+        assert_eq!(
+            picker_key(&rebound, chord(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+            Some(PickerKey::Details)
+        );
+        for c in ['o', 'c', '4'] {
+            assert_eq!(
+                picker_key(&rebound, chord(KeyCode::Char(c), KeyModifiers::NONE)),
+                Some(PickerKey::Char(c))
+            );
+        }
         let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
             "model_scope".to_string(),
             vec!["ctrl+r".to_string()],
@@ -5109,6 +5142,47 @@ mod tests {
             picker_key(&map, key(KeyCode::Char('p'), KeyModifiers::ALT)),
             None
         );
+    }
+
+    #[test]
+    fn picker_keys_route_chips_details_and_rebinding_without_stealing_text() {
+        let map = KeyMap::defaults();
+        for (code, mods, expected) in [
+            (KeyCode::Tab, KeyModifiers::NONE, PickerKey::ChipsNext),
+            (KeyCode::BackTab, KeyModifiers::SHIFT, PickerKey::ChipsPrev),
+            (KeyCode::F(2), KeyModifiers::NONE, PickerKey::Details),
+            (
+                KeyCode::Char('e'),
+                KeyModifiers::CONTROL,
+                PickerKey::Details,
+            ),
+        ] {
+            assert_eq!(
+                picker_key(&map, Key::from(KeyEvent::new(code, mods))),
+                Some(expected)
+            );
+        }
+        let (map, notices) = KeyMap::from_entries(&BTreeMap::from([(
+            "model_details".to_owned(),
+            vec!["alt+d".to_owned()],
+        )]));
+        assert!(notices.is_empty());
+        assert_eq!(
+            picker_key(
+                &map,
+                Key::from(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT))
+            ),
+            Some(PickerKey::Details)
+        );
+        for ch in ['o', 'c', '1'] {
+            assert_eq!(
+                picker_key(
+                    &map,
+                    Key::from(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+                ),
+                Some(PickerKey::Char(ch))
+            );
+        }
     }
 
     #[test]

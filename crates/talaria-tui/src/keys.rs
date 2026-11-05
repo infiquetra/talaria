@@ -322,16 +322,22 @@ pub enum ModelAction {
     ModelScope,
     ModelFavourite,
     ModelRefresh,
+    ModelChipsNext,
+    ModelChipsPrev,
+    ModelDetails,
 }
 
 impl ModelAction {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::ModelPicker,
         Self::EffortDown,
         Self::EffortUp,
         Self::ModelScope,
         Self::ModelFavourite,
         Self::ModelRefresh,
+        Self::ModelChipsNext,
+        Self::ModelChipsPrev,
+        Self::ModelDetails,
     ];
 
     pub const fn config_name(self) -> &'static str {
@@ -342,6 +348,9 @@ impl ModelAction {
             Self::ModelScope => "model_scope",
             Self::ModelFavourite => "model_favourite",
             Self::ModelRefresh => "model_refresh",
+            Self::ModelChipsNext => "model_chips_next",
+            Self::ModelChipsPrev => "model_chips_prev",
+            Self::ModelDetails => "model_details",
         }
     }
 
@@ -366,6 +375,7 @@ impl ModelAction {
             Self::ModelScope => &["ctrl+g"],
             Self::ModelFavourite => &["ctrl+f"],
             Self::ModelRefresh => &["ctrl+r"],
+            Self::ModelChipsNext | Self::ModelChipsPrev | Self::ModelDetails => &[],
         }
     }
 }

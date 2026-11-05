@@ -57,6 +57,9 @@ pub enum PickerKey {
     ToggleScope,
     ToggleFavourite,
     Refresh,
+    ChipsNext,
+    ChipsPrev,
+    Details,
 }
 
 /// A key the confirmation card handles.
@@ -80,6 +83,7 @@ pub struct PickerRow {
 /// What the overlay draws. The list height is the caller's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PickerView<'a> {
+    pub browse: Option<super::BrowseView<'a>>,
     pub title: &'a str,
     pub filter: &'a str,
     pub effort: &'a str,
@@ -150,6 +154,9 @@ pub enum ModelsEffect {
 /// One fact the app feeds the picker.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModelsInput {
+    Connection {
+        connected: bool,
+    },
     OpenPicker {
         session_id: Option<String>,
         profile: String,

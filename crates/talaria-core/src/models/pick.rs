@@ -139,6 +139,8 @@ impl ModelsState {
         self.list_height
     }
 
+    pub fn set_details_scroll_limit(&mut self, _limit: Option<usize>) {}
+
     /// The application supplies its local offset; the reducer never reads a clock.
     pub fn set_display_zone(&mut self, zone: DisplayZone) {
         self.display_zone = zone;
@@ -148,6 +150,7 @@ impl ModelsState {
     pub fn update(&mut self, input: ModelsInput) -> Vec<ModelsEffect> {
         let mut effects = Vec::new();
         match input {
+            ModelsInput::Connection { .. } => {}
             ModelsInput::SessionOpened {
                 session_id,
                 revision,
@@ -1272,7 +1275,7 @@ impl ModelsState {
     }
 
     pub fn view(&self) -> Option<PickerView<'_>> {
-        self.picker.as_ref().map(|p| PickerView { title: &p.title, filter: &p.filter, effort: &p.effort_text, hints: if p.refreshing { "refreshing all providers can take a few seconds; other actions wait until it finishes" } else { "enter switch · ctrl+g scope · ctrl+f ★ · ctrl+r refresh · esc" }, refreshing: p.refreshing, rows: &p.rows, selected: p.selected, banner: p.banner.as_deref() })
+        self.picker.as_ref().map(|p| PickerView { browse: None, title: &p.title, filter: &p.filter, effort: &p.effort_text, hints: if p.refreshing { "refreshing all providers can take a few seconds; other actions wait until it finishes" } else { "enter switch · ctrl+g scope · ctrl+f ★ · ctrl+r refresh · esc" }, refreshing: p.refreshing, rows: &p.rows, selected: p.selected, banner: p.banner.as_deref() })
     }
     fn visible_confirmation(&self) -> Option<&PendingConfirmation> {
         if self.picker.is_some() {

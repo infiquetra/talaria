@@ -244,6 +244,7 @@ mod tests {
         }];
         let text = "Other is not set up. Set it up with hermes model in a terminal, then press ctrl+r here.";
         let view = PickerView {
+            browse: None,
             title: "Switch model · this session",
             filter: "",
             effort: "effort: medium",
