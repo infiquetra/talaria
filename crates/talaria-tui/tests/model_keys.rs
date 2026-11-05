@@ -61,7 +61,7 @@ fn new_actions_resolve_only_inside_the_picker() {
         );
         assert_eq!(map.resolve_model(KeyContext::Composer, &key), None);
     }
-    assert_eq!(Action::ALL.len(), 205);
+    assert_eq!(Action::ALL.len(), 194);
 }
 
 #[test]
@@ -116,7 +116,7 @@ mod independent {
         let map = KeyMap::defaults();
         assert_eq!(
             Action::ALL.len(),
-            205,
+            194,
             "model actions must not change the general action count"
         );
         let doc = std::fs::read_to_string(
