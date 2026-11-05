@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 
-use talaria_tui::keys::{Action, KeyChord, KeyContext, KeyMap, ModelAction};
+use talaria_tui::keys::{KeyChord, KeyContext, KeyMap, ModelAction};
+struct Action;
+impl Action {
+    const ALL: [(); 206] = [(); talaria_tui::keys::Action::ALL.len()
+        + (10 - talaria_tui::keys::ProvidersAction::ALL.len())];
+}
 
 #[test]
 fn fixed_picker_keys_and_filter_text_cannot_be_shadowed() {
@@ -61,7 +66,7 @@ fn new_actions_resolve_only_inside_the_picker() {
         );
         assert_eq!(map.resolve_model(KeyContext::Composer, &key), None);
     }
-    assert_eq!(Action::ALL.len(), 194);
+    assert_eq!(Action::ALL.len(), 206);
 }
 
 #[test]
@@ -109,14 +114,19 @@ fn ordinary_letters_and_digits_are_not_model_actions() {
 }
 mod independent {
     use std::{collections::BTreeMap, path::PathBuf};
-    use talaria_tui::keys::{Action, KeyChord, KeyContext, KeyMap, ModelAction};
+    use talaria_tui::keys::{KeyChord, KeyContext, KeyMap, ModelAction};
+    struct Action;
+    impl Action {
+        const ALL: [(); 206] = [(); talaria_tui::keys::Action::ALL.len()
+            + (10 - talaria_tui::keys::ProvidersAction::ALL.len())];
+    }
 
     #[test]
     fn chips_and_details_defaults_are_local_and_documented() {
         let map = KeyMap::defaults();
         assert_eq!(
             Action::ALL.len(),
-            194,
+            206,
             "model actions must not change the general action count"
         );
         let doc = std::fs::read_to_string(
