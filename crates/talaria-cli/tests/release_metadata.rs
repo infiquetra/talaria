@@ -36,9 +36,9 @@ fn workspace_version_has_one_source() {
     );
     assert_eq!(
         workspace_version(&root),
-        "0.7.1",
+        "0.8.0",
         "{}",
-        blame("Cargo.toml", 1, "workspace version is not 0.7.1")
+        blame("Cargo.toml", 1, "workspace version is not 0.8.0")
     );
     for manifest_path in member_manifests(&root) {
         let rel = rel_to(&root, &manifest_path);
@@ -79,6 +79,23 @@ fn workspace_version_has_one_source() {
                 &rel,
                 1,
                 "member does not inherit the workspace version once"
+            )
+        );
+    }
+}
+
+#[test]
+fn no_planned_v080_markers_remain_in_configuration_doc() {
+    let root = root();
+    let text = read(&root, "docs/configuration.md");
+    for (number, line) in text.lines().enumerate() {
+        assert!(
+            !line.contains("Planned for v0.8.0"),
+            "{}",
+            blame(
+                "docs/configuration.md",
+                number + 1,
+                "planned v0.8.0 marker remains"
             )
         );
     }
@@ -421,6 +438,22 @@ fn final_version_requires_release_notes() {
                     &rel,
                     1,
                     &format!("v0.7.1 user-visible issue {issue} is missing")
+                )
+            );
+        }
+    }
+    if version == "0.8.0" {
+        for issue in [
+            "#424", "#426", "#427", "#428", "#480", "#481", "#482", "#485", "#486", "#487", "#488",
+            "#489", "#502", "#503",
+        ] {
+            assert!(
+                text.contains(issue),
+                "{}",
+                blame(
+                    &rel,
+                    1,
+                    &format!("v0.8.0 user-visible issue {issue} is missing")
                 )
             );
         }
