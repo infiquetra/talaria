@@ -1,5 +1,46 @@
 //! Turn Markdown into text the gateway can speak.
 
+/// Which structural rendering a session starts in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpeechRender {
+    /// The existing spoken form.
+    Strip,
+    /// A short digest.
+    Digest,
+}
+
+/// The starting render. Empty until `digest` is recognised.
+#[must_use]
+pub fn speech_render(value: Option<&str>) -> SpeechRender {
+    let _ = value;
+    SpeechRender::Strip
+}
+
+/// One sentence ready for playback.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpeechChunk {
+    /// The audio epoch this sentence belongs to.
+    pub audio_epoch: u64,
+    /// Position in the reply, starting at zero.
+    pub seq: u64,
+    /// The sentence, without a trailing code body.
+    pub text: String,
+}
+
+/// A deterministic digest. Empty until the summary exists.
+#[must_use]
+pub fn digest_text(markdown: &str, max_chars: usize) -> Option<String> {
+    let _ = (markdown, max_chars);
+    None
+}
+
+/// Split completed prose into sentences. Empty until chunking exists.
+#[must_use]
+pub fn sentence_chunks(text: &str, audio_epoch: u64) -> Vec<SpeechChunk> {
+    let _ = (text, audio_epoch);
+    Vec::new()
+}
+
 /// Spoken form of `markdown`, or nothing when no letter or digit remains.
 #[must_use]
 pub fn speakable_text(markdown: &str, max_chars: usize) -> Option<String> {

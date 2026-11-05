@@ -16,15 +16,46 @@ enum Phase {
     Detached,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cutoff {
+    /// Push-to-talk while speech or synthesis is still outstanding.
+    Record,
+    Stop,
+    ReadOff,
+    Escape,
+    TargetChanged,
+    Quit,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Input {
     Start,
     Finish,
-    CaptureFinished { epoch: u64 },
-    Text { epoch: u64, text: String },
-    Failed { epoch: u64 },
+    CaptureFinished {
+        epoch: u64,
+    },
+    Text {
+        epoch: u64,
+        text: String,
+    },
+    Failed {
+        epoch: u64,
+    },
     Reopen,
     Detach,
+    /// Local playback has something to say.
+    SpeechStarted,
+    /// Stop speech before any new recording.
+    Cutoff(Cutoff),
+    /// The playback helper reported that output is quiet.
+    Quiet {
+        audio_epoch: u64,
+    },
+    /// A synthesis result that may belong to an older audio epoch.
+    LateSynthesis {
+        audio_epoch: u64,
+        text: String,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -33,6 +64,8 @@ pub enum Effect {
     FinishCapture { epoch: u64 },
     Transcribe { epoch: u64 },
     Draft(String),
+    StopPlayback { audio_epoch: u64 },
+    Notice(String),
 }
 
 impl ClientVoice {
@@ -59,7 +92,14 @@ impl ClientVoice {
             partial: None,
             clock: None,
             read_aloud,
+            speaking: false,
         }
+    }
+
+    /// The counter that invalidates late playback and capture results.
+    #[must_use]
+    pub fn audio_epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub fn update(&mut self, input: Input) -> Vec<Effect> {
@@ -103,6 +143,10 @@ impl ClientVoice {
                 self.phase = Phase::Ready;
                 Vec::new()
             }
+            Input::SpeechStarted
+            | Input::Cutoff(_)
+            | Input::Quiet { .. }
+            | Input::LateSynthesis { .. } => Vec::new(),
             _ => Vec::new(),
         }
     }

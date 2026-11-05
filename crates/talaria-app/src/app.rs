@@ -15633,6 +15633,7 @@ fn client_voice_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> 
                 .into(),
             )
         }
+        Ok(VoiceCommand::Stop) | Ok(VoiceCommand::Mode(_)) => Vec::new(),
         Ok(VoiceCommand::Status) => notice_effect(
             state,
             format!(
@@ -15691,7 +15692,7 @@ fn client_voice_input(
                     effects.extend(load_draft(state, draft));
                 }
             }
-            Effect::Draft(_) => {}
+            Effect::Draft(_) | Effect::StopPlayback { .. } | Effect::Notice(_) => {}
         }
     }
     effects.push(AppEffect::Redraw);

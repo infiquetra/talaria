@@ -124,3 +124,26 @@ fn phase_projection_hides_unknown_and_marks_a_pending_stop() {
         "transcribing… +read"
     );
 }
+
+#[test]
+fn speaking_indicator_appears_and_clears() {
+    use talaria_core::voice::client::{ClientVoice, Cutoff, Input};
+    use talaria_tui::voice_view::segment_for;
+
+    let mut voice = ClientVoice::default();
+    voice.update(Input::SpeechStarted);
+    let shown = segment_for(&voice.view(true, false)).expect("speaking is on the status line");
+    assert!(
+        shown.text.contains("speaking"),
+        "speech playing is visible: {}",
+        shown.text
+    );
+    voice.update(Input::Cutoff(Cutoff::Stop));
+    let after = segment_for(&voice.view(true, false))
+        .map(|segment| segment.text)
+        .unwrap_or_default();
+    assert!(
+        !after.contains("speaking"),
+        "the speaking indicator clears when speech stops: {after}"
+    );
+}
