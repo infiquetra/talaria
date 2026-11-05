@@ -1,0 +1,11 @@
+schema = 1
+name = "Quiet amber"
+extends = "dark"
+follow_hermes_skin = true
+
+[palette]
+accent = "#ffb86b"
+
+[elements."composer.border.focused"]
+fg = "$palette.accent"
+bold = true

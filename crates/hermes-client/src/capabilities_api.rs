@@ -23,6 +23,7 @@ pub struct SkillToggleDto {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HubSearchDto {
+    pub source_counts: Option<std::collections::BTreeMap<String, u64>>,
     pub results: Vec<Value>,
     pub timed_out: Vec<String>,
     pub installed: Value,
@@ -165,7 +166,7 @@ pub async fn hub_search(
     read(
         rest,
         format!(
-            "/api/skills/hub/search?q={}&source=all&limit=20&profile={}",
+            "/api/skills/hub/search?q={}&source=all&limit=50&profile={}",
             encode(q),
             encode(profile)
         ),

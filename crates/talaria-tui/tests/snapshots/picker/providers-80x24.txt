@@ -1,0 +1,24 @@
+┌Providers · profile fixture───────────────────────────────────────────────────┐
+│> type to filter                                                              │
+│[All] Keys Accounts Endpoints                                                 │
+│3 providers                                                                   │
+│Configured                                                                    │
+│> Example provider 00                                             listed ready│
+│Needs setup                                                                   │
+│  Example provider 01                                                key saved│
+│  Example provider 02                                              needs setup│
+│Endpoints                                                                     │
+│  + Add an endpoint                                                           │
+│  Example endpoint                                                   key saved│
+│                                                                              │
+│Rows 1–8 of 8                                                                 │
+│Details───────────────────────────────────────────────────────────────────────│
+│Provider: Example provider 00                                                 │
+│Status: listed ready                                                          │
+│Catalogue authentication; reachability unknown                                │
+│Methods: API key, account sign-in                                             │
+│F2/Ctrl+E full details                                                        │
+│                                                                              │
+│Enter set up · Esc close · F2/Ctrl+E details                                  │
+│Tab view · Ctrl+R reload · Ctrl+U clear                                       │
+└──────────────────────────────────────────────────────────────────────────────┘

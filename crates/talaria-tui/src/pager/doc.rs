@@ -1,6 +1,7 @@
 //! Per-cell render cache for final transcript cells. Issue 222.
 //!
-//! A final cell never changes, so its rendered lines are kept by cell id, width and detail level.
+//! A final cell never changes, so its rendered lines are kept by cell id, entry position,
+//! width and detail level.
 //! A cell that is still live is drawn again every time, because it may still grow.
 //!
 //! Movement and drawing share the same rendered lines.
@@ -17,7 +18,7 @@ use crate::history::{CellLines, sanitize_line};
 /// The rendered lines of the cells of one session.
 #[derive(Debug, Default)]
 pub struct Document {
-    drawn: HashMap<(CellId, u16, u8), Vec<Line<'static>>>,
+    drawn: HashMap<(CellId, usize, u16, u8), Vec<Line<'static>>>,
 }
 
 impl Document {
@@ -67,7 +68,9 @@ impl Document {
         let mut lines = if cell.is_final()
             && let Some(id) = cell_id(cell)
         {
-            let key = (id, width, detail_key(details));
+            // Different session sources can reuse a cell id in the workspace's
+            // ordered commit stream. Its position distinguishes those entries.
+            let key = (id, index, width, detail_key(details));
             match cache.get(&key) {
                 Some(cached) => cached.clone(),
                 None => {

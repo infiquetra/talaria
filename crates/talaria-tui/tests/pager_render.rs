@@ -34,6 +34,18 @@ const TOO_SMALL_19: &str = "Window too small f…";
 const TOO_SMALL_40: &str = "Window too small for the transcript. q …";
 const RIGHT_MARK: &str = "cell 1/2000 · ↓ new output · End";
 
+#[test]
+fn recorded_render_cases_match_both_shared_body_callers() {
+    for fixture in support::FIXTURES {
+        let state = support::replay_fixture(fixture);
+        for width in [47, 80, 87, 120] {
+            for details in [Details::Expanded, Details::Compact] {
+                support::assert_shared_body_matches_pager(state.cells(), width, details);
+            }
+        }
+    }
+}
+
 fn paint(pager: &mut Pager, ctx: &PagerContext<'_>, cols: u16, rows: u16) -> Buffer {
     let plain = PlainCellLines;
     let mut buf = Buffer::empty(Rect::new(0, 0, cols, rows));

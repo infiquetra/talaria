@@ -4,7 +4,7 @@ use super::browse::{self, RowFacts};
 use super::picker::*;
 use super::saved::SavedModels;
 use super::text::*;
-use super::{BrowseCounts, BrowseView, Catalog, DisplayZone, Effort, ListScope};
+use super::{BrowseCounts, BrowseView, Catalog, CatalogKind, DisplayZone, Effort, ListScope};
 use crate::mutation::{Confirmation, Fences, MutationLedger, MutationOutcome, MutationRequest};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -38,7 +38,9 @@ struct PendingConfirmation {
 struct Session {
     profile: String,
     catalog: Option<Catalog>,
+    catalog_attempted: bool,
     model: Option<String>,
+    provider: Option<String>,
     effort: Option<Effort>,
     show_effort: bool,
     active: Option<Active>,
@@ -108,6 +110,21 @@ fn effort_value(level: Option<Effort>) -> Value {
 }
 
 impl ModelsState {
+    /// Whether a catalogue route offers effort levels, when known.
+    pub fn effort_offered(&self, session_id: &str, provider: &str, model: &str) -> Option<bool> {
+        self.sessions
+            .get(session_id)?
+            .catalog
+            .as_ref()?
+            .rows(&[], self.display_zone)
+            .into_iter()
+            .find(|row| {
+                row.kind == CatalogKind::Model
+                    && row.provider_slug == provider
+                    && row.model == model
+            })
+            .map(|row| !row.badges.iter().any(|badge| badge == "no effort"))
+    }
     pub fn new(launch_id: &str, saved: Result<SavedModels, String>) -> Self {
         Self {
             ledger: MutationLedger::new(launch_id),
@@ -272,6 +289,8 @@ impl ModelsState {
             ModelsInput::OptionsLoaded { session_id, result } => {
                 let session = self.sessions.entry(session_id.clone()).or_default();
                 session.model = Some(result.model.clone());
+                session.provider = Some(result.provider.clone());
+                session.catalog_attempted = true;
                 session.catalog = Some(Catalog::from_result(&result));
                 session.readback_model = true;
                 if session.readback_effort {
@@ -418,6 +437,7 @@ impl ModelsState {
         }
         self.warn_saved(&sid, effects);
         let session = self.sessions.entry(sid.clone()).or_default();
+        session.catalog_attempted = true;
         session.profile = profile.clone();
         let cached = session.catalog.is_some();
         self.picker = Some(Picker {
@@ -958,12 +978,26 @@ impl ModelsState {
                         .map_or(active.pick.effort.flatten(), |value| {
                             value.as_str().and_then(Effort::parse)
                         });
+                    let offered = self.sessions.get(&sid).and_then(|s| {
+                        let catalog = s.catalog.as_ref()?;
+                        self.effort_offered(
+                            &sid,
+                            s.provider.as_deref().unwrap_or(&catalog.result.provider),
+                            s.model.as_deref().unwrap_or(&catalog.result.model),
+                        )
+                    });
                     effects.push(notice(
                         &sid,
                         NoticeLevel::Info,
                         level.map_or_else(
                             || notice_effort_back().into(),
-                            |e| notice_effort(e.as_wire()),
+                            |e| {
+                                if offered == Some(false) {
+                                    notice_effort_not_offered(e.as_wire())
+                                } else {
+                                    notice_effort(e.as_wire())
+                                }
+                            },
                         ),
                     ));
                     self.sessions.entry(sid.clone()).or_default().effort = level;
@@ -1215,10 +1249,11 @@ impl ModelsState {
                 catalog.result.model = model.into();
             }
         }
-        if let Some(provider) = receipt.get("provider").and_then(Value::as_str)
-            && let Some(catalog) = &mut session.catalog
-        {
-            catalog.result.provider = provider.into();
+        if let Some(provider) = receipt.get("provider").and_then(Value::as_str) {
+            session.provider = Some(provider.into());
+            if let Some(catalog) = &mut session.catalog {
+                catalog.result.provider = provider.into();
+            }
         }
     }
     fn event(
@@ -1266,6 +1301,22 @@ impl ModelsState {
                 session.deferred = None;
             }
             self.adopt_model(sid, body);
+            let session = self.sessions.entry(sid.into()).or_default();
+            if self.foreground.as_deref() == Some(sid)
+                && body
+                    .get("reasoning_effort")
+                    .or_else(|| body.get("reasoning"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|e| !e.is_empty())
+                && session.catalog.is_none()
+                && !session.catalog_attempted
+            {
+                session.catalog_attempted = true;
+                effects.push(ModelsEffect::LoadOptions {
+                    session_id: sid.into(),
+                    refresh: false,
+                });
+            }
             return;
         }
         if type_name != "session.updated" {

@@ -20,6 +20,7 @@ pub mod fleet;
 pub mod fleet_attention;
 pub mod fleet_view;
 pub mod kanban;
+pub mod layout;
 pub mod mcp;
 pub mod memory;
 pub mod model_roles;
