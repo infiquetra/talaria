@@ -15,6 +15,9 @@ Read [AGENTS.md](AGENTS.md) and [README.md](README.md) before changing code.
 
 Use rustup with the pinned toolchain.
 
+Run `tools/prepush.sh` before pushing. Add `--bench` to include benchmark checks.
+For a short local loop:
+
 ```bash
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings

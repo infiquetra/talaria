@@ -48,6 +48,9 @@ define the tier ladder. Every phase ends with an operator check before the next 
 
 Use rustup; [rust-toolchain.toml](rust-toolchain.toml) pins the compiler and components.
 
+Run `tools/prepush.sh` before pushing. Add `--bench` to include benchmark checks.
+For a short local loop:
+
 ```bash
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
