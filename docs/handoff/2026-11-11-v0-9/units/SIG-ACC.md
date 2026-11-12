@@ -1,0 +1,58 @@
+# SIG-ACC: Live proof that a notice shows, and the sudo reconnect test is recorded
+
+Status: `proposed`. The GitHub issue for this unit is the contract; this document is its reference specification. If they disagree, the issue wins and the disagreement is reported on the issue.
+
+How to use this document. Read the issue for REQ-1 through REQ-6, UAT-1 and UAT-2, and the acceptance checks. The reconnect proof is the recorded result of the live test `SIG-5` adds, not a row that drops the connection. This page maps the code those rows stand next to, with `path:line`, at commit ee5c4881 unless a line says Hermes v0.23.1. It does not restate a requirement or a test.
+
+## What is already in the tree
+
+`docs/acceptance/v0.9.0/` is not in this tree. Tracked acceptance files are only under `docs/acceptance/v0.7.0/`. The column layout is `docs/acceptance/v0.7.0/phase-1.md:9`: `id`, `persona`, `result`, `evidence`, `commit`. Header fields at lines 3 to 7 are `Candidate:`, `Hermes:`, `Herdr:`, `OS:`, and `Date:`. `PROOF-4` adds `docs/acceptance/v0.9.0/signal.md` with the first line `# signal acceptance record`, five header lines, and an empty table. That file is on `main` before this issue starts. REQ-1 fills those five and adds no other header line. `OS:` is `macos` when `uname -s` prints `Darwin`, and otherwise that name in lower case. The table cell is the only result. The issue's `Result:` lines are the starting mark and are not copied into the record.
+
+`crates/talaria-cli/tests/repository.rs:20-21` passes `docs/acceptance/` to `git ls-files` and excludes only `docs/acceptance/v0.7.0/`. `python_and_node_toolchain_files_are_gone` (`repository.rs:95`) fails if any other tracked path under `docs/acceptance/` is listed. This issue does not edit that test. Filling a file `PROOF-4` already tracks does not add a path.
+
+`tools/prepush.sh` is not in this tree. `SEAT-0` provides it and it is on `main` before this issue starts. `PROOF-4` adds `case_proof_gates_and_acceptance` to `tools/release/tests/rc.test.sh`. That case reads the seven acceptance files and asserts that none contains `v0.22.4`. It does not look for `PASS`. This issue does not edit that case. The stop condition in the issue covers a failure on `v0.22.4`.
+
+## Launch
+
+`crates/talaria-cli/src/args.rs:45` is `--model`, `:47` is `--provider`, and `:51` is `--profile` with default `default`. `--bg` is `:65`. `--worktree` is `:68`, and `:249` rejects it unless `--bg` is also set. REQ-2 uses none of those two flags. The guide's first session (`docs/guide.md:37-39`) shows `talaria` with no flags.
+
+`hc read` prints the screen as text. The rows that need the screen use that command. The operator posts the terminal address as a comment on this issue, and the agent does not start a terminal. Do not copy the address into the record. The agent tester starts Talaria once in that terminal, and `UAT-2`'s operator steps happen in the same session. The agent sends text with `env -u HC_TERMINAL_ID -u HC_SCOPE hc send <address> "<text>"`: herdr core sets those two variables for every program it runs, and with them set, text sent to a program that reports its state arrives wrapped as a message from another agent, so a slash command sent that way is not a command (`docs/handoff/2026-11-11-v0-9/hc-facts.md`, "The sender tag on `hc send`"). The operator types `/copy link` and presses Enter. The agent sends `stty size` to that terminal before launch; under 80 columns it asks the operator on the issue to widen the Herdr window and waits. The screen shows notice text and does not show a frame key. REQ-2 passes `--record /tmp/talaria-<commit>/frames.jsonl`. Decision 45 counts credit keys in that file with grep. The recording is not committed and not pasted. The binary is `/tmp/talaria-<commit>/talaria`, typed as that path, never the `talaria` on `PATH`. Talaria starts in `/tmp/talaria-<commit>/run`. Pasted output goes through `scrub`, which is defined in the candidate checkout and first replaces that checkout's path with `<checkout>`, so a cargo `Compiling` line passes the record check. The agent tester runs the candidate build block in its own candidate checkout; the operator runs nothing that needs that checkout. REQ-5 is a `cargo test` command the agent tester runs in the candidate checkout. It needs no typed path and no run folder. Which build ran is `git rev-parse HEAD`, recorded as `Candidate:`.
+
+## Notices, as the tree and Hermes v0.23.1 have them
+
+Talaria decodes `notification.show` at `crates/hermes-contract/src/events.rs:216` and `notification.clear` at `:215`. `update` (`crates/talaria-core/src/session/reducer.rs:80-86`) passes `unknown` as true only when `frame.notification` is `Notification::Unknown`. A decoded show is not that case. `session` then ignores a known name with no match arm (`reducer.rs:523`). Nothing is drawn. `SIG-2` is on `main` before this issue starts, because `SIG-3` starts after it. This proof reads the screen. It does not edit the reducer.
+
+Read at Hermes v0.23.1 (commit 3b421578). A local-viewer turn publishes `notification.show` from `_local_notice_callback_sync` (`gateway/run_turn_progress.py:996-1002`). `agent/rate_limit_credits.py:208-218` reads `display.credits_notices`. `hermes_cli/config_defaults.py:871` sets that key to on. The credit keys are named in `agent/credits_tracker.py:167-231` (for example `credits.usage` and `credits.depleted`). `_publish_local_notice` (`gateway/slash_commands_login.py:40-54`) returns without publishing unless the source platform is `Platform.LOCAL` (`:43`), and then publishes the sign-in text as `notification.show` with a key that starts `login:` (`:53`). Re-verify these at the commit the run's `running:` line names, not at the tag in `crates/hermes-contract/PINNED`, in any clone of the public Hermes repository that holds that commit. The issue marks that check. The operator's comment says whether that session is local.
+
+Two lines in `UAT-2` are Talaria text that `SIG-3` adds, not Hermes text. Its REQ-2 adds `Type /copy link to copy it.` as the last line of every committed `login:` cell. Its REQ-4 adds the notice `Copy requested: sign-in link and code. Your terminal must allow clipboard access.` for a link with a code.
+
+`/copy link` is not in this tree. `SIG-3` adds it and is on `main` before this issue starts. The clipboard writer that already exists is `InlineTerminal::copy_to_clipboard` (`crates/talaria-tui/src/terminal.rs:724`). The paste in UAT-2 is the operator reading that clipboard outside Talaria.
+
+## Sudo, and what can drop a socket
+
+The masked sudo title in this tree is `sudo password` (`crates/talaria-tui/src/prompts/stack.rs:497`), drawn when the method is `sudo` (`stack.rs:496`). `policy_for` maps `sudo` to a masked prompt (`crates/talaria-app/src/prompts.rs:32`).
+
+Read at Hermes v0.23.1. `gateway/session_sudo_prompt.py:19` sets `SUDO_TIMEOUT_S` to 120. `ask_sudo` (`session_sudo_prompt.py:22`) sends method `sudo`. `tools/terminal_tool_sudo.py:460-462` documents the password sources and the `sudo -n true` probe. `tui_gateway/contracts/prompt_voice.py:301` defines `request.answer` with `id`, a `result` object, and an optional `profile`. Resume and events-since replies carry `open_requests` at `gateway/session_controls.py:740` and `:794`. This issue does not send `request.answer` and does not decode `open_requests`. `SIG-5` draws the recovered card and is on `main` before this issue starts.
+
+`FaultRelay` (`crates/hermes-client/tests/support/fault_relay.rs:36`) binds `127.0.0.1:0` and forwards to a gateway port. `drop` (`:67`) closes open connections. `restore` (`:82`) forwards again. It is test support. It is not a user command. `replay_recorded_request` is not in this tree. `PROOF-3` adds it and does not wrap `FaultRelay`. Nothing a tester can run drops the live gateway connection. `crates/hermes-client/tests/live_sudo_reconnect.rs` is not in this tree. `SIG-5` adds it, with `waiting_sudo_request_survives_a_reconnect`. REQ-5 records that test's command, its exit status, and the skip line when the gateway did not ask for a password.
+
+## Edge cases
+
+| Situation | Where the issue says what to do |
+| --- | --- |
+| No credit notice frame arrived | REQ-3. Result `NOT RUN (the gateway sent no credit notice)`. Not `PASS`. Not `FAIL`. |
+| A credit frame arrived and the screen lacks its text | REQ-3. Result `FAIL`, then still run `UAT-2` and the live test. `AC-2` does not pass. |
+| The sign-in source is not a local session | REQ-4. The operator's comment says so. Result `BLOCKED (<reason>)`. Do not change the platform. Do not infer it from a missing notice. |
+| A sign-in notice appears but the link, code, hint, copy notice or paste differs, or a local sign-in started and no sign-in notice appears | REQ-4. Result `FAIL`. `NOT RUN` is never written for `UAT-2`. |
+| The terminal is under 80 columns | REQ-2. Ask the operator on the issue to widen the Herdr window, and wait. Do not resize. |
+| The Hermes clone lacks the `running:` commit after `git fetch` | REQ-3. Ask the operator on the issue, and wait. |
+| The gateway did not ask for a password | REQ-5. Record exit status 0 and the skip line. Do not set `SUDO_PASSWORD`. |
+| The live test exits non-zero | REQ-5. Stop. Do not edit the test. |
+| The evidence would contain a password value or a secret | REQ-5. Stop. Do not commit it. |
+| The proof can be recorded only by adding a Rust test | REQ-6. Stop. `crates/talaria-app/tests/live_signal.rs` is not in this tree and this issue does not create it. |
+
+## What this proof does not run
+
+Existing live tests are `#[ignore]`. `live_catalog_completion_and_read_commands` carries that attribute at `crates/talaria-app/tests/live_commands.rs:32`. `report_skip` (`crates/hermes-client/tests/support/mod.rs:962-966`) panics when `TALARIA_LIVE_REQUIRE` is `1`. REQ-2 does not set that variable. `PROOF-1` is not a dependency of this issue. It is on `main` before `PROOF-3`, and `PROOF-3` is a start dependency. `SIG-5` uses that skip rule inside the test REQ-5 records. The agent tester runs that one command in its candidate checkout, as `<command>; echo "exit status: $?"`, and copies the output into the record, which is the only place of record. `report_skip` prints with `println!`, which `cargo test` captures for a passing test unless `--nocapture` is given. This issue does not add a test and does not run the smoke harness.
+
+`SIG-2` is on `main` when `SIG-3` is, because `SIG-3` starts after it. `SIG-4` is on `main` when `SIG-5` is, for the same reason. `PROOF-1` is on `main` when `PROOF-3` is. `SIG-7`, `SIG-8`, and `SIG-9` are not dependencies. The rows do not cover a connection request, an agent print line, or a review summary. `crates/hermes-contract/PINNED` is the tree's pin. The record's Hermes line is read with `/tmp/talaria-<commit>/talaria doctor --profile fixture --json | grep -o 'running: [^"]*'`. It prints `running: <version> at <commit>`. The version is the text after `running: ` and before ` at `. If nothing is printed, or the version is `unknown`, stop. Plain `talaria doctor` prints no `running:` line. The floor is v0.23.0; the doctor's older `MIN_HERMES` (`crates/talaria-core/src/doctor.rs:8`, 0.22.3) is not this floor until `SYNC-2` replaces it. Do not copy the `built for:` tag. `Candidate:` is `git rev-parse HEAD` of the checkout that build was made from. There is no `Talaria:` header and no `hc:` header. `Herdr:` is the whole line `herdr-app --version` printed, which the operator posts as a comment. The agent tester runs `hc --version` itself, and that line goes in the `UAT-1` evidence. The credit-warning check is the `UAT-1` row, not a Rust test. The skip line in `## Live test` is the line `SIG-5` prints, copied once.
