@@ -16,4 +16,4 @@ How to use this document: read it for the code that exists today. The requiremen
 
 `peek_panel_tail_card_and_outcome` (`fleet_view_screens.rs:617`) builds three `PeekPanel` values, at lines 642, 677, and 713.
 
-The count line is drawn only in that peek. The fleet list is unchanged. `PIN-3` leaves `PINNED` at Hermes v0.23.1. This unit does not edit that file. `/fleet` opens the overlay (`docs/configuration.md`). Space is `fleet_peek`.
+The count line is drawn only in that peek. The fleet list is unchanged. [#544](https://github.com/infiquetra/talaria/issues/544) (`PIN-3`) leaves `PINNED` at Hermes v0.23.1. This unit does not edit that file. `/fleet` opens the overlay (`docs/configuration.md`). Space is `fleet_peek`.

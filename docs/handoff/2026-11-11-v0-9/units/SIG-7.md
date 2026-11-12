@@ -14,7 +14,7 @@ How to use this document: the issue says what the card stores, which answer it s
 
 ## The generated wire
 
-On the draft tree the pin file is Hermes v0.22.4 and these structs are already generated. This issue starts after `PIN-3`, so the builder's pin is Hermes v0.23.1. REQ-3 is the re-verify.
+On the draft tree the pin file is Hermes v0.22.4 and these structs are already generated. This issue starts after [#544](https://github.com/infiquetra/talaria/issues/544) (`PIN-3`), so the builder's pin is Hermes v0.23.1. REQ-3 is the re-verify.
 
 `CanonicalSnapshot.pending_connection` is `Option<ConnectionRequestPayload>` (`crates/hermes-contract/src/generated/schemas.rs:2693`). The next field, `prompts`, is a `Vec` (`crates/hermes-contract/src/generated/schemas.rs:2694`), so a snapshot sets an array. `ConnectionRequestPayload` (`crates/hermes-contract/src/generated/schemas.rs:4357-4366`) requires `deadline_at`, `op_id`, `seq`, `targets`, and `timeout_seconds`, and optionally carries `display` and `tool_call_id`. There is no `owner` and no `settled` field on the request.
 
@@ -76,7 +76,7 @@ Exhaustive `NeedSummary` matches the developer commit edits: `summary_text` (`at
 
 `app.rs:14074-14076` takes `NeedSlot::Prompt` and otherwise refuses. A connection slot hits that refusal. REQ-5 leaves it. `app.rs:14085-14115` matches `Question` and `Approval` and then `_`, so it compiles without a connection arm.
 
-`AttentionTracker::seat_state` is not in this tree. `SEAT-1` adds it. The ledger names are `talaria_core::SeatState { Idle, Working, Blocked(Option<BlockKind>), Done, Error }` and `talaria_core::BlockKind { Permission, Question, Auth }`. REQ-5 adds the `Connection` arm only.
+`AttentionTracker::seat_state` is not in this tree. [#533](https://github.com/infiquetra/talaria/issues/533) (`SEAT-1`) adds it. The ledger names are `talaria_core::SeatState { Idle, Working, Blocked(Option<BlockKind>), Done, Error }` and `talaria_core::BlockKind { Permission, Question, Auth }`. REQ-5 adds the `Connection` arm only.
 
 ## The overlay and the fixtures
 

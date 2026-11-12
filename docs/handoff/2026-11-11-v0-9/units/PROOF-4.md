@@ -14,7 +14,7 @@ How to use this document: read the issue for what to add. Use this document for 
 
 ## The sentence to reword
 
-`tools/release/README.md:18` says live checks need `the pinned Hermes gateway`, then a configured fixture profile, a Herdr pane, tmux, and jq. That phrase is not in `tools/release/gates.tsv`. REQ-2 replaces only those words. Line 20 says exit 0 is PASS, exit 77 is SKIP, and exit 2 is invalid input. `TALARIA_LIVE_EXACT` is not read anywhere in this checkout. `PROOF-1` adds the reader. REQ-1 only sets the variable on the new row.
+`tools/release/README.md:18` says live checks need `the pinned Hermes gateway`, then a configured fixture profile, a Herdr pane, tmux, and jq. That phrase is not in `tools/release/gates.tsv`. REQ-2 replaces only those words. Line 20 says exit 0 is PASS, exit 77 is SKIP, and exit 2 is invalid input. `TALARIA_LIVE_EXACT` is not read anywhere in this checkout. [#554](https://github.com/infiquetra/talaria/issues/554) (`PROOF-1`) adds the reader. REQ-1 only sets the variable on the new row.
 
 ## The v0.7.0 header
 

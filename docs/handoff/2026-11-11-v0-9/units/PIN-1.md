@@ -14,13 +14,13 @@ How to use this document. Read the issue for REQ-1 through REQ-4 and the one upd
 
 `test_inline_string_enums_sharing_a_title_must_agree` plants two enums titled `Collision Probe` on `GatewayReadyPayload` (`test_lift.py:193-217`). Agreeing values pass. Differing values raise. It does not load a newer contract.
 
-`test_shared_names_point_at_their_own_schemas` asserts the only shared method with identical schema refs is `clarify.lock` (`tools/contract-gen/tests/test_methods.py:32-53`). That assertion matches the vendored contract. `PIN-3` updates it.
+`test_shared_names_point_at_their_own_schemas` asserts the only shared method with identical schema refs is `clarify.lock` (`tools/contract-gen/tests/test_methods.py:32-53`). That assertion matches the vendored contract. [#544](https://github.com/infiquetra/talaria/issues/544) (`PIN-3`) updates it.
 
 The README sentence at `tools/contract-gen/README.md:31-32` says "the nine individually named keyword exceptions". The following sentences keep the discriminator count of 13.
 
 ## Why the two rows are enough
 
-At the vendored pin the two new schemas do not exist, so `validate` does not see their titles and the generated files stay as they are. On a Hermes v0.23 contract, `CanonicalBotCancelResult.status` is a second `Status` title and `ImageRenderResult.mode` is a second `Mode` title. Removing only the Status title still leaves the Mode collision. Removing both titles clears both. `SharedMetricsDesktopModeDay.mode` is the Mode title that stays. This unit does not vendor that contract. `PIN-3` is the generate that runs it.
+At the vendored pin the two new schemas do not exist, so `validate` does not see their titles and the generated files stay as they are. On a Hermes v0.23 contract, `CanonicalBotCancelResult.status` is a second `Status` title and `ImageRenderResult.mode` is a second `Mode` title. Removing only the Status title still leaves the Mode collision. Removing both titles clears both. `SharedMetricsDesktopModeDay.mode` is the Mode title that stays. This unit does not vendor that contract. [#544](https://github.com/infiquetra/talaria/issues/544) (`PIN-3`) is the generate that runs it.
 
 ## Edge cases
 

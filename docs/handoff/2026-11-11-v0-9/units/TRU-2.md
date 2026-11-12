@@ -16,7 +16,7 @@ The window constant is `GATE_WINDOW` (`crates/talaria-app/src/fleet_attention.rs
 self.last_alert = Some((at, kind));
 ```
 
-That assignment is `attention.rs:257`. The returned `Alert` (`attention.rs:128-139`) has no time field. `AttentionOutput` today is `alert` and `pane` (`attention.rs:152-157`). There is no `seat` field on this tree. `SEAT-1` adds `AttentionOutput.seat: Option<SeatState>` and `seat_state` before this unit starts. REQ-4 says to keep both.
+That assignment is `attention.rs:257`. The returned `Alert` (`attention.rs:128-139`) has no time field. `AttentionOutput` today is `alert` and `pane` (`attention.rs:152-157`). There is no `seat` field on this tree. [#533](https://github.com/infiquetra/talaria/issues/533) (`SEAT-1`) adds `AttentionOutput.seat: Option<SeatState>` and `seat_state` before this unit starts. REQ-4 says to keep both.
 
 The join is inside `update` (`crates/talaria-app/src/app.rs:3282`). For each foreground activity it calls `observe` (`app.rs:4515`). A pane change becomes `AppEffect::ReportPane` (`app.rs:4516-4518`). An alert is then offered to `state.hub.on_foreground_alert(alert, state.attention_at)` (`app.rs:4519-4522`). Only `Some` becomes `AppEffect::Alert` (`app.rs:4524`). The tracker has already stored `last_alert`. A hub drop does not clear it.
 

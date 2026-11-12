@@ -14,6 +14,6 @@ How to use this document: read it for the code that exists today. The requiremen
 
 `docs/configuration.md:414` says the setting reports blocked, working or idle. Lines 415-422 say `enabled` adds live terminal agents and Enter focuses a Herdr row. The sample block is line 353. The table row is line 869.
 
-`SEAT-3` adds the status-record writer beside this reporter and rewrites line 414 so the setting switches both. This unit runs after that sentence is on `main`.
+[#535](https://github.com/infiquetra/talaria/issues/535) (`SEAT-3`) adds the status-record writer beside this reporter and rewrites line 414 so the setting switches both. This unit runs after that sentence is on `main`.
 
 `app.rs:993` holds `herdr_service`. `list_once_with_herdr` is `fleet/service.rs:446`. `commit_fleet_transcript` is `voice/fleet.rs:43`. `herdr_cmd.rs:94` calls `observe_herdr` in process. `herdr_cmd.rs:144` runs `fleet list --json` and expects both a `herdr` row and a `hermes` row. `voice_target.rs:115` is another `FleetBackend::Herdr`. `voice_multi_backend.rs` starts `HerdrService` through `tests/support/herdr_harness.rs`.

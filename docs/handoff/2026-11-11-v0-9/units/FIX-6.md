@@ -4,7 +4,7 @@ Status: `proposed`. The GitHub issue for this unit is the contract; this documen
 
 ## How to use this document
 
-The issue states REQ-1 and REQ-2, the one new test, and the stop conditions. This note maps those ids onto the current tree. It does not add a requirement. Line numbers are from Talaria `main` at the draft, and from Hermes tag v0.23.0, unless a line is named at tag v0.22.4. REQ-2 names the facts its re-verify covers. This issue does not wait on `PIN-3`, so the pin at start is Hermes v0.22.4.
+The issue states REQ-1 and REQ-2, the one new test, and the stop conditions. This note maps those ids onto the current tree. It does not add a requirement. Line numbers are from Talaria `main` at the draft, and from Hermes tag v0.23.0, unless a line is named at tag v0.22.4. REQ-2 names the facts its re-verify covers. This issue does not wait on [#544](https://github.com/infiquetra/talaria/issues/544) (`PIN-3`), so the pin at start is Hermes v0.22.4.
 
 ## What the reducer does today
 
