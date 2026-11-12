@@ -1,0 +1,1 @@
+{"terminals": [{"address": "t181", "agent": "bash", "cwd": "/tmp/scratch", "name": "talaria-smoke-abc12345", "state": "live", "turn": 0}, {"address": "t182", "agent": "bash", "cwd": "/tmp/scratch", "state": "live", "turn": 0}]}
