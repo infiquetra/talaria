@@ -156,3 +156,247 @@ fn ci_workflow_runs_every_baseline_command() {
         assert!(!text.contains(forbidden), "ci.yml contains `{forbidden}`");
     }
 }
+
+const UBUNTU_CI_COMMANDS: &[&str] = &[
+    "cargo fmt --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test -p talaria-app --test review_timing -- --exact keystroke_budget_while_gh_sleeps --list | grep -Fx 'keystroke_budget_while_gh_sleeps: test'",
+    "cargo test -p talaria-app --test review_timing -- --exact keystroke_budget_while_gh_sleeps --include-ignored",
+    "cargo test --workspace --doc",
+    "cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
+    "cargo test -p patterns-check --test boundaries -- --ignored clippy_catches_each_banned_interface",
+    "git diff --check origin/main...HEAD",
+    r#"! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)"#,
+];
+
+const BENCH_COMMANDS: &[&str] = &[
+    "cargo build --release -p talaria-cli -p talaria-bench",
+    "target/release/talaria-bench run --binary target/release/talaria --report bench-report.json",
+    "cargo bench -p talaria-tui --bench pager",
+    "cargo bench -p talaria-tui --bench session_picker",
+    "cargo bench -p talaria-tui --bench fleet_view",
+    "cargo bench -p talaria-core --bench background_output",
+    "cargo bench -p talaria-tui --bench background_overlay",
+    "cargo bench -p talaria-core --bench fleet_registry",
+    "jq -e '.median.point_estimate < 1000000' target/criterion/fleet_update_200/new/estimates.json",
+    "cargo bench -p talaria-core --bench subagent_tree",
+    "cargo bench -p talaria-tui --bench subagent_panel",
+];
+
+const SHORT_LOOP_COMMANDS: &[&str] = &[
+    "cargo fmt --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test --workspace",
+];
+
+const MISSING_TOOL_MESSAGES: &[&str] = &[
+    "prepush: missing cargo",
+    "prepush: missing cargo-llvm-cov",
+    "prepush: missing jq",
+];
+
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_folded_yaml_run_header(trimmed: &str) -> bool {
+    let Some(rest) = trimmed.strip_prefix("run:") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let Some(indicator) = rest.strip_prefix('>') else {
+        return false;
+    };
+    indicator
+        .chars()
+        .all(|ch| matches!(ch, '-' | '+' | '0'..='9'))
+}
+
+fn read_folded_yaml_block(lines: &[&str], start: usize) -> (String, usize) {
+    let base_indent = lines[start].len() - lines[start].trim_start().len();
+    let mut parts = vec!["run:".to_string()];
+    let mut i = start + 1;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+        let indent = line.len() - line.trim_start().len();
+        if !trimmed.is_empty() && indent <= base_indent {
+            break;
+        }
+        if !trimmed.is_empty() {
+            parts.push(trimmed.strip_suffix('\\').unwrap_or(trimmed).to_string());
+        }
+        i += 1;
+    }
+    (collapse_whitespace(&parts.join(" ")), i)
+}
+
+fn read_continued_line(lines: &[&str], start: usize) -> (String, usize) {
+    let mut combined = String::new();
+    let mut i = start;
+    while i < lines.len() {
+        let line = lines[i];
+        if let Some(prefix) = line.strip_suffix('\\') {
+            if !combined.is_empty() {
+                combined.push(' ');
+            }
+            combined.push_str(prefix);
+            i += 1;
+        } else {
+            if !combined.is_empty() {
+                combined.push(' ');
+            }
+            combined.push_str(line);
+            i += 1;
+            break;
+        }
+    }
+    (collapse_whitespace(&combined), i)
+}
+
+fn normalize_text_lines(text: &str, fold_yaml_run: bool) -> Vec<String> {
+    let raw_lines: Vec<&str> = text.lines().collect();
+    let mut logical = Vec::new();
+    let mut i = 0;
+
+    while i < raw_lines.len() {
+        let line = raw_lines[i];
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            i += 1;
+            continue;
+        }
+        if fold_yaml_run && is_folded_yaml_run_header(trimmed) {
+            let (folded, next_i) = read_folded_yaml_block(&raw_lines, i);
+            logical.push(folded);
+            i = next_i;
+            continue;
+        }
+        let (joined, next_i) = read_continued_line(&raw_lines, i);
+        if !joined.is_empty() {
+            logical.push(joined);
+        }
+        i = next_i;
+    }
+
+    logical
+}
+
+fn contains_missing_tool_message(text: &str, message: &str) -> bool {
+    let mut rest = text;
+    while let Some(pos) = rest.find(message) {
+        let after = &rest[pos + message.len()..];
+        let at_boundary = after
+            .chars()
+            .next()
+            .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
+        if at_boundary {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
+#[test]
+fn prepush_script_matches_the_ubuntu_pull_request_checks() {
+    let root = workspace_root();
+    let script = read_repo_file(&root, "tools/prepush.sh");
+    let ci = read_repo_file(&root, ".github/workflows/ci.yml");
+    let bench = read_repo_file(&root, ".github/workflows/bench.yml");
+    let agents_guide = read_repo_file(&root, "AGENTS.md");
+    let claude_guide = read_repo_file(&root, "CLAUDE.md");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(root.join("tools/prepush.sh"))
+            .unwrap_or_else(|error| panic!("tools/prepush.sh metadata could not be read: {error}"))
+            .permissions()
+            .mode();
+        assert!(mode & 0o111 != 0, "tools/prepush.sh must be executable");
+    }
+
+    assert_eq!(
+        script.lines().next(),
+        Some("#!/usr/bin/env bash"),
+        "tools/prepush.sh must start with #!/usr/bin/env bash"
+    );
+
+    let script_lines = normalize_text_lines(&script, false);
+    let normalized_script = script_lines.join("\n");
+    let normalized_ci = normalize_text_lines(&ci, true).join("\n");
+    let normalized_bench = normalize_text_lines(&bench, true).join("\n");
+
+    assert!(
+        normalized_script.contains("set -euo pipefail"),
+        "tools/prepush.sh must contain set -euo pipefail"
+    );
+    assert!(
+        normalized_script.contains("git rev-parse --show-toplevel"),
+        "tools/prepush.sh must contain git rev-parse --show-toplevel"
+    );
+
+    for command in UBUNTU_CI_COMMANDS {
+        assert!(
+            normalized_script.contains(command),
+            "tools/prepush.sh is missing Ubuntu pull-request command: {command}"
+        );
+        assert!(
+            normalized_ci.contains(command),
+            ".github/workflows/ci.yml is missing Ubuntu pull-request command: {command}"
+        );
+    }
+
+    for command in BENCH_COMMANDS {
+        assert!(
+            normalized_script.contains(command),
+            "tools/prepush.sh is missing bench command: {command}"
+        );
+        assert!(
+            normalized_bench.contains(command),
+            ".github/workflows/bench.yml is missing bench command: {command}"
+        );
+    }
+
+    for message in MISSING_TOOL_MESSAGES {
+        assert!(
+            contains_missing_tool_message(&normalized_script, message),
+            "tools/prepush.sh is missing tool check message: {message}"
+        );
+    }
+
+    let allowed_commands: Vec<&str> = UBUNTU_CI_COMMANDS
+        .iter()
+        .chain(BENCH_COMMANDS.iter())
+        .copied()
+        .collect();
+    for line in &script_lines {
+        let Some(first_word) = line.split_whitespace().next() else {
+            continue;
+        };
+        if matches!(first_word, "cargo" | "git" | "python3" | "rustup" | "jq") {
+            assert!(
+                allowed_commands.contains(&line.as_str()),
+                "tools/prepush.sh runs an unapproved `{first_word}` command: {line}"
+            );
+        }
+    }
+
+    for (path, guide) in [("AGENTS.md", &agents_guide), ("CLAUDE.md", &claude_guide)] {
+        assert!(
+            guide.contains("tools/prepush.sh"),
+            "{path} must mention tools/prepush.sh"
+        );
+        assert!(
+            !guide.contains("sh tools/prepush.sh"),
+            "{path} must not contain `sh tools/prepush.sh`"
+        );
+        for command in SHORT_LOOP_COMMANDS {
+            assert!(
+                guide.lines().any(|line| line.trim() == *command),
+                "{path} is missing short-loop command: {command}"
+            );
+        }
+    }
+}
