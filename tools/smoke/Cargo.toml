@@ -23,6 +23,16 @@ name = "fake_tmux"
 path = "tests/support/fake_tmux.rs"
 test = false
 
+[[bin]]
+name = "fake-hc"
+path = "tests/support/fake_hc.rs"
+test = false
+
+[[bin]]
+name = "hc-env-probe"
+path = "tests/support/hc_env_probe.rs"
+test = false
+
 [dependencies]
 clap.workspace = true
 rand.workspace = true
