@@ -62,7 +62,7 @@ pub use steps3::{
 };
 pub use suite::Suite;
 pub use suite5::{Phase5Config, run_smoke_5};
-pub use terminal::{HerdrCli, NewTab, PaneId, ReadSource, TabId, TermError, Terminal};
+pub use terminal::{HcCli, HerdrCli, NewTab, PaneId, ReadSource, TabId, TermError, Terminal};
 pub use tmux::{Paster, TmuxCli, TmuxGuard};
 pub use wording2b::{
     APPROVALS_MANUAL, APPROVALS_OFF, CD_DONE, CD_MISSING, CD_MOVING, CD_SHOW, COMPACT_REFUSAL,

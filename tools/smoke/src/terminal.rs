@@ -3,6 +3,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 
 use serde_json::Value;
 
@@ -270,6 +271,223 @@ impl Terminal for HerdrCli {
 
     fn close_tab(&self, tab: &TabId) -> Result<(), TermError> {
         self.call(&["tab", "close", &tab.0]).map(|_| ())
+    }
+
+    fn version(&self) -> String {
+        self.call(&["--version"])
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    }
+}
+
+/// The command line of herdr core, with independently started split terminals.
+pub struct HcCli {
+    executable: PathBuf,
+    splits: Mutex<Vec<String>>,
+}
+
+impl HcCli {
+    pub fn new(executable: &Path) -> Self {
+        Self {
+            executable: executable.to_path_buf(),
+            splits: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Runs one command without the harness's terminal identity.
+    fn call(&self, args: &[&str]) -> Result<String, TermError> {
+        let output = Command::new(&self.executable)
+            .args(args)
+            .env_remove("HC_TERMINAL_ID")
+            .env_remove("HC_SCOPE")
+            .output()
+            .map_err(|error| match error.kind() {
+                ErrorKind::NotFound => TermError::NotFound(format!(
+                    "the command line {} is not there: {error}",
+                    self.executable.display()
+                )),
+                _ => TermError::Io(format!("{}: {error}", self.executable.display())),
+            })?;
+        if !output.status.success() {
+            return Err(TermError::Io(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    pub fn check(&self) -> Result<(), TermError> {
+        self.call(&["ls"]).map(|_| ())
+    }
+
+    fn json(&self, args: &[&str]) -> Result<Value, TermError> {
+        let answer = self.call(args)?;
+        serde_json::from_str(&answer)
+            .map_err(|error| TermError::Parse(format!("{error}: {answer}")))
+    }
+
+    fn address(&self, args: &[&str]) -> Result<String, TermError> {
+        self.json(args)?
+            .get("address")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| TermError::Parse("hc run: address is not a string".to_owned()))
+    }
+}
+
+impl Terminal for HcCli {
+    fn create_tab(&self, label: &str, cwd: &Path) -> Result<NewTab, TermError> {
+        let address = self.address(&[
+            "run",
+            "--bg",
+            "--no-parent",
+            "--name",
+            label,
+            "--cwd",
+            &cwd.to_string_lossy(),
+        ])?;
+        Ok(NewTab {
+            tab: TabId(address.clone()),
+            pane: PaneId(address),
+        })
+    }
+
+    fn split_pane(&self, _pane: &PaneId, cwd: &Path) -> Result<PaneId, TermError> {
+        let mut splits = self
+            .splits
+            .lock()
+            .map_err(|error| TermError::Io(error.to_string()))?;
+        let address = self.address(&[
+            "run",
+            "--bg",
+            "--no-parent",
+            "--cwd",
+            &cwd.to_string_lossy(),
+        ])?;
+        splits.push(address.clone());
+        Ok(PaneId(address))
+    }
+
+    fn run(&self, pane: &PaneId, text: &str) -> Result<(), TermError> {
+        self.call(&["send", &pane.0, text]).map(|_| ())
+    }
+
+    fn send_text(&self, pane: &PaneId, text: &str) -> Result<(), TermError> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        let keys: Vec<String> = text
+            .chars()
+            .map(|character| match character {
+                ' ' => Ok("space".to_owned()),
+                'a'..='z'
+                | '0'..='9'
+                | '\''
+                | ','
+                | '-'
+                | '.'
+                | '/'
+                | ';'
+                | '='
+                | '['
+                | '\\'
+                | ']'
+                | '`' => Ok(character.to_string()),
+                'A'..='Z' => Ok(format!("shift+{}", character.to_ascii_lowercase())),
+                _ => Err(TermError::Parse(format!(
+                    "hc keys cannot type '{character}'"
+                ))),
+            })
+            .collect::<Result<_, _>>()?;
+        let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+        self.send_keys(pane, &keys)
+    }
+
+    fn send_keys(&self, pane: &PaneId, keys: &[&str]) -> Result<(), TermError> {
+        let mut args = vec!["keys", pane.0.as_str()];
+        args.extend_from_slice(keys);
+        self.call(&args).map(|_| ())
+    }
+
+    fn read(
+        &self,
+        pane: &PaneId,
+        _source: ReadSource,
+        lines: Option<u32>,
+    ) -> Result<String, TermError> {
+        let count = lines.map(|lines| lines.to_string());
+        let mut args = vec!["read", pane.0.as_str()];
+        if let Some(count) = &count {
+            args.extend_from_slice(&["--lines", count]);
+        }
+        self.call(&args)
+    }
+
+    fn foreground(&self, pane: &PaneId) -> Result<Vec<String>, TermError> {
+        let value = self.json(&["get", &pane.0, "--json"])?;
+        let Some(foreground) = value.get("foreground").filter(|value| !value.is_null()) else {
+            return Ok(Vec::new());
+        };
+        let argv = foreground
+            .get("argv")
+            .and_then(Value::as_array)
+            .and_then(|argv| argv.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
+            .ok_or_else(|| {
+                TermError::Parse("hc get: foreground.argv is not a list of strings".to_owned())
+            })?;
+        if argv.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(vec![argv.join(" ")])
+        }
+    }
+
+    fn pane_get(&self, pane: &PaneId) -> Result<String, TermError> {
+        let value = self.json(&["get", &pane.0, "--json"])?;
+        let status = &value["status"];
+        let app = status
+            .get("app")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let state = status
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        Ok(format!("{app}\n{state}"))
+    }
+
+    fn tab_exists(&self, tab: &TabId) -> Result<bool, TermError> {
+        let value = self.json(&["ls"])?;
+        let terminals = value
+            .get("terminals")
+            .and_then(Value::as_array)
+            .ok_or_else(|| TermError::Parse("hc ls: terminals is not an array".to_owned()))?;
+        Ok(terminals.iter().any(|terminal| {
+            terminal.get("address").and_then(Value::as_str) == Some(tab.0.as_str())
+                && terminal.get("state").and_then(Value::as_str) == Some("live")
+        }))
+    }
+
+    fn close_tab(&self, tab: &TabId) -> Result<(), TermError> {
+        let splits = std::mem::take(
+            &mut *self
+                .splits
+                .lock()
+                .map_err(|error| TermError::Io(error.to_string()))?,
+        );
+        let mut first_error = None;
+        for address in splits.iter().map(String::as_str).chain([tab.0.as_str()]) {
+            for command in ["kill", "rm"] {
+                if let Err(error) = self.call(&[command, address]) {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn version(&self) -> String {
