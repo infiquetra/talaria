@@ -27,13 +27,13 @@ const NOT_IN_HERDR: &str =
 
 `cli.rs:134` asserts the old sentence. `cli5.rs:150` runs `phase5` with `jq` on `PATH`, removes `HERDR_ENV`, and leaves the workspace id set. It asserts the output contains `Herdr pane`. REQ-1 tightens that assertion. The both-ways line also contains those two words, so the old assertion would not fail first.
 
-`SEAT-4B` reads `TALARIA_SMOKE_TERMINAL` before the block at lines 126-132 and leaves an unset variable as `herdr`. Re-verify the line numbers after that issue merges. REQ-1 replaces that block and that unset rule. It does not move the `jq` check.
+[#537](https://github.com/infiquetra/talaria/issues/537) (`SEAT-4B`) reads `TALARIA_SMOKE_TERMINAL` before the block at lines 126-132 and leaves an unset variable as `herdr`. Re-verify the line numbers after that issue merges. REQ-1 replaces that block and that unset rule. It does not move the `jq` check.
 
 ## Why the other six suites stop
 
 `send_text` does not press Enter. `phase2a` types `Summarize @calc` (`steps2a.rs:84`) by splitting off the last character and calling `typed` (`steps2a.rs:925-927`). `typed` calls `send_text` (`steps2a.rs:544-545`). `phase4a` types `api_key` (`steps4a.rs:201`) and `Bad Name!` (`steps4a.rs:518`) through `text` (`steps4a.rs:34-38`), which also calls `send_text`. The measured `hc` is 0.1.20. It cannot press `!` or `@` or `_`, and it cannot type text without Enter. `phase2b`, `phase3`, `phase4b` and `phase5` were not proved clean.
 
-REQ-2 returns the suite line before `HerdrCli::new` (`main.rs:215`) and before any suite function. On the `phase1` plus `hc` path, `HcCli::check(&self) -> Result<(), TermError>` replaces `HerdrCli::check` (`main.rs:216`). `SEAT-4A` provides that function. It runs `ls`. The checks at `main.rs:133-214` stay where they are. A fake command with no reply prints nothing and exits 0, so `check` succeeds and `create_tab` then runs `run`, not `tab`. This issue does not edit `steps2a.rs` or `steps4a.rs`. It does not invent a second terminal name. `SEAT-4A` owns every `Terminal` method. `PROOF-5` owns the question of how the six suites run later.
+REQ-2 returns the suite line before `HerdrCli::new` (`main.rs:215`) and before any suite function. On the `phase1` plus `hc` path, `HcCli::check(&self) -> Result<(), TermError>` replaces `HerdrCli::check` (`main.rs:216`). [#536](https://github.com/infiquetra/talaria/issues/536) (`SEAT-4A`) provides that function. It runs `ls`. The checks at `main.rs:133-214` stay where they are. A fake command with no reply prints nothing and exits 0, so `check` succeeds and `create_tab` then runs `run`, not `tab`. This issue does not edit `steps2a.rs` or `steps4a.rs`. It does not invent a second terminal name. [#536](https://github.com/infiquetra/talaria/issues/536) (`SEAT-4A`) owns every `Terminal` method. [#558](https://github.com/infiquetra/talaria/issues/558) (`PROOF-5`) owns the question of how the six suites run later.
 
 ## The gate rows
 
@@ -43,4 +43,4 @@ REQ-3 inserts `TALARIA_SMOKE_TERMINAL=hc` immediately before `TALARIA_LIVE_REQUI
 
 ## What stays on the trait
 
-`Terminal::foreground` is `tools/smoke/src/terminal.rs:65`, and `HcCli::foreground` is `terminal.rs:226`. `pane_get` is `terminal.rs:68` and `terminal.rs:246`. `create_tab` is `terminal.rs:52` and `terminal.rs:162`. `run` is `terminal.rs:55` and `terminal.rs:197`. REQ-4 does not edit those methods and does not add a call to `foreground` or `pane_get`. `phase1` reaches `create_tab` and `run` only through the path `SEAT-4B` already built. This issue starts no second program from `run` (`main.rs:94`).
+`Terminal::foreground` is `tools/smoke/src/terminal.rs:65`, and `HcCli::foreground` is `terminal.rs:226`. `pane_get` is `terminal.rs:68` and `terminal.rs:246`. `create_tab` is `terminal.rs:52` and `terminal.rs:162`. `run` is `terminal.rs:55` and `terminal.rs:197`. REQ-4 does not edit those methods and does not add a call to `foreground` or `pane_get`. `phase1` reaches `create_tab` and `run` only through the path [#537](https://github.com/infiquetra/talaria/issues/537) (`SEAT-4B`) already built. This issue starts no second program from `run` (`main.rs:94`).

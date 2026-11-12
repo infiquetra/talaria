@@ -33,7 +33,7 @@ commit=4d04303818b61bf3aa09278af48356315515965b
 
 `compare_versions` (`contract_gen.py:121-122`) is greater than zero when the left tag is newer. The pin test asserts `compare_versions("v0.22.10", "v0.22.4") > 0` (`tools/contract-gen/tests/test_pin.py:29`). REQ-2 uses that direction. The watcher tests do not hard-code `v0.22.4`. The pin on `main` changes when earlier units land.
 
-`main` (`contract_gen.py:710-728`) accepts `generate`, `check`, `verify-vendor`, `pin`, and `drift`. There is no `bump` sub-command in this tree. `SYNC-3` adds `python3 tools/contract-gen/contract_gen.py bump --tag <tag>`, and that command is on `main` before this issue starts. REQ-3 runs it. This issue does not edit `contract_gen.py`.
+`main` (`contract_gen.py:710-728`) accepts `generate`, `check`, `verify-vendor`, `pin`, and `drift`. There is no `bump` sub-command in this tree. [#550](https://github.com/infiquetra/talaria/issues/550) (`SYNC-3`) adds `python3 tools/contract-gen/contract_gen.py bump --tag <tag>`, and that command is on `main` before this issue starts. REQ-3 runs it. This issue does not edit `contract_gen.py`.
 
 `gh_raw` (`contract_gen.py:570-571`) fetches one file with `gh api` and `Accept: application/vnd.github.raw+json`. `verify_vendor` (`contract_gen.py:574-577`) already limits a pair of reads to the contract path and `LICENSE`:
 
@@ -67,7 +67,7 @@ REQ-2 and REQ-4 use one reading. If the newest tag is not newer than `PINNED`, o
 
 The captured files are `$RUNNER_TEMP/hermes-sync-bump.txt`, `$RUNNER_TEMP/hermes-sync-bump-err.txt`, `$RUNNER_TEMP/hermes-sync-test.txt`, `$RUNNER_TEMP/hermes-sync-ready.txt`, and `$RUNNER_TEMP/hermes-sync-failure.txt`. The bump file is that command's stdout. The bump err file is its stderr. The test file is stdout and stderr together. For a failed `bump`, the failure tail joins the stdout file and then the stderr file. `pull` runs `git switch -c chore/hermes-sync-<tag>`, stages only the paths `bump` wrote, and pushes with `git push origin HEAD`. That push does not update `main`. The toolchain install, the two cache restores, and the cargo-typify install are their own steps after `compare` and before `bump`, each gated on `proceed`. A `uses:` step is not placed inside a `run:` block. The ready file is, in order, the line `both commands passed`, the compare link REQ-3 names, those stdout bytes, and the `Closes` sentence REQ-3 names. The failure file starts with the failing command on one line, then a fenced block of the last 100 lines of the combined output, taken with `tail -n 100`. The failure text is the last 100 lines and at most 50,000 characters. If those 100 lines are longer than 50,000 characters, only their last 50,000 characters are kept. The failure file writes the tag the run resolved. The workflow source does not contain the characters `<tag>`.
 
-`recorded_against` is not scanned by this workflow. The field and the printed list arrive inside `bump`, which `SYNC-3` provides. Intent item 2 says nothing fails because of that list. Test 2 asserts the pull step does not mention the field, and that the ready file includes the bump stdout.
+`recorded_against` is not scanned by this workflow. The field and the printed list arrive inside `bump`, which [#550](https://github.com/infiquetra/talaria/issues/550) (`SYNC-3`) provides. Intent item 2 says nothing fails because of that list. Test 2 asserts the pull step does not mention the field, and that the ready file includes the bump stdout.
 
 ## Schedule, branch, and commit
 

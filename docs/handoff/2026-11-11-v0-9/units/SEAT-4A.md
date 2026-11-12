@@ -48,7 +48,7 @@ The replies were measured on hc 0.1.20 on 2026-11-11. The reference is `docs/han
 - `hc kill` returns after the program has ended (`kill_live.json` has `state` `finished`). `hc rm` follows at once.
 - `hc --version` is `version.txt`, the line `hc 0.1.20`. REQ-3 trims it. A failed `version` returns an empty string.
 
-`SEAT-4B` does not add `hc wait`. The harness waits stay read-and-compare loops. `POLL_INTERVAL` is 250 milliseconds (`tools/smoke/src/screen.rs:18-19`). That is not this unit.
+[#537](https://github.com/infiquetra/talaria/issues/537) (`SEAT-4B`) does not add `hc wait`. The harness waits stay read-and-compare loops. `POLL_INTERVAL` is 250 milliseconds (`tools/smoke/src/screen.rs:18-19`). That is not this unit.
 
 `create_tab` and `split_pane` start terminals with `hc run` and no program argument. `foreground` and `pane_get` read `hc get <address> --json`. REQ-8 is that map. `HerdrCli::pane_get` (`terminal.rs:246-251`) returns `format!("{agent}\n{status}")`, and both fields default to empty, so a pane with no agent is the string `"\n"`. REQ-8 uses that string when `status` is null and when the `status` key is absent. If `foreground` is present, is not null, and is not an object whose `argv` is an array of strings, REQ-8 returns `TermError::Parse`. An empty `argv` array is an empty vector.
 

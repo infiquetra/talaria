@@ -39,7 +39,7 @@ After the pane check, `main.rs:215-219` builds `HerdrCli::new` with the `--herdr
 
 `SmokeReport::result_line` returns `SMOKE_RESULT: PASSED (elapsed N s)` only when nothing failed and nothing skipped (`tools/smoke/src/report.rs:90-96`). A skip returns `SMOKE_RESULT: PASSED WITH SKIPS (...)` (`report.rs:91`). The exit code is 0 for a clean pass and 3 when a step skipped (`report.rs:60-65`). The README says the approval step skips, and the run exits 3, when the profile does not ask for approval itself (`tools/smoke/README.md:34-36`). Exit codes are 0 passed, 1 failed, 2 preflight failed, 3 passed with a skip (`README.md:53`).
 
-`tools/release/gates.tsv:19-25` are `smoke-phase1` through `smoke-phase5`. Each command runs one suite with `TALARIA_LIVE_REQUIRE=1`. None of those lines sets `TALARIA_SMOKE_TERMINAL`. REQ-3 does not edit the file. `SEAT-4C` later sets `TALARIA_SMOKE_TERMINAL=hc` on the `smoke-phase1` row only. The other six smoke rows stay as they are.
+`tools/release/gates.tsv:19-25` are `smoke-phase1` through `smoke-phase5`. Each command runs one suite with `TALARIA_LIVE_REQUIRE=1`. None of those lines sets `TALARIA_SMOKE_TERMINAL`. REQ-3 does not edit the file. [#538](https://github.com/infiquetra/talaria/issues/538) (`SEAT-4C`) later sets `TALARIA_SMOKE_TERMINAL=hc` on the `smoke-phase1` row only. The other six smoke rows stay as they are.
 
 The recorded multiplexer version in the tree is the single line `herdr 0.9.4` at `tools/smoke/tests/fixtures/herdr/version.txt:1`. This issue does not change that file.
 

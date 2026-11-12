@@ -20,13 +20,13 @@ How to use this document: read it for the status row and the notice cell that ex
 
 `AlertKind` is `NeedsYou`, `Done`, and `Failed` (`crates/talaria-core/src/attention.rs:22-28`). REQ-10 does not add a variant. `pr_segment_priority` (`crates/talaria-tui/tests/status_pr_segment.rs:8`) asserts the drop order. REQ-5 leaves that order alone.
 
-The store names REQ-1 copies are the ones `SIG-1` publishes. This page does not restate their replace and expire rules.
+The store names REQ-1 copies are the ones [#577](https://github.com/infiquetra/talaria/issues/577) (`SIG-1`) publishes. This page does not restate their replace and expire rules.
 
 ## The timed-notice wake
 
-A timed notice must expire when nothing else is due, and the run loop applies a tick only when one of its deadlines is due (`app.rs:14911-14913`). `SIG-1`'s store stamps a row's start at the first `expire` call that sees it, so the row also needs one tick soon after it is shown. Add two things.
+A timed notice must expire when nothing else is due, and the run loop applies a tick only when one of its deadlines is due (`app.rs:14911-14913`). [#577](https://github.com/infiquetra/talaria/issues/577) (`SIG-1`)'s store stamps a row's start at the first `expire` call that sees it, so the row also needs one tick soon after it is shown. Add two things.
 
-First, `NoticeStore::next_deadline(&self) -> Option<u64>` (new, in `notices.rs`). It reads the store and changes no rule. It returns the earliest time at which `expire` has work to do: 0 for a row that expires and has no start stamp yet, otherwise that row's start plus its `ttl_ms`, and `None` when no row expires. The store keeps each expiring row's start stamp privately (`SIG-1`, REQ-4); `next_deadline` is written inside the store, so it reads that stamp directly. `SessionState::next_notice_deadline(&self) -> Option<u64>` (new) returns it.
+First, `NoticeStore::next_deadline(&self) -> Option<u64>` (new, in `notices.rs`). It reads the store and changes no rule. It returns the earliest time at which `expire` has work to do: 0 for a row that expires and has no start stamp yet, otherwise that row's start plus its `ttl_ms`, and `None` when no row expires. The store keeps each expiring row's start stamp privately ([#577](https://github.com/infiquetra/talaria/issues/577) (`SIG-1`), REQ-4); `next_deadline` is written inside the store, so it reads that stamp directly. `SessionState::next_notice_deadline(&self) -> Option<u64>` (new) returns it.
 
 Second, `notice_wake(state: &AppState, executor: &Executor) -> Option<Instant>` (new) beside `background_wake` (`app.rs:11251`) and built the same way: `None` when no session is open or the session is gone, otherwise that deadline converted with `executor.started.checked_add`. In `run_inner`, compute `notice_due` beside `background_due` (`app.rs:14816`), add it to the deadline with `earliest_of` as `queue_due` is added (`app.rs:14866`), and add `notice_due.is_some_and(|due| due <= now)` to the condition at `app.rs:14911`.
 

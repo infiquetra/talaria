@@ -28,7 +28,7 @@ The issue states REQ-1 through REQ-5, the five new tests, and the stop condition
 
 ## Why the notice does not select
 
-`/theme use <id>` is what sets `session_file` (`appearance.rs:728`). Writing `[theme] file` is how a file is selected at launch (`docs/themes.md:39-43`). The same paragraph says those selection commands never write configuration or Hermes files (`themes.md:43`). REQ-2 leaves both statements true: the new command writes only `themes/<id>.toml`, and the operator then runs `/theme use <id>`. `FLW-4` is the later persistence of that selection. This issue does not wait on it. `FLW-4` starts after this issue has merged, and that gate is start.
+`/theme use <id>` is what sets `session_file` (`appearance.rs:728`). Writing `[theme] file` is how a file is selected at launch (`docs/themes.md:39-43`). The same paragraph says those selection commands never write configuration or Hermes files (`themes.md:43`). REQ-2 leaves both statements true: the new command writes only `themes/<id>.toml`, and the operator then runs `/theme use <id>`. [#597](https://github.com/infiquetra/talaria/issues/597) (`FLW-4`) is the later persistence of that selection. This issue does not wait on it. [#597](https://github.com/infiquetra/talaria/issues/597) (`FLW-4`) starts after this issue has merged, and that gate is start.
 
 ## Edges, by requirement
 

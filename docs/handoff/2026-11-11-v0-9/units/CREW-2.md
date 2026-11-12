@@ -18,7 +18,7 @@ The scheduler reads `cfg.limits.max_in_flight` (`crates/talaria-workflow/src/sch
 
 ## The entry this unit reads
 
-`CREW-1` writes a dated entry titled `Workflow width default` in `docs/engineering-journal/DECISIONS.md`. The measured value in that entry is 1, 5, or 10. This unit does not edit the journal. The 2026-10-28 entry that proposes `max_in_flight` of 1 stays where it is.
+[#574](https://github.com/infiquetra/talaria/issues/574) (`CREW-1`) writes a dated entry titled `Workflow width default` in `docs/engineering-journal/DECISIONS.md`. The measured value in that entry is 1, 5, or 10. This unit does not edit the journal. The 2026-10-28 entry that proposes `max_in_flight` of 1 stays where it is.
 
 ## Edge cases
 

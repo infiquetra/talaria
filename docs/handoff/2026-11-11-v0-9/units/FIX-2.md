@@ -14,7 +14,7 @@ How to use this document. Read the issue for REQ-1 through REQ-3 and the new com
 
 `failures_restore_composer_and_never_fall_back` (`crates/talaria-app/tests/ultracode_app.rs:215`) asserts that restore for six outcomes. It does not set `AppState.draft`. `session()` in that file is `SessionId::new("fixture-session")` (`ultracode_app.rs:10-12`).
 
-`CREW-3` is on `main` before this unit starts. It adds `answer_install`, `Action::InstallSkill`, `notice::offer`, and `AppMessage::UltracodeNotice`. This unit does not change them.
+[#576](https://github.com/infiquetra/talaria/issues/576) (`CREW-3`) is on `main` before this unit starts. It adds `answer_install`, `Action::InstallSkill`, `notice::offer`, and `AppMessage::UltracodeNotice`. This unit does not change them.
 
 ## Edge cases
 

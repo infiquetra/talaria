@@ -16,17 +16,17 @@ A gate exit of 0 is PASS, 77 is SKIP, and any other code is FAIL (lines 296-306)
 
 The catalogue is `tools/release/gates.tsv`. Seven smoke rows are lines 19-25, all class `live`, each ending in `TALARIA_LIVE_REQUIRE=1 cargo run -q --locked -p smoke -- run --suite <phase>`. `live-tests` is line 26, class `live`, with `TALARIA_LIVE_REQUIRE=1` and a trailing check that a line containing `_RESULT: SKIPPED` fails the gate. `live-pause` is line 27, class `operator`. `case_gates_shape` (`rc.test.sh:677`) requires those ids, among the other catalogue ids, to exist. It does not by itself reject an extra id. REQ-5 still adds no row. AC-6 is the check that the file is unchanged.
 
-On main, no smoke row sets `TALARIA_SMOKE_TERMINAL`. `SEAT-4C` inserts `TALARIA_SMOKE_TERMINAL=hc` on line 19 only, immediately before `TALARIA_LIVE_REQUIRE=1`. The stop condition in the issue is that re-check. The other six smoke commands stay without that variable, and a suite other than `phase1` on `hc` exits 2. That is why REQ-4 names two gates and leaves the other six to `PROOF-5`.
+On main, no smoke row sets `TALARIA_SMOKE_TERMINAL`. [#538](https://github.com/infiquetra/talaria/issues/538) (`SEAT-4C`) inserts `TALARIA_SMOKE_TERMINAL=hc` on line 19 only, immediately before `TALARIA_LIVE_REQUIRE=1`. The stop condition in the issue is that re-check. The other six smoke commands stay without that variable, and a suite other than `phase1` on `hc` exits 2. That is why REQ-4 names two gates and leaves the other six to [#558](https://github.com/infiquetra/talaria/issues/558) (`PROOF-5`).
 
 ## What the live rule will be
 
-`PROOF-1` is a start gate. Until it merges, `live_skip_reason` in `crates/hermes-contract/src/pinned.rs` still demands the pinned commit. After it merges, the default is the floor `OLDEST_SUPPORTED` `(0, 23, 0)`, and `TALARIA_LIVE_EXACT=1` is what selects the old commit check. `TALARIA_LIVE_PROFILE` defaults to `fixture`. REQ-4 and REQ-6 name those facts. This issue does not edit `pinned.rs`.
+[#554](https://github.com/infiquetra/talaria/issues/554) (`PROOF-1`) is a start gate. Until it merges, `live_skip_reason` in `crates/hermes-contract/src/pinned.rs` still demands the pinned commit. After it merges, the default is the floor `OLDEST_SUPPORTED` `(0, 23, 0)`, and `TALARIA_LIVE_EXACT=1` is what selects the old commit check. `TALARIA_LIVE_PROFILE` defaults to `fixture`. REQ-4 and REQ-6 name those facts. This issue does not edit `pinned.rs`.
 
-`crates/hermes-contract/PINNED` on main is `tag=v0.22.4` and commit `4d04303818b61bf3aa09278af48356315515965b`. This issue does not wait on `PIN-3`, so REQ-6 treats a different tag as a stop.
+`crates/hermes-contract/PINNED` on main is `tag=v0.22.4` and commit `4d04303818b61bf3aa09278af48356315515965b`. This issue does not wait on [#544](https://github.com/infiquetra/talaria/issues/544) (`PIN-3`), so REQ-6 treats a different tag as a stop.
 
 `tools/smoke/src/main.rs:347` reads `TALARIA_LIVE_REQUIRE`. In `tools/smoke/src/steps.rs:275-282` a skip while that flag is set becomes a failed step whose reason ends in `TALARIA_LIVE_REQUIRE=1`. The gate row already sets the flag. The smoke guide (`tools/smoke/README.md:103-104`) says a skip stops the run with exit 3, or fails with exit 1 when the flag is `1`. The phase1 deadline in that guide (line 16) is 300 seconds. That deadline is the suite's own limit. It is not the job's `timeout-minutes`. REQ-1 sets that key.
 
-The release guide (`tools/release/README.md:18`) still says live checks need the pinned gateway and a Herdr pane. `PROOF-1` and `SEAT-4C` are what change that for the two gates this job runs. This issue does not edit the guide.
+The release guide (`tools/release/README.md:18`) still says live checks need the pinned gateway and a Herdr pane. [#554](https://github.com/infiquetra/talaria/issues/554) (`PROOF-1`) and [#538](https://github.com/infiquetra/talaria/issues/538) (`SEAT-4C`) are what change that for the two gates this job runs. This issue does not edit the guide.
 
 ## Workflows on main
 
@@ -36,7 +36,7 @@ The only `schedule` on main is `contract.yml:16-17`, cron `17 6 * * 1`, plus `wo
 
 The one caller of `rc.sh` from a workflow is `release-candidate.yml:36-38`. It passes `--summary "$RUNNER_TEMP/summary.md"`, then, with `if: always()`, appends that file to `$GITHUB_STEP_SUMMARY`. The job `rc-linux` has `timeout-minutes: 90` (line 26) and runs `--class ci` on `ubuntu-latest`. REQ-3 and REQ-4 follow the summary path. REQ-3 names five steps. The third is the command of the `release-build` row in `tools/release/gates.tsv`. REQ-1 does not copy the 90 or the hosted label. Checkout in both of those workflows uses `actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09`. `case_workflow` (`rc.test.sh:1096-1102`) requires every `uses:` line in `release-candidate.yml` to carry 40 hexadecimal digits. REQ-3 uses the same pin. The new case applies the same pin check to the new file and requires that third step.
 
-`SYNC-4` will add `.github/workflows/hermes-sync.yml` with cron `23 7 * * *` and will open a GitHub issue on failure. That file is not on main. REQ-1 forbids that cron string. REQ-2 grants no `issues` permission. This issue does not take `SYNC-4` as a dependency.
+[#551](https://github.com/infiquetra/talaria/issues/551) (`SYNC-4`) will add `.github/workflows/hermes-sync.yml` with cron `23 7 * * *` and will open a GitHub issue on failure. That file is not on main. REQ-1 forbids that cron string. REQ-2 grants no `issues` permission. This issue does not take [#551](https://github.com/infiquetra/talaria/issues/551) (`SYNC-4`) as a dependency.
 
 `case_workflow` also fails if `.github/workflows/ci.yml` differs from the merge base (`rc.test.sh:1111-1113`). AC-6 leaves that file unchanged so the existing case stays green.
 
