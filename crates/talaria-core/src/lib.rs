@@ -33,6 +33,7 @@ pub mod providers;
 pub mod queue;
 pub mod review;
 pub mod rewind;
+pub mod seat_status;
 pub mod session;
 pub mod settings;
 pub mod side;
@@ -42,3 +43,5 @@ pub mod workspace;
 
 pub mod ultracode;
 pub mod voice;
+
+pub use seat_status::{BlockKind, SeatState};
