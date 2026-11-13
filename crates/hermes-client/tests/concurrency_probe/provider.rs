@@ -113,7 +113,9 @@ async fn serve(
 ) -> std::io::Result<()> {
     let mut stream = BufReader::new(stream);
     let mut first = String::new();
-    stream.read_line(&mut first).await?;
+    if stream.read_line(&mut first).await? == 0 {
+        return Ok(());
+    }
     let valid_route = first
         .split_whitespace()
         .take(2)

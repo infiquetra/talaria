@@ -169,6 +169,7 @@ async fn closing_worker_reaps_capture_without_sending_audio() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let pid_path = dir.path().join("pid");
+    let stopped_path = dir.path().join("stopped");
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let worker = ClientAudio::new(
         dir.path().into(),
@@ -181,9 +182,10 @@ async fn closing_worker_reaps_capture_without_sending_audio() {
         vec![
             "/bin/sh".into(),
             "-c".into(),
-            "echo $$ > \"$1\"; exec /bin/sleep 30".into(),
+            "echo $$ > \"$1\"; read line; echo stopped > \"$2\"; exec /bin/sleep 30".into(),
             "helper".into(),
             pid_path.to_string_lossy().into(),
+            stopped_path.to_string_lossy().into(),
         ],
         "work".into(),
         "one".into(),
@@ -192,8 +194,11 @@ async fn closing_worker_reaps_capture_without_sending_audio() {
     );
     let pid = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Ok(pid) = std::fs::read_to_string(&pid_path) {
-                break pid.trim().to_owned();
+            if let Ok(pid) = std::fs::read_to_string(&pid_path)
+                && let Ok(pid) = pid.trim().parse::<u32>()
+                && pid > 0
+            {
+                break pid.to_string();
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
@@ -201,10 +206,33 @@ async fn closing_worker_reaps_capture_without_sending_audio() {
     .await
     .unwrap();
     worker.finish_capture();
-    tokio::task::yield_now().await;
-    let started = std::time::Instant::now();
-    worker.close().await;
-    assert!(started.elapsed() < Duration::from_millis(500));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !stopped_path.exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("helper must receive the stop request");
+    tokio::time::timeout(Duration::from_secs(5), worker.close())
+        .await
+        .expect("capture worker must close");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let status = tokio::process::Command::new("/bin/ps")
+                .args(["-p", &pid])
+                .output()
+                .await
+                .expect("query capture helper")
+                .status;
+            match status.code() {
+                Some(1) => break,
+                Some(0) => tokio::time::sleep(Duration::from_millis(5)).await,
+                _ => panic!("could not query capture helper: {status}"),
+            }
+        }
+    })
+    .await
+    .expect("capture helper must be reaped");
     while let Ok(message) = rx.try_recv() {
         assert!(
             !matches!(

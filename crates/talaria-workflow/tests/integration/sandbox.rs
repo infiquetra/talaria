@@ -153,7 +153,7 @@ async fn runaway_loop_is_stopped() {
     cfg.max_sync_slice = Duration::from_millis(200);
     let (outcome, _) = execute(
         &source(
-            "await agent('slow'); let n = 0; for (let i=0; i<1000000; i++) n += i; return 'ok';",
+            "await agent('slow'); let n = 0; for (let i=0; i<50000; i++) n += i; if (n !== 1249975000) throw new Error('incomplete loop'); return 'ok';",
         ),
         cfg,
         backend,

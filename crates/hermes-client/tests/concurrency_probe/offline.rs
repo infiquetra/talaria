@@ -370,31 +370,57 @@ fn import_validates_before_mutation() {
         Ok(1)
     );
 }
-async fn request(provider: &LoopbackProvider, route: &str, body: Value) -> String {
+async fn connect(provider: &LoopbackProvider) -> tokio::net::TcpStream {
     let authority = provider
         .base_url()
         .strip_prefix("http://")
         .unwrap()
         .strip_suffix("/v1")
         .unwrap();
-    let mut stream = tokio::net::TcpStream::connect(authority).await.unwrap();
-    let body = body.to_string();
-    stream
-        .write_all(
-            format!(
-                "POST {route} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
-                body.len()
+    tokio::net::TcpStream::connect(authority).await.unwrap()
+}
+async fn request(provider: &LoopbackProvider, route: &str, body: Value) -> String {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut stream = connect(provider).await;
+        let body = body.to_string();
+        stream
+            .write_all(
+                format!(
+                    "POST {route} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
             )
-            .as_bytes(),
-        )
-        .await
-        .unwrap();
-    let mut output = String::new();
-    stream.read_to_string(&mut output).await.unwrap();
-    output
+            .await
+            .unwrap();
+        let mut output = String::new();
+        stream.read_to_string(&mut output).await.unwrap();
+        output
+    })
+    .await
+    .unwrap_or_else(|_| panic!("provider request timed out: {route}"))
 }
 fn turn(role: &str) -> Value {
     json!({"stream":true,"messages":[{"role":role,"content":PROMPT}]})
+}
+#[tokio::test]
+async fn empty_connection_is_not_an_unexpected_route() {
+    let p = LoopbackProvider::start("ready").await.unwrap();
+    let output = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut stream = connect(&p).await;
+        stream.shutdown().await.unwrap();
+        let mut output = String::new();
+        stream.read_to_string(&mut output).await.unwrap();
+        output
+    })
+    .await
+    .expect("empty connection must finish");
+    let stats = p.stats().await;
+    assert_eq!(stats.unexpected_routes, 0);
+    assert!(output.is_empty(), "no HTTP request was sent: {output}");
+    assert_eq!(stats.turn_requests, 0);
+    assert_eq!(stats.aux_requests, 0);
+    assert_eq!(stats.turn_requests_peak_min, 0);
 }
 #[tokio::test]
 async fn provider_counts_concurrency() {
@@ -408,8 +434,24 @@ async fn provider_counts_concurrency() {
     let stats = p.stats().await;
     assert_eq!(stats.turn_requests, 2);
     assert_eq!(stats.turn_requests_peak_min, 2);
-    p.reset_peak().await;
+    // Response EOF can precede the server's final active-counter decrement.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            p.reset_peak().await;
+            if p.stats().await.turn_requests_peak_min == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("completed turn handlers must become idle");
     request(&p, "/v1/chat/completions", json!({"stream":false})).await;
+    let before = p.stats().await;
+    assert_eq!(
+        before.unexpected_routes, 0,
+        "before the invalid route: {before:?}"
+    );
     assert!(
         request(&p, "/v1/other", json!({}))
             .await
@@ -417,7 +459,10 @@ async fn provider_counts_concurrency() {
     );
     let stats = p.stats().await;
     assert_eq!(stats.aux_requests, 1);
-    assert_eq!(stats.unexpected_routes, 1);
+    assert_eq!(
+        stats.unexpected_routes, 1,
+        "after the invalid route: {stats:?}"
+    );
     assert_eq!(stats.turn_requests_peak_min, 0);
 }
 #[tokio::test]

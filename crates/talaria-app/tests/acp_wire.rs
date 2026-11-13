@@ -28,6 +28,16 @@ fn error_reply() -> Value {
     json!({"kind":"reply_error","error":{"code":-32000,"message":"Authentication required"}})
 }
 
+async fn wait_until(description: &str, mut ready: impl FnMut() -> bool) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !ready() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for {description}"));
+}
+
 #[tokio::test]
 async fn handshake_speaks_the_configured_protocol_version() {
     let name = "handshake_speaks_the_configured_protocol_version";
@@ -114,7 +124,7 @@ async fn version_mismatch_refuses_and_kills_the_process() {
         .expect_err("version refused")
         .to_string();
     assert!(error.contains('1') && error.contains("99"));
-    settle().await;
+    wait_until("version-mismatched agent to exit", || !process_alive()).await;
     assert!(!process_alive());
     assert!(h.service.fleet_snapshot().rows.is_empty());
     assert!(messages("session/new").is_empty());
@@ -190,7 +200,7 @@ async fn auth_missing_or_unadvertised_fails_plainly() {
         .expect_err("no automatic authentication")
         .to_string();
     assert!(!error.trim().is_empty());
-    settle().await;
+    wait_until("unauthenticated agent to exit", || !process_alive()).await;
     assert!(messages("authenticate").is_empty());
     assert_eq!(messages("session/new").len(), 1);
     assert!(h.service.fleet_snapshot().rows.is_empty());
@@ -255,7 +265,14 @@ async fn prompt_streams_updates_then_completes() {
         .await
         .expect("session");
     h.service.prompt(&key, "hello").await.expect("prompt");
-    settle().await;
+    wait_until("prompt completion", || {
+        h.service
+            .fleet_snapshot()
+            .rows
+            .iter()
+            .any(|row| row.key.session_id == key.session_id && row.state == RowState::Done)
+    })
+    .await;
     let prompt = messages("session/prompt");
     assert_eq!(
         prompt[0]["params"],
@@ -292,11 +309,13 @@ async fn prompt_streams_updates_then_completes() {
 async fn failed_tool_then_recovery_stays_working_until_end() {
     let name = "failed_tool_then_recovery_stays_working_until_end";
     if !in_child(name) {
-        run_case(name, "", |_| {
-            let mut s = standard_hello();
-            s.extend(vec![expect("session/prompt"), update(json!({"sessionUpdate":"tool_call","toolCallId":"tool-1","title":"Run"})), update(json!({"sessionUpdate":"tool_call_update","toolCallId":"tool-1","status":"failed"})), json!({"kind":"sleep_ms","ms":150}), update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Recovered"}})), reply(json!({"stopReason":"end_turn"}))]);
-            script_with_finish(s)
-        });
+        for (variant, delay_ms) in [("", 150), ("delayed", 650)] {
+            run_case(name, variant, |_| {
+                let mut s = standard_hello();
+                s.extend(vec![expect("session/prompt"), update(json!({"sessionUpdate":"tool_call","toolCallId":"tool-1","title":"Run"})), update(json!({"sessionUpdate":"tool_call_update","toolCallId":"tool-1","status":"failed"})), json!({"kind":"sleep_ms","ms":delay_ms}), update(json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Recovered"}})), reply(json!({"stopReason":"end_turn"}))]);
+                script_with_finish(s)
+            });
+        }
         return;
     }
     let _trace_guard = talaria_app::acp::trace_fixture_guard(false);
@@ -308,7 +327,14 @@ async fn failed_tool_then_recovery_stays_working_until_end() {
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
     talaria_app::acp::trace_fixture_event(false, "prompt_returned");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    wait_until("recovered turn completion", || {
+        h.service
+            .fleet_snapshot()
+            .rows
+            .iter()
+            .any(|row| row.key.session_id == key.session_id && row.state == RowState::Done)
+    })
+    .await;
     let checkpoint = h.service.fleet_snapshot();
     let state = checkpoint
         .rows
@@ -347,6 +373,21 @@ async fn failed_tool_then_recovery_stays_working_until_end() {
             .state,
         RowState::Done
     );
+    let states = snapshots
+        .iter()
+        .flat_map(|snapshot| &snapshot.rows)
+        .filter(|row| row.key.session_id == key.session_id)
+        .map(|row| row.state)
+        .collect::<Vec<_>>();
+    let working = states
+        .iter()
+        .position(|state| *state == RowState::Working)
+        .expect("working snapshot");
+    let done = states
+        .iter()
+        .position(|state| *state == RowState::Done)
+        .expect("completed snapshot");
+    assert!(working < done, "the turn must work before completing");
     assert!(
         h.service
             .transcript(&key)
@@ -378,7 +419,15 @@ async fn cancel_stops_the_turn() {
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
     h.service.cancel(&key).await.expect("cancel");
-    settle().await;
+    wait_until("cancelled turn completion", || {
+        !messages("session/cancel").is_empty()
+            && h.service.fleet_snapshot().rows.iter().any(|row| {
+                row.key.session_id == key.session_id
+                    && row.state == RowState::Done
+                    && row.outcome == Some(Outcome::Interrupted)
+            })
+    })
+    .await;
     let cancel = messages("session/cancel");
     assert_eq!(cancel.len(), 1);
     assert!(cancel[0].get("id").is_none());
@@ -418,10 +467,16 @@ async fn cancel_with_open_permission_settles_it_cancelled() {
         .await
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
-    settle().await;
+    wait_until("permission request", || {
+        h.service.fleet_snapshot().queue.len() == 1
+    })
+    .await;
     assert_eq!(h.service.fleet_snapshot().queue.len(), 1);
     h.service.cancel(&key).await.expect("cancel");
-    settle().await;
+    wait_until("permission cancellation", || {
+        !responses(7).is_empty() && h.service.fleet_snapshot().queue.is_empty()
+    })
+    .await;
     assert_eq!(responses(7).len(), 1);
     assert_eq!(
         responses(7)[0]["result"],
@@ -465,7 +520,10 @@ async fn permission_answer_sends_the_chosen_option() {
         .await
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
-    settle().await;
+    wait_until("both permission requests", || {
+        h.service.fleet_snapshot().queue.len() == 2
+    })
+    .await;
     assert_eq!(h.service.fleet_snapshot().queue.len(), 2);
     let first = responder(key.clone(), "7");
     h.service
@@ -477,7 +535,12 @@ async fn permission_answer_sends_the_chosen_option() {
         .await
         .expect("second request");
     let _ = h.service.answer_permission(&first, "reject").await;
-    settle().await;
+    wait_until("both permission responses", || {
+        !responses(7).is_empty()
+            && !responses(8).is_empty()
+            && h.service.fleet_snapshot().queue.is_empty()
+    })
+    .await;
     assert_eq!(responses(7).len(), 1);
     assert_eq!(
         responses(7)[0]["result"],
@@ -525,33 +588,25 @@ async fn mixed_backend_actions_send_no_hermes_requests() {
         .await
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
+    wait_until("both backends and the permission request", || {
         let snap = h.service.fleet_snapshot();
-        if snap
-            .rows
+        snap.rows
             .iter()
             .any(|r| r.key.profile == "fixture" && r.key.session_id == "session-1")
             && snap
                 .rows
                 .iter()
                 .any(|r| r.key.profile == "acp:fixture" && r.key.session_id == "session-1")
-        {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "both backends must be visible"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    settle().await;
+            && snap.queue.len() == 1
+    })
+    .await;
     let before = gateway.frame_count();
     h.service
         .answer_permission(&responder(key.clone(), "7"), "reject")
         .await
         .expect("answer");
     h.service.cancel(&key).await.expect("cancel");
+    // Observe a full quiet window for unintended gateway traffic.
     settle().await;
     assert_eq!(
         gateway.frame_count(),
@@ -664,7 +719,17 @@ async fn client_powers_refused_by_default() {
         .await
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
-    settle().await;
+    wait_until("refused client powers", || {
+        [11, 12, 13].iter().all(|id| !responses(*id).is_empty())
+            && h.service
+                .fleet_snapshot()
+                .diagnostics
+                .iter()
+                .filter(|line| line.contains("not enabled"))
+                .count()
+                == 3
+    })
+    .await;
     for id in [11, 12, 13] {
         let responses = responses(id);
         assert_eq!(responses.len(), 1);
@@ -755,7 +820,7 @@ async fn enabled_file_power_stays_inside_the_working_directory() {
         .await
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
-    settle().await;
+    wait_until("file power responses", || !responses(26).is_empty()).await;
     if variant() == "enabled" {
         for id in [21, 22, 23] {
             assert!(
@@ -839,7 +904,11 @@ async fn enabled_terminal_uses_allowlisted_environment() {
         .await
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
-    settle().await;
+    let last_response = if variant() == "enabled" { 34 } else { 31 };
+    wait_until("terminal power response", || {
+        !responses(last_response).is_empty()
+    })
+    .await;
     if variant() == "enabled" {
         let result = responses(33);
         let output = result[0]["result"]["output"]
@@ -887,7 +956,15 @@ async fn process_exit_fails_working_rows() {
         .await
         .expect("session");
     let _ = h.service.prompt(&key, "go").await;
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    wait_until("exited agent to fail its working row", || {
+        let snapshot = h.service.fleet_snapshot();
+        snapshot
+            .rows
+            .iter()
+            .any(|row| row.key.session_id == key.session_id && row.state == RowState::Failed)
+            && !process_alive()
+    })
+    .await;
     let snap = h.service.fleet_snapshot();
     let row = snap
         .rows
@@ -924,7 +1001,17 @@ async fn stderr_is_never_protocol() {
         .await
         .expect("session");
     h.service.prompt(&key, "go").await.expect("prompt");
-    settle().await;
+    wait_until("protocol text and stderr diagnostic", || {
+        h.service
+            .transcript(&key)
+            .contains(&AcpCell::Text("real".into()))
+            && h.service
+                .fleet_snapshot()
+                .diagnostics
+                .iter()
+                .any(|line| line.contains("diagnostic line"))
+    })
+    .await;
     let cells = h.service.transcript(&key);
     assert!(cells.contains(&AcpCell::Text("real".into())));
     assert!(!cells.contains(&AcpCell::Text("fake".into())));
