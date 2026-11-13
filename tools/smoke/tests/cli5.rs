@@ -156,6 +156,16 @@ fn outside_herdr_fails_preflight_without_a_result() {
         .env_remove("HERDR_ENV")
         .run();
     assert_eq!(out.code, Some(2));
-    assert!(output(&out).contains("Herdr pane"), "{}", output(&out));
-    assert!(!output(&out).contains("SMOKE_RESULT"));
+    assert!(output(&out).contains("HC_TERMINAL_ID"), "{}", output(&out));
+    assert!(
+        output(&out).contains("TALARIA_SMOKE_TERMINAL=herdr"),
+        "{}",
+        output(&out)
+    );
+    assert!(!output(&out).contains("SMOKE_RESULT"), "{}", output(&out));
+    assert!(
+        !output(&out).contains("does not run on hc yet"),
+        "{}",
+        output(&out)
+    );
 }
