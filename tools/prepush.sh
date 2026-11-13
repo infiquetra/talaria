@@ -18,6 +18,10 @@ if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
     echo "prepush: missing cargo-llvm-cov" >&2
     exit 1
 fi
+if ! command -v cargo-nextest >/dev/null 2>&1; then
+    echo "prepush: missing cargo-nextest" >&2
+    exit 1
+fi
 if [[ $bench == true ]] && ! command -v jq >/dev/null 2>&1; then
     echo "prepush: missing jq" >&2
     exit 1
@@ -33,7 +37,7 @@ cargo test -p talaria-app --test review_timing -- --exact keystroke_budget_while
 echo "prepush: Doc tests"
 cargo test --workspace --doc
 echo "prepush: Coverage"
-cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
+cargo llvm-cov nextest --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
 echo "prepush: Clippy ban canary"
 cargo test -p patterns-check --test boundaries -- --ignored clippy_catches_each_banned_interface
 echo "prepush: Whitespace"

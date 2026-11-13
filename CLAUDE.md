@@ -25,10 +25,11 @@ cargo test --workspace
 ```
 
 Coverage has an 80% line floor; generated source under `/generated/` is excluded
-and inline test code counts.
+and inline test code counts. The measurement and `tools/prepush.sh` run tests
+through `cargo-nextest`, so install it beside `cargo-llvm-cov`.
 
 ```bash
-cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
+cargo llvm-cov nextest --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
 ```
 
 ## Notes
