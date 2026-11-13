@@ -13,7 +13,7 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -34,14 +34,6 @@ use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 pub const INSTANCE_ID: &str = "0123456789abcdef0123456789abcdef";
 pub const CODE_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
-static UMASK: Once = Once::new();
-
-fn install_umask() {
-    UMASK.call_once(|| {
-        let _ = rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
-    });
-}
-
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
@@ -59,7 +51,6 @@ pub struct Home {
 
 impl Home {
     pub fn new() -> Self {
-        install_umask();
         let dir = tempfile::Builder::new()
             .prefix("t")
             .rand_bytes(3)
@@ -261,7 +252,6 @@ pub async fn serve<F>(socket: &Path, replies_for: F, plan: WsPlan) -> AttachMock
 where
     F: FnOnce(&str) -> Vec<ControlReply>,
 {
-    install_umask();
     let shared = Arc::new(Shared {
         requests: Mutex::new(Vec::new()),
         request_lines: Mutex::new(Vec::new()),
