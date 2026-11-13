@@ -45,3 +45,5 @@ tests/**/corpora/
 
 /target
 /lcov.info
+# Coverage profiles written by test child processes that start with a cleared environment.
+*.profraw
