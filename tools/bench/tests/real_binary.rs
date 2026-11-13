@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use talaria_bench::pty::run_in_pty;
@@ -39,23 +39,61 @@ fn target_dir(root: &Path) -> PathBuf {
     }
 }
 
-/// Builds the debug `talaria` once for the whole test binary and returns its path. A build
-/// failure fails the test that asked.
+fn inputs_not_newer(path: &Path, built: SystemTime) -> std::io::Result<bool> {
+    if matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("profraw" | "profdata")
+    ) {
+        return Ok(true);
+    }
+    let metadata = path.metadata()?;
+    if metadata.is_file() {
+        return Ok(metadata.modified()? <= built);
+    }
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir()
+            && matches!(
+                entry.file_name().to_str(),
+                Some("tests" | "benches" | "examples" | "target")
+            )
+        {
+            continue;
+        }
+        if !inputs_not_newer(&entry.path(), built)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn binary_is_fresh(binary: &Path, root: &Path) -> bool {
+    let Ok(built) = binary.metadata().and_then(|metadata| metadata.modified()) else {
+        return false;
+    };
+    ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "crates"]
+        .iter()
+        .all(|path| inputs_not_newer(&root.join(path), built).unwrap_or(false))
+}
+
+/// Reuse a fresh debug executable, or build it once for a standalone invocation.
 fn debug_binary() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY.get_or_init(|| {
         let root = support::workspace_root();
-        let output = Command::new(env!("CARGO"))
-            .args(["build", "-p", "talaria-cli"])
-            .current_dir(&root)
-            .output()
-            .expect("start cargo to build the debug talaria binary");
-        assert!(
-            output.status.success(),
-            "building the debug talaria binary failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
         let path = target_dir(&root).join("debug/talaria");
+        if !binary_is_fresh(&path, &root) {
+            let output = Command::new(env!("CARGO"))
+                .args(["build", "-p", "talaria-cli"])
+                .current_dir(&root)
+                .output()
+                .expect("start cargo to build the debug talaria binary");
+            assert!(
+                output.status.success(),
+                "building the debug talaria binary failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         assert!(
             path.is_file(),
             "the build succeeded but there is no debug talaria binary where cargo puts it"

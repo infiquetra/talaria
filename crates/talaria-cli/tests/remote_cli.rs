@@ -23,7 +23,8 @@ impl Gateway {
             .join("examples")
             .join("mock_gated_gateway");
         BUILD_MOCK.call_once(|| {
-            if !binary.exists() {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            if !binary_is_fresh(&binary, &root) {
                 let target_dir = binary
                     .parent()
                     .and_then(|p| p.parent())
@@ -65,6 +66,52 @@ impl Gateway {
         }
     }
 }
+
+fn inputs_not_newer(path: &Path, built: SystemTime) -> std::io::Result<bool> {
+    if matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("profraw" | "profdata")
+    ) {
+        return Ok(true);
+    }
+    let metadata = path.metadata()?;
+    if metadata.is_file() {
+        return Ok(metadata.modified()? <= built);
+    }
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir()
+            && matches!(
+                entry.file_name().to_str(),
+                Some("tests" | "benches" | "examples" | "target")
+            )
+        {
+            continue;
+        }
+        if !inputs_not_newer(&entry.path(), built)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn binary_is_fresh(binary: &Path, root: &Path) -> bool {
+    let Ok(built) = binary.metadata().and_then(|metadata| metadata.modified()) else {
+        return false;
+    };
+    [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "crates",
+        "crates/hermes-client/examples/mock_gated_gateway.rs",
+        "crates/hermes-client/tests/support",
+        "fixtures",
+    ]
+    .iter()
+    .all(|path| inputs_not_newer(&root.join(path), built).unwrap_or(false))
+}
+
 impl Drop for Gateway {
     fn drop(&mut self) {
         let _ = self.child.kill();

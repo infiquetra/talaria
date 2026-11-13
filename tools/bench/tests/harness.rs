@@ -16,7 +16,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 use talaria_bench::{BenchError, Report, Row, RunOptions, Status, exit_code, generate, run};
@@ -74,6 +74,11 @@ fn fake_options(args: &[&str], only: &[&str]) -> RunOptions {
 
 fn run_fake(args: &[&str], only: &[&str]) -> Report {
     run(&fake_options(args, only)).expect("the run completes and measures")
+}
+
+fn passing_launch_report() -> &'static Report {
+    static REPORT: OnceLock<Report> = OnceLock::new();
+    REPORT.get_or_init(|| run_fake(&[], &["launch"]))
 }
 
 // ---- reading a report ----
@@ -524,7 +529,7 @@ fn missing_binary_exits_2_and_output_has_no_absolute_paths() {
     );
 
     // A normal run prints and writes no path, host name or user name.
-    let report = run_fake(&[], &["launch"]);
+    let report = passing_launch_report();
     assert_nothing_private("the table", &report.render());
     assert_nothing_private("the JSON", &report.to_json());
     let json: serde_json::Value =
@@ -539,7 +544,6 @@ fn missing_binary_exits_2_and_output_has_no_absolute_paths() {
     assert!(!version.contains('/') && !version.contains('\\') && !version.contains('\n'));
 
     // Only the first line of --version is kept, and only a short line without a slash.
-    let scratch = tempfile::tempdir().expect("create a scratch directory");
     let long_line = "v".repeat(120);
     let cases: [(&[&str], &str); 4] = [
         (&["tool 1.0", "second line"], "tool 1.0"),
@@ -548,14 +552,9 @@ fn missing_binary_exits_2_and_output_has_no_absolute_paths() {
         (&[long_line.as_str()], "unknown"),
     ];
     for (lines, expected) in cases {
-        let script = client_script(scratch.path(), Some(lines), None);
-        let report = run(&options(script, &[], &["launch"])).expect("the run completes");
-        let json: serde_json::Value =
-            serde_json::from_str(&report.to_json()).expect("the report is JSON");
-        assert_eq!(
-            json["binary_version"], expected,
-            "for version output {lines:?}"
-        );
+        let version = talaria_bench::measurements::version_line(lines.join("\n").as_bytes())
+            .unwrap_or_else(|| "unknown".into());
+        assert_eq!(version, expected, "for version output {lines:?}");
     }
 
     // The command line says the same in one line and exits 2 with no table.
@@ -699,9 +698,9 @@ fn extra_fixture_rows_are_labelled_and_table_lists_all_rows() {
     assert_nothing_private("the table", &table);
 
     // Selecting launch prints launch and the skipped gateway row, and nothing else.
-    let report = run_fake(&[], &["launch"]);
-    assert_status(&report, LAUNCH_ROW, Status::Pass);
-    assert_status(&report, SKIPPED_ROW, Status::Skipped);
+    let report = passing_launch_report();
+    assert_status(report, LAUNCH_ROW, Status::Pass);
+    assert_status(report, SKIPPED_ROW, Status::Skipped);
     for row in &report.rows {
         let name = row.name.to_lowercase();
         assert!(
@@ -720,7 +719,7 @@ fn extra_fixture_rows_are_labelled_and_table_lists_all_rows() {
         "resident",
     ] {
         assert!(
-            rows_matching(&report, other).is_empty(),
+            rows_matching(report, other).is_empty(),
             "the {other:?} rows ran for --only launch:\n{}",
             report.render()
         );

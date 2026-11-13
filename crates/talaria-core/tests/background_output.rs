@@ -465,19 +465,15 @@ proptest::proptest! {
 
 fn chunk_body() -> impl proptest::prelude::Strategy<Value = String> {
     use proptest::prelude::*;
-    proptest::collection::vec(
-        prop_oneof![
-            Just('\n'),
-            proptest::char::range('a', 'z'),
-            proptest::char::range('A', 'Z'),
-            Just('é'),
-            Just('你'),
-            Just('あ'),
-            Just('Ω'),
-        ],
-        0..=200,
-    )
-    .prop_map(|chars| chars.into_iter().collect())
+    let mut alphabet = vec!['\n'; 26];
+    alphabet.extend('a'..='z');
+    alphabet.extend('A'..='Z');
+    // Keep each original character class equally likely without a union tree per character.
+    for ch in ['é', '你', 'あ', 'Ω'] {
+        alphabet.extend(std::iter::repeat_n(ch, 26));
+    }
+    proptest::collection::vec(proptest::sample::select(alphabet), 0..=200)
+        .prop_map(|chars| chars.into_iter().collect())
 }
 
 #[derive(Clone, Debug)]

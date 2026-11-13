@@ -286,7 +286,8 @@ async fn secret_reaches_only_two_requests() {
 async fn unknown_outcomes_reload_and_never_resend() {
     let (gateway, client, _inbound) = MockGateway::start().await;
     gateway.set_silent_all(true);
-    let service = ProviderService::new(client, rest_client(), "fixture".into());
+    let service = ProviderService::new(client, rest_client(), "fixture".into())
+        .with_call_timeout(Duration::from_millis(250));
     let secret = Zeroizing::new(PROVIDER_KEY.to_owned());
     let saved = service
         .execute(
@@ -316,7 +317,15 @@ async fn unknown_outcomes_reload_and_never_resend() {
         Duration::from_secs(31),
     )
     .await;
-    let rest = RestClient::new(&mock.origin(), minted(), RestOptions::default()).expect("loopback");
+    let rest = RestClient::new(
+        &mock.origin(),
+        minted(),
+        RestOptions {
+            write_deadline: Duration::from_millis(250),
+            ..RestOptions::default()
+        },
+    )
+    .expect("loopback");
     let (gateway, client, _inbound) = MockGateway::start().await;
     let service = ProviderService::new(client, rest, "fixture".into());
     let stored = service

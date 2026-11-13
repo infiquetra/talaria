@@ -160,16 +160,7 @@ fn small_row_budgets() {
 
 fn content_text() -> impl Strategy<Value = String> {
     prop::collection::vec(
-        prop_oneof![
-            Just('a'),
-            Just('Z'),
-            Just(' '),
-            Just('漢'),
-            Just('字'),
-            Just('\u{301}'),
-            Just('👍'),
-            Just('.'),
-        ],
+        prop::sample::select(vec!['a', 'Z', ' ', '漢', '字', '\u{301}', '👍', '.']),
         0..300,
     )
     .prop_map(|chars| chars.into_iter().collect())

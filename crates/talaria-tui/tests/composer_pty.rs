@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Condvar, Mutex, Once};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -38,19 +38,9 @@ fn probe_preserves_input_before_after_and_between_split_replies() {
         let Some(mut demo) = Demo::open(&[]) else {
             return;
         };
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(2) {
-            if demo
-                .output
-                .lock()
-                .unwrap()
-                .windows(4)
-                .any(|bytes| bytes == b"\x1b[6n")
-            {
-                break;
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
+        demo.wait_until(Duration::from_secs(2), |output| {
+            output.windows(4).any(|bytes| bytes == b"\x1b[6n")
+        });
         assert!(
             demo.output
                 .lock()
@@ -64,7 +54,14 @@ fn probe_preserves_input_before_after_and_between_split_replies() {
         }
         thread::sleep(Duration::from_millis(200));
         assert!(demo.write(b"\r"));
-        let output = demo.collect(Duration::from_secs(1));
+        let submitted = format!(
+            "SUBMITTED lines=1 chars={} text={expected:?}",
+            expected.chars().count()
+        );
+        demo.wait_until(Duration::from_secs(1), |output| {
+            String::from_utf8_lossy(output).contains(&submitted)
+        });
+        let output = demo.snapshot();
         assert!(
             output.contains(&format!(
                 "SUBMITTED lines=1 chars={} text={expected:?}",
@@ -265,6 +262,7 @@ struct Demo {
     child: Box<dyn Child + Send + Sync>,
     writer: Option<Box<dyn Write + Send>>,
     output: Arc<Mutex<Vec<u8>>>,
+    output_changed: Arc<Condvar>,
     parser: Arc<Mutex<vt100::Parser>>,
     reader_done: Arc<AtomicBool>,
     reader: Option<JoinHandle<()>>,
@@ -299,28 +297,35 @@ impl Demo {
         let mut reader_half = pair.master.try_clone_reader().expect("pty reader");
         let writer = pair.master.take_writer().expect("pty writer");
         let output = Arc::new(Mutex::new(Vec::new()));
+        let output_changed = Arc::new(Condvar::new());
         let parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 0)));
         let reader_done = Arc::new(AtomicBool::new(false));
         let sink = Arc::clone(&output);
         let screen = Arc::clone(&parser);
         let done = Arc::clone(&reader_done);
+        let changed = Arc::clone(&output_changed);
         let reader = thread::spawn(move || {
             let mut buf = [0u8; 1_024];
             loop {
                 match reader_half.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        sink.lock().expect("output").extend_from_slice(&buf[..n]);
+                        let mut output = sink.lock().expect("output");
+                        output.extend_from_slice(&buf[..n]);
                         screen.lock().expect("parser").process(&buf[..n]);
+                        changed.notify_all();
                     }
                 }
             }
+            let _output = sink.lock().expect("output");
             done.store(true, Ordering::SeqCst);
+            changed.notify_all();
         });
         Some(Self {
             child,
             writer: Some(writer),
             output,
+            output_changed,
             parser,
             reader_done,
             reader: Some(reader),
@@ -329,24 +334,36 @@ impl Demo {
 
     /// Block until the screen has a drawn cell, the child has exited, or `timeout` elapses.
     fn wait_for_frame(&mut self, timeout: Duration) {
-        let start = Instant::now();
-        while start.elapsed() < timeout {
-            let drawn = self
-                .parser
+        self.wait_until(timeout, |_| {
+            self.parser
                 .lock()
                 .expect("parser")
                 .screen()
                 .contents()
                 .chars()
-                .any(|ch| !ch.is_whitespace());
-            if drawn {
-                return;
+                .any(|ch| !ch.is_whitespace())
+        });
+    }
+
+    fn wait_until(&self, timeout: Duration, ready: impl Fn(&[u8]) -> bool) -> bool {
+        let start = Instant::now();
+        let mut output = self.output.lock().expect("output");
+        loop {
+            if ready(&output) {
+                return true;
             }
-            let exited = self.child.try_wait().ok().flatten().is_some();
-            if exited && self.reader_done.load(Ordering::SeqCst) {
-                return;
+            if self.reader_done.load(Ordering::SeqCst) {
+                return false;
             }
-            thread::sleep(Duration::from_millis(20));
+            let remaining = timeout.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                return false;
+            }
+            let (next, _) = self
+                .output_changed
+                .wait_timeout(output, remaining)
+                .expect("output");
+            output = next;
         }
     }
 
@@ -369,6 +386,10 @@ impl Demo {
             }
             thread::sleep(Duration::from_millis(20));
         }
+        self.snapshot()
+    }
+
+    fn snapshot(&self) -> String {
         let raw = String::from_utf8_lossy(&self.output.lock().expect("output")).into_owned();
         let parsed = self.parser.lock().expect("parser").screen().contents();
         if raw.contains("PASTE-EVENT") || raw.contains("SUBMITTED") || raw.contains("INTERRUPT") {
