@@ -64,6 +64,8 @@ and the cost of holding finished output in memory.
 
 Use `/fleet` to find, peek at, answer, or attach to sessions. You can launch a background session with `--bg`, and add `--worktree` to create a separate checkout. Files shared through `.worktreeinclude` may remain linked to the main checkout; review changes before using them. Notifications highlight sessions needing attention.
 
+A Talaria session running in a Herdr terminal is a seat. [Running Talaria as a Herdr seat](herdr-seat.md) says what that seat reports and how to drive it from outside.
+
 ## Settings
 
 Use `/config` for Hermes settings and `/configure` to prepare supported changes. `/doctor` checks the gateway and its capabilities. Hermes owns profile settings and credentials; Talaria reads its own `~/.talaria/config.toml` at startup. See [configuration](configuration.md).

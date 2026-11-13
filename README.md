@@ -60,6 +60,7 @@ No attribution lines belong in commits, PRs, code or generated documentation.
 - [License](LICENSE)
 
 - [Guide](docs/guide.md)
+- [Running Talaria as a Herdr seat](docs/herdr-seat.md)
 - [Keybindings](docs/keybindings.md)
 - [Configuration](docs/configuration.md)
 - [Migrating from 0.6.5](docs/migrating-from-0.6.5.md)
