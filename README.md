@@ -13,12 +13,14 @@ Install: see [docs/install.md](docs/install.md) (Homebrew, release archives, or 
 
 Install Rust through rustup; the exact toolchain and components are pinned in
 [rust-toolchain.toml](rust-toolchain.toml). A Rust installation without rustup ignores that file.
+Install `cargo-nextest` once with `cargo install cargo-nextest --locked`.
 
 ```bash
 cargo build --workspace
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --workspace
+cargo nextest run --workspace
+cargo test --workspace --doc
 cargo run -q -p talaria-cli -- --version
 ```
 
@@ -27,7 +29,23 @@ Line coverage must be at least 80% across the workspace. Generated source under
 `/generated/` is excluded; inline test code counts.
 
 ```bash
-cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
+cargo llvm-cov nextest --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
+```
+
+Run `tools/prepush.sh` for the complete local check; add `--bench` for benchmarks.
+[The nextest configuration](.config/nextest.toml) keeps `retries = 0`, serializes
+the two trybuild cases, and runs timing-sensitive cases without competing tests.
+Failures stay visible on their first attempt.
+
+Each crate collects ordinary integration suites in `tests/integration.rs`, with
+the original suites as modules under `tests/integration/`. Shared helpers and
+fixtures keep their existing paths. Named architecture, documentation, release
+and live targets remain standalone, as do suites that require a fresh process
+for signal handlers or cold syntax-highlighter state. Select a consolidated
+suite with its module name, for example:
+
+```bash
+cargo nextest run -p talaria-core -E 'test(/memory_fields::/)'
 ```
 
 ## Workspace

@@ -10,16 +10,18 @@ use talaria_app::acp::{AcpAgentEntry, AcpConfig, AcpService};
 use talaria_app::fleet::{FleetConfig, FleetNotice, FleetService, FleetSnapshot};
 
 pub fn in_child(name: &str) -> bool {
-    std::env::var("TALARIA_ACP_TEST_CASE").ok().as_deref() == Some(name)
+    std::env::var("TALARIA_ACP_TEST_CASE").ok().as_deref() == name.rsplit("::").next()
 }
 
 pub fn run_case(name: &str, variant: &str, make_script: impl FnOnce(&Path) -> Vec<Value>) {
+    let trace_case =
+        name.rsplit("::").next() == Some("failed_tool_then_recovery_stays_working_until_end");
     let builder = tempfile::Builder::new();
     #[cfg(unix)]
     let builder = {
         use std::os::unix::fs::PermissionsExt;
         let mut builder = builder;
-        if name == "failed_tool_then_recovery_stays_working_until_end" {
+        if trace_case {
             builder.permissions(std::fs::Permissions::from_mode(0o700));
         }
         builder
@@ -40,7 +42,10 @@ pub fn run_case(name: &str, variant: &str, make_script: impl FnOnce(&Path) -> Ve
     std::fs::write(root.join("script.jsonl"), script).expect("mock script");
     let mut child = Command::new(std::env::current_exe().expect("test executable"))
         .args(["--exact", name, "--nocapture"])
-        .env("TALARIA_ACP_TEST_CASE", name)
+        .env(
+            "TALARIA_ACP_TEST_CASE",
+            name.rsplit("::").next().expect("case name"),
+        )
         .env("TALARIA_ACP_TEST_VARIANT", variant)
         .env("TALARIA_ACP_TEST_ROOT", root)
         .env("TALARIA_MOCK_ACP_SCRIPT", root.join("script.jsonl"))
@@ -59,7 +64,7 @@ pub fn run_case(name: &str, variant: &str, make_script: impl FnOnce(&Path) -> Ve
         }
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
-            if name == "failed_tool_then_recovery_stays_working_until_end" {
+            if trace_case {
                 eprintln!("ACP_TRACE_INCOMPLETE timeout");
                 let _trace_complete = retain_fixture_trace(root);
             }
@@ -69,7 +74,7 @@ pub fn run_case(name: &str, variant: &str, make_script: impl FnOnce(&Path) -> Ve
     }
     let output = child.wait_with_output().expect("child output");
     let mut trace_complete = true;
-    if name == "failed_tool_then_recovery_stays_working_until_end" {
+    if trace_case {
         eprintln!(
             "ACP_TRACE_CHILD {}",
             if output.status.success() {
@@ -81,11 +86,7 @@ pub fn run_case(name: &str, variant: &str, make_script: impl FnOnce(&Path) -> Ve
         trace_complete = retain_fixture_trace(root);
     }
     if !output.status.success() {
-        let cap = if name == "failed_tool_then_recovery_stays_working_until_end" {
-            65536
-        } else {
-            usize::MAX
-        };
+        let cap = if trace_case { 65536 } else { usize::MAX };
         if output.stdout.len() > cap || output.stderr.len() > cap {
             eprintln!("ACP_TRACE_INCOMPLETE child-output");
         }

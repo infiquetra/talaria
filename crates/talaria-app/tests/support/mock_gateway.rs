@@ -462,6 +462,7 @@ struct State {
 
 type CapabilityFailure = (String, String, i64, String, Value);
 struct CapabilityScript {
+    home: tempfile::TempDir,
     profile: String,
     plugins: Value,
     failures: VecDeque<CapabilityFailure>,
@@ -601,7 +602,7 @@ fn plan_capabilities(
                         Value::Null,
                     ));
                 } else if row.is_none_or(|row| row["source"] == "entrypoint") {
-                    let directory = std::env::temp_dir().join("capability-fixture-home/plugins");
+                    let directory = script.home.path().join("plugins");
                     error = Some((
                         5026,
                         format!("Plugin not found in {}", directory.display()),
@@ -754,6 +755,7 @@ fn new_shared(
 impl MockGateway {
     pub fn with_capabilities(&self, profile: &str) {
         lock(&self.shared).capabilities = Some(CapabilityScript {
+            home: tempfile::tempdir().expect("capability fixture home"),
             profile: profile.to_owned(),
             plugins: capability_fixture("plugins-manage-list.json")["plugins"].clone(),
             failures: VecDeque::new(),
