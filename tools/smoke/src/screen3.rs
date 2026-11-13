@@ -3,6 +3,8 @@
 //! Each reader takes normalised lines (box characters removed and trimmed). `lines_after_last`
 //! stays the one in `screen2b`.
 
+use std::sync::OnceLock;
+
 use regex::Regex;
 use serde_json::Value;
 
@@ -23,7 +25,8 @@ pub struct LaunchResult {
 
 /// Group headers such as `NEEDS YOU (1)`, in order, as `(name, count)`.
 pub fn fleet_headers(text: &str) -> Vec<(String, u32)> {
-    let Ok(header) = Regex::new(r"^([A-Z][A-Z ]*[A-Z]) \((\d+)\)$") else {
+    static HEADER: OnceLock<Result<Regex, regex::Error>> = OnceLock::new();
+    let Ok(header) = HEADER.get_or_init(|| Regex::new(r"^([A-Z][A-Z ]*[A-Z]) \((\d+)\)$")) else {
         return Vec::new();
     };
     normalised(text)

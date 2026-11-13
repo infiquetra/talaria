@@ -184,6 +184,39 @@ fn passes(step: &str, expected: &[&str], limit: u64) {
     }
     assert_eq!(exec.report.exit_code(), 0);
     assert_eq!(exec.close_tabs(), 1);
+    if step == "memory-commands" {
+        let delayed = exec_4b(
+            &script_4b(&[("@delayed-memory-command", "", "")]),
+            false,
+            false,
+            1.0,
+            900,
+        );
+        assert_eq!(delayed.report.exit_code(), 0, "{}", delayed.lines());
+        let elapsed = delayed
+            .report
+            .outcomes
+            .iter()
+            .find_map(|outcome| match outcome {
+                StepOutcome::Pass {
+                    step: "memory-commands",
+                    elapsed,
+                } => Some(*elapsed),
+                _ => None,
+            })
+            .expect("both delayed commands completed");
+        assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+        assert!(
+            delayed
+                .reads
+                .iter()
+                .filter(|read| read.source == ReadSource::Visible
+                    && read.text.contains("Waiting for command output."))
+                .count()
+                >= 2,
+            "each command is observed before its output is ready"
+        );
+    }
 }
 
 fn check_failure(step: &str, changes: &[(&str, &str, &str)], expected: &str) {
@@ -223,6 +256,20 @@ fn check_failure(step: &str, changes: &[(&str, &str, &str)], expected: &str) {
 fn fails(step: &str, cases: &[Case<'_>]) {
     for &(file, before, after, reason) in cases {
         check_failure(step, &[(file, before, after)], reason);
+    }
+    if step == "memory-commands" {
+        check_failure(
+            step,
+            &[
+                ("@delayed-memory-command", "", ""),
+                (
+                    "memory-commands-r1.txt",
+                    "# synthetic\n",
+                    "# synthetic\nSaved.\n",
+                ),
+            ],
+            "a write banner appeared; the suite must never change anything",
+        );
     }
     // Simultaneous adjacent violations establish the specified check order, as well as
     // proving each predicate independently above. Flags represent whole terminal paths.

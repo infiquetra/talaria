@@ -60,7 +60,9 @@ fn phase4b_refuses_other_profile_model_or_provider() {
         assert!(!output(&out).contains("SMOKE_RESULT"));
         assert_nothing_created(&harness, &report);
     }
-    let harness = Harness::plain();
+    let script = ScriptBuilder::new()
+        .on_first(RuleBuilder::run("--no-ensure --profile ").append("$0\nSMOKE_EXIT:7\n$ "));
+    let harness = Harness::new(&script);
     let out = harness
         .cmd()
         .args([
@@ -78,6 +80,8 @@ fn phase4b_refuses_other_profile_model_or_provider() {
         .run();
     assert!(!output(&out).contains(OVERRIDE));
     assert!(!output(&out).contains("unknown suite"), "{}", output(&out));
+    assert_eq!(out.code, Some(1), "{}", output(&out));
+    assert!(output(&out).contains("SMOKE_RESULT: FAILED (startup)"));
 }
 
 #[test]
@@ -131,23 +135,37 @@ fn exit_codes_are_0_1_2_and_never_3() {
             result: "SMOKE_RESULT: FAILED (no-gateway)",
         },
     ];
-    for case in cases {
-        for require in [false, true] {
-            let harness = Harness::new(&scripts4b::script_4b(case.mutation));
-            let mut command = harness
-                .cmd()
-                .args(["--suite", "phase4b"])
-                .env("PATH", jq_path(&harness))
-                .step_scale(0.01);
-            if require {
-                command = command.live_require();
+    let cases: Vec<_> = cases
+        .iter()
+        .flat_map(|case| [false, true].map(move |require| (case, require)))
+        .collect();
+    for batch in cases.chunks(2) {
+        std::thread::scope(|scope| {
+            let runs: Vec<_> = batch
+                .iter()
+                .map(|&(case, require)| {
+                    scope.spawn(move || {
+                        let harness = Harness::new(&scripts4b::script_4b(case.mutation));
+                        let mut command = harness
+                            .cmd()
+                            .args(["--suite", "phase4b"])
+                            .env("PATH", jq_path(&harness))
+                            .step_scale(0.01);
+                        if require {
+                            command = command.live_require();
+                        }
+                        let out = command.run();
+                        assert_eq!(out.code, Some(case.expected), "{}", output(&out));
+                        assert_ne!(out.code, Some(3));
+                        assert!(output(&out).contains(case.result), "{}", output(&out));
+                        assert!(!output(&out).contains("SKIP"));
+                    })
+                })
+                .collect();
+            for run in runs {
+                run.join().unwrap();
             }
-            let out = command.run();
-            assert_eq!(out.code, Some(case.expected), "{}", output(&out));
-            assert_ne!(out.code, Some(3));
-            assert!(output(&out).contains(case.result), "{}", output(&out));
-            assert!(!output(&out).contains("SKIP"));
-        }
+        });
     }
     let harness = Harness::plain();
     let out = harness

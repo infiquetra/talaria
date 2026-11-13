@@ -1,5 +1,7 @@
 //! Pure readers for configuration screens and doctor output.
 
+use std::sync::OnceLock;
+
 use regex::Regex;
 use serde_json::Value;
 
@@ -24,7 +26,9 @@ pub struct ProviderRow {
 
 // Strip control sequences before inspecting any captured screen or command output.
 pub(crate) fn plain(text: &str) -> String {
-    let Ok(escapes) = Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+    static ESCAPES: OnceLock<Result<Regex, regex::Error>> = OnceLock::new();
+    let Ok(escapes) = ESCAPES
+        .get_or_init(|| Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"))
     else {
         return text.to_owned();
     };
@@ -222,7 +226,10 @@ pub fn doctor_json(text: &str) -> Option<(String, usize)> {
 }
 
 pub fn doctor_summary(text: &str) -> Option<(usize, usize, usize)> {
-    let pattern = Regex::new(DOCTOR_SUMMARY_RE).ok()?;
+    static PATTERN: OnceLock<Option<Regex>> = OnceLock::new();
+    let pattern = PATTERN
+        .get_or_init(|| Regex::new(DOCTOR_SUMMARY_RE).ok())
+        .as_ref()?;
     let text = plain(text);
     let captures = pattern.captures(&text)?;
     Some((

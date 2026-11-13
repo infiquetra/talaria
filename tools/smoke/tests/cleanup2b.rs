@@ -6,11 +6,9 @@
 
 mod support;
 
-use std::path::PathBuf;
-use std::process::Command;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use support::readiness::Readiness;
 use support::scratch2b::Scratch2b;
 use support::scripts2b::{
     ContextEmpty, Shapes, Step, assert_fails_with, assert_one_close_tab, assert_passes, exec_2b,
@@ -23,21 +21,6 @@ fn explain(outcome: &support::Outcome) -> String {
         "exit code {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
         outcome.code, outcome.stdout, outcome.stderr
     )
-}
-
-/// True once the process is gone or only waiting to be collected.
-fn has_ended(pid: u32) -> bool {
-    match Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-    {
-        Ok(output) => {
-            let stat = String::from_utf8_lossy(&output.stdout);
-            let stat = stat.trim();
-            stat.is_empty() || stat.starts_with('Z')
-        }
-        Err(_) => false,
-    }
 }
 
 /// No exported Markdown file is left anywhere under the temporary root.
@@ -93,24 +76,21 @@ fn tab_closed_after_failure() {
 fn tab_closed_after_signal() {
     let script = script_2b(&Shapes::default(), Step::Headless);
     let harness = Harness::new(&script);
-    let mut running = harness.cmd().arg("--suite").arg("phase2b").spawn();
-    let pid = running.pid();
-    let deadline = Instant::now() + Duration::from_secs(240);
-    let mut exported: Option<PathBuf> = None;
-    while Instant::now() < deadline {
-        if let Some(scratch) = Scratch2b::find_scratch(&harness.tmp_dir()) {
-            let candidate = scratch.join("a").join("fixture-smoke-export.md");
-            if candidate.is_file() {
-                exported = Some(candidate);
-                break;
-            }
-        }
-        if has_ended(pid) {
-            break;
-        }
-        sleep(Duration::from_millis(100));
-    }
+    let ready = Readiness::new("export-written");
+    let mut running = harness
+        .cmd()
+        .arg("--suite")
+        .arg("phase2b")
+        .spawn_ready(ready);
+    let exported = if running.wait_ready(Duration::from_secs(240)) {
+        Scratch2b::find_scratch(&harness.tmp_dir())
+            .map(|scratch| scratch.join("a").join("fixture-smoke-export.md"))
+            .filter(|candidate| candidate.is_file())
+    } else {
+        None
+    };
     if exported.is_none() {
+        running.release_ready();
         running.kill();
         let outcome = running.finish();
         panic!(
@@ -119,6 +99,7 @@ fn tab_closed_after_signal() {
         );
     }
     running.signal("TERM");
+    running.release_ready();
     let outcome = running.finish();
     assert_eq!(outcome.code, Some(1), "{}", explain(&outcome));
     assert!(

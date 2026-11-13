@@ -171,69 +171,80 @@ fn phase2b_exit_codes() {
 #[test]
 fn phase2b_failure_report_is_scrubbed() {
     // Run 1 names the report folder, run 2 uses the default one.
-    for explicit in [true, false] {
-        let harness = Harness::plain();
-        let tmp = harness.tmp_dir();
-        let tmp_real = tmp.canonicalize().expect("tmp exists");
-        let home = harness.home_dir();
-        let hermes = harness.root().join("hermes-data");
-        fs::create_dir(&hermes).expect("hermes home");
-        let user = harness.user().to_owned();
+    std::thread::scope(|scope| {
+        let mut runs = Vec::new();
+        for explicit in [true, false] {
+            runs.push(scope.spawn(move || {
+                let harness = Harness::plain();
+                let tmp = harness.tmp_dir();
+                let tmp_real = tmp.canonicalize().expect("tmp exists");
+                let home = harness.home_dir();
+                let hermes = harness.root().join("hermes-data");
+                fs::create_dir(&hermes).expect("hermes home");
+                let user = harness.user().to_owned();
 
-        // The pane shows private values, as a shell prompt and a stack trace would.
-        let planted = format!(
-            "$0\nlogin={user} home={} tmp={}/stuff tmp_real={}/stuff hermes={}\n",
-            home.display(),
-            tmp.display(),
-            tmp_real.display(),
-            hermes.display(),
-        );
-        let script = ScriptBuilder::new()
-            .on_first(RuleBuilder::run("--no-ensure --profile ").append("$0\ntalaria\nidle"))
-            .on_first(RuleBuilder::run(r"^/context$").append(&planted));
-        fs::write(harness.fake.dir().join("script.json"), script.to_json()).expect("script");
-        let reports = tmp.join("reports");
-        fs::create_dir(&reports).expect("report folder");
+                // The pane shows private values, as a shell prompt and a stack trace would.
+                let planted = format!(
+                    "$0\nlogin={user} home={} tmp={}/stuff tmp_real={}/stuff hermes={}\n",
+                    home.display(),
+                    tmp.display(),
+                    tmp_real.display(),
+                    hermes.display(),
+                );
+                let script = ScriptBuilder::new()
+                    .on_first(
+                        RuleBuilder::run("--no-ensure --profile ").append("$0\ntalaria\nidle"),
+                    )
+                    .on_first(RuleBuilder::run(r"^/context$").append(&planted));
+                fs::write(harness.fake.dir().join("script.json"), script.to_json())
+                    .expect("script");
+                let reports = tmp.join("reports");
+                fs::create_dir(&reports).expect("report folder");
 
-        let mut cmd = harness.cmd().env("HERMES_HOME", &hermes);
-        cmd = cmd.arg("--suite").arg("phase2b");
-        if explicit {
-            cmd = cmd.arg("--report-dir").arg(&reports);
+                let mut cmd = harness.cmd().env("HERMES_HOME", &hermes);
+                cmd = cmd.arg("--suite").arg("phase2b");
+                if explicit {
+                    cmd = cmd.arg("--report-dir").arg(&reports);
+                }
+                let outcome = cmd.run();
+
+                let name = if explicit {
+                    "named folder"
+                } else {
+                    "default folder"
+                };
+                assert_eq!(outcome.code, Some(1), "{name}: {}", explain(&outcome));
+                let report_path = if explicit {
+                    reports.join("smoke-report.txt")
+                } else {
+                    find_report(&tmp)
+                };
+                let report = fs::read_to_string(&report_path)
+                    .unwrap_or_else(|e| panic!("{name}: no report at {report_path:?}: {e}"));
+
+                let needles = [
+                    ("login name", user),
+                    ("home", home.display().to_string()),
+                    ("tmp", tmp.display().to_string()),
+                    ("real tmp", tmp_real.display().to_string()),
+                    ("hermes home", hermes.display().to_string()),
+                ];
+                let printed = everything(&outcome);
+                for (kind, needle) in &needles {
+                    assert!(
+                        !printed.contains(needle.as_str()),
+                        "{name}: the {kind} leaked into the output; {}",
+                        explain(&outcome)
+                    );
+                    assert!(
+                        !report.contains(needle.as_str()),
+                        "{name}: the {kind} leaked into the report:\n{report}"
+                    );
+                }
+            }));
         }
-        let outcome = cmd.run();
-
-        let name = if explicit {
-            "named folder"
-        } else {
-            "default folder"
-        };
-        assert_eq!(outcome.code, Some(1), "{name}: {}", explain(&outcome));
-        let report_path = if explicit {
-            reports.join("smoke-report.txt")
-        } else {
-            find_report(&tmp)
-        };
-        let report = fs::read_to_string(&report_path)
-            .unwrap_or_else(|e| panic!("{name}: no report at {report_path:?}: {e}"));
-
-        let needles = [
-            ("login name", user),
-            ("home", home.display().to_string()),
-            ("tmp", tmp.display().to_string()),
-            ("real tmp", tmp_real.display().to_string()),
-            ("hermes home", hermes.display().to_string()),
-        ];
-        let printed = everything(&outcome);
-        for (kind, needle) in &needles {
-            assert!(
-                !printed.contains(needle.as_str()),
-                "{name}: the {kind} leaked into the output; {}",
-                explain(&outcome)
-            );
-            assert!(
-                !report.contains(needle.as_str()),
-                "{name}: the {kind} leaked into the report:\n{report}"
-            );
+        for run in runs {
+            run.join().unwrap();
         }
-    }
+    });
 }

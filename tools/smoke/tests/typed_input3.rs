@@ -6,6 +6,7 @@
 mod support;
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use support::scripts3::{
     Attach, BgLaunch, Exec3, FleetList, FleetQuiet, FleetView, LocalCommands, NeedsYou, OpenInPane,
@@ -239,6 +240,11 @@ fn collect_all() -> Vec<Sent> {
     all
 }
 
+fn collected() -> &'static [Sent] {
+    static SENT: OnceLock<Vec<Sent>> = OnceLock::new();
+    SENT.get_or_init(collect_all)
+}
+
 /// Files under the smoke crate's source that hold the forbidden word.
 fn forbidden_word_in_src() -> Vec<String> {
     let mut hits = Vec::new();
@@ -268,14 +274,14 @@ fn forbidden_word_in_src() -> Vec<String> {
 
 #[test]
 fn nothing_typed_contains_unattended() {
-    for sent in collect_all() {
-        for text in texts(&sent) {
+    for sent in collected() {
+        for text in texts(sent) {
             assert!(
                 !text.to_lowercase().contains("unattended"),
                 "no sent text may hold the forbidden word: {text:?}"
             );
         }
-        for key in keys(&sent) {
+        for key in keys(sent) {
             assert!(
                 !key.to_lowercase().contains("unattended"),
                 "no sent key may hold the forbidden word: {key:?}"
@@ -293,8 +299,8 @@ fn nothing_typed_contains_unattended() {
 fn no_dangerous_slash_commands_are_typed() {
     let forbidden = ["/model", "/profile", "/permissions", "/yolo", "/compact"];
     let fleet_letters = ["r", "x", "p"];
-    for sent in collect_all() {
-        for text in texts(&sent) {
+    for sent in collected() {
+        for text in texts(sent) {
             for needle in forbidden {
                 assert!(
                     !text.starts_with(needle),
@@ -320,7 +326,7 @@ fn no_dangerous_slash_commands_are_typed() {
                 );
             }
         }
-        for key in keys(&sent) {
+        for key in keys(sent) {
             assert_ne!(key, "shift+p", "push is not sent");
             assert_ne!(key, "alt+s", "the subagent key is not sent");
             assert_ne!(key, "shift+x", "stop is not sent");
@@ -330,8 +336,8 @@ fn no_dangerous_slash_commands_are_typed() {
 
 #[test]
 fn every_launch_line_carries_no_ensure() {
-    for sent in collect_all() {
-        for text in texts(&sent) {
+    for sent in collected() {
+        for text in texts(sent) {
             if text.contains("fleet list") {
                 assert!(
                     !text.contains("--no-ensure"),
@@ -356,8 +362,8 @@ fn every_launch_line_carries_no_ensure() {
 fn only_allowed_keys_are_sent() {
     let allowed = ["enter", "esc", "ctrl+c", "alt+a"];
     let recorded = ["alt+s", "shift+p", "shift+x", "ctrl+s"];
-    for sent in collect_all() {
-        for key in keys(&sent) {
+    for sent in collected() {
+        for key in keys(sent) {
             assert!(
                 allowed.contains(&key),
                 "unexpected key {key:?}; allowed {allowed:?}"
