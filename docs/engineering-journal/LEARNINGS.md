@@ -2,6 +2,20 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-12 — Status capability replies use compact wire delimiters
+
+**Evidence.** Live terminal acceptance received an Operating System Command 7501
+capability reply from `hc` with payload
+`?:states=idle,working,done,blocked,error:kinds=permission,question,auth`.
+The parser accepted only the spaced prose form and reported no support.
+
+**Mechanism.** Colons separate capability fields on the wire without spaces.
+Spaces around the colons in the prose description were interpreted as required
+bytes. The amended probe tests exercise both forms with both reply terminators.
+
+**Rule.** Accept compact and spaced field delimiters in status capability replies,
+while matching comma-separated capability names without trimming spaces.
+
 ## 2026-11-04 — Persistent workspace ownership must outlive temporary overlays
 
 **Evidence.** The new workspace terminal tests initially failed on inert entry,

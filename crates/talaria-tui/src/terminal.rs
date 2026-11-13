@@ -28,6 +28,7 @@ use ratatui::text::Line;
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 use talaria_core::session::Cell;
+use talaria_core::{BlockKind, SeatState};
 
 use crate::history::{CellLines, sanitize_line, wrap_lines};
 use crate::live::{FrameStats, LiveView, max_live_height};
@@ -64,6 +65,19 @@ pub struct TerminalCaps {
     pub keyboard_enhancement: bool,
 }
 
+/// The state and kind words accepted by the terminal's status protocol.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StatusSupport {
+    pub idle: bool,
+    pub working: bool,
+    pub done: bool,
+    pub blocked: bool,
+    pub error: bool,
+    pub permission: bool,
+    pub question: bool,
+    pub auth: bool,
+}
+
 /// The start-up probe's answers. `cursor` is (column, row), 0-based.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ProbeReply {
@@ -71,13 +85,41 @@ pub struct ProbeReply {
     pub cursor: Option<(u16, u16)>,
     /// The OSC 11 background and OSC 10 foreground answers; `None` when unanswered.
     pub colors: crate::theme::TerminalColors,
+    /// Accepted status words, or `None` when the probe was unanswered.
+    pub status: Option<StatusSupport>,
 }
 
-/// The six queries, written once at start-up: cursor position, keyboard flags, the
-/// synchronized output mode report, the background and foreground colours (OSC 11 and 10), and
+/// The seven queries, written once at start-up: cursor position, keyboard flags, the
+/// synchronized output mode report, the background and foreground colours (OSC 11 and 10), status, and
 /// device attributes, which every terminal answers and so marks the end of the reply. A terminal
 /// that does not know a colour query skips it, so the colours cost no extra wait.
-pub const PROBE_QUERY: &[u8] = b"\x1b[6n\x1b[?u\x1b[?2026$p\x1b]11;?\x1b\\\x1b]10;?\x1b\\\x1b[c";
+pub const PROBE_QUERY: &[u8] =
+    b"\x1b[6n\x1b[?u\x1b[?2026$p\x1b]11;?\x1b\\\x1b]10;?\x1b\\\x1b]7501;?\x07\x1b[c";
+
+/// Encode a supported state, falling back to idle only for an unlisted done or error state.
+pub fn status_record(state: SeatState, support: StatusSupport) -> Option<Vec<u8>> {
+    let word = match state {
+        SeatState::Idle if support.idle => "idle",
+        SeatState::Working if support.working => "working",
+        SeatState::Done if support.done => "done",
+        SeatState::Error if support.error => "error",
+        SeatState::Done | SeatState::Error if support.idle => "idle",
+        SeatState::Blocked(_) if support.blocked => "blocked",
+        _ => return None,
+    };
+    let kind = match state {
+        SeatState::Blocked(Some(BlockKind::Permission)) if support.permission => ":kind=permission",
+        SeatState::Blocked(Some(BlockKind::Question)) if support.question => ":kind=question",
+        SeatState::Blocked(Some(BlockKind::Auth)) if support.auth => ":kind=auth",
+        _ => "",
+    };
+    Some(format!("\x1b]7501;state={word}:app=talaria{kind}\x07").into_bytes())
+}
+
+/// Clear the status owned by this terminal application.
+pub fn clear_status_record() -> &'static [u8] {
+    b"\x1b]7501;state=clear\x07"
+}
 
 /// One control sequence (`ESC [` …) read from a probe reply.
 struct Sequence {
@@ -158,6 +200,48 @@ fn osc_reply(bytes: &[u8]) -> Osc {
     Osc::Incomplete
 }
 
+fn parse_status_support(bytes: &[u8]) -> Option<StatusSupport> {
+    let payload = bytes.strip_prefix(b"\x1b]7501;")?;
+    let payload = payload
+        .strip_suffix(b"\x07")
+        .or_else(|| payload.strip_suffix(b"\x1b\\"))?;
+    let payload = std::str::from_utf8(payload).ok()?;
+    let separator = if payload.starts_with("? : ") {
+        " : "
+    } else {
+        ":"
+    };
+    let mut fields = payload.split(separator);
+    if fields.next()? != "?" {
+        return None;
+    }
+    let states = fields.next()?.strip_prefix("states=")?;
+    let kinds = fields.next()?.strip_prefix("kinds=")?;
+    if fields.next().is_some() {
+        return None;
+    }
+    let mut support = StatusSupport::default();
+    for word in states.split(',') {
+        match word {
+            "idle" => support.idle = true,
+            "working" => support.working = true,
+            "done" => support.done = true,
+            "blocked" => support.blocked = true,
+            "error" => support.error = true,
+            _ => {}
+        }
+    }
+    for word in kinds.split(',') {
+        match word {
+            "permission" => support.permission = true,
+            "question" => support.question = true,
+            "auth" => support.auth = true,
+            _ => {}
+        }
+    }
+    Some(support)
+}
+
 fn clamp_u16(value: u32) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
@@ -171,6 +255,9 @@ pub fn parse_probe_reply(bytes: &[u8]) -> (ProbeReply, bool) {
         if bytes[at] == 0x1b && bytes[at + 1] == b']' {
             match osc_reply(&bytes[at..]) {
                 Osc::Complete(len) => {
+                    if let Some(status) = parse_status_support(&bytes[at..at + len]) {
+                        found.status = Some(status);
+                    }
                     if let Some((index, color)) =
                         crate::theme::detect::parse_osc_color(&bytes[at..at + len])
                     {
@@ -277,7 +364,10 @@ fn split_probe_input(bytes: &[u8]) -> (Vec<u8>, Vec<u8>) {
                 Scan::Complete(_) => {}
             }
         }
-        if rest.starts_with(b"\x1b]10;") || rest.starts_with(b"\x1b]11;") {
+        if rest.starts_with(b"\x1b]10;")
+            || rest.starts_with(b"\x1b]11;")
+            || rest.starts_with(b"\x1b]7501;")
+        {
             match osc_reply(rest) {
                 Osc::Incomplete => break,
                 Osc::Broken(len) => {
@@ -308,8 +398,9 @@ fn split_probe_input(bytes: &[u8]) -> (Vec<u8>, Vec<u8>) {
         } else if rest.starts_with(b"\x1b]") {
             match osc_reply(rest) {
                 Osc::Complete(len)
-                    if crate::theme::detect::parse_osc_color(&rest[..len])
-                        .is_some_and(|(index, _)| index == 10 || index == 11) =>
+                    if rest.starts_with(b"\x1b]7501;")
+                        || crate::theme::detect::parse_osc_color(&rest[..len])
+                            .is_some_and(|(index, _)| index == 10 || index == 11) =>
                 {
                     Some(len)
                 }
@@ -517,8 +608,11 @@ struct RestoreState {
 }
 
 /// The restore sequence for this state.
-fn restore_sequence(state: &RestoreState) -> Vec<u8> {
+fn restore_sequence(state: &RestoreState, clear_status: bool) -> Vec<u8> {
     let mut bytes = Vec::new();
+    if clear_status {
+        bytes.extend_from_slice(clear_status_record());
+    }
     if state.in_sync {
         bytes.extend_from_slice(SYNC_END);
     }
@@ -547,25 +641,46 @@ fn restore_sequence(state: &RestoreState) -> Vec<u8> {
 }
 
 /// What the panic hook writes when the state is locked by the panicking code.
-fn minimal_restore() -> Vec<u8> {
-    [RESET_REGION, PASTE_OFF, RESET_STYLE, SHOW_CURSOR].concat()
+fn minimal_restore(clear_status: bool) -> Vec<u8> {
+    [
+        if clear_status {
+            clear_status_record()
+        } else {
+            b""
+        },
+        RESET_REGION,
+        PASTE_OFF,
+        RESET_STYLE,
+        SHOW_CURSOR,
+    ]
+    .concat()
+}
+
+#[derive(Default)]
+struct SharedRestoreState {
+    state: Mutex<RestoreState>,
+    /// Kept outside the mutex so a panic can clear status while that mutex is held.
+    status_written: AtomicBool,
 }
 
 /// The shared state the restore routine runs from.
 #[derive(Clone)]
 pub struct RestoreLink {
-    state: Arc<Mutex<RestoreState>>,
+    shared: Arc<SharedRestoreState>,
 }
 
 impl RestoreLink {
     pub fn detached() -> Self {
         Self {
-            state: Arc::default(),
+            shared: Arc::default(),
         }
     }
 
     fn lock(&self) -> MutexGuard<'_, RestoreState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Mark the restore as done and return the state to write it from, unless it was already
@@ -584,24 +699,35 @@ impl RestoreLink {
         let Some(state) = claimed else {
             return Ok(false);
         };
-        w.write_all(&restore_sequence(&state))?;
+        let clear_status = self.shared.status_written.load(Ordering::SeqCst);
+        w.write_all(&restore_sequence(&state, clear_status))?;
+        if clear_status {
+            self.shared.status_written.store(false, Ordering::SeqCst);
+        }
         w.flush()?;
         Ok(true)
     }
 
     /// The panic hook's restore. True when it wrote something.
     fn restore_on_panic(&self, w: &mut dyn io::Write) -> bool {
-        let bytes = match self.state.try_lock() {
-            Ok(mut state) => Self::claim(&mut state).map(|state| restore_sequence(&state)),
-            Err(TryLockError::Poisoned(state)) => {
-                Self::claim(&mut state.into_inner()).map(|state| restore_sequence(&state))
+        let clear_status = self.shared.status_written.load(Ordering::SeqCst);
+        let bytes = match self.shared.state.try_lock() {
+            Ok(mut state) => {
+                Self::claim(&mut state).map(|state| restore_sequence(&state, clear_status))
             }
-            Err(TryLockError::WouldBlock) => Some(minimal_restore()),
+            Err(TryLockError::Poisoned(state)) => Self::claim(&mut state.into_inner())
+                .map(|state| restore_sequence(&state, clear_status)),
+            Err(TryLockError::WouldBlock) => Some(minimal_restore(clear_status)),
         };
         let Some(bytes) = bytes else {
             return false;
         };
-        let _ = w.write_all(&bytes).and_then(|()| w.flush());
+        if w.write_all(&bytes).is_ok() {
+            if clear_status {
+                self.shared.status_written.store(false, Ordering::SeqCst);
+            }
+            let _ = w.flush();
+        }
         true
     }
 }
@@ -685,6 +811,11 @@ pub struct InlineTerminal<W: io::Write> {
     out: W,
     link: RestoreLink,
     caps: TerminalCaps,
+    status: Option<StatusSupport>,
+    /// The latest requested state, including requests received while released.
+    last_seat: Option<SeatState>,
+    /// Bytes of the last written status record, for deduplication.
+    last_status: Option<Vec<u8>>,
     cols: u16,
     rows: u16,
     /// The viewport's first row, 0-based.
@@ -741,6 +872,9 @@ impl<W: io::Write> InlineTerminal<W> {
             out: w,
             link,
             caps: probe.caps,
+            status: probe.status,
+            last_seat: None,
+            last_status: None,
             cols,
             rows,
             top: 0,
@@ -1194,7 +1328,15 @@ impl<W: io::Write> InlineTerminal<W> {
         let Some(state) = claimed else {
             return Ok(());
         };
-        self.out.write_all(&restore_sequence(&state))?;
+        let clear_status = self.link.shared.status_written.load(Ordering::SeqCst);
+        self.out
+            .write_all(&restore_sequence(&state, clear_status))?;
+        if clear_status {
+            self.link
+                .shared
+                .status_written
+                .store(false, Ordering::SeqCst);
+        }
         self.out.flush()
     }
 
@@ -2006,6 +2148,7 @@ impl<W: io::Write> InlineTerminal<W> {
             .write_all(b"\x1b7\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l")?;
         self.out.flush()?;
         let reply = probe().unwrap_or_default();
+        self.status = reply.status;
         let mut batch = Batch::default();
         batch.put(PASTE_ON);
         batch.put(HIDE_CURSOR);
@@ -2042,7 +2185,39 @@ impl<W: io::Write> InlineTerminal<W> {
             self.out.write_all(&bytes)?;
             self.out.flush()?;
         }
+        self.write_seat_record(true)?;
         Ok(())
+    }
+
+    /// Report a changed supported state, or retain it until the terminal is reacquired.
+    pub fn report_seat(&mut self, state: SeatState) -> io::Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.last_seat = Some(state);
+        if self.released {
+            return Ok(());
+        }
+        self.write_seat_record(false)
+    }
+
+    fn write_seat_record(&mut self, resend: bool) -> io::Result<()> {
+        let Some((state, support)) = self.last_seat.zip(self.status) else {
+            return Ok(());
+        };
+        let Some(bytes) = status_record(state, support) else {
+            return Ok(());
+        };
+        if !resend && self.last_status.as_ref() == Some(&bytes) {
+            return Ok(());
+        }
+        self.out.write_all(&bytes)?;
+        self.link
+            .shared
+            .status_written
+            .store(true, Ordering::SeqCst);
+        self.last_status = Some(bytes);
+        self.out.flush()
     }
 
     /// Re-assert modes and repaint in place, without moving the viewport.

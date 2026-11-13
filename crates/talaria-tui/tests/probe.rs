@@ -14,7 +14,7 @@ use rustix::io::write;
 use rustix::pipe::pipe;
 use support::probe;
 use talaria_tui::terminal::{
-    ProbeReply, parse_probe_reply, read_probe_reply, read_probe_reply_with_input,
+    PROBE_QUERY, ProbeReply, parse_probe_reply, read_probe_reply, read_probe_reply_with_input,
 };
 
 /// Cursor report for row 24, column 1, which is (0, 23) when 0-based.
@@ -279,4 +279,58 @@ fn read_probe_reply_stops_at_marker_or_deadline() {
         elapsed < Duration::from_millis(100),
         "end of file took {elapsed:?}"
     );
+}
+
+#[test]
+fn probe_query_asks_for_status_before_device_attributes() {
+    let status = b"\x1b]7501;?\x07";
+    let end = b"\x1b[c";
+    let status_at = PROBE_QUERY
+        .windows(status.len())
+        .position(|window| window == status)
+        .unwrap_or_else(|| panic!("{status:?} not in PROBE_QUERY"));
+    let end_at = PROBE_QUERY
+        .windows(end.len())
+        .position(|window| window == end)
+        .unwrap_or_else(|| panic!("{end:?} not in PROBE_QUERY"));
+    assert!(
+        status_at < end_at,
+        "status query must precede device attributes"
+    );
+    assert_eq!(
+        PROBE_QUERY.last(),
+        Some(&b'c'),
+        "device attributes must end PROBE_QUERY"
+    );
+}
+
+#[test]
+fn late_status_answer_is_not_input() {
+    let answers: &[(&str, &[u8])] = &[
+        (
+            "compact BEL",
+            b"\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x07",
+        ),
+        (
+            "spaced BEL",
+            b"\x1b]7501;? : states=idle,working,done,blocked,error : kinds=permission,question,auth\x07",
+        ),
+    ];
+
+    for &(name, answer) in answers {
+        let (read_end, write_end) = pipe().expect("pipe");
+        write_all(&write_end, answer);
+        let (reply, input) =
+            read_probe_reply_with_input(&read_end, Duration::from_millis(50)).expect("read probe");
+        assert_eq!(reply, ProbeReply::default(), "{name} reply mismatch");
+        assert!(
+            input.is_empty(),
+            "{name} late status answer must not become input: {input:?}"
+        );
+        assert!(
+            !has_bytes_waiting(&read_end),
+            "{name} late status answer must not remain in the pipe"
+        );
+        drop(write_end);
+    }
 }
