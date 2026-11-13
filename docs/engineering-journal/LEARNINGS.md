@@ -7014,3 +7014,24 @@ Paper's disabled colour `#716551` measures approximately 4.67:1 against its `#ee
 using the theme contrast function. Inline rendering leaves the terminal background untouched.
 
 Rule: measure authored palette pairs, and inspect light and dark themes on both terminal backgrounds.
+
+## 2026-11-13 — Test consolidation changes names and process identity
+
+**Evidence.** Application child harnesses select tests with `--exact`, while the
+Agent Client Protocol (ACP) fixture trace selects its case through an environment
+marker. Moving a suite adds a module prefix to the compiled test name; the trace
+still expects the leaf name. Application layout/model fixtures also used process identifiers in paths,
+which cease to distinguish suites after consolidation. Their fixtures now own
+temporary directories. Property-test regression files move beside their source
+modules so saved failures remain discoverable.
+
+Rule: verify every exact child destination against the compiled inventory, keep
+independent fixture selectors intact, and give each fixture its own directory.
+
+**Evidence.** The terminal's cold Markdown suites assert initial highlighter
+state, and application editor/suspend suites install process-wide signal
+handlers. Serialization does not reset either state. Those suites retain their
+standalone binaries; ordinary suites share only test-free helpers.
+
+Rule: preserve a process boundary when a suite depends on initial global state
+or installs a persistent handler.

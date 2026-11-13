@@ -4858,3 +4858,29 @@ and renderers, including inline output on both terminal backgrounds.
 **Rationale.** The shared parser keeps the built-in and user formats consistent. Paper's disabled
 slot is `#716551`, which reaches the required contrast against its surface. **Revisit when.**
 The theme format or terminal background handling changes.
+
+## 2026-11-13 — Consolidate integration suites and retain process boundaries
+
+**Decision.** Collect each crate's ordinary integration suites behind
+`tests/integration.rs`, keeping the original filenames as modules under
+`tests/integration/`. Share test-free helpers with per-fixture state. Keep helper
+and fixture paths fixed, and move property-regression files with their source
+modules. Keep actively invoked
+contract, architecture, documentation, release and live targets standalone.
+Also retain suites whose signal handlers or cold syntax-highlighter assertions
+depend on a fresh process.
+
+Use `cargo-nextest` for integration execution and instrumented coverage, with
+`retries = 0` in `.config/nextest.toml`. Keep the trybuild group serialized and
+timing-sensitive cases isolated. Match moved suites by module-qualified test
+name, and continue to run documentation tests through Cargo.
+
+**Rationale.** Fewer integration binaries avoid repeated helper compilation and
+linking. Consolidation must preserve test discovery, assertions, ignores and
+subprocess destinations; a successful exact-filter child can otherwise run zero
+tests. Enumerated before/after manifests distinguish namespace changes from
+reviewed duplicate removals. A lock cannot reset an initialized global or undo a
+registered signal handler.
+
+**Revisit when.** A retained target no longer has an active caller or its process
+state can be isolated without weakening its assertions.
