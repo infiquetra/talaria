@@ -1,6 +1,6 @@
 //! `smoke run`: argument parsing, preflight, signal flag, exit codes and the result line.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -20,7 +20,7 @@ use smoke::steps2b::run_smoke_2b;
 use smoke::steps3::{run_smoke_3, shell_lines};
 use smoke::suite::Suite;
 use smoke::suite4a::{Phase4aConfig, run_smoke_4a};
-use smoke::terminal::{HerdrCli, Terminal};
+use smoke::terminal::{HcCli, HerdrCli, Terminal};
 use smoke::tmux::{Paster, TmuxCli};
 
 /// The longest launch line the command line takes.
@@ -93,6 +93,18 @@ fn main() -> ExitCode {
 /// The preflight, the run and the printing.
 fn run(cli: &Cli) -> Result<u8, String> {
     let suite = cli.suite;
+    let selector = std::env::var_os("TALARIA_SMOKE_TERMINAL");
+    let use_hc = match selector.as_deref() {
+        None => false,
+        Some(value) if value == "herdr" => false,
+        Some(value) if value == "hc" => suite == Suite::Phase1,
+        Some(value) => {
+            return Err(format!(
+                "unknown TALARIA_SMOKE_TERMINAL '{}'; use herdr or hc",
+                value.to_string_lossy()
+            ));
+        }
+    };
     if matches!(suite, Suite::Phase4a | Suite::Phase4b | Suite::Phase5) {
         let jq_found = std::env::var_os("PATH").is_some_and(|path| {
             std::env::split_paths(&path).any(|dir| {
@@ -123,13 +135,18 @@ fn run(cli: &Cli) -> Result<u8, String> {
             ));
         }
     }
-    if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
-        return Err(NOT_IN_HERDR.to_owned());
-    }
-    let workspace = std::env::var("HERDR_WORKSPACE_ID").unwrap_or_default();
-    if workspace.is_empty() {
-        return Err(NOT_IN_HERDR.to_owned());
-    }
+    let workspace = if use_hc {
+        String::new()
+    } else {
+        if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
+            return Err(NOT_IN_HERDR.to_owned());
+        }
+        let workspace = std::env::var("HERDR_WORKSPACE_ID").unwrap_or_default();
+        if workspace.is_empty() {
+            return Err(NOT_IN_HERDR.to_owned());
+        }
+        workspace
+    };
     if !cli.step_scale.is_finite() || cli.step_scale <= 0.0 {
         return Err("--step-scale must be a finite number above 0.".to_owned());
     }
@@ -212,12 +229,26 @@ fn run(cli: &Cli) -> Result<u8, String> {
         }
     }
 
-    let herdr = HerdrCli::new(&cli.herdr, &workspace);
-    if let Err(error) = herdr.check() {
-        return Err(scrubber.scrub(&format!(
-            "the command `herdr tab list --workspace {workspace}` failed: {error}"
-        )));
-    }
+    let hc;
+    let herdr;
+    let (terminal, terminal_name): (&dyn Terminal, &str) = if use_hc {
+        let executable = if cli.herdr == Path::new("herdr") {
+            Path::new("hc")
+        } else {
+            &cli.herdr
+        };
+        hc = HcCli::new(executable);
+        hc.check().map_err(|error| error.to_string())?;
+        (&hc, "hc")
+    } else {
+        herdr = HerdrCli::new(&cli.herdr, &workspace);
+        if let Err(error) = herdr.check() {
+            return Err(scrubber.scrub(&format!(
+                "the command `herdr tab list --workspace {workspace}` failed: {error}"
+            )));
+        }
+        (&herdr, "herdr")
+    };
 
     let talaria = match cli
         .talaria
@@ -359,11 +390,11 @@ fn run(cli: &Cli) -> Result<u8, String> {
         scrubber.scrub(&config.talaria.display().to_string())
     };
     println!("talaria: {binary_label}");
-    println!("herdr: {}", scrubber.scrub(&herdr.version()));
+    println!("{terminal_name}: {}", scrubber.scrub(&terminal.version()));
 
     let clock = SystemClock::new();
     let report = match suite {
-        Suite::Phase1 => run_smoke(&herdr, &clock, &config, &stop),
+        Suite::Phase1 => run_smoke(terminal, &clock, &config, &stop),
         Suite::Phase2a => {
             let seed = seed.unwrap_or(0);
             let scratch = scratch_for(&config.temp_root, seed);
@@ -372,12 +403,12 @@ fn run(cli: &Cli) -> Result<u8, String> {
             let cfg2 = Phase2aConfig {
                 tmux: cli.tmux.clone(),
             };
-            run_smoke_2a(&herdr, &tmux, &clock, &config, &cfg2, &stop)
+            run_smoke_2a(terminal, &tmux, &clock, &config, &cfg2, &stop)
         }
-        Suite::Phase2b => run_smoke_2b(&herdr, &clock, &config, &stop),
-        Suite::Phase3 => run_smoke_3(&herdr, &clock, &config, &stop),
+        Suite::Phase2b => run_smoke_2b(terminal, &clock, &config, &stop),
+        Suite::Phase3 => run_smoke_3(terminal, &clock, &config, &stop),
         Suite::Phase4a => run_smoke_4a(
-            &herdr,
+            terminal,
             &clock,
             &config,
             &Phase4aConfig {
@@ -386,7 +417,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
             &stop,
         ),
         Suite::Phase5 => smoke::run_smoke_5(
-            &herdr,
+            terminal,
             &clock,
             &config,
             &smoke::Phase5Config {
@@ -397,7 +428,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
             &stop,
         ),
         Suite::Phase4b => smoke::suite4b::run_smoke_4b(
-            &herdr,
+            terminal,
             &clock,
             &config,
             &smoke::suite4b::Phase4bConfig {
@@ -436,7 +467,10 @@ fn run(cli: &Cli) -> Result<u8, String> {
         let path = report_dir.join("smoke-report.txt");
         let mut text = String::new();
         text.push_str(&public_text(&format!("step: {step}\nreason: {reason}\n")));
-        text.push_str(&format!("herdr: {}\n", public_text(&report.version)));
+        text.push_str(&format!(
+            "{terminal_name}: {}\n",
+            public_text(&report.version)
+        ));
         text.push_str(&format!("talaria: {binary_label}\n"));
         for line in &block {
             text.push_str(&public_text(line));
