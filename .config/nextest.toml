@@ -1,0 +1,62 @@
+# Settings for `cargo nextest run` and `cargo llvm-cov nextest`.
+
+[profile.default]
+# A failing test fails the run. Nothing is retried, so a flaky test stays visible.
+retries = 0
+# Report every failure in one run instead of stopping at the first.
+fail-fast = false
+
+[test-groups]
+# trybuild builds a scratch crate in one directory under the target directory. cargo-nextest
+# runs each test in its own process, and two trybuild processes there break each other's build.
+trybuild = { max-threads = 1 }
+
+# The two trybuild tests are matched by test name. cargo-nextest refuses a configuration that
+# names a test binary that does not exist, so a test name keeps working if its file moves.
+[[profile.default.overrides]]
+filter = 'package(hermes-client) & (test(/canonical_methods_are_native/) | test(/legacy_session_compress_is_not_a_native_method/))'
+test-group = 'trybuild'
+
+# These tests assert on elapsed time, such as a first frame within 50 ms, or count the
+# connections a local server receives. Next to dozens of other tests they fail now and then,
+# so each one runs with nothing beside it.
+# They also run last. A test that needs every slot waits until all running tests finish, so
+# in the middle of a run it would hold everything up for as long as the slowest test. Right
+# after the build they have failed even with nothing beside them, so they do not run first.
+[[profile.default.overrides]]
+filter = """
+  (package(talaria-app) & (
+    binary(acp_wire)
+    | binary(voice_client_transport)
+    | binary(review_timing)
+    | test(/keystroke_with_list_open_stays_in_budget/)
+    | test(/app_wiring_and_config/)
+    | test(/foreground_prompt_reaches_queue/)
+    | test(/slow_split_never_blocks_the_loop/)
+    | test(/first_frame_within_50ms_without_network/)
+    | test(/records_flushed_within_50ms/)
+    | test(/slow_or_failing_herdr_never_blocks/)
+    | test(/launch_runs_off_the_ui_task/)
+    | test(/first_frame_precedes_any_call/)
+  ))
+  | (package(talaria-tui) & (
+    test(/five_hundred_rows_inside_budget/)
+    | test(/keys_layout_first_frame_and_idle/)
+    | test(/opens_without_waiting_and_idles/)
+    | test(/fifty_jobs_within_budget/)
+    | test(/input_thread_not_created_without_a_terminal/)
+    | test(/read_probe_reply_stops_at_marker_or_deadline/)
+    | test(/keystroke_budget_holds_for_two_hundred_rows/)
+  ))
+  | (package(hermes-client) & (
+    binary(audio_relay) | test(/provider_counts_concurrency/)
+  ))
+  | (package(talaria-cli) & (
+    binary(bg_cmd)
+    | test(/first_frame_before_the_gateway_answers_and_typing_is_kept/)
+    | test(/continue_asks_git_for_the_top_level_after_the_first_frame/)
+  ))
+  | (package(talaria-workflow) & test(/runaway_loop_is_stopped/))
+"""
+threads-required = "num-cpus"
+priority = -100

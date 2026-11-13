@@ -14,8 +14,9 @@
   "mechanical_tool_baseline": [
     "cargo fmt --check",
     "cargo clippy --all-targets -- -D warnings",
-    "cargo test --workspace",
-    "cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
+    "cargo nextest run --workspace",
+    "cargo test --workspace --doc",
+    "cargo llvm-cov nextest --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
     "git diff --check origin/main...HEAD"
   ],
   "preflight_checks": [

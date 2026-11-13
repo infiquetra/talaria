@@ -58,10 +58,11 @@ cargo test --workspace
 ```
 
 Line coverage must reach 80% across the workspace. Generated source under
-`/generated/` is excluded; inline test code counts.
+`/generated/` is excluded; inline test code counts. The measurement and `tools/prepush.sh`
+run tests through `cargo-nextest`, so install it beside `cargo-llvm-cov`.
 
 ```bash
-cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
+cargo llvm-cov nextest --workspace --ignore-filename-regex /generated/ --fail-under-lines 80
 ```
 
 ## Boundaries and public safety

@@ -39,8 +39,9 @@ const REMOVED_PATHS: &[&str] = &[
 const BASELINE_COMMANDS: &[&str] = &[
     "cargo fmt --check",
     "cargo clippy --all-targets -- -D warnings",
-    "cargo test --workspace",
-    "cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
+    "cargo nextest run --workspace",
+    "cargo test --workspace --doc",
+    "cargo llvm-cov nextest --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
     "git diff --check origin/main...HEAD",
 ];
 
@@ -163,7 +164,7 @@ const UBUNTU_CI_COMMANDS: &[&str] = &[
     "cargo test -p talaria-app --test review_timing -- --exact keystroke_budget_while_gh_sleeps --list | grep -Fx 'keystroke_budget_while_gh_sleeps: test'",
     "cargo test -p talaria-app --test review_timing -- --exact keystroke_budget_while_gh_sleeps --include-ignored",
     "cargo test --workspace --doc",
-    "cargo llvm-cov --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
+    "cargo llvm-cov nextest --workspace --ignore-filename-regex /generated/ --fail-under-lines 80",
     "cargo test -p patterns-check --test boundaries -- --ignored clippy_catches_each_banned_interface",
     "git diff --check origin/main...HEAD",
     r#"! git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . || (echo "conflict marker" && false)"#,
@@ -192,6 +193,7 @@ const SHORT_LOOP_COMMANDS: &[&str] = &[
 const MISSING_TOOL_MESSAGES: &[&str] = &[
     "prepush: missing cargo",
     "prepush: missing cargo-llvm-cov",
+    "prepush: missing cargo-nextest",
     "prepush: missing jq",
 ];
 
@@ -399,4 +401,91 @@ fn prepush_script_matches_the_ubuntu_pull_request_checks() {
             );
         }
     }
+}
+
+/// Path patterns a pull request may change without running the Rust checks.
+const DOCS_ONLY_PATTERNS: &[&str] = &["docs/handoff/2026-11-11-v0-9/*"];
+
+/// Places a check reads: Rust sources and tests, tools, and the pages whose links are tested.
+const CHECKED_PLACES: &[&str] = &[
+    "crates",
+    "tools",
+    ".github/actions",
+    "Cargo.toml",
+    "README.md",
+    "CHANGELOG.md",
+    "llms.txt",
+    "docs/00-index.md",
+    "docs/guide.md",
+    "docs/keybindings.md",
+    "docs/configuration.md",
+    "docs/migrating-from-0.6.5.md",
+    "docs/release-notes",
+    ":(exclude)tools/ci/change-scope.sh",
+    ":(exclude)crates/talaria-cli/tests/repository.rs",
+];
+
+const CLASSIFY_COMMAND: &str =
+    r#"sh tools/ci/change-scope.sh "origin/$BASE_REF" >> "$GITHUB_OUTPUT""#;
+
+#[test]
+fn docs_only_fast_path_keeps_the_required_checks_reporting() {
+    let root = workspace_root();
+    let script = read_repo_file(&root, "tools/ci/change-scope.sh");
+    let listed: Vec<&str> = script
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_suffix(") ;;"))
+        .collect();
+    assert_eq!(
+        listed, DOCS_ONLY_PATTERNS,
+        "tools/ci/change-scope.sh lists different docs-only patterns"
+    );
+
+    for pattern in DOCS_ONLY_PATTERNS {
+        let prefix = pattern
+            .strip_suffix("/*")
+            .unwrap_or_else(|| panic!("{pattern} must name a whole directory"));
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["grep", "-lF", "-e", prefix, "--"])
+            .args(CHECKED_PLACES)
+            .output()
+            .unwrap_or_else(|_| panic!("git could not run"));
+        let named = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            named.trim().is_empty(),
+            "{prefix} is named by files a check reads, so it is not docs-only:\n{named}"
+        );
+    }
+
+    for workflow in [".github/workflows/ci.yml", ".github/workflows/bench.yml"] {
+        let text = read_repo_file(&root, workflow);
+        assert!(
+            text.contains(CLASSIFY_COMMAND),
+            "{workflow} must classify the change with tools/ci/change-scope.sh"
+        );
+        // A path filter stops the workflow from running, and a required check that never
+        // reports blocks the pull request for good.
+        for line in text.lines().map(str::trim) {
+            assert!(
+                !line.starts_with("paths:") && !line.starts_with("paths-ignore:"),
+                "{workflow} must not filter its triggers by path"
+            );
+        }
+    }
+
+    // A job-level condition is decided before the matrix expands, so a skipped matrix job
+    // never reports under the two required names. Only steps may be skipped.
+    let ci = read_repo_file(&root, ".github/workflows/ci.yml");
+    let required_job = ci
+        .split_once("\n  rust-check:\n")
+        .and_then(|(_, rest)| rest.split_once("\n  rust-coverage:\n"))
+        .map(|(job, _)| job)
+        .unwrap_or_else(|| panic!("ci.yml must define rust-check before rust-coverage"));
+    assert!(
+        !required_job.lines().any(|line| line.starts_with("    if:")),
+        "the rust-check job must not have a job-level condition"
+    );
 }
