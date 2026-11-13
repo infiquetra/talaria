@@ -433,14 +433,22 @@ fn read_version(options: &RunOptions, report: &mut Report) {
     drop(guard);
     if let Ok(bytes) = reader.join()
         && success
+        && let Some(version) = version_line(&bytes)
     {
-        let text = String::from_utf8_lossy(&bytes);
-        let first = text.trim_end_matches('\r');
-        if first.len() < 100 && !first.contains(['/', '\\']) && !first.chars().any(char::is_control)
-        {
-            report.binary_version = first.into();
-        }
+        report.binary_version = version;
     }
+}
+
+/// The first version line, when it is short and contains no path or control characters.
+pub fn version_line(output: &[u8]) -> Option<String> {
+    let first = output
+        .split(|&byte| byte == b'\n')
+        .next()
+        .unwrap_or_default();
+    let text = String::from_utf8_lossy(first);
+    let first = text.trim_end_matches('\r');
+    (first.len() < 100 && !first.contains(['/', '\\']) && !first.chars().any(char::is_control))
+        .then(|| first.to_owned())
 }
 
 fn row(name: &str, value: f64, limit: f64, unit: &str, error: Option<&str>) -> Row {

@@ -213,6 +213,18 @@ mod tests {
         now: Instant,
         secret: &str,
     ) -> Vec<ProvidersEffect> {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 24));
+        check_domain_in(wiring, state, input, now, secret, &mut buffer)
+    }
+
+    fn check_domain_in(
+        wiring: &mut ProvidersWiring,
+        state: &mut ProvidersState,
+        input: ProvidersInput,
+        now: Instant,
+        secret: &str,
+        buffer: &mut Buffer,
+    ) -> Vec<ProvidersEffect> {
         assert!(!format!("{input:?}").contains(secret));
         let effects = providers::update(state, input, now);
         for effect in &effects {
@@ -225,9 +237,8 @@ mod tests {
         }
         let view = providers::view(state, now);
         assert!(!format!("{state:?} {view:?}").contains(secret));
-        let area = Rect::new(0, 0, 100, 24);
-        let mut buffer = Buffer::empty(area);
-        talaria_tui::providers::draw_providers(&view, wiring.secret_len(), area, &mut buffer);
+        buffer.reset();
+        talaria_tui::providers::draw_providers(&view, wiring.secret_len(), buffer.area, buffer);
         let drawn: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
         assert!(!drawn.contains(secret));
         effects
@@ -292,11 +303,12 @@ mod tests {
             let now = Instant::now();
             let mut wiring = ProvidersWiring::new();
             let mut state = key_card(&mut wiring, now, &secret);
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 100, 24));
             for ch in secret.chars() {
                 let view = providers::view(&state, now);
                 let input = wiring.route_key(&view, ProvidersKey::Char(ch));
                 assert!(matches!(input, ProvidersInput::SecretEdited { .. }));
-                check_domain(&mut wiring, &mut state, input, now, &secret);
+                check_domain_in(&mut wiring, &mut state, input, now, &secret, &mut buffer);
             }
             let view = providers::view(&state, now);
             let clear = wiring.route_key(&view, ProvidersKey::CtrlU);

@@ -11,6 +11,12 @@ fn legacy_session_compress_is_not_a_native_method() {
 
 #[test]
 fn canonical_methods_are_native() {
-    let cases = trybuild::TestCases::new();
-    cases.pass("tests/compile_pass/canonical_session_list.rs");
+    mod accepted {
+        include!("compile_pass/canonical_session_list.rs");
+
+        pub fn check() {
+            main();
+        }
+    }
+    accepted::check();
 }

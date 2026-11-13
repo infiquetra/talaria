@@ -39,6 +39,7 @@ pub struct ProviderService {
     client: Client,
     rest: Arc<RestClient>,
     profile_name: String,
+    call_timeout: Duration,
     sign_ins: Mutex<SignIns>,
 }
 
@@ -48,8 +49,15 @@ impl ProviderService {
             client,
             rest: rest.into(),
             profile_name,
+            call_timeout: Duration::from_secs(30),
             sign_ins: Mutex::default(),
         }
+    }
+
+    /// Override the socket-call deadline.
+    pub fn with_call_timeout(mut self, timeout: Duration) -> Self {
+        self.call_timeout = timeout;
+        self
     }
 
     pub fn profile_name(&self) -> &str {
@@ -73,7 +81,7 @@ impl ProviderService {
         secret: Option<Zeroizing<String>>,
     ) -> Vec<ProvidersInput> {
         let options = CallOptions {
-            timeout: Some(Duration::from_secs(30)),
+            timeout: Some(self.call_timeout),
         };
         let mut input = match effect {
             ProvidersEffect::LoadEnv => ProvidersInput::EnvLoaded(

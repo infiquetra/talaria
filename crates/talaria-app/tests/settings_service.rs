@@ -134,18 +134,22 @@ async fn load_runs_four_reads_and_maps_failures() {
     let service = build_service(Some(mock.origin()), Arc::new(CountingMinter::default()));
     failure(&service.execute(load("fixture")).await, FailReason::BadData);
 
-    let mock = MockRest::start().await;
+    let mut mock = MockRest::start().await;
     mock.delay(
         "GET",
         "/api/config/schema",
         std::time::Duration::from_secs(16),
     )
     .await;
+    mock.drive_paused_clock();
+    tokio::time::pause();
     let service = build_service(Some(mock.origin()), Arc::new(CountingMinter::default()));
     failure(
         &service.execute(load("fixture")).await,
         FailReason::Timeout { secs: 15 },
     );
+    drop(mock);
+    tokio::time::resume();
 
     let mock = MockRest::start().await;
     let minter: MinterFactory = Arc::new(|_| Arc::new(FailingMinter));

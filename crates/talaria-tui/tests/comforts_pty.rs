@@ -8,7 +8,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Condvar, Mutex, Once};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -42,6 +42,7 @@ fn ctrl_g_edits_and_returns() {
         Duration::from_millis(300),
         &[b"typed".to_vec(), vec![ENTER]],
         Duration::from_secs(3),
+        None,
     ) else {
         return;
     };
@@ -59,21 +60,13 @@ fn reacquire_probe_keeps_input_before_and_after_its_reply() {
     };
     demo.wait_for_frame(Duration::from_secs(5));
     assert!(demo.write(&[CTRL_G]));
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(3) {
-        if demo
-            .output
-            .lock()
-            .unwrap()
+    demo.wait_until(Duration::from_secs(3), |output| {
+        output
             .windows(4)
             .filter(|bytes| *bytes == b"\x1b[6n")
             .count()
             >= 2
-        {
-            break;
-        }
-        thread::sleep(Duration::from_millis(2));
-    }
+    });
     assert!(
         demo.output
             .lock()
@@ -90,7 +83,10 @@ fn reacquire_probe_keeps_input_before_and_after_its_reply() {
     writer.flush().unwrap();
     thread::sleep(Duration::from_millis(200));
     assert!(demo.write(&[ENTER]));
-    let output = demo.collect(Duration::from_secs(2));
+    demo.wait_until(Duration::from_secs(2), |output| {
+        String::from_utf8_lossy(output).contains("SUBMITTED text=\"hello\"")
+    });
+    let output = demo.snapshot();
     assert!(output.contains("SUBMITTED text=\"hello\""), "{output}");
 }
 
@@ -107,6 +103,7 @@ fn ctrl_c_in_editor_keeps_talaria() {
         Duration::from_millis(300),
         &[vec![0x03], b"!".to_vec(), vec![ENTER]],
         Duration::from_secs(4),
+        Some("SUBMITTED text=\"draft!\""),
     ) else {
         return;
     };
@@ -127,7 +124,12 @@ fn bash() -> Option<PathBuf> {
 
 fn shell_job_control(shell: &mut Shell) -> bool {
     shell.write_line("set -o | grep monitor");
-    let output = shell.drain(Duration::from_secs(3));
+    let output = shell.wait_for_output(Duration::from_secs(3), |output| {
+        output.lines().any(|line| {
+            let mut words = line.split_whitespace().rev();
+            matches!(words.next(), Some("on" | "off")) && words.next() == Some("monitor")
+        })
+    });
     output.contains("monitor") && !output.contains("off")
 }
 
@@ -159,13 +161,16 @@ fn ctrl_z_then_fg_restores_screen() {
     shell.write_bytes(b"draft");
     thread::sleep(Duration::from_millis(200));
     shell.write_bytes(&[CTRL_Z]);
-    let stopped = shell.drain(Duration::from_secs(3));
+    let stopped = shell.wait_for_output(Duration::from_secs(3), |output| {
+        let lower = output.to_lowercase();
+        lower.contains("stopped") || lower.contains("suspended")
+    });
     assert!(
         stopped.to_lowercase().contains("stopped") || stopped.to_lowercase().contains("suspended"),
         "the shell reports the stopped job: {stopped}"
     );
     shell.write_line("fg");
-    thread::sleep(Duration::from_millis(500));
+    shell.wait_for_text("RESUMED", Duration::from_secs(3));
     shell.write_bytes(b"!");
     shell.write_bytes(&[ENTER]);
     let output = shell.drain(Duration::from_secs(3));
@@ -219,9 +224,11 @@ fn ctrl_z_without_job_control_or_ignored_stop() {
         demo.display(),
         history.display()
     ));
-    thread::sleep(Duration::from_millis(500));
+    shell.wait_for_text("composer", Duration::from_secs(2));
     shell.write_bytes(&[CTRL_Z]);
-    let output = shell.drain(Duration::from_secs(4));
+    let output = shell.wait_for_output(Duration::from_secs(4), |output| {
+        output.contains("Suspend did not take effect: the stop signal is ignored in this terminal.")
+    });
     assert!(
         output
             .contains("Suspend did not take effect: the stop signal is ignored in this terminal."),
@@ -242,6 +249,7 @@ fn ctrl_r_finds_prompt_after_restart() {
         Duration::from_millis(200),
         &[b"beta two".to_vec(), vec![ENTER], vec![ESC], vec![ESC]],
         Duration::from_secs(3),
+        None,
     ) else {
         return;
     };
@@ -259,6 +267,7 @@ fn ctrl_r_finds_prompt_after_restart() {
         Duration::from_millis(200),
         &[b"alp".to_vec(), vec![ENTER]],
         Duration::from_secs(3),
+        Some("LOADED text=\"alpha one\""),
     ) else {
         return;
     };
@@ -285,6 +294,7 @@ fn drive(
     settle: Duration,
     rest: &[Vec<u8>],
     timeout: Duration,
+    expected: Option<&str>,
 ) -> Option<String> {
     let mut demo = Demo::open(args)?;
     demo.wait_for_frame(Duration::from_secs(10));
@@ -300,22 +310,27 @@ fn drive(
     for chunk in rest {
         demo.write(chunk);
         if chunk == &[0x03] {
-            let start = Instant::now();
-            while start.elapsed() < Duration::from_secs(2)
-                && !demo.snapshot().contains("The editor was stopped by signal")
-            {
-                thread::sleep(Duration::from_millis(20));
-            }
+            demo.wait_until(Duration::from_secs(2), |output| {
+                String::from_utf8_lossy(output).contains("The editor was stopped by signal")
+            });
         }
         thread::sleep(Duration::from_millis(50));
     }
-    Some(demo.collect(timeout))
+    if let Some(expected) = expected {
+        demo.wait_until(timeout, |output| {
+            String::from_utf8_lossy(output).contains(expected)
+        });
+        Some(demo.snapshot())
+    } else {
+        Some(demo.collect(timeout))
+    }
 }
 
 struct Demo {
     child: Box<dyn Child + Send + Sync>,
     writer: Option<Box<dyn Write + Send>>,
     output: Arc<Mutex<Vec<u8>>>,
+    output_changed: Arc<Condvar>,
     reader_done: Arc<AtomicBool>,
     reader: Option<JoinHandle<()>>,
 }
@@ -365,49 +380,67 @@ impl Demo {
         let mut reader_half = pair.master.try_clone_reader().expect("pty reader");
         let writer = pair.master.take_writer().expect("pty writer");
         let output = Arc::new(Mutex::new(Vec::new()));
+        let output_changed = Arc::new(Condvar::new());
         let reader_done = Arc::new(AtomicBool::new(false));
         let sink = Arc::clone(&output);
         let done = Arc::clone(&reader_done);
+        let changed = Arc::clone(&output_changed);
         let reader = thread::spawn(move || {
             let mut buf = [0u8; 1_024];
             loop {
                 match reader_half.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        sink.lock().expect("output").extend_from_slice(&buf[..n]);
+                        let mut output = sink.lock().expect("output");
+                        output.extend_from_slice(&buf[..n]);
+                        changed.notify_all();
                     }
                 }
             }
+            let _output = sink.lock().expect("output");
             done.store(true, Ordering::SeqCst);
+            changed.notify_all();
         });
         Some(Self {
             child,
             writer: Some(writer),
             output,
+            output_changed,
             reader_done,
             reader: Some(reader),
         })
     }
 
     fn wait_for_frame(&mut self, timeout: Duration) {
-        let start = Instant::now();
-        while start.elapsed() < timeout {
-            if self
-                .output
-                .lock()
-                .expect("output")
+        if !self.wait_until(timeout, |output| {
+            output
                 .windows(b"Enter sends".len())
                 .any(|bytes| bytes == b"Enter sends")
-            {
-                return;
-            }
-            let exited = self.child.try_wait().ok().flatten().is_some();
-            if exited && self.reader_done.load(Ordering::SeqCst) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(20));
+        }) {
+            panic!("demo did not render its input surface: {}", self.snapshot());
         }
-        panic!("demo did not render its input surface: {}", self.snapshot());
+    }
+
+    fn wait_until(&self, timeout: Duration, ready: impl Fn(&[u8]) -> bool) -> bool {
+        let start = Instant::now();
+        let mut output = self.output.lock().expect("output");
+        loop {
+            if ready(&output) {
+                return true;
+            }
+            if self.reader_done.load(Ordering::SeqCst) {
+                return false;
+            }
+            let remaining = timeout.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                return false;
+            }
+            let (next, _) = self
+                .output_changed
+                .wait_timeout(output, remaining)
+                .expect("output");
+            output = next;
+        }
     }
 
     fn is_running(&mut self) -> bool {
@@ -506,22 +539,29 @@ impl Shell {
     }
 
     fn wait_for_text(&mut self, needle: &str, timeout: Duration) {
-        let start = Instant::now();
-        while start.elapsed() < timeout {
-            if self.demo.snapshot()[self.seen..].contains(needle) {
-                return;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
+        self.demo.wait_until(timeout, |output| {
+            String::from_utf8_lossy(&output[self.seen..]).contains(needle)
+        });
     }
 
-    /// Output since the last drain.
+    fn wait_for_output(&mut self, timeout: Duration, ready: impl Fn(&str) -> bool) -> String {
+        self.demo.wait_until(timeout, |output| {
+            ready(&String::from_utf8_lossy(&output[self.seen..]))
+        });
+        self.take_output()
+    }
+
+    fn take_output(&mut self) -> String {
+        let output = self.demo.output.lock().expect("output");
+        let fresh = String::from_utf8_lossy(&output[self.seen..]).into_owned();
+        self.seen = output.len();
+        fresh
+    }
+
+    /// Observe the full window, including possible duplicate output.
     fn drain(&mut self, wait: Duration) -> String {
         thread::sleep(wait);
-        let snapshot = self.demo.snapshot();
-        let fresh = snapshot[self.seen..].to_owned();
-        self.seen = snapshot.len();
-        fresh
+        self.take_output()
     }
 }
 

@@ -340,12 +340,22 @@ async fn http_failures_are_classified() {
         "a refused connection was not classified: {connect}"
     );
 
+    let mock = MockRest::start().await;
     mock.delay(
         "POST",
         "/api/providers/custom-endpoints",
         std::time::Duration::from_secs(31),
     )
     .await;
+    let rest = RestClient::new(
+        &mock.origin(),
+        Arc::new(CountingMinter::default()),
+        RestOptions {
+            write_deadline: std::time::Duration::from_millis(250),
+            ..RestOptions::default()
+        },
+    )
+    .expect("loopback origin");
     let timed = save_endpoint(&rest, &endpoint_body())
         .await
         .expect_err("a late reply should fail");
