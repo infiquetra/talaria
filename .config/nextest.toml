@@ -49,7 +49,7 @@ filter = """
     | test(/keystroke_budget_holds_for_two_hundred_rows/)
   ))
   | (package(hermes-client) & (
-    binary(audio_relay) | test(/provider_counts_concurrency/)
+    test(/audio_relay::/) | test(/provider_counts_concurrency/)
   ))
   | (package(talaria-cli) & (
     binary(bg_cmd)
