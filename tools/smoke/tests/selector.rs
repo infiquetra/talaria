@@ -24,15 +24,18 @@ fn explain(outcome: &Outcome) -> String {
     )
 }
 
-fn run_phase1_with_hc(harness: &Harness, herdr_arg: &Path) -> Outcome {
-    let output = Command::new(smoke_exe())
-        .env_clear()
+fn run_phase1_with_env(harness: &Harness, herdr_arg: &Path, extra_env: &[(&str, &str)]) -> Outcome {
+    let mut cmd = Command::new(smoke_exe());
+    cmd.env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", harness.home_dir())
         .env("USER", harness.user())
         .env("LOGNAME", harness.user())
-        .env("TMPDIR", harness.tmp_dir())
-        .env("TALARIA_SMOKE_TERMINAL", "hc")
+        .env("TMPDIR", harness.tmp_dir());
+    for &(key, value) in extra_env {
+        cmd.env(key, value);
+    }
+    let output = cmd
         .current_dir(harness.root())
         .stdin(Stdio::null())
         .args(["run", "--suite", "phase1"])
@@ -48,6 +51,16 @@ fn run_phase1_with_hc(harness: &Harness, herdr_arg: &Path) -> Outcome {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     }
+}
+
+fn run_phase1_with_hc(harness: &Harness, herdr_arg: &Path) -> Outcome {
+    run_phase1_with_env(harness, herdr_arg, &[("TALARIA_SMOKE_TERMINAL", "hc")])
+}
+
+fn refusal_line(suite: &str) -> String {
+    format!(
+        "suite {suite} does not run on hc yet: hc cannot type some of its text. Run it from an old Herdr pane with TALARIA_SMOKE_TERMINAL=herdr"
+    )
 }
 
 fn read_log(path: &Path) -> Vec<Vec<String>> {
@@ -153,5 +166,124 @@ fn hc_liveness_failure_exits_2() {
         !outcome.stderr.contains(NOT_IN_HERDR),
         "unexpected NOT_IN_HERDR in stderr:\n{}",
         explain(&outcome)
+    );
+}
+
+#[test]
+fn hc_id_selects_phase1() {
+    let harness = Harness::plain();
+    let hc_dir = tempfile::tempdir().expect("create fake-hc tempdir");
+    fs::write(hc_dir.path().join("replies.json"), "{}").expect("write replies.json");
+
+    let wrapper = hc_dir.path().join("hc");
+    let body = format!(
+        "#!/bin/sh\nFAKE_HC_DIR={} exec {} \"$@\"\n",
+        shell_quote(&hc_dir.path().to_string_lossy()),
+        shell_quote(fake_hc_exe()),
+    );
+    write_executable(&wrapper, &body);
+
+    let outcome = run_phase1_with_env(
+        &harness,
+        &wrapper,
+        &[
+            ("HERDR_ENV", "1"),
+            ("HERDR_WORKSPACE_ID", "ws"),
+            ("HC_TERMINAL_ID", "term_x"),
+        ],
+    );
+
+    assert!(
+        !outcome.stderr.contains(NOT_IN_HERDR),
+        "unexpected NOT_IN_HERDR in stderr:\n{}",
+        explain(&outcome)
+    );
+    assert!(
+        !outcome.stderr.contains("does not run on hc yet"),
+        "unexpected hc suite refusal in stderr:\n{}",
+        explain(&outcome)
+    );
+
+    let entries = read_log(&hc_dir.path().join("log"));
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry.first().map(String::as_str) == Some("ls")),
+        "expected hc ls probe in log, got: {entries:?}"
+    );
+    for entry in &entries {
+        assert!(
+            !entry
+                .iter()
+                .any(|arg| arg == "tab" || arg == "--workspace" || arg.starts_with("--workspace")),
+            "unexpected herdr flag/subcommand in hc invocation: {entry:?}"
+        );
+    }
+}
+
+#[test]
+fn hc_refuses_later_suites() {
+    let harness = Harness::plain();
+    let outcome = harness
+        .cmd()
+        .outside_herdr()
+        .env("HC_TERMINAL_ID", "term_x")
+        .args(["--suite", "phase2a"])
+        .run();
+
+    assert_eq!(
+        outcome.code,
+        Some(2),
+        "expected exit 2:\n{}",
+        explain(&outcome)
+    );
+    assert_eq!(
+        outcome.stderr.trim_end_matches('\n'),
+        refusal_line("phase2a"),
+        "expected phase2a refusal line in stderr:\n{}",
+        explain(&outcome)
+    );
+    assert!(
+        !outcome.stdout.contains("SMOKE_RESULT"),
+        "unexpected SMOKE_RESULT in stdout:\n{}",
+        explain(&outcome)
+    );
+    assert!(
+        !harness
+            .fake
+            .log()
+            .iter()
+            .any(|args| args.iter().any(|arg| arg == "tab")),
+        "unexpected tab invocation in fake herdr log: {:?}",
+        harness.fake.log()
+    );
+
+    let harness = Harness::plain();
+    let outcome = harness
+        .cmd()
+        .env("TALARIA_SMOKE_TERMINAL", "hc")
+        .args(["--suite", "phase2b"])
+        .run();
+
+    assert_eq!(
+        outcome.code,
+        Some(2),
+        "expected exit 2:\n{}",
+        explain(&outcome)
+    );
+    assert_eq!(
+        outcome.stderr.trim_end_matches('\n'),
+        refusal_line("phase2b"),
+        "expected phase2b refusal line in stderr:\n{}",
+        explain(&outcome)
+    );
+    assert!(
+        !harness
+            .fake
+            .log()
+            .iter()
+            .any(|args| args.iter().any(|arg| arg == "tab")),
+        "unexpected tab invocation in fake herdr log: {:?}",
+        harness.fake.log()
     );
 }

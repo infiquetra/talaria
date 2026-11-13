@@ -132,26 +132,73 @@ fn help_lists_every_option() {
 
 #[test]
 fn outside_herdr_exits_2_no_tab() {
+    const BOTH_WAYS: &str = "Run this inside an hc terminal (HC_TERMINAL_ID set), or set TALARIA_SMOKE_TERMINAL=herdr and start it from an old Herdr pane (HERDR_ENV=1).";
+    const OLD_HERDR: &str =
+        "This test must run inside a Herdr pane (HERDR_ENV=1). Start it from a Herdr tab.";
+
     let harness = Harness::plain();
-
     let outcome = harness.cmd().outside_herdr().run();
-
     assert_preflight_failure(&harness, &outcome, "outside Herdr");
     assert!(
-        everything(&outcome).contains(
-            "This test must run inside a Herdr pane (HERDR_ENV=1). Start it from a Herdr tab."
-        ),
+        everything(&outcome).contains(BOTH_WAYS),
+        "{}",
+        explain(&outcome)
+    );
+    assert!(
+        !everything(&outcome).contains("does not run on hc yet"),
         "{}",
         explain(&outcome)
     );
 
-    // One of the two variables alone does not make a Herdr pane.
     let harness = Harness::plain();
     let outcome = harness.cmd().env_remove("HERDR_WORKSPACE_ID").run();
     assert_preflight_failure(&harness, &outcome, "no workspace id");
+    assert!(
+        everything(&outcome).contains(OLD_HERDR),
+        "{}",
+        explain(&outcome)
+    );
+
     let harness = Harness::plain();
     let outcome = harness.cmd().env("HERDR_ENV", "0").run();
     assert_preflight_failure(&harness, &outcome, "HERDR_ENV is not 1");
+    assert!(
+        everything(&outcome).contains(BOTH_WAYS),
+        "{}",
+        explain(&outcome)
+    );
+
+    let harness = Harness::plain();
+    let outcome = harness
+        .cmd()
+        .outside_herdr()
+        .env("HC_TERMINAL_ID", "")
+        .run();
+    assert_preflight_failure(&harness, &outcome, "empty HC_TERMINAL_ID");
+    assert!(
+        everything(&outcome).contains(BOTH_WAYS),
+        "{}",
+        explain(&outcome)
+    );
+
+    let harness = Harness::plain();
+    let outcome = harness
+        .cmd()
+        .outside_herdr()
+        .env("TALARIA_SMOKE_TERMINAL", "herdr")
+        .env("HC_TERMINAL_ID", "term_x")
+        .run();
+    assert_preflight_failure(&harness, &outcome, "forced herdr outside Herdr");
+    assert!(
+        everything(&outcome).contains(OLD_HERDR),
+        "{}",
+        explain(&outcome)
+    );
+    assert!(
+        !everything(&outcome).contains(BOTH_WAYS),
+        "{}",
+        explain(&outcome)
+    );
 }
 
 #[test]
