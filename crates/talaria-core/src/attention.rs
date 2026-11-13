@@ -5,6 +5,7 @@
 use std::time::{Duration, Instant};
 
 use crate::session::PromptKey;
+use crate::{BlockKind, SeatState};
 
 /// What the foreground pane is doing, as Herdr and the screen show it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -154,6 +155,8 @@ pub struct AttentionOutput {
     pub alert: Option<Alert>,
     /// The pane report, only when the state or its message changed.
     pub pane: Option<PaneReport>,
+    /// The seat state, only when it changed.
+    pub seat: Option<SeatState>,
 }
 
 /// Tracks open needs and the running turn for the foreground session.
@@ -163,6 +166,7 @@ pub struct AttentionTracker {
     needs: Vec<(NeedKey, NeedSummary)>,
     remembered: std::collections::VecDeque<NeedKey>,
     started: Option<Instant>,
+    last_outcome: Option<TurnOutcome>,
     last_alert: Option<(Instant, AlertKind)>,
     session: Option<String>,
     label: String,
@@ -176,6 +180,7 @@ impl AttentionTracker {
             needs: Vec::new(),
             remembered: std::collections::VecDeque::new(),
             started: None,
+            last_outcome: None,
             last_alert: None,
             session: None,
             label: "session".into(),
@@ -185,12 +190,15 @@ impl AttentionTracker {
     /// Fold one activity into the tracker.
     pub fn observe(&mut self, activity: Activity) -> AttentionOutput {
         let before = self.pane();
+        let seat_before = self.seat_state();
         let candidate = match activity {
             Activity::TurnStarted { at } => {
                 self.started.get_or_insert(at);
+                self.last_outcome = None;
                 None
             }
             Activity::TurnEnded { outcome, at } => self.started.take().and_then(|start| {
+                self.last_outcome = Some(outcome);
                 let kind = match outcome {
                     TurnOutcome::Complete
                         if at.saturating_duration_since(start) >= self.config.done_after =>
@@ -235,6 +243,7 @@ impl AttentionTracker {
                 if self.session.as_ref() != Some(&session_id) {
                     self.needs.clear();
                     self.started = None;
+                    self.last_outcome = None;
                 }
                 self.session = Some(session_id);
                 self.label = label;
@@ -274,9 +283,34 @@ impl AttentionTracker {
             })
         });
         let after = self.pane();
+        let seat_after = self.seat_state();
         AttentionOutput {
             alert,
             pane: (before != after).then_some(after),
+            seat: (seat_before != seat_after).then_some(seat_after),
+        }
+    }
+
+    /// The current seat state, with the first open need taking precedence.
+    pub fn seat_state(&self) -> SeatState {
+        if let Some((_, summary)) = self.needs.first() {
+            let kind = match summary {
+                NeedSummary::Approval { .. } => BlockKind::Permission,
+                NeedSummary::Question(_) => BlockKind::Question,
+                NeedSummary::Sudo
+                | NeedSummary::Secret
+                | NeedSummary::VaultCode
+                | NeedSummary::VaultUnlock => BlockKind::Auth,
+            };
+            return SeatState::Blocked(Some(kind));
+        }
+        if self.started.is_some() {
+            return SeatState::Working;
+        }
+        match self.last_outcome {
+            Some(TurnOutcome::Complete) => SeatState::Done,
+            Some(TurnOutcome::Failed) => SeatState::Error,
+            None | Some(TurnOutcome::Interrupted) => SeatState::Idle,
         }
     }
 
