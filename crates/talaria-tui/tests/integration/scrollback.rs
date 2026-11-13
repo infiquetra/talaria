@@ -547,10 +547,10 @@ fn narrowing_live_rows_tracks_wraps_separately_from_history() {
         assert_eq!(term.viewport(), Rect::new(0, expected_top, cols, 10));
         if !overlay {
             let written = String::from_utf8(sink.take()).expect("ASCII cursor moves");
-            assert!(written.contains(&format!("\x1b[{};1H", expected_top + 1)));
-            let mut vt = vt100::Parser::new(20, cols, 0);
-            vt.process(written.as_bytes());
-            assert_eq!(vt.screen().cursor_position(), (expected_top + 9, 0));
+            assert!(
+                !written.contains(";1H"),
+                "a resize must not address a row by number: {written:?}"
+            );
         }
         term.resize(100, 40).expect("grow");
         assert_eq!(
@@ -749,27 +749,37 @@ fn assert_main_screen_exact(rig: &Rig, model: &Model, shell_history: bool, step:
     let screen = rig.alac.screen();
     assert_eq!(screen.len(), usize::from(model.rows));
     let first_visible = model.view_height - viewport.height + 1;
-    for index in 0..viewport.height {
+    let first_label = format!("LIVE# {first_visible}");
+    let found: Vec<usize> = screen
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.as_str() == first_label)
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        found.len(),
+        1,
+        "{step}: `{first_label}` should be on the screen once: {screen:?}"
+    );
+    let top = found[0];
+    for index in 0..usize::from(viewport.height) {
         assert_eq!(
-            screen[usize::from(viewport.y + index)],
-            format!("LIVE# {}", first_visible + index),
+            screen[top + index],
+            format!("LIVE# {}", usize::from(first_visible) + index),
             "{step}: live row {index}"
         );
     }
 
-    // With enough scrollback behind it a terminal returns every row the model assumes, so no
-    // stale live row may survive anywhere. With none, a grow returns fewer rows than assumed
-    // and stale live rows above the viewport are a documented limit; tags still must not break.
-    if shell_history {
-        let screen_start = all.len() - usize::from(model.rows);
-        for (index, row) in all.iter().enumerate() {
-            let inside = index >= screen_start + usize::from(viewport.y)
-                && index < screen_start + usize::from(viewport.y + viewport.height);
-            assert!(
-                inside || !row.contains("LIVE#"),
-                "{step}: stray live row {index}: {row:?}"
-            );
-        }
+    // Whether or not the terminal has scrollback to give back on a grow, no stale live row may
+    // survive anywhere, history included.
+    let screen_start = all.len() - usize::from(model.rows);
+    for (index, row) in all.iter().enumerate() {
+        let inside = index >= screen_start + top
+            && index < screen_start + top + usize::from(viewport.height);
+        assert!(
+            inside || !row.contains("LIVE#"),
+            "{step}: stray live row {index}: {row:?}"
+        );
     }
 }
 
