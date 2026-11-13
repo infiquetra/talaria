@@ -93,18 +93,6 @@ fn main() -> ExitCode {
 /// The preflight, the run and the printing.
 fn run(cli: &Cli) -> Result<u8, String> {
     let suite = cli.suite;
-    let selector = std::env::var_os("TALARIA_SMOKE_TERMINAL");
-    let use_hc = match selector.as_deref() {
-        None => false,
-        Some(value) if value == "herdr" => false,
-        Some(value) if value == "hc" => suite == Suite::Phase1,
-        Some(value) => {
-            return Err(format!(
-                "unknown TALARIA_SMOKE_TERMINAL '{}'; use herdr or hc",
-                value.to_string_lossy()
-            ));
-        }
-    };
     if matches!(suite, Suite::Phase4a | Suite::Phase4b | Suite::Phase5) {
         let jq_found = std::env::var_os("PATH").is_some_and(|path| {
             std::env::split_paths(&path).any(|dir| {
@@ -135,7 +123,41 @@ fn run(cli: &Cli) -> Result<u8, String> {
             ));
         }
     }
+    let selector = std::env::var_os("TALARIA_SMOKE_TERMINAL");
+    let use_hc = match selector.as_deref() {
+        Some(value) if value == "herdr" => false,
+        Some(value) if value == "hc" => true,
+        Some(value) => {
+            return Err(format!(
+                "unknown TALARIA_SMOKE_TERMINAL '{}'; use herdr or hc",
+                value.to_string_lossy()
+            ));
+        }
+        None => {
+            if std::env::var_os("HC_TERMINAL_ID").is_some_and(|id| !id.is_empty()) {
+                true
+            } else if std::env::var("HERDR_ENV").as_deref() == Ok("1") {
+                false
+            } else {
+                return Err("Run this inside an hc terminal (HC_TERMINAL_ID set), or set TALARIA_SMOKE_TERMINAL=herdr and start it from an old Herdr pane (HERDR_ENV=1).".to_owned());
+            }
+        }
+    };
     let workspace = if use_hc {
+        let unsupported_suite = match suite {
+            Suite::Phase1 => None,
+            Suite::Phase2a => Some("phase2a"),
+            Suite::Phase2b => Some("phase2b"),
+            Suite::Phase3 => Some("phase3"),
+            Suite::Phase4a => Some("phase4a"),
+            Suite::Phase4b => Some("phase4b"),
+            Suite::Phase5 => Some("phase5"),
+        };
+        if let Some(name) = unsupported_suite {
+            return Err(format!(
+                "suite {name} does not run on hc yet: hc cannot type some of its text. Run it from an old Herdr pane with TALARIA_SMOKE_TERMINAL=herdr"
+            ));
+        }
         String::new()
     } else {
         if std::env::var("HERDR_ENV").as_deref() != Ok("1") {
