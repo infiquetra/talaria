@@ -19,6 +19,7 @@ use hermes_client::replay::{Cursor, ReplayGap};
 use hermes_client::{Inbound, ServerRequest};
 use hermes_contract::events::EventFrame;
 use serde_json::{Value, json};
+use talaria_core::SeatState;
 use talaria_core::attachments::{Chip, CollapseRule, Expanded, reference_notice};
 use talaria_core::automation::{
     AutomationEffect, AutomationEvent, AutomationState, CommandResult, canonical_name,
@@ -539,6 +540,9 @@ pub trait Screen: ComposerDeadline + StatusHost {
     fn work_panel(&self) -> bool {
         false
     }
+    fn seat_reporting(&self) -> bool {
+        true
+    }
     fn menu_bar(&self) -> bool {
         false
     }
@@ -608,6 +612,7 @@ pub trait Screen: ComposerDeadline + StatusHost {
         _session: Option<(&str, &str)>,
     ) {
     }
+    fn report_seat(&mut self, _state: SeatState) {}
     /// Configured alert channels for this interactive screen.
     fn attention_config(&self) -> talaria_core::attention::AttentionConfig {
         talaria_core::attention::AttentionConfig {
@@ -814,6 +819,8 @@ pub struct AppState {
     model_notice_counter: u64,
     model_warnings: BTreeSet<String>,
     attention: talaria_core::attention::AttentionTracker,
+    /// Whether foreground seat changes are reported to the terminal.
+    pub seat_reporting: bool,
     attention_at: Instant,
     /// The background attention hub: the fleet tracker, the shared gate and the holds.
     hub: AttentionHub,
@@ -1114,6 +1121,7 @@ impl AppState {
             model_service: None,
             model_notice_counter: 0,
             model_warnings: BTreeSet::new(),
+            seat_reporting: true,
             attention: talaria_core::attention::AttentionTracker::new(
                 talaria_core::attention::AttentionConfig {
                     bell: vec![
@@ -2318,6 +2326,8 @@ pub enum AppEffect {
     CloseSide,
     /// Report the foreground pane state.
     ReportPane(talaria_core::attention::PaneReport),
+    /// Report the foreground seat state.
+    ReportSeat(SeatState),
     /// Emit a configured foreground alert.
     Alert(talaria_core::attention::Alert),
     Attachment(AttachmentEffect),
@@ -4494,6 +4504,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             } else {
                 effects.push(AppEffect::ReportPane(state.attention.pane()));
             }
+            if state.seat_reporting {
+                effects.push(AppEffect::ReportSeat(state.attention.seat_state()));
+            }
         }
     }
     let foreground = state
@@ -4515,6 +4528,11 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         let out = state.attention.observe(activity);
         if let Some(pane) = out.pane {
             effects.push(AppEffect::ReportPane(pane));
+        }
+        if state.seat_reporting
+            && let Some(seat) = out.seat
+        {
+            effects.push(AppEffect::ReportSeat(seat));
         }
         if let Some(alert) = out.alert
             // A foreground alert shares the gate with the background ones, so two
@@ -13267,6 +13285,7 @@ fn apply<S: Screen>(
                     .as_ref()
                     .map(|o| (o.session_id.as_str(), state.profile.as_str())),
             ),
+            AppEffect::ReportSeat(seat) => screen.report_seat(seat),
             AppEffect::Alert(alert) => {
                 screen.alert(&alert);
                 if alert.speech
@@ -14675,6 +14694,7 @@ async fn run_inner<S: Screen>(
     remote_audio: Option<hermes_client::audio_api::AudioRelay>,
 ) -> Outcome {
     let mut state = AppState::new_boxed(setup.launch_id.clone());
+    state.seat_reporting = screen.seat_reporting();
     if setup.remote_gateway {
         state.attached_to_remote_gateway();
     }

@@ -2,6 +2,38 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-13
+
+### A long turn stays working
+
+**Context.** The newer Herdr reads a status record to show people and other agents
+what a terminal is doing, and a lead agent waits on a seat until it stops working;
+a turn that delegates to sub-agents can run for many minutes with nothing printed.
+
+**Decision.** Talaria reports `working` for the whole of a running turn, including
+while it waits on sub-agents, and never reports another state to avoid another
+tool's stall alert.
+
+**Costs and revisit conditions.** A watcher cannot tell a long healthy turn from a
+stuck one by the state alone, because no progress value is sent in this release;
+revisit when the status record gains a way to say that a program is waiting on
+helpers, or when operators report stall alerts caused by this.
+
+### Done, and the old Herdr reporter
+
+**Context.** Talaria now reports to two generations of Herdr, the status record for
+the newer one and `herdr pane report-agent` for the old one; a lead that waits on a
+seat reads the state after the turn has ended.
+
+**Decision.** `done` means the last turn ended normally and no need is open; it
+stays until the next turn starts or the session changes, and typing does not change
+it. The old reporter, `PaneState` and `PaneReport` are left exactly as they are in
+this release, and `[herdr] report_state` switches both reporters.
+
+**Costs and revisit conditions.** The two reporters can show different words for
+the same moment, because the old one has no `done`; revisit when old Herdr support
+is removed, which the operator has decided for a later release.
+
 ## 2026-11-04
 
 ### Optional workspace: one transcript body and independent terminal ownership

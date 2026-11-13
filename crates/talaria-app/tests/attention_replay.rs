@@ -9,16 +9,19 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use hermes_client::ReplaySource;
+use hermes_client::replay::Cursor;
 use hermes_contract::events::EventFrame;
 use hermes_contract::schemas::CanonicalSnapshot;
 use serde_json::Value;
 use talaria_app::app::{AppEffect, AppMessage, AppState, UserAction, update};
 use talaria_app::comforts::activities_for;
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
+use talaria_app::sessions::{OpenedSession, SessionInfoSummary};
 use talaria_core::attention::{
     Activity, AlertKind, AttentionConfig, AttentionTracker, NeedKey, NeedSummary, PaneState,
 };
 use talaria_core::session::{Event, SessionId, SessionState, update as reduce};
+use talaria_core::{BlockKind, SeatState};
 use zeroize::Zeroizing;
 
 fn fixture_path(file: &str) -> PathBuf {
@@ -255,4 +258,159 @@ fn local_masked_answer_closes_need_through_update() {
         },
     );
     assert!(has_pane(&effects, PaneState::Idle));
+}
+
+fn has_seat(effects: &[AppEffect], seat: SeatState) -> bool {
+    effects
+        .iter()
+        .any(|effect| matches!(effect, AppEffect::ReportSeat(reported) if *reported == seat))
+}
+
+fn has_any_seat(effects: &[AppEffect]) -> bool {
+    effects
+        .iter()
+        .any(|effect| matches!(effect, AppEffect::ReportSeat(_)))
+}
+
+fn empty_opened_session(session_id: &str) -> OpenedSession {
+    OpenedSession {
+        state: SessionState::empty(SessionId::new(session_id)),
+        session_id: session_id.to_owned(),
+        stored_session_id: String::new(),
+        subscription_id: String::new(),
+        info: SessionInfoSummary {
+            model: None,
+            provider: None,
+            cwd: None,
+            branch: None,
+        },
+        title: None,
+        cursor: Cursor {
+            replay_epoch: String::new(),
+            last_sequence: 0,
+        },
+        revision: 0,
+        execution_generation: 0,
+        launch_notices: Vec::new(),
+        effort: None,
+    }
+}
+
+fn approval_opening_events() -> (String, Vec<Event>) {
+    let path = fixture_path("approval.jsonl");
+    let source = ReplaySource::open(&path).expect("the recorded approval turn");
+    let events = replay_events(&source);
+    let session_id = events
+        .iter()
+        .find_map(|event| match event {
+            Event::Session { session_id, .. } if !session_id.as_str().is_empty() => {
+                Some(session_id.as_str().to_owned())
+            }
+            _ => None,
+        })
+        .expect("a non-empty session_id in the approval fixture");
+    let approval_index = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                Event::Session { raw, .. }
+                    if raw.get("type").and_then(Value::as_str) == Some("approval.request")
+            )
+        })
+        .expect("approval.request event in the approval fixture");
+    let opening = events.into_iter().take(approval_index + 1).collect();
+    (session_id, opening)
+}
+
+#[test]
+fn approval_opening_reports_blocked_permission() {
+    let mut state = AppState::new("0123456789abcdef");
+    let (session_id, events) = approval_opening_events();
+    state.opened = Some(empty_opened_session(&session_id));
+
+    let effects = update(
+        &mut state,
+        AppMessage::PromptDone {
+            events,
+            notices: Vec::new(),
+            masked: None,
+        },
+    );
+    assert!(
+        has_seat(&effects, SeatState::Blocked(Some(BlockKind::Permission))),
+        "opening an approval request must report blocked(permission)"
+    );
+}
+
+#[test]
+fn unchanged_seat_state_reports_nothing() {
+    let mut state = AppState::new("0123456789abcdef");
+    let (session_id, events) = approval_opening_events();
+    state.opened = Some(empty_opened_session(&session_id));
+
+    let first = update(
+        &mut state,
+        AppMessage::PromptDone {
+            events,
+            notices: Vec::new(),
+            masked: None,
+        },
+    );
+    assert!(has_seat(
+        &first,
+        SeatState::Blocked(Some(BlockKind::Permission))
+    ));
+
+    let second = update(
+        &mut state,
+        AppMessage::PromptDone {
+            events: Vec::new(),
+            notices: Vec::new(),
+            masked: None,
+        },
+    );
+    assert!(
+        !has_any_seat(&second),
+        "an unchanged seat state must push no ReportSeat effect"
+    );
+}
+
+#[test]
+fn report_state_false_pushes_no_report_seat() {
+    let mut state = AppState::new("0123456789abcdef");
+    state.seat_reporting = false;
+    let (session_id, events) = approval_opening_events();
+    state.opened = Some(empty_opened_session(&session_id));
+
+    let effects = update(
+        &mut state,
+        AppMessage::PromptDone {
+            events,
+            notices: Vec::new(),
+            masked: None,
+        },
+    );
+    assert!(
+        !has_any_seat(&effects),
+        "seat_reporting = false must push no ReportSeat effect"
+    );
+}
+
+#[test]
+fn first_session_reports_idle() {
+    let mut state = AppState::new("0123456789abcdef");
+    assert!(state.opened.is_none());
+
+    let effects = update(
+        &mut state,
+        AppMessage::Opened {
+            opened: empty_opened_session("local-session-1"),
+            notice: None,
+        },
+    );
+    assert!(
+        has_seat(&effects, SeatState::Idle),
+        "opening the first session must report Idle"
+    );
 }
