@@ -601,6 +601,8 @@ struct RestoreState {
     /// A viewport was placed (false while the screen is too small).
     placed: bool,
     top: u16,
+    /// `top` is the viewport's real first row.
+    anchored: bool,
     overlay_open: bool,
     flags_pushed: bool,
     in_sync: bool,
@@ -619,8 +621,22 @@ fn restore_sequence(state: &RestoreState, clear_status: bool) -> Vec<u8> {
     if state.overlay_open {
         bytes.extend_from_slice(ALTERNATE_OFF);
     }
-    bytes.extend_from_slice(RESET_REGION);
-    if state.placed {
+    if state.placed && !state.anchored {
+        // The cursor is on the viewport's first row; its row number is not known.
+        bytes.extend_from_slice(b"\x1b7");
+        bytes.extend_from_slice(RESET_REGION);
+        bytes.extend_from_slice(b"\x1b8");
+        if !state.overlay_open {
+            bytes.extend_from_slice(b"\r");
+            bytes.extend_from_slice(CLEAR_LINE);
+            bytes.extend_from_slice(b"\x1b7\x1b[B");
+            bytes.extend_from_slice(CLEAR_BELOW);
+            bytes.extend_from_slice(b"\x1b8");
+        }
+    } else {
+        bytes.extend_from_slice(RESET_REGION);
+    }
+    if state.placed && state.anchored {
         push_move(&mut bytes, 0, state.top);
         if state.top == 0 {
             bytes.extend_from_slice(CLEAR_LINE);
@@ -806,7 +822,8 @@ struct Overlay {
 ///
 /// Finished lines are written once into the terminal's own scrollback; only the live region,
 /// the viewport, is redrawn. The cursor stays hidden and is parked at column 0 of the
-/// viewport's last row after every operation, because the resize model depends on where it is.
+/// viewport's first row after every operation: a terminal keeps the cursor on its cell when its
+/// size changes, so after a resize the cursor is still where the live region starts.
 pub struct InlineTerminal<W: io::Write> {
     out: W,
     link: RestoreLink,
@@ -818,7 +835,8 @@ pub struct InlineTerminal<W: io::Write> {
     last_status: Option<Vec<u8>>,
     cols: u16,
     rows: u16,
-    /// The viewport's first row, 0-based.
+    /// The viewport's first row, 0-based. Exact while `anchored`; after a resize it is the row
+    /// the common terminals move it to, kept for `viewport` and never used to address the screen.
     top: u16,
     /// The row the cursor is on. Moves are written relative to it, so a write made before
     /// Talaria hears of a resize still lands next to the live region.
@@ -848,6 +866,11 @@ pub struct InlineTerminal<W: io::Write> {
     closed: bool,
     released: bool,
     held_alert: Option<(u8, Vec<u8>)>,
+    /// True while `top` is the viewport's real first row. A resize ends that: the terminal moves
+    /// the screen by rules of its own, so from then on rows are reached only from the cursor.
+    anchored: bool,
+    /// A resize arrived while an overlay or workspace covered the main screen.
+    covered_resize: bool,
 }
 
 impl<W: io::Write> InlineTerminal<W> {
@@ -898,6 +921,8 @@ impl<W: io::Write> InlineTerminal<W> {
             closed: false,
             released: false,
             held_alert: None,
+            anchored: true,
+            covered_resize: false,
         };
         let pushed = term.caps.keyboard_enhancement;
         term.link.lock().active = true;
@@ -928,7 +953,7 @@ impl<W: io::Write> InlineTerminal<W> {
                 term.jump(&mut batch, 0, rows - 1);
                 term.make_room(&mut batch);
             }
-            term.jump(&mut batch, 0, term.top + term.height - 1);
+            term.jump(&mut batch, 0, term.top);
         }
         term.send(batch)?;
         Ok(term)
@@ -1097,13 +1122,15 @@ impl<W: io::Write> InlineTerminal<W> {
         })
     }
 
-    /// Follow a size change without asking the terminal where the cursor went.
+    /// Follow a size change without asking the terminal where the cursor went, and without
+    /// assuming how the terminal rearranged its screen.
     ///
-    /// The model: a shrink drops rows below the cursor first, then pushes rows from the top into
-    /// scrollback; a grow pulls rows back from scrollback. The cursor is parked on the
-    /// viewport's last row, so the viewport moves up by the rows pushed out, or down by the rows
-    /// pulled back. Clears from the new top down; the caller's next `draw_live` paints. Rows
-    /// above the top are history and are never cleared.
+    /// Terminals differ: some pull rows back from scrollback on a grow, some add blank rows;
+    /// some wrap long rows on a narrowing, some cut them. All keep the cursor on its cell, and
+    /// the cursor is parked on the viewport's first row. So this clears from the cursor's row
+    /// down, makes room for the live region below it with newlines, and leaves the painting to
+    /// the caller's next `draw_live`. Rows above the cursor are history and are never cleared.
+    /// The row arithmetic that follows only keeps `viewport` close for the common terminals.
     pub fn resize(&mut self, cols: u16, rows: u16) -> io::Result<()> {
         if self.closed || (cols, rows) == (self.cols, self.rows) {
             return Ok(());
@@ -1177,16 +1204,20 @@ impl<W: io::Write> InlineTerminal<W> {
         }
         self.repaint = true;
         self.clear = true;
+        // The terminal kept the cursor on the viewport's first row; where that row is now is
+        // not known. `top` above is only the common terminals' answer, kept for `viewport`.
+        self.anchored = false;
+        self.cursor = self.top;
         if self.overlay.is_some() || self.workspace.is_some() {
+            self.covered_resize = true;
             self.update_link();
             return Ok(());
         }
 
-        // The new size is known now: address the top absolutely, so the cursor row is exact again.
         let mut batch = self.begin();
         self.sync_on(&mut batch);
-        self.clear_from_top_absolute(&mut batch);
-        self.park(&mut batch);
+        Self::clear_at_cursor(&mut batch);
+        self.reserve(&mut batch);
         self.sync_off(&mut batch);
         self.clear = false;
         self.send(batch).map(drop)
@@ -1201,6 +1232,11 @@ impl<W: io::Write> InlineTerminal<W> {
         let mut batch = self.begin();
         self.sync_on(&mut batch);
         if self.workspace.is_none() {
+            if self.placed && !self.released {
+                // No live rows stay on the main screen while it is covered, so a resize that
+                // happens meanwhile has nothing of the live region to move or wrap.
+                self.clear_from_top_relative(&mut batch);
+            }
             batch.put(ALTERNATE_ON);
             batch.mark(Mark::OverlayOn);
         }
@@ -1301,13 +1337,23 @@ impl<W: io::Write> InlineTerminal<W> {
         batch.put(HIDE_CURSOR);
         batch.put(ALTERNATE_OFF);
         batch.mark(Mark::OverlayOff);
-        if self.placed {
-            self.clear_from_top_absolute(&mut batch);
+        if self.placed && !self.covered_resize {
+            if self.anchored {
+                self.clear_from_top_absolute(&mut batch);
+            } else {
+                // Leaving the alternate screen put the cursor back on the viewport's first row.
+                self.cursor = self.top;
+                Self::clear_at_cursor(&mut batch);
+                self.reserve(&mut batch);
+            }
             self.write_queue(&mut batch)?;
         } else if self.rows >= 3 {
+            // The main screen changed size while it was covered: nothing says where history
+            // ends now, so take the bottom rows and scroll what is there into history.
             self.place_at_bottom(&mut batch);
             self.write_queue(&mut batch)?;
         }
+        self.covered_resize = false;
         self.park(&mut batch);
         self.sync_off(&mut batch);
         self.forget_frames();
@@ -1369,7 +1415,7 @@ impl<W: io::Write> InlineTerminal<W> {
     }
 
     /// A new batch, starting with the recovery bytes when the last write failed.
-    fn begin(&self) -> Batch {
+    fn begin(&mut self) -> Batch {
         let mut batch = Batch::default();
         if self.dirty {
             if self.link.lock().in_sync {
@@ -1378,7 +1424,18 @@ impl<W: io::Write> InlineTerminal<W> {
             }
             batch.put(RESET_REGION);
             batch.put(RESET_STYLE);
-            batch.move_to(0, self.cursor);
+            if self.anchored || !self.placed || self.overlay.is_some() || self.workspace.is_some() {
+                batch.move_to(0, self.cursor);
+            } else {
+                // Neither the cursor nor the viewport's row is known: take the bottom rows.
+                batch.move_to(0, self.rows - 1);
+                for _ in 0..self.height {
+                    batch.put(b"\n");
+                }
+                self.top = self.rows - self.height;
+                self.cursor = self.rows - 1;
+                self.anchored = true;
+            }
             batch.mark(Mark::Recovered);
         }
         batch
@@ -1398,10 +1455,32 @@ impl<W: io::Write> InlineTerminal<W> {
         }
     }
 
-    /// Put the hidden cursor on column 0 of the viewport's last row.
+    /// Put the hidden cursor on column 0 of the viewport's first row.
     fn park(&mut self, batch: &mut Batch) {
         if self.placed {
-            self.go(batch, 0, self.top + self.height - 1);
+            self.go(batch, 0, self.top);
+        }
+    }
+
+    /// Clear from the cursor's row to the end of the screen without knowing which row it is.
+    /// The erase starts one row down, so it never starts at the origin (tmux would save the
+    /// screen to history), and the saved cursor brings it back even from the last row.
+    fn clear_at_cursor(batch: &mut Batch) {
+        batch.put(b"\r");
+        batch.put(CLEAR_LINE);
+        batch.put(b"\x1b7\x1b[B");
+        batch.put(CLEAR_BELOW);
+        batch.put(b"\x1b8");
+    }
+
+    /// Make sure `height` rows exist from the cursor's row down: a newline at the last row
+    /// scrolls history up, anywhere else it only moves. The cursor ends where it started.
+    fn reserve(&self, batch: &mut Batch) {
+        if self.height > 1 {
+            for _ in 1..self.height {
+                batch.put(b"\n");
+            }
+            batch.put(format!("\x1b[{}A", self.height - 1).as_bytes());
         }
     }
 
@@ -1449,7 +1528,9 @@ impl<W: io::Write> InlineTerminal<W> {
     // tmux saves the visible screen to history when erase-below starts at the origin.
     fn clear_from_top_relative(&mut self, batch: &mut Batch) {
         self.go(batch, 0, self.top);
-        if self.top == 0 {
+        if !self.anchored {
+            Self::clear_at_cursor(batch);
+        } else if self.top == 0 {
             batch.put(CLEAR_LINE);
             if self.rows > 1 {
                 self.go(batch, 0, 1);
@@ -1553,6 +1634,21 @@ impl<W: io::Write> InlineTerminal<W> {
     /// Make the viewport fit below its top by scrolling the whole screen up with newlines at
     /// the last row. Content above moves into scrollback; nothing is erased.
     fn make_room(&mut self, batch: &mut Batch) {
+        if !self.anchored {
+            self.go(batch, 0, self.top);
+            for _ in 1..self.height {
+                batch.put(b"\n");
+            }
+            if self.top + self.height > self.rows {
+                let room = self.top + self.height - self.rows;
+                if let Some(scrolled) = &mut self.scrolled {
+                    *scrolled = scrolled.saturating_add(u32::from(room));
+                }
+                self.top = self.rows - self.height;
+            }
+            self.cursor = self.top + self.height - 1;
+            return;
+        }
         if self.top + self.height > self.rows {
             let room = self.top + self.height - self.rows;
             if let Some(scrolled) = &mut self.scrolled {
@@ -1578,6 +1674,7 @@ impl<W: io::Write> InlineTerminal<W> {
         }
         self.top = self.rows - self.height;
         self.placed = true;
+        self.anchored = true;
         self.repaint = true;
         self.clear = true;
     }
@@ -1620,6 +1717,7 @@ impl<W: io::Write> InlineTerminal<W> {
         let mut state = self.link.lock();
         state.top = self.top;
         state.placed = self.placed;
+        state.anchored = self.anchored;
     }
 
     /// Write the batch. The state it planned is kept whatever happens; on an error the batch is
@@ -1663,6 +1761,7 @@ impl<W: io::Write> InlineTerminal<W> {
             }
             state.top = self.top;
             state.placed = self.placed;
+            state.anchored = self.anchored;
         }
         if recovered {
             self.dirty = false;
@@ -2118,10 +2217,17 @@ impl<W: io::Write> InlineTerminal<W> {
         if self.placed {
             self.clear_from_top_relative(&mut batch);
         }
-        batch.put(RESET_REGION);
-        if self.placed {
-            // Resetting the scroll region homes the cursor; start the child after history.
-            self.jump(&mut batch, 0, self.top);
+        if self.placed && !self.anchored {
+            // Resetting the scroll region homes the cursor; the saved cursor brings it back.
+            batch.put(b"\x1b7");
+            batch.put(RESET_REGION);
+            batch.put(b"\x1b8");
+        } else {
+            batch.put(RESET_REGION);
+            if self.placed {
+                // Resetting the scroll region homes the cursor; start the child after history.
+                self.jump(&mut batch, 0, self.top);
+            }
         }
         batch.put(PASTE_OFF);
         if self.caps.keyboard_enhancement {
@@ -2167,8 +2273,10 @@ impl<W: io::Write> InlineTerminal<W> {
                 self.top = self.cursor;
             }
             self.placed = true;
+            self.anchored = true;
+            self.covered_resize = false;
             self.make_room(&mut batch);
-            self.jump(&mut batch, 0, self.top + self.height - 1);
+            self.jump(&mut batch, 0, self.top);
         }
         self.forget_frames();
         self.repaint = true;
@@ -2178,6 +2286,7 @@ impl<W: io::Write> InlineTerminal<W> {
             batch.mark(Mark::OverlayOn);
         } else if self.placed {
             self.write_queue(&mut batch)?;
+            self.park(&mut batch);
         }
         self.send(batch)?;
         self.released = false;
