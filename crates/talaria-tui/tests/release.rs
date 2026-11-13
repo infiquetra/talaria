@@ -77,6 +77,7 @@ fn reacquire_probes_after_resets_and_writes_queued_once() {
             },
             cursor: Some((0, 10)),
             colors: Default::default(),
+            status: None,
         })
     };
     term.reacquire(&mut probe_fn).unwrap();
@@ -111,6 +112,7 @@ fn overlay_survives_release() {
             },
             cursor: Some((0, 10)),
             colors: Default::default(),
+            status: None,
         })
     };
     term.reacquire(&mut probe_fn).unwrap();
@@ -142,6 +144,7 @@ fn released_alert_keeps_most_urgent() {
             },
             cursor: Some((0, 10)),
             colors: Default::default(),
+            status: None,
         })
     };
     term.reacquire(&mut probe_fn).unwrap();
