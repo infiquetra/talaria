@@ -27,6 +27,9 @@ use serde_json::{Value, json};
 #[path = "script.rs"]
 mod script;
 
+#[path = "readiness.rs"]
+mod readiness;
+
 use script::{FIRST, Failure, Input, Machine, SECOND, Script, TAB_ID};
 
 struct Ctx {
@@ -363,6 +366,16 @@ fn pane_type(ctx: &mut Ctx, rest: &[String], input: Input) -> Result<String, Sto
     }
     ctx.machine.typed(pane, input, text);
     ctx.event(json!(["typed", pane, input.name(), text]));
+    if input == Input::Run
+        && text == "/export"
+        && ctx
+            .machine
+            .cwd(pane)
+            .join("fixture-smoke-export.md")
+            .is_file()
+    {
+        readiness::notify("export-written").expect("notify that the export file was written");
+    }
     Ok(ctx.fixture(fixture))
 }
 

@@ -7,12 +7,11 @@ mod support;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use regex::Regex;
 use smoke::Suite;
+use support::readiness::Readiness;
 use support::scripts2a::{Shapes, Step, script_2a};
 use support::tmux_fake::TmuxFake;
 use support::{Harness, Outcome, RuleBuilder, Scenario, ScriptBuilder, Startup, write_executable};
@@ -31,21 +30,6 @@ fn everything(outcome: &Outcome) -> String {
 /// A run that ends at the first step: the binary exits with code 7 at once.
 fn quick_failure() -> Harness {
     Harness::from_scenario(&Scenario::happy().startup(Startup::ExitsWith(7)))
-}
-
-/// True once the process is gone or only waiting to be collected.
-fn has_ended(pid: u32) -> bool {
-    match Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-    {
-        Ok(output) => {
-            let stat = String::from_utf8_lossy(&output.stdout);
-            let stat = stat.trim();
-            stat.is_empty() || stat.starts_with('Z')
-        }
-        Err(_) => false,
-    }
 }
 
 #[test]
@@ -257,6 +241,7 @@ fn scratch_folder_is_private_and_holds_the_launch_and_editor_scripts() {
     let script = script_2a(&shapes, Step::TmuxPane);
     let harness = Harness::new(&script);
     let tmux = TmuxFake::with_env(&["FAKE_TMUX_NEVER_UP=1"]);
+    let ready = Readiness::new("session-unavailable");
     let mut running = harness
         .cmd()
         .arg("--suite")
@@ -265,26 +250,20 @@ fn scratch_folder_is_private_and_holds_the_launch_and_editor_scripts() {
         .arg(&tmux.wrapper)
         .arg("--step-scale")
         .arg("100")
-        .spawn();
-    let pid = running.pid();
-    let deadline = Instant::now() + Duration::from_secs(240);
-    let mut launch: Option<PathBuf> = None;
-    while Instant::now() < deadline {
-        for dir in harness.scratch_dirs() {
-            let candidate = dir.join("launch.sh");
-            if candidate.is_file() {
-                launch = Some(candidate);
-                break;
-            }
-        }
-        if launch.is_some() || has_ended(pid) {
-            break;
-        }
-        sleep(Duration::from_millis(100));
-    }
+        .spawn_ready(ready);
+    let launch: Option<PathBuf> = if running.wait_ready(Duration::from_secs(240)) {
+        harness
+            .scratch_dirs()
+            .into_iter()
+            .map(|dir| dir.join("launch.sh"))
+            .find(|candidate| candidate.is_file())
+    } else {
+        None
+    };
     let launch = match launch {
         Some(path) => path,
         None => {
+            running.release_ready();
             running.kill();
             let outcome = running.finish();
             panic!(
@@ -394,7 +373,9 @@ fn scratch_folder_is_private_and_holds_the_launch_and_editor_scripts() {
             .is_match(secret.trim()),
         "the dropped file holds the secret: {secret:?}"
     );
+    running.release_ready();
     running.kill();
+    let _ = running.finish();
 }
 
 #[test]

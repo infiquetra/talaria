@@ -105,7 +105,7 @@ fn missing_jq_is_exit_2_and_creates_nothing() {
 
 #[test]
 fn exit_codes_are_0_1_2_and_never_3() {
-    for (modes, code, result) in [
+    let cases: Vec<_> = [
         (&[][..], 0, "SMOKE_RESULT: PASSED (elapsed "),
         (
             &["workflows-missing"][..],
@@ -117,23 +117,39 @@ fn exit_codes_are_0_1_2_and_never_3() {
             1,
             "SMOKE_RESULT: FAILED (no-gateway)",
         ),
-    ] {
-        for require in [false, true] {
-            let harness = Harness::new(&scripts5::script_5(modes));
-            let mut cmd = harness
-                .cmd()
-                .args(["--suite", "phase5"])
-                .env("PATH", jq_path(&harness))
-                .step_scale(0.01);
-            if require {
-                cmd = cmd.live_require();
+    ]
+    .into_iter()
+    .flat_map(|(modes, code, result)| {
+        [false, true].map(move |require| (modes, code, result, require))
+    })
+    .collect();
+    for batch in cases.chunks(2) {
+        std::thread::scope(|scope| {
+            let runs: Vec<_> = batch
+                .iter()
+                .map(|&(modes, code, result, require)| {
+                    scope.spawn(move || {
+                        let harness = Harness::new(&scripts5::script_5(modes));
+                        let mut cmd = harness
+                            .cmd()
+                            .args(["--suite", "phase5"])
+                            .env("PATH", jq_path(&harness))
+                            .step_scale(0.01);
+                        if require {
+                            cmd = cmd.live_require();
+                        }
+                        let out = cmd.run();
+                        assert_eq!(out.code, Some(code), "{}", output(&out));
+                        assert_ne!(out.code, Some(3));
+                        assert!(output(&out).contains(result), "{}", output(&out));
+                        assert!(!output(&out).contains("SKIP"));
+                    })
+                })
+                .collect();
+            for run in runs {
+                run.join().unwrap();
             }
-            let out = cmd.run();
-            assert_eq!(out.code, Some(code), "{}", output(&out));
-            assert_ne!(out.code, Some(3));
-            assert!(output(&out).contains(result), "{}", output(&out));
-            assert!(!output(&out).contains("SKIP"));
-        }
+        });
     }
     let harness = Harness::plain();
     let out = harness

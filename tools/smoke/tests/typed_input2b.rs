@@ -6,6 +6,8 @@
 
 mod support;
 
+use std::sync::OnceLock;
+
 use smoke::SmokeConfig;
 use support::Call;
 use support::scripts2b::{
@@ -287,16 +289,21 @@ fn collect_all() -> Vec<Sent> {
     all
 }
 
+fn collected() -> &'static [Sent] {
+    static SENT: OnceLock<Vec<Sent>> = OnceLock::new();
+    SENT.get_or_init(collect_all)
+}
+
 #[test]
 fn nothing_typed_contains_unattended() {
-    for sent in collect_all() {
-        for text in texts(&sent) {
+    for sent in collected() {
+        for text in texts(sent) {
             assert!(
                 !text.to_lowercase().contains("unattended"),
                 "no sent text may hold unattended: {text:?}"
             );
         }
-        for key in keys(&sent) {
+        for key in keys(sent) {
             assert!(
                 !key.to_lowercase().contains("unattended"),
                 "no sent key may hold unattended: {key:?}"
@@ -333,7 +340,7 @@ fn slash_lines_are_the_allowed_list() {
                     .chars()
                     .all(|c| !c.is_whitespace())
     };
-    for sent in collect_all() {
+    for sent in collected() {
         for event in &sent.events {
             match event {
                 // Submits travel as runs; the launch line is not a slash line.
@@ -352,9 +359,9 @@ fn slash_lines_are_the_allowed_list() {
 
 #[test]
 fn permissions_line_is_only_session_default() {
-    for sent in collect_all() {
+    for sent in collected() {
         let mut count = 0;
-        for text in texts(&sent) {
+        for text in texts(sent) {
             if text.starts_with("/permissions") {
                 count += 1;
                 assert_eq!(text, "/permissions session default", "the one cleanup line");
@@ -384,8 +391,8 @@ fn no_line_restores_files_or_changes_the_profile() {
         "hermes config",
     ];
     let allowed_keys = ["shift+tab", "backtab", "esc", "enter", "ctrl+c"];
-    for sent in collect_all() {
-        for text in texts(&sent) {
+    for sent in collected() {
+        for text in texts(sent) {
             for needle in forbidden {
                 assert!(
                     !text.contains(needle),
@@ -405,7 +412,7 @@ fn no_line_restores_files_or_changes_the_profile() {
                 );
             }
         }
-        for key in keys(&sent) {
+        for key in keys(sent) {
             assert!(allowed_keys.contains(&key), "unexpected key: {key:?}");
             assert_ne!(key, "f", "the rewind list never restores files");
         }
@@ -422,7 +429,7 @@ fn prompts_are_the_documented_prompts() {
     let long = "Run the shell command sleep 25, then reply with the word first in capital letters.";
     let omega = "Reply with the word omega in capital letters.";
     let token_prefix = "Without using any tools, join these two words with a hyphen and reply with only the result: ";
-    for sent in collect_all() {
+    for sent in collected() {
         for event in &sent.events {
             let Event::Run(text) = event else {
                 continue;

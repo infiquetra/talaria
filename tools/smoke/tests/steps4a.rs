@@ -3,12 +3,43 @@
 mod scripts4a;
 mod support;
 use scripts4a::{exec_4a, script_4a};
-use smoke::StepOutcome;
+use smoke::{SmokeReport, StepOutcome};
+use std::sync::OnceLock;
 use std::time::Duration;
-use support::Call;
+use support::{Call, Recorded};
+
+struct HappyRun {
+    report: SmokeReport,
+    calls: Vec<Recorded>,
+    close_tabs: usize,
+}
+
+impl HappyRun {
+    fn lines(&self) -> String {
+        self.report.step_lines()
+    }
+
+    fn close_tabs(&self) -> usize {
+        self.close_tabs
+    }
+}
+
+fn happy_run() -> &'static HappyRun {
+    static HAPPY: OnceLock<HappyRun> = OnceLock::new();
+    HAPPY.get_or_init(|| {
+        let exec = exec_4a(&script_4a(&[]), false, false, 1.0, 900);
+        let calls = exec.term.calls();
+        let close_tabs = exec.close_tabs();
+        HappyRun {
+            report: exec.report,
+            calls,
+            close_tabs,
+        }
+    })
+}
 
 fn passes(step: &str, expected: &[&str], max_secs: u64) {
-    let exec = exec_4a(&script_4a(&[]), false, false, 1.0, 900);
+    let exec = happy_run();
     let elapsed = exec
         .report
         .outcomes
@@ -20,8 +51,8 @@ fn passes(step: &str, expected: &[&str], max_secs: u64) {
         .unwrap_or_else(|| panic!("{step} did not pass: {}", exec.lines()));
     assert!(elapsed <= Duration::from_secs(max_secs));
     let inputs: Vec<String> = exec
-        .term
-        .calls()
+        .calls
+        .clone()
         .into_iter()
         .flat_map(|call| match call.call {
             Call::SendText { text, .. } => vec![format!("text:{text}")],
@@ -41,8 +72,8 @@ fn passes(step: &str, expected: &[&str], max_secs: u64) {
         );
     }
     let runs: Vec<String> = exec
-        .term
-        .calls()
+        .calls
+        .clone()
         .into_iter()
         .filter_map(|call| match call.call {
             Call::Run { text, .. } => Some(text),
@@ -966,7 +997,7 @@ pair!(
 );
 #[test]
 fn a_full_run_returns_to_idle_between_steps() {
-    let exec = exec_4a(&script_4a(&[]), false, false, 1.0, 900);
+    let exec = happy_run();
     assert_eq!(exec.report.outcomes.len(), 17);
     assert_eq!(exec.report.exit_code(), 0);
     assert!(
@@ -975,7 +1006,7 @@ fn a_full_run_returns_to_idle_between_steps() {
             .iter()
             .all(|outcome| matches!(outcome, StepOutcome::Pass { .. }))
     );
-    let calls = exec.term.calls();
+    let calls = &exec.calls;
     let mut last = 0;
     for command in [
         "/config",

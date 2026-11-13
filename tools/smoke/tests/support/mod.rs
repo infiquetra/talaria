@@ -30,6 +30,9 @@ use smoke::{Clock, NewTab, PaneId, ReadSource, TabId, TermError, Terminal};
 #[path = "script.rs"]
 pub mod script;
 
+#[path = "readiness.rs"]
+pub mod readiness;
+
 #[path = "paster2a.rs"]
 pub mod paster2a;
 
@@ -1469,6 +1472,16 @@ fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
+fn child_profile(root: &Path) -> PathBuf {
+    std::env::var_os("LLVM_PROFILE_FILE")
+        .map(PathBuf::from)
+        .filter(|path| {
+            let pattern = path.to_string_lossy().replace("%%", "");
+            path.is_absolute() && pattern.contains("%p") && pattern.contains("%m")
+        })
+        .unwrap_or_else(|| root.join("profiles-%p-%m.profraw"))
+}
+
 /// Writes an executable file.
 pub fn write_executable(path: &Path, body: &str) {
     fs::write(path, body).expect("write executable");
@@ -1582,6 +1595,7 @@ impl FakeHerdr {
         let output = Command::new(&self.wrapper)
             .args(args)
             .env_clear()
+            .env("LLVM_PROFILE_FILE", child_profile(self.dir.path()))
             .output()
             .expect("run the fake herdr");
         Outcome::from_output(output)
@@ -1742,6 +1756,7 @@ impl Harness {
             .env("TMPDIR", self.tmp_dir())
             .env("HERDR_ENV", "1")
             .env("HERDR_WORKSPACE_ID", WORKSPACE_ID)
+            .env("LLVM_PROFILE_FILE", child_profile(self.root.path()))
             .current_dir(self.root.path());
         SmokeCmd { cmd }
     }
@@ -1821,6 +1836,15 @@ impl SmokeCmd {
         Outcome::from_output(output)
     }
 
+    pub fn spawn_ready(mut self, ready: readiness::Readiness) -> Running {
+        self.cmd
+            .env("SMOKE_READY_ADDRESS", ready.address().to_string())
+            .env("SMOKE_READY_POINT", ready.point());
+        let mut running = self.spawn();
+        running.readiness = Some(ready);
+        running
+    }
+
     /// Starts the process; use [`Running::signal`] and [`Running::finish`].
     pub fn spawn(mut self) -> Running {
         let child = self
@@ -1830,16 +1854,36 @@ impl SmokeCmd {
             .stderr(Stdio::piped())
             .spawn()
             .expect("start the smoke binary");
-        Running { child }
+        Running {
+            child,
+            readiness: None,
+        }
     }
 }
 
 /// A started `smoke` process.
 pub struct Running {
     child: Child,
+    readiness: Option<readiness::Readiness>,
 }
 
 impl Running {
+    pub fn wait_ready(&mut self, timeout: Duration) -> bool {
+        let child = &mut self.child;
+        self.readiness
+            .as_mut()
+            .expect("process readiness barrier")
+            .wait(timeout, || {
+                child.try_wait().expect("check the smoke process").is_some()
+            })
+    }
+
+    pub fn release_ready(&mut self) {
+        if let Some(mut ready) = self.readiness.take() {
+            ready.release();
+        }
+    }
+
     pub fn pid(&self) -> u32 {
         self.child.id()
     }
@@ -1875,5 +1919,31 @@ impl Running {
             stdout,
             stderr,
         }
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        let _ = Command::new("kill")
+            .args(["-TERM", &self.child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        self.release_ready();
+        drop(self.child.stdout.take());
+        drop(self.child.stderr.take());
+        let end = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < end {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(_) => break,
+            }
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }

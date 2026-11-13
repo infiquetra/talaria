@@ -42,7 +42,9 @@ fn phase4a_refuses_other_profile_model_or_provider() {
         assert_eq!(std::fs::read_dir(h.tmp_dir()).unwrap().count(), 0);
         assert!(!h.fake.saw(&["tab", "create"]));
     }
-    let h = Harness::plain();
+    let script = ScriptBuilder::new()
+        .on_first(RuleBuilder::run("--no-ensure --profile ").append("$0\nSMOKE_EXIT:7\n$ "));
+    let h = Harness::new(&script);
     let out = h
         .cmd()
         .args([
@@ -59,6 +61,8 @@ fn phase4a_refuses_other_profile_model_or_provider() {
         .run();
     assert!(!output(&out).contains(OVERRIDE));
     assert!(!output(&out).contains("unknown suite"));
+    assert_eq!(out.code, Some(1), "{}", output(&out));
+    assert!(output(&out).contains("SMOKE_RESULT: FAILED (startup)"));
 }
 #[test]
 fn missing_jq_is_exit_2_and_creates_nothing() {
@@ -103,16 +107,28 @@ fn exit_codes_0_1_2_3() {
             "SMOKE_RESULT: PASSED WITH SKIPS (providers-tabs)",
         ),
     ];
-    for (replacements, expected, line) in scenarios {
-        let h = Harness::new(&scripts4a::script_4a(replacements));
-        let out = h
-            .cmd()
-            .args(["--suite", "phase4a"])
-            .env("PATH", jq_path(&h))
-            .run();
-        assert_eq!(out.code, Some(*expected), "{}", output(&out));
-        assert!(output(&out).contains(line), "{}", output(&out));
-    }
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = scenarios
+            .chunks(scenarios.len().div_ceil(2))
+            .map(|batch| {
+                scope.spawn(move || {
+                    for (replacements, expected, line) in batch {
+                        let h = Harness::new(&scripts4a::script_4a(replacements));
+                        let out = h
+                            .cmd()
+                            .args(["--suite", "phase4a"])
+                            .env("PATH", jq_path(&h))
+                            .run();
+                        assert_eq!(out.code, Some(*expected), "{}", output(&out));
+                        assert!(output(&out).contains(line), "{}", output(&out));
+                    }
+                })
+            })
+            .collect();
+        for run in runs {
+            run.join().unwrap();
+        }
+    });
     let h = Harness::plain();
     let out = h
         .cmd()

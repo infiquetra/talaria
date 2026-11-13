@@ -12,6 +12,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "readiness.rs"]
+mod readiness;
+
 const VERSION: &str = include_str!("../fixtures/tmux/version.txt");
 
 fn dir() -> PathBuf {
@@ -103,6 +106,7 @@ fn main() {
                     );
                 }
             }
+            readiness::notify("paste-loaded").expect("notify that the paste buffer was copied");
             std::process::exit(0);
         }
         "paste-buffer" => {
@@ -120,6 +124,8 @@ fn main() {
                 std::process::exit(2);
             }
             if std::env::var("FAKE_TMUX_NEVER_UP").is_ok_and(|v| v == "1") {
+                readiness::notify("session-unavailable")
+                    .expect("notify that the prepared session is unavailable");
                 eprintln!("can't find session: {session}");
                 std::process::exit(1);
             }

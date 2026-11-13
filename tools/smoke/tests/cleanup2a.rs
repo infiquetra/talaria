@@ -6,10 +6,9 @@
 mod support;
 
 use std::path::PathBuf;
-use std::process::Command;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use support::readiness::Readiness;
 use support::scripts2a::{
     Exec2a, PasteCollapse, Shapes, Step, assert_fails_with, assert_one_close_tab, exec_2a,
     script_2a,
@@ -38,21 +37,6 @@ fn residue(exec: &Exec2a) -> Vec<PathBuf> {
         .collect()
 }
 
-/// True once the process is gone or only waiting to be collected.
-fn has_ended(pid: u32) -> bool {
-    match Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-    {
-        Ok(output) => {
-            let stat = String::from_utf8_lossy(&output.stdout);
-            let stat = stat.trim();
-            stat.is_empty() || stat.starts_with('Z')
-        }
-        Err(_) => false,
-    }
-}
-
 /// Starts `smoke --suite phase2a` against the fakes on a script that runs up to the first
 /// paste, waits (in real time) until the paste is loaded, sends the signal and returns what
 /// the process did.
@@ -64,27 +48,17 @@ fn run_and_signal(signal: &str) -> (Harness, TmuxFake, support::Outcome) {
     let script = script_2a(&shapes, Step::PasteCollapse);
     let harness = Harness::new(&script);
     let tmux = TmuxFake::new();
+    let ready = Readiness::new("paste-loaded");
     let mut running = harness
         .cmd()
         .arg("--suite")
         .arg("phase2a")
         .arg("--tmux")
         .arg(&tmux.wrapper)
-        .spawn();
-    let pid = running.pid();
-    let deadline = Instant::now() + Duration::from_secs(240);
-    let mut pasted = false;
-    while Instant::now() < deadline {
-        if tmux.saw(&["load-buffer"]) {
-            pasted = true;
-            break;
-        }
-        if has_ended(pid) {
-            break;
-        }
-        sleep(Duration::from_millis(50));
-    }
+        .spawn_ready(ready);
+    let pasted = running.wait_ready(Duration::from_secs(240));
     if !pasted {
+        running.release_ready();
         running.kill();
         let outcome = running.finish();
         panic!(
@@ -93,7 +67,11 @@ fn run_and_signal(signal: &str) -> (Harness, TmuxFake, support::Outcome) {
             explain(&outcome)
         );
     }
+    assert!(tmux.saw(&["load-buffer"]));
+    assert!(tmux.dir.join("buffer_copy.txt").is_file());
+    assert!(tmux.dir.join("buffer_mode.txt").is_file());
     running.signal(signal);
+    running.release_ready();
     let outcome = running.finish();
     (harness, tmux, outcome)
 }

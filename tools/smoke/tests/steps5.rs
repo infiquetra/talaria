@@ -4,11 +4,47 @@ mod scripts5;
 mod support;
 
 use scripts5::{Exec5, LIMITS, STEPS, exec_5, script_5};
-use smoke::{ReadSource, StepOutcome};
-use support::Call;
+use smoke::{ReadSource, SmokeReport, StepOutcome};
+use std::sync::OnceLock;
+use support::{Call, Recorded};
 
 fn run(modes: &[&str]) -> Exec5 {
     exec_5(&script_5(modes), false, false, 1.0, 600)
+}
+
+struct HappyRun {
+    report: SmokeReport,
+    calls: Vec<Recorded>,
+    memory: Vec<String>,
+    reads: Vec<scripts5::ReadReceipt>,
+    close_tabs: usize,
+}
+
+impl HappyRun {
+    fn lines(&self) -> String {
+        self.report.step_lines()
+    }
+
+    fn close_tabs(&self) -> usize {
+        self.close_tabs
+    }
+}
+
+fn happy_run() -> &'static HappyRun {
+    static HAPPY: OnceLock<HappyRun> = OnceLock::new();
+    HAPPY.get_or_init(|| {
+        let exec = run(&[]);
+        let calls = exec.term.calls();
+        let memory = exec.term.memory();
+        let close_tabs = exec.close_tabs();
+        HappyRun {
+            report: exec.report,
+            calls,
+            memory,
+            reads: exec.reads,
+            close_tabs,
+        }
+    })
 }
 
 fn sent(call: &Call) -> Option<&str> {
@@ -19,7 +55,7 @@ fn sent(call: &Call) -> Option<&str> {
 }
 
 fn passes(step: &str) {
-    let exec = run(&[]);
+    let exec = happy_run();
     let index = STEPS.iter().position(|name| *name == step).unwrap();
     assert!(
         matches!(exec.report.outcomes.get(index), Some(StepOutcome::Pass { step: got, elapsed }) if *got == step && elapsed.as_secs() <= LIMITS[index]),
@@ -28,7 +64,7 @@ fn passes(step: &str) {
     );
     assert_eq!(exec.report.exit_code(), 0, "{}", exec.lines());
     assert_eq!(exec.close_tabs(), 1);
-    let calls = exec.term.calls();
+    let calls = &exec.calls;
     let text: Vec<_> = calls.iter().filter_map(|entry| sent(&entry.call)).collect();
     match step {
         "startup" => assert!(text.iter().any(|line| line.contains("--no-ensure")
@@ -36,7 +72,7 @@ fn passes(step: &str) {
             && line.contains("--model minimax-m3.1-flash")
             && line.contains("--provider ollama-cloud"))),
         "plain-answer" | "resume" => {
-            let tokens = exec.term.memory();
+            let tokens = &exec.memory;
             assert_eq!(tokens.len(), 2);
             assert_ne!(tokens[0], tokens[1]);
             if step == "resume" {
@@ -201,7 +237,7 @@ pair!(no_gateway_passes, no_gateway_fails, "no-gateway", [
 
 #[test]
 fn a_full_run_returns_to_idle_between_steps() {
-    let exec = run(&[]);
+    let exec = happy_run();
     let names: Vec<_> = exec
         .report
         .outcomes
@@ -212,7 +248,7 @@ fn a_full_run_returns_to_idle_between_steps() {
         })
         .collect();
     assert_eq!(names, STEPS);
-    let calls = exec.term.calls();
+    let calls = &exec.calls;
     for (open, next) in [
         ("/workflows", "/ultracode status"),
         ("/ultracode status", "/quit"),

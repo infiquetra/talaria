@@ -297,6 +297,16 @@ pub fn script_4b(replacements: &[(&str, &str, &str)]) -> ScriptBuilder {
             } else {
                 rule = rule.clear().append(&fixture(name, replacements));
             }
+            if flag("@delayed-memory-command")
+                && matches!(name, "memory-commands-r1.txt" | "memory-commands-r2.txt")
+            {
+                rule = rule.clear().append("Waiting for command output.\n").then(
+                    StageBuilder::new()
+                        .after_polls(2)
+                        .clear()
+                        .append(&fixture(name, replacements)),
+                );
+            }
             if let Some((_, _, next)) = ended {
                 let next = format!("{next}-r0.txt");
                 if replacements.iter().any(|(file, _, _)| *file == next) {

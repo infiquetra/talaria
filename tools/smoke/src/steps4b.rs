@@ -324,10 +324,31 @@ fn memory(run: &mut Run<'_>) -> Result<(), Abort> {
     teardown(run, "memory", last)?;
     require(closed, "the memory title is still shown after Esc")
 }
+fn command_output(run: &Run<'_>, ready: impl Fn(&str) -> bool) -> Result<String, Abort> {
+    let end = run.clock.now() + Duration::from_secs(10);
+    loop {
+        let value = raw(run)?;
+        guard(&value)?;
+        let loading = value.contains("Reading profile …")
+            || value
+                .lines()
+                .any(|line| line.trim().starts_with("Loading "));
+        let now = run.clock.now();
+        if !loading && ((ready(&value) && idle_screen(&value)) || now >= end) {
+            return Ok(value);
+        }
+        if now >= end {
+            return Err(Abort::Deadline);
+        }
+        run.clock.sleep(Duration::from_millis(200).min(end - now));
+    }
+}
+
 fn memory_commands(run: &Run<'_>) -> Result<(), Abort> {
     submit(run, &run.pane, "/memory pending")?;
-    run.clock.sleep(Duration::from_secs(10));
-    let r1 = read(run)?;
+    let r1 = command_output(run, |text| {
+        text.contains(MEMORY_PENDING_NONE) || text.contains(MEMORY_PENDING_SOME)
+    })?;
     require(
         r1.contains(MEMORY_PENDING_NONE) || r1.contains(MEMORY_PENDING_SOME),
         "\"/memory pending\" printed neither \"No pending memory writes.\" nor \"Pending memory writes (\"",
@@ -337,8 +358,8 @@ fn memory_commands(run: &Run<'_>) -> Result<(), Abort> {
         "the memory command did not return to an idle composer",
     )?;
     submit(run, &run.pane, "/curator status")?;
-    run.clock.sleep(Duration::from_secs(10));
-    let r2 = read(run)?;
+    let curator = regex::Regex::new(CURATOR_STATUS_RE).map_err(error)?;
+    let r2 = command_output(run, |text| curator.is_match(text))?;
     require(
         regex::Regex::new(CURATOR_STATUS_RE)
             .map_err(error)?
