@@ -453,6 +453,7 @@ fn signal_before_submit_rolls_back() {
 }
 
 #[test]
+#[allow(unexpected_cfgs, reason = "cargo-llvm-cov defines the coverage cfg")]
 fn launch_time_budget() {
     let home = tempfile::tempdir().expect("home");
     let _gateway = mock_gateway_start(home.path());
@@ -469,6 +470,7 @@ fn launch_time_budget() {
         None,
         Duration::from_secs(3),
     );
+    assert!(output.status.success(), "warm launch failed: {output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("\"status\":\"launched\""),
@@ -477,7 +479,7 @@ fn launch_time_budget() {
     let mut samples = Vec::new();
     for _ in 0..20 {
         let started = Instant::now();
-        let _ = invoke(
+        let output = invoke(
             home.path(),
             &[
                 "--bg",
@@ -491,10 +493,19 @@ fn launch_time_budget() {
             Duration::from_secs(3),
         );
         samples.push(started.elapsed());
+        assert!(output.status.success(), "sample launch failed: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("\"status\":\"launched\""),
+            "sample missing launched status: {output:?}"
+        );
     }
     samples.sort();
     let p95 = samples[18];
-    assert!(p95 <= Duration::from_millis(300), "p95 {p95:?}");
+    // Instrumented exits include profile writes; every launch still has a bounded wait.
+    // Measure the unchanged process-exit budget with the ordinary executable.
+    if !cfg!(coverage) {
+        assert!(p95 <= Duration::from_millis(300), "p95 {p95:?}");
+    }
 }
 
 // The mock lives in the application crate's test support. This binary includes it by path so the

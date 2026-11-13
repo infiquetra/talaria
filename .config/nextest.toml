@@ -26,8 +26,7 @@ test-group = 'trybuild'
 [[profile.default.overrides]]
 filter = """
   (package(talaria-app) & (
-    binary(acp_wire)
-    | binary(voice_client_transport)
+    binary(voice_client_transport)
     | binary(review_timing)
     | test(/keystroke_with_list_open_stays_in_budget/)
     | test(/app_wiring_and_config/)
