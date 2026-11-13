@@ -411,7 +411,12 @@ render_mode = "strip"
 `editor.command`, `$VISUAL`, `$EDITOR` or a fallback (graphical editors need a wait flag); Ctrl+R
 searches saved prompts; Ctrl+Z suspends to the shell until `fg`. History is kept owner-only in `~/.talaria/history.jsonl`; a leading space or over 100,000 characters
 keeps a prompt in memory only, and `[history] save = false` stops reading and writing it. Notification kinds are `needs_you`, `done` and `failed`; the bell and desktop
-lists choose channels separately, and `done` waits for `done_after_seconds` (0 to 86400). Inside Herdr, `[herdr] report_state` reports blocked, working or idle.
+lists choose channels separately, and `done` waits for `done_after_seconds` (0 to 86400).
+`[herdr] report_state` (default true) sends `idle`, `working`, `blocked`, `done` and
+`error` to a Herdr terminal that answered the startup probe, and also sends
+`blocked`, `working` or `idle` through `herdr pane report-agent` when that older
+program is present. `report_state = false` sends neither. A terminal that did not
+answer the probe gets no in-band record.
 
 Set `[herdr] enabled = true` to add live terminal agents to the enabled fleet. `binary` selects the
 executable, `poll_interval_ms` accepts 50–300000 milliseconds, and `workspace_filter` optionally
@@ -863,6 +868,12 @@ The default block above is authoritative. Invalid values use the documented defa
 | `fleet_finished` | string | watched | see the section above | watched |
 
 ### `herdr`
+
+`[herdr] report_state` (default true) sends `idle`, `working`, `blocked`, `done` and
+`error` to a Herdr terminal that answered the startup probe, and also sends
+`blocked`, `working` or `idle` through `herdr pane report-agent` when that older
+program is present. `report_state = false` sends neither. A terminal that did not
+answer the probe gets no in-band record.
 
 | Key | Type | Default | Range | Example |
 |---|---|---|---|---|

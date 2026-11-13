@@ -35,6 +35,7 @@ use talaria_app::peek::CardAnswer;
 use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
 use talaria_app::subagents::SubagentAction;
 use talaria_app::theme_file::BorderPreset;
+use talaria_core::SeatState;
 use talaria_core::appearance::ThemeReport;
 use talaria_core::attachments::CollapseRule;
 use talaria_core::attention::{Alert, AttentionConfig, PaneReport, PaneState};
@@ -3430,6 +3431,9 @@ impl Screen for TuiScreen {
     fn work_panel(&self) -> bool {
         self.config.ui.work_panel
     }
+    fn seat_reporting(&self) -> bool {
+        self.config.herdr.report_state
+    }
     fn menu_bar(&self) -> bool {
         self.config.ui.menu_bar
     }
@@ -4748,6 +4752,10 @@ impl Screen for TuiScreen {
                 let _ = self.sender.send(ScreenInput::ComfortNotice(notice));
             }
         }
+    }
+
+    fn report_seat(&mut self, state: SeatState) {
+        let _ = self.terminal.report_seat(state);
     }
 }
 
