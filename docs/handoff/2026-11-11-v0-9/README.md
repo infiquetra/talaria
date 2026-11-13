@@ -12,3 +12,5 @@ Written on 2026-11-11. This folder is the reference set for the issues that plan
 | [deferred-inventory.md](deferred-inventory.md) | The 78 deferred items of the 2026-11-08 product plan, and the issue that takes each one up, where one does. |
 
 Keys such as `SEAT-2` are planning names for issues. [index.md](index.md) gives the issue number for each key.
+
+<!-- Temporary verification change to confirm the inert handoff fast-path workflow check. -->
