@@ -32,7 +32,7 @@ const APPROVAL_PROMPT: &str =
     "Run this exact shell command and then tell me its exit code: rm -rf .pytest_cache";
 const APPROVAL_RETRY_PROMPT: &str =
     "Use your shell tool now and run exactly this command: rm -rf .pytest_cache";
-const COUNT_PROMPT: &str = "Count from 1 to 2000, one number per line, and do not stop early.";
+const COUNT_PROMPT: &str = "Count from 1 to 2000, one number per line, answer directly in plain text without calling any tools or shell commands, and do not stop early.";
 const WORDS: [&str; 8] = [
     "maple", "cobalt", "juniper", "saffron", "tundra", "walnut", "harbor", "quartz",
 ];
@@ -468,7 +468,9 @@ fn script_to_interrupt() -> ScriptBuilder {
 }
 
 fn count_rule(lines: u32) -> RuleBuilder {
-    RuleBuilder::run(r"Count from 1 to 2000, one number per line, and do not stop early\.$")
+    RuleBuilder::run(
+        r"Count from 1 to 2000, one number per line, answer directly in plain text without calling any tools or shell commands, and do not stop early\.$",
+    )
         .append("you: $0")
         .churn(lines)
         .churn_lines("{n}", 1, 1)
@@ -501,6 +503,10 @@ fn happy_path_passes_and_closes_the_tab() {
     assert!(is_token_prompt(&first[1]));
     assert_eq!(first[2], APPROVAL_PROMPT);
     assert_eq!(first[3], COUNT_PROMPT);
+    assert!(
+        first[3].starts_with("Count from 1 to 2000")
+            && first[3].contains("without calling any tools or shell commands")
+    );
     assert!(is_token_prompt(&first[4]));
     assert_eq!(first[5], "/quit");
     // Second pane: resume line, token C, /quit.

@@ -25,7 +25,7 @@ use super::{
 const PROMPT_TAIL: &str =
     r"join these two words with a hyphen and reply with only the result: (\w+) and (\d+)$";
 /// The count prompt both suites submit.
-const COUNT_PATTERN: &str = r"Count from 1 to 2000, one number per line, and do not stop early\.$";
+const COUNT_PATTERN: &str = r"Count from 1 to 2000, one number per line, answer directly in plain text without calling any tools or shell commands, and do not stop early\.$";
 /// The checklist plan prompt.
 const PLAN_PATTERN: &str = "todo_list tool to write a plan";
 /// The launch flag run, matching plain and environment-prefixed launch lines alike.
@@ -759,7 +759,7 @@ pub fn theme_rules(shape: Theme) -> Vec<RuleBuilder> {
     let skin = |screen: &str| RuleBuilder::run("^/skin \\.\\./etc$").append(screen);
     let argument = |screen: &str| RuleBuilder::run("^/theme purple$").append(screen);
     let skin_usage = "/skin ../etc\nUsage: /skin [name]. A skin name is letters, digits, dot, dash or underscore, up to 64 characters.";
-    let argument_usage = "/theme purple\nUsage: /theme [light|dark|auto]";
+    let argument_usage = "/theme purple\nUsage: /theme [light|dark|auto|use [<id>]|reload]";
     match shape {
         Theme::Happy => vec![theme(report), skin(skin_usage), argument(argument_usage)],
         Theme::ReportMissing => vec![

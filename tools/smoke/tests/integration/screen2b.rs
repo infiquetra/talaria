@@ -66,6 +66,13 @@ fn picker_state_reads_the_open_picker() {
         picker_state("Switch model · this session\nNot set up (1)\neffort: medium\n").not_set_up,
         "the unconfigured-provider banner is recognised when it is visible"
     );
+    assert!(
+        picker_state(
+            "Switch model · this session\nOllama Cloud\n>  ● minimax-m3.1-flash          effort ?\neffort: medium\n"
+        )
+        .has_current,
+        "the current model row is recognised with the leading selection cursor"
+    );
 }
 
 #[test]

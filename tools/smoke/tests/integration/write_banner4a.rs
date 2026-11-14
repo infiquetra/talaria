@@ -12,7 +12,10 @@ const SCREENS: &[(&str, &[&str])] = &[
         &["r0", "r1", "r2", "r3", "teardown"],
     ),
     ("config-secret-refused", &["r0", "r1", "r2", "r3"]),
-    ("providers-tabs", &["r0", "r1", "r2", "r3", "teardown"]),
+    (
+        "providers-tabs",
+        &["r0", "r1", "r2", "r3", "r4", "teardown"],
+    ),
     (
         "providers-key-masked",
         &["r0", "r1", "r2", "r3", "r4", "teardown"],

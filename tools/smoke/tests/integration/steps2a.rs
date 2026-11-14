@@ -1119,6 +1119,10 @@ fn checklist_passes_with_collapse_and_record() {
             K_CHECKLIST,
         ]),
     );
+    assert!(
+        !submitted(&exec, "pass todos as a JSON-encoded string").is_empty(),
+        "checklist prompt instructs JSON-encoded string todos to avoid XML item wrapping"
+    );
     assert_one_close_tab(&exec);
 }
 

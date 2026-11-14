@@ -1,6 +1,16 @@
 # recorded
-┌Providers · profile fixture────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│[Keys]  Accounts   Endpoints                                                                                                                                           │
-│Filter: openrouter                                                                                                                                                     │
-│› OpenRouter · OPENROUTER_API_KEY · no key                                                                                                                             │
-│enter set key · ctrl+d remove · ctrl+r reload · tab next tab · type to filter                                                                                          │
+┌Providers · profile fixture───────────────────────────────────────────────────────────────────────────────────────────┐
+│> openrouter                                                                                                          │
+│[All] Keys Accounts Endpoints                                                                                         │
+│1 provider                                                                                                            │
+│Needs setup                                                           │Details                                        │
+│> OpenRouter                                               needs setup│Provider: OpenRouter                           │
+│                                                                      │Status: needs setup                            │
+│                                                                      │Methods: API key                               │
+│                                                                      │Key setting: OPENROUTER_API_KEY                │
+│                                                                      │OpenRouter · OPENROUTER_API_KEY · no key       │
+│                                                                      │F2/Ctrl+E full details                         │
+│Rows 1–2 of 2                                                         │                                               │
+│Enter set up · Esc close · F2/Ctrl+E details                                                                          │
+│Tab view · Ctrl+R reload · Ctrl+U clear                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

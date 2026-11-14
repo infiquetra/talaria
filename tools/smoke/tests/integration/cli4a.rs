@@ -99,8 +99,8 @@ fn exit_codes_0_1_2_3() {
         (
             &[(
                 "providers-tabs-r1.txt",
-                "OpenRouter · OPENROUTER_API_KEY · no key",
-                "OpenRouter · OPENROUTER_API_KEY · key …abcd",
+                "OpenRouter                                               needs setup",
+                "OpenRouter                                              listed ready",
             )],
             3,
             "SMOKE_RESULT: PASSED WITH SKIPS (providers-tabs)",

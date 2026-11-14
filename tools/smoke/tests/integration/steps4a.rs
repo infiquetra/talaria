@@ -449,6 +449,7 @@ pair!(
         "key:enter",
         "key:tab",
         "key:tab",
+        "key:tab",
         "key:esc"
     ],
     [
@@ -460,24 +461,36 @@ pair!(
         ),
         (
             "providers-tabs-r1.txt",
-            "ready ·",
-            "offline ·",
+            "[All] Keys Accounts Endpoints",
+            "[All] Wrong Endpoints",
+            "providers tabs did not show All, Keys, Accounts, Endpoints"
+        ),
+        (
+            "providers-tabs-r1.txt",
+            "Ollama Cloud                                            listed ready",
+            "Ollama Cloud                                             needs setup",
             "Ollama Cloud is not ready"
         ),
         (
             "providers-tabs-r1.txt",
-            "key …abcd",
-            "key",
-            "Ollama Cloud shows no key tail \"key …\" plus four characters"
+            "OpenRouter",
+            "Missing",
+            "the OpenRouter row is missing"
         ),
         (
             "providers-tabs-r2.txt",
-            "not signed in",
-            "unknown",
-            "the Accounts tab shows no sign-in state on row Nous"
+            "Ollama Cloud                                            listed ready",
+            "Ollama Cloud                                             needs setup",
+            "the Keys tab does not list Ollama Cloud as ready"
         ),
         (
             "providers-tabs-r3.txt",
+            "Account: not signed in",
+            "Account: unknown",
+            "the Accounts tab shows no sign-in state"
+        ),
+        (
+            "providers-tabs-r4.txt",
             "+ Add an endpoint",
             "",
             "the Endpoints tab has no \"+ Add an endpoint\" row"
@@ -517,14 +530,14 @@ pair!(
         ),
         (
             "providers-key-masked-r4.txt",
-            "OpenRouter · OPENROUTER_API_KEY · no key",
+            "OpenRouter                                               needs setup",
             "API key for OpenRouter",
             "the key card did not close on Esc"
         ),
         (
             "providers-key-masked-r4.txt",
-            "no key",
-            "ready",
+            "needs setup",
+            "listed ready",
             "the OpenRouter row changed after a cancelled key card"
         ),
     ]
@@ -1069,8 +1082,8 @@ fn a_skip_is_never_a_pass() {
     let exec = exec_4a(
         &script_4a(&[(
             "providers-tabs-r1.txt",
-            "OpenRouter · OPENROUTER_API_KEY · no key",
-            "OpenRouter · OPENROUTER_API_KEY · ready · key …abcd",
+            "OpenRouter                                               needs setup",
+            "OpenRouter                                              listed ready",
         )]),
         false,
         false,
@@ -1085,8 +1098,8 @@ fn live_require_turns_a_skip_into_a_failure() {
     let exec = exec_4a(
         &script_4a(&[(
             "providers-tabs-r1.txt",
-            "OpenRouter · OPENROUTER_API_KEY · no key",
-            "OpenRouter · OPENROUTER_API_KEY · ready · key …abcd",
+            "OpenRouter                                               needs setup",
+            "OpenRouter                                              listed ready",
         )]),
         true,
         false,

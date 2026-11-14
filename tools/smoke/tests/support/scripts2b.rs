@@ -214,6 +214,8 @@ pub enum RenameExport {
     /// The rename answers, the export lands with mode 0600 and the bad name is refused.
     #[default]
     Pass,
+    /// The `/export` output wraps across lines at whitespace inside `(Markdown, secrets redacted).`.
+    WrappedAtSpace,
     /// The rename stays silent.
     RenamedMissing,
     /// The bare rename stays silent.
@@ -659,15 +661,19 @@ fn title_hit() -> RuleBuilder {
 
 /// The export that writes the remembered prompt line with mode 0600.
 fn export_hit() -> RuleBuilder {
+    export_hit_with(
+        "Exported \"fixture smoke ${mem:1}\" to ./fixture-smoke-export.md (4.2 KiB, Markdown, secrets redacted).",
+    )
+}
+
+fn export_hit_with(line: &str) -> RuleBuilder {
     RuleBuilder::run(r"^/export$")
-        .append("Exported \"fixture smoke ${mem:1}\" to ./fixture-smoke-export.md (4.2 KiB, Markdown, secrets redacted).")
-        .then(
-            StageBuilder::new().write_in_cwd_with_mode(
-                "fixture-smoke-export.md",
-                "${mem:0}\n",
-                0o600,
-            ),
-        )
+        .append(line)
+        .then(StageBuilder::new().write_in_cwd_with_mode(
+            "fixture-smoke-export.md",
+            "${mem:0}\n",
+            0o600,
+        ))
 }
 
 /// The refused bad name, writing nothing.
@@ -680,6 +686,14 @@ fn bad_name_hit() -> RuleBuilder {
 pub fn rename_export_rules(shape: RenameExport) -> Vec<RuleBuilder> {
     match shape {
         RenameExport::Pass => vec![rename_hit(), title_hit(), export_hit(), bad_name_hit()],
+        RenameExport::WrappedAtSpace => vec![
+            rename_hit(),
+            title_hit(),
+            export_hit_with(
+                "Exported \"fixture smoke ${mem:1}\" to ./fixture-smoke-export.md (4.2 KiB, Markdown, secrets\nredacted).",
+            ),
+            bad_name_hit(),
+        ],
         RenameExport::RenamedMissing => vec![
             RuleBuilder::run(r"^/rename fixture smoke (\S+)$")
                 .append("> /rename fixture smoke $1"),

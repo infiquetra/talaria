@@ -374,6 +374,12 @@ fn idle_screen_requires_composer_and_no_title() {
     )));
     assert!(idle_screen(&screen("memory-commands-r2.txt")));
     assert!(idle_screen(&screen("configure-secret-refused-r3.txt")));
+    assert!(idle_screen(
+        "> join these two words\n∴ thinking\nLet me think.\nanswer-1\n> Type a message. Enter sends, Shift+Enter adds a line.\n minimax-m3.1-flash │ approvals: manual"
+    ));
+    assert!(!idle_screen(
+        "∴ thinking\n>\n minimax-m3.1-flash │ 1 working"
+    ));
 }
 
 #[test]

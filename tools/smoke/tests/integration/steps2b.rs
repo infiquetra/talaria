@@ -817,6 +817,17 @@ fn rename_export_passes() {
 }
 
 #[test]
+fn rename_export_wrapped_at_space_passes() {
+    let shapes = Shapes {
+        rename_export: RenameExport::WrappedAtSpace,
+        ..Default::default()
+    };
+    let exec = play(&shapes, Step::RenameExport);
+    assert_passes(&exec, "rename-export");
+    assert_one_close_tab(&exec);
+}
+
+#[test]
 fn rename_export_renamed_missing_fails() {
     let shapes = Shapes {
         rename_export: RenameExport::RenamedMissing,

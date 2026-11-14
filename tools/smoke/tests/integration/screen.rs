@@ -633,6 +633,27 @@ fn counting_ignores_replies_and_earlier_text() {
     assert_eq!(highest_number(&scrolled, COUNT_PROMPT), Some(43));
 }
 
+#[test]
+fn counting_ignores_tool_output_blocks() {
+    let screen = [
+        "› Count from 1 to 2000, one number per line, answer directly in plain text without calling any tools or shell commands, and do not stop early.",
+        "⏺ Shell(seq 1 2000)",
+        "  ⎿  2000",
+        "     ---",
+        "     1",
+        "     … +1999 lines (Ctrl+O to view)",
+        "205",
+        "206",
+        "207",
+    ]
+    .join("\n");
+    assert_eq!(
+        sorted(counting_values(&screen, COUNT_PROMPT)),
+        vec![205, 206, 207]
+    );
+    assert_eq!(highest_number(&screen, COUNT_PROMPT), Some(207));
+}
+
 // ---------------------------------------------------------------- exit marker
 
 #[test]

@@ -370,7 +370,7 @@ fn theme_report_and_usage_lines() {
         "the skin usage line is printed"
     );
     assert!(
-        usage.contains("Usage: /theme [light|dark|auto]"),
+        usage.contains("Usage: /theme [light|dark|auto|use [<id>]|reload]"),
         "the theme usage line is printed"
     );
     assert!(

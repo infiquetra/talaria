@@ -205,6 +205,7 @@ fn collect_all() -> Vec<Sent> {
     }
     for shape in [
         RenameExport::Pass,
+        RenameExport::WrappedAtSpace,
         RenameExport::RenamedMissing,
         RenameExport::TitleMissing,
         RenameExport::ExportedMissing,
