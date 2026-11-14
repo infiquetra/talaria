@@ -2125,7 +2125,7 @@ exit=0
 
 ## AUTO-5
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Each command ran on its own, one at a time, with `"$T" fleet list --profile fixture` read before and after each: no NEEDS YOU and no WORKING group before any of them. Six targets ran once and passed; live_background and live_attention failed on run 1 for reasons outside Talaria and passed on run 2, each rerun approved on the issue first (section 8.1 item 2). Long model sentences in BG_APPROVAL lines are cut at 180 characters; only its first line is kept.
 
@@ -2445,7 +2445,7 @@ exit=0
 
 ## AUTO-8
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Run 1 of 2 failed at the step `interrupt`, after `startup`, `plain-answer` and `approval` had passed (exit 1). The reason printed was "the count was not running, or was nearly finished, when Esc was sent". Cause, not a Talaria defect: before counting, the model wrote a sketch of the count in its visible reasoning, with the bare lines 1, 2, 3, ... and 2000. The step reads the highest bare number on screen after the prompt (`tools/smoke/src/screen.rs:198`) and refuses anything above 1500, so it read 2000 while the real count stood at 180. Rerun approved on the issue: `rerun approved: AUTO-8: model printed a 1..2000 sketch before counting`. Run 2 below came right after AUTO-12, with no other live scenario in between. The Herdr window measured 102 columns by 41 rows just before run 2; this suite's steps do not depend on the width.
 
@@ -2453,10 +2453,10 @@ Run 1 of 2 failed at the step `interrupt`, after `startup`, `plain-answer` and `
 
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2474,10 +2474,10 @@ tab: wC6:t2W
 SMOKE_RESULT: PASSED (elapsed 49 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2485,7 +2485,7 @@ wC6:tV t70-c1-test-3
 
 ## AUTO-9
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Run 5 of 5 passed; its whole output is below. Runs 1 to 4 failed, each for a cause outside Talaria.
 
@@ -2503,10 +2503,10 @@ Reruns approved on the issue before runs 2 to 5: `rerun approved: AUTO-9/AUTO-10
 
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2539,10 +2539,10 @@ tab: wC6:t36
 SMOKE_RESULT: PASSED (elapsed 143 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2550,7 +2550,7 @@ wC6:tV t70-c1-test-3
 
 ## AUTO-10
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 3 of 3. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 3 of 3. Date: 2026-10-26.
 
 Run 1 of 3 failed at the step `model-refusal` after 4 steps had passed (exit 1), with the reason "the refusal for an unknown model did not appear within 10 s". Cause, not a Talaria defect: the Herdr window was 102 columns wide (a second terminal client was holding the shared layout at that width), so Talaria wrapped the refusal onto two lines and the step, which matches the whole sentence on one line, did not find it although it was on screen. The operator widened the window to 170 by 44. Run 2 of 3 then failed at the step `headless` after 14 steps had passed (exit 1), with the reason that the headless run without a gateway did not print `"status":"not_started"` with exit code 4. Cause, not a Talaria defect: the step runs the binary with `HERMES_HOME` pointing at an empty folder to simulate a missing gateway, but the tester's first launcher script set `HERMES_HOME` unconditionally, so the run reached the live gateway and exited 0. Both reruns were approved on the issue first: `rerun approved: AUTO-9/AUTO-10: Herdr window 102 columns wraps the matched text` and `rerun approved: AUTO-10: tester launcher overrode the headless step HERMES_HOME`. Run 3 below used a launcher that sets `HERMES_HOME` only when it is unset (a new Herdr tab starts with it unset, checked in a probe tab), in a 170-column window.
 
@@ -2558,10 +2558,10 @@ Run 1 of 3 failed at the step `model-refusal` after 4 steps had passed (exit 1),
 
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2587,10 +2587,10 @@ tab: wC6:t32
 SMOKE_RESULT: PASSED (elapsed 74 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2598,7 +2598,7 @@ wC6:tV t70-c1-test-3
 
 ## AUTO-11
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Run 1 of 1. The Herdr window measured 102 columns by 41 rows during this run; the phase 3 steps do not depend on a wider tab.
 
@@ -2606,10 +2606,10 @@ Run 1 of 1. The Herdr window measured 102 columns by 41 rows during this run; th
 
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2632,10 +2632,10 @@ tab: wC6:t2T
 SMOKE_RESULT: PASSED (elapsed 42 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2643,7 +2643,7 @@ wC6:tV t70-c1-test-3
 
 ## AUTO-12
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Run 1 of 1, straight after AUTO-11 with only the quiet-fleet check between them. The Herdr window was 102 columns by 41 rows. Both tab lists bracket the whole block of AUTO-8 run 1 to AUTO-12; the tmux count was taken after AUTO-12.
 
@@ -2651,10 +2651,10 @@ Run 1 of 1, straight after AUTO-11 with only the quiet-fleet check between them.
 
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2677,10 +2677,10 @@ tab: wC6:t2V
 SMOKE_RESULT: PASSED (elapsed 42 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
-wC6:t3 t70-c1-dev-1
+wC6:t3 t70-c1-<host>
 wC6:t4 t70-c1-<host>
-wC6:t5 t70-c1-dev-3
-wC6:t6 t70-c1-dev-4
+wC6:t5 t70-c1-<host>
+wC6:t6 t70-c1-<host>
 wC6:t1 t70-c1-test-1
 wC6:t2 t70-c1-test-2
 wC6:tV t70-c1-test-3
@@ -2690,7 +2690,7 @@ $ tmux ls 2>&1 | grep -c talaria-smoke
 
 ## P3-01 UAT-1
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2707,7 +2707,7 @@ $ # rows by profile: 200 fixture
 
 ## P3-01 UAT-2
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2743,7 +2743,7 @@ talaria-fleet-probe
 
 ## P3-01 UAT-3
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2787,7 +2787,7 @@ Hermes denies this after 60 s without an answer.
 
 ## P3-01 UAT-4
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2807,7 +2807,7 @@ $ jq -r 'select(.kind=="row") | .row.title' watch.jsonl | sort | uniq -c
 
 ## P3-01 UAT-5
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2825,7 +2825,7 @@ ls-exit=0
 
 ## P3-01 UAT-6
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2839,7 +2839,7 @@ exit=2
 
 ## P3-02 UAT-1
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2881,7 +2881,7 @@ enter open · space peek · r reply · x stop · v review · / filter · esc clo
 
 ## P3-02 UAT-2
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2931,7 +2931,7 @@ enter open · space peek · r reply · x stop · v review · / filter · esc clo
 
 ## P3-02 UAT-3
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Result: PASS
 
@@ -2983,7 +2983,7 @@ talaria-peek-probe
 
 ## P3-02 UAT-4
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3029,7 +3029,7 @@ Note the "too-late" name hints at something about the timeout — maybe the inte
 
 ## P3-02 UAT-5
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 3 of 3. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 3 of 3. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3064,7 +3064,7 @@ IDLE (201)
 
 ## P3-02 UAT-6
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3104,7 +3104,7 @@ WORKING (1)
 
 ## P3-03 UAT-1
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3132,7 +3132,7 @@ wait-done
 
 ## P3-03 UAT-2
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3165,7 +3165,7 @@ final-done
 
 ## P3-03 UAT-3
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3202,7 +3202,7 @@ $ ls -d .worktrees/talaria-write-the-word-ready-into-notes-txt
 
 ## P3-03 UAT-4
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3257,7 +3257,7 @@ Hermes denies this after 60 s without an answer.
 
 ## P3-03 UAT-5
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3284,7 +3284,7 @@ $ # gateway log (fixture): inbound prompts "hi" since 20:08:00
 
 ## P3-03 UAT-6
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3306,7 +3306,7 @@ exit=2
 
 ## P3-04 UAT-1
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3342,7 +3342,7 @@ The working directory contains a single file, notes.txt, whose contents are the 
 
 ## P3-04 UAT-2
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3376,7 +3376,7 @@ hell command `sleep 3` TEN separate times, as TEN distinct terminal tool invocat
 
 ## P3-04 UAT-3
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3396,7 +3396,7 @@ Steer queued for "Run `sleep 3` ten times, one terminal co". It reaches the suba
 
 ## P3-04 UAT-4
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Result: PASS
 
@@ -3433,7 +3433,7 @@ done
 
 ## P3-04 UAT-5
 
-Candidate: 8b514e6. Runner: t70-c1-dev-1. Run 3 of 3. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 3 of 3. Date: 2026-10-26.
 
 Result: PASS
 
