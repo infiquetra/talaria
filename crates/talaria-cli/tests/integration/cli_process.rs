@@ -419,3 +419,83 @@ fn sigint_at_the_resume_list_ends_the_process_by_the_signal() {
         "no session should have been opened"
     );
 }
+
+#[test]
+fn ctrl_o_close_redraws_inline_composer_immediately() {
+    let home = home();
+    let _gateway = StandaloneGateway::start(home.path());
+    let mut terminal = Launch::new(home.path())
+        .size(41, 145)
+        .args(&["--no-ensure"])
+        .spawn();
+    assert!(
+        terminal.wait_for_text(COMPOSER_ROW, Duration::from_secs(5)),
+        "inline composer never appeared:\n{}",
+        terminal.screen_text()
+    );
+    terminal.settle();
+
+    terminal.type_keys("\x0f");
+    assert!(
+        terminal.wait_for_text("Transcript · ", Duration::from_secs(2)),
+        "Ctrl+O did not open the transcript pager:\n{}",
+        terminal.screen_text()
+    );
+    terminal.settle();
+
+    terminal.type_keys("\x0f");
+    terminal.settle();
+    assert!(
+        terminal.screen_text().contains(COMPOSER_ROW),
+        "closing transcript with Ctrl+O did not redraw the inline composer:\n{}",
+        terminal.screen_text()
+    );
+
+    type_line(&mut terminal, "/quit");
+    let screen = terminal.finish(Duration::from_secs(5));
+    assert_eq!(screen.exit_code, Some(0), "{}", screen.text);
+}
+
+#[test]
+fn ctrl_o_close_redraws_workspace_composer_immediately() {
+    let home = home();
+    let _gateway = StandaloneGateway::start(home.path());
+    let mut terminal = Launch::new(home.path())
+        .size(41, 145)
+        .args(&["--no-ensure"])
+        .spawn();
+    assert!(
+        terminal.wait_for_text(COMPOSER_ROW, Duration::from_secs(5)),
+        "inline composer never appeared:\n{}",
+        terminal.screen_text()
+    );
+    terminal.settle();
+
+    terminal.type_keys("\x1bd");
+    assert!(
+        terminal.wait_for_text("Work", Duration::from_secs(2)),
+        "Alt+D did not open the workspace layout:\n{}",
+        terminal.screen_text()
+    );
+    terminal.settle();
+
+    terminal.type_keys("\x0f");
+    assert!(
+        terminal.wait_for_text("Transcript · ", Duration::from_secs(2)),
+        "Ctrl+O did not open the transcript pager:\n{}",
+        terminal.screen_text()
+    );
+    terminal.settle();
+
+    terminal.type_keys("\x0f");
+    terminal.settle();
+    assert!(
+        terminal.screen_text().contains(COMPOSER_ROW),
+        "closing transcript with Ctrl+O did not redraw the workspace composer:\n{}",
+        terminal.screen_text()
+    );
+
+    type_line(&mut terminal, "/quit");
+    let screen = terminal.finish(Duration::from_secs(5));
+    assert_eq!(screen.exit_code, Some(0), "{}", screen.text);
+}
