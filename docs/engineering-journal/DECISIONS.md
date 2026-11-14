@@ -2,6 +2,20 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-14
+
+### Redact recorder diagnostics without changing the frame log
+
+**Context.** Derived debug output can expose credentials and substitution needles
+that the recording header already hides.
+
+**Decision.** Both recorder options and redactor use hand-written `Debug`: the
+endpoint follows header redaction, ticket subprotocols are omitted, and every
+pair, including short needles, prints as `<redacted> -> <placeholder>`. The frame
+log page records that the format itself is unchanged.
+
+**Revisit when.** The recorder's header redaction or diagnostic disclosure policy changes.
+
 ## 2026-11-14 — Name transcript and search in the workspace footer
 
 **Context.** The footer names the checklist chord but not the transcript chord.

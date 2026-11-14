@@ -2,6 +2,17 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-14 — Debug output needs the recorder's redaction boundary
+
+**Evidence.** The recorder debug regressions exercise ticket credentials, host
+substitutions and short needles alongside existing header redaction tests.
+
+**Mechanism.** Derived `Debug` exposes the endpoint, ticket subprotocol and
+substitution needles even though the recording header withholds or replaces them.
+
+**Generalizable rule.** Apply the same disclosure boundary to diagnostic output
+as to the persisted representation, including values rejected during validation.
+
 ### 2026-11-14 — Workspace hints need their own layout budget
 
 **Evidence.** The workspace draw takes one hint, the checklist chord.

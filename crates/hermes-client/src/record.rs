@@ -35,7 +35,7 @@ pub struct GatewayIdentity {
 }
 
 /// What the header records and how a recording is processed.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct RecorderOptions {
     pub endpoint: String,
     pub subprotocols: Vec<String>,
@@ -45,6 +45,40 @@ pub struct RecorderOptions {
     pub substitutions: Vec<(String, String)>,
     /// Frames the queue holds before it drops; `None` means 4,096.
     pub queue_capacity: Option<usize>,
+}
+
+impl std::fmt::Debug for RecorderOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut substitutions = self.substitutions.clone();
+        substitutions.sort_by_key(|(needle, _)| std::cmp::Reverse(needle.chars().count()));
+        let mut endpoint = redact_url(&self.endpoint);
+        for (needle, replacement) in &substitutions {
+            if needle.chars().count() >= 4 {
+                endpoint = endpoint.replace(needle, replacement);
+            }
+        }
+        let protocols: Vec<_> = self
+            .subprotocols
+            .iter()
+            .filter(|protocol| !protocol.starts_with(TICKET_PROTOCOL_PREFIX))
+            .collect();
+        let pairs = self
+            .substitutions
+            .iter()
+            .map(|(_, replacement)| format!("<redacted> -> {replacement}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        formatter
+            .debug_struct("RecorderOptions")
+            .field("endpoint", &endpoint)
+            .field("subprotocols", &protocols)
+            .field("gateway", &self.gateway)
+            .field("scenario", &self.scenario)
+            .field("expected_statuses", &self.expected_statuses)
+            .field("substitutions", &format_args!("[{pairs}]"))
+            .field("queue_capacity", &self.queue_capacity)
+            .finish()
+    }
 }
 
 /// What `finish` reports.
