@@ -9,8 +9,8 @@ use crate::events;
 use hermes_contract::events::{EventFrame, Notification};
 use serde_json::{Value, json};
 use talaria_core::session::{
-    AnswerRefusal, Cell, Effect, Event, NoticeKind, PromptState, SessionState, Settlement,
-    ToolStatus, TurnOutcome, TurnState,
+    AnswerRefusal, Cell, Effect, Event, NoticeKind, PromptKind, PromptState, SessionState,
+    Settlement, ToolStatus, TurnOutcome, TurnState,
 };
 
 use events::{SESSION, approval_request, clarify_request, ev, ev_gen, ev_session, key, submit};
@@ -1027,6 +1027,48 @@ fn second_answer_is_refused_and_failure_reopens() {
     assert!(
         matches!(prompts(&state)[0].state, PromptState::Answering(ref value) if value == "session")
     );
+}
+
+#[test]
+fn withdrawn_approval_leaves_on_settled_and_cancelled_leaves_it() {
+    let (settled, effects) = run(vec![
+        ev(1, "approval.request", approval_request("p1", 1, &["once"])),
+        ev(
+            2,
+            "approval.settled",
+            json!({"prompt_id": "p1", "execution_generation": 1}),
+        ),
+    ]);
+    assert!(effects.is_empty());
+    let cells = prompts(&settled);
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cells[0].key.prompt_id, "p1");
+    assert_eq!(cells[0].kind, PromptKind::Approval);
+    assert_eq!(cells[0].state, PromptState::Settled(Settlement::Elsewhere));
+    assert!(cells[0].sealed);
+    assert_eq!(settled.open_prompts().count(), 0);
+
+    let (cancelled, effects) = run(vec![
+        ev(1, "approval.request", approval_request("p1", 1, &["once"])),
+        ev(
+            2,
+            "approval.cancelled",
+            json!({
+                "cancelled_count": 1,
+                "reason": "superseded",
+                "request_ids": ["p1"],
+                "session_id": SESSION,
+                "stored_session_id": "stored-1"
+            }),
+        ),
+    ]);
+    assert!(effects.is_empty());
+    let open: Vec<_> = cancelled.open_prompts().collect();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].key.prompt_id, "p1");
+    assert_eq!(open[0].kind, PromptKind::Approval);
+    assert_eq!(open[0].state, PromptState::Open);
+    assert!(!open[0].sealed);
 }
 
 #[test]
