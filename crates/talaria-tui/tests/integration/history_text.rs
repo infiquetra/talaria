@@ -8,11 +8,13 @@ use crate::support;
 
 use std::borrow::Cow;
 
-use ratatui::buffer::CellWidth;
+use ratatui::buffer::{Buffer, CellWidth};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use talaria_core::session::Cell;
 use talaria_tui::history::{CommitLedger, sanitize, wrap_lines};
+use talaria_tui::live::{LiveSection, PlainTextSection};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[test]
@@ -257,6 +259,211 @@ fn wrap_lines_keeps_span_styles() {
             .collect(),
     ];
     assert_eq!(got, expected);
+}
+
+fn render_section_rows(section: &dyn LiveSection, width: u16, height: u16) -> Vec<String> {
+    let area = Rect::new(0, 0, width, height);
+    let mut buf = Buffer::empty(area);
+    section.render(area, &mut buf);
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn wrap_lines_borrows_unsplit_ascii_spans_and_plain_text_reuses_width() {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let red = Style::default().fg(Color::Red);
+    let plain = Style::default();
+
+    let printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let single = wrap_lines(vec![Line::from(Span::styled(printable, bold))], 95);
+    assert_eq!(single.len(), 1);
+    assert_eq!(single[0].spans.len(), 1);
+    assert!(
+        matches!(single[0].spans[0].content, Cow::Borrowed(text) if text == printable),
+        "expected unsplit printable ASCII span to remain borrowed: {:?}",
+        single[0].spans[0]
+    );
+    assert_eq!(single[0].spans[0].style, bold);
+
+    let single_raw = wrap_lines(vec![Line::from(Span::raw("hello, world!"))], 20);
+    assert_eq!(single_raw.len(), 1);
+    assert_eq!(single_raw[0].spans.len(), 1);
+    assert!(
+        matches!(
+            single_raw[0].spans[0].content,
+            Cow::Borrowed("hello, world!")
+        ),
+        "expected raw printable ASCII span to remain borrowed: {:?}",
+        single_raw[0].spans[0]
+    );
+    assert_eq!(single_raw[0].spans[0].style, plain);
+
+    for width in [16, 30] {
+        let multi = wrap_lines(
+            vec![Line::from(vec![
+                Span::raw("hi "),
+                Span::styled("talaria", bold),
+                Span::styled(" 12345", red),
+            ])],
+            width,
+        );
+        assert_eq!(multi.len(), 1);
+        assert_eq!(multi[0].spans.len(), 3);
+        let expected = [("hi ", plain), ("talaria", bold), (" 12345", red)];
+        for (span, (expected_text, expected_style)) in multi[0].spans.iter().zip(expected) {
+            assert!(
+                matches!(span.content, Cow::Borrowed(text) if text == expected_text),
+                "expected multi-span printable ASCII piece {expected_text:?} to stay borrowed at width {width}: {span:?}"
+            );
+            assert_eq!(span.style, expected_style);
+        }
+    }
+
+    // Long printable-ASCII splitting at exact width boundaries.
+    let long_rows = wrap_lines(vec![Line::from(Span::styled("abcdefghijklmnop", bold))], 5);
+    let long_texts: Vec<String> = long_rows.iter().map(row_text).collect();
+    assert_eq!(long_texts, vec!["abcde", "fghij", "klmno", "p"]);
+    assert!(
+        long_rows
+            .iter()
+            .flat_map(|row| row.spans.iter())
+            .all(|span| span.style == bold)
+    );
+    assert_eq!(
+        wrap_lines(vec![Line::from(Span::raw("abc"))], 0)
+            .iter()
+            .map(row_text)
+            .collect::<Vec<_>>(),
+        vec!["a", "b", "c"]
+    );
+
+    // Splitting when a preceding span leaves 0 < used < width.
+    let partial_rows = wrap_lines(
+        vec![Line::from(vec![
+            Span::styled("ab", bold),
+            Span::styled("cdefghijkl", red),
+            Span::raw("mn"),
+        ])],
+        5,
+    );
+    let partial_chars: Vec<Vec<(char, Style)>> = partial_rows.iter().map(styled_chars).collect();
+    assert_eq!(
+        partial_chars,
+        vec![
+            "ab".chars()
+                .map(|c| (c, bold))
+                .chain("cde".chars().map(|c| (c, red)))
+                .collect::<Vec<_>>(),
+            "fghij".chars().map(|c| (c, red)).collect::<Vec<_>>(),
+            "kl".chars()
+                .map(|c| (c, red))
+                .chain("mn".chars().map(|c| (c, plain)))
+                .collect::<Vec<_>>(),
+        ]
+    );
+
+    // Splitting when a preceding span fills used == width (both short and long trailing spans).
+    let exact_short = wrap_lines(
+        vec![Line::from(vec![
+            Span::styled("abcde", bold),
+            Span::styled("fgh", red),
+        ])],
+        5,
+    );
+    assert_eq!(
+        exact_short.iter().map(styled_chars).collect::<Vec<_>>(),
+        vec![
+            "abcde".chars().map(|c| (c, bold)).collect::<Vec<_>>(),
+            "fgh".chars().map(|c| (c, red)).collect::<Vec<_>>(),
+        ]
+    );
+    let exact_long = wrap_lines(
+        vec![Line::from(vec![
+            Span::styled("abcde", bold),
+            Span::styled("fghijkl", red),
+        ])],
+        5,
+    );
+    assert_eq!(
+        exact_long.iter().map(styled_chars).collect::<Vec<_>>(),
+        vec![
+            "abcde".chars().map(|c| (c, bold)).collect::<Vec<_>>(),
+            "fghij".chars().map(|c| (c, red)).collect::<Vec<_>>(),
+            "kl".chars().map(|c| (c, red)).collect::<Vec<_>>(),
+        ]
+    );
+
+    // Control-char and wide-Unicode wrapping behavior remains unchanged.
+    assert_eq!(
+        wrap_lines(vec![Line::from(Span::raw("ab\tcde"))], 4)
+            .iter()
+            .map(row_text)
+            .collect::<Vec<_>>(),
+        vec!["ab\tcd", "e"]
+    );
+    assert_eq!(
+        wrap_lines(vec![Line::from(Span::raw("ab\u{7}cde"))], 4)
+            .iter()
+            .map(row_text)
+            .collect::<Vec<_>>(),
+        vec!["ab\u{7}cd", "e"]
+    );
+    assert_eq!(
+        wrap_lines(
+            vec![Line::from(vec![
+                Span::raw("abcd"),
+                Span::raw("\u{7}ef"),
+                Span::styled("\u{754c}", bold),
+            ])],
+            5,
+        )
+        .iter()
+        .map(row_text)
+        .collect::<Vec<_>>(),
+        vec!["abcd\u{7}e", "f\u{754c}"]
+    );
+    assert_eq!(
+        wrap_lines(
+            vec![Line::from(vec![
+                Span::raw("abc"),
+                Span::styled("\u{754c}xy", red),
+            ])],
+            4,
+        )
+        .iter()
+        .map(styled_chars)
+        .collect::<Vec<_>>(),
+        vec![
+            "abc".chars().map(|c| (c, plain)).collect::<Vec<_>>(),
+            "\u{754c}xy".chars().map(|c| (c, red)).collect::<Vec<_>>(),
+        ]
+    );
+
+    // Reusing one PlainTextSection across widths recomputes cleanly.
+    let section = PlainTextSection::new("alpha beta gamma delta\nsecond\tline");
+    assert_eq!(section.height(40), 2);
+    assert_eq!(
+        render_section_rows(&section, 40, 2),
+        vec!["alpha beta gamma delta", "second    line"]
+    );
+    assert_eq!(section.height(12), 4);
+    assert_eq!(
+        render_section_rows(&section, 12, 4),
+        vec!["alpha beta g", "amma delta", "second    li", "ne"]
+    );
+    assert_eq!(section.height(40), 2);
+    assert_eq!(
+        render_section_rows(&section, 40, 2),
+        vec!["alpha beta gamma delta", "second    line"]
+    );
 }
 
 fn ids(cells: &[Cell]) -> Vec<String> {
