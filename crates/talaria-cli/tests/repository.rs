@@ -490,3 +490,18 @@ fn docs_only_fast_path_keeps_the_required_checks_reporting() {
         "the rust-check job must not have a job-level condition"
     );
 }
+
+#[test]
+fn v070_acceptance_evidence_omits_runner_host_suffixes() {
+    let root = workspace_root();
+    for path in [
+        "docs/acceptance/v0.7.0/phase-3-evidence.md",
+        "docs/acceptance/v0.7.0/phase-4a-evidence.md",
+    ] {
+        let text = read_repo_file(&root, path);
+        assert!(
+            !text.contains("t70-c1-dev-"),
+            "{path} still contains runner host suffix \"t70-c1-dev-\""
+        );
+    }
+}

@@ -368,7 +368,7 @@ Result: PASS. Release-binary budgets, both filter medians and both timing tests 
 
 ## AUTO-5
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 Result: PASS for the qualified fixture-home run. All six required signals appeared, all commands exited 0, and no test skipped. The provider reads ran separately and were appended into one combined provider log. The profiles read selector is `live_profiles_list_classifies`, as corrected on issue 255. No write opt-in was set.
 
@@ -875,7 +875,7 @@ Result: PASS. The ignored list differs from the baseline by the single added pha
 
 ## AUTO-8
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 Result: PASS. 6 steps passed within the 300-second limit.
 
@@ -905,7 +905,7 @@ cmp=0
 
 ## AUTO-9
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 Result: PASS. 21 steps passed within the 1800-second limit.
 
@@ -951,7 +951,7 @@ cmp=0
 
 ## AUTO-10
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 1 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 2. Date: 2026-10-27.
 
 Result: FAIL at `rename-export` after 10 passing steps. The captured pane contains an export notice, but the frozen checker did not recognize it within 15 seconds. The notice wraps its final redaction text across lines. No code change was made. This is the Run 1 result; the subsequently approved retry appears below.
 
@@ -1061,7 +1061,7 @@ cmp=0
 ```
 
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 2 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-27.
 
 Rerun approved on issue 255 under section 8.1 item 2. No other live scenario ran between the first sequence and this approved retry block. The retry server used observed 200×48 geometry and `SHELL=/bin/sh`, with the literal `$ ` prompt verified in both its root pane and a fresh tab. A temporary POSIX shell initialization file enforced that prompt after macOS login startup. The frozen release binary and smoke code were unchanged.
 
@@ -1104,7 +1104,7 @@ cmp=0
 
 ## AUTO-11
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 Result: PASS. 12 steps passed within the 1200-second limit.
 
@@ -1141,7 +1141,7 @@ Quiet fleet before AUTO-11: no NEEDS YOU group; no WORKING group; checks=1.
 
 ## AUTO-12
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 1 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 2. Date: 2026-10-27.
 
 Result: FAIL at `no-gateway` after 16 passing steps. The frozen checker counted one entry, while the captured `ls -A` output shows no entry before the trailing shell prompt. Its count filter removes only the literal `$` prompt. The actual no-gateway doctor/profiles refusal checks completed before this failure. No code change was made.
 
@@ -1272,7 +1272,7 @@ Quiet fleet before AUTO-12: no NEEDS YOU group; no WORKING group; checks=1.
 ```
 
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 2 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-27.
 
 Rerun approved on issue 255 under section 8.1 item 2. No other live scenario ran between the first sequence and this approved retry block. The retry server used observed 200×48 geometry and `SHELL=/bin/sh`, with the literal `$ ` prompt verified in both its root pane and a fresh tab. A temporary POSIX shell initialization file enforced that prompt after macOS login startup. The frozen release binary and smoke code were unchanged.
 
@@ -1318,7 +1318,7 @@ Quiet fleet before AUTO-12 Run 2: no NEEDS YOU group; no WORKING group; checks=1
 
 ## AUTO-13
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 1 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 2. Date: 2026-10-27.
 
 Result: FAIL at `no-gateway` after 16 passing steps. The frozen checker counted one entry, while the captured `ls -A` output shows no entry before the trailing shell prompt. Its count filter removes only the literal `$` prompt. The actual no-gateway doctor/profiles refusal checks completed before this failure. No code change was made.
 
@@ -1456,7 +1456,7 @@ Frozen release binary was not rebuilt
 ```
 
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-3. Run 2 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-27.
 
 Rerun approved on issue 255 under section 8.1 item 2. No other live scenario ran between the first sequence and this approved retry block. The retry server used observed 200×48 geometry and `SHELL=/bin/sh`, with the literal `$ ` prompt verified in both its root pane and a fresh tab. A temporary POSIX shell initialization file enforced that prompt after macOS login startup. The frozen release binary and smoke code were unchanged.
 
