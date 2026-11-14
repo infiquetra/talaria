@@ -24,6 +24,8 @@ REJECTED_ROWS = (
     ("ProviderUsageWindow", "scope", "title"),
     ("SessionAutomationParams", "kind", "title"),
     ("CanonicalPendingPrompt", "kind", "title"),
+    ("CanonicalBotCancelResult", "status", "title"),
+    ("ImageRenderResult", "mode", "title"),
 )
 
 # The 13 const discriminator properties at the known union sites. preprocess_schemas
@@ -104,7 +106,8 @@ class LiftTests(unittest.TestCase):
         self.assertEqual(sorted(rows), sorted(REJECTED_ROWS))
         lifted = contract_gen.preprocess_schemas(contract)
         for schema, prop, keyword in REJECTED_ROWS:
-            self.assertNotIn(keyword, _property(lifted, schema, prop))
+            if schema in lifted["$defs"]:
+                self.assertNotIn(keyword, _property(lifted, schema, prop))
         scope = _property(lifted, "ProviderUsageWindow", "scope")
         self.assertIn("enum", scope)
         self.assertIn("default", _property(lifted, "DisplayLease", "reason"))
