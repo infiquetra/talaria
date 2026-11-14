@@ -2,6 +2,19 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-14 — Close the transcript overlay before painting its replacement
+
+**Evidence.** The CLI process regression exercises the transcript pager's closing
+frame in both inline and workspace layouts. Previously, the composer remained blank
+until another event.
+
+**Mechanism.** The close action cleared pager state, but the terminal overlay remained
+open until after the live or workspace draw. Both draws skip painting while an overlay
+is open.
+
+**Generalizable rule.** Track which view owns the terminal overlay and release a closing
+transcript's overlay before drawing the view beneath it.
+
 ### 2026-11-14 — Release checks must follow rendered state and isolate run history
 
 **Evidence.** Issue #651 records MiniMax wrapping deferred `tool_call` list
