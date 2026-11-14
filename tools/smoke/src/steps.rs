@@ -37,8 +37,7 @@ const APPROVAL_PROMPT: &str =
 const APPROVAL_RETRY_PROMPT: &str =
     "Use your shell tool now and run exactly this command: rm -rf .pytest_cache";
 /// The prompt that makes the model count.
-pub(crate) const COUNT_PROMPT: &str =
-    "Count from 1 to 2000, one number per line, and do not stop early.";
+pub(crate) const COUNT_PROMPT: &str = "Count from 1 to 2000, one number per line, answer directly in plain text without calling any tools or shell commands, and do not stop early.";
 /// The text that marks the echo of the counting prompt.
 pub(crate) const COUNT_MARKER: &str = "Count from 1 to 2000";
 /// The only slash command.

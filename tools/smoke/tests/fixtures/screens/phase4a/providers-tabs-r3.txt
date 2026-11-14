@@ -1,5 +1,16 @@
 # recorded
-┌Providers · profile fixture────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Keys   Accounts  [Endpoints]                                                                                                                                          │
-│› + Add an endpoint                                                                                                                                                    │
-│Default: minimax-m3.1-flash on ollama-cloud · enter edit · ctrl+d delete · ctrl+r reload · tab next tab                                                                │
+┌Providers · profile fixture───────────────────────────────────────────────────────────────────────────────────────────┐
+│> type to filter                                                                                                      │
+│All Keys [Accounts] Endpoints                                                                                         │
+│8 providers                                                                                                           │
+│> Nous Portal                                              needs setup│Details                                        │
+│  ChatGPT or Codex Subscription                            needs setup│Provider: Nous Portal                          │
+│  Anthropic                                               listed ready│Status: needs setup                            │
+│                                                                      │Methods: account sign-in                       │
+│                                                                      │Account: not signed in                         │
+│                                                                      │Nous Portal · not signed in · sign in here     │
+│                                                                      │F2/Ctrl+E full details                         │
+│Rows 1–3 of 8 · More below                                            │                                               │
+│Enter set up · Esc close · F2/Ctrl+E details                                                                          │
+│Tab view · Ctrl+R reload · Ctrl+U clear                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

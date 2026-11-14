@@ -70,7 +70,7 @@ pub const APPROVAL_COMMAND: &str = "rm -rf .pytest_cache";
 const PROMPT_PATTERN: &str =
     r"join these two words with a hyphen and reply with only the result: (\w+) and (\d+)$";
 const APPROVAL_PATTERN: &str = r"rm -rf \.pytest_cache$";
-const COUNT_PATTERN: &str = r"Count from 1 to 2000, one number per line, and do not stop early\.$";
+const COUNT_PATTERN: &str = r"Count from 1 to 2000, one number per line, answer directly in plain text without calling any tools or shell commands, and do not stop early\.$";
 const START_PATTERN: &str = r"--no-ensure --profile ";
 const RESUME_PATTERN: &str = r"--no-ensure -c --profile ";
 const FOREVER: u32 = 1_000_000;

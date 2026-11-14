@@ -84,13 +84,20 @@ pub fn setting_row(text: &str, key: &str) -> Option<SettingRow> {
 }
 
 pub fn providers_row(text: &str, name: &str) -> Option<ProviderRow> {
-    lines(text).iter().find_map(|line| {
-        let line = line.trim_start_matches(['>', '›', ' ']);
-        let status = if let Some(rest) = line.strip_prefix(&format!("{name} · ")) {
+    plain(text).lines().find_map(|raw| {
+        let trimmed = raw.trim();
+        let inner = trimmed.strip_prefix('│').unwrap_or(trimmed);
+        let left = inner
+            .split('│')
+            .next()
+            .unwrap_or(inner)
+            .trim()
+            .trim_start_matches(['>', '›', ' ']);
+        let status = if let Some(rest) = left.strip_prefix(&format!("{name} · ")) {
             // Key rows include the environment-variable name before their status.
             rest.split_once(" · ")?.1.to_owned()
         } else {
-            let parts = columns(line);
+            let parts = columns(left);
             let index = parts.iter().position(|part| *part == name)?;
             parts.get(index + 1..)?.join("  ")
         };
@@ -110,16 +117,21 @@ pub fn providers_row(text: &str, name: &str) -> Option<ProviderRow> {
 }
 
 pub fn providers_tabs(text: &str) -> Vec<String> {
-    const TABS: [&str; 3] = ["Keys", "Accounts", "Endpoints"];
-    lines(text)
-        .iter()
-        .flat_map(|line| {
-            line.split(|c: char| c.is_whitespace() || matches!(c, '[' | ']'))
+    const TABS: [&str; 4] = ["All", "Keys", "Accounts", "Endpoints"];
+    plain(text)
+        .lines()
+        .find_map(|raw| {
+            let trimmed = raw.trim();
+            let inner = trimmed.strip_prefix('│').unwrap_or(trimmed);
+            let left = inner.split('│').next().unwrap_or(inner);
+            let found: Vec<String> = left
+                .split(|c: char| c.is_whitespace() || matches!(c, '[' | ']'))
                 .filter(|word| TABS.contains(word))
                 .map(str::to_owned)
-                .collect::<Vec<_>>()
+                .collect();
+            (found.len() >= 3).then_some(found)
         })
-        .collect()
+        .unwrap_or_default()
 }
 
 pub fn models_sections(text: &str) -> Vec<String> {

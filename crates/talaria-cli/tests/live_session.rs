@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use hermes_client::{DiscoverOptions, EnsurePolicy, default_home, discover_with};
 use support::{Launch, Terminal};
 
-const ASK: &str = "What is 1234 plus 4321? Reply with only the number.";
-const LONG_ASK: &str = "Count from 1 to 200, one number per line, then write the sum of 6000 and 1731 on the last line.";
+const ASK: &str = "Do not call any tools. What is 1234 plus 4321? Reply with only the number.";
+const LONG_ASK: &str = "Do not call any tools. Write the integers from 1 to 200, each on its own line, then press Enter and on line 201 write only the four-digit string formed by placing 77 immediately before 31.";
 const RM_ASK: &str =
     "Run this exact shell command and then tell me its exit code: rm -rf .pytest_cache";
 const PROFILE_FLAGS: [&str; 2] = ["--profile", "fixture"];
@@ -116,12 +116,38 @@ fn wait_for_line(terminal: &mut Terminal, wanted: &str, limit: Duration) -> bool
     lines_equal_to(&terminal.screen_text(), wanted) > 0
 }
 
-/// Wait until the status line has not shown `working` for this long.
+fn status_working(text: &str) -> bool {
+    text.lines()
+        .rfind(|line| !line.trim().is_empty())
+        .into_iter()
+        .flat_map(|line| line.split(['│', '·']))
+        .any(|part| {
+            part.trim().split_once(' ').is_some_and(|(count, state)| {
+                state == "working" && count.parse::<u64>().is_ok_and(|n| n > 0)
+            })
+        })
+}
+
+fn wait_working(terminal: &mut Terminal, limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    while Instant::now() < deadline {
+        if status_working(&terminal.screen_text()) {
+            return true;
+        }
+        if terminal.exited() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    status_working(&terminal.screen_text())
+}
+
+/// Wait until the status line has not shown active work for this long.
 fn wait_idle(terminal: &mut Terminal, quiet: Duration, limit: Duration) -> bool {
     let deadline = Instant::now() + limit;
     let mut idle_since: Option<Instant> = None;
     while Instant::now() < deadline {
-        if terminal.screen_text().contains("working") {
+        if status_working(&terminal.screen_text()) {
             idle_since = None;
         } else {
             let since = *idle_since.get_or_insert_with(Instant::now);
@@ -248,7 +274,7 @@ fn quit_mid_turn_leaves_the_turn_running() {
     assert!(session.wait_first_frame(Duration::from_secs(5)).is_some());
     type_line(&mut session, LONG_ASK);
     assert!(
-        session.wait_for_text("working", Duration::from_secs(60)),
+        wait_working(&mut session, Duration::from_secs(60)),
         "the turn never showed as working:\n{}",
         session.screen_text()
     );
@@ -426,7 +452,7 @@ fn interrupt_and_resume_list() {
         "Count from 1 to 2000, one number per line, and do not stop early.",
     );
     assert!(
-        session.wait_for_text("working", Duration::from_secs(60)),
+        wait_working(&mut session, Duration::from_secs(60)),
         "{}",
         session.screen_text()
     );
@@ -472,4 +498,14 @@ fn interrupt_and_resume_list() {
     assert!(screen.text.contains("Cancelled."), "{}", screen.text);
     assert_eq!(screen.exit_code, Some(0), "{}", screen.text);
     passed();
+}
+
+#[test]
+fn status_working_reads_status_bar_not_prose() {
+    assert!(!status_working(
+        "The working directory is /tmp\n minimax-m3.1-flash │ approvals: manual │ ctx 1%"
+    ));
+    assert!(status_working(
+        "prose\n minimax-m3.1-flash │ approvals: manual │ 1 working"
+    ));
 }

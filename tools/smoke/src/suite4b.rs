@@ -440,7 +440,9 @@ fn stable_screen(run: &mut Run<'_>, pane: &PaneId, resumed: bool) -> Result<(), 
 fn startup(run: &mut Run<'_>) -> Result<Step, Abort> {
     let pane = run.pane.clone();
     shell(run, &pane)?;
-    let line = crate::config::launch_line(
+    let runs_dir = run.scratch.join("runs").to_string_lossy().into_owned();
+    let line = crate::config::launch_line_env(
+        &[("TALARIA_RUNS_DIR", runs_dir.as_str())],
         &run.cfg.talaria,
         &[
             "--no-ensure",
@@ -603,7 +605,9 @@ fn resume(run: &mut Run<'_>) -> Result<Step, Abort> {
     let pane = run.term.split_pane(&run.pane, &run.scratch).map_err(err)?;
     run.second = Some(pane.clone());
     shell(run, &pane)?;
-    let line = crate::config::launch_line(
+    let runs_dir = run.scratch.join("runs").to_string_lossy().into_owned();
+    let line = crate::config::launch_line_env(
+        &[("TALARIA_RUNS_DIR", runs_dir.as_str())],
         &run.cfg.talaria,
         &["--no-ensure", "-c", "--profile", &run.cfg.profile],
     );

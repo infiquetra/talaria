@@ -578,9 +578,14 @@ impl Run2b<'_> {
             }
             if !picker.has_current
                 || !normalised(text).iter().any(|line| {
-                    line.strip_prefix(PICKER_CURRENT_ROW).is_some_and(|rest| {
-                        rest.is_empty() || rest.starts_with(char::is_whitespace)
-                    })
+                    let row_body = line
+                        .strip_prefix('>')
+                        .map_or(line.as_str(), str::trim_start);
+                    row_body
+                        .strip_prefix(PICKER_CURRENT_ROW)
+                        .is_some_and(|rest| {
+                            rest.is_empty() || rest.starts_with(char::is_whitespace)
+                        })
                 })
             {
                 missing.push("current model row");
@@ -829,15 +834,17 @@ impl Run2b<'_> {
         if !self.wait(15, ReadSource::RecentUnwrapped, |text| {
             let lines = normalised(text);
             filename = lines.iter().enumerate().rev().find_map(|(idx, line)| {
-                let joined = match lines.get(idx + 1) {
-                    Some(next) => format!("{line}{next} {next}"),
-                    None => line.clone(),
+                let candidates = match lines.get(idx + 1) {
+                    Some(next) => vec![format!("{line}{next}"), format!("{line} {next}")],
+                    None => vec![line.clone()],
                 };
-                let rest = joined.strip_prefix(prefix)?;
-                if !rest.contains(EXPORTED_REDACTED) {
-                    return None;
-                }
-                rest.split_once(" (").map(|(name, _)| name.to_owned())
+                candidates.into_iter().find_map(|joined| {
+                    let rest = joined.strip_prefix(prefix)?;
+                    if !rest.contains(EXPORTED_REDACTED) {
+                        return None;
+                    }
+                    rest.split_once(" (").map(|(name, _)| name.to_owned())
+                })
             });
             filename.is_some()
         })? {

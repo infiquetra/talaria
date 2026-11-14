@@ -77,7 +77,9 @@ fn wait_for(
 }
 
 fn loaded_read(run: &Run<'_>) -> Result<String, Abort> {
-    if let Some(value) = wait_for(run, 10, |s| !s.contains("Loading"))? {
+    if let Some(value) = wait_for(run, 10, |s| {
+        !s.contains("Loading") && !s.contains("Refreshing…")
+    })? {
         Ok(value)
     } else {
         read(run)
@@ -128,7 +130,10 @@ fn same_tail(a: &str, b: &str) -> bool {
 fn open(run: &Run<'_>, command: &str, screen: &str, seconds: u64) -> Result<Option<String>, Abort> {
     submit(run, command)?;
     wait_for(run, seconds, |s| {
-        title(screen, s) && !s.contains("Loading") && !s.contains("checking…")
+        title(screen, s)
+            && !s.contains("Loading")
+            && !s.contains("Refreshing…")
+            && !s.contains("checking…")
     })
 }
 
@@ -212,7 +217,10 @@ fn screen_step_inner(run: &Run<'_>, name: &'static str) -> Result<Step, Abort> {
             }
             key(run, "esc")?;
             key(run, "esc")?;
-            let r4 = read(run)?;
+            let r4 = match wait_for(run, 2, |s| !title(screen, s) && idle_screen(s))? {
+                Some(screen_text) => screen_text,
+                None => read(run)?,
+            };
             equality = Some((
                 "the screen after closing settings differs from the screen before",
                 initial.clone(),
@@ -279,56 +287,53 @@ fn screen_step_inner(run: &Run<'_>, name: &'static str) -> Result<Step, Abort> {
                     run.limit_secs(30)
                 ));
             };
+            if providers_tabs(&r1) != ["All", "Keys", "Accounts", "Endpoints"] {
+                return fail("providers tabs did not show All, Keys, Accounts, Endpoints");
+            }
             let ollama = providers_row(&r1, PROVIDERS_OLLAMA);
             if !ollama
                 .as_ref()
-                .is_some_and(|r| r.status.starts_with(PROVIDERS_READY))
+                .is_some_and(|r| r.status == PROVIDERS_LISTED_READY)
             {
                 return fail("Ollama Cloud is not ready");
             }
-            if !ollama
-                .as_ref()
-                .and_then(|r| r.key_tail.as_ref())
-                .is_some_and(|s| s.chars().count() == 4)
-            {
-                return fail("Ollama Cloud shows no key tail \"key …\" plus four characters");
-            }
             let Some(openrouter) = providers_row(&r1, PROVIDERS_OPENROUTER) else {
-                return fail("the OpenRouter row is missing after the filter \"openrouter\"");
+                return fail("the OpenRouter row is missing");
             };
-            if !openrouter.status.contains(PROVIDERS_NO_KEY) {
-                if openrouter.key_tail.is_some() {
+            if openrouter.status != PROVIDERS_NEEDS_SETUP {
+                if matches!(
+                    openrouter.status.as_str(),
+                    PROVIDERS_LISTED_READY | PROVIDERS_KEY_SAVED
+                ) {
                     skip = Some(
                         "OpenRouter already has a key on profile fixture (operator precondition: no OpenRouter key)",
                     );
                 } else {
-                    return fail("the OpenRouter row is missing after the filter \"openrouter\"");
+                    return fail("the OpenRouter row does not show needs setup");
                 }
             }
             key(run, "tab")?;
             let r2 = loaded_read(run)?;
-            for line in crate::screen2a::normalised(&r2)
-                .iter()
-                .skip_while(|l| !l.contains("Accounts"))
-                .skip(1)
-                .filter(|l| !l.is_empty() && !l.starts_with("enter "))
+            if !r2.contains("[Keys]")
+                || !providers_row(&r2, PROVIDERS_OLLAMA)
+                    .is_some_and(|r| r.status == PROVIDERS_LISTED_READY)
             {
-                if !line.contains(PROVIDERS_SIGNED_IN) && !line.contains(PROVIDERS_NOT_SIGNED_IN) {
-                    return fail(format!(
-                        "the Accounts tab shows no sign-in state on row {}",
-                        line.trim_start_matches(['›', ' '])
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or("")
-                    ));
-                }
+                return fail("the Keys tab does not list Ollama Cloud as ready");
             }
             key(run, "tab")?;
             let r3 = loaded_read(run)?;
-            if !r3.contains(PROVIDERS_ADD_ENDPOINT) {
+            if !r3.contains("[Accounts]")
+                || (!r3.contains(&format!("Account: {PROVIDERS_SIGNED_IN}"))
+                    && !r3.contains(&format!("Account: {PROVIDERS_NOT_SIGNED_IN}")))
+            {
+                return fail("the Accounts tab shows no sign-in state");
+            }
+            key(run, "tab")?;
+            let r4 = loaded_read(run)?;
+            if !r4.contains("[Endpoints]") || !r4.contains(PROVIDERS_ADD_ENDPOINT) {
                 return fail("the Endpoints tab has no \"+ Add an endpoint\" row");
             }
-            r3
+            r4
         }
         "providers-key-masked" => {
             if open(run, "/providers", screen, 30)?.is_none() {
@@ -506,7 +511,10 @@ fn screen_step_inner(run: &Run<'_>, name: &'static str) -> Result<Step, Abort> {
             }
             key(run, "esc")?;
             key(run, "esc")?;
-            let r3 = read(run)?;
+            let r3 = match wait_for(run, 2, |s| !title(screen, s) && idle_screen(s))? {
+                Some(screen_text) => screen_text,
+                None => read(run)?,
+            };
             equality = Some(("the list changed after Esc", initial.clone(), r3.clone()));
             r3
         }
@@ -607,7 +615,7 @@ fn screen_step_inner(run: &Run<'_>, name: &'static str) -> Result<Step, Abort> {
         }
         _ => unreachable!(),
     };
-    let Some(_) = teardown(run, screen, last)? else {
+    let Some(closed) = teardown(run, screen, last)? else {
         return fail(format!("the {screen} overlay did not close after 3 Esc"));
     };
     if !doctor_closed {
@@ -625,7 +633,7 @@ fn screen_step_inner(run: &Run<'_>, name: &'static str) -> Result<Step, Abort> {
             };
             header(&before) == header(&after) && profiles_rows(&before) == profiles_rows(&after)
         } else {
-            same_tail(&before, &after)
+            same_tail(&before, &closed)
         };
         if !equal {
             return fail(reason);

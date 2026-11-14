@@ -143,4 +143,10 @@ fn recorded_composer_hints_and_active_status() {
     assert!(!smoke::screen5::idle_screen(
         "> Type a message. Enter sends, Alt+Enter adds a line.\n model │ 1 working"
     ));
+    assert!(smoke::screen5::idle_screen(
+        "> join these two words\n∴ thinking\nLet me think.\nanswer-1\n│ > Type a message. Enter sends, Shift+Enter adds a line. │\n minimax-m3.1-flash │ approvals: manual"
+    ));
+    assert!(!smoke::screen5::idle_screen(
+        "> Type a message. Enter sends, Alt+Enter adds a line.\n∴ thinking"
+    ));
 }

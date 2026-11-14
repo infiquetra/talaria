@@ -2,6 +2,30 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+### 2026-11-14 — Release checks must follow rendered state and isolate run history
+
+**Evidence.** Issue #651 records MiniMax wrapping deferred `tool_call` list
+arguments in XML `<item>` elements, timed-out checklist turns remaining active,
+and counting checks reading numbers from rendered `⎿` tool-output blocks.
+The v0.8.0 theme syntax, selected model rows, four-tab providers dialog and
+active-work indicators also differed from older smoke and live-test expectations.
+
+**Mechanism.** `tools/smoke/src/steps2a.rs` requests `todos` as a JSON-encoded
+string when using deferred `tool_call`, avoiding the XML list wrapper, and sends
+Esc to interrupt timed-out checklist turns before waiting for quiet. In
+`tools/smoke/src/steps.rs`, `COUNT_PROMPT` requests plain text without tools;
+`tools/smoke/src/screen.rs` excludes `⎿` blocks and their indented continuations
+from counting. Updated checks recognize current picker, theme and providers
+rendering and wait for overlay closes and asynchronous refreshes. Live tests
+read active work from the status bar, use unambiguous text-only prompts, wait for
+the pause acknowledgement and interrupt stalled turns before detaching.
+`TALARIA_RUNS_DIR` under each smoke run's scratch directory keeps startup and
+resume from inheriting unrelated workflow history.
+
+**Generalizable rule.** Match release checks to current rendered state, quote
+structured arguments when provider wrappers alter lists, cleanly interrupt
+timed-out turns, and isolate persistent artifacts for each run.
+
 ## 2026-11-14 — Repeated wrapping and serialization consume streaming CPU headroom
 
 **Evidence.** A `/usr/bin/sample` profile of `talaria --bench-replay queue.jsonl`

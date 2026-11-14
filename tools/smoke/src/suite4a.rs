@@ -140,7 +140,10 @@ pub fn run_smoke_4a(
         run.deadline = overall_deadline.min(started + run.limit(limit));
         run.step_fallbacks = 0;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match name {
-            "startup" => run.startup(&[]),
+            "startup" => {
+                let runs_dir = run.scratch.join("runs").to_string_lossy().into_owned();
+                run.startup(&[("TALARIA_RUNS_DIR", runs_dir.as_str())])
+            }
             "plain-answer" => run.plain_answer(),
             "quit" => {
                 if let Some(token) = run.tokens.first().copied() {
@@ -253,7 +256,10 @@ fn capture(run: &Run<'_>) -> Vec<PaneCapture> {
 }
 
 fn resume(run: &mut Run<'_>) -> Result<Step, Abort> {
-    let result = run.resume(&[], &mut |_, _| Ok(Step::Pass))?;
+    let runs_dir = run.scratch.join("runs").to_string_lossy().into_owned();
+    let result = run.resume(&[("TALARIA_RUNS_DIR", runs_dir.as_str())], &mut |_, _| {
+        Ok(Step::Pass)
+    })?;
     match result {
         Step::Fail { reason } if reason.starts_with("token counts after resume:") => {
             let Some(pane) = run.second.as_ref() else {

@@ -1,12 +1,17 @@
 # recorded
-┌Providers · profile fixture────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Keys  [Accounts]  Endpoints                                                                                                                                           │
-│› Nous Portal · not signed in · sign in here                                                                                                                           │
-│  ChatGPT or Codex Subscription · signed in · chatgpt · sign in here                                                                                                   │
-│  Qwen (via Qwen CLI) · not signed in · sign in with hermes auth add qwen-oauth                                                                                        │
-│  MiniMax (OAuth) · not signed in · sign in here                                                                                                                       │
-│  xAI Grok OAuth (SuperGrok / Premium+) · signed in · <home> (auth.json)                                     · sign in here                                     │
-│  GitHub Copilot (ACP) · signed in · <home> · sign in with copilot login                                                                   │
-│  Anthropic Account · not signed in · sign in with hermes auth add anthropic                                                                                           │
-│  Anthropic OAuth: Required Extra Usage Credits to Use Subscription · signed in · <home> · expires in 7 h · sign in with claude setup-token       │
-│enter sign in · ctrl+d sign out · ctrl+r reload · tab next tab                                                                                                         │
+┌Providers · profile fixture───────────────────────────────────────────────────────────────────────────────────────────┐
+│> type to filter                                                                                                      │
+│All [Keys] Accounts Endpoints                                                                                         │
+│40 providers                                                                                                          │
+│> DeepSeek                                                listed ready│Details                                        │
+│  Ollama Cloud                                            listed ready│Provider: DeepSeek                             │
+│  OpenRouter                                               needs setup│Status: listed ready                           │
+│                                                                      │Catalogue authentication; reachability unknown │
+│                                                                      │Methods: API key                               │
+│                                                                      │Key setting: DEEPSEEK_API_KEY                  │
+│                                                                      │DeepSeek · DEEPSEEK_API_KEY · ready · 2 models │
+│                                                                      │F2/Ctrl+E full details                         │
+│Rows 1–3 of 40 · More below                                           │                                               │
+│Enter set up · Esc close · F2/Ctrl+E details                                                                          │
+│Tab view · Ctrl+R reload · Ctrl+U clear                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

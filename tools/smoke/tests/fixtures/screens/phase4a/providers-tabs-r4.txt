@@ -1,0 +1,12 @@
+# recorded
+┌Providers · profile fixture───────────────────────────────────────────────────────────────────────────────────────────┐
+│> type to filter                                                                                                      │
+│All Keys Accounts [Endpoints]                                                                                         │
+│0 providers                                                                                                           │
+│> + Add an endpoint                                                   │Details                                        │
+│                                                                      │Add a user-defined endpoint; Enter opens form   │
+│                                                                      │F2/Ctrl+E full details                         │
+│Rows 1–1 of 1                                                         │                                               │
+│Enter set up · Esc close · F2/Ctrl+E details                                                                          │
+│Tab view · Ctrl+R reload · Ctrl+U clear                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

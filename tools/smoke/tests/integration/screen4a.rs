@@ -48,19 +48,26 @@ fn setting_row_parsed_with_value_and_flags() {
 #[test]
 fn providers_row_parsed_with_status_and_key_tail() {
     let text = screen("providers-tabs-r1.txt");
-    let row = providers_row(&text, "Ollama Cloud").expect("row");
-    assert!(row.status.starts_with("ready ·"));
-    assert_eq!(row.key_tail.as_deref(), Some("abcd"));
+    assert_eq!(
+        providers_row(&text, "Ollama Cloud").expect("row").status,
+        PROVIDERS_LISTED_READY
+    );
     assert_eq!(
         providers_row(&text, "OpenRouter").expect("row").status,
-        "no key"
+        PROVIDERS_NEEDS_SETUP
     );
+    let legacy = providers_row(
+        "Ollama Cloud · OLLAMA_API_KEY · ready · 24 models · key …abcd",
+        "Ollama Cloud",
+    )
+    .expect("legacy row");
+    assert_eq!(legacy.key_tail.as_deref(), Some("abcd"));
 }
 #[test]
 fn providers_tabs_found() {
     assert_eq!(
         providers_tabs(&screen("providers-tabs-r1.txt")),
-        ["Keys", "Accounts", "Endpoints"]
+        ["All", "Keys", "Accounts", "Endpoints"]
     );
 }
 #[test]
