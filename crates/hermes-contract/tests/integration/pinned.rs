@@ -76,3 +76,124 @@ fn live_skip_reason_table() {
         )
     );
 }
+
+#[test]
+fn version_floor_skips_below_oldest() {
+    let (tag, commit) = pinned_fields();
+    assert_eq!(hermes_contract::pinned::OLDEST_SUPPORTED, (0, 23, 0));
+
+    let missing_msg = "the gateway reported no code_version; live tests need Hermes 0.23.0 or later and are skipped without it";
+    for input in [None, Some(""), Some("   ")] {
+        let reason = hermes_contract::pinned::version_skip_reason(input, (0, 23, 0))
+            .expect("missing or whitespace-only version must skip");
+        assert_eq!(reason, missing_msg, "input {input:?}");
+        assert!(!reason.contains(commit));
+        assert!(!reason.contains(tag));
+    }
+
+    for raw in ["0.22.4", "unknown", "  0.22.4", "0.23"] {
+        let reason = hermes_contract::pinned::version_skip_reason(Some(raw), (0, 23, 0))
+            .expect("older or unparseable version must skip");
+        assert_eq!(
+            reason,
+            format!(
+                "gateway code_version \"{raw}\" is older than the oldest supported Hermes release 0.23.0; live tests are skipped"
+            ),
+            "raw {raw:?}"
+        );
+        assert!(!reason.contains(commit));
+        assert!(!reason.contains(tag));
+    }
+
+    for ok in [
+        "0.23.0",
+        "0.23.1",
+        "v0.23.0",
+        "V0.23.0",
+        "0.23.0+12.gabcdef",
+    ] {
+        assert_eq!(
+            hermes_contract::pinned::version_skip_reason(Some(ok), (0, 23, 0)),
+            None,
+            "supported version {ok:?} must not skip"
+        );
+    }
+}
+
+#[test]
+fn feature_skip_names_the_feature() {
+    assert_eq!(
+        hermes_contract::pinned::feature_skip_reason(Some("0.23.0"), "sudo prompt", "0.24.0"),
+        Some("needs sudo prompt (Hermes 0.24.0 or later); this gateway runs 0.23.0".to_owned())
+    );
+    assert_eq!(
+        hermes_contract::pinned::feature_skip_reason(Some("0.24.0"), "sudo prompt", "0.24.0"),
+        None
+    );
+    assert_eq!(
+        hermes_contract::pinned::feature_skip_reason(Some("0.24.1"), "sudo prompt", "0.24.0"),
+        None
+    );
+    assert_eq!(
+        hermes_contract::pinned::feature_skip_reason(None, "sudo prompt", "0.24.0"),
+        Some("needs sudo prompt (Hermes 0.24.0 or later); this gateway runs unknown".to_owned())
+    );
+    assert_eq!(
+        hermes_contract::pinned::feature_skip_reason(Some("   "), "sudo prompt", "0.24.0"),
+        Some("needs sudo prompt (Hermes 0.24.0 or later); this gateway runs unknown".to_owned())
+    );
+    assert_eq!(
+        hermes_contract::pinned::feature_skip_reason(Some("0.23.0"), "sudo prompt", "later"),
+        Some("needs sudo prompt (Hermes later or later); this gateway runs 0.23.0".to_owned())
+    );
+}
+
+#[test]
+fn live_test_skip_uses_the_floor_unless_exact() {
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        hermes_contract::pinned::live_test_skip(Some("0.23.1"), Some(sha), false),
+        None
+    );
+    assert_eq!(
+        hermes_contract::pinned::live_test_skip(Some("0.23.1"), Some(sha), true),
+        hermes_contract::pinned::live_skip_reason(Some(sha))
+    );
+    assert!(!hermes_contract::pinned::live_exact_from(None));
+    assert!(hermes_contract::pinned::live_exact_from(Some("1")));
+    assert!(!hermes_contract::pinned::live_exact_from(Some("0")));
+}
+
+#[test]
+fn gateway_version_line_names_both_fields() {
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        hermes_contract::pinned::gateway_version_line(Some("0.23.1"), Some(sha)),
+        format!("gateway code_version=0.23.1 code_sha={sha}")
+    );
+    assert_eq!(
+        hermes_contract::pinned::gateway_version_line(None, Some("")),
+        "gateway code_version=unknown code_sha=unknown"
+    );
+    assert_eq!(
+        hermes_contract::pinned::gateway_version_line(Some("   "), Some("  ab ")),
+        "gateway code_version=unknown code_sha=ab"
+    );
+    assert_eq!(
+        hermes_contract::pinned::gateway_version_line(None, Some(sha)),
+        format!("gateway code_version=unknown code_sha={sha}")
+    );
+}
+
+#[test]
+fn live_profile_defaults_to_fixture() {
+    assert_eq!(hermes_contract::pinned::live_profile_from(None), "fixture");
+    assert_eq!(
+        hermes_contract::pinned::live_profile_from(Some("   ")),
+        "fixture"
+    );
+    assert_eq!(
+        hermes_contract::pinned::live_profile_from(Some("  other  ")),
+        "other"
+    );
+}

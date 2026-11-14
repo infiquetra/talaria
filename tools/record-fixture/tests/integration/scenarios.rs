@@ -832,8 +832,12 @@ async fn pinned_sha_mismatch_or_missing_is_exit_2() {
             ..HomeSpec::good()
         };
         let home = MockHome::start(spec, plain_script()).await;
-        let outcome = preflight(&input(home.path(), &login, &host)).await;
-        assert!(outcome.is_err(), "{label} must be refused");
+        let outcome = preflight(&input(home.path(), &login, &host), false).await;
+        assert!(
+            outcome.is_ok(),
+            "{label} must be accepted when version is 0.23.0 and exact is false: {:?}",
+            outcome.err()
+        );
     }
 }
 
@@ -906,19 +910,18 @@ async fn short_login_name_is_exit_2() {
 
 #[tokio::test]
 async fn preflight_accepts_a_ready_manual_gateway() {
-    let commit = hermes_contract::pinned::COMMIT;
-    let seven = commit[..7].to_owned();
+    let sha = "0123456789abcdef0123456789abcdef01234567".to_owned();
     let other = format!("p{}", &random_hex()[..8]);
     let parked = format!("p{}", &random_hex()[..8]);
     let spec = HomeSpec {
-        code_sha: Some(seven.clone()),
+        code_sha: Some(sha.clone()),
         served: vec!["fixture".to_owned(), other.clone()],
         parked: vec![(parked.clone(), "broken config".to_owned())],
         approvals_mode: json!("manual"),
     };
     let home = MockHome::start(spec, plain_script()).await;
     // Exactly four characters each is long enough.
-    let result: Preflight = preflight(&input(home.path(), "abcd", "wxyz"))
+    let result: Preflight = preflight(&input(home.path(), "abcd", "wxyz"), false)
         .await
         .unwrap_or_else(|err| panic!("preflight refused a good gateway: {}", err.message));
     assert_eq!(
@@ -926,7 +929,7 @@ async fn preflight_accepts_a_ready_manual_gateway() {
         format!("{}/profiles/fixture", home.path().display())
     );
     assert_eq!(result.api_origin, home.gateway.origin());
-    assert_eq!(result.code_sha, seven);
+    assert_eq!(result.code_sha, sha);
     let mut others = result.other_profiles.clone();
     others.sort();
     let mut expected = vec![other, parked];
