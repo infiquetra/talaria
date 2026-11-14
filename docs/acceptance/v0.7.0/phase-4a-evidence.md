@@ -4,7 +4,7 @@ Assembly note: source sections retain every recorded run. Account and repository
 
 ## AUTO-1
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 ```text
 $ cargo fmt --check
@@ -92,7 +92,7 @@ Result: PASS. The benchmark dispatch and every candidate check completed success
 
 ## AUTO-2
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 ```text
 $ cargo test -p hermes-client --test config_surface_matrix
@@ -124,7 +124,7 @@ Result: PASS. Every prescribed target ran at least one passing test.
 
 ## AUTO-3
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 ```text
 $ cargo test -p hermes-client --test rest_client --test config_api --test providers_api --test model_roles_rest
@@ -234,7 +234,7 @@ Result: PASS. Every prescribed target ran at least one passing test.
 
 ## AUTO-4
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 ```text
 $ target/release/talaria-bench run --binary target/release/talaria --report "$X/bench.json" > "$X/bench.txt"
@@ -480,7 +480,7 @@ Skipped test count: 0
 
 ## AUTO-6
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 2. Date: 2026-10-27.
 
 Result: FAIL on the original broad scans. The background detach implementation was required by an earlier unit, and the profile scan also matched prose and a synthetic test name. No frozen product file was changed. Rerun approved: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6443054455
 
@@ -507,7 +507,7 @@ fixture-a
 exit=1
 ```
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 2 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-27.
 
 ```text
 $ ! git grep -nE 'unsafe *(\{|fn |impl )' -- crates tools
@@ -588,7 +588,7 @@ Result: PASS. The only config.set implementation sets key=skin in appearance.rs;
 
 ## AUTO-7
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 2. Date: 2026-10-27.
 
 Result: FAIL on the ignored-list comparison. The smoke tests passed and the first candidate list had five tests, while the baseline had four. Building the baseline in the same target invalidated the candidate smoke library cache after baseline removal; the second candidate list was empty and its pipeline exited 1. The original command suppressed compiler stderr. A separate diagnostic compilation subsequently reported missing phase4a symbols despite their presence in candidate source. Rerun approved: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6444490912
 
@@ -740,7 +740,7 @@ warning: build failed, waiting for other jobs to finish...
 diagnostic exit=101
 ```
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 2 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-27.
 
 The baseline uses its own temporary Cargo target, removed with the baseline worktree. Its child environment explicitly overrides CARGO_TARGET_DIR for the baseline-list command. Only contaminated smoke artifacts in the candidate temporary target were invalidated before rebuilding the candidate smoke tests; frozen binaries and tracked files were preserved.
 
@@ -1513,7 +1513,7 @@ Frozen release binary was not rebuilt
 
 ## P4-00 UAT-1
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 ```text
 $ cargo test -p hermes-client --test live_config_surface -- --ignored --nocapture probe_reads_on_fixture
@@ -1630,7 +1630,7 @@ Result: PASS. The read-only probe ran after the smoke-suite scheduling gate.
 
 ## P4-00 UAT-2
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 ```text
 $ cargo test -p hermes-client --test live_config_surface -- --ignored --nocapture probe_reads_on_fixture
@@ -1681,7 +1681,7 @@ Result: PASS. The skipped/failing outputs above are the negative scenario's requ
 
 ## P4-00 UAT-3
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 ```text
 $ cargo test -p hermes-client --test live_config_surface -- --ignored --nocapture probe_ticket_rules
@@ -1742,7 +1742,7 @@ Operator note on fixture/config.yaml:
 
 ## P4-00 UAT-5
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 ```text
 $ cargo test -p hermes-client --test live_config_surface -- --ignored --nocapture probe_writes_round_trip_on_fixture
@@ -1766,7 +1766,7 @@ Result: PASS. The skipped/failing outputs above are the negative scenario's requ
 
 ## P4-00 UAT-6
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-27.
 
 Result: PASS. The three answers were posted on the issue and read back successfully: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6442966412
 
@@ -3288,7 +3288,7 @@ Protected fixture files before / after cleanup: cmp=0
 
 ## XF-5
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 1 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 1 of 2. Date: 2026-10-27.
 
 Result: FAIL (capture setup). Redirected interactive output reached the terminal guard before gateway discovery. The initial Python capture stopped on its exit-code assertion before saving its aggregate receipt; the captured refusal is retained below. Rerun approved: https://github.com/<account>/<repo-1>/issues/255#issuecomment-6443054455
 
@@ -3300,7 +3300,7 @@ Next step: Run it in a terminal pane, or use talaria -p "<prompt>" in scripts.
 capture harness exit=1 (assertion failed before aggregate receipt)
 ```
 
-Candidate: 8b2fe42. Runner: t70-c1-dev-2. Run 2 of 2. Date: 2026-10-27.
+Candidate: 8b2fe42. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-27.
 
 The approved rerun gave stdin and stdout a pseudo-terminal and captured its output externally. All three commands used one new empty Hermes home, removed after the check.
 

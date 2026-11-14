@@ -2,7 +2,7 @@
 
 ## AUTO-1
 
-Candidate: 8b514e6. Runner: t70-c1-dev-2. Run 2 of 2. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 2 of 2. Date: 2026-10-26.
 
 Result: PASS.
 
@@ -101,7 +101,7 @@ exit=0
 
 ## AUTO-2
 
-Candidate: 8b514e6. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS.
 
@@ -468,7 +468,7 @@ exit=0
 
 ## AUTO-3
 
-Candidate: 8b514e6. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS.
 
@@ -1790,7 +1790,7 @@ exit=0
 
 ## AUTO-4
 
-Candidate: 8b514e6. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS.
 
@@ -2249,7 +2249,7 @@ Counts after the last runs: `grep -c SKIPPED` prints 0 for l1, l2, l3, l5, l6, l
 
 ## AUTO-6
 
-Candidate: 8b514e6. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS.
 
@@ -2338,7 +2338,7 @@ exit=0
 
 ## AUTO-7
 
-Candidate: 8b514e6. Runner: t70-c1-dev-2. Run 1 of 1. Date: 2026-10-26.
+Candidate: 8b514e6. Runner: t70-c1-<host>. Run 1 of 1. Date: 2026-10-26.
 
 Result: PASS.
 
@@ -2454,7 +2454,7 @@ Run 1 of 2 failed at the step `interrupt`, after `startup`, `plain-answer` and `
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2475,7 +2475,7 @@ SMOKE_RESULT: PASSED (elapsed 49 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2504,7 +2504,7 @@ Reruns approved on the issue before runs 2 to 5: `rerun approved: AUTO-9/AUTO-10
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2540,7 +2540,7 @@ SMOKE_RESULT: PASSED (elapsed 143 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2559,7 +2559,7 @@ Run 1 of 3 failed at the step `model-refusal` after 4 steps had passed (exit 1),
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2588,7 +2588,7 @@ SMOKE_RESULT: PASSED (elapsed 74 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2607,7 +2607,7 @@ Run 1 of 1. The Herdr window measured 102 columns by 41 rows during this run; th
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2633,7 +2633,7 @@ SMOKE_RESULT: PASSED (elapsed 42 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2652,7 +2652,7 @@ Run 1 of 1, straight after AUTO-11 with only the quiet-fleet check between them.
 ```text
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # before
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1
@@ -2678,7 +2678,7 @@ SMOKE_RESULT: PASSED (elapsed 42 s)
 exit=0
 $ herdr tab list --workspace "$HERDR_WORKSPACE_ID"   # after
 wC6:t3 t70-c1-dev-1
-wC6:t4 t70-c1-dev-2
+wC6:t4 t70-c1-<host>
 wC6:t5 t70-c1-dev-3
 wC6:t6 t70-c1-dev-4
 wC6:t1 t70-c1-test-1

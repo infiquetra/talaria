@@ -19,6 +19,7 @@ const REMOVED_PATHS: &[&str] = &[
     ".python-version",
     "docs/acceptance/",
     ":(exclude)docs/acceptance/v0.7.0/",
+    ":(exclude)docs/acceptance/v0.8.1/",
     "docs/plans/",
     "docs/reviews/",
     "docs/code-reviews/",
