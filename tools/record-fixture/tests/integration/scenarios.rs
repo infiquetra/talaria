@@ -737,7 +737,7 @@ fn evidence_check_accepts_good_run_and_rejects_missing_one() {
 async fn no_gateway_is_exit_2_and_hermes_never_run() {
     let (login, host) = long_names();
     let home = empty_home();
-    let error = preflight(&input(home.path(), &login, &host))
+    let error = preflight(&input(home.path(), &login, &host), false)
         .await
         .expect_err("an empty home has no gateway");
     assert!(
@@ -792,7 +792,7 @@ async fn unserved_profile_is_exit_2() {
         ..HomeSpec::good()
     };
     let home = MockHome::start(spec, plain_script()).await;
-    let error = preflight(&input(home.path(), &login, &host))
+    let error = preflight(&input(home.path(), &login, &host), false)
         .await
         .expect_err("fixture is not served");
     assert!(
@@ -807,7 +807,7 @@ async fn unserved_profile_is_exit_2() {
         ..HomeSpec::good()
     };
     let home = MockHome::start(spec, plain_script()).await;
-    let error = preflight(&input(home.path(), &login, &host))
+    let error = preflight(&input(home.path(), &login, &host), false)
         .await
         .expect_err("fixture is parked");
     assert!(
@@ -854,7 +854,7 @@ async fn approvals_mode_not_manual_is_exit_2() {
             ..HomeSpec::good()
         };
         let home = MockHome::start(spec, plain_script()).await;
-        let error = preflight(&input(home.path(), &login, &host))
+        let error = preflight(&input(home.path(), &login, &host), false)
             .await
             .expect_err("approvals.mode is not manual");
         assert!(
@@ -878,7 +878,7 @@ async fn short_login_name_is_exit_2() {
     let home = MockHome::start(HomeSpec::good(), plain_script()).await;
 
     let short_login = "zq9".to_owned();
-    let error = preflight(&input(home.path(), &short_login, &host))
+    let error = preflight(&input(home.path(), &short_login, &host), false)
         .await
         .expect_err("a three character login name is refused");
     assert!(
@@ -895,7 +895,7 @@ async fn short_login_name_is_exit_2() {
     );
 
     let short_host = "zq9".to_owned();
-    let error = preflight(&input(home.path(), &login, &short_host))
+    let error = preflight(&input(home.path(), &login, &short_host), false)
         .await
         .expect_err("a three character host name is refused");
     assert!(

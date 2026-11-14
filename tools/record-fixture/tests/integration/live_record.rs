@@ -54,9 +54,24 @@ async fn attempt(
     };
     let endpoint = match discover_with(home, &options).await {
         Ok(endpoint) => endpoint,
-        Err(err) => return Attempt::Skip(err.to_string()),
+        Err(err) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            return Attempt::Skip(err.to_string());
+        }
     };
-    let profile = match endpoint.resolve_profile("fixture") {
+    if number == 1 {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(
+                endpoint.code_version(),
+                endpoint.code_sha(),
+            )
+        );
+    }
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
         Err(err) => return Attempt::Skip(err.to_string()),
     };
@@ -146,11 +161,30 @@ async fn live_plain_answer_records_and_replays() {
     // a gateway. A missing precondition is a skip, not a failure.
     let input = PreflightInput {
         hermes_home: home.clone(),
-        profile: "fixture".to_owned(),
+        profile: hermes_contract::pinned::live_profile(),
         login_name: login.clone(),
         host_name: host,
     };
-    if let Err(err) = preflight(&input).await {
+    if let Err(err) = preflight(&input, hermes_contract::pinned::live_exact()).await {
+        let (version, sha) = match discover_with(
+            &home,
+            &DiscoverOptions {
+                control_timeout: Duration::from_secs(5),
+                ensure: EnsurePolicy::Never,
+            },
+        )
+        .await
+        {
+            Ok(endpoint) => (
+                endpoint.code_version().map(str::to_owned),
+                endpoint.code_sha().map(str::to_owned),
+            ),
+            Err(_) => (None, None),
+        };
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(version.as_deref(), sha.as_deref())
+        );
         skip(&err.message);
         return;
     }
