@@ -2,6 +2,128 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-11
+
+### Pin Hermes v0.23.0 or later, on stock Hermes
+
+**Decision.** Talaria pins Hermes v0.23.0 or later and aims for the latest release. It must work with stock Hermes and asks nothing of upstream unless that cannot be avoided.
+
+**Rationale.** On 2026-11-11 the operator's words were "we certainly want v0.23.0 or later, lets do what is needed to be able to use the latest release". On the same day the words were "Agree, we don't want to request any updates to hermes if we can avoid it... we want talaria working with stock hermes, not a patched version." The checked-in pin file still records tag v0.22.4. This entry does not change that file, and it does not name a tag newer than v0.23.0.
+
+**Rejected.** Pinning Hermes v0.22.7. Depending on a patched Hermes.
+
+**Revisit when.** Stock Hermes cannot provide something Talaria needs, so asking upstream cannot be avoided.
+
+### Talaria stays in step with Hermes
+
+**Decision.** Talaria and Hermes are coupled, so Talaria signals a new Hermes release, updates itself automatically where it can, and publishes which release of each matches.
+
+**Rationale.** On 2026-11-11, beside accepting the floor below, the operator's words were "Default, but something about this seems inflexible as well. Can we not signal that there is a new version of hermes? Maybe somehow automatically update talaria based on hermes updates. I don't know, we are missing something in the talaria ecosystem that keeps talaria in sync with hermes. They are, at least currently, coupled and we should try to keep talaria working with the latest and maybe considering some sort of release making table. Such that anyone using it knows what release of each match."
+
+**Rejected.** A fixed pin with no signal, no automatic update, and no published table of which release of each matches.
+
+**Revisit when.** Talaria and Hermes are no longer coupled.
+
+### A live test accepts any supported gateway
+
+**Decision.** A live test accepts any supported gateway and records its version. The release run also includes one pass against a gateway at exactly the pinned release. The operator provides that gateway. Supported means the floor in the next entry.
+
+**Rationale.** On 2026-11-11 the operator's words were "can you consider adjusting that test rule to something better. That seems a bit inflexable". A gateway that runs a build ahead of any release tag cannot match an exact commit. Today `live_skip_reason` in `crates/hermes-contract/src/pinned.rs` skips unless the gateway's code identity matches the pinned commit.
+
+**Rejected.** Skipping every live test unless the gateway is exactly the pinned commit.
+
+**Revisit when.** The release run drops the one pass at the pinned release, or a live test must refuse a gateway that meets the floor.
+
+### The oldest supported Hermes release is v0.23.0
+
+**Decision.** The oldest supported Hermes release is v0.23.0.
+
+**Rationale.** On 2026-11-11, on the question "oldest supported gateway v0.23.0", the operator's words were "Default". That answer accepts this floor.
+
+**Rejected.** Treating Hermes v0.22.7 as the oldest supported release. The same day's pin words, "v0.23.0 or later", reject v0.22.7 as the pin target.
+
+**Revisit when.** The operator names a different oldest supported release.
+
+### The operator and agent crews dogfood Talaria
+
+**Decision.** The operator and agent crews both dogfood Talaria on Talaria's own releases.
+
+**Rationale.** On 2026-11-11 the operator's words were "probably both should dogfood." Keep both "probably" and "should" whenever you quote that sentence. Both means the operator, by hand, and agent crews driving Talaria seats. This entry does not say that use has already happened.
+
+**Rejected.** Only the operator dogfooding. Only agent crews dogfooding.
+
+**Revisit when.** A Talaria release is no longer built by using Talaria.
+
+### Old Herdr support is removed in v0.9.1
+
+**Decision.** Old Herdr support is removed in v0.9.1. Until that release, the old reporter is left as it is.
+
+**Rationale.** On 2026-11-11, on the question "remove old Herdr support in v0.9.1", the operator's words were "Default". That answer is yes. v0.9.1 is the later release. The old reporter stays as it is until then.
+
+**Rejected.** Removing the old reporter in Talaria v0.9.0. Changing the old reporter before v0.9.1.
+
+**Revisit when.** Talaria v0.9.1 is being cut, to confirm the removal is still that old reporter.
+
+### The fleet approval card footer is corrected
+
+**Decision.** The fleet approval card's footer is corrected. What Ctrl+C does in the fleet view does not change.
+
+**Rationale.** On 2026-11-11, on the fleet approval card, the operator's words were "Default". That answer corrects the footer text. The key keeps the behavior it has.
+
+**Rejected.** Making Ctrl+C in the fleet view deny the approval and stop the turn.
+
+**Revisit when.** The fleet view's Ctrl+C handling is replaced. A footer correction does not wait on that replacement.
+
+### A plan viewer and a full-duplex voice helper stay unstarted
+
+**Decision.** A plan viewer and a full-duplex voice helper are filed as studies in v0.9.1, and neither study is started.
+
+**Rationale.** On 2026-11-11, on the question "plan viewer and full-duplex voice", the operator's words were "Default". That answer files both as studies in v0.9.1 and starts neither.
+
+**Rejected.** Starting the plan viewer in Talaria v0.9.0. Starting the full-duplex voice helper in Talaria v0.9.0. Dropping the plan viewer. Dropping the voice helper.
+
+**Revisit when.** A study's written answer says to start that subject.
+
+### A theme chosen with /theme use persists in a later release
+
+**Decision.** A theme chosen with `/theme use <id>` persists across launches. That persistence is built in a later release. This entry does not name the release.
+
+**Rationale.** On 2026-11-11 the operator's words included "Yes to theme". In `crates/talaria-app/src/appearance.rs`, the `["use", id]` arm sets `session_file` to that id, and the `["use"]` arm sets `session_file` to none. `docs/themes.md` says these commands never write configuration or Hermes files. The paragraph in this journal dated 2026-09-04 records persistence for `/theme select` and Enter. Leave that paragraph where it is. It is a different command.
+
+**Rejected.** Leaving `/theme use <id>` as a choice that ends when the process ends.
+
+**Revisit when.** The later release that saves a `/theme use <id>` choice across launches is started.
+
+### A workflow runs more than one agent at once
+
+**Decision.** A workflow should run more than one agent at once by default, and more than one workflow should be able to run at the same time. The operator's words were "Wouldn't we want more than 1 in both cases?" The first number, how many agents one workflow runs at once, comes from a measurement. For the second, how many workflows run at the same time, that measurement records what Talaria does today, and this release sets no number. This ruling does not adopt the ten simultaneous agents in `docs/workflows/staffing.md`. `DEFAULT_MAX_IN_FLIGHT` in `crates/talaria-workflow/src/staffing/table.rs` stays 1 until the measurement is recorded. The 2026-10-28 entry "Workflow concurrency default proposed, awaiting the operator" stays in this file as the proposal it was.
+
+**Rationale.** On 2026-11-11 the operator's words were "Yes to theme, I don't understand the concurrency question. A workflow by default can have more than one age. Is this about how many workflows at a time? Wouldn't we want more than 1 in both cases?" The settled word for "age" is agent. Both cases are in that question: agents in one workflow, and workflows at the same time. The 2026-10-28 entry proposed a default of 1 because a live measurement at width 10 missed a health rule.
+
+**Rejected.** Adopting ten from the staffing guide without a measurement. Setting, in this release, a number of workflows that run at the same time. Leaving the 2026-10-28 proposal unanswered.
+
+**Revisit when.** The measurement records how many agents one workflow runs at once, and it records what Talaria does today for how many workflows run at the same time. A later release may set that second number. This release does not.
+
+### A note typed on Allow is kept
+
+**Decision.** A note typed on an Allow answer is kept and labelled `note (sent after the answer)`.
+
+**Rationale.** This is the settled ruling of 2026-11-11. The note stays on the Allow answer, and the label says it was sent after that answer.
+
+**Rejected.** Dropping the note from an Allow answer. Sending that note before the Allow answer.
+
+**Revisit when.** Allow stops taking a note, or the note is sent before the answer.
+
+### What Talaria will not build
+
+**Decision.** Talaria will not build a client-side approval classifier or reviewer agent, a second checkpoint store, any key that spends money, in-process plugin panes, inline images, pinning an unreleased Hermes build, mouse capture by default, or public share links.
+
+**Rationale.** Hermes owns approval policy, so a classifier or reviewer agent in the client would be a second judge. Hermes keeps the checkpoints a session rolls back to, so a second store in the client would drift from that. A key that spends money is refused, because spending one keystroke away is not a Talaria command. In-process plugin panes would run unsandboxed code in a client that can approve actions across a fleet view. Inline images need graphics-protocol work and were ranked below the fleet gaps. The claim that inline images exist only in Hermes v0.23.0 is not the reason, because the floor recorded above is v0.23.0. The pin is a published release, so an unreleased build is not a pin target. Architecture decision record 0009, decision 4, says "Mouse capture is off by default so the terminal's own selection, copy and search work." A public share link would publish session content from a public client. The plan viewer and the full-duplex voice helper are the studies above. They are outside this list.
+
+**Rejected.** Building any item named in the decision.
+
+**Revisit when.** For the classifier, a spending key, and in-process plugin panes, revisit only when the reason in this entry no longer holds. For inline images, an unreleased pin, mouse capture, and public share links, revisit when new evidence contradicts the reason written here.
+
 ## 2026-11-13
 
 ### A long turn stays working
