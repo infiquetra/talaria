@@ -2,6 +2,17 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-14 — Correct the fleet approval card clause
+
+**Context.** The shared approval card describes Ctrl+C differently from its
+behaviour in the fleet peek.
+
+**Decision.** In list focus the card says `ctrl+c close`; in answer focus it
+says `ctrl+c back to list`. A split suffix stays as `PromptStack` drew it. The
+fleet peek keeps today's card, and fleet Ctrl+C behaviour does not change.
+
+**Revisit when.** The fleet peek's card or Ctrl+C handling changes.
+
 ## 2026-11-14
 
 ### Apply theme colours to inline conversation text
