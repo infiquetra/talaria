@@ -2,6 +2,27 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-14 — Repeated wrapping and serialization consume streaming CPU headroom
+
+**Evidence.** A `/usr/bin/sample` profile of `talaria --bench-replay queue.jsonl`
+attributed 117 of 403 active CPU samples to `PlainTextSection` double-wrapping
+in `crates/talaria-tui/src/live.rs`, 95 of 403 to grapheme iteration and string
+allocation in `wrap_lines` in `crates/talaria-tui/src/history.rs`, and 114 of 403
+to `ReplaySource` calling `frame.to_string()` in
+`crates/hermes-client/src/replay_source.rs`.
+
+**Mechanism.** Layout measures a section and then renders it at the same width,
+so wrapping independently in both calls repeats cloning and allocation. Printable
+ASCII spans have one column per byte and need neither grapheme iteration nor a
+new string when they fit intact. Parsed replay frames are immutable, so serializing
+them on every timed delivery repeats work that can be done once during loading.
+Caching rows per section width and inbound JSON text trades retained memory for
+less repeated work while preserving Unicode wrapping and replay timing.
+
+**Generalizable rule.** Profile the full streaming path, reuse immutable work
+between measurement and rendering, and move invariant preparation out of timed
+delivery loops before changing performance budgets.
+
 ## 2026-11-12 — Status capability replies use compact wire delimiters
 
 **Evidence.** Live terminal acceptance received an Operating System Command 7501

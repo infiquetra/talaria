@@ -4,7 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
-use crate::history::{sanitize_line, split_lines, wrap_lines};
+use crate::history::{split_lines, wrap_lines};
 
 /// One block of the live region.
 pub trait LiveSection {
@@ -77,33 +77,44 @@ pub fn max_live_height(rows: u16) -> u16 {
 /// Plain text split on newlines and wrapped to the width.
 pub struct PlainTextSection {
     lines: Vec<Line<'static>>,
+    cached: std::sync::Mutex<Option<(u16, Vec<Line<'static>>)>>,
 }
 
 impl PlainTextSection {
     pub fn new(text: &str) -> Self {
         let lines = split_lines(text)
-            .map(|piece| sanitize_line(Line::from(piece.to_string())))
+            .map(|piece| Line::from(crate::history::sanitize(piece).into_owned()))
             .collect();
-        Self { lines }
+        Self {
+            lines,
+            cached: std::sync::Mutex::new(None),
+        }
     }
 
-    fn rows(&self, width: u16) -> Vec<Line<'static>> {
-        wrap_lines(self.lines.clone(), width)
+    fn with_rows<R>(&self, width: u16, f: impl FnOnce(&[Line<'static>]) -> R) -> R {
+        let mut guard = self.cached.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.as_ref().is_none_or(|(w, _)| *w != width) {
+            *guard = Some((width, wrap_lines(self.lines.clone(), width)));
+        }
+        // An empty cache is filled above before its rows are borrowed.
+        let (_, rows) = guard.as_ref().expect("wrapped rows were initialized");
+        f(rows)
     }
 }
 
 impl LiveSection for PlainTextSection {
     fn height(&self, width: u16) -> u16 {
-        u16::try_from(self.rows(width).len()).unwrap_or(u16::MAX)
+        self.with_rows(width, |rows| u16::try_from(rows.len()).unwrap_or(u16::MAX))
     }
 
     /// Draws the last rows that fit, one buffer row each, so nothing is clipped.
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let rows = self.rows(area.width);
-        let skip = rows.len().saturating_sub(usize::from(area.height));
-        for (offset, row) in (0..area.height).zip(rows.iter().skip(skip)) {
-            buf.set_line(area.x, area.y + offset, row, area.width);
-        }
+        self.with_rows(area.width, |rows| {
+            let skip = rows.len().saturating_sub(usize::from(area.height));
+            for (offset, row) in (0..area.height).zip(rows.iter().skip(skip)) {
+                buf.set_line(area.x, area.y + offset, row, area.width);
+            }
+        });
     }
 }
 

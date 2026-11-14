@@ -168,6 +168,36 @@ pub fn wrap_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
         let mut current: Vec<Span<'static>> = Vec::new();
         let mut used: u16 = 0;
         for span in line.spans {
+            if span.content.is_empty() {
+                continue;
+            }
+            let bytes = span.content.as_bytes();
+            if bytes.iter().all(|&b| (0x20..=0x7e).contains(&b)) {
+                if used >= width {
+                    rows.push(row_of(std::mem::take(&mut current)));
+                    used = 0;
+                }
+                if bytes.len() <= usize::from(width - used) {
+                    used += bytes.len() as u16;
+                    current.push(span);
+                    continue;
+                }
+                let mut offset = 0;
+                while offset < bytes.len() {
+                    let take = (bytes.len() - offset).min(usize::from(width - used));
+                    current.push(Span::styled(
+                        span.content[offset..offset + take].to_owned(),
+                        span.style,
+                    ));
+                    offset += take;
+                    used += take as u16;
+                    if offset < bytes.len() {
+                        rows.push(row_of(std::mem::take(&mut current)));
+                        used = 0;
+                    }
+                }
+                continue;
+            }
             let mut piece = String::new();
             for grapheme in span.content.graphemes(true) {
                 let columns = grapheme_width(grapheme);
