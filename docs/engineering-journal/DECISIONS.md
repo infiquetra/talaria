@@ -2,6 +2,36 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-11 — Every decoded Hermes event this client ignores
+
+**Context.** Talaria at commit ee5c4881 decodes 85 Hermes event names. The map is `crates/hermes-contract/src/events.rs` lines 181 to 264, plus `voice.interrupted` at line 165. A set session id that is neither open nor retained returns at `app.rs:8954`. A missing id returns at `app.rs:8986` when a session is open, and at `app.rs:8981` when none is. A decoded name with no earlier arm hits the silent catch-all at `crates/talaria-core/src/session/reducer.rs:523`. A wire name outside the 85 may draw one diagnostic at `reducer.rs:533` and is not a row. A workflow view that refuses a name at `crates/talaria-workflow/src/progress/live.rs:1108` does not handle it. The public page is `docs/hermes-signals.md`.
+
+**Decision.** 46 of the 85 are handled. 2 are dropped before the reducer. 37 are ignored in the reducer. 46 + 2 + 37 = 85. `gateway.ready` is one of the 46. The handshake reads it at `crates/hermes-client/src/connect.rs:511`. Every bare `reducer.rs` line is `crates/talaria-core/src/session/reducer.rs`.
+
+`session.reclaimed` is ignored. It cannot concern Talaria's sessions. The page section "Reclaimed session" carries the Hermes file and line. `approval.cancelled` is ignored because it cannot name an approval Talaria holds, and `approval.settled` is what removes a card. The page section "Cancelled approval" carries the Hermes file and line. The regression for a withdrawn approval is ACT-2. This entry does not add that test.
+
+`tool.output_risk` has nothing to do. It is never delivered. The page section "Tool-output risk" carries the Hermes file and line. The reducer would ignore the name if a frame arrived.
+
+The Mixture of Agents progress events are `moa.reference`, `moa.progress`, `moa.phase`, and `moa.aggregating`. Ignore them until someone asks for them. They are ignored in the reducer today.
+
+`voice.interrupted` is already handled. `voice_event` maps it at `crates/talaria-app/src/voice.rs:329`, called from `voice_link` at `app.rs:16829`. It is not an ignored event.
+
+`request.cancel` is handled. `link_event` turns it into `AppEffect::CancelRequest` at `app.rs:9004`. The match arm opens at `app.rs:9003`. `PromptService::on_request_cancel` is `crates/talaria-app/src/prompts.rs:148`. The silent arm starts at `reducer.rs:523` and names `request.cancel` at `reducer.rs:531`. That arm is not the handler. `request.cancel` is not an ignored event.
+
+`billing.step_up.verification` reaches only a client that called the billing step-up method, which Talaria never calls, so it stays ignored. The page section "One event that stays ignored" carries that claim. `notice`, `session.resume_progress` and `free_tier.challenge` do not reach a session Talaria created and stay ignored. The page section "The three delivery paths" carries the Hermes file and line: an older-server emit does not reach a session Talaria created, and a broadcast frame session id is the empty string.
+
+These five are ignored in the reducer at commit ee5c4881. The page names the unit that changes each one. This entry does not describe that code as present in this tree. `notification.show` and `notification.clear` are SIG-1. `connection.request` is SIG-7. `agent.print` is SIG-8. `review.summary` is SIG-9.
+
+These 23 are ignored in the reducer. No unit in this set changes them. This decision does not state whether they reach a session Talaria created: `bot_relay.outbox.pending`, `browser.controller.cancel`, `browser.controller.command`, `browser.progress`, `display.install.done`, `display.install.log`, `display.lease`, `display.status`, `message.reaction`, `onboarding.ended`, `pane.reveal`, `pet.changed`, `pet.generate.progress`, `pet.hatch.progress`, `preview.close`, `preview.open`, `preview.restart.complete`, `preview.restart.progress`, `projects.changed`, `reaction`, `setup.ready`, `tip.show`, `wake.detected`.
+
+`open_requests` is not an event. The page records which replies carry it.
+
+**Rationale.** The two broadcasts cannot name a session or an approval Talaria holds, so they are dropped before the reducer. A decoded name with no arm is a recorded ignore. The catch-all stays silent until an issue names that event.
+
+**Rejected.** Drawing `session.reclaimed` or `approval.cancelled`. Treating `tool.output_risk` as a signal that arrives. Listing `request.cancel` or `voice.interrupted` as ignored. Filling the catch-all for a name no issue has named.
+
+**Revisit when.** Someone asks for the Mixture of Agents progress events, or SIG-1, SIG-7, SIG-8, or SIG-9 has merged and this entry should say that name is no longer ignored.
+
 ## 2026-11-11
 
 ### Pin Hermes v0.23.0 or later, on stock Hermes
