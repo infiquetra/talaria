@@ -59,7 +59,13 @@ pub fn catalogue() -> &'static [CatalogueEntry] {
                     role: parts.next().expect("catalogue role"),
                     attributes: parts.next().expect("catalogue attributes"),
                     description: parts.next().expect("catalogue description"),
-                    reserved: token.starts_with("picker."),
+                    reserved: token.starts_with("picker.")
+                        || matches!(
+                            token,
+                            "transcript.user.label"
+                                | "transcript.assistant.label"
+                                | "transcript.system"
+                        ),
                     area: family_area(token),
                 }
             })

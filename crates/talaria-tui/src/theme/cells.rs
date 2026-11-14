@@ -5,7 +5,7 @@
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use talaria_core::session::{Cell, CellId};
+use talaria_core::session::{Cell, CellId, NoticeKind};
 
 use super::Theme;
 use crate::automation::hermes_command_lines_with_options_and_theme;
@@ -33,6 +33,41 @@ impl CellLines for ThemedCells<'_> {
         let (text, base_style) = match cell {
             Cell::Assistant(cell) => (&cell.text, Style::default()),
             Cell::Reasoning(cell) => (&cell.text, reasoning_base(self.theme)),
+            Cell::User(cell) if self.theme.views.active() => {
+                let style = self.theme.views.inline(
+                    super::surfaces::tokens::TRANSCRIPT_USER_TEXT,
+                    Style::default().add_modifier(Modifier::BOLD),
+                );
+                return crate::history::split_lines(&cell.text)
+                    .enumerate()
+                    .map(|(index, line)| {
+                        Line::styled(
+                            format!("{}{line}", if index == 0 { "> " } else { "" }),
+                            style,
+                        )
+                    })
+                    .collect();
+            }
+            Cell::Notice(cell) if self.theme.views.active() => {
+                let token = if cell.kind == NoticeKind::Error {
+                    super::surfaces::tokens::ALERT_ERROR
+                } else {
+                    super::surfaces::tokens::TRANSCRIPT_NOTICE
+                };
+                let style = self
+                    .theme
+                    .views
+                    .inline(token, Style::default().add_modifier(Modifier::DIM));
+                return crate::history::split_lines(&cell.text)
+                    .enumerate()
+                    .map(|(index, line)| {
+                        Line::styled(
+                            format!("{}{line}", if index == 0 { "· " } else { "" }),
+                            style,
+                        )
+                    })
+                    .collect();
+            }
             Cell::HermesCommand(cell) => {
                 return hermes_command_lines_with_options_and_theme(
                     cell,
@@ -82,10 +117,15 @@ impl CellLines for ThemedCells<'_> {
             &self.theme.views,
         );
         if matches!(cell, Cell::Reasoning(_)) {
-            lines.insert(
-                0,
-                Line::styled("∴ thinking", base_style.add_modifier(Modifier::DIM)),
-            );
+            let heading = base_style.add_modifier(Modifier::DIM);
+            let heading = if self.theme.views.active() {
+                self.theme
+                    .views
+                    .inline(super::surfaces::tokens::TRANSCRIPT_REASONING_LABEL, heading)
+            } else {
+                heading
+            };
+            lines.insert(0, Line::styled("∴ thinking", heading));
         }
         lines
     }

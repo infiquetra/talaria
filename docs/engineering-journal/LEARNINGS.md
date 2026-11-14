@@ -2,6 +2,17 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-14 — Inline theme colours need their own drawing path
+
+**Evidence.** `inline_user_and_notice_use_theme_colours` checks the four inline
+colours and cleared backgrounds; the catalogue now marks 33 names reserved.
+
+**Mechanism.** User and notice cells fell through to `PlainCellLines`, while
+`ViewStyles::inline` already resolves a token with its background cleared.
+
+**Generalizable rule.** Paint inline tokens through `ViewStyles::inline` without
+adding a theme field or a surface binding.
+
 ## 2026-11-14 — Skin tolerance must precede contract decoding
 
 **Evidence.** The connection regressions exercise null colours in the ready payload,
