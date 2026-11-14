@@ -112,7 +112,10 @@ pub fn picker_state(text: &str) -> PickerState {
         } else if let Some(row) = line.strip_prefix("› ") {
             state.selected_row = Some(row.to_owned());
         }
-        state.has_current |= line.starts_with("● ") || line.starts_with("★● ");
+        let row_body = line
+            .strip_prefix('>')
+            .map_or(line.as_str(), str::trim_start);
+        state.has_current |= row_body.starts_with("● ") || row_body.starts_with("★● ");
         if !state.not_set_up
             && !line.starts_with(['★', '●', '>'])
             && let Some((group, _)) = line.split_once(" · ")

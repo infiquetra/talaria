@@ -96,7 +96,7 @@ pub const THEME_LINES: &[&str; 5] = &["Theme", "Skin:", "Background:", "Colours:
 pub const USAGE_SKIN: &str = "Usage: /skin [name].";
 
 /// The usage line of a bad theme argument (issue #227, bad arguments scenario).
-pub const USAGE_THEME: &str = "Usage: /theme [light|dark|auto]";
+pub const USAGE_THEME: &str = "Usage: /theme [light|dark|auto|use [<id>]|reload]";
 
 /// The refusal fragment that must never appear after a bad argument
 /// (issue #227, bad arguments scenario).

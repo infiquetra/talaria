@@ -85,15 +85,7 @@ fn empty_composer(line: &str) -> bool {
             && (COMPOSER_HINT.starts_with(line) || COMPOSER_HINT_ALT.starts_with(line)))
 }
 pub(crate) fn turn_active(text: &str) -> bool {
-    text.contains(THINKING)
-        || text
-            .lines()
-            .flat_map(|line| line.split(['│', '·']))
-            .any(|part| {
-                part.trim().split_once(' ').is_some_and(|(count, state)| {
-                    state == WORKING && count.parse::<u64>().is_ok_and(|n| n > 0)
-                })
-            })
+    crate::screen4b::turn_active(text)
 }
 pub(crate) fn composer_found(text: &str) -> bool {
     text.lines().map(composer_line).any(empty_composer)

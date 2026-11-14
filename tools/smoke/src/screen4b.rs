@@ -286,6 +286,31 @@ pub fn consent_found(text: &str, profile: &str) -> bool {
 pub(crate) fn consent_hint_found(text: &str) -> bool {
     text.to_lowercase().contains(CONNECTORS_CONSENT_HINT)
 }
+pub(crate) fn turn_active(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    let thinking_after_composer = match lines.iter().rposition(|line| {
+        let line = line.trim();
+        let line = line
+            .strip_prefix('│')
+            .map(|inner| inner.strip_suffix('│').unwrap_or(inner).trim())
+            .unwrap_or(line);
+        line.starts_with(COMPOSER)
+    }) {
+        Some(idx) => lines[idx + 1..]
+            .iter()
+            .any(|line| line.contains("∴ thinking")),
+        None => text.contains("∴ thinking"),
+    };
+    thinking_after_composer
+        || lines
+            .into_iter()
+            .flat_map(|line| line.split(['│', '·']))
+            .any(|part| {
+                part.trim().split_once(' ').is_some_and(|(count, state)| {
+                    state == "working" && count.parse::<u64>().is_ok_and(|n| n > 0)
+                })
+            })
+}
 pub fn idle_screen(text: &str) -> bool {
     let titles = [
         MCP_TITLE_FMT,
@@ -302,7 +327,7 @@ pub fn idle_screen(text: &str) -> bool {
     });
     !has_title
         && !consent_hint_found(text)
-        && !text.lines().any(|line| line.contains("∴ thinking"))
+        && !turn_active(text)
         && text
             .lines()
             .map(|line| {

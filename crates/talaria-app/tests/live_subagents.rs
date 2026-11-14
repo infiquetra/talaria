@@ -28,6 +28,7 @@ use talaria_core::subagents::Clock;
 use tokio::sync::mpsc;
 
 const PROMPT_B: &str = "Use the delegate_task tool to run two subagents in parallel: one lists the files in the current directory, the other reads notes.txt. Then summarise both results in one sentence.";
+const PROMPT_PAUSE: &str = "Call the delegate_task tool once to start one subagent whose goal is to read notes.txt. Do not call any other tool. If delegate_task reports that spawning is paused, stop immediately without calling any other tool and reply in one short sentence stating that delegation spawning is paused.";
 const PROMPT_L: &str = "Use the delegate_task tool to start exactly one subagent. Its goal: run the shell command sleep 3 ten times, one command at a time, then reply with the single word finished. Wait for it, then reply with the single word done.";
 const STEER_TEXT: &str = "Reply with the single word steered after your current command.";
 
@@ -491,7 +492,27 @@ async fn live_pause_blocks_new_spawns() {
             SubagentAction::ConfirmPause(true),
             live_clock(started),
         );
-        submit(&client, &session.session_id, PROMPT_B).await;
+        let pause_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        let mut pause_confirmed = false;
+        while !pause_confirmed {
+            let Ok(Some(msg)) = tokio::time::timeout_at(pause_deadline, rx.recv()).await else {
+                break;
+            };
+            if let AppMessage::Subagents(inner) = msg {
+                hub.on_message(inner.clone(), live_clock(started));
+                if matches!(
+                    inner,
+                    SubagentMsg::Control {
+                        outcome: ControlOutcome::Paused(true),
+                        ..
+                    }
+                ) {
+                    pause_confirmed = true;
+                }
+            }
+        }
+        assert!(pause_confirmed, "delegation.pause confirmed before submit");
+        submit(&client, &session.session_id, PROMPT_PAUSE).await;
 
         let mut turn_done = false;
         let mut delegate_seen = false;
@@ -533,6 +554,17 @@ async fn live_pause_blocks_new_spawns() {
             },
         )
         .await;
+        if !turn_done {
+            let _ = client
+                .call_raw(
+                    "session.interrupt",
+                    json!({"session_id": session.session_id}),
+                    CallOptions {
+                        timeout: Some(Duration::from_secs(10)),
+                    },
+                )
+                .await;
+        }
         detach(&client, &session).await;
         if delegate_seen && turn_done {
             exercised = true;

@@ -99,7 +99,7 @@ const THEME_COMMAND: &str = "/theme";
 const BAD_SKIN: &str = "/skin ../etc";
 const BAD_THEME: &str = "/theme purple";
 /// The plan prompt of the checklist step (issue #226, verbatim).
-const PLAN_PROMPT: &str = "Use your todo_list tool to write a plan with exactly three items: create a.txt, run sleep 30, create b.txt. Before each step mark it in_progress with the todo_list tool, and after it mark it completed. Do the steps in this folder. Then reply with the single word: done.";
+const PLAN_PROMPT: &str = "Use your todo_list tool to write a plan with exactly three items: create a.txt, run sleep 30, create b.txt (when calling todo_list via tool_call, pass todos as a JSON-encoded string like \"[{\\\"id\\\":\\\"1\\\",\\\"content\\\":\\\"create a.txt\\\",\\\"status\\\":\\\"pending\\\"},{\\\"id\\\":\\\"2\\\",\\\"content\\\":\\\"run sleep 30\\\",\\\"status\\\":\\\"pending\\\"},{\\\"id\\\":\\\"3\\\",\\\"content\\\":\\\"create b.txt\\\",\\\"status\\\":\\\"pending\\\"}]\", never XML item tags). Before each step mark it in_progress with the todo_list tool, and after it mark it completed. Do the steps in this folder. Then reply with the single word: done.";
 /// The rows of an open task panel.
 const TASK_ROW_MARKS: [&str; 4] = ["[ ]", "[>]", "[x]", "[-]"];
 /// The questions of the tmux section.
@@ -1286,13 +1286,19 @@ impl Run2a<'_> {
         for _attempt in 1..=2 {
             run.submit(&pane, PLAN_PROMPT)?;
             let mut panel = false;
-            run.wait_until(&pane, PANEL_LIMIT, Reads::Visible, true, |seen| {
+            let done = run.wait_until(&pane, PANEL_LIMIT, Reads::Visible, true, |seen| {
                 panel = panel_on_sleep(&seen.visible);
                 panel || seen.quiet >= Duration::from_secs(QUIET_PLAN)
             })?;
             if panel {
                 shown = true;
                 break;
+            }
+            if !done {
+                run.key(&pane, "esc")?;
+                let _ = run.wait_until(&pane, TOGGLE_LIMIT, Reads::Visible, false, |seen| {
+                    seen.quiet >= Duration::from_secs(QUIET_REPLY)
+                })?;
             }
         }
         if !shown {

@@ -15,15 +15,16 @@ pub const SETTINGS_DEFAULT: &str = "default";
 pub const SETTINGS_RESTART_FLAG: &str = "may need a restart";
 // Providers: profile title, missing key and endpoint action.
 pub const PROVIDERS_TITLE_FMT: &str = "Providers · profile ";
-pub const PROVIDERS_NO_KEY: &str = "no key";
 pub const PROVIDERS_ADD_ENDPOINT: &str = "+ Add an endpoint";
 // Providers: key entry title and masked input.
 pub const PROVIDERS_KEY_CARD_TITLE_FMT: &str = "API key for ";
 pub const PROVIDERS_KEY_MASK: &str = "••••••••••••••••••••••••••••••••••••••••…";
-// Providers: rows, key status and sign-in status.
+// Providers: rows, browse statuses and sign-in status.
 pub const PROVIDERS_OLLAMA: &str = "Ollama Cloud";
 pub const PROVIDERS_OPENROUTER: &str = "OpenRouter";
-pub const PROVIDERS_READY: &str = "ready ·";
+pub const PROVIDERS_LISTED_READY: &str = "listed ready";
+pub const PROVIDERS_KEY_SAVED: &str = "key saved";
+pub const PROVIDERS_NEEDS_SETUP: &str = "needs setup";
 pub const PROVIDERS_KEY_TAIL: &str = "key …";
 pub const PROVIDERS_SIGNED_IN: &str = "signed in";
 pub const PROVIDERS_NOT_SIGNED_IN: &str = "not signed in";

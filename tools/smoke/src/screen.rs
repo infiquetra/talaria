@@ -24,7 +24,7 @@ const CARD_LINES: usize = 25;
 const BLOCK_LINES: usize = 12;
 
 /// A number alone on its line: a list marker and a trailing dot are allowed.
-const COUNTING_LINE: &str = r"(?m)^[^\p{L}\d\n]{0,6}(\d{1,4})[.)]?\s*$";
+const COUNTING_LINE: &str = r"(?m)^[ \t*+•-]{0,6}(\d{1,4})[.)]?\s*$";
 /// The exit marker the launch line prints.
 const EXIT_MARKER: &str = r"SMOKE_EXIT:(\d+)";
 /// The number of a numbered choice line, with the word it holds.
@@ -178,7 +178,18 @@ pub fn counting_values(visible: &str, after_prompt: &str) -> Vec<u32> {
     let pattern =
         cached("counting", COUNTING_LINE).unwrap_or_else(|| Regex::new("$^").expect("never"));
     let mut values = Vec::new();
+    let mut in_tool_output = false;
     for line in &lines[start..] {
+        if line.trim_start().starts_with('⎿') {
+            in_tool_output = true;
+            continue;
+        }
+        if in_tool_output {
+            if line.starts_with("     ") {
+                continue;
+            }
+            in_tool_output = false;
+        }
         for found in pattern.captures_iter(line) {
             let Some(number) = found.get(1) else {
                 continue;
