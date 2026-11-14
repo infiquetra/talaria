@@ -4,8 +4,8 @@ use super::text::{
     remove_whitespace, strip_terminal_escapes, text_after_non_whitespace, trim_leading_breaks,
 };
 use super::{
-    AssistantCell, Cell, Effect, Event, NoticeKind, ReasoningCell, SessionState, StatusNote,
-    TodoState, ToolCell, ToolProgress, ToolStatus, TurnOutcome, TurnState,
+    AssistantCell, Cell, Effect, Event, NoticeKind, NoticeRow, ReasoningCell, SessionState,
+    StatusNote, TodoState, ToolCell, ToolProgress, ToolStatus, TurnOutcome, TurnState,
 };
 use hermes_contract::events::Notification;
 use serde_json::Value;
@@ -509,6 +509,24 @@ fn session(
                         }
                     }
                 }
+            }
+        }
+        "notification.show" => {
+            if let Some(text) = payload["text"].as_str().filter(|text| !text.is_empty()) {
+                state.notices.apply_show(NoticeRow {
+                    text: text.to_owned(),
+                    level: payload["level"].as_str().unwrap_or("").to_owned(),
+                    kind: payload["kind"].as_str().unwrap_or("").to_owned(),
+                    key: payload["key"].as_str().map(str::to_owned),
+                    id: payload["id"].as_str().map(str::to_owned),
+                    detail: payload["detail"].as_str().map(str::to_owned),
+                    ttl_ms: payload["ttl_ms"].as_i64(),
+                });
+            }
+        }
+        "notification.clear" => {
+            if let Some(key) = payload["key"].as_str() {
+                state.notices.apply_clear(key);
             }
         }
         "session.usage" => super::usage::merge_usage(&mut state.usage, payload, true),
