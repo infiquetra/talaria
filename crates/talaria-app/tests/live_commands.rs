@@ -38,15 +38,27 @@ async fn live_catalog_completion_and_read_commands() {
     let endpoint = match discover_with(&home(), &options).await {
         Ok(endpoint) => endpoint,
         Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             require_or_skip("no Hermes gateway reachable");
             return;
         }
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         require_or_skip(&reason);
         return;
     }
-    let profile = match endpoint.resolve_profile("fixture") {
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
         Err(_) => {
             require_or_skip("the fixture profile is not served");

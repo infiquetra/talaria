@@ -10,6 +10,28 @@ use talaria_core::fleet::acp::AcpCell;
 #[tokio::test]
 #[ignore = "gate: operator-configured agent"]
 async fn live_acp_session_reaches_the_fleet() {
+    let identity_options = hermes_client::DiscoverOptions {
+        control_timeout: Duration::from_secs(5),
+        ensure: hermes_client::EnsurePolicy::Never,
+    };
+    match hermes_client::discover_with(&hermes_client::default_home(), &identity_options).await {
+        Ok(endpoint) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(
+                    endpoint.code_version(),
+                    endpoint.code_sha()
+                )
+            );
+        }
+        Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+        }
+    }
+
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         println!("LIVE_ACP_RESULT: SKIPPED (configuration home is unavailable)");
         return;
@@ -28,7 +50,12 @@ async fn live_acp_session_reaches_the_fleet() {
         return;
     };
     let id = entry.id.clone();
-    let fleet = FleetService::start(home, "fixture".into(), FleetConfig::default(), |_| {});
+    let fleet = FleetService::start(
+        home,
+        hermes_contract::pinned::live_profile(),
+        FleetConfig::default(),
+        |_| {},
+    );
     let mut service = AcpService::start(config, fleet);
     let cwd = std::env::current_dir().expect("working directory");
     let key = service

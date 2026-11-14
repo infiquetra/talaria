@@ -12,7 +12,9 @@ use talaria_app::launch::{Launch, StartMode, new_request_id};
 use talaria_app::mutation::MutationClient;
 use talaria_core::mutation::{MutationOutcome, MutationRequest};
 
-const PROFILE: &str = "fixture";
+fn profile_name() -> String {
+    hermes_contract::pinned::live_profile()
+}
 const OPEN_MODEL: &str = "minimax-m3.1-flash";
 const PROVIDER: &str = "ollama-cloud";
 
@@ -46,7 +48,7 @@ fn skip(reason: &str) -> bool {
     false
 }
 
-fn gateway_code_sha(home: &std::path::Path) -> Result<Option<String>, String> {
+fn gateway_skip_reason(home: &std::path::Path) -> Result<Option<String>, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -58,16 +60,35 @@ fn gateway_code_sha(home: &std::path::Path) -> Result<Option<String>, String> {
         };
         discover_with(home, &options)
             .await
-            .map(|endpoint| endpoint.code_sha().map(str::to_owned))
-            .map_err(|error| sanitize(&error.to_string()))
+            .map(|endpoint| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(
+                        endpoint.code_version(),
+                        endpoint.code_sha()
+                    )
+                );
+                hermes_contract::pinned::live_test_skip(
+                    endpoint.code_version(),
+                    endpoint.code_sha(),
+                    hermes_contract::pinned::live_exact(),
+                )
+            })
+            .map_err(|error| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(None, None)
+                );
+                sanitize(&error.to_string())
+            })
     })
 }
 
 /// True when the pinned gateway is up. A skip prints its reason and returns false.
 fn begin() -> bool {
-    match gateway_code_sha(&hermes_home()) {
+    match gateway_skip_reason(&hermes_home()) {
         Err(reason) => skip(&reason),
-        Ok(sha) => match hermes_contract::pinned::live_skip_reason(sha.as_deref()) {
+        Ok(reason) => match reason {
             Some(reason) => skip(&reason),
             None => true,
         },
@@ -182,7 +203,7 @@ async fn switch_models() -> Result<(), String> {
         model: None,
         provider: None,
         effort: None,
-        profile: PROFILE.to_string(),
+        profile: profile_name(),
         folder: work.path().to_path_buf(),
         record: None,
         bench_replay: None,

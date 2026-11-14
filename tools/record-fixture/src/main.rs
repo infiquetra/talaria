@@ -14,6 +14,7 @@ use hermes_client::{
     Scope, Speed, connect_with, default_home, discover_with, handshake, local_forbidden_literals,
     mint_ticket, scan_for_secrets, scan_literals, ws_url,
 };
+use hermes_contract::pinned::{live_exact, live_profile};
 use record_fixture::{
     AttemptResult, DiscoveryFacts, DriverConfig, EnvFacts, FLEET_PEEK, FLEET_REGISTRY,
     NO_TODO_TOOL, Preflight, PreflightInput, SCENARIOS, SCRIPTED_SCENARIOS, SESSION_PICKER,
@@ -40,7 +41,7 @@ enum Command {
         /// The Hermes home. Default: the one Talaria would use.
         #[arg(long)]
         home: Option<PathBuf>,
-        #[arg(long, default_value = "fixture")]
+        #[arg(long, default_value_t = live_profile())]
         profile: String,
         #[arg(long, default_value = "minimax-m3.1-flash")]
         model: String,
@@ -170,7 +171,7 @@ async fn record(settings: &RecordSettings) -> Outcome {
         login_name: login.clone(),
         host_name: gethostname::gethostname().to_string_lossy().into_owned(),
     };
-    let checked = match preflight(&input).await {
+    let checked = match preflight(&input, live_exact()).await {
         Ok(checked) => checked,
         Err(error) => {
             eprintln!("{}", error.message);

@@ -526,11 +526,35 @@ async fn live_worktree_agent_edits_only_the_worktree() {
     let endpoint = match hermes_client::discover_with(&home, &options).await {
         Ok(endpoint) => endpoint,
         Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             eprintln!("skipped: gateway unavailable");
             return;
         }
     };
-    if endpoint.resolve_profile("fixture").is_err() {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        eprintln!("SKIPPED ({reason})");
+        assert_ne!(
+            std::env::var("TALARIA_LIVE_REQUIRE").ok().as_deref(),
+            Some("1"),
+            "live gateway required"
+        );
+        return;
+    }
+    if endpoint
+        .resolve_profile(&hermes_contract::pinned::live_profile())
+        .is_err()
+    {
         eprintln!("skipped: fixture profile unavailable");
         return;
     }
@@ -543,7 +567,7 @@ async fn live_worktree_agent_edits_only_the_worktree() {
             args: None,
             started_at_ms: 0,
             seed: 0,
-            profile: "fixture".into(),
+            profile: hermes_contract::pinned::live_profile(),
             on_unknown: OnUnknown::Wait,
             talaria_version: "test".into(),
             hermes: json!({}),
@@ -586,7 +610,7 @@ async fn live_worktree_agent_edits_only_the_worktree() {
             ..PortConfig::default()
         },
         wires,
-        "fixture",
+        &hermes_contract::pinned::live_profile(),
     )
     .await
     .unwrap();
@@ -594,7 +618,7 @@ async fn live_worktree_agent_edits_only_the_worktree() {
     req.prompt="Use the file tool to create talaria-wt-proof.txt in your current directory containing the word proof. Do not modify any other file.".into();
     req.model = Some("minimax-m3.1-flash".into());
     req.provider = Some("ollama-cloud".into());
-    req.profile = Some("fixture".into());
+    req.profile = Some(hermes_contract::pinned::live_profile());
     req.toolsets = Some(vec!["file".into()]);
     journal
         .record_engine_event(&EngineEvent::AgentStarted {
@@ -604,7 +628,7 @@ async fn live_worktree_agent_edits_only_the_worktree() {
         .await
         .unwrap();
     let defaults = LaunchDefaults {
-        profile: "fixture".into(),
+        profile: hermes_contract::pinned::live_profile(),
         cwd: fixture.repo.clone(),
         toolsets: Some(vec!["file".into()]),
         worktrees: Some(provider.clone()),

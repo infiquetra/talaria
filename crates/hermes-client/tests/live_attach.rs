@@ -64,9 +64,11 @@ async fn live_attach_prints_timings_and_never_the_ticket() {
         started.elapsed().as_millis()
     ));
 
-    let profile = endpoint.resolve_profile("fixture").unwrap_or_else(|err| {
-        panic!("fixture lookup failed: {err} | {}", err.next_step());
-    });
+    let profile = endpoint
+        .resolve_profile(&hermes_contract::pinned::live_profile())
+        .unwrap_or_else(|err| {
+            panic!("fixture lookup failed: {err} | {}", err.next_step());
+        });
     let started = Instant::now();
     let ticket = mint_ticket(
         &env.home,

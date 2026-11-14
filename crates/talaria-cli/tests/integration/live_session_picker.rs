@@ -31,7 +31,13 @@ fn skip_reason() -> Option<String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|error| error.to_string())
+        .map_err(|error| {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            error.to_string()
+        })
         .ok()?;
     let found = runtime.block_on(async {
         let options = hermes_client::DiscoverOptions {
@@ -40,11 +46,30 @@ fn skip_reason() -> Option<String> {
         };
         hermes_client::discover_with(&hermes_home(), &options)
             .await
-            .map(|endpoint| endpoint.code_sha().map(str::to_owned))
-            .map_err(|error| error.to_string())
+            .map(|endpoint| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(
+                        endpoint.code_version(),
+                        endpoint.code_sha()
+                    )
+                );
+                hermes_contract::pinned::live_test_skip(
+                    endpoint.code_version(),
+                    endpoint.code_sha(),
+                    hermes_contract::pinned::live_exact(),
+                )
+            })
+            .map_err(|error| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(None, None)
+                );
+                error.to_string()
+            })
     });
     match found {
-        Ok(sha) => hermes_contract::pinned::live_skip_reason(sha.as_deref()),
+        Ok(sha) => sha,
         Err(reason) => Some(reason),
     }
 }
@@ -200,7 +225,7 @@ fn launch_in(folder: PathBuf, mode: StartMode) -> Launch {
         model: None,
         provider: None,
         effort: None,
-        profile: "fixture".to_string(),
+        profile: hermes_contract::pinned::live_profile(),
         folder,
         record: None,
         bench_replay: None,
@@ -286,7 +311,7 @@ fn live_picker_lists_healthy_gateway() {
             let mut service = DirectoryService::new();
             let start = Instant::now();
             let scope = service
-                .open(&hermes_home(), "fixture")
+                .open(&hermes_home(), &hermes_contract::pinned::live_profile())
                 .await
                 .unwrap_or_else(|error| panic!("round {round}: no side connection: {error:?}"));
             let profiles = match scope {
@@ -427,7 +452,7 @@ fn live_picker_sibling_routes() {
         // Both rows list with their titles.
         let mut service = DirectoryService::new();
         service
-            .open(&hermes_home(), "fixture")
+            .open(&hermes_home(), &hermes_contract::pinned::live_profile())
             .await
             .unwrap_or_else(|error| panic!("no side connection: {error:?}"));
         let (tx, mut rx) = mpsc::channel(64);

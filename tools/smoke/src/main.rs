@@ -45,7 +45,7 @@ struct Cli {
     #[arg(long, global = true, default_value = "herdr")]
     herdr: PathBuf,
     /// The profile the session runs in.
-    #[arg(long, global = true, default_value = "fixture")]
+    #[arg(long, global = true, default_value_t = live_profile())]
     profile: String,
     /// The model the session uses.
     #[arg(long, global = true, default_value = "minimax-m3.1-flash")]
@@ -75,6 +75,14 @@ struct Cli {
 enum Command {
     /// Run the smoke test.
     Run,
+}
+
+fn live_profile() -> String {
+    std::env::var("TALARIA_LIVE_PROFILE")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "fixture".to_owned())
 }
 
 fn main() -> ExitCode {

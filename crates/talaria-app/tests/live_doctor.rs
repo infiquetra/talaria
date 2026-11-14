@@ -18,7 +18,9 @@ async fn reads_the_real_gateway() {
             return;
         }
     };
-    let facts = DoctorService::new(env.home.clone()).gather("fixture").await;
+    let facts = DoctorService::new(env.home.clone())
+        .gather(&hermes_contract::pinned::live_profile())
+        .await;
     let report = diagnose(&facts);
     for id in [CheckId::Gateway, CheckId::Capabilities, CheckId::Attach] {
         let row = report

@@ -41,7 +41,7 @@ fn public_reason(reason: &str) -> String {
         .join(" ")
 }
 
-fn gateway_code_sha(home: &Path) -> Result<Option<String>, String> {
+fn gateway_skip_reason(home: &Path) -> Result<Option<String>, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -53,16 +53,34 @@ fn gateway_code_sha(home: &Path) -> Result<Option<String>, String> {
         };
         discover_with(home, &options)
             .await
-            .map(|endpoint| endpoint.code_sha().map(str::to_owned))
-            .map_err(|error| public_reason(&error.to_string()))
+            .map(|endpoint| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(
+                        endpoint.code_version(),
+                        endpoint.code_sha()
+                    )
+                );
+                hermes_contract::pinned::live_test_skip(
+                    endpoint.code_version(),
+                    endpoint.code_sha(),
+                    hermes_contract::pinned::live_exact(),
+                )
+            })
+            .map_err(|error| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(None, None)
+                );
+                public_reason(&error.to_string())
+            })
     })
 }
 
 fn skip_reason() -> Option<String> {
-    match gateway_code_sha(&hermes_home()) {
+    match gateway_skip_reason(&hermes_home()) {
         Err(reason) => Some(reason),
-        Ok(sha) => hermes_contract::pinned::live_skip_reason(sha.as_deref())
-            .map(|reason| public_reason(&reason)),
+        Ok(reason) => reason.map(|reason| public_reason(&reason)),
     }
 }
 
@@ -83,7 +101,7 @@ fn launch(folder: &Path, record: PathBuf) -> Launch {
         model: Some("minimax-m3.1-flash".to_string()),
         provider: Some("ollama-cloud".to_string()),
         effort: None,
-        profile: "fixture".to_string(),
+        profile: hermes_contract::pinned::live_profile(),
         folder: folder.to_path_buf(),
         record: Some(record),
         bench_replay: None,

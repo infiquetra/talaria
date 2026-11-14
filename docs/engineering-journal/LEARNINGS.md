@@ -2,6 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+### 2026-11-14 — A generated-contract pin and a live gateway floor answer different questions
+
+**Evidence.** At Hermes v0.23.0, `gateway/control_socket.py` includes the identity
+fields from `gateway/status.py`, which reads `get_code_identity()["version"]`.
+`hermes_cli/version_info.py` sets that value to `base_version`; the separate
+display version can contain a `+` suffix. The fail-first tests for issue #554
+distinguish a supported version with a different commit from an exact-pin run.
+
+**Mechanism.** `hermes_contract::pinned` keeps the generated-contract revision
+check unchanged and gives live callers a separate version floor. Callers print
+both identity fields before admission, check an optional feature floor before
+profile lookup, and resolve request profiles from `TALARIA_LIVE_PROFILE`.
+Pure parsing helpers let tests cover these choices without changing process
+environment variables.
+
+**Generalizable rule.** Keep schema provenance separate from runtime support,
+report the runtime identity even when admission skips, and make exact-revision
+verification an explicit mode.
+
 ## 2026-11-14 — Fixture faults must follow the pin
 
 **Evidence.** `tools/smoke/tests/integration/steps4a.rs` planted the missing

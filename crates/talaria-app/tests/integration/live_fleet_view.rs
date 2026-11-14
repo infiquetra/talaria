@@ -75,15 +75,27 @@ async fn gate(name: &str) -> Option<Wire> {
     let endpoint = match discover_with(&home(), &options).await {
         Ok(endpoint) => endpoint,
         Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             skip(name, "no Hermes gateway reachable");
             return None;
         }
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         skip(name, &reason);
         return None;
     }
-    let profile = match endpoint.resolve_profile("fixture") {
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
         Err(_) => {
             skip(name, "the fixture profile is not served");
@@ -147,7 +159,7 @@ fn peek_for(folder: &Path) -> PeekService {
             model: Some("minimax-m3.1-flash".to_owned()),
             provider: Some("ollama-cloud".to_owned()),
             effort: None,
-            profile: "fixture".to_owned(),
+            profile: hermes_contract::pinned::live_profile(),
             folder: folder.to_path_buf(),
             record: None,
             bench_replay: None,
@@ -162,7 +174,7 @@ fn peek_for(folder: &Path) -> PeekService {
 
 fn row_key(session_id: &str) -> RowKey {
     RowKey {
-        profile: "fixture".to_owned(),
+        profile: hermes_contract::pinned::live_profile(),
         session_id: session_id.to_owned(),
     }
 }

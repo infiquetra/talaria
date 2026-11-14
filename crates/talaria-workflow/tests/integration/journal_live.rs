@@ -15,10 +15,10 @@ fn unique(label: &str) -> String {
     )
 }
 fn create(id: &str, model: &str) -> Value {
-    json!({"profile":"fixture","request_id":id,"source":"tool","hidden":true,"model":model,"provider":"ollama-cloud","toolsets":["search"]})
+    json!({"profile":hermes_contract::pinned::live_profile(),"request_id":id,"source":"tool","hidden":true,"model":model,"provider":"ollama-cloud","toolsets":["search"]})
 }
 fn submit(session: &str, id: &str, text: &str) -> Value {
-    json!({"profile":"fixture","session_id":session,"submission_id":id,"text":text,"finite":true})
+    json!({"profile":hermes_contract::pinned::live_profile(),"session_id":session,"submission_id":id,"text":text,"finite":true})
 }
 async fn make_session(port: &LivePort, id: &str) -> String {
     port.call("session.create", create(id, "minimax-m3.1-flash"))
@@ -154,7 +154,7 @@ async fn live_turn_survives_runner_disconnect() {
     second
         .call(
             "session.resume",
-            json!({"profile":"fixture","session_id":session}),
+            json!({"profile":hermes_contract::pinned::live_profile(),"session_id":session}),
         )
         .await
         .unwrap();
@@ -201,7 +201,7 @@ async fn live_unknown_after_restart() {
     let snapshot = second
         .call(
             "session.resume",
-            json!({"profile":"fixture","session_id":session}),
+            json!({"profile":hermes_contract::pinned::live_profile(),"session_id":session}),
         )
         .await
         .unwrap();
@@ -212,7 +212,7 @@ async fn live_unknown_after_restart() {
             .iter()
             .any(|p| p["admission_id"] == admission && p["status"] == "unknown")
     );
-    let receipt=second.call("prompt.receipt",json!({"profile":"fixture","session_id":session,"admission_id":admission,"include_result":true})).await.unwrap();
+    let receipt=second.call("prompt.receipt",json!({"profile":hermes_contract::pinned::live_profile(),"session_id":session,"admission_id":admission,"include_result":true})).await.unwrap();
     assert_eq!(receipt["status"], "unknown");
     let params = json!({"session_id":session,"admission_id":admission,"execution_generation":receipt["execution_generation"]});
     let first = second

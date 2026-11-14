@@ -898,12 +898,15 @@ async fn incompatible_live_revision(home: &Path) -> Option<String> {
             return None;
         }
         let result = reply.get("result")?.as_object()?;
-        let sha = result.get("code_sha")?.as_str()?;
-        // Restrict the only peer text included in a skip reason to a revision.
-        if !(7..=40).contains(&sha.len()) || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return None;
-        }
-        hermes_contract::pinned::live_skip_reason(Some(sha))
+        let version = result
+            .get("code_version")
+            .and_then(serde_json::Value::as_str);
+        let sha = result.get("code_sha").and_then(serde_json::Value::as_str);
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(version, sha)
+        );
+        hermes_contract::pinned::live_test_skip(version, sha, hermes_contract::pinned::live_exact())
     })
     .await
     .ok()
@@ -911,6 +914,10 @@ async fn incompatible_live_revision(home: &Path) -> Option<String> {
 }
 
 pub async fn live_preconditions() -> Result<LiveEnv, String> {
+    live_preconditions_for(None).await
+}
+
+pub async fn live_preconditions_for(feature: Option<(&str, &str)>) -> Result<LiveEnv, String> {
     let home = default_home();
     let options = DiscoverOptions {
         control_timeout: Duration::from_secs(5),
@@ -919,6 +926,10 @@ pub async fn live_preconditions() -> Result<LiveEnv, String> {
     let endpoint = match discover_with(&home, &options).await {
         Ok(endpoint) => endpoint,
         Err(DiscoveryError::NoGateway) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             return Err("no Hermes gateway is running for this home".to_string());
         }
         Err(DiscoveryError::InvalidIdentity) => {
@@ -930,7 +941,24 @@ pub async fn live_preconditions() -> Result<LiveEnv, String> {
         }
         Err(err) => panic!("discovery failed: {err} | {}", err.next_step()),
     };
-    let fixture = match endpoint.resolve_profile("fixture") {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return Err(reason);
+    }
+    if let Some((name, since)) = feature
+        && let Some(reason) =
+            hermes_contract::pinned::feature_skip_reason(endpoint.code_version(), name, since)
+    {
+        return Err(reason);
+    }
+    let fixture = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
         Err(ProfileLookupError::NeverDiscovered { name }) => {
             return Err(format!(
@@ -939,9 +967,6 @@ pub async fn live_preconditions() -> Result<LiveEnv, String> {
         }
         Err(err) => panic!("profile lookup failed: {err} | {}", err.next_step()),
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
-        return Err(reason);
-    }
     Ok(LiveEnv {
         home,
         endpoint,

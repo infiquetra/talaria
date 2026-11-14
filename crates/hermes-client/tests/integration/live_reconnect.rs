@@ -52,7 +52,7 @@ async fn dropped_link_mid_turn_replays_exactly_once() {
     };
     let deadline = Instant::now() + BUDGET;
     let relay = start_relay(&env).await;
-    let dial = GatewayDial::new(env.home.clone(), "fixture".to_string())
+    let dial = GatewayDial::new(env.home.clone(), hermes_contract::pinned::live_profile())
         .via_origin(relay.origin().to_string());
     let (link, mut rx) = start_link(dial, LinkConfig::default()).await;
     expect_connected(&mut rx, deadline).await;
@@ -213,7 +213,7 @@ async fn long_outage_yields_one_gap_then_resync() {
         },
         ..LinkConfig::default()
     };
-    let dial_a = GatewayDial::new(env.home.clone(), "fixture".to_string())
+    let dial_a = GatewayDial::new(env.home.clone(), hermes_contract::pinned::live_profile())
         .via_origin(relay.origin().to_string());
     let (link_a, mut rx_a) = start_link(dial_a, config_a).await;
     expect_connected(&mut rx_a, deadline).await;
@@ -254,7 +254,7 @@ async fn long_outage_yields_one_gap_then_resync() {
 
     // Link B has no relay. It resumes the session and keeps it busy until the numbering has
     // moved past the gateway's 512-frame replay ring.
-    let dial_b = GatewayDial::new(env.home.clone(), "fixture".to_string());
+    let dial_b = GatewayDial::new(env.home.clone(), hermes_contract::pinned::live_profile());
     let (link_b, mut rx_b) = start_link(dial_b, LinkConfig::default()).await;
     expect_connected(&mut rx_b, deadline).await;
     let client_b = link_b.client();

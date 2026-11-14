@@ -19,7 +19,9 @@ use talaria_workflow::{
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const MODEL: &str = "minimax-m3.1-flash";
 const PROVIDER: &str = "ollama-cloud";
-const PROFILE: &str = "fixture";
+fn profile_name() -> String {
+    hermes_contract::pinned::live_profile()
+}
 const PROMPT: &str = "This is an interactive workflow control exercise. Use the search tool to find information about workflow testing. If a later steer asks you to name one file only, then stop, print exactly one filename first, but continue this exercise afterward: that steer's 'then stop' means stop naming files, not finish the turn. Immediately after the filename, perform eight separate sequential search tool calls, one word per call, in this order: workflow, journal, runner, progress, staffing, worktree, builtins, ultracode. Do not combine or parallelize those calls. Then count from 1 to 2000, one number per line, without abbreviation or skipping numbers. Keep doing that work until the client interrupts you. Do not run shell commands or change files.";
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -29,7 +31,7 @@ fn now_ms() -> i64 {
 }
 fn launch() -> ResolvedLaunch {
     ResolvedLaunch {
-        profile: PROFILE.into(),
+        profile: profile_name(),
         model: MODEL.into(),
         provider: Some(PROVIDER.into()),
         effort: None,
@@ -67,7 +69,7 @@ async fn call(client: &Client, method: &str, params: Value) -> Result<Value> {
 }
 impl Gateway for LiveGateway {
     async fn start(&mut self, request: &str, submission: &str) -> Result<Admission> {
-        let created = call(&self.0, "session.create", json!({"profile": PROFILE, "request_id": request,
+        let created = call(&self.0, "session.create", json!({"profile": profile_name(), "request_id": request,
             "source":"tool", "hidden":true, "model":MODEL, "provider":PROVIDER, "toolsets":["search"]})).await?;
         let session = created["session_id"]
             .as_str()
@@ -177,7 +179,7 @@ impl<G: Gateway> Consumer<G> {
                 args: None,
                 started_at_ms: now_ms(),
                 seed: 1,
-                profile: PROFILE.into(),
+                profile: profile_name(),
                 on_unknown: OnUnknown::Wait,
                 talaria_version: env!("CARGO_PKG_VERSION").into(),
                 hermes: json!({}),
@@ -509,14 +511,30 @@ async fn connect_live() -> Result<LiveGateway> {
             control_timeout: Duration::from_secs(5),
         },
     )
-    .await?;
+    .await
+    .map_err(|error| {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
+        error
+    })?;
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
     if let Ok(url) = std::env::var("TALARIA_HERMES_URL") {
         endpoint = endpoint.with_api_origin(url.trim())?;
     }
-    if !matches!(endpoint.code_version(), Some("0.22.4" | "v0.22.4")) {
-        return Err("gateway release must be 0.22.4".into());
+
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return Err(reason.into());
     }
-    let profile = endpoint.resolve_profile(PROFILE)?;
+    let profile = endpoint.resolve_profile(&profile_name())?;
     let ticket = hermes_client::mint_ticket(
         &home,
         &endpoint,
@@ -532,7 +550,7 @@ async fn connect_live() -> Result<LiveGateway> {
     let options = call(
         &client,
         "model.options",
-        json!({"profile":PROFILE,"refresh":true}),
+        json!({"profile":profile_name(),"refresh":true}),
     )
     .await?;
     let provider = options["providers"]

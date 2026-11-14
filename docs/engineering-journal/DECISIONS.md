@@ -2,6 +2,25 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-14 — Live tests admit supported gateway versions
+
+**Context.** The release used to generate Talaria's contract types remains pinned,
+but ordinary live verification must also exercise newer supported Hermes
+gateways. Requiring that gateway to run the pin's commit silently skips that
+verification.
+
+**Decision.** Live tests and fixture recording default to a shared Hermes 0.23.0
+floor. `TALARIA_LIVE_EXACT=1` selects the unchanged pinned-commit check, and
+`TALARIA_LIVE_REQUIRE=1` still turns skips into failures. Each live test reports
+the gateway version and full commit. `TALARIA_LIVE_PROFILE` defaults to `fixture`
+for live tests, smoke, and recording, while explicit tool profile flags win.
+The application's profile default, doctor minimum, examples, generated contract,
+and release gates stay outside this change.
+
+**Revisit when.** A supported gateway fails the live contract or a feature needs
+a newer Hermes release; update the relevant floor or feature requirement with
+evidence, while retaining the distinction from the generated-contract pin.
+
 ## 2026-11-11 — Every decoded Hermes event this client ignores
 
 **Context.** Talaria at commit ee5c4881 decodes 85 Hermes event names. The map is `crates/hermes-contract/src/events.rs` lines 181 to 264, plus `voice.interrupted` at line 165. A set session id that is neither open nor retained returns at `app.rs:8954`. A missing id returns at `app.rs:8986` when a session is open, and at `app.rs:8981` when none is. A decoded name with no earlier arm hits the silent catch-all at `crates/talaria-core/src/session/reducer.rs:523`. A wire name outside the 85 may draw one diagnostic at `reducer.rs:533` and is not a row. A workflow view that refuses a name at `crates/talaria-workflow/src/progress/live.rs:1108` does not handle it. The public page is `docs/hermes-signals.md`.

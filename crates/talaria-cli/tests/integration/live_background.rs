@@ -49,12 +49,28 @@ async fn attach() -> Option<LiveLink> {
     let endpoint = match discover_with(&home, &options).await {
         Ok(endpoint) => endpoint,
         Err(DiscoveryError::NoGateway) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             report_skip("no gateway");
             return None;
         }
         Err(error) => panic!("discovery failed: {error}"),
     };
-    let profile = match endpoint.resolve_profile("fixture") {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        report_skip(&reason);
+        return None;
+    }
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
         Err(ProfileLookupError::NeverDiscovered { .. }) => {
             report_skip("fixture not served");
@@ -62,10 +78,6 @@ async fn attach() -> Option<LiveLink> {
         }
         Err(error) => panic!("fixture lookup failed: {error}"),
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
-        report_skip(&reason);
-        return None;
-    }
     let ticket = mint_ticket(
         &home,
         &endpoint,

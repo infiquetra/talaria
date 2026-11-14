@@ -43,9 +43,15 @@ enum Tk {
 impl Tk {
     fn json(self) -> Value {
         match self {
-            Tk::Ip => json!({"purpose": "interactive", "scope": "profile", "profile": "fixture"}),
-            Tk::Ih => json!({"purpose": "interactive", "scope": "host", "profile": "fixture"}),
-            Tk::N => json!({"purpose": "native-http", "scope": "profile", "profile": "fixture"}),
+            Tk::Ip => {
+                json!({"purpose": "interactive", "scope": "profile", "profile": hermes_contract::pinned::live_profile()})
+            }
+            Tk::Ih => {
+                json!({"purpose": "interactive", "scope": "host", "profile": hermes_contract::pinned::live_profile()})
+            }
+            Tk::N => {
+                json!({"purpose": "native-http", "scope": "profile", "profile": hermes_contract::pinned::live_profile()})
+            }
             Tk::No => Value::Null,
         }
     }
@@ -931,7 +937,13 @@ impl Probe {
             }
             "C15" | "C22" => {
                 let origin = id == "C22";
-                let target = "/api/config?profile=fixture";
+                let target = &format!(
+                    "/api/config?{}",
+                    url::form_urlencoded::byte_serialize(
+                        hermes_contract::pinned::live_profile().as_bytes()
+                    )
+                    .collect::<String>()
+                );
                 self.rest("GET", target, RestTicket::Fresh, origin, None)
                     .await
             }
@@ -941,18 +953,36 @@ impl Probe {
                     .await
             }
             "C17" => {
-                let target = "/api/config?include_defaults=false&profile=fixture";
+                let target = &format!(
+                    "/api/config?include_defaults=false&{}",
+                    url::form_urlencoded::byte_serialize(
+                        hermes_contract::pinned::live_profile().as_bytes()
+                    )
+                    .collect::<String>()
+                );
                 self.rest("GET", target, RestTicket::Fresh, false, None)
                     .await
             }
             "C18" => {
-                let target = "/api/config/raw?profile=fixture";
+                let target = &format!(
+                    "/api/config/raw?{}",
+                    url::form_urlencoded::byte_serialize(
+                        hermes_contract::pinned::live_profile().as_bytes()
+                    )
+                    .collect::<String>()
+                );
                 self.rest("GET", target, RestTicket::Fresh, false, None)
                     .await
             }
             "C21" => {
                 let (ticket, mint_ms) = self.mint().await?;
-                let target = "/api/config?profile=fixture";
+                let target = &format!(
+                    "/api/config?{}",
+                    url::form_urlencoded::byte_serialize(
+                        hermes_contract::pinned::live_profile().as_bytes()
+                    )
+                    .collect::<String>()
+                );
                 let first = self
                     .rest(
                         "GET",
@@ -972,7 +1002,13 @@ impl Probe {
             "C23" => {
                 let (ticket, mint_ms) = self.mint().await?;
                 tokio::time::sleep(Duration::from_secs(31)).await;
-                let target = "/api/config?profile=fixture";
+                let target = &format!(
+                    "/api/config?{}",
+                    url::form_urlencoded::byte_serialize(
+                        hermes_contract::pinned::live_profile().as_bytes()
+                    )
+                    .collect::<String>()
+                );
                 let mut obs = self
                     .rest("GET", target, RestTicket::Given(ticket), false, None)
                     .await?;
@@ -980,12 +1016,18 @@ impl Probe {
                 Ok(obs)
             }
             "C24" => {
-                let target = "/api/config?profile=fixture";
+                let target = &format!(
+                    "/api/config?{}",
+                    url::form_urlencoded::byte_serialize(
+                        hermes_contract::pinned::live_profile().as_bytes()
+                    )
+                    .collect::<String>()
+                );
                 self.rest("GET", target, RestTicket::No, false, None).await
             }
             "C25" => self.socket(spec.ticket, "model.options", json!({})).await,
             "C26" => {
-                let params = json!({"profile": "fixture"});
+                let params = json!({"profile": hermes_contract::pinned::live_profile()});
                 self.socket(spec.ticket, "model.options", params).await
             }
             "C27" => {
@@ -997,17 +1039,23 @@ impl Probe {
                 self.socket(spec.ticket, "model.disconnect", params).await
             }
             "C29" => {
-                let target = "/api/env?profile=fixture";
+                let target = &format!(
+                    "/api/env?{}",
+                    url::form_urlencoded::byte_serialize(
+                        hermes_contract::pinned::live_profile().as_bytes()
+                    )
+                    .collect::<String>()
+                );
                 self.rest("GET", target, RestTicket::Fresh, false, None)
                     .await
             }
             "C41" => self.socket(spec.ticket, "profiles.list", json!({})).await,
             "C43" => {
-                let params = json!({"name": "fixture"});
+                let params = json!({"name": hermes_contract::pinned::live_profile()});
                 self.socket(spec.ticket, "profiles.describe", params).await
             }
             "C44" => {
-                let params = json!({"name": "fixture"});
+                let params = json!({"name": hermes_contract::pinned::live_profile()});
                 self.socket(spec.ticket, "profiles.configure", params).await
             }
             "C47" => {
@@ -1023,8 +1071,8 @@ impl Probe {
                 self.socket(spec.ticket, "config.get", params).await
             }
             "C50" => {
-                let target = format!("/api/config?profile={unserved}");
-                self.rest("GET", &target, RestTicket::Fresh, false, None)
+                let target = &format!("/api/config?profile={unserved}");
+                self.rest("GET", target, RestTicket::Fresh, false, None)
                     .await
             }
             "C51" => {
@@ -1552,7 +1600,11 @@ async fn probe_ticket_rules() {
 #[ignore]
 async fn probe_writes_round_trip_on_fixture() {
     let opt_in = std::env::var("TALARIA_PROBE_WRITES").ok();
-    if write_probe_allowed("fixture", opt_in.as_deref()).is_err() {
+    if write_probe_allowed(&hermes_contract::pinned::live_profile(), opt_in.as_deref()).is_err() {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
         println!("{PREFIX}: SKIPPED (write opt-in not set)");
         println!("requests sent: 0");
         return;
@@ -1561,11 +1613,15 @@ async fn probe_writes_round_trip_on_fixture() {
     let Some(mut probe) = prepare().await else {
         return;
     };
-    let explicit = "/api/config?include_defaults=false&profile=fixture";
+    let explicit = format!(
+        "/api/config?include_defaults=false&profile={}",
+        url::form_urlencoded::byte_serialize(hermes_contract::pinned::live_profile().as_bytes())
+            .collect::<String>()
+    );
     for id in WRITE_ROWS {
         let result = match *id {
-            "C10" => write_skin(&mut probe, explicit).await,
-            _ => write_show_cost(&mut probe, explicit).await,
+            "C10" => write_skin(&mut probe, &explicit).await,
+            _ => write_show_cost(&mut probe, &explicit).await,
         };
         if let Err(reason) = result {
             fail(Some(&probe), &format!("{id}: {reason}"));
@@ -1690,8 +1746,7 @@ async fn write_show_cost(probe: &mut Probe, explicit: &str) -> Result<(), String
         not_probed(probe, "C19");
         return Ok(());
     };
-    let body =
-        |value: bool| json!({"config": {"display": {"show_cost": value}}, "profile": "fixture"});
+    let body = |value: bool| json!({"config": {"display": {"show_cost": value}}, "profile": hermes_contract::pinned::live_profile()});
     let write = probe
         .rest(
             "PUT",

@@ -11,7 +11,9 @@ use hermes_contract::methods::canonical::profiles_list;
 use hermes_contract::methods::legacy::{profiles_configure, profiles_describe};
 use hermes_contract::schemas::{ProfileNameParams, ProfilesConfigureParams};
 
-const PROFILE: &str = "fixture";
+fn profile_name() -> String {
+    hermes_contract::pinned::live_profile()
+}
 const PROBE_TEXT: &str = "Talaria live probe (restored after the test)";
 
 struct LiveEnv {
@@ -69,15 +71,27 @@ async fn prepare() -> Option<LiveEnv> {
     {
         Ok(endpoint) => endpoint,
         Err(err) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             skip("LIVE_PROFILES_RESULT", &err.to_string());
             return None;
         }
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         skip("LIVE_PROFILES_RESULT", &reason);
         return None;
     }
-    let profile = match endpoint.resolve_profile(PROFILE) {
+    let profile = match endpoint.resolve_profile(&profile_name()) {
         Ok(profile) => profile,
         Err(err) => {
             skip("LIVE_PROFILES_RESULT", &err.to_string());
@@ -132,7 +146,8 @@ async fn live_profiles_list_classifies() {
         .expect("the clock runs")
         .as_millis() as u64;
     let rows = talaria_core::profiles::join_roster(Some(&roster), &gateway, None, &[], now_ms);
-    for name in ["default", PROFILE] {
+    let live_profile = profile_name();
+    for name in ["default", live_profile.as_str()] {
         let row = rows
             .iter()
             .find(|row| row.name == name)
@@ -179,7 +194,7 @@ impl RestoreGuard {
 
     fn restore(client: &Client, original: &str) -> Result<(), String> {
         let params = ProfilesConfigureParams {
-            name: Some(PROFILE.to_owned()),
+            name: Some(profile_name()),
             description: Some(original.to_owned()),
             ..Default::default()
         };
@@ -232,16 +247,17 @@ async fn live_profiles_configure_round_trip() {
         skip("LIVE_PROFILES_RESULT", "TALARIA_PROBE_WRITES != 1");
         return;
     }
-    let wanted = std::env::var("TALARIA_PROBE_PROFILE").unwrap_or_else(|_| PROFILE.to_owned());
+    let wanted = std::env::var("TALARIA_PROBE_PROFILE").unwrap_or_else(|_| profile_name());
     assert_eq!(
-        wanted, PROFILE,
+        wanted,
+        profile_name(),
         "this probe only runs against the fixture profile"
     );
     let Some(env) = prepare().await else { return };
     let _ = &env.inbound;
 
     let params = ProfileNameParams {
-        name: Some(PROFILE.to_owned()),
+        name: Some(profile_name()),
         ..Default::default()
     };
     let described = env
@@ -253,7 +269,7 @@ async fn live_profiles_configure_round_trip() {
 
     let guard = RestoreGuard::armed(env.client.clone(), original.clone());
     let params = ProfilesConfigureParams {
-        name: Some(PROFILE.to_owned()),
+        name: Some(profile_name()),
         description: Some(PROBE_TEXT.to_owned()),
         ..Default::default()
     };
@@ -266,7 +282,7 @@ async fn live_profiles_configure_round_trip() {
     assert_eq!(answer.applied.description, Some(true));
 
     let params = ProfileNameParams {
-        name: Some(PROFILE.to_owned()),
+        name: Some(profile_name()),
         ..Default::default()
     };
     let reread = env
@@ -277,7 +293,7 @@ async fn live_profiles_configure_round_trip() {
     assert_eq!(reread.description, PROBE_TEXT, "the probe text reads back");
 
     let params = ProfilesConfigureParams {
-        name: Some(PROFILE.to_owned()),
+        name: Some(profile_name()),
         description: Some(original.clone()),
         ..Default::default()
     };
@@ -289,7 +305,7 @@ async fn live_profiles_configure_round_trip() {
     assert!(restored.ok, "the restore applied");
 
     let params = ProfileNameParams {
-        name: Some(PROFILE.to_owned()),
+        name: Some(profile_name()),
         ..Default::default()
     };
     let reread = env

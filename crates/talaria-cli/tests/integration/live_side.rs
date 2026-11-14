@@ -30,13 +30,34 @@ async fn live_shell_and_btw() {
         model: Some("minimax-m3.1-flash".to_string()),
         provider: Some("ollama-cloud".to_string()),
         effort: None,
-        profile: "fixture".to_string(),
+        profile: hermes_contract::pinned::live_profile(),
         folder: work.path().to_path_buf(),
         record: None,
         bench_replay: None,
         no_ensure: true,
     };
     let home = hermes_client::default_home();
+    let identity_options = hermes_client::DiscoverOptions {
+        control_timeout: std::time::Duration::from_secs(5),
+        ensure: hermes_client::EnsurePolicy::Never,
+    };
+    match hermes_client::discover_with(&home, &identity_options).await {
+        Ok(endpoint) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(
+                    endpoint.code_version(),
+                    endpoint.code_sha()
+                )
+            );
+        }
+        Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+        }
+    }
     let connection = match ConnectionService::open(&launch, &home, None).await {
         Ok(connection) => connection,
         Err(error) => {

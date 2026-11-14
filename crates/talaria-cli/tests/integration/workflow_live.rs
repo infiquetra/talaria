@@ -57,15 +57,27 @@ async fn live_detached_review_run() {
     {
         Ok(endpoint) => endpoint,
         Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             skip("gateway");
             return;
         }
     };
-    if hermes_contract::pinned::live_skip_reason(endpoint.code_sha()).is_some() {
-        skip("pinned gateway revision");
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        skip(&reason);
         return;
     }
-    let profile = match endpoint.resolve_profile("fixture") {
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(p) => p,
         Err(_) => {
             skip("fixture profile");
@@ -139,7 +151,7 @@ async fn live_detached_review_run() {
             "--detach",
             "--json",
             "--profile",
-            "fixture",
+            &hermes_contract::pinned::live_profile(),
             "--record",
         ])
         .arg(&initial_record)

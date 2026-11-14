@@ -377,14 +377,25 @@ pub fn never_ensure() -> DiscoverOptions {
 
 /// Check the preconditions without starting anything. Runs discovery with
 /// `EnsurePolicy::Never`, so no `hermes` process is ever run.
-pub async fn preflight(input: &PreflightInput) -> Result<Preflight, PreconditionError> {
+pub async fn preflight(
+    input: &PreflightInput,
+    exact: bool,
+) -> Result<Preflight, PreconditionError> {
     if input.login_name.chars().count() < MIN_NAME {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
         return Err(PreconditionError::new(
             "the login name is unset or under four characters, so a recording cannot be proved \
              free of it; record as a user whose login name has four or more characters",
         ));
     }
     if input.host_name.chars().count() < MIN_NAME {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
         return Err(PreconditionError::new(
             "the host name is under four characters, so a recording cannot be proved free of \
              it; record on a machine whose host name has four or more characters",
@@ -393,26 +404,23 @@ pub async fn preflight(input: &PreflightInput) -> Result<Preflight, Precondition
     let endpoint = discover_with(&input.hermes_home, &never_ensure())
         .await
         .map_err(|error| {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             PreconditionError::new(format!(
                 "{error}. Set up the gateway first: {}",
                 error.next_step()
             ))
         })?;
-    let pinned = hermes_contract::pinned::COMMIT;
-    let code_sha = endpoint.code_sha().unwrap_or_default().to_lowercase();
-    if code_sha.is_empty() {
-        return Err(PreconditionError::new(format!(
-            "the gateway did not report its code commit; run Hermes at the pinned commit {} \
-             and restart its gateway",
-            &pinned[..12]
-        )));
-    }
-    if code_sha.len() < 7 || !pinned.starts_with(&code_sha) {
-        return Err(PreconditionError::new(format!(
-            "the gateway runs a different Hermes commit; update Hermes to the pinned commit {} \
-             and restart its gateway",
-            &pinned[..12]
-        )));
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) =
+        hermes_contract::pinned::live_test_skip(endpoint.code_version(), endpoint.code_sha(), exact)
+    {
+        return Err(PreconditionError::new(reason));
     }
     let profile = endpoint.resolve_profile(&input.profile).map_err(|error| {
         PreconditionError::new(format!(
@@ -471,7 +479,7 @@ pub async fn preflight(input: &PreflightInput) -> Result<Preflight, Precondition
     Ok(Preflight {
         profile_id: profile.as_ref().to_owned(),
         api_origin: endpoint.api_origin().to_owned(),
-        code_sha,
+        code_sha: endpoint.code_sha().unwrap_or_default().to_lowercase(),
         other_profiles,
     })
 }

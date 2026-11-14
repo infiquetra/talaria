@@ -27,12 +27,35 @@ fn live_skip_reason() -> Option<String> {
     };
     match runtime.block_on(hermes_client::discover_with(&home, &options)) {
         Ok(endpoint) => {
-            if endpoint.resolve_profile("fixture").is_err() {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(
+                    endpoint.code_version(),
+                    endpoint.code_sha()
+                )
+            );
+            if let Some(reason) = hermes_contract::pinned::live_test_skip(
+                endpoint.code_version(),
+                endpoint.code_sha(),
+                hermes_contract::pinned::live_exact(),
+            ) {
+                return Some(reason);
+            }
+            if endpoint
+                .resolve_profile(&hermes_contract::pinned::live_profile())
+                .is_err()
+            {
                 return Some("fixture profile is not served".into());
             }
-            hermes_contract::pinned::live_skip_reason(endpoint.code_sha())
+            None
         }
-        Err(_) => Some("no Hermes gateway answered".into()),
+        Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            Some("no Hermes gateway answered".into())
+        }
     }
 }
 
@@ -80,7 +103,7 @@ fn capture_tool_turn() -> String {
         model: None,
         provider: None,
         effort: None,
-        profile: "fixture".to_string(),
+        profile: hermes_contract::pinned::live_profile(),
         folder: work.path().to_path_buf(),
         record: None,
         bench_replay: None,
@@ -264,7 +287,7 @@ fn command(work: &std::path::Path) -> std::process::Command {
             "-p",
             "--no-ensure",
             "--profile",
-            "fixture",
+            &hermes_contract::pinned::live_profile(),
             "--provider",
             "ollama-cloud",
             "--model",
@@ -360,7 +383,7 @@ fn verify_two_finite_turns() {
         model: None,
         provider: None,
         effort: None,
-        profile: "fixture".into(),
+        profile: hermes_contract::pinned::live_profile(),
         folder: work.path().to_path_buf(),
         record: None,
         bench_replay: None,

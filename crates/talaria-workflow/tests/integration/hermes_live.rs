@@ -45,7 +45,7 @@ fn manifest() -> NewManifest {
         args: None,
         started_at_ms: 1,
         seed: 7,
-        profile: "fixture".into(),
+        profile: hermes_contract::pinned::live_profile(),
         on_unknown: OnUnknown::Wait,
         talaria_version: env!("CARGO_PKG_VERSION").into(),
         hermes: json!({}),
@@ -68,7 +68,7 @@ fn request(prompt: &str, schema: Option<Value>, toolsets: Vec<String>) -> AgentR
         model: Some("minimax-m3.1-flash".into()),
         provider: Some("ollama-cloud".into()),
         effort: None,
-        profile: Some("fixture".into()),
+        profile: Some(hermes_contract::pinned::live_profile()),
         toolsets: Some(toolsets),
         skills: None,
         isolation: None,
@@ -79,7 +79,7 @@ fn request(prompt: &str, schema: Option<Value>, toolsets: Vec<String>) -> AgentR
 
 fn defaults(cwd: &Path, toolsets: Vec<String>) -> LaunchDefaults {
     LaunchDefaults {
-        profile: "fixture".into(),
+        profile: hermes_contract::pinned::live_profile(),
         cwd: cwd.to_path_buf(),
         toolsets: Some(toolsets),
         worktrees: None,
@@ -191,7 +191,7 @@ async fn provider_authenticated(
     let result = client
         .call::<hermes_contract::methods::legacy::model_options::Marker>(
             hermes_contract::schemas::ModelOptionsParams {
-                profile: Some("fixture".into()),
+                profile: Some(hermes_contract::pinned::live_profile()),
                 ..hermes_contract::schemas::ModelOptionsParams::default()
             },
         )
@@ -214,9 +214,19 @@ async fn ready_home() -> Option<PathBuf> {
     };
     let endpoint = match hermes_client::discover_with(&home, &options).await {
         Ok(endpoint) => endpoint,
-        Err(_) => return skip("gateway"),
+        Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            return skip("gateway");
+        }
     };
-    let profile = match endpoint.resolve_profile("fixture") {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
         Err(_) => return skip("fixture"),
     };
@@ -248,12 +258,13 @@ async fn connect_profile(
         );
         let factory: Arc<dyn WireFactory> =
             Arc::new(LinkWireFactory::new(home.to_path_buf()).on_connect(hook));
-        let (port, feed) = HermesPort::with_wires(cfg, factory, "fixture")
-            .await
-            .unwrap_or_else(|error| panic!("gateway connect failed: {error}"));
+        let (port, feed) =
+            HermesPort::with_wires(cfg, factory, &hermes_contract::pinned::live_profile())
+                .await
+                .unwrap_or_else(|error| panic!("gateway connect failed: {error}"));
         (port, feed, Some(recorder))
     } else {
-        let (port, feed) = HermesPort::connect(cfg, "fixture")
+        let (port, feed) = HermesPort::connect(cfg, &hermes_contract::pinned::live_profile())
             .await
             .unwrap_or_else(|error| panic!("gateway connect failed: {error}"));
         (port, feed, None)
@@ -337,7 +348,7 @@ async fn assert_hidden(port: &HermesPort, path: &Path) {
     assert_eq!(info.provider.as_deref(), Some("ollama-cloud"));
     assert_eq!(info.source.as_deref(), Some("tool"));
     let listed = port
-        .live_session_ids("fixture")
+        .live_session_ids(&hermes_contract::pinned::live_profile())
         .await
         .expect("session list");
     assert!(

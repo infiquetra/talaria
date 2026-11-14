@@ -19,7 +19,9 @@ use talaria_app::connectors::{ConnectorsConsent, ConnectorsService};
 use talaria_core::connectors::{ConnectorsEffect, ConnectorsInput};
 use zeroize::Zeroizing;
 
-const PROFILE: &str = "fixture";
+fn profile_name() -> String {
+    hermes_contract::pinned::live_profile()
+}
 const SIGNAL_URL: &str = "SIGNAL_HTTP_URL";
 const PROBE: &str = "http://127.0.0.1:9/talaria-probe";
 
@@ -54,7 +56,7 @@ struct Live {
 }
 
 // Discovery errors can contain private paths; expose only fixed public descriptions.
-async fn fixture() -> Result<Live, &'static str> {
+async fn fixture() -> Result<Live, String> {
     let home = default_home();
     let endpoint = discover_with(
         &home,
@@ -64,12 +66,26 @@ async fn fixture() -> Result<Live, &'static str> {
         },
     )
     .await
-    .map_err(|_| "running gateway unavailable")?;
-    if hermes_contract::pinned::live_skip_reason(endpoint.code_sha()).is_some() {
-        return Err("gateway revision does not match the pinned Hermes release");
+    .map_err(|_| {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
+        "running gateway unavailable"
+    })?;
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return Err(reason);
     }
     let profile = endpoint
-        .resolve_profile(PROFILE)
+        .resolve_profile(&profile_name())
         .map_err(|_| "fixture unavailable")?;
     let endpoint = Arc::new(endpoint);
     let rest = RestClient::new(
@@ -94,7 +110,7 @@ async fn begin() -> Option<Live> {
     match fixture().await {
         Ok(live) => Some(live),
         Err(reason) => {
-            report("SKIPPED", reason);
+            report("SKIPPED", &reason);
             None
         }
     }
@@ -137,10 +153,10 @@ fn signal_state(platforms: &[PlatformWire], is_set: bool) -> bool {
 #[ignore]
 async fn live_messaging_reads_on_fixture() {
     let Some(live) = begin().await else { return };
-    let platforms = list_platforms(&live.rest, PROFILE)
+    let platforms = list_platforms(&live.rest, &profile_name())
         .await
         .unwrap_or_else(|_| panic!("messaging platform list failed"));
-    let _pairing = list_pairing(&live.rest, PROFILE)
+    let _pairing = list_pairing(&live.rest, &profile_name())
         .await
         .unwrap_or_else(|_| panic!("messaging pairing list failed"));
     let off = platforms
@@ -157,19 +173,19 @@ async fn live_messaging_reads_on_fixture() {
         report("SKIPPED", "no off platform");
         return;
     };
-    let tested = test_platform(&live.rest, PROFILE, &off.id)
+    let tested = test_platform(&live.rest, &profile_name(), &off.id)
         .await
         .unwrap_or_else(|_| panic!("off platform test failed"));
     require(!tested.ok, "off platform unexpectedly passed its test");
 
     let mut names = BTreeSet::new();
-    for path in [
-        "/api/messaging/platforms?profile=fixture",
-        "/api/pairing?profile=fixture",
-    ] {
+    let profile_query =
+        url::form_urlencoded::byte_serialize(profile_name().as_bytes()).collect::<String>();
+    for route in ["/api/messaging/platforms", "/api/pairing"] {
+        let path = format!("{route}?profile={profile_query}");
         let reply = live
             .rest
-            .request(Method::Get, path, None, RequestOpts::default())
+            .request(Method::Get, &path, None, RequestOpts::default())
             .await
             .unwrap_or_else(|_| panic!("messaging field names read failed"));
         field_names(&reply, &mut names);
@@ -210,8 +226,8 @@ async fn live_connectors_gate_on_fixture() {
         .unwrap_or_else(|_| panic!("fixture handshake unavailable"));
     let (client, _inbound) = Client::start(connection.into_parts());
     let consent = ConnectorsConsent::default();
-    consent.grant(PROFILE);
-    let service = ConnectorsService::new(client.clone(), live.rest, PROFILE.into(), consent);
+    consent.grant(&profile_name());
+    let service = ConnectorsService::new(client.clone(), live.rest, profile_name(), consent);
     require(
         matches!(
             service
@@ -264,7 +280,7 @@ async fn live_messaging_write_round_trip() {
         return;
     }
     let Some(live) = begin().await else { return };
-    let before = list_platforms(&live.rest, PROFILE)
+    let before = list_platforms(&live.rest, &profile_name())
         .await
         .unwrap_or_else(|_| panic!("messaging write preconditions read failed"));
     if !signal_state(&before.platforms, false) {
@@ -278,16 +294,16 @@ async fn live_messaging_write_round_trip() {
         clear_env: Vec::new(),
     };
     // Keep every outcome as data until the clear and its readback have completed.
-    let attempted = update_platform(&live.rest, PROFILE, "signal", &body).await;
-    let after_attempt = list_platforms(&live.rest, PROFILE).await;
+    let attempted = update_platform(&live.rest, &profile_name(), "signal", &body).await;
+    let after_attempt = list_platforms(&live.rest, &profile_name()).await;
     drop(body);
     let cleanup = PlatformUpdate {
         enabled: None,
         env: BTreeMap::new(),
         clear_env: vec![SIGNAL_URL.into()],
     };
-    let cleared = update_platform(&live.rest, PROFILE, "signal", &cleanup).await;
-    let after_cleanup = list_platforms(&live.rest, PROFILE).await;
+    let cleared = update_platform(&live.rest, &profile_name(), "signal", &cleanup).await;
+    let after_cleanup = list_platforms(&live.rest, &profile_name()).await;
 
     let cleanup_ok = cleared.is_ok_and(|reply| reply.ok)
         && after_cleanup.is_ok_and(|reply| signal_state(&reply.platforms, false));

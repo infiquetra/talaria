@@ -62,14 +62,16 @@ async fn attempt(
             return Attempt::Skip(err.to_string());
         }
     };
-    if number == 1 {
-        println!(
-            "{}",
-            hermes_contract::pinned::gateway_version_line(
-                endpoint.code_version(),
-                endpoint.code_sha(),
-            )
-        );
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return Attempt::Skip(reason);
     }
     let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
@@ -151,6 +153,10 @@ async fn live_plain_answer_records_and_replays() {
         .or_else(|_| std::env::var("LOGNAME"))
         .unwrap_or_default();
     let Ok(user_home) = std::env::var("HOME") else {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
         skip("HOME is not set");
         return;
     };
@@ -166,25 +172,6 @@ async fn live_plain_answer_records_and_replays() {
         host_name: host,
     };
     if let Err(err) = preflight(&input, hermes_contract::pinned::live_exact()).await {
-        let (version, sha) = match discover_with(
-            &home,
-            &DiscoverOptions {
-                control_timeout: Duration::from_secs(5),
-                ensure: EnsurePolicy::Never,
-            },
-        )
-        .await
-        {
-            Ok(endpoint) => (
-                endpoint.code_version().map(str::to_owned),
-                endpoint.code_sha().map(str::to_owned),
-            ),
-            Err(_) => (None, None),
-        };
-        println!(
-            "{}",
-            hermes_contract::pinned::gateway_version_line(version.as_deref(), sha.as_deref())
-        );
         skip(&err.message);
         return;
     }
