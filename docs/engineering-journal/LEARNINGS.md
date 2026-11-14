@@ -7058,3 +7058,19 @@ bottom rows.
 **Generalizable rule.** After a size change, reach the live region from the cursor, never
 from a computed row, and test a renderer against one terminal that pulls scrollback back and
 wraps and one that does neither.
+
+## 2026-11-13 — Register acceptance directories and scrub runner suffixes
+
+**Evidence.** The `python_and_node_toolchain_files_are_gone` check in
+`crates/talaria-cli/tests/repository.rs` rejected the new v0.8.1 acceptance record.
+`tools/release/doc-scan.sh` also found 31 runner host suffixes in the v0.7.0
+acceptance transcripts.
+
+**Mechanism.** `REMOVED_PATHS` blocks `docs/acceptance/` unless each release
+directory has an explicit `:(exclude)docs/acceptance/vX.Y.Z/` entry. The document
+scanner checks `hostname -s` dynamically, with no allow-list, so an old transcript
+can fail when a different machine checks or releases the build.
+
+**Generalizable rule.** Register each release acceptance directory explicitly and
+scrub runner host suffixes to `t70-c1-<host>` when assembling transcripts,
+regardless of which machine will check or release the build.
