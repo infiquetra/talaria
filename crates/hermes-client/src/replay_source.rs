@@ -98,6 +98,7 @@ pub struct ReplayItem {
 pub struct ReplaySource {
     header: FrameLogHeader,
     inbound: Vec<ReplayFrame>,
+    inbound_text: Vec<String>,
     outbound: Vec<ReplayFrame>,
     loss: Vec<LossRecord>,
     dropped_frames: u64,
@@ -129,6 +130,7 @@ impl ReplaySource {
         let mut source = ReplaySource {
             header,
             inbound: Vec::new(),
+            inbound_text: Vec::new(),
             outbound: Vec::new(),
             loss: Vec::new(),
             dropped_frames: 0,
@@ -191,6 +193,9 @@ impl ReplaySource {
                 generation,
                 frame: frame.clone(),
             });
+            if record.get("dir").and_then(Value::as_str) == Some("in") {
+                source.inbound_text.push(frame.to_string());
+            }
         }
         Ok(source)
     }
@@ -234,7 +239,7 @@ impl ReplaySource {
         let speed = speed.checked()?;
         let started = tokio::time::Instant::now();
         let mut sent = 0;
-        for frame in &self.inbound {
+        for (frame, text) in self.inbound.iter().zip(&self.inbound_text) {
             let due = match speed {
                 Speed::Instant => None,
                 Speed::Recorded => Some(Duration::from_millis(frame.t_ms)),
@@ -250,7 +255,7 @@ impl ReplaySource {
             }
             let item = ReplayItem {
                 generation: frame.generation,
-                text: frame.frame.to_string(),
+                text: text.clone(),
             };
             if sink.send(item).await.is_err() {
                 break;
