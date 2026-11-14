@@ -36,9 +36,9 @@ fn workspace_version_has_one_source() {
     );
     assert_eq!(
         workspace_version(&root),
-        "0.8.0",
+        "0.8.1",
         "{}",
-        blame("Cargo.toml", 1, "workspace version is not 0.8.0")
+        blame("Cargo.toml", 1, "workspace version is not 0.8.1")
     );
     for manifest_path in member_manifests(&root) {
         let rel = rel_to(&root, &manifest_path);
@@ -538,6 +538,100 @@ fn release_notes_flags_exist_in_help() {
             )
         );
     }
+}
+
+#[test]
+fn release_notes_quote_live_versions() {
+    let root = root();
+    let notes = read(&root, "docs/release-notes/v0.8.1.md");
+    assert!(
+        notes.contains("The Hermes pin is unchanged at v0.22.4."),
+        "{}",
+        blame("docs/release-notes/v0.8.1.md", 1, "pin sentence is missing")
+    );
+    let seat = read(&root, "docs/acceptance/v0.8.1/seat.md");
+    let mut herdr_versions = Vec::new();
+    let mut hc_versions = Vec::new();
+    for line in seat.lines() {
+        if let Some(value) = line.strip_prefix("Herdr version: ") {
+            herdr_versions.push(value);
+        }
+        if let Some(value) = line.strip_prefix("hc version: ") {
+            hc_versions.push(value);
+        }
+    }
+    assert_eq!(
+        herdr_versions.len(),
+        1,
+        "{}",
+        blame(
+            "docs/acceptance/v0.8.1/seat.md",
+            1,
+            "expected exactly one Herdr version line"
+        )
+    );
+    assert_eq!(
+        hc_versions.len(),
+        1,
+        "{}",
+        blame(
+            "docs/acceptance/v0.8.1/seat.md",
+            1,
+            "expected exactly one hc version line"
+        )
+    );
+    let herdr_token = herdr_versions[0];
+    let hc_token = hc_versions[0];
+    assert!(
+        !herdr_token.trim().is_empty(),
+        "{}",
+        blame(
+            "docs/acceptance/v0.8.1/seat.md",
+            1,
+            "Herdr version line is empty"
+        )
+    );
+    assert!(
+        !hc_token.trim().is_empty(),
+        "{}",
+        blame(
+            "docs/acceptance/v0.8.1/seat.md",
+            1,
+            "hc version line is empty"
+        )
+    );
+    assert!(
+        notes.contains(&format!("Herdr version: {herdr_token}")),
+        "{}",
+        blame(
+            "docs/release-notes/v0.8.1.md",
+            1,
+            "release notes do not quote Herdr version from seat acceptance"
+        )
+    );
+    assert!(
+        notes.contains(&format!("hc version: {hc_token}")),
+        "{}",
+        blame(
+            "docs/release-notes/v0.8.1.md",
+            1,
+            "release notes do not quote hc version from seat acceptance"
+        )
+    );
+    assert!(
+        notes.contains("../herdr-seat.md"),
+        "{}",
+        blame(
+            "docs/release-notes/v0.8.1.md",
+            1,
+            "release notes do not link to ../herdr-seat.md"
+        )
+    );
+    assert!(
+        root.join("docs/herdr-seat.md").is_file(),
+        "{}",
+        blame("docs/herdr-seat.md", 1, "seat guide is missing")
+    );
 }
 
 #[test]
