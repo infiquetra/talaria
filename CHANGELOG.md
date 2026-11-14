@@ -10,6 +10,22 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-11-13
+
+Talaria 0.8.1 is a patch release on 0.8.0 that reports seat status to a Herdr terminal. See the [release notes](https://github.com/infiquetra/talaria/blob/v0.8.1/docs/release-notes/v0.8.1.md) and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.8.1/docs/migrating-from-0.6.5.md).
+
+### Added
+
+- Talaria reports seat status when the terminal answers the startup probe. States are idle, working, blocked, done and error. Blocked can name permission, question or auth. No answer means no report, including in tmux and a plain terminal. A long turn stays working until it ends.
+
+### Changed
+
+- `[herdr] report_state`, default true, turns both the new records and `herdr pane report-agent` on or off. No new setting is added.
+
+### Removed
+
+- No user-facing feature is removed in this release.
+
 ## [0.8.0] — 2026-11-05
 
 Talaria 0.8.0 adds an optional workspace, menu bar, local themes, clearer pickers,
@@ -646,7 +662,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/infiquetra/talaria/releases/tag/v0.8.1
 [0.8.0]: https://github.com/infiquetra/talaria/releases/tag/v0.8.0
 [0.7.1]: https://github.com/infiquetra/talaria/releases/tag/v0.7.1
 [0.7.0]: https://github.com/infiquetra/talaria/releases/tag/v0.7.0
