@@ -78,6 +78,7 @@ No attribution lines belong in commits, PRs, code or generated documentation.
 - [License](LICENSE)
 
 - [Guide](docs/guide.md)
+- [How Hermes signals reach Talaria](docs/hermes-signals.md)
 - [Running Talaria as a Herdr seat](docs/herdr-seat.md)
 - [Keybindings](docs/keybindings.md)
 - [Configuration](docs/configuration.md)
