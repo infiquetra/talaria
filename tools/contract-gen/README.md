@@ -28,8 +28,8 @@ Fallback eligibility assumes the full interactive grant and follows the pinned
 isolated temporary workspace. Binding tests decide success; recording tests
 are reported separately. The source workspace is never modified.
 
-Schema preprocessing removes closed-object markers and the nine individually
-named keyword exceptions in `SCHEMA_REMOVALS`. The 13 discriminator constants
+Schema preprocessing removes closed-object markers and the keyword exceptions
+listed in `SCHEMA_REMOVALS`. The 13 discriminator constants
 become singleton enums without titles. The existing WaitBarrierTarget enum and
 unrelated constants stay intact. Remaining inline string enums with the same
 title must have the same values. At MessageCompletePayload.text only, a union
