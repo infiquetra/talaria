@@ -110,9 +110,8 @@ fn clearing_a_viewport_at_row_zero_never_erases_the_display_from_home() {
         }
         assert_eq!(screen, expected, "{operation} changed the screen contents");
         let expected_cursor_row = match operation {
-            "resize" | "restore" => 0,
-            "commit" => 2,
-            _ => 1,
+            "commit" => 1,
+            _ => 0,
         };
         assert_eq!(
             vt.screen().cursor_position(),

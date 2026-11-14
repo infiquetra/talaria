@@ -176,6 +176,8 @@ mod queue_preview;
 mod reasoning_label;
 #[path = "integration/replay_commit.rs"]
 mod replay_commit;
+#[path = "integration/resize_anchor.rs"]
+mod resize_anchor;
 #[path = "integration/review_render.rs"]
 mod review_render;
 #[path = "integration/rewind_render.rs"]

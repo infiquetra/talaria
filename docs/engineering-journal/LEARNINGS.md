@@ -7035,3 +7035,26 @@ standalone binaries; ordinary suites share only test-free helpers.
 
 Rule: preserve a process boundary when a suite depends on initial global state
 or installs a persistent handler.
+
+## 2026-11-13 — A resize model that predicts the terminal is right for one terminal only
+
+**Evidence.** `crates/talaria-tui/src/terminal.rs` (`resize`, `park`, `clear_at_cursor`,
+`reserve`); `crates/talaria-tui/tests/integration/resize_anchor.rs`. Measured with cursor
+position reports in herdr core 0.1.21 (libghostty-vt): growing from 41 to 43 rows left the
+cursor on its row while blank rows lay below it and moved it only when it stood on the last
+row; narrowing from 200 to 145 columns moved the cursor down by the rows that wrapped above
+it. `alacritty_terminal` pulls rows back on every grow and keeps the cursor's row.
+
+**Mechanism.** `resize` computed where one terminal's rules put the viewport and cleared from
+that row by absolute address. Under other rules the clear starts on the wrong row: too low
+leaves the first rows of the old live region (two composer rows for each two-row grow), too
+high erases committed lines. Every terminal keeps the cursor on its cell. With the cursor
+parked on the viewport's first row, clearing from the cursor's row and making room with
+newlines needs no prediction. The 2026-10-23 limit "with less scrollback than a grow assumes,
+stale live rows stay above the viewport" is gone; the limits about a shrink below the live
+region and quick resizes remain, and a resize under an overlay now places the viewport on the
+bottom rows.
+
+**Generalizable rule.** After a size change, reach the live region from the cursor, never
+from a computed row, and test a renderer against one terminal that pulls scrollback back and
+wraps and one that does neither.
