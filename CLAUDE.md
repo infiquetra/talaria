@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Talaria is a public Rust terminal client for the Hermes gateway, currently a placeholder.
+Talaria is a public Rust terminal client for the Hermes gateway.
 Read [AGENTS.md](AGENTS.md) and [README.md](README.md) before changing code.
 
 ## Navigation

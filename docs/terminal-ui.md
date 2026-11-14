@@ -37,7 +37,7 @@ past both thresholds docks it again. Below 16 rows the panel reserves no space.
 The panel hosts the existing task checklist. Ctrl+T expands or collapses those tasks.
 When the panel is dismissed, the checklist returns above the composer. The composer
 and bottom status row keep their existing behavior, including the voice segment.
-The top menu is separate planned work and is not enabled by this setting.
+The top menu is already available. This panel setting does not enable it.
 
 The workspace follows the conversation's end. Ctrl+O opens the existing transcript
 pager for earlier output and search; closing it returns to the workspace. While the

@@ -4,11 +4,12 @@
 
 ## 2026-11-04
 
-### Bind the completed picker surfaces to the theme catalogue
+### ~~Bind the completed picker surfaces to the theme catalogue~~ — CLOSED 2026-11-05
+**Closed by.** `t::PICKER_BACKGROUND` in `crates/talaria-tui/src/picker_frame/mod.rs`.
 
 **Priority.** Existing view colour work (#486), after both picker cards.
-**Evidence.** The model and Providers frames now settle forty-three `picker.*` names in the
-decisions ledger. This stack precedes theme files, so the current terminal styles remain.
+**Evidence.** The model and Providers frames now settle `picker.*` names in the
+decisions ledger. Theme files are in the tree, and the picker frame reads t::PICKER_BACKGROUND.
 **Worth it when.** The theme mechanism and both picker cards are integrated. Bind the shared
 elements and the three provider additions once, preserving their textual statuses and masking.
 
@@ -41,11 +42,12 @@ and deliver changes through the existing application channel without idle repain
 
 **Worth it when.** A slash command frequently takes workspace file paths as arguments and users want inline `@` path completion after the command token is selected.
 
-### Map active skin tokens into `PagerTheme`, `SideTheme`, and `ChecklistStyle` (`#213` C-6)
+### ~~Map active skin tokens into `PagerTheme`, `SideTheme`, and `ChecklistStyle` (`#213` C-6)~~ — CLOSED 2026-11-05
+**Closed by.** `ViewStyles::pager_theme`, `ViewStyles::side_theme`, and `ViewStyles::checklist_style` in `crates/talaria-tui/src/theme/legacy.rs`.
 
 **Priority.** P2.
 
-**Evidence.** Parent issue 213 (`Settled C-6`) and issue 227 (`REQ-4`). Phase 2a skin switching themes five primary chrome surfaces (`TranscriptTheme`, `ComposerTheme`, `StatusTheme`, `PromptTheme`, and `ToolTheme`) while `PagerTheme`, `SideTheme`, and `ChecklistStyle` retain their built-in light/dark defaults.
+**Evidence.** Parent issue 213 (`Settled C-6`) and issue 227 (`REQ-4`). Phase 2a skin switching themes five primary chrome surfaces (`TranscriptTheme`, `ComposerTheme`, `StatusTheme`, `PromptTheme`, and `ToolTheme`), and ViewStyles::pager_theme, ViewStyles::side_theme, and ViewStyles::checklist_style overlay theme tokens.
 
 **Worth it when.** Custom skins need distinct accent tokens for the full-screen transcript pager, `/btw` and `!` side cells, or the live task checklist drawer.
 
@@ -61,7 +63,7 @@ and deliver changes through the existing application channel without idle repain
 
 **Priority.** P3.
 
-**Evidence.** Parent issue 213 (`AC-13`) and issue 228 (`crates/talaria-app/src/attention.rs`). Phase 2a implements multiplexer pane-attention reporting (`working`, `blocked`, `done`, `idle`) for Herdr (`herdr pane report-agent`) plus standard terminal `BEL` and `OSC 9` notifications, leaving Zellij plugin/pipe state reporting for a future multiplexer adapter.
+**Evidence.** Parent issue 213 (`AC-13`) and issue 228 (`crates/talaria-app/src/attention.rs`). Phase 2a implements multiplexer pane-attention reporting (`idle`, `working`, `blocked`) for Herdr (`herdr pane report-agent`) plus standard terminal `BEL` and `OSC 9` notifications, leaving Zellij plugin/pipe state reporting for a future multiplexer adapter.
 
 **Worth it when.** Operators run Talaria sessions inside Zellij panes and want tab/pane status badges driven by the same `AttentionEvent` transitions.
 
@@ -100,7 +102,7 @@ recording does not exist yet, and P1-04's seven scenarios include no `session.re
 
 **Evidence.** Parent issue 192, contradiction C-4. P1-05 section 11.
 `crates/talaria-core/tests/data/resume_snapshot.jsonl` is a contract-built stand-in (see
-`DECISIONS.md`, 2026-10-23). `fixtures/frames/` currently holds only `README.md`. Issue 201 is open.
+`DECISIONS.md`, 2026-10-23). `fixtures/frames/` holds recordings, including `tool-diff.jsonl`, and `tool-diff.jsonl` has no `session.resume` frame. Issue 201 is open.
 
 **Worth it when.** Issue 201 records `fixtures/frames/tool-diff.jsonl`. Add an eighth scenario:
 `session.resume` with `display_projection: true` after that turn. Test 10 then uses the recording.
@@ -905,7 +907,8 @@ The reason it is not in U8 is that "an empty value" and "no answer" are the same
 **Two gaps found in Hermes rather than rules taken from it**, both recorded as catalogue entries RR-27 and RR-28: the gateway emits `.expire` for all four blocking bridges but the shipping terminal UI handles only two of them, and `approval.request` carries no `request_id` at all, so R8's keyed registry needs a synthesized key for approvals.
 **Refs.** [ADR-0003](../../platform-specs/04-architecture/adrs/0003-talaria-re-encodes-hermes-tui-behavior.md), [Hermes reconciliation-rule catalogue](../analysis/2026-08-02-hermes-reconciliation-rules.md), [LEARNINGS](LEARNINGS.md)
 
-### Add the sub-agent monitor
+### ~~Add the sub-agent monitor~~ — CLOSED 2026-10-26
+**Closed by.** `/agents` in `crates/talaria-core/src/commands/local.rs`.
 
 **Author.** Project bootstrap
 **Priority.** P1
@@ -913,7 +916,8 @@ The reason it is not in U8 is that "an empty value" and "no answer" are the same
 **Worth it when.** The gateway advertises enough delegation or spawn-tree state to make the pane meaningful.
 **Context.** Sub-agent visibility is a primary UX goal.
 
-### Attach to a remote (gated) gateway
+### ~~Attach to a remote (gated) gateway~~ — CLOSED 2026-10-30
+**Closed by.** `talaria --remote` in `docs/remote-gateways.md`.
 
 **Author.** v0.1 prototype plan doc review, 2026-08-02
 **Priority.** P1
