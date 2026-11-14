@@ -160,9 +160,7 @@ read by YAML as a comment, so Hermes sends the colour as `null`. Talaria's own s
 `null` or other non-string colour leniently: it skips that colour, keeps the rest of the skin,
 and lists the key under `Ignored skin values` in `/theme`.
 
-That leniency starts at the skin Talaria reads from the describe result. The launch handshake
-decodes `runtime.describe` through the generated contract types before that, and those types
-reject a `null` colour. So in this release a profile whose skin has an unquoted `#` colour stops
-Talaria at the handshake and does not launch; the fix is to quote the colour in the skin file.
-Making the handshake decode skip such colours belongs to the contract types, and is left for a
-later release.
+The launch handshake drops a null colour from the skin before it decodes the generated contract types, and then keeps the rest of the skin.
+A profile whose skin has an unquoted `#` colour connects.
+Quote the colour in the skin file when that colour should be used.
+The generated contract types are not edited.

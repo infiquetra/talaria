@@ -157,12 +157,22 @@ impl ConnectionService {
                     exit_code: 1,
                 }
             })?;
+        let method = hermes_contract::methods::canonical::runtime_describe::NAME;
         let describe = link
             .client()
-            .call::<hermes_contract::methods::canonical::runtime_describe::Marker>(
-                hermes_contract::schemas::RuntimeDescribeParams(serde_json::Map::new()),
+            .call_raw(
+                method,
+                serde_json::json!({}),
+                hermes_client::CallOptions::default(),
             )
-            .await;
+            .await
+            .and_then(|mut result| {
+                hermes_contract::overrides::skin_payload_lenient(&mut result);
+                serde_json::from_value(result).map_err(|_| hermes_client::CallError::BadResult {
+                    method: method.into(),
+                    reason: "result did not decode",
+                })
+            });
         match describe {
             Ok(describe) => Ok(OpenConnection {
                 link,

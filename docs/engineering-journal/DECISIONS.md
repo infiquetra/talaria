@@ -4,6 +4,18 @@
 
 ## 2026-11-14
 
+### Normalize null skin colours at connection boundaries
+
+**Context.** A null colour from a YAML skin prevents generated contract types from
+decoding the connection handshake before the skin reader can skip it.
+
+**Decision.** Remove null entries only from the three skin colour maps before
+decoding ready and describe payloads during connection; keep generated types and
+other decode paths unchanged.
+
+**Revisit when.** The upstream contract represents nullable colours or connection
+and later skin refreshes adopt a shared compatibility policy.
+
 ### Redact recorder diagnostics without changing the frame log
 
 **Context.** Derived debug output can expose credentials and substitution needles

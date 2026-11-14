@@ -2,6 +2,18 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-14 — Skin tolerance must precede contract decoding
+
+**Evidence.** The connection regressions exercise null colours in the ready payload,
+the handshake describe result, and a supplied dial's describe result, retaining a
+quoted colour in each path.
+
+**Mechanism.** YAML reads an unquoted `#` as a comment, producing a null colour.
+Generated string maps reject it before Talaria's lenient skin reader can run.
+
+**Generalizable rule.** Apply narrowly scoped wire compatibility before typed
+decoding, and preserve unrelated invalid values for normal validation.
+
 ## 2026-11-14 — Debug output needs the recorder's redaction boundary
 
 **Evidence.** The recorder debug regressions exercise ticket credentials, host
