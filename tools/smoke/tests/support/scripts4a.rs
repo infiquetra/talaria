@@ -26,6 +26,22 @@ fn fixture(name: &str, replacements: &[(&str, &str, &str)]) -> String {
         manifest.join("tests/fixtures/screens/phase4a").join(name)
     };
     let mut text = std::fs::read_to_string(path).expect("recorded screen");
+    let pin = include_str!("../../../../crates/hermes-contract/PINNED");
+    let tag = pin
+        .lines()
+        .find_map(|s| s.strip_prefix("tag="))
+        .unwrap_or("");
+    let commit = pin
+        .lines()
+        .find_map(|s| s.strip_prefix("commit="))
+        .unwrap_or("");
+    let prefix: String = commit.chars().take(8).collect();
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    text = text
+        .replace("PIN_COMMIT8", &prefix)
+        .replace("PIN_COMMIT", commit)
+        .replace("PIN_TAG", tag)
+        .replace("PIN_VERSION", version);
     for (file, before, after) in replacements {
         if *file == name {
             assert!(

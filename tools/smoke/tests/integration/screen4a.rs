@@ -10,7 +10,22 @@ fn screen(name: &str) -> String {
     } else {
         manifest.join("tests/fixtures/screens/phase4a").join(name)
     };
-    std::fs::read_to_string(path).expect("screen")
+    let text = std::fs::read_to_string(path).expect("screen");
+    let pin = include_str!("../../../../crates/hermes-contract/PINNED");
+    let tag = pin
+        .lines()
+        .find_map(|s| s.strip_prefix("tag="))
+        .unwrap_or("");
+    let commit = pin
+        .lines()
+        .find_map(|s| s.strip_prefix("commit="))
+        .unwrap_or("");
+    let prefix: String = commit.chars().take(8).collect();
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    text.replace("PIN_COMMIT8", &prefix)
+        .replace("PIN_COMMIT", commit)
+        .replace("PIN_TAG", tag)
+        .replace("PIN_VERSION", version)
 }
 #[test]
 fn settings_title_found_with_profile() {

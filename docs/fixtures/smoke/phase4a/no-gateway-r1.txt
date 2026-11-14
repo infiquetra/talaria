@@ -1,6 +1,6 @@
 # recorded
 Talaria doctor (profile default)
-ok    Talaria         Talaria 0.7.0-dev, built for Hermes v0.22.4 (4d043038)
+ok    Talaria         Talaria 0.7.0-dev, built for Hermes PIN_TAG (PIN_COMMIT8)
 FAIL  Gateway         no Hermes gateway is running for this home
       Fix: Run `hermes gateway ensure --json` to start the Hermes gateway, then try again.
 skip  Hermes version  needs an answer from the gateway

@@ -2,6 +2,19 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-14 — Fixture faults must follow the pin
+
+**Evidence.** `tools/smoke/tests/integration/steps4a.rs` planted the missing
+`running:` detail by matching a literal release and commit prefix.
+
+**Mechanism.** The doctor screen loaders expand their tokens from `PINNED`
+before applying faults, so a literal fault target disappears on the next pin
+change. Matching the checker's stable `running: ` prefix preserves the exact
+failure reason; the built-for fault derives its text from the pin.
+
+**Generalizable rule.** Derive versioned fault targets from the same pin as
+their fixtures, or match the stable text the checker requires.
+
 ## 2026-11-14 — Close the transcript overlay before painting its replacement
 
 **Evidence.** The CLI process regression exercises the transcript pager's closing
