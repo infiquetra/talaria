@@ -51,14 +51,6 @@ and deliver changes through the existing application channel without idle repain
 
 **Worth it when.** Custom skins need distinct accent tokens for the full-screen transcript pager, `/btw` and `!` side cells, or the live task checklist drawer.
 
-### Add a local Talaria `/clear` session-reset shortcut alongside Hermes `slash.exec` (`#213` C-7)
-
-**Priority.** P2.
-
-**Evidence.** Parent issue 213 (`Settled C-7`) and issue 223. In Phase 2a, typing `/clear` routes through Hermes `slash.exec` (`hermes_cli/commands.py`), which prints Hermes's command response rather than detaching and creating a fresh session locally inside Talaria.
-
-**Worth it when.** Operators want `/clear` to perform a client-side `session.detach` + `session.create` in the current folder in addition to or instead of the gateway's `/clear` slash command.
-
 ### Add Zellij pane-attention reporting alongside Herdr (`#213` / `#228`)
 
 **Priority.** P3.
@@ -76,14 +68,6 @@ and deliver changes through the existing application channel without idle repain
 **Evidence.** Parent issue 193 (`Settled C-2`), `crates/talaria-cli/src/bench_replay.rs`, and issue 208 (`REQ-14`). In Phase 1, `--bench-replay` deliberately omits the status line (`no status line`) so the replay harness measures markdown streaming and composer rendering deterministically without an external status subprocess.
 
 **Worth it when.** Phase 2 (`#213` / `#214`) or a later performance pass wants `--bench-replay` to measure status-segment formatting cost alongside the markdown tail and composer.
-
-### Implement `/clear` in the slash-command palette (`#193` C-7)
-
-**Priority.** P1 (scheduled in Phase 2 issue 223).
-
-**Evidence.** Parent issue 193 (`Settled C-7`) and issue 209 (`REQ-15`). Phase 1 restricts slash commands to `/quit` only (`the_only_slash_command_is_quit`); `/clear` (detach from the current session and call `session.create` in the same folder) is moved to issue 223.
-
-**Worth it when.** Issue 223 builds the Phase 2 slash-command palette and session-reset flow.
 
 ### Reconcile frozen `docs/formats/status-line.md` with Rust configuration paths (`#193` C-8)
 

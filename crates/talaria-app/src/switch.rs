@@ -158,7 +158,7 @@ fn failed_switch(app: &mut AppState, target: &RowKey, error: &OpenError) -> Swit
 }
 
 /// The gateway's reason for refusing the resume.
-fn refusal_reason(error: &OpenError) -> String {
+pub(crate) fn refusal_reason(error: &OpenError) -> String {
     match error {
         OpenError::NotFound => "not_found".to_owned(),
         OpenError::Refused { reason } => reason.clone(),
@@ -379,7 +379,7 @@ fn write_new(path: &std::path::Path, content: &str) -> Result<(std::path::PathBu
     Ok((path.to_path_buf(), content.len() as u64))
 }
 
-async fn stop_voice(app: &mut AppState, service: &SessionService, session_id: &str) {
+pub(crate) async fn stop_voice(app: &mut AppState, service: &SessionService, session_id: &str) {
     app.voice_detaching(session_id);
     app.close_client_voice().await;
     if app.uses_client_voice() {
