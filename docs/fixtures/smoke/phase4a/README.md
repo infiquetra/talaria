@@ -1,4 +1,4 @@
 # Recorded doctor output
 
-These historical screen recordings retain the version reported when captured.
-The smoke tests read them here so release version checks can distinguish historical evidence from current source.
+Every spelling of the pin in these screens is a token: PIN_TAG, PIN_VERSION, PIN_COMMIT8, and PIN_COMMIT.
+The smoke tests fill those tokens from crates/hermes-contract/PINNED when they load a screen, and Talaria 0.7.0-dev stays as captured.

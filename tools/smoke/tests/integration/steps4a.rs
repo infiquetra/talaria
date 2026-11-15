@@ -13,6 +13,23 @@ struct HappyRun {
     close_tabs: usize,
 }
 
+fn built_for_find() -> &'static str {
+    static BUILT_FOR: OnceLock<String> = OnceLock::new();
+    BUILT_FOR.get_or_init(|| {
+        let pin = include_str!("../../../../crates/hermes-contract/PINNED");
+        let tag = pin
+            .lines()
+            .find_map(|s| s.strip_prefix("tag="))
+            .unwrap_or("");
+        let commit = pin
+            .lines()
+            .find_map(|s| s.strip_prefix("commit="))
+            .unwrap_or("");
+        let prefix: String = commit.chars().take(8).collect();
+        format!("built for: {tag} ({prefix})")
+    })
+}
+
 impl HappyRun {
     fn lines(&self) -> String {
         self.report.step_lines()
@@ -791,13 +808,13 @@ pair!(
         ),
         (
             "doctor-overlay-r1.txt",
-            "running: 0.22.4 at 4d043038",
+            "running: ",
             "",
             "\"running:\" detail missing"
         ),
         (
             "doctor-overlay-r1.txt",
-            "built for: v0.22.4 (4d043038)",
+            built_for_find(),
             "",
             "\"built for:\" detail missing"
         ),
