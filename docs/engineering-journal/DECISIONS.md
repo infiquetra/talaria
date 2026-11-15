@@ -25,6 +25,59 @@ lost reply, and a first composer refusal are not offered.
 **Revisit when.** The approval or follow-up submission flow changes its handling
 of notes or definitive outcomes.
 
+## 2026-11-14
+
+### Workflow width default
+
+**Context.** The default workflow width is currently 1. A live shared-connection
+series B sweep measured the free model at widths 1, 5, and 10, using profile
+`fixture`. This measurement addresses agents within a workflow; a separate
+observation checks two workflows at width 1.
+
+**Decision.** The gateway reported
+`gateway code_version=0.23.1 code_sha=3b421578588243f920886e6fe79a6faa87ea026e`.
+The results stored `execution_mode` as `unknown`. The unchanged health rule is:
+
+1. When `evidence` is not `live`, the record fails criterion 1 and the other criteria are not evaluated. When `evidence` is `live`, it also fails criterion 1 when `create_refused`, `admissions_unknown`, or `timeouts` is not 0, when `rpc_errors` is missing or is not an empty object, when `distinct_sessions` is not the width, or, for a series other than D, when `turns_failed` is not 0 or `turns_completed` is not width times repetitions.
+2. Fail criterion 2 when the baseline `evidence` is not `live`, when `start_delay_ms.p95` is missing on the record or the baseline, or when the record's 95th-percentile start delay is greater than the baseline's plus 1000 milliseconds. For a series other than B, also fail when `provider.turn_requests_peak_min` is not the width. Series B does not apply that peak check. Do not add it back.
+3. Fail criterion 3 when `foreground_errors` is not 0, when `foreground_rtt_ms.p95` is missing or greater than 50, or when `foreground_rtt_ms.max` is missing or greater than 250.
+4. Fail criterion 4 when `resources.rss_mb.before` or `resources.rss_mb.after` is missing, when before is not above 0, or when the absolute change is more than 20 percent of before. A change of exactly 20 percent passes. Resident set size is the process memory figure the probe stores. The results test uses a before of 100.0: after 120.0 passes, and after 121.0 fails criterion 4.
+5. For a series other than D, fail criterion 5 when `events.seq_repeats`, `events.seq_decreases`, or `events.unresolved_gaps` is not 0, or when `events.complete_per_admission` is not width times repetitions.
+6. Criterion 6 applies only to series D and E. Fail it when `recovery.terminal_with_result` is not the turn count, or when `terminal_without_result`, `unknown`, or `unresolved` is not 0. For series E, also fail when `submit_after_detach_refused` is not true or `next_turn_ms` is missing. Series B does not apply criterion 6.
+7. Criterion 7 applies only to series C. Fail it when `observations.tool_executions` is not the width, or when `turns_completed` is not the turn count, or when `turns_failed` is not 0. Series B does not apply criterion 7.
+
+The live `B-shared-1` and `B-shared-5` records passed with no failed criteria.
+The live `B-shared-10` record failed criterion 2; it completed 10 turns and
+failed none. The contiguous healthy width N is **5**. Widths 2, 3, and 8 were
+not measured; width 16 was above the operator's cap and was not measured.
+The 2026-10-27 `B-shared-10` row completed 9 and failed 1, with health failures
+1, 2, and 3. That day's loopback `A-shared-10` completed 30/30 and failed
+criteria 2 and 3; series A was not re-run.
+
+For the two-workflow observation, both commands printed detach lines:
+
+```text
+run 01M7EQW4JK64DXBPNCWGWYG0JY detached
+run 01M7EQWKNH1W8G9SE18NZYG4S8 detached
+```
+
+The list immediately before the second start showed the first run `running`.
+The list after the second start showed:
+
+```text
+01M7EQWKNH1W8G9SE18NZYG4S8  research  interrupted  agents 0/0  tokens -  money -  2026-11-15T04:36:44Z
+01M7EQW4JK64DXBPNCWGWYG0JY  research  running  agents 0/1  tokens -  money -  2026-11-15T04:36:29Z
+```
+
+This screen fits none of the prescribed both-ran, waited, or refused labels.
+Both runs were subsequently stopped. The paid provider was not measured. The
+tool-probe anomaly was not measured.
+
+**Costs and revisit conditions.** This is a free-model measurement on one
+gateway, not evidence for paid providers or tool execution. Revisit the width
+when a later measurement on the intended gateway changes the contiguous health
+result, or when provider or tool behavior supplies new evidence.
+
 ## 2026-11-14 — Correct the fleet approval card clause
 
 **Context.** The shared approval card describes Ctrl+C differently from its
@@ -5021,6 +5074,8 @@ the settings a particular child used. **Revisit when.** Hermes reports per-child
 explicit lifecycle for retained goal results.
 
 ## 2026-10-28 — Workflow concurrency default proposed, awaiting the operator
+
+Replaced by the entry titled "Workflow width default".
 
 **Decision.** Proposed, awaiting the operator: use a shared connection and a default
 `max_in_flight` of 1, with approximately 1.1 MB per session from A-shared-1.
