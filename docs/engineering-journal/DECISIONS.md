@@ -2,6 +2,18 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-15 — Return refused approval-note follow-ups
+
+**Context.** Approval notes are submitted after the answer, and a refused
+follow-up previously lost the note without offering it back.
+
+**Decision.** Label the field `note (sent after the answer)` and offer a refused
+follow-up to the composer while retaining it in a notice. A sent follow-up, a
+lost reply, and a first composer refusal are not offered.
+
+**Revisit when.** The approval or follow-up submission flow changes its handling
+of notes or definitive outcomes.
+
 ## 2026-11-14 — Correct the fleet approval card clause
 
 **Context.** The shared approval card describes Ctrl+C differently from its

@@ -526,7 +526,7 @@ fn approval_keys_matrix() {
     rig.press(named(KeyCode::Tab)).nothing();
     rig.type_text("go 2 ");
     assert!(
-        has_row(&rig.rows(), "note: go 2"),
+        has_row(&rig.rows(), "note (sent after the answer) go 2"),
         "the note is drawn: {:?}",
         rig.rows()
     );
@@ -1425,7 +1425,7 @@ fn shift_tab_leaves_the_note_field_alone() {
     rig.press(shift_tab).nothing();
     rig.type_text("1");
     assert!(
-        has_row(&rig.rows(), "note: 1"),
+        has_row(&rig.rows(), "note (sent after the answer) 1"),
         "the digit stays in the note: {:?}",
         rig.rows()
     );
