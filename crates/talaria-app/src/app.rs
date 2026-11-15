@@ -2093,6 +2093,10 @@ pub enum AppEffect {
         effects: Vec<talaria_core::memory::MemoryEffect>,
     },
     CopyMemorySetup(String),
+    /// Request a clipboard copy of a finished assistant reply.
+    CopyReply {
+        text: String,
+    },
     Cron(CronEffect),
     CronNotice(String),
     CronFrame,
@@ -5674,6 +5678,38 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Copy {
+        let raw = argument.trim();
+        let raw = if raw.is_empty() { "1" } else { raw };
+        let digits = raw.strip_prefix('+').unwrap_or(raw);
+        if digits.is_empty()
+            || !digits.bytes().all(|byte| byte.is_ascii_digit())
+            || digits.bytes().all(|byte| byte == b'0')
+        {
+            return vec![notice_lines("Usage: /copy [N]")];
+        }
+        let Some(opened) = state.opened.as_ref().filter(|_| !state.session_gone) else {
+            return vec![notice_lines("No session is open.")];
+        };
+        let Ok(n) = raw.parse::<u32>() else {
+            return vec![notice_lines(&format!("No reply {raw} to copy."))];
+        };
+        let Ok(text) = talaria_core::session::assistant_reply(opened.state.cells(), n) else {
+            return vec![notice_lines(&format!("No reply {raw} to copy."))];
+        };
+        let count = text.chars().count();
+        if count > 100_000 {
+            return vec![notice_lines(&format!(
+                "Reply {n} is too long to copy ({count} characters). Use /export."
+            ))];
+        }
+        return vec![
+            notice_lines(&format!(
+                "Copy requested: reply {n}, {count} characters. Your terminal must allow clipboard access."
+            )),
+            AppEffect::CopyReply { text },
+        ];
+    }
     if action == LocalAction::Layout {
         return match talaria_core::layout::parse_layout_args(&argument) {
             Ok(talaria_core::layout::LayoutAction::Panel) => {
@@ -11577,6 +11613,7 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::CopyMemorySetup(text) => screen.copy_provider_text(&text),
+            AppEffect::CopyReply { text } => screen.copy_mcp_text(&text),
             AppEffect::CronNotice(text) => {
                 state.model_notice_counter = state.model_notice_counter.saturating_add(1);
                 screen.commit_cells(&[Cell::Notice(talaria_core::session::NoticeCell {

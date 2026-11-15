@@ -2,6 +2,17 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-14 — Clipboard requests need a finished reply and honest feedback
+
+**Evidence.** The copy command regression checks finished and interim replies,
+oversized text, missing sessions and terminal escape removal before copying.
+
+**Mechanism.** A terminal clipboard request has no confirmation, and an assistant
+may emit interim text before its final transformed reply.
+
+**Generalizable rule.** Select sealed non-interim text and report a clipboard
+request without claiming that the terminal completed it.
+
 ### 2026-11-14 — Rewrite fleet approval hints after painting
 
 **Evidence.** Fleet peek screen checks distinguish the card row from the answer

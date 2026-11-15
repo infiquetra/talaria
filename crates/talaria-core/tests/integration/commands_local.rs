@@ -6,6 +6,7 @@ use serde_json::json;
 use talaria_core::commands::{
     CatalogResult, CatalogStatus, CommandCatalog, CommandSource, LocalAction, LocalCommandTable,
     PaletteContext, PaletteEffect, PaletteInput, PaletteState, palette_update as update,
+    parse_slash_line,
 };
 
 fn catalog_with_quit() -> CommandCatalog {
@@ -103,4 +104,17 @@ fn local_table_names_are_unique() {
             assert!(seen.insert(alias), "repeated alias {alias}");
         }
     }
+}
+
+#[test]
+fn copy_is_local_and_shadows_a_remote_copy() {
+    let table = LocalCommandTable::builtin();
+    let copy = table.find("copy").expect("/copy");
+    assert_eq!(copy.action, LocalAction::Copy);
+    assert_eq!(copy.tag, "talaria");
+    assert!(copy.takes_argument);
+
+    let parsed = parse_slash_line("/copy 2").expect("slash line");
+    assert_eq!(parsed.name, "copy");
+    assert_eq!(parsed.arg, "2");
 }
