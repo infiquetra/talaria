@@ -13,6 +13,8 @@ talaria remote login work
 talaria --remote work --profile fixture
 ```
 
+`talaria --remote` opens an interactive session. It refuses `--print` (`-p`), `--bg`, `--worktree` (`-w`), and `--name`. The process prints `talaria: --remote opens an interactive session; print and background commands are not supported` and exits 2. The same check refuses a worktree and a name. That printed sentence does not name those two flags.
+
 The optional path prefix is preserved. Remote names contain lowercase letters, digits and
 hyphens, start with a letter or digit, and have at most 32 characters. `remote add` checks for
 a gated listener offering `native_pkce`; `--no-check` defers that probe. HTTPS is required.

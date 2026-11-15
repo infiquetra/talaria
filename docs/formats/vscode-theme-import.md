@@ -1,9 +1,9 @@
 # Visual Studio Code color-theme import
 
-Talaria imports one strict Visual Studio Code color-theme JSON file into one
-stored user theme loaded at startup, discovered by the theme picker, and
-reloadable live on demand. This document is the public allowlist. Nothing outside
-these tables is inferred, and the source file is never watched after import.
+This page is a colour mapping from a Visual Studio Code color-theme JSON file.
+This client does not provide `talaria theme import`, `talaria theme fetch`,
+`talaria theme search`, or `/theme fetch`. Theme files and the `/theme` commands
+are in [Themes](../themes.md#commands). Nothing outside these tables is inferred.
 
 The mapping and resolution rules below are copied verbatim from the v0.5.0 visual
 specification so later documentation can link to one stable format contract.
@@ -117,111 +117,4 @@ These eighteen Talaria extension tokens have no entry in either supported mappin
 | talaria.transcript.fault | Talaria-specific transcript channel |
 | talaria.transcript.fault.background | Talaria-specific transcript channel |
 
-Any other token falls back only when its listed source is absent or invalid. The successful import report states source-mapped count, fallback count, unsupported count, and every affected path/token. Successful imports with warnings exit successfully but visibly print the report. A failed import never writes a stored theme; its command-line report is described below.
-
-## Command-line reports and exit status
-
-The default report remains prose: informational lines use standard output and
-warnings use standard error. `talaria theme import FILE --json` instead writes
-one JSON object to standard output and writes nothing to standard error.
-
-On success, `schema_version` is `talaria-theme-import-report-v1`. The object
-also carries `slug`, `target_path`, `source_token_count`, `fallback_count`,
-`warning_count`, and ordered `composites`, `fallbacks`, and `warnings` arrays.
-Each composite record carries `severity`, `path`, `token`, `source`,
-`background`, and the flattened `value`. Each fallback and warning record also
-has an explicit `severity`, so consumers never infer routing from English text.
-
-On failure, `schema_version` is `talaria-theme-import-error-v1`. The object
-carries the stable `kind` and a human-readable `message`; the exit status still
-uses the table below. The `kind` vocabulary is `unreadable`, `empty`,
-`malformed`, `wrong-root`, `reserved-slug`, `invalid-slug`, `unwritable`,
-`unknown-source`, `ambiguous-source`, `network`, and `oversized`.
-These eleven values distinguish the documented causes even when several share
-one exit status.
-
-| Exit status | Meaning |
-|---|---|
-| 0 | Import completed; warnings, if any, are present in the report |
-| 2 | Command-line usage error |
-| 3 | Source file unreadable, empty, malformed, or structurally unsupported; or marketplace source unknown, ambiguous, unreachable, or oversized |
-| 4 | Requested storage slug invalid or reserved |
-| 5 | Validated theme could not be written |
-
-## Marketplace sources
-
-`talaria theme search QUERY [--limit N] [--json]` lists at most `N` entries (default 10,
-hard bound 25) without downloading anything. Its `--json` listing uses
-`schema_version` `talaria-theme-search-v1` and carries `query`, `count`, and an ordered
-`entries` array of `source_id`, `publisher`, `extension`, `theme_label`, `description`,
-and `download_url` objects.
-
-`talaria theme fetch REF [--name NAME] [--json]` resolves one user-selected reference and
-imports it with no manual download step. `REF` is either a `publisher/extension[/theme]`
-reference — the optional third segment selects one contributed theme by 1-based index or
-exact label — or a direct `http(s)` URL to a raw theme JSON file. The user-selected source
-is accepted as given: there is no additional trust policy. A reference that names nothing
-fails as `unknown-source`; a reference matching several themes without a selector fails as
-`ambiguous-source` and lists the available labels. Only `http(s)` download URLs are
-supported.
-
-Marketplace rules under the same strictness:
-
-1. Fetch is transport only. Fetched bytes enter the same strict bytes entry point as a
-   local file, so every input, resolution, alpha, and report rule above holds identically
-   for both sources: the same bytes parse, and the same bytes fail with the same kind.
-2. Fetched bytes are parsed, never executed, imported, or dynamically loaded as code.
-3. Payloads larger than 262144 bytes are refused as `oversized` before parsing. Registry
-   and transport failures — unreachable hosts, non-200 answers, invalid registry JSON —
-   fail as `network`. A failed or invalid fetch preserves the current theme with a notice
-   and writes nothing.
-4. The storage name is the explicit `--name` when given, else the slugified marketplace
-   theme label (`Solar Flare` becomes `solar-flare`). The payload's own top-level `name`
-   is a display string and never a storage slug. Built-in slugs stay reserved.
-
-## Recorded sources, local refresh, and upstream reimport
-
-Every successful file or marketplace import records its source in
-`<config-dir>/theme-sources.json` (`schema_version` `talaria-theme-sources-v1`), mapping
-each slug to its absolute file path or marketplace reference.
-
-Talaria strictly distinguishes local theme refresh from upstream reimport:
-
-- **Local refresh:** `/theme reload [name]` refreshes the theme directly from its local stored
-  file (`<config-dir>/themes/<slug>.json`). It does not require an import source, applying saved
-  edits to stored user themes live immediately without restart. If the stored file is malformed,
-  the current appearance is preserved with an actionable validation notice. Reloading a built-in
-  theme is a visible no-op with an explanatory notice.
-- **Upstream reimport:** `/theme fetch <source>` (or CLI `talaria theme fetch` and `talaria theme import`)
-  re-reads the upstream source through the strict import entry point, rewrites the canonical stored
-  theme only after the fresh source validates fully, records the origin in `theme-sources.json`,
-  and applies the re-resolved theme live with no restart.
-
-Neither stored theme files nor source files are watched by the filesystem: an edit changes nothing
-until an explicit reload or reimport, and concurrent reloads and fetches serialize behind one lock.
-
-## Stored user-theme format
-
-The selected storage name uses this fixed precedence: command-line `--name`,
-top-level `name`, then source-file stem. It must already be a lowercase
-hyphenated slug with no separators or traversal. Built-in theme slugs are
-reserved.
-
-Talaria writes `<config>/themes/<slug>.json` only after parsing and reporting
-complete successfully. The stored object contains `schema_version` with the
-value `talaria-theme-v1`, `dark`, `name`, `slug`, and the complete `tokens`
-mapping, and optionally the sparse per-category `groups` layer and the
-`transcript_bar_visible` bar-state flag (absent means the transcript's left
-offset column paints). The normative schema is
-[`stored-theme.schema.json`](stored-theme.schema.json). Keys are sorted, values
-are opaque uppercase `#RRGGBB`, and the file has exactly one trailing newline.
-A later import of the same slug atomically replaces that path. If the path is a
-symlink, Talaria replaces the link itself and never writes through to its target.
-Imported themes are read at startup when constructing the theme registry,
-discovered when opening the theme picker, and refreshed live via
-`/theme reload [name]`; stored files and source files are not watched.
-
-During v0.5.0, the reader treats a stored theme without `schema_version` as
-version one. The field becomes required in v0.6.0. A file carrying any other
-version, or any other invalid stored document, is skipped with a visible
-notice; it cannot prevent valid themes or the application from loading.
+Any other token falls back only when its listed source is absent or invalid.

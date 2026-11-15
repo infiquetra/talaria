@@ -53,8 +53,12 @@ it does not implement the layout or the voice features.
    Turning both off restores the inline view, subject to these conditions:
    - The workspace and transcript pager (Ctrl+O) share one transcript renderer and the same tests
      for both views. Implementation starts from the pager.
-   - Nothing that finishes while the workspace is on is lost. On return to the inline view, text
-     that finished during the workspace is committed to native scrollback once.
+   - On return to the inline view, text that finished during the workspace is committed to native
+     scrollback once. Until that return, finished text waits in memory, and a process crash can lose it.
+     The recovery route for the session is `talaria --resume <id>`, as
+     [the guide](../../../docs/guide.md#your-first-session) shows. Resume rebuilds the session
+     from the snapshot through `SessionState::from_snapshot`
+     (`crates/talaria-core/src/session/state.rs`). It does not restore text a crash already dropped.
    - Terminal mode changes and escape sequences remain in the terminal module. Mouse capture
      stays off by default.
    - Verification covers Herdr, tmux and Zellij, as required by ADR-0009.

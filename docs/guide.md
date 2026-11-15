@@ -49,6 +49,18 @@ talaria --resume <id>
 
 Use the [keybinding reference](keybindings.md) for composer editing, approvals and question cards. The transcript shows tool calls and diffs. Queue prompts behind a running turn, steer it when available, and use rewind to return to an earlier checkpoint. Use the model picker for the current session, `@` mentions for files, `!` for shell commands, and the transcript pager to search earlier output. Inspect commands before confirming an approval.
 
+### Rewind
+
+`/rewind` goes back to an earlier prompt. When the session runs its commands in a container, Talaria shows: "This session runs its commands in a container, so Hermes keeps no checkpoints of its files."
+
+### Process list
+
+`/processes` shows this session's background processes. When Hermes runs the session in a separate worker, Talaria shows: "Hermes runs this session in a separate worker and cannot list its processes."
+
+### Sub-agents
+
+`/agents` shows the session's sub-agents. `/tasks` is the same command. When Hermes runs the session in a separate worker, a refusal includes: "the session runs in a separate worker that Talaria cannot reach".
+
 ## Many sessions at once
 
 For a persistent view of tasks, use Alt+D or `/layout panel` to open the optional

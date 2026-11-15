@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Talaria is a public Rust terminal client for the Hermes gateway. The workspace currently
-contains placeholders; it owns terminal presentation, transport adapters and client state.
+Talaria is a public Rust terminal client for the Hermes gateway. The workspace
+owns terminal presentation, transport adapters and client state.
 
 ## Architecture decision records
 

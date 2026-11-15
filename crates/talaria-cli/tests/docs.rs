@@ -68,6 +68,120 @@ fn required_pages_exist_with_headings() {
 }
 
 #[test]
+fn product_descriptions_match_the_rust_client() {
+    let root = root();
+    let claude = read(&root, "CLAUDE.md");
+    let agents = read(&root, "AGENTS.md");
+    let readme = read(&root, "README.md");
+    assert!(
+        !claude.contains("placeholder"),
+        "CLAUDE.md product sentence"
+    );
+    assert!(
+        !agents.contains("placeholder"),
+        "AGENTS.md product sentence"
+    );
+    assert!(
+        !readme.contains("being rewritten"),
+        "README.md product sentence"
+    );
+    assert!(
+        readme.contains("Talaria is a Rust terminal client for the Hermes agent gateway."),
+        "README.md replacement"
+    );
+    let checks =
+        "cargo fmt --check\ncargo clippy --all-targets -- -D warnings\ncargo test --workspace\n";
+    assert!(claude.contains(checks), "CLAUDE.md Checks");
+    assert!(agents.contains(checks), "AGENTS.md Checks");
+}
+
+#[test]
+fn corrected_records_match_the_code() {
+    let root = root();
+    let adr = read(
+        &root,
+        "platform-specs/04-architecture/adrs/0013-optional-layout-uses-a-full-screen-workspace.md",
+    );
+    let queued = read(&root, "docs/engineering-journal/QUEUED.md");
+    let terminal = read(&root, "docs/terminal-ui.md");
+    let themes = read(&root, "docs/formats/vscode-theme-import.md");
+    let remote = read(&root, "docs/remote-gateways.md");
+    let guide = read(&root, "docs/guide.md");
+    let keys = read(&root, "docs/keybindings.md");
+    let present = [
+        (&adr, "The recovery route for the session is"),
+        (&adr, "`talaria --resume <id>`"),
+        (&adr, "SessionState::from_snapshot"),
+        (&adr, "a process crash can lose it"),
+        (&keys, "## Slash command palette\n"),
+        (&themes, "This client does not provide"),
+        (&themes, "## Input and resolution rules"),
+        (
+            &remote,
+            "talaria: --remote opens an interactive session; print and background commands are not supported",
+        ),
+        (&remote, "`--print`"),
+        (&remote, "`--bg`"),
+        (&remote, "`--worktree`"),
+        (&remote, "`--name`"),
+        (&remote, "exits 2"),
+        (
+            &guide,
+            "This session runs its commands in a container, so Hermes keeps no checkpoints of its files.",
+        ),
+        (
+            &guide,
+            "Hermes runs this session in a separate worker and cannot list its processes.",
+        ),
+        (
+            &guide,
+            "the session runs in a separate worker that Talaria cannot reach",
+        ),
+        (&queued, "`idle`, `working`, `blocked`"),
+        (
+            &queued,
+            "~~Bind the completed picker surfaces to the theme catalogue~~",
+        ),
+        (
+            &queued,
+            "~~Map active skin tokens into `PagerTheme`, `SideTheme`, and `ChecklistStyle` (`#213` C-6)~~",
+        ),
+        (&queued, "~~Add the sub-agent monitor~~"),
+        (&queued, "~~Attach to a remote (gated) gateway~~"),
+        (
+            &queued,
+            "### Record a `session.resume` fixture after the tool-diff turn",
+        ),
+        (
+            &queued,
+            "### Add Zellij pane-attention reporting alongside Herdr",
+        ),
+    ];
+    for (text, needle) in present {
+        assert!(text.contains(needle), "{needle}");
+    }
+    let absent = [
+        (
+            &adr,
+            "Nothing that finishes while the workspace is on is lost.",
+        ),
+        (&terminal, "separate planned work"),
+        (&themes, "talaria theme import FILE"),
+        (&themes, "talaria theme fetch REF"),
+        (&themes, "talaria theme search QUERY"),
+        (&themes, "/theme fetch <source>"),
+        (&queued, "precedes theme files"),
+        (&queued, "retain their built-in light/dark defaults"),
+        (&queued, "currently holds only"),
+        (&queued, "`working`, `blocked`, `done`, `idle`"),
+        (&queued, "### ~~Add Zellij"),
+    ];
+    for (text, needle) in absent {
+        assert!(!text.contains(needle), "{needle}");
+    }
+}
+
+#[test]
 fn relative_links_and_anchors_resolve() {
     let root = root();
     for file in [

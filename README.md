@@ -1,6 +1,6 @@
 # Talaria
 
-Talaria is a terminal client for the Hermes agent gateway, being rewritten in Rust.
+Talaria is a Rust terminal client for the Hermes agent gateway.
 It owns the terminal experience; Hermes owns agent execution and durable sessions.
 
 The last Python release is v0.6.5, preserved at [python-final](https://github.com/infiquetra/talaria/tree/python-final).
