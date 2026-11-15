@@ -113,6 +113,9 @@ pub mod notice {
     pub const ONE_SHOT: &str = "This prompt runs as a workflow (keyword ultracode).";
     pub const NO_SESSION: &str = "No session to set ultracode on.";
     pub const USAGE: &str = "Usage: /ultracode [on|off|status]";
+    pub fn offer(profile: &str) -> String {
+        format!("Install talaria-workflows into profile {profile} now? [y/N]")
+    }
     pub fn missing(profile: &str) -> String {
         format!(
             "Ultracode needs the talaria-workflows skill in profile {profile}. Ultracode runs substantive prompts as Talaria workflows through that skill. Install it with: talaria workflow skill install --profile {profile}"

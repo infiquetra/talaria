@@ -54,3 +54,14 @@ fn hidden_skill_notice_explains_why_and_keeps_collision_guidance() {
 fn enabled_notice_already_explains_the_skill_role() {
     explains_skill_role(notice::ON);
 }
+
+#[test]
+fn missing_skill_offer_names_the_profile() {
+    assert_eq!(
+        notice::offer("fixture"),
+        "Install talaria-workflows into profile fixture now? [y/N]"
+    );
+    let missing = notice::missing("fixture");
+    assert!(missing.contains("Install it with: talaria workflow skill install --profile fixture"));
+    assert!(!missing.contains("now? [y/N]"));
+}
