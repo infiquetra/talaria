@@ -120,6 +120,8 @@ use crate::peek::FleetSink;
 use crate::permissions::PermissionsService;
 use crate::prompts::{MaskedRequestInfo, PromptService, ServerRequestPolicy, policy_for};
 use crate::queue::{QueueCommand, QueueService, queue_command, steer_command};
+pub use crate::rebuild::{RebuildMode, rebuild_foreground};
+use crate::rebuild::{final_prefix, recover_retained, recovered};
 use crate::sessions::{
     DetachOutcome, ExecuteOutcome, OpenError, OpenedSession, SessionInfoSummary, SessionService,
     accept_event, submission_id,
@@ -151,7 +153,8 @@ pub const REFRESHED_NOTICE: &str = "Reconnected. The transcript was refreshed.";
 pub const STALE_SUBSCRIPTION: &str =
     "Hermes no longer knew this connection's subscription; the session is unaffected.";
 const LINK_STOPPED_NOTICE: &str = "This prompt was not sent: the connection to Hermes has stopped.";
-const REFRESH_FAILED_NOTICE: &str = "The transcript could not be refreshed after the reconnect.";
+pub(crate) const REFRESH_FAILED_NOTICE: &str =
+    "The transcript could not be refreshed after the reconnect.";
 /// The line a prompt gets while a switch or a branch runs.
 pub const SWITCHING_NOTICE: &str = "Switching sessions: your prompt was not sent. It is back in the composer; submit it again when the new session is ready.";
 /// The line a second session action gets while one runs.
@@ -836,7 +839,7 @@ pub struct AppState {
     opened_profile: Option<String>,
     /// Whether the foreground session's process overlay is open.
     pub processes_open: bool,
-    retained_sessions: BTreeMap<RowKey, OpenedSession>,
+    pub(crate) retained_sessions: BTreeMap<RowKey, OpenedSession>,
     connection_generation: u64,
     background_generation_base: u64,
     background_stop_bindings: BTreeMap<(String, u64), BackgroundBinding>,
@@ -961,9 +964,9 @@ pub struct AppState {
     /// The `/cd` reducer: at most one folder check or move at a time (#237).
     cd: CdState,
     /// The moves' own request ids and fences, apart from the model picker's (#237).
-    cd_ledger: MutationLedger,
+    pub(crate) cd_ledger: MutationLedger,
     /// The foreground session's folder and branch (#237).
-    folder: SessionFolder,
+    pub(crate) folder: SessionFolder,
     /// The home folder `~` stands for in `/cd` (#237).
     pub home: Option<PathBuf>,
     /// How the `/cd` refusal names the interrupt key (#237).
@@ -2352,7 +2355,7 @@ pub enum AppEffect {
     OpenFleetViewAt(RowKey),
 }
 
-fn notice_lines(text: &str) -> AppEffect {
+pub(crate) fn notice_lines(text: &str) -> AppEffect {
     AppEffect::CommitLines(text.lines().map(|line| format!("\u{b7} {line}")).collect())
 }
 
@@ -2651,7 +2654,7 @@ fn cron_not_connected(effect: CronEffect) -> Option<CronInput> {
     })
 }
 
-fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
+pub(crate) fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
     state.models.update(ModelsInput::Connection {
         connected: state.link_state == LinkView::Connected,
     });
@@ -2749,135 +2752,6 @@ fn models_input(state: &mut AppState, input: ModelsInput) -> Vec<AppEffect> {
         } else {
             effects.push(AppEffect::Models(effect));
         }
-    }
-    effects
-}
-
-/// How a foreground rebuild was caused.
-pub enum RebuildMode {
-    /// Gap recovery, unchanged.
-    AfterGap,
-    /// A rewind or a restore finished. `notice` is committed and nothing above it is reprinted.
-    AfterRewind { notice: Vec<String> },
-}
-
-/// Replace the foreground session from a fresh snapshot.
-///
-/// `AfterGap` calls the existing gap recovery. `AfterRewind` is issue 233.
-pub fn rebuild_foreground(
-    state: &mut AppState,
-    snapshot: Value,
-    mode: RebuildMode,
-) -> Vec<AppEffect> {
-    match mode {
-        RebuildMode::AfterGap => rebuild_after_gap(state, snapshot),
-        RebuildMode::AfterRewind { notice } => rebuild_after_rewind(state, snapshot, notice),
-    }
-}
-
-fn rebuild_after_gap(state: &mut AppState, snapshot: Value) -> Vec<AppEffect> {
-    let result =
-        match serde_json::from_value::<hermes_contract::schemas::CanonicalSnapshot>(snapshot) {
-            Ok(decoded) => Ok(crate::sessions::OpenedSession::from_snapshot(decoded)),
-            Err(_) => Err(crate::sessions::OpenError::Link(
-                "the session reply did not decode".to_string(),
-            )),
-        };
-    recovered(state, result)
-}
-
-/// Replace the foreground state after a rewind or a restore without printing anything again.
-///
-/// Cells already in scrollback are matched in order and skipped; the notice is committed, then
-/// any final cell this pane never showed (another window's new turn), once.
-fn rebuild_after_rewind(
-    state: &mut AppState,
-    snapshot: Value,
-    notice: Vec<String>,
-) -> Vec<AppEffect> {
-    let now_ms = state.now_ms;
-    let mut fresh =
-        match serde_json::from_value::<hermes_contract::schemas::CanonicalSnapshot>(snapshot) {
-            Ok(decoded) => crate::sessions::OpenedSession::from_snapshot(decoded),
-            Err(_) => {
-                return vec![notice_lines(&rewind_text::reload_failed(
-                    "the session reply did not decode",
-                ))];
-            }
-        };
-    let mut old = state.opened.take();
-    if let Some(old) = &mut old {
-        carry_over(&mut old.state, &mut fresh.state);
-        fresh.state.queue.carry_waiting_from(&old.state.queue);
-        fresh.carry_background_from(old);
-    }
-    let shown: &[Cell] = old.as_ref().map_or(&[], |old| {
-        &old.state.cells()[..state.committed_cells.min(old.state.cells().len())]
-    });
-    let cells = fresh.state.cells();
-    let total = final_prefix(cells);
-    let mut position = 0;
-    let mut unseen: Vec<usize> = Vec::new();
-    for (index, cell) in cells[..total].iter().enumerate() {
-        match shown[position..].iter().position(|seen| seen == cell) {
-            Some(offset) => position += offset + 1,
-            None => unseen.push(index),
-        }
-    }
-    let mut effects = Vec::new();
-    if !notice.is_empty() {
-        effects.push(AppEffect::CommitLines(notice));
-    }
-    let mut start = 0;
-    while start < unseen.len() {
-        let mut end = start + 1;
-        while end < unseen.len() && unseen[end] == unseen[end - 1] + 1 {
-            end += 1;
-        }
-        effects.push(AppEffect::CommitCells(unseen[start]..unseen[end - 1] + 1));
-        start = end;
-    }
-    state.committed_cells = total;
-    effects.push(AppEffect::Resync {
-        session_id: fresh.session_id.clone(),
-        cursor: fresh.cursor.clone(),
-    });
-    effects.extend(models_input(
-        state,
-        ModelsInput::SessionOpened {
-            session_id: fresh.session_id.clone(),
-            revision: Some(fresh.revision),
-            execution_generation: Some(fresh.execution_generation),
-        },
-    ));
-    if fresh.title.is_none() {
-        fresh.title = old.and_then(|old| old.title);
-    }
-    state.folder =
-        SessionFolder::from_snapshot(fresh.info.cwd.as_deref(), fresh.info.branch.as_deref());
-    state
-        .cd_ledger
-        .fences_mut(&fresh.session_id)
-        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
-    state
-        .ledger
-        .fences_mut(&fresh.session_id)
-        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
-    state.opened = Some(fresh);
-    if let Some(session_id) = state
-        .opened
-        .as_ref()
-        .map(|opened| opened.session_id.clone())
-    {
-        effects.extend(background_event(
-            state,
-            &session_id,
-            BackgroundEvent::Attached { now_ms },
-        ));
-    }
-    state.source_epoch = state.source_epoch.wrapping_add(1);
-    if state.pager_open {
-        effects.push(AppEffect::Transcript(TranscriptAction::Changed));
     }
     effects
 }
@@ -6121,7 +5995,7 @@ fn background_effects(
         .collect()
 }
 
-fn background_event(
+pub(crate) fn background_event(
     state: &mut AppState,
     session_id: &str,
     event: BackgroundEvent,
@@ -6147,7 +6021,7 @@ fn background_event(
     background_effects(SessionId::new(session_id), background, false)
 }
 
-fn close_processes(state: &mut AppState) -> Vec<AppEffect> {
+pub(crate) fn close_processes(state: &mut AppState) -> Vec<AppEffect> {
     if !state.processes_open {
         return Vec::new();
     }
@@ -6303,7 +6177,7 @@ fn share_fences(state: &mut AppState, session_id: &str) {
 /// The session bypass is the value `/yolo` sets, so a reply that wrote or read it also reads
 /// the standing yolo mode again, as a finished `/yolo` does. A call that was never sent changed
 /// nothing, so it reads nothing.
-fn permissions(state: &mut AppState, input: PermissionsInput) -> Vec<AppEffect> {
+pub(crate) fn permissions(state: &mut AppState, input: PermissionsInput) -> Vec<AppEffect> {
     let label = state.toggle_label.clone();
     let bypass = match &input {
         PermissionsInput::SessionOffSet {
@@ -7217,7 +7091,7 @@ fn command_done(state: &mut AppState, typed: &str, outcome: CommandOutcome) -> V
 // ---------------------------------------------------------------------------------------------
 
 /// Fold one automation event into the standing state, turning its effects into app effects.
-fn automation_event(state: &mut AppState, event: AutomationEvent) -> Vec<AppEffect> {
+pub(crate) fn automation_event(state: &mut AppState, event: AutomationEvent) -> Vec<AppEffect> {
     let mut effects = Vec::new();
     for effect in talaria_core::automation::update(&mut state.automation, event) {
         match effect {
@@ -7396,7 +7270,7 @@ fn foreground_row(state: &AppState) -> Option<RowKey> {
     })
 }
 
-fn retained_key(state: &AppState, session_id: &str) -> Option<RowKey> {
+pub(crate) fn retained_key(state: &AppState, session_id: &str) -> Option<RowKey> {
     let current = RowKey {
         profile: state.profile.clone(),
         session_id: session_id.to_owned(),
@@ -9650,140 +9524,6 @@ fn interrupt_done(
     effects
 }
 
-fn recovered(state: &mut AppState, result: Result<OpenedSession, OpenError>) -> Vec<AppEffect> {
-    let now_ms = state.now_ms;
-    let mut fresh = match result {
-        Ok(fresh) => fresh,
-        Err(OpenError::NotFound) => {
-            let mut effects = close_processes(state);
-            state.session_gone = true;
-            effects.push(notice_lines(SESSION_GONE_NOTICE));
-            effects.extend(permissions(state, PermissionsInput::SessionClosed));
-            effects.extend(automation_event(state, AutomationEvent::Detached));
-            return effects;
-        }
-        Err(_) => return vec![notice_lines(REFRESH_FAILED_NOTICE)],
-    };
-    let Some(mut old) = state.opened.take() else {
-        return Vec::new();
-    };
-    carry_over(&mut old.state, &mut fresh.state);
-    fresh.state.queue.carry_waiting_from(&old.state.queue);
-    fresh.carry_background_from(&old);
-    let shown = state.committed_cells;
-    let mut effects = Vec::new();
-    let keeps_prefix = fresh.state.cells().len() >= shown
-        && old.state.cells().len() >= shown
-        && fresh.state.cells()[..shown] == old.state.cells()[..shown];
-    if !keeps_prefix {
-        let cells = fresh.state.cells();
-        let total = final_prefix(cells);
-        let start = total.saturating_sub(RESUME_HISTORY_CELLS);
-        let mut lines = vec!["\u{2500}\u{2500} Transcript refreshed \u{2500}\u{2500}".to_string()];
-        if start > 0 {
-            lines.push(format!("({start} earlier messages not shown)"));
-        }
-        effects.push(AppEffect::CommitLines(lines));
-        effects.push(AppEffect::CommitCells(start..total));
-        state.committed_cells = total;
-    }
-    effects.push(AppEffect::Resync {
-        session_id: fresh.session_id.clone(),
-        cursor: fresh.cursor.clone(),
-    });
-    effects.extend(models_input(
-        state,
-        ModelsInput::SessionOpened {
-            session_id: fresh.session_id.clone(),
-            revision: Some(fresh.revision),
-            execution_generation: Some(fresh.execution_generation),
-        },
-    ));
-    state
-        .cd_ledger
-        .fences_mut(&fresh.session_id)
-        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
-    state
-        .ledger
-        .fences_mut(&fresh.session_id)
-        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
-    if fresh.title.is_none() {
-        fresh.title = old.title;
-    }
-    let session_id = fresh.session_id.clone();
-    state.folder =
-        SessionFolder::from_snapshot(fresh.info.cwd.as_deref(), fresh.info.branch.as_deref());
-    state
-        .cd_ledger
-        .fences_mut(&fresh.session_id)
-        .adopt(Some(fresh.revision), Some(fresh.execution_generation));
-    state.opened = Some(fresh);
-    if let (Some(hub), Some(key)) = (
-        state.subagents.as_mut(),
-        Some(RowKey {
-            profile: state.profile.clone(),
-            session_id: session_id.clone(),
-        }),
-    ) {
-        hub.on_reconnected(&key);
-    }
-    effects.extend(background_event(
-        state,
-        &session_id,
-        BackgroundEvent::Attached { now_ms },
-    ));
-    state.source_epoch = state.source_epoch.wrapping_add(1);
-    if state.pager_open {
-        effects.push(AppEffect::Transcript(TranscriptAction::Changed));
-    }
-    // A re-attached session reads the standing state again.
-    effects.extend(automation_event(
-        state,
-        AutomationEvent::Attached {
-            session_id: session_id.clone(),
-        },
-    ));
-    effects.push(notice_lines(REFRESHED_NOTICE));
-    effects
-}
-
-fn recover_retained(
-    state: &mut AppState,
-    session_id: &str,
-    result: Result<OpenedSession, OpenError>,
-) -> Vec<AppEffect> {
-    let now_ms = state.now_ms;
-    let Some(key) = retained_key(state, session_id) else {
-        return Vec::new();
-    };
-    let mut fresh = match result {
-        Ok(fresh) => fresh,
-        Err(OpenError::NotFound) => {
-            state.retained_sessions.remove(&key);
-            return Vec::new();
-        }
-        Err(_) => return Vec::new(),
-    };
-    let Some(mut old) = state.retained_sessions.remove(&key) else {
-        return Vec::new();
-    };
-    carry_over(&mut old.state, &mut fresh.state);
-    fresh.state.queue.carry_waiting_from(&old.state.queue);
-    fresh.carry_background_from(&old);
-    fresh.state.queue.observe_time(now_ms);
-    let mut effects = vec![AppEffect::Resync {
-        session_id: fresh.session_id.clone(),
-        cursor: fresh.cursor.clone(),
-    }];
-    state.retained_sessions.insert(key, fresh);
-    effects.extend(background_event(
-        state,
-        session_id,
-        BackgroundEvent::Attached { now_ms },
-    ));
-    effects
-}
-
 /// Commit cells that became final, and tell the prompt service when the open prompts changed.
 fn commit_ready(state: &mut AppState) -> Vec<AppEffect> {
     let Some(opened) = state.opened.as_ref() else {
@@ -9808,10 +9548,6 @@ fn commit_ready(state: &mut AppState) -> Vec<AppEffect> {
         effects.push(AppEffect::PromptsChanged(open));
     }
     effects
-}
-
-fn final_prefix(cells: &[Cell]) -> usize {
-    cells.iter().take_while(|cell| cell.is_final()).count()
 }
 
 fn cut(text: &str, limit: usize) -> String {
