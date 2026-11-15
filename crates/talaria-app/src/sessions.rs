@@ -129,11 +129,13 @@ pub enum ExecuteOutcome {
     VoiceStopped,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetachOutcome {
     Detached,
     StaleSubscription,
-    Failed,
+    Failed {
+        reason: String,
+    },
     /// Nothing was detached: there was no session, or the session or link was already gone.
     Skipped,
 }
@@ -417,7 +419,9 @@ impl SessionService {
                 DetachOutcome::StaleSubscription
             }
             Ok(_) => DetachOutcome::Detached,
-            Err(_) => DetachOutcome::Failed,
+            Err(error) => DetachOutcome::Failed {
+                reason: error.to_string(),
+            },
         }
     }
 

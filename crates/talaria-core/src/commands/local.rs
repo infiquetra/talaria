@@ -65,6 +65,8 @@ pub enum LocalAction {
     Branch,
     /// Export a session to a file.
     Export,
+    /// Start a new session in the current folder.
+    Clear,
     /// Request a clipboard copy of a finished assistant reply.
     Copy,
     /// Open the fleet overlay.
@@ -465,6 +467,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "panel|bar|menu",
         takes_argument: true,
         action: LocalAction::Layout,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "clear",
+        aliases: &[],
+        summary: "Start a new session in this folder; the previous session keeps running",
+        args_hint: "",
+        takes_argument: false,
+        action: LocalAction::Clear,
         tag: "talaria",
     },
 ];

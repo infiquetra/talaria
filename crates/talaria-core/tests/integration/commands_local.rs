@@ -118,3 +118,19 @@ fn copy_is_local_and_shadows_a_remote_copy() {
     assert_eq!(parsed.name, "copy");
     assert_eq!(parsed.arg, "2");
 }
+
+#[test]
+fn clear_is_local_and_takes_no_argument() {
+    let table = LocalCommandTable::builtin();
+    let matches: Vec<_> = table.iter().filter(|cmd| cmd.name == "clear").collect();
+    assert_eq!(matches.len(), 1);
+    let clear = table.find("clear").expect("/clear");
+    assert!(clear.aliases.is_empty());
+    assert!(!clear.takes_argument);
+    assert!(clear.args_hint.is_empty());
+    assert_eq!(
+        clear.summary,
+        "Start a new session in this folder; the previous session keeps running"
+    );
+    assert_eq!(clear.action, LocalAction::Clear);
+}

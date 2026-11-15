@@ -1961,6 +1961,8 @@ pub enum AppMessage {
         /// The gateway's refusal reason, when it refused.
         reason: Option<String>,
     },
+    /// A local session reset finished.
+    SessionCleared(SessionCleared),
     /// A branch request came back; the loop settles it with the one ledger.
     BranchSent {
         request: MutationRequest,
@@ -2012,6 +2014,23 @@ pub struct SwitchInstall {
     pub service: SessionService,
     /// The new link, when the switch crossed to another profile.
     pub link: Option<Link>,
+}
+
+/// Result of leaving the current session and opening a new one.
+pub enum SessionCleared {
+    DetachFailed {
+        reason: String,
+    },
+    Started {
+        install: Box<SwitchInstall>,
+        resume_previous: bool,
+    },
+    OpenFailed {
+        previous_id: String,
+        reason: String,
+        left: bool,
+    },
+    Skipped,
 }
 
 /// What the executor does after one update. Ranges index the open session's cells.
@@ -2300,6 +2319,11 @@ pub enum AppEffect {
     /// Switch the foreground session to this row.
     Switch {
         key: RowKey,
+    },
+    /// Open a new session after leaving the foreground session.
+    ClearSession {
+        skip_detach: bool,
+        cwd: PathBuf,
     },
     /// Send a branch request the loop built with the one ledger.
     BranchSession {
@@ -4264,6 +4288,51 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         AppMessage::Cd(input) => cd_input(state, input),
         AppMessage::Automation(event) => automation_event(state, event),
         AppMessage::Picker(input) => picker_input(state, input),
+        AppMessage::SessionCleared(result) => match result {
+            SessionCleared::DetachFailed { reason } => vec![notice_lines(&format!(
+                "Could not leave the current session: {reason}. You are still in it."
+            ))],
+            SessionCleared::Started {
+                install,
+                resume_previous,
+            } => {
+                let notice = if resume_previous {
+                    let previous = state
+                        .opened
+                        .as_ref()
+                        .map(|opened| opened.session_id.as_str())
+                        .unwrap_or_default();
+                    let hint = crate::launch::exit_hint(previous, &state.profile);
+                    format!(
+                        "Started a new session in this folder. The previous session was not ended; resume it with {}",
+                        hint.lines().nth(1).unwrap_or_default().trim()
+                    )
+                } else {
+                    "Started a new session in this folder.".to_owned()
+                };
+                opened_session(state, install.opened, Some(notice))
+            }
+            SessionCleared::OpenFailed {
+                previous_id,
+                reason,
+                left,
+            } => {
+                state.opened = None;
+                let notice = if left {
+                    let hint = crate::launch::exit_hint(&previous_id, &state.profile);
+                    format!(
+                        "Left the previous session, but a new one could not be started: {reason}. Resume the previous session with {}",
+                        hint.lines().nth(1).unwrap_or_default().trim()
+                    )
+                } else {
+                    format!(
+                        "The previous session had ended, and a new one could not be started: {reason}."
+                    )
+                };
+                vec![notice_lines(&notice)]
+            }
+            SessionCleared::Skipped => Vec::new(),
+        },
         AppMessage::Switched {
             outcome,
             install,
@@ -5678,6 +5747,34 @@ fn local_effect(
     argument: String,
     typed: String,
 ) -> Vec<AppEffect> {
+    if action == LocalAction::Clear {
+        let Some(opened) = state.opened.as_ref() else {
+            return vec![notice_lines("No session is open.")];
+        };
+        if opened.state.turn() == &talaria_core::session::TurnState::Running
+            || opened.state.open_prompts().next().is_some()
+        {
+            return vec![AppEffect::CommitLines(vec![
+                "Finish or interrupt the current turn before /clear.".to_owned(),
+            ])];
+        }
+        if !state.held.is_empty() {
+            return vec![notice_lines(crate::switch::HELD_PROMPTS_TEXT)];
+        }
+        if state.link_failed {
+            return vec![notice_lines(LINK_STOPPED_NOTICE)];
+        }
+        let cwd = state
+            .folder
+            .cwd
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| state.launch_folder.clone());
+        return vec![AppEffect::ClearSession {
+            skip_detach: state.session_gone,
+            cwd,
+        }];
+    }
     if action == LocalAction::Copy {
         let raw = argument.trim();
         let raw = if raw.is_empty() { "1" } else { raw };
@@ -12742,6 +12839,70 @@ fn apply<S: Screen>(
                         outcome,
                         install,
                         reason,
+                    }
+                });
+            }
+            AppEffect::ClearSession { skip_detach, cwd } => {
+                let mut copy = state.working_copy();
+                executor.send_later(async move {
+                    let Some(old) = copy.opened.clone() else {
+                        return AppMessage::SessionCleared(SessionCleared::Skipped);
+                    };
+                    let Some(service) = copy.service.clone() else {
+                        if skip_detach {
+                            return AppMessage::SessionCleared(SessionCleared::OpenFailed {
+                                previous_id: old.session_id,
+                                reason: "Talaria is not connected to Hermes".into(),
+                                left: false,
+                            });
+                        }
+                        return AppMessage::SessionCleared(SessionCleared::DetachFailed {
+                            reason: "Talaria is not connected to Hermes".into(),
+                        });
+                    };
+                    if !skip_detach {
+                        crate::switch::stop_voice(&mut copy, &service, &old.session_id).await;
+                        match service.detach(&old).await {
+                            DetachOutcome::Detached | DetachOutcome::StaleSubscription => {}
+                            DetachOutcome::Failed { reason } => {
+                                return AppMessage::SessionCleared(SessionCleared::DetachFailed {
+                                    reason,
+                                });
+                            }
+                            DetachOutcome::Skipped => {
+                                return AppMessage::SessionCleared(SessionCleared::Skipped);
+                            }
+                        }
+                    }
+                    let request = crate::launch::NewSession {
+                        request_id: new_request_id(),
+                        source: crate::launch::SESSION_SOURCE.into(),
+                        cwd,
+                        model: None,
+                        provider: None,
+                        reasoning: None,
+                    };
+                    match service
+                        .open(crate::launch::SessionRequest::New(request))
+                        .await
+                    {
+                        Ok(opened) => {
+                            copy.opened = Some(opened);
+                            match copy.into_install() {
+                                Some(install) => {
+                                    AppMessage::SessionCleared(SessionCleared::Started {
+                                        install: Box::new(install),
+                                        resume_previous: !skip_detach,
+                                    })
+                                }
+                                None => AppMessage::SessionCleared(SessionCleared::Skipped),
+                            }
+                        }
+                        Err(error) => AppMessage::SessionCleared(SessionCleared::OpenFailed {
+                            previous_id: old.session_id,
+                            reason: crate::switch::refusal_reason(&error),
+                            left: !skip_detach,
+                        }),
                     }
                 });
             }
