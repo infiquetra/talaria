@@ -65,6 +65,8 @@ pub enum LocalAction {
     Branch,
     /// Export a session to a file.
     Export,
+    /// Request a clipboard copy of a finished assistant reply.
+    Copy,
     /// Open the fleet overlay.
     Fleet,
     /// Open the subagent panel, or pause and resume spawning. Issue #242.
@@ -281,6 +283,15 @@ const BUILTIN: &[LocalCommand] = &[
         args_hint: "[--no-redact] [file]",
         takes_argument: true,
         action: LocalAction::Export,
+        tag: "talaria",
+    },
+    LocalCommand {
+        name: "copy",
+        aliases: &[],
+        summary: "Copy a finished assistant reply",
+        args_hint: "[N]",
+        takes_argument: true,
+        action: LocalAction::Copy,
         tag: "talaria",
     },
     LocalCommand {

@@ -47,7 +47,7 @@ talaria --resume <id>
 
 ## Working in a session
 
-Use the [keybinding reference](keybindings.md) for composer editing, approvals and question cards. The transcript shows tool calls and diffs. Queue prompts behind a running turn, steer it when available, and use rewind to return to an earlier checkpoint. Use the model picker for the current session, `@` mentions for files, `!` for shell commands, and the transcript pager to search earlier output. Inspect commands before confirming an approval.
+Use the [keybinding reference](keybindings.md) for composer editing, approvals and question cards. The transcript shows tool calls and diffs. Queue prompts behind a running turn, steer it when available, and use rewind to return to an earlier checkpoint. Use the model picker for the current session, `@` mentions for files, `!` for shell commands, and the transcript pager to search earlier output. Inspect commands before confirming an approval. `/copy` copies the newest finished assistant reply, and `/copy N` copies the Nth newest, with 1 being the newest.
 
 ### Rewind
 

@@ -32,6 +32,27 @@ pub enum Cell {
     Background(BackgroundCell),
 }
 
+/// The requested finished assistant reply does not exist.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReplyMiss {
+    Missing,
+}
+
+/// Select a finished, non-interim assistant reply, counting backwards from one.
+pub fn assistant_reply(cells: &[Cell], n: u32) -> Result<String, ReplyMiss> {
+    let index = n.checked_sub(1).ok_or(ReplyMiss::Missing)?;
+    cells
+        .iter()
+        .rev()
+        .filter_map(|cell| match cell {
+            Cell::Assistant(reply) if reply.sealed && !reply.interim => Some(reply),
+            _ => None,
+        })
+        .nth(index as usize)
+        .map(|reply| super::text::strip_terminal_escapes(&reply.text))
+        .ok_or(ReplyMiss::Missing)
+}
+
 impl Cell {
     /// Whether this cell is final and ready to be committed to scrollback once every earlier cell is also final.
     #[must_use]
