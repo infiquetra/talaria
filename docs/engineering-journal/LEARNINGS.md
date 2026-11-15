@@ -2,6 +2,19 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+### 2026-11-14 — A withdrawn approval settles without a cancellation handler
+
+**Evidence.** `withdrawn_approval_leaves_on_settled_and_cancelled_leaves_it`
+checks settlement with only `prompt_id` and `execution_generation`. At Hermes
+v0.23.0 the older server announces cancellations from `_teardown_session`,
+`_interrupt_session_turn`, and `_recover_unreachable_compute_host_turn`.
+
+**Mechanism.** `approval.settled` matches the prompt id and settles the cell.
+The `approval.cancelled` arm does not read `request_ids`, so even a payload
+naming `p1` leaves that cell open. `open_prompts` excludes the settled cell.
+
+**Rule.** Do not take `approval.cancelled` off the silent list.
+
 ### 2026-11-14 — A generated-contract pin and a live gateway floor answer different questions
 
 **Evidence.** At Hermes v0.23.0, `gateway/control_socket.py` includes the identity

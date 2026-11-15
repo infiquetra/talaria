@@ -2,6 +2,16 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-14 — Lock withdrawal of an approval
+
+**Context.** A test-only regression locks how a displayed approval is withdrawn.
+
+**Decision.** `approval.settled` removes the approval from open prompts, while
+`approval.cancelled`, even when its request ids name that approval, leaves it
+open. This lock makes no product change.
+
+**Revisit when.** The reducer starts reading `approval.cancelled`.
+
 ## 2026-11-14 — Live tests admit supported gateway versions
 
 **Context.** The release used to generate Talaria's contract types remains pinned,
