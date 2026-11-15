@@ -379,6 +379,8 @@ pub struct TuiScreen {
     rewind_theme: RewindTheme,
     /// The transcript screen, while it is open.
     transcript: Option<Transcript>,
+    /// Whether the transcript most recently took the terminal overlay.
+    transcript_overlay_open: bool,
     /// What the application asked of the transcript screen.
     transcript_actions: Vec<TranscriptAction>,
     /// The queued row whose edit the composer holds, once its text is loaded (#232).
@@ -1693,6 +1695,7 @@ impl TuiScreen {
         if self.overlay == Overlay::Profiles && kind != Overlay::Profiles {
             return;
         }
+        self.transcript_overlay_open = false;
         if self.overlay == kind {
             return;
         }
@@ -3340,10 +3343,9 @@ impl TuiScreen {
         }
     }
 
-    /// Draw the transcript over the live view, or close it.
+    /// Draw the transcript over the live view.
     fn draw_transcript(&mut self, view: &View<'_>) {
         let Some(transcript) = self.transcript.as_mut() else {
-            let _ = self.terminal.close_overlay();
             return;
         };
         let ctx = transcript_context(view);
@@ -3354,6 +3356,7 @@ impl TuiScreen {
             transcript.dirty = false;
         }
         let _ = self.terminal.open_overlay();
+        self.transcript_overlay_open = true;
         let width = self.terminal.viewport().width;
         let height = self.terminal.viewport().height;
         transcript.pager.resize(width, height);
@@ -4154,6 +4157,7 @@ impl Screen for TuiScreen {
         self.cells.set_clock(&self.clock, now);
         self.sync_confirmation_focus(now);
         if let Some(rewind) = &view.rewind {
+            self.transcript_overlay_open = false;
             if !self.rewind_open {
                 let _ = self.terminal.open_overlay();
                 self.rewind_open = true;
@@ -4173,6 +4177,10 @@ impl Screen for TuiScreen {
         if self.rewind_open {
             let _ = self.terminal.close_overlay();
             self.rewind_open = false;
+        }
+        if self.transcript.is_none() && self.transcript_overlay_open {
+            let _ = self.terminal.close_overlay();
+            self.transcript_overlay_open = false;
         }
         if self.overlay == Overlay::Agents {
             self.draw_agents(view);
@@ -5271,6 +5279,7 @@ fn session(
         attachments: AttachmentView::default(),
         attachment_rule,
         transcript: None,
+        transcript_overlay_open: false,
         transcript_actions: Vec::new(),
         editing: None,
         edit_closing: false,
