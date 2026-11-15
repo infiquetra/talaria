@@ -2,6 +2,17 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — Keep compatibility and exact-pin release evidence separate
+
+**Evidence.** The release catalogue's existing live command uses the supported
+gateway floor, while an exact-pin pass needs an additional selector.
+
+**Mechanism.** An operator gate copies the live command with exact-pin selection;
+fixture replay gates are independent, and blank records contain no outcomes.
+
+**Generalizable rule.** Give distinct release claims separate gates and leave
+acceptance records empty until an operator supplies evidence.
+
 ## 2026-11-15 — Isolate the release comparison step
 
 **Evidence.** Watcher checks identify a step from its id to the next named step,

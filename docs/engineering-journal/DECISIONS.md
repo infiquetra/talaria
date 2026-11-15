@@ -2,6 +2,17 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-15 — Add release proof gates and blank acceptance records
+
+**Context.** Fixture replay and live compatibility each need a release gate,
+and acceptance results need a place to be recorded by later operators.
+
+**Decision.** Require separate sudo and secret replay gates and an operator
+exact-pin live gate. The ordinary live gate accepts supported newer gateways.
+Create seven empty acceptance records without claiming any results.
+
+**Revisit when.** The replay fixtures or live compatibility requirements change.
+
 ## 2026-11-15 — Watch Hermes releases with bounded reports
 
 **Context.** A newer release needs a reviewable pin update without repeated work.
