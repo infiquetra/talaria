@@ -5,7 +5,7 @@ use crate::events;
 use crate::snapshot_json;
 
 use serde_json::json;
-use talaria_core::session::{SessionId, SessionState, update};
+use talaria_core::session::{Cell, SessionId, SessionState, update};
 
 use events::{SESSION, ev, ev_session};
 
@@ -45,7 +45,7 @@ fn same_key_replaces_the_earlier_text() {
     assert_eq!(row.text, "second");
     assert_eq!(row.level, "info");
     assert_eq!(row.detail.as_deref(), Some("new"));
-    assert!(state.cells().is_empty());
+    assert_eq!(notice_texts(&state), vec!["first", "old", "new"]);
 }
 
 #[test]
@@ -168,39 +168,53 @@ fn timed_row_expires_when_the_caller_advances_time() {
 }
 
 #[test]
-fn show_and_clear_do_not_add_a_transcript_cell() {
+fn show_commits_detail_and_clear_keeps_the_cell() {
     let mut state = SessionState::empty(SessionId::new(SESSION));
-    let show_effects = update(
+    let _ = update(
         &mut state,
         ev(
             1,
             "notification.show",
             json!({
-                "text": "notice text",
+                "text": "head",
                 "level": "info",
                 "kind": "sticky",
-                "key": "k1",
-                "detail": "notice detail",
+                "key": "credits.usage",
+                "detail": "more",
             }),
         ),
     );
-    assert!(state.cells().is_empty());
-    assert!(show_effects.is_empty());
-    assert!(state.notices().by_key("k1").is_some());
+    let after_show: Vec<&str> = state
+        .cells()
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Notice(notice) => Some(notice.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(after_show, vec!["more"]);
+    assert!(state.notices().by_key("credits.usage").is_some());
 
-    let clear_effects = update(
+    let _ = update(
         &mut state,
         ev(
             2,
             "notification.clear",
             json!({
-                "key": "k1",
+                "key": "credits.usage",
             }),
         ),
     );
-    assert!(state.cells().is_empty());
-    assert!(clear_effects.is_empty());
-    assert!(state.notices().by_key("k1").is_none());
+    let after_clear: Vec<&str> = state
+        .cells()
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Notice(notice) => Some(notice.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(after_clear, vec!["more"]);
+    assert!(state.notices().by_key("credits.usage").is_none());
 }
 
 #[test]
@@ -350,4 +364,193 @@ fn most_recent_is_the_latest_show_still_stored() {
         state.notices().most_recent().map(|row| row.text.as_str()),
         Some("loose")
     );
+}
+
+fn notice_texts(state: &SessionState) -> Vec<&str> {
+    state
+        .cells()
+        .iter()
+        .filter_map(|cell| match cell {
+            Cell::Notice(notice) => Some(notice.text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn warn_text_and_detail_commit_once() {
+    let show = ev(
+        1,
+        "notification.show",
+        json!({
+            "key": "credits.usage",
+            "level": "warn",
+            "kind": "sticky",
+            "text": "head",
+            "detail": "more",
+        }),
+    );
+    let (mut state, _) = drive::reduce(SESSION, vec![show.clone()]);
+    assert_eq!(notice_texts(&state), vec!["head", "more"]);
+
+    let _ = update(
+        &mut state,
+        ev(
+            2,
+            "notification.show",
+            json!({
+                "key": "credits.usage",
+                "level": "warn",
+                "kind": "sticky",
+                "text": "head",
+                "detail": "more",
+            }),
+        ),
+    );
+    assert_eq!(notice_texts(&state), vec!["head", "more"]);
+}
+
+#[test]
+fn same_text_skips_a_new_detail() {
+    let (state, _) = drive::reduce(
+        SESSION,
+        vec![
+            ev(
+                1,
+                "notification.show",
+                json!({
+                    "key": "credits.usage",
+                    "level": "warn",
+                    "kind": "sticky",
+                    "text": "head",
+                    "detail": "more",
+                }),
+            ),
+            ev(
+                2,
+                "notification.show",
+                json!({
+                    "key": "credits.usage",
+                    "level": "warn",
+                    "kind": "sticky",
+                    "text": "head",
+                    "detail": "other",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(notice_texts(&state), vec!["head", "more"]);
+}
+
+#[test]
+fn info_without_detail_commits_nothing() {
+    let (mut state, _) = drive::reduce(
+        SESSION,
+        vec![ev(
+            1,
+            "notification.show",
+            json!({
+                "key": "credits.usage",
+                "level": "info",
+                "kind": "sticky",
+                "text": "quiet",
+            }),
+        )],
+    );
+    assert!(state.cells().is_empty());
+    assert_eq!(
+        state.notices().most_recent().map(|r| r.text.as_str()),
+        Some("quiet")
+    );
+    assert_eq!(state.notices().warning_count(), 0);
+
+    let _ = update(
+        &mut state,
+        ev(
+            2,
+            "notification.show",
+            json!({
+                "key": "credits.usage",
+                "level": "success",
+                "kind": "sticky",
+                "text": "done",
+            }),
+        ),
+    );
+    assert!(state.cells().is_empty());
+    assert_eq!(state.notices().warning_count(), 0);
+}
+
+#[test]
+fn sign_in_text_commits_once() {
+    let (mut state, _) = drive::reduce(
+        SESSION,
+        vec![ev(
+            1,
+            "notification.show",
+            json!({
+                "key": "login:abcd1234",
+                "level": "info",
+                "kind": "sticky",
+                "text": "https://example.test",
+            }),
+        )],
+    );
+    assert_eq!(notice_texts(&state), vec!["https://example.test"]);
+
+    let _ = update(
+        &mut state,
+        ev(
+            2,
+            "notification.show",
+            json!({
+                "key": "login:abcd1234",
+                "level": "info",
+                "kind": "sticky",
+                "text": "https://example.test",
+            }),
+        ),
+    );
+    assert_eq!(notice_texts(&state), vec!["https://example.test"]);
+}
+
+#[test]
+fn next_deadline_follows_the_stamp() {
+    let (mut state, _) = drive::reduce(
+        SESSION,
+        vec![ev(
+            1,
+            "notification.show",
+            json!({
+                "text": "back",
+                "level": "success",
+                "kind": "ttl",
+                "key": "credits.restored",
+                "ttl_ms": 8000,
+            }),
+        )],
+    );
+    assert_eq!(state.next_notice_deadline(), Some(0));
+
+    state.expire_notices(500);
+    assert_eq!(state.next_notice_deadline(), Some(8500));
+
+    state.expire_notices(8500);
+    assert_eq!(state.next_notice_deadline(), None);
+    assert!(state.notices().most_recent().is_none());
+
+    let (sticky_only, _) = drive::reduce(
+        SESSION,
+        vec![ev(
+            1,
+            "notification.show",
+            json!({
+                "text": "stay",
+                "level": "info",
+                "kind": "sticky",
+                "key": "credits.usage",
+            }),
+        )],
+    );
+    assert_eq!(sticky_only.next_notice_deadline(), None);
 }

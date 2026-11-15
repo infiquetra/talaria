@@ -70,6 +70,8 @@ mod doctor_view;
 mod fleet_alert_bytes;
 #[path = "integration/fleet_external_launch.rs"]
 mod fleet_external_launch;
+#[path = "integration/fleet_notice_count.rs"]
+mod fleet_notice_count;
 #[path = "integration/fleet_pane_screens.rs"]
 mod fleet_pane_screens;
 #[path = "integration/fleet_pr_column.rs"]
@@ -208,6 +210,8 @@ mod status_fleet_segments;
 mod status_inline;
 #[path = "integration/status_line.rs"]
 mod status_line;
+#[path = "integration/status_notice.rs"]
+mod status_notice;
 #[path = "integration/status_pr_segment.rs"]
 mod status_pr_segment;
 #[path = "integration/status_probe.rs"]
