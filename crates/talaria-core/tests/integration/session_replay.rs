@@ -12,7 +12,8 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 use talaria_core::session::{
-    Cell, Effect, Event, NoticeKind, SessionState, TurnOutcome, TurnState,
+    AssistantCell, Cell, CellId, Effect, Event, NoticeKind, ReplyMiss, SessionId, SessionState,
+    TurnOutcome, TurnState, assistant_reply,
 };
 
 const ROLES: &[(&str, &str)] = &[
@@ -487,4 +488,81 @@ fn duplicated_sequenced_frames_change_no_fixture() {
     assert_eq!(once.cells(), twice.cells());
     assert_eq!(once.turn(), twice.turn());
     assert_eq!(once.cursor(), twice.cursor());
+}
+
+#[test]
+fn copy_selects_the_numbered_assistant_reply() {
+    let (_text, log) = require_role("plain answer", "plain-answer.jsonl");
+    let (state, _) = reduce_log(&log);
+    let expected = assistant_texts(&state);
+    assert_eq!(expected.len(), 1);
+    assert_eq!(assistant_reply(state.cells(), 1), Ok(expected[0].clone()));
+    assert_eq!(assistant_reply(state.cells(), 2), Err(ReplyMiss::Missing));
+
+    let mut custom = SessionState::empty(SessionId::new("copy-test"));
+    custom.insert_final(Cell::Assistant(AssistantCell {
+        id: CellId::new(1),
+        text: "unsealed".into(),
+        sealed: false,
+        interim: false,
+        transformed: false,
+    }));
+    custom.insert_final(Cell::Assistant(AssistantCell {
+        id: CellId::new(2),
+        text: "interim".into(),
+        sealed: true,
+        interim: true,
+        transformed: false,
+    }));
+    custom.insert_final(Cell::Assistant(AssistantCell {
+        id: CellId::new(3),
+        text: "transformed".into(),
+        sealed: true,
+        interim: false,
+        transformed: true,
+    }));
+    assert_eq!(
+        assistant_reply(custom.cells(), 1),
+        Ok("transformed".to_string())
+    );
+    assert_eq!(assistant_reply(custom.cells(), 2), Err(ReplyMiss::Missing));
+
+    custom.insert_final(Cell::Assistant(AssistantCell {
+        id: CellId::new(4),
+        text: "\x1b[31m\x1b[0m".into(),
+        sealed: true,
+        interim: false,
+        transformed: false,
+    }));
+    assert_eq!(assistant_reply(custom.cells(), 1), Ok(String::new()));
+
+    custom.insert_final(Cell::Assistant(AssistantCell {
+        id: CellId::new(5),
+        text: "earlier".into(),
+        sealed: true,
+        interim: false,
+        transformed: false,
+    }));
+    custom.insert_final(Cell::Assistant(AssistantCell {
+        id: CellId::new(6),
+        text: "later".into(),
+        sealed: true,
+        interim: false,
+        transformed: false,
+    }));
+    assert_eq!(assistant_reply(custom.cells(), 1), Ok("later".to_string()));
+    assert_eq!(
+        assistant_reply(custom.cells(), 2),
+        Ok("earlier".to_string())
+    );
+
+    let fenced = "```rust\nlet n = 1;\n\n```";
+    custom.insert_final(Cell::Assistant(AssistantCell {
+        id: CellId::new(7),
+        text: fenced.into(),
+        sealed: true,
+        interim: false,
+        transformed: false,
+    }));
+    assert_eq!(assistant_reply(custom.cells(), 1), Ok(fenced.to_string()));
 }
