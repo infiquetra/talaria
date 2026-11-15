@@ -1,4 +1,4 @@
-// Hermes v0.22.4 commit 4d04303818b61bf3aa09278af48356315515965b contract sha256 248ce12519dcc1e830a15c5819c93e6d27ef18404d19da38c960570710f83d00
+// Hermes v0.23.1 commit 3b421578588243f920886e6fe79a6faa87ea026e contract sha256 c2f48466a3e4fa98babceb066ab5d053d1573f0202146cd6e6fdb319ddd81f19
 #![allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub enum Notification {
@@ -10,8 +10,6 @@ pub enum Notification {
     BackgroundComplete(crate::schemas::SideAgentCompletePayload),
     BillingStepUpVerification(crate::schemas::BillingStepUpVerificationPayload),
     BotRelayOutboxPending(crate::schemas::ChangeSignalPayload),
-    BrowserControllerCancel(crate::schemas::BrowserControllerCancelPayload),
-    BrowserControllerCommand(crate::schemas::BrowserControllerCommandPayload),
     BrowserProgress(crate::schemas::BrowserProgressPayload),
     BtwComplete(crate::schemas::SideAgentCompletePayload),
     ClarifyRequest(crate::canonical_events::ClarifyRequest),
@@ -110,11 +108,6 @@ pub const REQUIRED_FIELDS: &[(&str, &[&str])] = &[
         &["user_code", "verification_url"],
     ),
     ("bot_relay.outbox.pending", &[]),
-    ("browser.controller.cancel", &["command_id"]),
-    (
-        "browser.controller.command",
-        &["action", "arguments", "command_id"],
-    ),
     ("browser.progress", &["level", "message"]),
     ("btw.complete", &["task_id", "text"]),
     ("clarify.request", &["prompt_id"]),

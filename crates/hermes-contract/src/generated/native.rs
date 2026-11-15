@@ -1,7 +1,8 @@
-// Hermes v0.22.4 commit 4d04303818b61bf3aa09278af48356315515965b contract sha256 248ce12519dcc1e830a15c5819c93e6d27ef18404d19da38c960570710f83d00
+// Hermes v0.23.1 commit 3b421578588243f920886e6fe79a6faa87ea026e contract sha256 c2f48466a3e4fa98babceb066ab5d053d1573f0202146cd6e6fdb319ddd81f19
 pub trait NativeMethod: crate::method::Method {}
 impl NativeMethod for crate::methods::canonical::a2a_forward::Marker {}
 impl NativeMethod for crate::methods::canonical::approval_respond::Marker {}
+impl NativeMethod for crate::methods::canonical::bot_relay_cancel::Marker {}
 impl NativeMethod for crate::methods::canonical::bot_relay_deliver::Marker {}
 impl NativeMethod for crate::methods::canonical::bot_relay_settle::Marker {}
 impl NativeMethod for crate::methods::canonical::clarify_lock::Marker {}
@@ -18,6 +19,9 @@ impl NativeMethod for crate::methods::canonical::groups_attachment_download::Mar
 impl NativeMethod for crate::methods::canonical::groups_attachment_upload::Marker {}
 impl NativeMethod for crate::methods::canonical::groups_create::Marker {}
 impl NativeMethod for crate::methods::canonical::groups_discard::Marker {}
+impl NativeMethod for crate::methods::canonical::groups_peer_invite::Marker {}
+impl NativeMethod for crate::methods::canonical::groups_peer_register::Marker {}
+impl NativeMethod for crate::methods::canonical::groups_peer_revoke::Marker {}
 impl NativeMethod for crate::methods::canonical::groups_retry::Marker {}
 impl NativeMethod for crate::methods::canonical::image_attach_bytes::Marker {}
 impl NativeMethod for crate::methods::canonical::kanban_run::Marker {}
@@ -44,6 +48,7 @@ impl NativeMethod for crate::methods::canonical::session_redirect::Marker {}
 impl NativeMethod for crate::methods::canonical::session_resume::Marker {}
 impl NativeMethod for crate::methods::canonical::session_stats::Marker {}
 impl NativeMethod for crate::methods::canonical::session_steer::Marker {}
+impl NativeMethod for crate::methods::canonical::session_transcript::Marker {}
 impl NativeMethod for crate::methods::canonical::shell_exec::Marker {}
 impl NativeMethod for crate::methods::canonical::worker_adopt::Marker {}
 impl NativeMethod for crate::methods::canonical::worker_persist::Marker {}
@@ -53,15 +58,12 @@ impl NativeMethod for crate::methods::legacy::approval_received::Marker {}
 impl NativeMethod for crate::methods::legacy::billing_auto_reload::Marker {}
 impl NativeMethod for crate::methods::legacy::billing_charge::Marker {}
 impl NativeMethod for crate::methods::legacy::billing_charge_status::Marker {}
+impl NativeMethod for crate::methods::legacy::billing_keep_going_on_credits::Marker {}
 impl NativeMethod for crate::methods::legacy::billing_state::Marker {}
 impl NativeMethod for crate::methods::legacy::billing_step_up::Marker {}
 impl NativeMethod for crate::methods::legacy::bot_relay_outbox_drain::Marker {}
 impl NativeMethod for crate::methods::legacy::bot_relay_reply::Marker {}
 impl NativeMethod for crate::methods::legacy::bot_relay_roster_sync::Marker {}
-impl NativeMethod for crate::methods::legacy::browser_controller_detach::Marker {}
-impl NativeMethod for crate::methods::legacy::browser_controller_heartbeat::Marker {}
-impl NativeMethod for crate::methods::legacy::browser_controller_register::Marker {}
-impl NativeMethod for crate::methods::legacy::browser_controller_result::Marker {}
 impl NativeMethod for crate::methods::legacy::browser_manage::Marker {}
 impl NativeMethod for crate::methods::legacy::cli_exec::Marker {}
 impl NativeMethod for crate::methods::legacy::client_capabilities::Marker {}
@@ -105,13 +107,12 @@ impl NativeMethod for crate::methods::legacy::free_tier_provision::Marker {}
 impl NativeMethod for crate::methods::legacy::free_tier_status::Marker {}
 impl NativeMethod for crate::methods::legacy::gateway_capabilities::Marker {}
 impl NativeMethod for crate::methods::legacy::groups_capabilities::Marker {}
+impl NativeMethod for crate::methods::legacy::groups_context::Marker {}
+impl NativeMethod for crate::methods::legacy::groups_continue::Marker {}
 impl NativeMethod for crate::methods::legacy::groups_demote::Marker {}
 impl NativeMethod for crate::methods::legacy::groups_disband::Marker {}
 impl NativeMethod for crate::methods::legacy::groups_list::Marker {}
 impl NativeMethod for crate::methods::legacy::groups_log::Marker {}
-impl NativeMethod for crate::methods::legacy::groups_peer_invite::Marker {}
-impl NativeMethod for crate::methods::legacy::groups_peer_register::Marker {}
-impl NativeMethod for crate::methods::legacy::groups_peer_revoke::Marker {}
 impl NativeMethod for crate::methods::legacy::groups_promote::Marker {}
 impl NativeMethod for crate::methods::legacy::groups_rename::Marker {}
 impl NativeMethod for crate::methods::legacy::groups_replica_state::Marker {}
@@ -127,6 +128,7 @@ impl NativeMethod for crate::methods::legacy::i18n_languages::Marker {}
 impl NativeMethod for crate::methods::legacy::image_attach::Marker {}
 impl NativeMethod for crate::methods::legacy::image_detach::Marker {}
 impl NativeMethod for crate::methods::legacy::image_generate::Marker {}
+impl NativeMethod for crate::methods::legacy::image_render::Marker {}
 impl NativeMethod for crate::methods::legacy::input_detect_drop::Marker {}
 impl NativeMethod for crate::methods::legacy::insights_get::Marker {}
 impl NativeMethod for crate::methods::legacy::learning_delete::Marker {}
@@ -239,6 +241,7 @@ impl NativeMethod for crate::methods::legacy::spawn_tree_load::Marker {}
 impl NativeMethod for crate::methods::legacy::spawn_tree_save::Marker {}
 impl NativeMethod for crate::methods::legacy::subagent_interrupt::Marker {}
 impl NativeMethod for crate::methods::legacy::subagent_list::Marker {}
+impl NativeMethod for crate::methods::legacy::subagent_roster::Marker {}
 impl NativeMethod for crate::methods::legacy::subagent_steer::Marker {}
 impl NativeMethod for crate::methods::legacy::subagent_tail::Marker {}
 impl NativeMethod for crate::methods::legacy::subscription_change::Marker {}
@@ -256,6 +259,7 @@ impl NativeMethod for crate::methods::legacy::usage_bars::Marker {}
 impl NativeMethod for crate::methods::legacy::vault_add::Marker {}
 impl NativeMethod for crate::methods::legacy::vault_list::Marker {}
 impl NativeMethod for crate::methods::legacy::vault_lock::Marker {}
+impl NativeMethod for crate::methods::legacy::vault_preview_fill::Marker {}
 impl NativeMethod for crate::methods::legacy::vault_remove::Marker {}
 impl NativeMethod for crate::methods::legacy::vault_source_set::Marker {}
 impl NativeMethod for crate::methods::legacy::vault_sources::Marker {}

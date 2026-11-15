@@ -92,6 +92,8 @@ impl RewindService {
         let params = RollbackListParams {
             profile: None,
             session_id: self.session_id.clone(),
+            undo_message_id: None,
+            undo_since: None,
         };
         match self.client.call::<rollback_list::Marker>(params).await {
             Ok(result) => Reply::Checkpoints(CheckpointList::from_result(

@@ -533,6 +533,7 @@ pub async fn handshake_with(
         conn,
         1,
         client_capabilities::Params {
+            desktop_local: false,
             server_requests: true,
         },
         options.call_timeout,

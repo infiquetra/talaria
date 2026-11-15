@@ -894,6 +894,7 @@ impl AttachmentService {
                                         data_url: None,
                                         name: None,
                                         profile: None,
+                                        staged_upload: None,
                                     },
                                     CallOptions { timeout: None },
                                 )

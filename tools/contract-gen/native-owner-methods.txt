@@ -2,6 +2,7 @@ a2a.forward
 approval.pending
 approval.received
 approval.respond
+bot_relay.cancel
 bot_relay.deliver
 bot_relay.outbox.drain
 bot_relay.reply
@@ -30,11 +31,16 @@ groups.approve
 groups.attachment.download
 groups.attachment.upload
 groups.capabilities
+groups.context
+groups.continue
 groups.create
 groups.disband
 groups.discard
 groups.list
 groups.log
+groups.peer.invite
+groups.peer.register
+groups.peer.revoke
 groups.rename
 groups.retry
 groups.send
