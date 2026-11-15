@@ -12,12 +12,16 @@ use talaria_app::fleet_attention::{
 };
 use talaria_app::side_connection::SideScope;
 use talaria_core::alert_gate::urgency;
-use talaria_core::attention::{Alert, AlertKind, NeedSummary};
+use talaria_core::attention::{
+    Activity, Alert, AlertKind, AttentionConfig, AttentionTracker, NeedKey, NeedSummary,
+    TurnOutcome,
+};
 use talaria_core::fleet::{
     FleetCounts, FleetRow, NeedDetail, NeedId, NeedItem, NeedSlot, Outcome, ProfileStatus, RowKey,
     RowState,
 };
 use talaria_core::fleet_attention::{FleetAttentionConfig, FleetScope};
+use talaria_core::session::{PromptKey, SessionId};
 
 fn cfg() -> FleetAttentionConfig {
     FleetAttentionConfig {
@@ -836,5 +840,100 @@ fn attention_key_opens_fleet_view_or_notice() {
         effects
             .iter()
             .all(|effect| !matches!(effect, AppEffect::OpenFleetViewAt(_)))
+    );
+}
+
+#[test]
+fn dropped_foreground_alert_does_not_move_the_tracker_window() {
+    let base = Instant::now();
+    let config = AttentionConfig {
+        bell: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+        desktop: vec![AlertKind::NeedsYou, AlertKind::Done, AlertKind::Failed],
+        speech: vec![],
+        done_after: Duration::from_secs(20),
+    };
+
+    // Negative half: a dropped Done alert does not block a higher-urgency NeedsYou alert.
+    let mut tracker = AttentionTracker::new(config.clone());
+    let mut hub = AttentionHub::new(cfg(), String::from("fixture"), None);
+    let gate_done = Alert {
+        kind: AlertKind::Done,
+        bell: true,
+        desktop: true,
+        speech: false,
+        text: String::from("gate-done"),
+    };
+    assert!(
+        hub.on_foreground_alert(gate_done, base + Duration::from_secs(19))
+            .is_some()
+    );
+
+    tracker.observe(Activity::TurnStarted { at: base });
+    let ended = tracker.observe(Activity::TurnEnded {
+        outcome: TurnOutcome::Complete,
+        at: base + Duration::from_secs(20),
+    });
+    let done_alert = ended.alert.expect("done alert");
+    assert_eq!(done_alert.kind, AlertKind::Done);
+    assert!(
+        hub.on_foreground_alert(done_alert, base + Duration::from_secs(20))
+            .is_none()
+    );
+
+    let need_at = base + Duration::from_secs(20) + Duration::from_millis(500);
+    let need_out = tracker.observe(Activity::NeedOpened {
+        key: NeedKey::Prompt(PromptKey {
+            session_id: SessionId::new("session-a"),
+            prompt_id: String::from("need"),
+            execution_generation: 1,
+        }),
+        summary: NeedSummary::Sudo,
+        restored: false,
+        at: need_at,
+    });
+    let need_alert = need_out.alert.expect("needs-you alert");
+    assert_eq!(need_alert.kind, AlertKind::NeedsYou);
+    assert!(hub.on_foreground_alert(need_alert, need_at).is_some());
+
+    // Failing half: a dropped NeedsYou alert does not move the tracker's 2-second window.
+    let mut tracker = AttentionTracker::new(config);
+    let mut hub = AttentionHub::new(cfg(), String::from("fixture"), None);
+    let gate_need = Alert {
+        kind: AlertKind::NeedsYou,
+        bell: true,
+        desktop: true,
+        speech: false,
+        text: String::from("gate"),
+    };
+    assert!(hub.on_foreground_alert(gate_need, base).is_some());
+
+    let one_at = base + Duration::from_secs(1);
+    let one_out = tracker.observe(Activity::NeedOpened {
+        key: NeedKey::Prompt(PromptKey {
+            session_id: SessionId::new("session-a"),
+            prompt_id: String::from("one"),
+            execution_generation: 1,
+        }),
+        summary: NeedSummary::Sudo,
+        restored: false,
+        at: one_at,
+    });
+    let one_alert = one_out.alert.expect("first need produces tracker alert");
+    assert!(hub.on_foreground_alert(one_alert, one_at).is_none());
+
+    let two_at = base + Duration::from_secs(2) + Duration::from_millis(100);
+    let two_out = tracker.observe(Activity::NeedOpened {
+        key: NeedKey::Prompt(PromptKey {
+            session_id: SessionId::new("session-a"),
+            prompt_id: String::from("two"),
+            execution_generation: 1,
+        }),
+        summary: NeedSummary::Sudo,
+        restored: false,
+        at: two_at,
+    });
+    assert!(
+        two_out.alert.is_some(),
+        "a dropped foreground alert must not move the tracker window"
     );
 }

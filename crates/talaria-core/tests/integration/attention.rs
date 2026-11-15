@@ -338,21 +338,29 @@ fn rate_limit_keeps_the_more_urgent_alert() {
     let base = Instant::now();
     let mut alerts = 0;
     for (index, millis) in [0, 500, 1900].into_iter().enumerate() {
+        let at = base + Duration::from_millis(millis);
         let out = tracker.observe(opened(
             prompt_key("session-a", &format!("prompt-{index}")),
             approval("ls", ""),
-            base + Duration::from_millis(millis),
+            at,
         ));
+        if let Some(alert) = &out.alert {
+            tracker.record_admitted(at, alert.kind);
+        }
         alerts += usize::from(out.alert.is_some());
     }
     assert_eq!(alerts, 1, "three needs inside the window ring once");
 
+    let at = base + Duration::from_millis(2100);
     let out = tracker.observe(opened(
         prompt_key("session-a", "prompt-3"),
         approval("ls", ""),
-        base + Duration::from_millis(2100),
+        at,
     ));
     assert!(out.alert.is_some(), "a need past the window rings again");
+    if let Some(alert) = &out.alert {
+        tracker.record_admitted(at, alert.kind);
+    }
 
     let reopened = prompt_key("session-a", "prompt-1");
     tracker.observe(Activity::NeedClosed {
@@ -374,12 +382,19 @@ fn rate_limit_keeps_the_more_urgent_alert() {
         at: base,
     });
     assert!(out.alert.is_some());
+    if let Some(alert) = &out.alert {
+        tracker.record_admitted(base, alert.kind);
+    }
+    let at = base + Duration::from_secs(1);
     let out = tracker.observe(opened(
         prompt_key("session-a", "prompt-1"),
         approval("ls", ""),
-        base + Duration::from_secs(1),
+        at,
     ));
     assert!(out.alert.is_some(), "a need beats an earlier done");
+    if let Some(alert) = &out.alert {
+        tracker.record_admitted(at, alert.kind);
+    }
 
     let mut tracker = AttentionTracker::new(all_channels());
     let out = tracker.observe(opened(
@@ -388,6 +403,9 @@ fn rate_limit_keeps_the_more_urgent_alert() {
         base,
     ));
     assert!(out.alert.is_some());
+    if let Some(alert) = &out.alert {
+        tracker.record_admitted(base, alert.kind);
+    }
     tracker.observe(Activity::TurnStarted {
         at: base - Duration::from_secs(25),
     });
