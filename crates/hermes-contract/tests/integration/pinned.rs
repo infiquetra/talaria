@@ -197,3 +197,28 @@ fn live_profile_defaults_to_fixture() {
         "other"
     );
 }
+
+#[test]
+fn current_matches_pin_and_floor() {
+    let current = hermes_contract::compat::CURRENT;
+    assert_eq!(current.pinned_tag, hermes_contract::pinned::TAG);
+    assert_eq!(current.pinned_commit, hermes_contract::pinned::COMMIT);
+    let floor_str = current
+        .floor
+        .strip_prefix('v')
+        .expect("floor starts with v");
+    let parts: Vec<u64> = floor_str
+        .split('.')
+        .map(|part| part.parse::<u64>().expect("numeric version component"))
+        .collect();
+    assert_eq!(
+        parts.len(),
+        3,
+        "three-part floor version: {}",
+        current.floor
+    );
+    assert_eq!(
+        (parts[0], parts[1], parts[2]),
+        hermes_contract::pinned::OLDEST_SUPPORTED
+    );
+}
