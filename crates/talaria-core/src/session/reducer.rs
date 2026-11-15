@@ -513,7 +513,7 @@ fn session(
         }
         "notification.show" => {
             if let Some(text) = payload["text"].as_str().filter(|text| !text.is_empty()) {
-                state.notices.apply_show(NoticeRow {
+                let row = NoticeRow {
                     text: text.to_owned(),
                     level: payload["level"].as_str().unwrap_or("").to_owned(),
                     kind: payload["kind"].as_str().unwrap_or("").to_owned(),
@@ -521,7 +521,31 @@ fn session(
                     id: payload["id"].as_str().map(str::to_owned),
                     detail: payload["detail"].as_str().map(str::to_owned),
                     ttl_ms: payload["ttl_ms"].as_i64(),
-                });
+                };
+                let previous = match row.key.as_deref() {
+                    Some(key) => state.notices.by_key(key),
+                    None => state.notices.keyless(),
+                }
+                .cloned();
+                state.notices.apply_show(row.clone());
+                if previous.as_ref().is_none_or(|old| old.text != row.text) {
+                    let kind = match row.level.as_str() {
+                        "error" => NoticeKind::Error,
+                        "warn" => NoticeKind::Warning,
+                        _ => NoticeKind::System,
+                    };
+                    if matches!(row.level.as_str(), "warn" | "error")
+                        || row
+                            .key
+                            .as_deref()
+                            .is_some_and(|key| key.starts_with("login:"))
+                    {
+                        state.notice(kind, row.text, None);
+                    }
+                    if let Some(detail) = row.detail.filter(|detail| !detail.is_empty()) {
+                        state.notice(kind, detail, None);
+                    }
+                }
             }
         }
         "notification.clear" => {

@@ -19,8 +19,8 @@ pub use document::{DOCUMENT_FIELDS, StatusDocument};
 pub use env::{DENIED_PROVIDER_KEYS, FORWARDED_TALARIA, build_child_env, clean_gateway_url};
 pub use output::{ExternalRow, Failure, ParsedOutput, parse_output};
 pub use segments::{
-    ApprovalsSegment, ExternalSegment, LinePlan, Segment, SessionRef, StatusInputs, StatusSection,
-    TokenUsage, VoiceSegment, plan,
+    ApprovalsSegment, ExternalSegment, LinePlan, NoticeLine, Segment, SessionRef, StatusInputs,
+    StatusSection, TokenUsage, VoiceSegment, notice_tone, plan,
 };
 
 /// The attach state of the gateway link.

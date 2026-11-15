@@ -98,8 +98,8 @@ use talaria_tui::session_picker::{PickerTheme, SessionPickerView};
 use talaria_tui::side::{SideTasksSection, shell_mode_title};
 use talaria_tui::status::{
     ApprovalsSegment, CommandLimits, CommandResult, CommandSpec, Connection, ExternalDisplay,
-    SessionRef, StatusCommandService, StatusDocument, StatusInputs, StatusPalette, StatusSection,
-    Tone, TurnState, interval_from_config, parse_command,
+    NoticeLine, SessionRef, StatusCommandService, StatusDocument, StatusInputs, StatusPalette,
+    StatusSection, Tone, TurnState, interval_from_config, notice_tone, parse_command,
 };
 use talaria_tui::subagents::{
     AgentsPanel, PanelHeader, PanelMode, SubagentDock, SubagentStyle, TailView, batch_block_lines,
@@ -1241,6 +1241,16 @@ fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
         .subagents
         .and_then(|hub| hub.foreground_key().and_then(|key| hub.known_counts(key)));
     StatusInputs {
+        notice: view
+            .state
+            .and_then(|state| state.notices().most_recent())
+            .map(|row| NoticeLine {
+                text: row.text.clone(),
+                tone: notice_tone(&row.level),
+            }),
+        warning_count: view.state.map_or(0, |state| {
+            u32::try_from(state.notices().warning_count()).unwrap_or(u32::MAX)
+        }),
         ultracode: view.ultracode,
         connection: match view.link {
             LinkView::Connecting => Connection::Connecting,
