@@ -31,7 +31,7 @@ tokens = 2000000
 
 #[test]
 fn parses_the_documented_example() {
-    assert_eq!(DEFAULT_MAX_IN_FLIGHT, 1);
+    assert_eq!(DEFAULT_MAX_IN_FLIGHT, 5);
     let table = StaffingTable::parse(EXAMPLE).unwrap();
     assert_eq!(table.default_tier.as_deref(), Some("builder"));
     assert_eq!(table.tiers["survey"].model, "minimax-m3.1-flash");
