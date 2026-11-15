@@ -283,11 +283,7 @@ const EXPECTED: &[(&str, &str, &str, &str, &str, &str)] = &[
 #[test]
 fn matrix_parses_and_every_row_is_complete() {
     let m = matrix();
-    let pin = fs::read_to_string(root().join("crates/hermes-contract/PINNED")).unwrap();
-    assert_eq!(
-        m["hermes_release"].as_str(),
-        pin.lines().find_map(|s| s.strip_prefix("tag="))
-    );
+    assert_eq!(m["recorded_against"].as_str(), Some("v0.22.4"));
     let keys: HashSet<_> = [
         "id",
         "question",

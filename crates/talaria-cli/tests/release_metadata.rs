@@ -354,6 +354,48 @@ fn final_version_requires_changelog_section() {
 }
 
 #[test]
+fn newest_compat_entry_matches_pinned() {
+    let root = root();
+    let compat_text = read(&root, "crates/hermes-contract/compat.toml");
+    let compat: toml::Value = toml::from_str(&compat_text).expect("compat.toml parses");
+    let releases = compat
+        .get("release")
+        .and_then(toml::Value::as_array)
+        .expect("compat.toml has [[release]] array");
+    let newest = releases
+        .iter()
+        .max_by_key(|entry| {
+            let ver = entry
+                .get("talaria")
+                .and_then(toml::Value::as_str)
+                .expect("release entry has talaria version");
+            parse_version(ver).expect("talaria version is major.minor.patch")
+        })
+        .expect("compat.toml has at least one [[release]] entry");
+
+    let pinned_text = read(&root, "crates/hermes-contract/PINNED");
+    let expected_tag = pinned_text
+        .lines()
+        .find_map(|line| line.strip_prefix("tag="))
+        .expect("PINNED has tag=")
+        .trim();
+    let expected_commit = pinned_text
+        .lines()
+        .find_map(|line| line.strip_prefix("commit="))
+        .expect("PINNED has commit=")
+        .trim();
+
+    assert_eq!(
+        newest.get("pinned_tag").and_then(toml::Value::as_str),
+        Some(expected_tag)
+    );
+    assert_eq!(
+        newest.get("pinned_commit").and_then(toml::Value::as_str),
+        Some(expected_commit)
+    );
+}
+
+#[test]
 fn final_version_requires_release_notes() {
     let root = root();
     let version = workspace_version(&root);

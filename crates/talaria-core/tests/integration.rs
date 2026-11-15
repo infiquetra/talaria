@@ -233,6 +233,8 @@ mod permissions_profile;
 mod permissions_state;
 #[path = "integration/picker_state.rs"]
 mod picker_state;
+#[path = "integration/pin_literals.rs"]
+mod pin_literals;
 #[path = "integration/profile_names.rs"]
 mod profile_names;
 #[path = "integration/profile_roster.rs"]

@@ -164,7 +164,7 @@ const OBSERVATION_KEYS: &[&str] = &[
 fn results_parse_and_every_run_is_complete() {
     let doc = load_results();
     assert_keys(&doc, FILE_KEYS, "results file");
-    assert_eq!(doc["hermes_release"].as_str(), Some(pinned_tag().as_str()));
+    assert_eq!(doc["recorded_against"].as_str(), Some("v0.22.4"));
     let mode = doc["execution_mode"].as_str().expect("execution mode");
     assert!(matches!(mode, "in-process" | "managed-worker" | "unknown"));
     validate_recommendations(&doc["recommendations"]);
@@ -627,16 +627,6 @@ fn load_results() -> Value {
     serde_json::from_str(&read_results_text()).unwrap_or_else(|err| {
         panic!("gateway concurrency results are not json: {err}");
     })
-}
-
-fn pinned_tag() -> String {
-    let path = repo_root().join("crates/hermes-contract/PINNED");
-    let text = std::fs::read_to_string(&path).expect("pinned release file");
-    text.lines()
-        .find_map(|line| line.strip_prefix("tag="))
-        .expect("pinned tag")
-        .trim()
-        .to_string()
 }
 
 fn read_repo_file(relative: &str) -> String {

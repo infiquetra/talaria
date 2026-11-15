@@ -421,8 +421,7 @@ async fn profile_injected_for_declared_methods_only() {
     link.close().await;
 }
 
-#[test]
-fn profile_methods_match_vendored_contract() {
+fn vendored_profile_methods() -> BTreeSet<String> {
     fn has_profile(root: &Value, schema: &Value, depth: usize) -> bool {
         if depth > 32 {
             return false;
@@ -462,8 +461,24 @@ fn profile_methods_match_vendored_contract() {
             }
         }
     }
+    expected
+}
+
+#[test]
+fn profile_methods_match_vendored_contract() {
+    let expected = vendored_profile_methods();
     assert!(!expected.is_empty());
     let actual: BTreeSet<_> = PROFILE_METHODS.iter().map(|s| (*s).to_owned()).collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn generated_profile_methods_equal_the_vendored_contract() {
+    let expected = vendored_profile_methods();
+    let actual: BTreeSet<_> = hermes_contract::generated::profile_methods::PROFILE_METHODS
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
     assert_eq!(actual, expected);
 }
 
