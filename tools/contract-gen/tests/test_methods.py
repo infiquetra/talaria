@@ -50,7 +50,15 @@ class MethodTests(unittest.TestCase):
             self.assertEqual(by_transport["canonical"][name]["result"], _schema(right[1]))
             if left == right:
                 identical.append(name)
-        self.assertEqual(identical, ["clarify.lock"])
+        self.assertEqual(
+            identical,
+            [
+                "clarify.lock",
+                "groups.attachment.download",
+                "groups.attachment.upload",
+                "groups.discard",
+            ],
+        )
 
 
 def _schema(ref: str) -> str:

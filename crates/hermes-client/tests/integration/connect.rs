@@ -2226,7 +2226,7 @@ mod handshake {
     fn caps_frame() -> String {
         let name = hermes_contract::methods::legacy::client_capabilities::NAME;
         format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"{name}","params":{{"server_requests":true}}}}"#
+            r#"{{"jsonrpc":"2.0","id":1,"method":"{name}","params":{{"desktop_local":false,"server_requests":true}}}}"#
         )
     }
 
