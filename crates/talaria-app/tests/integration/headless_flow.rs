@@ -5,7 +5,10 @@ use crate::mock_gateway;
 use std::time::{Duration, Instant};
 
 use mock_gateway::{HeadlessScenario, StandaloneGateway};
-use talaria_app::headless::run::StopCause;
+use serde_json::json;
+use talaria_app::headless::run::{
+    CallReply, HeadlessEffect, HeadlessInput, HeadlessRun, StopCause, SubmitReply,
+};
 use talaria_app::headless::service::{HeadlessTimings, run_headless};
 use talaria_app::headless::{OutputFormat, PrintOptions};
 use talaria_app::launch::{Launch, StartMode};
@@ -206,4 +209,61 @@ fn mock_completion_matches_recorded_shape() {
             "the recorded frames lack {key}"
         );
     }
+}
+
+fn opened_run() -> HeadlessRun {
+    let mut run = HeadlessRun::new("hello".to_string());
+    let _ = run.step(HeadlessInput::Opened {
+        session_id: "local-session-1".to_string(),
+        stored_session_id: "local-session-1".to_string(),
+        profile: "fixture".to_string(),
+        model: Some("minimax-m3.1-flash".to_string()),
+        provider: Some("ollama-cloud".to_string()),
+        open_prompts: Vec::new(),
+        unknown_admissions: 0,
+    });
+    let _ = run.step(HeadlessInput::SubmitReplied(SubmitReply::Admitted {
+        admission_id: "adm-1".to_string(),
+        status: "queued".to_string(),
+        execution_generation: None,
+    }));
+    run
+}
+
+#[test]
+fn queued_stop_cancel_started_receipt_settles_without_a_second_interrupt() {
+    let mut run = opened_run();
+    let _ = run.step(HeadlessInput::Stop(StopCause::Timeout));
+
+    let effects = run.step(HeadlessInput::CancelReplied(CallReply::Ok(json!({
+        "status": "started",
+        "execution_generation": 7,
+    }))));
+    assert_eq!(effects, vec![HeadlessEffect::StartSettleTimer]);
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, HeadlessEffect::Interrupt { .. })),
+        "started cancel reply during stop must not emit Interrupt"
+    );
+}
+
+#[test]
+fn foreign_prompt_cancel_started_receipt_does_not_interrupt() {
+    let mut run = opened_run();
+    let cancel_effects = run.step(HeadlessInput::Event {
+        admission_id: Some("adm-9".to_string()),
+        execution_generation: Some(7),
+        event_type: "approval.request".to_string(),
+        payload: json!({
+            "prompt_id": "p-9",
+            "execution_generation": 3,
+        }),
+    });
+    assert_eq!(cancel_effects, vec![HeadlessEffect::Cancel]);
+
+    let effects = run.step(HeadlessInput::CancelReplied(CallReply::Ok(json!({
+        "status": "started",
+    }))));
+    assert_eq!(effects, Vec::<HeadlessEffect>::new());
 }
