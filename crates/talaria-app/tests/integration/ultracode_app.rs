@@ -4,7 +4,7 @@ use talaria_app::ultracode::{Action, Foreground, UltracodeService};
 use talaria_core::session::ids::SessionId;
 use talaria_core::{
     commands::{CatalogResult, CommandCatalog, ErrorView},
-    ultracode::UltracodeCommand,
+    ultracode::{UltracodeCommand, notice},
 };
 fn session() -> SessionId {
     SessionId::new("fixture-session")
@@ -248,4 +248,267 @@ fn slash_shell_and_keyword_paths() {
     let actions = off.intercept_submit(&id, "please ultracode this").unwrap();
     assert!(actions.iter().any(|a| matches!(a,Action::Notice(v) if v=="This prompt runs as a workflow (keyword ultracode).")));
     assert!(!off.status_input(Some(&id)));
+}
+
+#[test]
+fn local_missing_asks_once() {
+    let id = session();
+    let missing = json!({"skills":{}});
+
+    let mut service = UltracodeService::new(false);
+    let _ = service.handle_local_command("on", foreground(&id));
+    let replies = service.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::On,
+        Ok(parsed(missing.clone())),
+    );
+    let offer = notice::offer("fixture");
+    assert!(
+        replies.iter().any(
+            |a| matches!(a, Action::Notice(v) if v == &offer && !v.contains("Install it with:"))
+        )
+    );
+    assert!(
+        !replies
+            .iter()
+            .any(|a| matches!(a, Action::InstallSkill { .. }))
+    );
+    assert!(service.answer_install(&id, "y").is_none());
+
+    service.record_shown(&id);
+    let second = service.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::On,
+        Ok(parsed(missing.clone())),
+    );
+    let expected_missing = notice::missing("fixture");
+    assert!(second.iter().any(
+        |a| matches!(a, Action::Notice(v) if v == &expected_missing && !v.contains("now? [y/N]"))
+    ));
+
+    let collision = json!({
+        "skills": {"/talaria-workflows": {"origin": "local"}},
+        "pairs": [["/talaria-workflows", "custom"]],
+        "categories": [{"name": "User commands", "pairs": [["/talaria-workflows", "custom"]]}]
+    });
+    let mut collision_service = UltracodeService::new(false);
+    let _ = collision_service.handle_local_command("on", foreground(&id));
+    let collision_replies = collision_service.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::On,
+        Ok(parsed(collision)),
+    );
+    assert!(
+        collision_replies
+            .iter()
+            .any(|a| matches!(a, Action::Notice(v) if v.contains("Rename that command") && !v.contains("now? [y/N]")))
+    );
+
+    let mut offline_service = UltracodeService::new(false);
+    let _ = offline_service.handle_local_command("on", foreground(&id));
+    let offline_replies = offline_service.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::On,
+        Err("offline".into()),
+    );
+    assert!(offline_replies.iter().any(
+        |a| matches!(a, Action::Notice(v) if v.contains("offline") && !v.contains("now? [y/N]"))
+    ));
+
+    let mut status_service = UltracodeService::new(false);
+    let _ = status_service.handle_local_command("status", foreground(&id));
+    let status_replies = status_service.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::Status,
+        Ok(parsed(missing.clone())),
+    );
+    assert!(
+        status_replies
+            .iter()
+            .any(|a| matches!(a, Action::Notice(v) if v.contains("not found in profile fixture") && !v.contains("now? [y/N]")))
+    );
+
+    let mut outcome_service = UltracodeService::new(false);
+    let _ = outcome_service.handle_local_command("on", foreground(&id));
+    let first_outcome =
+        outcome_service.on_command_outcome(&id, "hello", Err(rpc("unsupported_command")));
+    assert!(
+        first_outcome
+            .iter()
+            .any(|a| matches!(a, Action::Notice(v) if v == &offer))
+    );
+    assert!(
+        first_outcome
+            .iter()
+            .any(|a| matches!(a, Action::RestoreComposer(text) if text == "hello"))
+    );
+
+    outcome_service.record_shown(&id);
+    let second_outcome =
+        outcome_service.on_command_outcome(&id, "hello", Err(rpc("unsupported_command")));
+    assert!(
+        second_outcome
+            .iter()
+            .any(|a| matches!(a, Action::Notice(v) if v == &expected_missing))
+    );
+    assert!(
+        second_outcome
+            .iter()
+            .any(|a| matches!(a, Action::RestoreComposer(text) if text == "hello"))
+    );
+}
+
+#[test]
+fn answer_y_installs_and_other_lines_print_the_command() {
+    fn asked_service(id: &SessionId) -> UltracodeService {
+        let mut service = UltracodeService::new(false);
+        let _ = service.handle_local_command("on", foreground(id));
+        let _ = service.on_catalog_reply(
+            id,
+            "fixture",
+            UltracodeCommand::On,
+            Ok(parsed(json!({"skills":{}}))),
+        );
+        assert!(service.answer_install(id, "y").is_none());
+        service.record_shown(id);
+        service
+    }
+
+    let id = session();
+    let expected_install = vec![Action::InstallSkill {
+        session: id.clone(),
+        profile: String::from("fixture"),
+    }];
+
+    let mut yes_service = asked_service(&id);
+    assert_eq!(
+        yes_service.answer_install(&id, "y"),
+        Some(expected_install.clone())
+    );
+    assert_eq!(yes_service.answer_install(&id, "y"), None);
+
+    let mut padded_yes_service = asked_service(&id);
+    assert_eq!(
+        padded_yes_service.answer_install(&id, " y "),
+        Some(expected_install)
+    );
+
+    let expected_missing = vec![Action::Notice(notice::missing("fixture"))];
+    for answer in ["n", "Y", "yes", ""] {
+        let mut service = asked_service(&id);
+        let reply = service.answer_install(&id, answer);
+        assert_eq!(reply, Some(expected_missing.clone()), "answer={answer:?}");
+        assert!(
+            !reply
+                .unwrap_or_default()
+                .iter()
+                .any(|a| matches!(a, Action::InstallSkill { .. }))
+        );
+        assert_eq!(service.answer_install(&id, answer), None);
+    }
+
+    let mut unasked = UltracodeService::new(false);
+    assert_eq!(unasked.answer_install(&id, "y"), None);
+}
+
+#[test]
+fn remote_missing_does_not_ask() {
+    let id = session();
+    let missing = json!({"skills":{}});
+    let expected = format!(
+        "{}. The skill must be installed on the machine that runs the gateway.",
+        notice::missing("fixture")
+    );
+
+    let mut service = UltracodeService::new(false);
+    service.set_remote(true);
+    let _ = service.handle_local_command("on", foreground(&id));
+    let replies = service.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::On,
+        Ok(parsed(missing.clone())),
+    );
+    assert!(
+        replies
+            .iter()
+            .any(|a| matches!(a, Action::Notice(v) if v == &expected && !v.contains("now? [y/N]")))
+    );
+    assert!(
+        !replies
+            .iter()
+            .any(|a| matches!(a, Action::InstallSkill { .. }))
+    );
+    assert_eq!(service.answer_install(&id, "y"), None);
+
+    let second =
+        service.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(missing)));
+    assert!(
+        second
+            .iter()
+            .any(|a| matches!(a, Action::Notice(v) if v == &expected))
+    );
+
+    let mut outcome_service = UltracodeService::new(false);
+    outcome_service.set_remote(true);
+    let _ = outcome_service.handle_local_command("on", foreground(&id));
+    let outcome = outcome_service.on_command_outcome(&id, "hello", Err(rpc("unsupported_command")));
+    assert!(
+        outcome
+            .iter()
+            .any(|a| matches!(a, Action::Notice(v) if v == &expected))
+    );
+    assert!(
+        outcome
+            .iter()
+            .any(|a| matches!(a, Action::RestoreComposer(text) if text == "hello"))
+    );
+}
+
+#[test]
+fn background_reply_asks_when_shown() {
+    let id = session();
+    let missing = json!({"skills":{}});
+    let offer = notice::offer("fixture");
+
+    let mut service = UltracodeService::new(false);
+    let _ = service.handle_local_command("on", foreground(&id));
+    let _ = service.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::On,
+        Ok(parsed(missing.clone())),
+    );
+    assert_eq!(service.answer_install(&id, "y"), None);
+    assert_eq!(service.show_kept(&id), Some(offer.clone()));
+    assert_eq!(service.show_kept(&id), None);
+
+    let later = service.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::On,
+        Ok(parsed(missing.clone())),
+    );
+    assert!(
+        !later
+            .iter()
+            .any(|a| matches!(a, Action::Notice(v) if v == &offer))
+    );
+
+    let mut twice = UltracodeService::new(false);
+    let _ = twice.handle_local_command("on", foreground(&id));
+    let _ = twice.on_catalog_reply(
+        &id,
+        "fixture",
+        UltracodeCommand::On,
+        Ok(parsed(missing.clone())),
+    );
+    let _ = twice.on_catalog_reply(&id, "fixture", UltracodeCommand::On, Ok(parsed(missing)));
+    assert_eq!(twice.show_kept(&id), Some(offer));
+    assert_eq!(twice.show_kept(&id), None);
 }
