@@ -9,7 +9,7 @@ use crate::frames;
 use crate::snapshot_json;
 
 use serde_json::{Value, json};
-use talaria_core::session::{Cell, NoticeKind, SessionState, ToolStatus, TurnState};
+use talaria_core::session::{Cell, NoticeKind, PromptKind, SessionState, ToolStatus, TurnState};
 
 use events::{SESSION, ev, ev_noseq};
 
@@ -252,4 +252,68 @@ fn events_at_or_below_the_snapshot_cursor_are_ignored() {
     assert_eq!(assistant_texts(&state), vec!["Yes tail".to_string()]);
     assert_eq!(state.cursor().last_seq, 6);
     assert_eq!(state.cursor().replay_epoch.as_deref(), Some("epoch-1"));
+}
+
+#[test]
+fn open_requests_become_cards_keyed_by_request_id() {
+    let approval = json!({
+        "prompt_id": "app-1",
+        "kind": "approval",
+        "execution_generation": 1,
+        "command": "ls",
+        "choices": [],
+    });
+
+    let mut value = snapshot_json::base(SESSION);
+    value["prompts"] = json!([approval.clone()]);
+    value["open_requests"] = json!([
+        {"id": "req-1", "method": "sudo", "params": {}},
+    ]);
+    let state = SessionState::from_snapshot(snapshot_json::snapshot(value));
+    let server_cards: Vec<_> = state
+        .open_prompts()
+        .filter(|cell| cell.kind == PromptKind::ServerRequest)
+        .collect();
+    assert_eq!(server_cards.len(), 1);
+    assert_eq!(server_cards[0].key.prompt_id, "req-1");
+    assert_eq!(server_cards[0].command.as_deref(), Some("sudo"));
+    assert!(
+        state
+            .open_prompts()
+            .any(|cell| cell.kind == PromptKind::Approval && cell.key.prompt_id == "app-1")
+    );
+
+    let mut dup_and_clarify = snapshot_json::base(SESSION);
+    dup_and_clarify["prompts"] = json!([approval.clone()]);
+    dup_and_clarify["open_requests"] = json!([
+        {"id": "req-1", "method": "sudo", "params": {}},
+        {"id": "req-1", "method": "sudo", "params": {}},
+        {"id": "req-2", "method": "clarify", "params": {}},
+    ]);
+    let deduped = SessionState::from_snapshot(snapshot_json::snapshot(dup_and_clarify));
+    let deduped_cards: Vec<_> = deduped
+        .open_prompts()
+        .filter(|cell| cell.kind == PromptKind::ServerRequest)
+        .collect();
+    assert_eq!(deduped_cards.len(), 1);
+    assert_eq!(deduped_cards[0].key.prompt_id, "req-1");
+    assert!(
+        !deduped
+            .open_prompts()
+            .any(|cell| cell.key.prompt_id == "req-2")
+    );
+
+    let mut no_key = snapshot_json::base(SESSION);
+    no_key["prompts"] = json!([approval]);
+    let absent = SessionState::from_snapshot(snapshot_json::snapshot(no_key));
+    assert!(
+        absent
+            .open_prompts()
+            .any(|cell| cell.kind == PromptKind::Approval && cell.key.prompt_id == "app-1")
+    );
+    assert!(
+        !absent
+            .open_prompts()
+            .any(|cell| cell.kind == PromptKind::ServerRequest)
+    );
 }
