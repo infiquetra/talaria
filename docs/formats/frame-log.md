@@ -14,6 +14,9 @@ This file is the contract. The writer is `crates/hermes-client/src/record.rs`, t
 `crates/hermes-client/src/redact.rs`. A change to any of them changes this file in the same pull
 request.
 
+Recorder options and the redactor have hand-written `Debug` output that never shows an endpoint
+credential, a ticket, or the text being redacted. The recording format itself does not change.
+
 ## Shape
 
 JSON Lines: UTF-8, one JSON object per line, every line ending in a newline, appended and never

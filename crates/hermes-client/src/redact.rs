@@ -129,10 +129,24 @@ impl OpenRequests {
 }
 
 /// Redacts frames and remembers the method of each open server request.
-#[derive(Debug)]
 pub struct Redactor {
     open: OpenRequests,
     substitutions: Vec<(String, String)>,
+}
+
+impl std::fmt::Debug for Redactor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pairs = self
+            .substitutions
+            .iter()
+            .map(|(_, replacement)| format!("<redacted> -> {replacement}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        formatter
+            .debug_struct("Redactor")
+            .field("substitutions", &format_args!("[{pairs}]"))
+            .finish()
+    }
 }
 
 impl Redactor {

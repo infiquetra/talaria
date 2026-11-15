@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hermes_client::{
-    GatewayIdentity, REDACTED, RecordError, RecordSummary, Recorder, RecorderOptions,
+    GatewayIdentity, REDACTED, RecordError, RecordSummary, Recorder, RecorderOptions, Redactor,
 };
 use serde_json::{Value, json};
 
@@ -981,4 +981,56 @@ fn header_write_error_is_returned() {
         matches!(outcome, Err(RecordError::Io(io::ErrorKind::BrokenPipe))),
         "a header that cannot be written must be an Io error"
     );
+}
+
+#[test]
+fn debug_format_hides_the_ticket() {
+    let secret = sentinel();
+    let needle = String::from("gateway-host.test");
+    let placeholder = String::from("<gateway>");
+    let options = RecorderOptions {
+        endpoint: format!("wss://{needle}/api/ws?ticket={secret}&mode=1"),
+        subprotocols: vec![
+            String::from("hermes-gateway-v1"),
+            format!("hermes-gateway-ticket.{secret}"),
+        ],
+        scenario: Some(String::from("desk-check")),
+        substitutions: vec![(needle.clone(), placeholder.clone())],
+        ..RecorderOptions::default()
+    };
+
+    let text = format!("{options:?}");
+    assert!(text.contains("ticket=%5Bredacted%5D"), "{text}");
+    assert!(text.contains("hermes-gateway-v1"), "{text}");
+    assert!(text.contains("desk-check"), "{text}");
+    assert!(text.contains("<gateway>"), "{text}");
+    assert!(text.contains("<redacted> -> <gateway>"), "{text}");
+    assert!(!text.contains(&secret), "{text}");
+    assert!(!text.contains("gateway-host.test"), "{text}");
+    assert!(!text.contains("hermes-gateway-ticket."), "{text}");
+
+    let redactor = Redactor::new(vec![(needle, placeholder)]).expect("needle");
+    let printed = format!("{redactor:?}");
+    assert!(printed.contains("<redacted> -> <gateway>"), "{printed}");
+    assert!(!printed.contains("gateway-host.test"), "{printed}");
+    assert!(!printed.contains(&secret), "{printed}");
+}
+
+#[test]
+fn debug_format_prints_a_short_pair() {
+    let short = String::from("zz");
+    let needle = String::from("gateway-host.test");
+    let short_mark = String::from("<host>");
+    let placeholder = String::from("<gateway>");
+    let options = RecorderOptions {
+        endpoint: String::from("wss://gateway.example.com/api/ws?mode=1"),
+        substitutions: vec![(short, short_mark), (needle, placeholder)],
+        ..RecorderOptions::default()
+    };
+
+    let text = format!("{options:?}");
+    assert!(text.contains("<redacted> -> <host>"), "{text}");
+    assert!(text.contains("<redacted> -> <gateway>"), "{text}");
+    assert!(!text.contains("zz"), "{text}");
+    assert!(!text.contains("gateway-host.test"), "{text}");
 }
