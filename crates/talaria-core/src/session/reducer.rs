@@ -527,20 +527,27 @@ fn session(
                     None => state.notices.keyless(),
                 }
                 .cloned();
-                state.notices.apply_show(row.clone());
-                if previous.as_ref().is_none_or(|old| old.text != row.text) {
+                let sign_in = row
+                    .key
+                    .as_deref()
+                    .is_some_and(|key| key.starts_with("login:"));
+                let text_changed = previous.as_ref().is_none_or(|old| old.text != row.text);
+                if text_changed || !sign_in {
+                    state.notices.apply_show(row.clone());
+                }
+                if text_changed {
                     let kind = match row.level.as_str() {
                         "error" => NoticeKind::Error,
                         "warn" => NoticeKind::Warning,
                         _ => NoticeKind::System,
                     };
-                    if matches!(row.level.as_str(), "warn" | "error")
-                        || row
-                            .key
-                            .as_deref()
-                            .is_some_and(|key| key.starts_with("login:"))
-                    {
-                        state.notice(kind, row.text, None);
+                    if matches!(row.level.as_str(), "warn" | "error") || sign_in {
+                        let text = if sign_in {
+                            format!("{}\nType /copy link to copy it.", row.text)
+                        } else {
+                            row.text
+                        };
+                        state.notice(kind, text, None);
                     }
                     if let Some(detail) = row.detail.filter(|detail| !detail.is_empty()) {
                         state.notice(kind, detail, None);

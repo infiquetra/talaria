@@ -291,7 +291,7 @@ const BUILTIN: &[LocalCommand] = &[
         name: "copy",
         aliases: &[],
         summary: "Copy a finished assistant reply",
-        args_hint: "[N]",
+        args_hint: "[N|link]",
         takes_argument: true,
         action: LocalAction::Copy,
         tag: "talaria",

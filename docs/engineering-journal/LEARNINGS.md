@@ -2,6 +2,20 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — Deduplicate sign-in notices before changing their order
+
+**Evidence.** `NoticeStore::apply_show` moves a replaced key to the newest slot.
+Replaying an unchanged sign-in link after its code would therefore move the
+link past that code, making a walk in show order treat it as a new pair.
+
+**Mechanism.** The reducer leaves unchanged `login:` text in its existing slot.
+Changed sign-in text remains a new show. The store keeps raw text for pairing
+and status display; only transcript cells receive the copy instruction.
+
+**Generalizable rule.** When order encodes an interaction, suppress duplicate
+updates before changing that order, and keep display instructions out of the
+stored values used to reconstruct it.
+
 ## 2026-11-15 — Allow unused helpers in generated schema modules
 
 **Evidence.** Hermes v0.23.1 defines `SubagentRosterEntry.background` and
