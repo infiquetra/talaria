@@ -27,10 +27,10 @@ use mock_gateway::{Behavior, MockGateway, Reply, StandaloneGateway};
 use serde_json::{Value, json};
 use talaria_app::app::{
     AppEffect, AppMessage, AppState, ComposerDeadline, HELD_FULL_NOTICE, Outcome, REFRESHED_NOTICE,
-    RunSetup, SESSION_GONE_NOTICE, STILL_WORKING, Screen, Slash, StatusHost, UserAction, View,
-    apply_inbound, drive_composer, drive_status, folder_notice, hold_prompt, interrupt,
-    link_notice, list_sessions, note_connection, other_folder_notice, quit, quit_while_opening,
-    resume_history, run, slash_line, startup_notices, update,
+    RunSetup, SESSION_GONE_NOTICE, STILL_WORKING, Screen, SessionCleared, Slash, StatusHost,
+    UserAction, View, apply_inbound, drive_composer, drive_status, folder_notice, hold_prompt,
+    interrupt, link_notice, list_sessions, note_connection, other_folder_notice, quit,
+    quit_while_opening, resume_history, run, slash_line, startup_notices, update,
 };
 use talaria_app::connection::{ConnectionService, ensure_invocations};
 use talaria_app::failure::{
@@ -44,6 +44,8 @@ use talaria_app::sessions::{
     DetachOutcome, ExecuteOutcome, OpenError, OpenedSession, SessionService, accept_event,
     detach_params,
 };
+use talaria_app::switch::HELD_PROMPTS_TEXT;
+use talaria_core::commands::LocalAction;
 use talaria_core::queue::SubmissionId;
 use talaria_core::session::{
     Cell, Effect, Event, NoticeKind, PromptKind, SessionId, SessionState, TurnState,
@@ -2377,4 +2379,246 @@ fn new_connection_feeds_connection_opened_generation_to_reducer() {
     assert!(!state.unknown_event_types().is_empty());
     note_connection(&mut state, 2);
     assert!(state.unknown_event_types().is_empty());
+}
+
+#[tokio::test]
+async fn clear_detaches_and_creates_in_the_same_folder() {
+    assert_eq!(
+        slash_line("/clear"),
+        Slash::Local(LocalAction::Clear, String::new())
+    );
+    assert_eq!(
+        slash_line("/clear extra"),
+        Slash::Notice("/clear does not take an argument.".to_string())
+    );
+
+    // 1. Success: detaches the open session and creates a new session in the same folder.
+    let rig = Rig::start();
+    let gateway = &rig.gateway;
+    let folder_str = rig.folder.display().to_string();
+    let (outcome, _) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            let previous_id = locked(&driver.log).session.clone().expect("open session");
+            driver.submit("/clear");
+            driver.line("Started a new session in this folder.").await;
+            eventually("the foreground session id to change", || {
+                locked(&driver.log)
+                    .session
+                    .as_deref()
+                    .is_some_and(|id| id != previous_id)
+            })
+            .await;
+
+            let detaches = gateway.requests("session.detach");
+            assert_eq!(detaches.len(), 1);
+            assert_eq!(detaches[0].params["session_id"], previous_id);
+            let creates = gateway.requests("session.create");
+            assert_eq!(creates.len(), 2);
+            assert_eq!(creates[1].params["cwd"], folder_str);
+            assert!(
+                creates[1].params["request_id"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty())
+            );
+            assert_eq!(creates[1].params["source"], "tui");
+
+            let resume_flag = format!("talaria --resume {previous_id} --profile fixture");
+            let notice_found = locked(&driver.log).lines.iter().any(|line| {
+                line.contains(
+                    "Started a new session in this folder. The previous session was not ended; resume it with",
+                ) && line.contains(&resume_flag)
+            });
+            assert!(
+                notice_found,
+                "expected REQ-2 success sentence with {resume_flag}, got {:?}",
+                locked(&driver.log).lines
+            );
+            driver.quit();
+        })
+        .await;
+    assert_eq!(outcome.code, 0, "{}", outcome.stderr);
+
+    // 2. No session: commits the no-session notice and sends nothing.
+    let mut no_session = AppState::new(LAUNCH_ID);
+    let effects = submit(&mut no_session, "/clear");
+    assert!(
+        committed_lines(&effects)
+            .iter()
+            .any(|line| line.contains("\u{b7} No session is open."))
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::ClearSession { .. }))
+    );
+
+    // 3. Running turn: commits only the running-turn notice and sends no detach or create.
+    let rig = Rig::start();
+    let gateway = &rig.gateway;
+    rig.gateway.set_resume_snapshot(running_turn("/work/proj"));
+    let (outcome, _) = rig
+        .drive(
+            StartMode::Resume(Some("local-session-1".to_string())),
+            |driver| async move {
+                driver.opened().await;
+                let before = locked(&driver.log).lines.len();
+                driver.submit("/clear");
+                driver
+                    .line("Finish or interrupt the current turn before /clear.")
+                    .await;
+                let new_lines = locked(&driver.log).lines[before..].to_vec();
+                assert_eq!(
+                    new_lines,
+                    vec!["Finish or interrupt the current turn before /clear."]
+                );
+                assert!(gateway.requests("session.detach").is_empty());
+                assert!(gateway.requests("session.create").is_empty());
+                driver.quit();
+            },
+        )
+        .await;
+    assert_eq!(outcome.code, 0, "{}", outcome.stderr);
+
+    // 4. Stale subscription: still creates a new session and commits the success notice.
+    let rig = Rig::start();
+    let gateway = &rig.gateway;
+    let (outcome, _) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            gateway.set_detached(Some(false));
+            driver.submit("/clear");
+            driver.line("Started a new session in this folder.").await;
+            assert_eq!(gateway.requests("session.create").len(), 2);
+            driver.quit();
+        })
+        .await;
+    assert_eq!(outcome.code, 0, "{}", outcome.stderr);
+
+    // 5. Detach fails: leaves session unchanged, creates nothing, commits the failure notice.
+    let rig = Rig::start();
+    let gateway = &rig.gateway;
+    let (outcome, _) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            let previous_id = locked(&driver.log).session.clone().expect("open session");
+            gateway.queue_behavior("session.detach", Behavior::Refuse("not_sent".into()));
+            driver.submit("/clear");
+            driver
+                .line(
+                    "Could not leave the current session: RpcError { code: 4001, reason: Some(\"not_sent\"), message_length: 8, data_length: 21 }. You are still in it.",
+                )
+                .await;
+            assert_eq!(locked(&driver.log).session.as_deref(), Some(previous_id.as_str()));
+            assert_eq!(gateway.requests("session.create").len(), 1);
+            driver.quit();
+        })
+        .await;
+    assert_eq!(outcome.code, 0, "{}", outcome.stderr);
+
+    // 6. Create fails after detach: clears opened session and commits the left-but-failed notice.
+    let rig = Rig::start();
+    let gateway = &rig.gateway;
+    let (outcome, _) = rig
+        .drive(StartMode::New, |driver| async move {
+            driver.opened().await;
+            let previous_id = locked(&driver.log).session.clone().expect("open session");
+            gateway.queue_behavior("session.create", Behavior::Refuse("not_sent".into()));
+            driver.submit("/clear");
+            driver
+                .line("Left the previous session, but a new one could not be started: not_sent.")
+                .await;
+            let resume_flag = format!("talaria --resume {previous_id} --profile fixture");
+            let notice_found = locked(&driver.log).lines.iter().any(|line| {
+                line.contains(
+                    "Left the previous session, but a new one could not be started: not_sent. Resume the previous session with ",
+                ) && line.contains(&resume_flag)
+            });
+            assert!(
+                notice_found,
+                "expected create-failed notice with {resume_flag}, got {:?}",
+                locked(&driver.log).lines
+            );
+            assert_eq!(gateway.requests("session.detach").len(), 1);
+            assert_eq!(gateway.requests("session.create").len(), 2);
+            assert!(locked(&driver.log).session.is_none());
+            driver.quit();
+        })
+        .await;
+    assert_eq!(outcome.code, 0, "{}", outcome.stderr);
+
+    // 7. Held prompts: refuses with HELD_PROMPTS_TEXT and leaves held prompts intact.
+    let ip = in_process().await;
+    let opened = ip.open(new_request()).await.expect("opened");
+    let mut held_state = AppState::new(LAUNCH_ID);
+    held_state.profile = "fixture".to_string();
+    opened_effects(&mut held_state, opened.clone());
+    held_state.held.push_back("unsent words".to_string());
+    let effects = submit(&mut held_state, "/clear");
+    assert!(
+        committed_lines(&effects)
+            .iter()
+            .any(|line| line.contains(HELD_PROMPTS_TEXT))
+    );
+    assert!(
+        held_state
+            .held
+            .iter()
+            .any(|prompt| prompt == "unsent words")
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::ClearSession { .. }))
+    );
+
+    // 8. Link failed and session gone.
+    let mut failed_state = AppState::new(LAUNCH_ID);
+    failed_state.profile = "fixture".to_string();
+    opened_effects(&mut failed_state, opened.clone());
+    failed_state.link_failed = true;
+    let effects = submit(&mut failed_state, "/clear");
+    assert!(committed_lines(&effects).iter().any(|line| {
+        line.contains("This prompt was not sent: the connection to Hermes has stopped.")
+    }));
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::ClearSession { .. }))
+    );
+
+    let mut gone_state = AppState::new(LAUNCH_ID);
+    gone_state.profile = "fixture".to_string();
+    opened_effects(&mut gone_state, opened.clone());
+    gone_state.session_gone = true;
+    gone_state.link_failed = false;
+    let effects = submit(&mut gone_state, "/clear");
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        AppEffect::ClearSession {
+            skip_detach: true,
+            ..
+        }
+    )));
+    assert!(
+        !committed_lines(&effects)
+            .iter()
+            .any(|line| line.contains("resume it with"))
+    );
+
+    let effects = update(
+        &mut gone_state,
+        AppMessage::SessionCleared(SessionCleared::OpenFailed {
+            previous_id: opened.session_id,
+            reason: String::from("not_sent"),
+            left: false,
+        }),
+    );
+    let lines = committed_lines(&effects);
+    assert!(lines.iter().any(|line| {
+        line.contains(
+            "The previous session had ended, and a new one could not be started: not_sent.",
+        )
+    }));
+    assert!(!lines.iter().any(|line| line.contains("talaria --resume")));
 }
