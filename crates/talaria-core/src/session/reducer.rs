@@ -571,6 +571,15 @@ fn session(
                 state.notice(NoticeKind::System, text.to_owned(), None);
             }
         }
+        "review.summary" => {
+            if let Some(text) = payload["text"]
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+            {
+                state.notice(NoticeKind::System, text.to_owned(), None);
+            }
+        }
         _ if !unknown
             || name.starts_with("subagent.")
             || matches!(
