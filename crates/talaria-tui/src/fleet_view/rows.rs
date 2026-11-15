@@ -141,7 +141,11 @@ pub(super) fn header_text(state: &FleetViewState, width: usize) -> Header {
             sanitize(state.filter_text())
         ));
     }
-    let note = state.link_note().map(|note| sanitize(note).into_owned());
+    let note = match state.warning_count() {
+        0 => state.link_note().map(|note| sanitize(note).into_owned()),
+        1 => Some("1 warning".to_owned()),
+        count => Some(format!("{count} warnings")),
+    };
     match note {
         Some(note) if columns_of(&left) + columns_of(&note) < width => {
             let at = u16::try_from(width - columns_of(&note)).unwrap_or(0);

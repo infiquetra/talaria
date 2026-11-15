@@ -194,6 +194,7 @@ pub struct FleetViewState {
     profiles: Vec<(String, ProfileStatus)>,
     scope_note: Option<String>,
     link_note: Option<String>,
+    warning_count: u32,
     version: u64,
     seen_snapshot: bool,
     foreground: Option<RowKey>,
@@ -230,6 +231,7 @@ impl FleetViewState {
             profiles: Vec::new(),
             scope_note: None,
             link_note: None,
+            warning_count: 0,
             version: 0,
             seen_snapshot: false,
             foreground,
@@ -351,6 +353,20 @@ impl FleetViewState {
     #[must_use]
     pub fn scope_note(&self) -> Option<&str> {
         self.scope_note.as_deref()
+    }
+
+    /// Current warnings and errors in the foreground session.
+    #[must_use]
+    pub fn warning_count(&self) -> u32 {
+        self.warning_count
+    }
+
+    /// Refresh the foreground session's warning count without replacing the snapshot.
+    pub fn set_warning_count(&mut self, count: u32) {
+        if self.warning_count != count {
+            self.warning_count = count;
+            self.dirty = true;
+        }
     }
 
     /// The note about the fleet connection.

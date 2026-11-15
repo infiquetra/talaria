@@ -298,6 +298,11 @@ impl SessionState {
         self.notices.expire(now_ms);
     }
 
+    /// Earliest notice deadline using the caller's fixed time origin.
+    pub fn next_notice_deadline(&self) -> Option<u64> {
+        self.notices.next_deadline()
+    }
+
     /// Merged usage.
     pub fn usage(&self) -> &Usage {
         &self.usage

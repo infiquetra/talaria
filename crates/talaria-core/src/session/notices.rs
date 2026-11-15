@@ -89,4 +89,28 @@ impl NoticeStore {
     pub fn most_recent(&self) -> Option<&NoticeRow> {
         self.rows.last().map(|stored| &stored.row)
     }
+
+    /// Count current warning and error notices.
+    pub fn warning_count(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|stored| matches!(stored.row.level.as_str(), "warn" | "error"))
+            .count()
+    }
+
+    /// Earliest time a timed notice needs to be armed or expired.
+    pub fn next_deadline(&self) -> Option<u64> {
+        self.rows
+            .iter()
+            .filter(|stored| stored.row.kind == "ttl")
+            .filter_map(|stored| {
+                let ttl = stored.row.ttl_ms.and_then(|ttl| u64::try_from(ttl).ok())?;
+                Some(
+                    stored
+                        .started_at_ms
+                        .map_or(0, |start| start.saturating_add(ttl)),
+                )
+            })
+            .min()
+    }
 }

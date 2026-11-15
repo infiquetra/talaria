@@ -41,6 +41,10 @@ pub struct TokenUsage {
 /// Everything the line shows, handed over by the caller.
 #[derive(Clone, Debug, Default)]
 pub struct StatusInputs {
+    /// The current notice shown before the other status information.
+    pub notice: Option<NoticeLine>,
+    /// The number of current warnings and errors.
+    pub warning_count: u32,
     /// Workflow routing is enabled for the foreground session.
     pub ultracode: bool,
     /// The attach state of the link.
@@ -95,6 +99,26 @@ pub struct StatusInputs {
     pub pull_request: Option<PrLabel>,
     /// The microphone segment, when voice has something to show.
     pub voice: Option<VoiceSegment>,
+}
+
+/// The current notice text and its display tone.
+#[derive(Clone, Debug)]
+pub struct NoticeLine {
+    /// The notice text.
+    pub text: String,
+    /// The tone used to draw the notice.
+    pub tone: Tone,
+}
+
+/// Map a notice level to its status-line tone.
+pub fn notice_tone(level: &str) -> Tone {
+    match level {
+        "warn" => Tone::Warning,
+        "error" => Tone::Error,
+        "success" => Tone::Success,
+        "info" => Tone::Text,
+        _ => Tone::Muted,
+    }
 }
 
 /// The approvals segment text and tone, handed over by the caller.
@@ -220,6 +244,10 @@ impl Segment {
 /// The pieces of one status line.
 #[derive(Clone, Debug)]
 pub struct LinePlan {
+    /// The current notice, when it has visible text.
+    pub notice: Option<(String, Tone)>,
+    /// The current warning count, when nonzero.
+    pub warnings: Option<(String, Tone)>,
     /// The segments, left to right.
     pub pieces: Vec<(Segment, String, Tone)>,
 }
@@ -227,11 +255,8 @@ pub struct LinePlan {
 impl LinePlan {
     /// The line as one string: a leading blank, then the pieces joined by the separator.
     pub fn text(&self) -> String {
-        if self.pieces.is_empty() {
-            return String::new();
-        }
         let mut out = String::new();
-        for (index, (_, text, _)) in self.pieces.iter().enumerate() {
+        for (index, (text, _)) in self.parts().enumerate() {
             if index == 0 {
                 out.push(' ');
             } else {
@@ -244,20 +269,52 @@ impl LinePlan {
 
     /// The display width of the line.
     pub fn width(&self) -> usize {
-        if self.pieces.is_empty() {
-            return 0;
+        let (text, count) = self.parts().fold((0, 0usize), |(width, count), (text, _)| {
+            (width + UnicodeWidthStr::width(text), count + 1)
+        });
+        if count == 0 {
+            0
+        } else {
+            1 + text + UnicodeWidthStr::width(SEPARATOR) * (count - 1)
         }
-        let text: usize = self
-            .pieces
+    }
+
+    fn parts(&self) -> impl Iterator<Item = (&str, Tone)> {
+        self.notice
             .iter()
-            .map(|(_, piece, _)| UnicodeWidthStr::width(piece.as_str()))
-            .sum();
-        1 + text + 3 * (self.pieces.len() - 1)
+            .chain(self.warnings.iter())
+            .map(|(text, tone)| (text.as_str(), *tone))
+            .chain(
+                self.pieces
+                    .iter()
+                    .map(|(_, text, tone)| (text.as_str(), *tone)),
+            )
     }
 }
 
 /// The line for `inputs` at `cols` columns, with the external segment when there is one.
 pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16) -> LinePlan {
+    let notice = inputs.notice.as_ref().and_then(|notice| {
+        if cols == 0 {
+            return None;
+        }
+        let text = sanitize(&notice.text);
+        let cap = usize::from(cols / 2);
+        let text = if UnicodeWidthStr::width(text.as_ref()) > cap {
+            cut_to_width(text.as_ref(), cap)
+        } else {
+            text.into_owned()
+        };
+        (!text.is_empty()).then_some((text, notice.tone))
+    });
+    let warnings = (inputs.warning_count > 0).then(|| {
+        let suffix = if inputs.warning_count == 1 {
+            "warning"
+        } else {
+            "warnings"
+        };
+        (format!("{} {suffix}", inputs.warning_count), Tone::Muted)
+    });
     let mut pieces: Vec<(Segment, String, Tone)> = Vec::new();
     add(&mut pieces, Segment::Connection, connection_segment(inputs));
     add(&mut pieces, Segment::Model, model_segment(inputs));
@@ -290,8 +347,19 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     add(&mut pieces, Segment::External, external_segment(external));
 
     // One blank column on the left is reserved, so the line never reaches the last column.
-    let available = usize::from(cols.saturating_sub(1));
+    let prefix_count = usize::from(notice.is_some()) + usize::from(warnings.is_some());
+    let prefix_width: usize = notice
+        .iter()
+        .chain(warnings.iter())
+        .map(|(text, _)| UnicodeWidthStr::width(text.as_str()))
+        .sum();
+    let available = usize::from(cols.saturating_sub(1))
+        .saturating_sub(prefix_width + 3 * prefix_count.saturating_sub(1))
+        .saturating_sub(if prefix_count > 0 { 3 } else { 0 });
     loop {
+        if pieces.is_empty() {
+            break;
+        }
         let need: usize = pieces
             .iter()
             .map(|(_, text, _)| UnicodeWidthStr::width(text.as_str()))
@@ -339,7 +407,11 @@ pub fn plan(inputs: &StatusInputs, external: Option<&ExternalSegment>, cols: u16
     }
 
     pieces.sort_by_key(|(segment, _, _)| segment.position());
-    LinePlan { pieces }
+    LinePlan {
+        notice,
+        warnings,
+        pieces,
+    }
 }
 
 fn add(pieces: &mut Vec<(Segment, String, Tone)>, segment: Segment, part: Option<(String, Tone)>) {
@@ -641,8 +713,8 @@ impl<'a> StatusSection<'a> {
         for x in region.x..region.right() {
             buf[(x, row)].reset();
         }
-        let pieces = plan(self.inputs, self.external, region.width).pieces;
-        if pieces.is_empty() {
+        let line = plan(self.inputs, self.external, region.width);
+        if line.parts().next().is_none() {
             return;
         }
         let mut x = region.x;
@@ -650,19 +722,30 @@ impl<'a> StatusSection<'a> {
             .set_symbol(" ")
             .set_style(self.palette.style(Tone::Text));
         x += 1;
-        for (index, (_, text, tone)) in pieces.iter().enumerate() {
+        for (index, (text, tone)) in line.parts().enumerate() {
+            if x >= region.right() {
+                break;
+            }
             if index > 0 {
                 let (next, _) = buf.set_stringn(
                     x,
                     row,
                     self.palette.separator(),
-                    usize::MAX,
+                    usize::from(region.right().saturating_sub(x)),
                     self.palette.style(Tone::Separator),
                 );
                 x = next;
             }
-            let (next, _) =
-                buf.set_stringn(x, row, text.as_str(), usize::MAX, self.palette.style(*tone));
+            if x >= region.right() {
+                break;
+            }
+            let (next, _) = buf.set_stringn(
+                x,
+                row,
+                text,
+                usize::from(region.right().saturating_sub(x)),
+                self.palette.style(tone),
+            );
             x = next;
         }
     }

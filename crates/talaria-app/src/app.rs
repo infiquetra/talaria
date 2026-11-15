@@ -4160,6 +4160,14 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
         } => compact_done(state, request, outcome, typed),
         AppMessage::Tick { now_ms } => {
             state.now_ms = now_ms;
+            if let Some(opened) = state.opened.as_mut() {
+                let notice = opened.state.notices().most_recent().cloned();
+                let warnings = opened.state.notices().warning_count();
+                opened.state.expire_notices(now_ms);
+                redraw |= notice.as_ref() != opened.state.notices().most_recent()
+                    || warnings != opened.state.notices().warning_count();
+            }
+            refresh_fleet_warning_count(state);
             let delta = Duration::from_millis(now_ms.saturating_sub(state.voice_last_tick_ms));
             state.voice_last_tick_ms = now_ms;
             let mut effects = Vec::new();
@@ -6124,6 +6132,7 @@ fn reduce(state: &mut AppState, event: Event) -> Vec<AppEffect> {
     let observed = observe_context(state, &event);
     let mut effects = automation_from_session(state, &event);
     let Some(opened) = state.opened.as_mut() else {
+        refresh_fleet_warning_count(state);
         return effects;
     };
     let produced = talaria_core::session::update(&mut opened.state, event);
@@ -6132,7 +6141,18 @@ fn reduce(state: &mut AppState, event: Event) -> Vec<AppEffect> {
     if state.pager_open {
         effects.push(AppEffect::Transcript(TranscriptAction::Changed));
     }
+    refresh_fleet_warning_count(state);
     effects
+}
+
+fn refresh_fleet_warning_count(state: &mut AppState) {
+    if let Some(fleet) = state.fleet.as_mut() {
+        let count = state
+            .opened
+            .as_ref()
+            .map_or(0, |opened| opened.state.notices().warning_count());
+        fleet.set_warning_count(u32::try_from(count).unwrap_or(u32::MAX));
+    }
 }
 
 fn background_effects(
@@ -11208,6 +11228,15 @@ fn background_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     executor.started.checked_add(Duration::from_millis(due))
 }
 
+fn notice_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
+    let opened = state.opened.as_ref()?;
+    if state.session_gone {
+        return None;
+    }
+    let due = opened.state.next_notice_deadline()?;
+    executor.started.checked_add(Duration::from_millis(due))
+}
+
 fn queue_wake(state: &AppState, executor: &Executor) -> Option<Instant> {
     if state.session_gone {
         return None;
@@ -14024,6 +14053,7 @@ pub(crate) fn open_fleet_view(state: &mut AppState) -> Vec<AppEffect> {
     if let Some(view) = state.fleet.as_mut() {
         view.take_frame();
     }
+    refresh_fleet_warning_count(state);
     effects.push(AppEffect::Redraw);
     effects
 }
@@ -14875,6 +14905,7 @@ async fn run_inner<S: Screen>(
         state.now_ms = executor.now_ms();
         let side_due = side_wake(&state, &executor);
         let background_due = background_wake(&state, &executor);
+        let notice_due = notice_wake(&state, &executor);
         let workflow_due = workflow_wake(&state, &executor);
         let queue_due = queue_wake(&state, &executor);
         let deadline = earliest_of([
@@ -14925,6 +14956,7 @@ async fn run_inner<S: Screen>(
         let other_deadline = deadline;
         let deadline = earliest_of([deadline, workflow_due]);
         let deadline = earliest_of([deadline, queue_due]);
+        let deadline = earliest_of([deadline, notice_due]);
         let mut redraw = false;
         let mut woke_on_message = false;
         tokio::select! {
@@ -14969,7 +15001,7 @@ async fn run_inner<S: Screen>(
                 drive_composer(screen, now);
                 screen.on_tick(now);
                 state.now_ms = executor.now_ms();
-                if voice_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
+                if voice_due.is_some_and(|due| due <= now) || side_due.is_some_and(|due| due <= now) || background_due.is_some_and(|due| due <= now) || notice_due.is_some_and(|due| due <= now) || workflow_due.is_some_and(|due| due <= now) || queue_due.is_some_and(|due| due <= now) || state.configure_tick_at.is_some_and(|due| due <= now) {
                     let now_ms = executor.now_ms();
                     redraw |= apply(&mut state, AppMessage::Tick { now_ms }, screen, &executor);
                 }
