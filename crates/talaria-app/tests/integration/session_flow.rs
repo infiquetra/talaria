@@ -40,6 +40,7 @@ use talaria_app::launch::{
     Choice, Launch, ListRow, NewSession, SessionRequest, StartMode, format_rows, merge_rows,
     parse_choice,
 };
+use talaria_app::prompts::PromptService;
 use talaria_app::sessions::{
     DetachOutcome, ExecuteOutcome, OpenError, OpenedSession, SessionService, accept_event,
     detach_params,
@@ -48,7 +49,7 @@ use talaria_app::switch::HELD_PROMPTS_TEXT;
 use talaria_core::commands::LocalAction;
 use talaria_core::queue::SubmissionId;
 use talaria_core::session::{
-    Cell, Effect, Event, NoticeKind, PromptKind, SessionId, SessionState, TurnState,
+    Cell, Effect, Event, NoticeKind, PromptKey, PromptKind, SessionId, SessionState, TurnState,
 };
 use tokio::sync::mpsc;
 use zeroize::Zeroizing;
@@ -2621,4 +2622,182 @@ async fn clear_detaches_and_creates_in_the_same_folder() {
         )
     }));
     assert!(!lines.iter().any(|line| line.contains("talaria --resume")));
+}
+
+#[tokio::test]
+async fn refused_note_follow_up_offers_the_draft() {
+    async fn shared_note_setup() -> (MockGateway, InboundStream, AppState) {
+        let (mock, client, inbound) = MockGateway::start().await;
+        let service = SessionService::with_client(LAUNCH_ID, client.clone());
+        let opened = within(15, "the session call", service.open(new_request()))
+            .await
+            .expect("opened");
+        let mut app = AppState::new(LAUNCH_ID);
+        opened_effects(&mut app, opened.clone());
+
+        let mut prompt_service = PromptService::new(Box::new(|| String::from("note-sub-1")));
+        let key = PromptKey {
+            session_id: SessionId::new(&opened.session_id),
+            prompt_id: String::from("note-1"),
+            execution_generation: 1,
+        };
+        prompt_service.set_note(&key, String::from("go 2"));
+        let executed = prompt_service
+            .execute(
+                &client,
+                Effect::RespondApproval {
+                    key,
+                    choice: String::from("once"),
+                },
+            )
+            .await;
+        assert_eq!(
+            executed.events,
+            vec![Event::Submit {
+                text: String::from("go 2"),
+                display: String::from("go 2"),
+                submission_id: String::from("note-sub-1"),
+                attachments: Vec::new(),
+            }]
+        );
+        assert!(executed.notices.is_empty());
+        assert!(mock.requests("prompt.submit").is_empty());
+
+        let effects = update(
+            &mut app,
+            AppMessage::PromptDone {
+                events: executed.events,
+                notices: Vec::new(),
+                masked: None,
+            },
+        );
+        assert_eq!(
+            sent_prompts(&effects),
+            vec![(String::from("go 2"), String::from("note-sub-1"))]
+        );
+        let entry = app
+            .opened
+            .as_ref()
+            .expect("opened")
+            .state
+            .queue
+            .ledger
+            .get(&SubmissionId(String::from("note-sub-1")))
+            .expect("ledger entry");
+        assert_eq!(entry.text, "go 2");
+        assert!(!entry.retried);
+        (mock, inbound, app)
+    }
+
+    // Block B: Sent follow-up does not offer a draft.
+    {
+        let (_mock, _inbound, mut app) = shared_note_setup().await;
+        let effects = update(
+            &mut app,
+            AppMessage::SubmitDone {
+                submission_id: String::from("note-sub-1"),
+                outcome: ExecuteOutcome::Sent,
+            },
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::OfferDraft(_)))
+        );
+    }
+
+    // Block C: First refusal of a composer submit does not offer a draft.
+    {
+        let (_mock, client, _inbound) = MockGateway::start().await;
+        let service = SessionService::with_client(LAUNCH_ID, client);
+        let opened = within(15, "the session call", service.open(new_request()))
+            .await
+            .expect("opened");
+        let mut app = AppState::new(LAUNCH_ID);
+        opened_effects(&mut app, opened);
+        let sends = sent_prompts(&submit(&mut app, "hello"));
+        let effects = update(
+            &mut app,
+            AppMessage::SubmitDone {
+                submission_id: sends[0].1.clone(),
+                outcome: ExecuteOutcome::Refused {
+                    reason: String::from("runtime_draining"),
+                },
+            },
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::OfferDraft(_)))
+        );
+    }
+
+    // Block D: Lost reply keeps the ledger entry awaiting reconcile and offers no draft.
+    {
+        let (_mock, _inbound, mut app) = shared_note_setup().await;
+        let effects = update(
+            &mut app,
+            AppMessage::SubmitDone {
+                submission_id: String::from("note-sub-1"),
+                outcome: ExecuteOutcome::OutcomeUnknown,
+            },
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::OfferDraft(_)))
+        );
+        let entry = app
+            .opened
+            .as_ref()
+            .expect("opened")
+            .state
+            .queue
+            .ledger
+            .get(&SubmissionId(String::from("note-sub-1")))
+            .expect("ledger entry remains");
+        assert!(entry.awaiting_reconcile);
+    }
+
+    // Block A: Refused note follow-up offers the draft, removes the ledger row, and logs both notices.
+    {
+        let (_mock, _inbound, mut app) = shared_note_setup().await;
+        let effects = update(
+            &mut app,
+            AppMessage::SubmitDone {
+                submission_id: String::from("note-sub-1"),
+                outcome: ExecuteOutcome::Refused {
+                    reason: String::from("runtime_draining"),
+                },
+            },
+        );
+        let offers: Vec<&str> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                AppEffect::OfferDraft(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(offers, vec!["go 2"]);
+        assert!(sent_prompts(&effects).is_empty());
+        assert!(
+            !app.opened
+                .as_ref()
+                .expect("opened")
+                .state
+                .queue
+                .ledger
+                .contains_key(&SubmissionId(String::from("note-sub-1")))
+        );
+        let lines = committed_lines(&effects);
+        let refusal_pos = lines
+            .iter()
+            .position(|line| line.contains("Hermes refused the prompt (runtime_draining)."))
+            .expect("refusal notice");
+        let note_pos = lines
+            .iter()
+            .position(|line| line.contains("note not sent: go 2"))
+            .expect("note not sent notice");
+        assert!(note_pos > refusal_pos);
+    }
 }
