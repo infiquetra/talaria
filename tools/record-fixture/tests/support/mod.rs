@@ -479,7 +479,7 @@ pub fn identify_value(
         "supervisor": "none",
         "launch_supervisor": "manual",
         "code_sha": code_sha,
-        "code_version": "0.22.4",
+        "code_version": "0.23.0",
         "instance_id": INSTANCE_ID,
         "runtime_protocol": 1,
         "authority_epoch": 3,

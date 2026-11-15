@@ -59,15 +59,27 @@ async fn live_client() -> Option<(Client, InboundStream)> {
     let endpoint = match discover_with(&home(), &options).await {
         Ok(endpoint) => endpoint,
         Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             skipped("no Hermes gateway reachable");
             return None;
         }
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         skipped(&reason);
         return None;
     }
-    let profile = match endpoint.resolve_profile("fixture") {
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
         Err(_) => {
             skipped("the fixture profile is not served");
@@ -163,7 +175,7 @@ async fn detach(client: &Client, session: &LiveSession) {
 
 fn live_key(session_id: &str) -> RowKey {
     RowKey {
-        profile: "fixture".to_owned(),
+        profile: hermes_contract::pinned::live_profile(),
         session_id: session_id.to_owned(),
     }
 }

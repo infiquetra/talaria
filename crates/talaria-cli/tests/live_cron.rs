@@ -169,15 +169,29 @@ async fn attach() -> Result<(PathBuf, Client, hermes_client::InboundStream, Rest
         },
     )
     .await
-    .map_err(|error| match error {
-        DiscoveryError::NoGateway => "no gateway".to_string(),
-        other => format!("discovery failed: {other}"),
+    .map_err(|error| {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
+        match error {
+            DiscoveryError::NoGateway => "no gateway".to_string(),
+            other => format!("discovery failed: {other}"),
+        }
     })?;
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         return Err(reason);
     }
     let profile = endpoint
-        .resolve_profile("fixture")
+        .resolve_profile(&hermes_contract::pinned::live_profile())
         .map_err(|error| match error {
             ProfileLookupError::NeverDiscovered { .. } => "fixture not served".to_string(),
             other => format!("fixture lookup failed: {other}"),
@@ -278,7 +292,13 @@ async fn live_reads_on_fixture() {
         .and_then(|jobs| jobs.first())
         .map(|job| job.job_id.clone())
     {
-        let runs = hermes_client::cron_api::job_runs(&rest, "fixture", &job_id, 1).await;
+        let runs = hermes_client::cron_api::job_runs(
+            &rest,
+            &hermes_contract::pinned::live_profile(),
+            &job_id,
+            1,
+        )
+        .await;
         if let Err(error) = runs {
             finish(Err(format!("runs failed: {error}")));
             return;
@@ -533,7 +553,7 @@ async fn live_run_now_and_history_on_fixture() {
         .as_secs_f64();
     let triggered = hermes_client::cron_api::trigger_job(
         &rest,
-        "fixture",
+        &hermes_contract::pinned::live_profile(),
         &job_id,
         RequestOpts {
             ticket: true,
@@ -565,7 +585,14 @@ async fn live_run_now_and_history_on_fixture() {
         finish(Err("the probe job disappeared after trigger".into()));
         return;
     };
-    let runs_value = match hermes_client::cron_api::job_runs(&rest, "fixture", &job_id, 20).await {
+    let runs_value = match hermes_client::cron_api::job_runs(
+        &rest,
+        &hermes_contract::pinned::live_profile(),
+        &job_id,
+        20,
+    )
+    .await
+    {
         Ok(value) => value,
         Err(error) => {
             finish(Err(format!("runs failed: {error}")));

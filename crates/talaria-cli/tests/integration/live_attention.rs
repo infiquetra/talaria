@@ -66,19 +66,34 @@ fn attach() -> Result<(tokio::runtime::Runtime, Client), String> {
             control_timeout: Duration::from_secs(5),
             ensure: EnsurePolicy::Never,
         };
-        let endpoint = discover_with(&home, &options)
-            .await
-            .map_err(|error| match error {
+        let endpoint = discover_with(&home, &options).await.map_err(|error| {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            match error {
                 DiscoveryError::NoGateway => {
                     "no Hermes gateway is running for this home".to_owned()
                 }
                 other => other.to_string(),
-            })?;
-        if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+            }
+        })?;
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(
+                endpoint.code_version(),
+                endpoint.code_sha()
+            )
+        );
+        if let Some(reason) = hermes_contract::pinned::live_test_skip(
+            endpoint.code_version(),
+            endpoint.code_sha(),
+            hermes_contract::pinned::live_exact(),
+        ) {
             return Err(reason);
         }
         let profile = endpoint
-            .resolve_profile("fixture")
+            .resolve_profile(&hermes_contract::pinned::live_profile())
             .map_err(|error| match error {
                 ProfileLookupError::NeverDiscovered { name } => {
                     format!("the gateway never discovered a profile named {name}")
@@ -109,7 +124,7 @@ fn approvals_mode(runtime: &tokio::runtime::Runtime, client: &Client) -> Result<
     runtime.block_on(async {
         let params = ConfigGetParams {
             key: "approvals.mode".to_owned(),
-            profile: Some("fixture".to_owned()),
+            profile: Some(hermes_contract::pinned::live_profile()),
             cwd: None,
             session_id: None,
         };
@@ -162,7 +177,7 @@ fn launch(home: &Path, project: &Path) -> Terminal {
         .args(&[
             "--no-ensure",
             "--profile",
-            "fixture",
+            &hermes_contract::pinned::live_profile(),
             "--provider",
             PROVIDER,
             "--model",

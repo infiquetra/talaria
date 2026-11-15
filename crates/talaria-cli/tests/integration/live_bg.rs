@@ -21,7 +21,9 @@ use talaria_app::bg::{
 };
 use talaria_app::worktree::GitRunner;
 
-const PROFILE: &str = "fixture";
+fn profile_name() -> String {
+    hermes_contract::pinned::live_profile()
+}
 const MODEL: &str = "minimax-m3.1-flash";
 const PROVIDER: &str = "ollama-cloud";
 
@@ -88,12 +90,31 @@ fn begin() -> bool {
             },
         )
         .await
-        .map(|endpoint| endpoint.code_sha().map(str::to_owned))
-        .map_err(|error| sanitize(&error.to_string()))
+        .map(|endpoint| {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(
+                    endpoint.code_version(),
+                    endpoint.code_sha()
+                )
+            );
+            hermes_contract::pinned::live_test_skip(
+                endpoint.code_version(),
+                endpoint.code_sha(),
+                hermes_contract::pinned::live_exact(),
+            )
+        })
+        .map_err(|error| {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            sanitize(&error.to_string())
+        })
     });
     match discovered {
         Err(reason) => skip(&reason),
-        Ok(sha) => match hermes_contract::pinned::live_skip_reason(sha.as_deref()) {
+        Ok(sha) => match sha {
             Some(reason) => skip(&reason),
             None => true,
         },
@@ -174,7 +195,7 @@ impl Watch {
                 "--watch",
                 "--json",
                 "--profile",
-                PROFILE,
+                &profile_name(),
                 "--for",
                 "120",
             ],
@@ -221,7 +242,10 @@ impl Drop for Watch {
 /// One `talaria fleet list --json` snapshot of the fixture profile.
 fn fleet_once(cwd: &Path) -> Value {
     let output = support::captured(
-        talaria_command(cwd, &["fleet", "list", "--json", "--profile", PROFILE]),
+        talaria_command(
+            cwd,
+            &["fleet", "list", "--json", "--profile", &profile_name()],
+        ),
         Duration::from_secs(20),
     );
     match serde_json::from_slice::<Value>(&output.stdout) {
@@ -244,7 +268,7 @@ fn runtime() -> tokio::runtime::Runtime {
 /// Open a link as the fixture profile and run `work` on it, then close it.
 fn on_own_connection<T>(work: impl AsyncFnOnce(&LaunchConn) -> T) -> T {
     runtime().block_on(async {
-        let link = match LaunchLink::open(&hermes_home(), PROFILE).await {
+        let link = match LaunchLink::open(&hermes_home(), &profile_name()).await {
             Ok(link) => link,
             Err(error) => failed(&format!("could not open a link: {}", error.what)),
         };
@@ -303,7 +327,7 @@ fn live_bg_runs_after_exit() {
             "--output-format",
             "json",
             "--profile",
-            PROFILE,
+            &profile_name(),
             "--model",
             MODEL,
             "--provider",
@@ -352,7 +376,7 @@ fn live_bg_worktree_isolates_edits() {
             "--output-format",
             "json",
             "--profile",
-            PROFILE,
+            &profile_name(),
             "--model",
             MODEL,
             "--provider",
@@ -421,7 +445,7 @@ fn live_bg_approval_waits_in_queue() {
             "--output-format",
             "json",
             "--profile",
-            PROFILE,
+            &profile_name(),
             "--model",
             MODEL,
             "--provider",
@@ -493,7 +517,7 @@ async fn host_link_other_profile() {
     });
     let request = LaunchRequest {
         prompt: "Reply with the single word: ready".to_owned(),
-        profile: PROFILE.to_owned(),
+        profile: profile_name(),
         folder: folder.clone(),
         model: Some(MODEL.to_owned()),
         provider: Some(PROVIDER.to_owned()),

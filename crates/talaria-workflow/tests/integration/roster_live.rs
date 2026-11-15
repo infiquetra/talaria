@@ -41,11 +41,19 @@ async fn model_options_on_the_fixture_profile() {
     let gateway = match discover_with(&home, &options).await {
         Ok(v) => v,
         Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             skip("no Hermes gateway: start one and create the fixture profile (operator)");
             return;
         }
     };
-    let profile = match gateway.resolve_profile("fixture") {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(gateway.code_version(), gateway.code_sha())
+    );
+    let profile = match gateway.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(v) => v,
         Err(_) => {
             skip("profile 'fixture' not found");
@@ -96,7 +104,12 @@ async fn model_options_on_the_fixture_profile() {
         .await
         .unwrap();
     let elapsed = started.elapsed();
-    let roster = Roster::from_model_options(&result, "fixture", chrono::Utc::now()).unwrap();
+    let roster = Roster::from_model_options(
+        &result,
+        &hermes_contract::pinned::live_profile(),
+        chrono::Utc::now(),
+    )
+    .unwrap();
     assert!(roster.providers().iter().any(|p|p.slug=="ollama-cloud" && p.models.iter().any(|m|m=="minimax-m3.1-flash")));
     let summary = recorder.finish().unwrap();
     assert_eq!(summary.dropped, 0);

@@ -189,7 +189,7 @@ async fn live_write_round_trip_on_fixture() {
     };
     let fixture_id = env
         .endpoint
-        .resolve_profile("fixture")
+        .resolve_profile(&hermes_contract::pinned::live_profile())
         .expect("fixture profile");
     assert!(
         fixture_id.as_ref() == env.fixture.as_ref(),

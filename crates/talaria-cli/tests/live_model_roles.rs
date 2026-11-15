@@ -19,7 +19,9 @@ use hermes_client::{
 use model_roles_scrub::{allowlist_violations, provider_map, scrub_fixture};
 use serde_json::{Value, json};
 
-const PROFILE: &str = "fixture";
+fn profile_name() -> String {
+    hermes_contract::pinned::live_profile()
+}
 const BUILTIN_TASKS: [&str; 12] = [
     "vision",
     "compression",
@@ -101,18 +103,28 @@ async fn record_fixtures() {
             };
             panic!("discovery failed: {reason}");
         });
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         panic!("gateway precondition failed: {}", sanitize(&reason));
     }
-    let profile = endpoint.resolve_profile(PROFILE).unwrap_or_else(|error| {
-        let reason = match error {
-            ProfileLookupError::NeverDiscovered { name } => {
-                format!("the gateway never discovered a profile named {name}")
-            }
-            other => sanitize(&other.to_string()),
-        };
-        panic!("profile lookup failed: {reason}");
-    });
+    let profile = endpoint
+        .resolve_profile(&profile_name())
+        .unwrap_or_else(|error| {
+            let reason = match error {
+                ProfileLookupError::NeverDiscovered { name } => {
+                    format!("the gateway never discovered a profile named {name}")
+                }
+                other => sanitize(&other.to_string()),
+            };
+            panic!("profile lookup failed: {reason}");
+        });
     let endpoint = Arc::new(endpoint);
     let minter = Arc::new(NativeHttpMinter::new(
         home.clone(),
@@ -210,6 +222,10 @@ async fn reads_all_sections() {
     let endpoint = match discover_with(&home, &options).await {
         Ok(endpoint) => endpoint,
         Err(error) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             let reason = match error {
                 DiscoveryError::NoGateway => {
                     "no Hermes gateway is running for this home".to_owned()
@@ -220,11 +236,19 @@ async fn reads_all_sections() {
             return;
         }
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         skip_live(&reason);
         return;
     }
-    let profile = match endpoint.resolve_profile(PROFILE) {
+    let profile = match endpoint.resolve_profile(&profile_name()) {
         Ok(profile) => profile,
         Err(error) => {
             skip_live(&sanitize(&error.to_string()));
@@ -323,7 +347,9 @@ async fn round_trip_writes_on_fixture() {
         ensure: EnsurePolicy::Never,
     };
     let endpoint = discover_with(&home, &options).await.expect("gateway");
-    let profile = endpoint.resolve_profile(PROFILE).expect("fixture profile");
+    let profile = endpoint
+        .resolve_profile(&profile_name())
+        .expect("fixture profile");
     let endpoint = Arc::new(endpoint);
     let minter = Arc::new(NativeHttpMinter::new(home, Arc::clone(&endpoint), profile));
     let rest =

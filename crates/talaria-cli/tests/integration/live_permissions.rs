@@ -30,16 +30,35 @@ fn hermes_home() -> PathBuf {
         .unwrap_or_else(default_home)
 }
 
-/// The commit the running gateway reports, read through discovery that never starts a gateway.
-async fn gateway_code_sha(home: &Path) -> Result<Option<String>, String> {
+/// The live admission reason, read through discovery that never starts a gateway.
+async fn gateway_skip_reason(home: &Path) -> Result<Option<String>, String> {
     let options = DiscoverOptions {
         control_timeout: Duration::from_secs(5),
         ensure: EnsurePolicy::Never,
     };
     discover_with(home, &options)
         .await
-        .map(|endpoint| endpoint.code_sha().map(str::to_owned))
-        .map_err(|error| error.to_string())
+        .map(|endpoint| {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(
+                    endpoint.code_version(),
+                    endpoint.code_sha()
+                )
+            );
+            hermes_contract::pinned::live_test_skip(
+                endpoint.code_version(),
+                endpoint.code_sha(),
+                hermes_contract::pinned::live_exact(),
+            )
+        })
+        .map_err(|error| {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            error.to_string()
+        })
 }
 
 fn skip(reason: String) {
@@ -90,13 +109,13 @@ fn same_folder(reported: &str, expected: &str) -> bool {
 #[ignore]
 async fn live_session_bypass_and_move() {
     let home = hermes_home();
-    match gateway_code_sha(&home).await {
+    match gateway_skip_reason(&home).await {
         Err(reason) => {
             skip(reason);
             return;
         }
-        Ok(sha) => {
-            if let Some(reason) = hermes_contract::pinned::live_skip_reason(sha.as_deref()) {
+        Ok(reason) => {
+            if let Some(reason) = reason {
                 skip(reason);
                 return;
             }
@@ -110,7 +129,7 @@ async fn live_session_bypass_and_move() {
         .await
         .expect("the operator gateway answers");
     let profile = endpoint
-        .resolve_profile("fixture")
+        .resolve_profile(&hermes_contract::pinned::live_profile())
         .expect("profile fixture exists");
     let ticket = hermes_client::mint_ticket(
         &home,

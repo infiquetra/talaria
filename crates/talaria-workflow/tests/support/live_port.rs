@@ -30,6 +30,9 @@ impl LivePort {
 }
 
 pub async fn preconditions() -> Option<LiveEnv> {
+    preconditions_for(None).await
+}
+pub async fn preconditions_for(feature: Option<(&str, &str)>) -> Option<LiveEnv> {
     let home = default_home();
     let options = DiscoverOptions {
         control_timeout: Duration::from_secs(5),
@@ -37,19 +40,35 @@ pub async fn preconditions() -> Option<LiveEnv> {
     };
     let endpoint = match discover_with(&home, &options).await {
         Ok(e) => e,
-        Err(_) => return skip("no usable gateway"),
+        Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            return skip("no usable gateway");
+        }
     };
-    let profile = match endpoint.resolve_profile("fixture") {
-        Ok(p) => p,
-        Err(_) => return skip("fixture profile unavailable"),
-    };
-    let pin = include_str!("../../../hermes-contract/PINNED")
-        .lines()
-        .find_map(|line| line.strip_prefix("commit="))
-        .unwrap();
-    if !endpoint.code_sha().is_some_and(|sha| pin.starts_with(sha)) {
-        return skip("gateway revision differs from pinned release");
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return skip(&reason);
     }
+    if let Some((name, since)) = feature
+        && let Some(reason) =
+            hermes_contract::pinned::feature_skip_reason(endpoint.code_version(), name, since)
+    {
+        return skip(&reason);
+    }
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
+        Ok(p) => p,
+        Err(_) => return skip("live profile unavailable"),
+    };
     Some(LiveEnv {
         home,
         endpoint,
@@ -88,7 +107,7 @@ pub async fn attach(env: &LiveEnv, recording: Option<&Recorder>) -> LivePort {
 }
 pub async fn wait_terminal(port: &LivePort, session: &str, admission: &str) -> Value {
     for _ in 0..180 {
-        let receipt=port.call("prompt.receipt",serde_json::json!({"profile":"fixture","session_id":session,"admission_id":admission,"include_result":true})).await.unwrap();
+        let receipt=port.call("prompt.receipt",serde_json::json!({"profile":hermes_contract::pinned::live_profile(),"session_id":session,"admission_id":admission,"include_result":true})).await.unwrap();
         if receipt["status"] == "terminal" {
             return receipt;
         }
@@ -107,7 +126,9 @@ pub async fn changed_gateway(env: &LiveEnv) -> Option<LiveEnv> {
         if let Ok(endpoint) = discover_with(&env.home, &opts).await
             && endpoint.instance_id() != original
         {
-            let profile = endpoint.resolve_profile("fixture").ok()?;
+            let profile = endpoint
+                .resolve_profile(&hermes_contract::pinned::live_profile())
+                .ok()?;
             return Some(LiveEnv {
                 home: env.home.clone(),
                 endpoint,

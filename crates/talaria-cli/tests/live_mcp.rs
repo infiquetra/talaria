@@ -41,7 +41,7 @@ struct Live {
 }
 
 // Errors are fixed public descriptions: discovery errors can contain private paths.
-async fn connect_fixture() -> Result<Live, &'static str> {
+async fn connect_fixture() -> Result<Live, String> {
     let home = home();
     let endpoint = hermes_client::discover_with(
         &home,
@@ -51,13 +51,27 @@ async fn connect_fixture() -> Result<Live, &'static str> {
         },
     )
     .await
-    .map_err(|_| "running gateway unavailable")?;
-    if hermes_contract::pinned::live_skip_reason(endpoint.code_sha()).is_some() {
-        return Err("gateway revision does not match the pinned Hermes release");
+    .map_err(|_| {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
+        "running gateway unavailable"
+    })?;
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return Err(reason);
     }
     let endpoint = Arc::new(endpoint);
     let profile = endpoint
-        .resolve_profile("fixture")
+        .resolve_profile(&hermes_contract::pinned::live_profile())
         .map_err(|_| "fixture unavailable")?;
     let ticket = hermes_client::mint_ticket(
         &home,
@@ -88,7 +102,7 @@ async fn begin() -> Option<Live> {
     match connect_fixture().await {
         Ok(live) => Some(live),
         Err(reason) => {
-            skip(reason);
+            skip(&reason);
             None
         }
     }

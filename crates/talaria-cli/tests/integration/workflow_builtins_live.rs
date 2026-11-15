@@ -24,6 +24,35 @@ fn files_contain_forbidden(path: &Path) {
     }
 }
 fn run_live(name: &str, mode: &str) {
+    let identity_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("identity discovery runtime");
+    identity_runtime.block_on(async {
+        let identity_options = hermes_client::DiscoverOptions {
+            control_timeout: Duration::from_secs(5),
+            ensure: hermes_client::EnsurePolicy::Never,
+        };
+        match hermes_client::discover_with(&hermes_client::default_home(), &identity_options).await
+        {
+            Ok(endpoint) => {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(
+                        endpoint.code_version(),
+                        endpoint.code_sha()
+                    )
+                );
+            }
+            Err(_) => {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(None, None)
+                );
+            }
+        }
+    });
+
     for (program, arg) in [("git", "--version"), ("python3", "--version")] {
         if !command_ok(program, arg) {
             eprintln!("skipped: {program} is unavailable");
@@ -70,7 +99,7 @@ fn run_live(name: &str, mode: &str) {
             "run",
             name,
             "--profile",
-            "fixture",
+            &hermes_contract::pinned::live_profile(),
             "--staffing",
         ])
         .arg(data.join("staffing-fixture.toml"))

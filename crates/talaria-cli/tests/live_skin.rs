@@ -47,6 +47,10 @@ fn discover() -> Result<hermes_client::Endpoint, String> {
 fn skip_reason() -> Option<String> {
     let endpoint = match discover() {
         Err(error) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             return Some(match error.as_str() {
                 _ if error.contains("NoGateway") || error.contains("no gateway") => {
                     "no Hermes gateway is running for this home".to_owned()
@@ -56,12 +60,25 @@ fn skip_reason() -> Option<String> {
         }
         Ok(endpoint) => endpoint,
     };
-    if let Err(ProfileLookupError::NeverDiscovered { name }) = endpoint.resolve_profile("fixture") {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return Some(reason);
+    }
+    if let Err(ProfileLookupError::NeverDiscovered { name }) =
+        endpoint.resolve_profile(&hermes_contract::pinned::live_profile())
+    {
         return Some(format!(
             "the gateway never discovered a profile named {name}"
         ));
     }
-    hermes_contract::pinned::live_skip_reason(endpoint.code_sha())
+    None
 }
 
 /// True when the test may run.
@@ -137,7 +154,11 @@ fn live_handshake_skin_resolves() {
     let mut terminal = start(
         home.path(),
         &project,
-        &["--no-ensure", "--profile", "fixture"],
+        &[
+            "--no-ensure",
+            "--profile",
+            &hermes_contract::pinned::live_profile(),
+        ],
     );
     terminal.wait_first_frame(Duration::from_secs(20));
 
@@ -178,7 +199,11 @@ fn live_skin_switch_round_trip() {
     let mut terminal = start(
         home.path(),
         &project,
-        &["--no-ensure", "--profile", "fixture"],
+        &[
+            "--no-ensure",
+            "--profile",
+            &hermes_contract::pinned::live_profile(),
+        ],
     );
     terminal.wait_first_frame(Duration::from_secs(20));
 

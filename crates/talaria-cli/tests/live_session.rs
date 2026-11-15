@@ -17,7 +17,7 @@ const ASK: &str = "Do not call any tools. What is 1234 plus 4321? Reply with onl
 const LONG_ASK: &str = "Do not call any tools. Write the integers from 1 to 200, each on its own line, then press Enter and on line 201 write only the four-digit string formed by placing 77 immediately before 31.";
 const RM_ASK: &str =
     "Run this exact shell command and then tell me its exit code: rm -rf .pytest_cache";
-const PROFILE_FLAGS: [&str; 2] = ["--profile", "fixture"];
+
 const ROWS: u16 = 60;
 const COLS: u16 = 160;
 const ANSWER_LIMIT: Duration = Duration::from_secs(90);
@@ -28,8 +28,8 @@ fn hermes_home() -> PathBuf {
         .unwrap_or_else(default_home)
 }
 
-/// The commit the running gateway reports, read through discovery that never starts a gateway.
-fn gateway_code_sha(home: &Path) -> Result<Option<String>, String> {
+/// The live admission reason, read through discovery that never starts a gateway.
+fn gateway_skip_reason(home: &Path) -> Result<Option<String>, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -41,8 +41,27 @@ fn gateway_code_sha(home: &Path) -> Result<Option<String>, String> {
         };
         discover_with(home, &options)
             .await
-            .map(|endpoint| endpoint.code_sha().map(str::to_owned))
-            .map_err(|error| error.to_string())
+            .map(|endpoint| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(
+                        endpoint.code_version(),
+                        endpoint.code_sha()
+                    )
+                );
+                hermes_contract::pinned::live_test_skip(
+                    endpoint.code_version(),
+                    endpoint.code_sha(),
+                    hermes_contract::pinned::live_exact(),
+                )
+            })
+            .map_err(|error| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(None, None)
+                );
+                error.to_string()
+            })
     })
 }
 
@@ -50,9 +69,9 @@ fn skip_reason(release_only: bool) -> Option<String> {
     if release_only && cfg!(debug_assertions) {
         return Some("this budget is measured on a release binary".into());
     }
-    match gateway_code_sha(&hermes_home()) {
+    match gateway_skip_reason(&hermes_home()) {
         Err(reason) => Some(reason),
-        Ok(sha) => hermes_contract::pinned::live_skip_reason(sha.as_deref()),
+        Ok(reason) => reason,
     }
 }
 
@@ -86,7 +105,8 @@ fn start(user_home: &Path, project: &Path, args: &[&str]) -> Terminal {
 
 fn new_session(user_home: &Path, project: &Path) -> Terminal {
     let mut args = vec!["--no-ensure"];
-    args.extend(PROFILE_FLAGS);
+    let profile = hermes_contract::pinned::live_profile();
+    args.extend(["--profile", profile.as_str()]);
     start(user_home, project, &args)
 }
 
@@ -184,8 +204,8 @@ fn resume_id(text: &str) -> String {
         .to_owned()
 }
 
-fn resume_args(id: &str) -> Vec<&str> {
-    vec!["--resume", id, "--no-ensure", "--profile", "fixture"]
+fn resume_args<'a>(id: &'a str, profile: &'a str) -> Vec<&'a str> {
+    vec!["--resume", id, "--no-ensure", "--profile", profile]
 }
 
 #[ignore = "needs a running gateway"]
@@ -225,7 +245,12 @@ fn new_ask_quit_resume_roundtrip() {
     );
     let id = resume_id(&screen.text);
 
-    let mut resumed = start(user_home.path(), project.path(), &resume_args(&id));
+    let profile = hermes_contract::pinned::live_profile();
+    let mut resumed = start(
+        user_home.path(),
+        project.path(),
+        &resume_args(&id, &profile),
+    );
     assert!(
         resumed.wait_for_text("Resumed:", Duration::from_secs(30)),
         "{}",
@@ -249,7 +274,8 @@ fn new_ask_quit_resume_roundtrip() {
     // Continue finds the same session in this folder, which also shows the gateway recorded the
     // working folder of the new session.
     let mut args = vec!["-c", "--no-ensure"];
-    args.extend(PROFILE_FLAGS);
+    let profile = hermes_contract::pinned::live_profile();
+    args.extend(["--profile", profile.as_str()]);
     let mut continued = start(user_home.path(), project.path(), &args);
     assert!(
         continued.wait_for_text("Resumed:", Duration::from_secs(30)),
@@ -289,7 +315,12 @@ fn quit_mid_turn_leaves_the_turn_running() {
     );
     let id = resume_id(&screen.text);
 
-    let mut resumed = start(user_home.path(), project.path(), &resume_args(&id));
+    let profile = hermes_contract::pinned::live_profile();
+    let mut resumed = start(
+        user_home.path(),
+        project.path(),
+        &resume_args(&id, &profile),
+    );
     assert!(
         wait_for_line(&mut resumed, "7731", ANSWER_LIMIT),
         "the answer is not there on resume:\n{}",
@@ -314,7 +345,8 @@ fn continue_in_a_fresh_folder_is_refused() {
     let user_home = tempfile::tempdir().expect("home");
     let project = tempfile::tempdir().expect("project");
     let mut args = vec!["-c", "--no-ensure"];
-    args.extend(PROFILE_FLAGS);
+    let profile = hermes_contract::pinned::live_profile();
+    args.extend(["--profile", profile.as_str()]);
     let terminal = start(user_home.path(), project.path(), &args);
     let screen = terminal.finish(Duration::from_secs(30));
     assert!(
@@ -406,7 +438,11 @@ fn launch_to_usable_composer_within_budget() {
             .cwd(project.path())
             .size(48, 160)
             .answer_queries()
-            .args(&["--no-ensure", "--profile", "fixture"])
+            .args(&[
+                "--no-ensure",
+                "--profile",
+                &hermes_contract::pinned::live_profile(),
+            ])
             .spawn();
         let first = terminal
             .wait_first_frame(Duration::from_secs(5))
@@ -480,7 +516,12 @@ fn interrupt_and_resume_list() {
     let mut list = start(
         user_home.path(),
         project.path(),
-        &["--resume", "--no-ensure", "--profile", "fixture"],
+        &[
+            "--resume",
+            "--no-ensure",
+            "--profile",
+            &hermes_contract::pinned::live_profile(),
+        ],
     );
     assert!(
         list.wait_for_text("Number or id", Duration::from_secs(30)),

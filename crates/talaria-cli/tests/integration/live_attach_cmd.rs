@@ -61,12 +61,32 @@ fn skip_reason() -> Option<String> {
     let home = hermes_home();
     let endpoint = match block_on(discover_with(&home, &never())) {
         Ok(endpoint) => endpoint,
-        Err(error) => return Some(error.to_string()),
+        Err(error) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            return Some(error.to_string());
+        }
     };
-    if endpoint.resolve_profile("fixture").is_err() {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return Some(reason);
+    }
+    if endpoint
+        .resolve_profile(&hermes_contract::pinned::live_profile())
+        .is_err()
+    {
         return Some("the gateway does not serve fixture".to_owned());
     }
-    hermes_contract::pinned::live_skip_reason(endpoint.code_sha())
+    None
 }
 
 fn begin() -> bool {
@@ -103,7 +123,9 @@ fn make_probe(tag: &str) -> String {
     let home = hermes_home();
     block_on(async {
         let endpoint = discover_with(&home, &never()).await.expect("discovery");
-        let profile = endpoint.resolve_profile("fixture").expect("fixture");
+        let profile = endpoint
+            .resolve_profile(&hermes_contract::pinned::live_profile())
+            .expect("fixture");
         let ticket = mint_ticket(
             &home,
             &endpoint,
@@ -216,7 +238,7 @@ fn live_attach_by_prefix_and_title() {
         user_home.path(),
         project.path(),
         &session_id,
-        &["--profile", "fixture"],
+        &["--profile", &hermes_contract::pinned::live_profile()],
     );
 
     // No match: exit 1 with the no-match text. The text names every served
@@ -240,7 +262,7 @@ fn live_attach_by_prefix_and_title() {
             "attach",
             "local-0000000000000000",
             "--profile",
-            "fixture",
+            &hermes_contract::pinned::live_profile(),
             "--no-ensure",
         ],
     );

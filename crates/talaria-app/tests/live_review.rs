@@ -39,15 +39,30 @@ async fn reachable() -> bool {
     let endpoint = match discover_with(&home(), &options).await {
         Ok(endpoint) => endpoint,
         Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             skip("no Hermes gateway reachable");
             return false;
         }
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         skip(&reason);
         return false;
     }
-    if endpoint.resolve_profile("fixture").is_err() {
+    if endpoint
+        .resolve_profile(&hermes_contract::pinned::live_profile())
+        .is_err()
+    {
         skip("the fixture profile is not served");
         return false;
     }
@@ -62,7 +77,7 @@ async fn create_in(conn: &LaunchConn, cwd: &std::path::Path, request_id: &str) -
         provider: None,
         reasoning: None,
     };
-    let profile = conn.routed_profile("fixture");
+    let profile = conn.routed_profile(&hermes_contract::pinned::live_profile());
     let reply = conn
         .call(
             "session.create",
@@ -87,7 +102,9 @@ async fn draft_message_from_session_model() {
         return;
     }
     let git = GitRepo::new();
-    let link_a = LaunchLink::open(&home(), "fixture").await.expect("link A");
+    let link_a = LaunchLink::open(&home(), &hermes_contract::pinned::live_profile())
+        .await
+        .expect("link A");
     let conn_a = LaunchConn::Link(link_a);
     let session_id = create_in(&conn_a, &git.repo, &talaria_app::launch::new_request_id()).await;
 
@@ -96,7 +113,9 @@ async fn draft_message_from_session_model() {
     let recent = git.ok(&git.repo, &["log", "-n", "10", "--pretty=format:%s"]);
 
     // Link B has never attached the session.
-    let link_b = LaunchLink::open(&home(), "fixture").await.expect("link B");
+    let link_b = LaunchLink::open(&home(), &hermes_contract::pinned::live_profile())
+        .await
+        .expect("link B");
     let conn_b = LaunchConn::Link(link_b);
     let info = conn_b
         .call(
@@ -115,7 +134,7 @@ async fn draft_message_from_session_model() {
     );
 
     let row = RowKey {
-        profile: "fixture".to_owned(),
+        profile: hermes_contract::pinned::live_profile(),
         session_id: session_id.clone(),
     };
     let text = draft_message(&conn_b, &row, &diff, &recent, "")
@@ -145,7 +164,9 @@ async fn session_info_reports_folder() {
         return;
     }
     let git = GitRepo::new();
-    let link = LaunchLink::open(&home(), "fixture").await.expect("link");
+    let link = LaunchLink::open(&home(), &hermes_contract::pinned::live_profile())
+        .await
+        .expect("link");
     let conn = LaunchConn::Link(link);
     let session_id = create_in(&conn, &git.repo, &talaria_app::launch::new_request_id()).await;
     conn.close().await;
@@ -158,7 +179,7 @@ async fn session_info_reports_folder() {
     let reply = conn
         .call(
             "session.info",
-            json!({"session_id": session_id, "profile": "fixture"}),
+            json!({"session_id": session_id, "profile": hermes_contract::pinned::live_profile()}),
             Duration::from_secs(10),
         )
         .await;

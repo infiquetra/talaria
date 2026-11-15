@@ -377,7 +377,7 @@ pub async fn live_compile_and_complete(
         .map_err(|_| KanbanError::Message("no gateway for live compile".into()))?,
     );
     let profile = endpoint
-        .resolve_profile("fixture")
+        .resolve_profile(&hermes_contract::pinned::live_profile())
         .map_err(|_| KanbanError::Message("invalid live profile".into()))?;
     let minter = Arc::new(crate::NativeHttpMinter::new(
         home,
@@ -399,7 +399,12 @@ pub async fn live_compile_and_complete(
     )
     .args(["workflow", "compile"])
     .arg(&path)
-    .args(["--board", board, "--profile", "fixture"])
+    .args([
+        "--board",
+        board,
+        "--profile",
+        &hermes_contract::pinned::live_profile(),
+    ])
     .output()
     .await;
     let _ = std::fs::remove_file(&path);

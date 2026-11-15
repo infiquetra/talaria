@@ -7,14 +7,16 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-const PROFILE: &[&str] = &[
-    "--profile",
-    "fixture",
-    "--provider",
-    "ollama-cloud",
-    "--model",
-    "minimax-m3.1-flash",
-];
+fn profile_flags() -> Vec<String> {
+    vec![
+        "--profile".into(),
+        hermes_contract::pinned::live_profile(),
+        "--provider".into(),
+        "ollama-cloud".into(),
+        "--model".into(),
+        "minimax-m3.1-flash".into(),
+    ]
+}
 
 fn live_require() -> bool {
     std::env::var("TALARIA_LIVE_REQUIRE").as_deref() == Ok("1")
@@ -39,9 +41,25 @@ fn gateway_present() -> bool {
         control_timeout: Duration::from_secs(5),
         ensure: hermes_client::EnsurePolicy::Never,
     };
-    runtime
-        .block_on(hermes_client::discover_with(&home, &options))
-        .is_ok()
+    match runtime.block_on(hermes_client::discover_with(&home, &options)) {
+        Ok(endpoint) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(
+                    endpoint.code_version(),
+                    endpoint.code_sha()
+                )
+            );
+            true
+        }
+        Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            false
+        }
+    }
 }
 
 fn capture_finite_turn() -> String {
@@ -86,7 +104,7 @@ fn capture_finite_turn() -> String {
         model: None,
         provider: None,
         effort: None,
-        profile: "fixture".to_string(),
+        profile: hermes_contract::pinned::live_profile(),
         folder: work.path().to_path_buf(),
         record: None,
         bench_replay: None,
@@ -212,7 +230,7 @@ fn run(args: &[&str], dir: &Path) -> Output {
 
 fn with_profile(extra: &[&str]) -> Vec<String> {
     let mut args = vec!["-p".to_string()];
-    args.extend(PROFILE.iter().map(|entry| (*entry).to_string()));
+    args.extend(profile_flags());
     args.extend(extra.iter().map(|entry| (*entry).to_string()));
     args
 }
@@ -281,7 +299,7 @@ fn resume_headless_session_by_id() {
         &[
             "-p",
             "--profile",
-            "fixture",
+            &hermes_contract::pinned::live_profile(),
             "--resume",
             &id,
             "What number did you give me before? Reply with only the number.",
@@ -290,7 +308,16 @@ fn resume_headless_session_by_id() {
     );
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&output.stdout), "5555\n");
-    let output = run(&["-p", "-c", "--profile", "fixture", "hello"], work.path());
+    let output = run(
+        &[
+            "-p",
+            "-c",
+            "--profile",
+            &hermes_contract::pinned::live_profile(),
+            "hello",
+        ],
+        work.path(),
+    );
     assert_eq!(output.status.code(), Some(4));
     println!("LIVE_PRINT_RESULT: PASSED");
 }
@@ -369,7 +396,7 @@ fn timeout_stops_a_long_turn() {
         &[
             "-p",
             "--profile",
-            "fixture",
+            &hermes_contract::pinned::live_profile(),
             "--resume",
             &id,
             "Reply with only the word ok.",

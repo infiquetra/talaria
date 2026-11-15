@@ -50,7 +50,7 @@ fn hermes_home() -> PathBuf {
         .unwrap_or_else(default_home)
 }
 
-fn gateway_code_sha(home: &Path) -> Result<Option<String>, String> {
+fn gateway_skip_reason(home: &Path) -> Result<Option<String>, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -62,15 +62,34 @@ fn gateway_code_sha(home: &Path) -> Result<Option<String>, String> {
         };
         discover_with(home, &options)
             .await
-            .map(|endpoint| endpoint.code_sha().map(str::to_owned))
-            .map_err(|_| "no gateway".to_string())
+            .map(|endpoint| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(
+                        endpoint.code_version(),
+                        endpoint.code_sha()
+                    )
+                );
+                hermes_contract::pinned::live_test_skip(
+                    endpoint.code_version(),
+                    endpoint.code_sha(),
+                    hermes_contract::pinned::live_exact(),
+                )
+            })
+            .map_err(|_| {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(None, None)
+                );
+                "no gateway".to_string()
+            })
     })
 }
 
 fn skip_reason() -> Option<String> {
-    match gateway_code_sha(&hermes_home()) {
+    match gateway_skip_reason(&hermes_home()) {
         Err(reason) => Some(reason),
-        Ok(sha) => hermes_contract::pinned::live_skip_reason(sha.as_deref()),
+        Ok(reason) => reason,
     }
 }
 
@@ -150,7 +169,7 @@ impl Live {
             model: Some(MODEL.to_string()),
             provider: Some(PROVIDER.to_string()),
             effort: None,
-            profile: "fixture".to_string(),
+            profile: hermes_contract::pinned::live_profile(),
             folder: folder.path().to_path_buf(),
             record: None,
             bench_replay: None,

@@ -47,17 +47,29 @@ async fn attach_fixture() -> Result<(PathBuf, Client, hermes_client::InboundStre
         control_timeout: Duration::from_secs(5),
         ensure: EnsurePolicy::Never,
     };
-    let endpoint = discover_with(&home, &options)
-        .await
-        .map_err(|error| match error {
+    let endpoint = discover_with(&home, &options).await.map_err(|error| {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
+        match error {
             DiscoveryError::NoGateway => "no gateway".to_string(),
             other => format!("discovery failed: {other}"),
-        })?;
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+        }
+    })?;
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         return Err(reason);
     }
     let profile = endpoint
-        .resolve_profile("fixture")
+        .resolve_profile(&hermes_contract::pinned::live_profile())
         .map_err(|error| match error {
             ProfileLookupError::NeverDiscovered { .. } => "fixture not served".to_string(),
             other => format!("fixture lookup failed: {other}"),
@@ -87,7 +99,7 @@ async fn create_session(client: &Client, folder: &Path, nonce: &str) -> Result<S
                 "request_id": format!("fleet-{nonce}-{}", run_nonce()),
                 "source": "tui",
                 "cwd": folder.display().to_string(),
-                "profile": "fixture",
+                "profile": hermes_contract::pinned::live_profile(),
             }),
             CallOptions {
                 timeout: Some(Duration::from_secs(20)),
@@ -142,7 +154,7 @@ fn spawn_watch(
             "--watch",
             "--json",
             "--profile",
-            "fixture",
+            &hermes_contract::pinned::live_profile(),
             "--for",
             seconds,
         ])
@@ -196,7 +208,13 @@ async fn live_fleet_lists_fixture_sessions() {
         let started = Instant::now();
         let output = run_fleet(
             &home,
-            &["fleet", "list", "--json", "--profile", "fixture"],
+            &[
+                "fleet",
+                "list",
+                "--json",
+                "--profile",
+                &hermes_contract::pinned::live_profile(),
+            ],
             Duration::from_secs(20),
         )?;
         if started.elapsed() > Duration::from_secs(5) {
@@ -548,6 +566,10 @@ async fn live_sessions_changed_sibling_report() {
     let endpoint = match discover_with(&home, &options).await {
         Ok(endpoint) => endpoint,
         Err(DiscoveryError::NoGateway) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
             skip("no gateway");
             return;
         }
@@ -556,7 +578,15 @@ async fn live_sessions_changed_sibling_report() {
             return;
         }
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         skip(&reason);
         return;
     }

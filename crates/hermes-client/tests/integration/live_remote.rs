@@ -97,7 +97,9 @@ async fn live_remote_attach_and_round_trip() {
     assert_eq!(handshake.ready.session_authority, Some(true));
     println!("handshake_ms={}", began.elapsed().as_millis());
     let (client, mut inbound) = Client::start(connection.into_parts());
-    client.set_param_injector(Some(profile_injector("fixture".into())));
+    client.set_param_injector(Some(profile_injector(
+        hermes_contract::pinned::live_profile(),
+    )));
     let call = CallOptions {
         timeout: Some(Duration::from_secs(120)),
     };

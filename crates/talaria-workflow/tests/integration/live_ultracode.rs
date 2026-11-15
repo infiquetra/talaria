@@ -1,8 +1,43 @@
 #[test]
 #[ignore = "requires operator-provisioned fixture gateway"]
 fn live_roster_envelope_fixture() {
+    let identity_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("identity discovery runtime");
+    identity_runtime.block_on(async {
+        let identity_options = hermes_client::DiscoverOptions {
+            control_timeout: std::time::Duration::from_secs(5),
+            ensure: hermes_client::EnsurePolicy::Never,
+        };
+        match hermes_client::discover_with(&hermes_client::default_home(), &identity_options).await
+        {
+            Ok(endpoint) => {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(
+                        endpoint.code_version(),
+                        endpoint.code_sha()
+                    )
+                );
+            }
+            Err(_) => {
+                println!(
+                    "{}",
+                    hermes_contract::pinned::gateway_version_line(None, None)
+                );
+            }
+        }
+    });
+
     let output = std::process::Command::new("talaria")
-        .args(["workflow", "roster", "--profile", "fixture", "--json"])
+        .args([
+            "workflow",
+            "roster",
+            "--profile",
+            &hermes_contract::pinned::live_profile(),
+            "--json",
+        ])
         .output();
     let Ok(output) = output else {
         eprintln!("SKIPPED (talaria unavailable)");
@@ -14,7 +49,7 @@ fn live_roster_envelope_fixture() {
     }
     assert!([Some(0), Some(2)].contains(&output.status.code()));
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["profile"], "fixture");
+    assert_eq!(value["profile"], hermes_contract::pinned::live_profile());
     assert!(
         value["report"]["providers"]
             .as_array()
@@ -40,10 +75,18 @@ async fn live_skill_directive_fixture() {
         ensure: EnsurePolicy::Never,
     };
     let Ok(endpoint) = discover_with(&home, &opts).await else {
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(None, None)
+        );
         eprintln!("SKIPPED (gateway not running)");
         return;
     };
-    let Ok(profile) = endpoint.resolve_profile("fixture") else {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    let Ok(profile) = endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) else {
         eprintln!("SKIPPED (fixture profile not served)");
         return;
     };

@@ -25,12 +25,26 @@ async fn setup() -> Option<(RestClient, Arc<SettingsService>)> {
     .await
     {
         Ok(endpoint) => Arc::new(endpoint),
-        Err(_) => return skip("gateway unavailable"),
+        Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            return skip("gateway unavailable");
+        }
     };
-    if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
         return skip(&reason);
     }
-    let profile = match endpoint.resolve_profile("fixture") {
+    let profile = match endpoint.resolve_profile(&hermes_contract::pinned::live_profile()) {
         Ok(profile) => profile,
         Err(_) => return skip("fixture unavailable"),
     };
@@ -46,16 +60,18 @@ async fn setup() -> Option<(RestClient, Arc<SettingsService>)> {
     )
     .expect("rest client");
     let factory = Arc::new(move |name: &str| -> Arc<dyn TicketMinter> {
-        assert_eq!(name, "fixture");
+        assert_eq!(name, hermes_contract::pinned::live_profile());
         Arc::new(NativeHttpMinter::new(
             home.clone(),
             endpoint.clone(),
-            endpoint.resolve_profile("fixture").expect("fixture"),
+            endpoint
+                .resolve_profile(&hermes_contract::pinned::live_profile())
+                .expect("fixture"),
         ))
     });
     let settings = Arc::new(SettingsService::new(
         Some(origin),
-        vec!["fixture".into()],
+        vec![hermes_contract::pinned::live_profile()],
         factory,
     ));
     Some((rest, settings))
@@ -87,7 +103,7 @@ async fn live_session_is_locked_down() {
         model: None,
         provider: None,
         effort: None,
-        profile: "fixture".into(),
+        profile: hermes_contract::pinned::live_profile(),
         folder: work.path().to_owned(),
         record: None,
         bench_replay: None,
@@ -144,7 +160,7 @@ async fn live_dry_run_proposes_without_writing() {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_talaria"))
             .args([
                 "--profile",
-                "fixture",
+                &hermes_contract::pinned::live_profile(),
                 "--provider",
                 "ollama-cloud",
                 "--model",
@@ -174,7 +190,9 @@ async fn live_dry_run_proposes_without_writing() {
 }
 
 async fn apply_bell(backends: &SiblingBackends, value: bool) -> Result<(), String> {
-    let context = backends.read_context("fixture").await?;
+    let context = backends
+        .read_context(&hermes_contract::pinned::live_profile())
+        .await?;
     let reply = format!(
         "```talaria-configure\n{{\"kind\":\"proposal\",\"summary\":\"Bell\",\"changes\":[{{\"op\":\"set\",\"key\":\"display.bell_on_complete\",\"value\":{value}}}]}}\n```"
     );

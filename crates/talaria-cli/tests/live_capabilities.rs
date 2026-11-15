@@ -33,7 +33,8 @@ async fn live_capabilities_read() {
         }
     };
     let mut counts = Vec::new();
-    for profile in ["fixture", "default"] {
+    let live_profile = hermes_contract::pinned::live_profile();
+    for profile in [live_profile.as_str(), "default"] {
         if profile == "default" && environment.endpoint.resolve_profile(profile).is_err() {
             continue;
         }
@@ -112,7 +113,7 @@ async fn service(environment: LiveEnv) -> (CapabilitiesService, hermes_client::I
 async fn read(service: &CapabilitiesService, tab: CapTab) -> Result<CapData, String> {
     let replies = service
         .execute(CapEffect::Fetch {
-            profile: "fixture".into(),
+            profile: hermes_contract::pinned::live_profile(),
             tab,
             generation: 1,
         })
@@ -136,9 +137,11 @@ async fn live_capabilities_write_on_fixture() {
         Some("1"),
         "operator must opt in to fixture writes"
     );
-    let requested = std::env::var("TALARIA_PROBE_PROFILE").unwrap_or_else(|_| "fixture".into());
+    let requested = std::env::var("TALARIA_PROBE_PROFILE")
+        .unwrap_or_else(|_| hermes_contract::pinned::live_profile());
     assert_eq!(
-        requested, "fixture",
+        requested,
+        hermes_contract::pinned::live_profile(),
         "capability writes refuse every other profile"
     );
     let environment = match live_preconditions().await {
@@ -181,10 +184,14 @@ async fn live_capabilities_write_on_fixture() {
             },
             _ => unreachable!(),
         };
-        let off = service.apply("fixture", change(false)).await;
+        let off = service
+            .apply(&hermes_contract::pinned::live_profile(), change(false))
+            .await;
         let off_read = read(&service, tab).await;
         // Always attempt restoration before asserting the off result.
-        let on = service.apply("fixture", change(true)).await;
+        let on = service
+            .apply(&hermes_contract::pinned::live_profile(), change(true))
+            .await;
         let on_read = read(&service, tab).await;
         assert_eq!(off, ChangeOutcome::Applied);
         assert_eq!(on, ChangeOutcome::Applied);

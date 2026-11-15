@@ -29,8 +29,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 const MODEL: &str = "minimax-m3.1-flash";
 const PROVIDER: &str = "ollama-cloud";
-const PROFILE: &str = "fixture";
-const RELEASE: &str = "0.22.4";
+fn profile_name() -> String {
+    hermes_contract::pinned::live_profile()
+}
 const KEY_FINISHED: &str = "11111111111111111111111111111111";
 const KEY_RUNNING: &str = "88888888888888888888888888888888";
 const MARKER: &str = "live-steer-marker";
@@ -63,7 +64,7 @@ fn unique(label: &str) -> String {
 
 fn launch() -> ResolvedLaunch {
     ResolvedLaunch {
-        profile: PROFILE.into(),
+        profile: profile_name(),
         model: MODEL.into(),
         provider: Some(PROVIDER.into()),
         effort: None,
@@ -73,10 +74,6 @@ fn launch() -> ResolvedLaunch {
         isolation: None,
         cwd: None,
     }
-}
-
-fn release_ok(version: &str) -> bool {
-    version == RELEASE || version.strip_prefix('v') == Some(RELEASE)
 }
 
 async fn connect_gateway(
@@ -137,8 +134,18 @@ async fn prepare() -> Option<Gateway> {
     };
     let mut endpoint = match discover_with(&home, &options).await {
         Ok(endpoint) => endpoint,
-        Err(_) => return skip("no gateway is listening on the default local address"),
+        Err(_) => {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            return skip("no gateway is listening on the default local address");
+        }
     };
+    println!(
+        "{}",
+        hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
+    );
     if let Ok(url) = std::env::var("TALARIA_HERMES_URL") {
         let url = url.trim();
         if !url.is_empty() {
@@ -148,10 +155,15 @@ async fn prepare() -> Option<Gateway> {
             };
         }
     }
-    if !endpoint.code_version().is_some_and(release_ok) {
-        return skip("gateway release is not 0.22.4");
+
+    if let Some(reason) = hermes_contract::pinned::live_test_skip(
+        endpoint.code_version(),
+        endpoint.code_sha(),
+        hermes_contract::pinned::live_exact(),
+    ) {
+        return skip(&reason);
     }
-    let profile = match endpoint.resolve_profile(PROFILE) {
+    let profile = match endpoint.resolve_profile(&profile_name()) {
         Ok(profile) => profile,
         Err(_) => return skip("profile fixture is unavailable"),
     };
@@ -162,7 +174,7 @@ async fn prepare() -> Option<Gateway> {
     let options = match gateway
         .client
         .call::<hermes_contract::methods::legacy::model_options::Marker>(ModelOptionsParams {
-            profile: Some(PROFILE.into()),
+            profile: Some(profile_name()),
             refresh: true,
             ..ModelOptionsParams::default()
         })
@@ -238,7 +250,7 @@ async fn wait_until_active(gateway: &mut Gateway, session: &str, admission: &str
             &gateway.client,
             "prompt.receipt",
             json!({
-                "profile": PROFILE,
+                "profile": profile_name(),
                 "session_id": session,
                 "admission_id": admission,
                 "include_result": true
@@ -280,7 +292,7 @@ async fn wait_for_delivery(gateway: &mut Gateway, session: &str, admission: &str
             &gateway.client,
             "prompt.receipt",
             json!({
-                "profile": PROFILE,
+                "profile": profile_name(),
                 "session_id": session,
                 "admission_id": admission,
                 "include_result": true
@@ -307,7 +319,7 @@ async fn wait_for_interrupt(client: &Client, session: &str, admission: &str) -> 
             client,
             "prompt.receipt",
             json!({
-                "profile": PROFILE,
+                "profile": profile_name(),
                 "session_id": session,
                 "admission_id": admission,
                 "include_result": true
@@ -547,7 +559,7 @@ async fn steer_stop_and_open_against_gateway() {
         &gateway.client,
         "session.create",
         json!({
-            "profile": PROFILE,
+            "profile": profile_name(),
             "request_id": unique("create"),
             "source": "tool",
             "hidden": true,
@@ -567,7 +579,7 @@ async fn steer_stop_and_open_against_gateway() {
         &gateway.client,
         "prompt.submit",
         json!({
-            "profile": PROFILE,
+            "profile": profile_name(),
             "session_id": session,
             "submission_id": unique("submit"),
             "text": PROMPT,
@@ -596,7 +608,7 @@ async fn steer_stop_and_open_against_gateway() {
             args: None,
             started_at_ms: 1,
             seed: 1,
-            profile: PROFILE.into(),
+            profile: profile_name(),
             on_unknown: OnUnknown::Wait,
             talaria_version: "dev".into(),
             hermes: json!({}),

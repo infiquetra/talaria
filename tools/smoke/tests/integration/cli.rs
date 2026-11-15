@@ -264,6 +264,7 @@ fn env_variable_used_without_flag() {
     let outcome = harness
         .cmd_without_talaria()
         .env("TALARIA_SMOKE_BIN", harness.talaria())
+        .env_remove("TALARIA_LIVE_PROFILE")
         .run();
     assert_eq!(outcome.code, Some(1), "{}", explain(&outcome));
     assert_eq!(
@@ -279,6 +280,7 @@ fn env_variable_used_without_flag() {
     let outcome = harness
         .cmd_without_talaria()
         .env("TALARIA_SMOKE_BIN", harness.talaria())
+        .env_remove("TALARIA_LIVE_PROFILE")
         .arg("--talaria")
         .arg(&other)
         .run();
@@ -289,6 +291,41 @@ fn env_variable_used_without_flag() {
     assert!(
         !line.contains(&format!("'{}'", from_variable.display())),
         "the variable must lose against the flag: {line}"
+    );
+}
+
+#[test]
+fn live_profile_env_sets_the_smoke_profile() {
+    let harness = quick_failure();
+    let outcome = harness
+        .cmd()
+        .env("TALARIA_LIVE_PROFILE", "other")
+        .env_remove("TALARIA_LIVE_EXACT")
+        .run();
+    assert_eq!(outcome.code, Some(1), "{}", explain(&outcome));
+    let line = first_launch_line(&harness);
+    assert!(
+        line.contains("--profile other"),
+        "TALARIA_LIVE_PROFILE sets the profile when --profile is omitted: {line}"
+    );
+    assert!(
+        !line.contains("--profile fixture"),
+        "the default fixture profile must not be used: {line}"
+    );
+
+    let harness = quick_failure();
+    let outcome = harness
+        .cmd()
+        .env("TALARIA_LIVE_PROFILE", "other")
+        .env_remove("TALARIA_LIVE_EXACT")
+        .arg("--profile")
+        .arg("fixture")
+        .run();
+    assert_eq!(outcome.code, Some(1), "{}", explain(&outcome));
+    let line = first_launch_line(&harness);
+    assert!(
+        line.contains("--profile fixture"),
+        "an explicit --profile flag must win over TALARIA_LIVE_PROFILE: {line}"
     );
 }
 

@@ -80,20 +80,35 @@ fn attach() -> Result<Attached, String> {
             control_timeout: Duration::from_secs(5),
             ensure: EnsurePolicy::Never,
         };
-        let endpoint = discover_with(&home, &options)
-            .await
-            .map_err(|error| match error {
+        let endpoint = discover_with(&home, &options).await.map_err(|error| {
+            println!(
+                "{}",
+                hermes_contract::pinned::gateway_version_line(None, None)
+            );
+            match error {
                 DiscoveryError::NoGateway => {
                     "no Hermes gateway is running for this home".to_owned()
                 }
                 other => other.to_string(),
-            })?;
-        if let Some(reason) = hermes_contract::pinned::live_skip_reason(endpoint.code_sha()) {
+            }
+        })?;
+        println!(
+            "{}",
+            hermes_contract::pinned::gateway_version_line(
+                endpoint.code_version(),
+                endpoint.code_sha()
+            )
+        );
+        if let Some(reason) = hermes_contract::pinned::live_test_skip(
+            endpoint.code_version(),
+            endpoint.code_sha(),
+            hermes_contract::pinned::live_exact(),
+        ) {
             return Err(reason);
         }
         let origin = endpoint.api_origin().to_owned();
         let profile = endpoint
-            .resolve_profile("fixture")
+            .resolve_profile(&hermes_contract::pinned::live_profile())
             .map_err(|error| match error {
                 ProfileLookupError::NeverDiscovered { name } => {
                     format!("the gateway never discovered a profile named {name}")
@@ -244,7 +259,7 @@ fn live_read_tabs_on_fixture() {
         }
     };
     runtime.block_on(async {
-        let service = ProviderService::new(client, rest, "fixture".into());
+        let service = ProviderService::new(client, rest, hermes_contract::pinned::live_profile());
         let env = service.execute(ProvidersEffect::LoadEnv, None).await;
         let options = service.execute(ProvidersEffect::LoadOptions, None).await;
         let accounts = service.execute(ProvidersEffect::LoadOauth, None).await;
@@ -328,7 +343,7 @@ fn live_rejected_key_is_not_saved() {
         }
     };
     runtime.block_on(async {
-        let service = ProviderService::new(client, rest, "fixture".into());
+        let service = ProviderService::new(client, rest, hermes_contract::pinned::live_profile());
         let before = service.execute(ProvidersEffect::LoadEnv, None).await;
         let before_set = is_set(&before, "OPENROUTER_API_KEY");
         assert!(
@@ -393,7 +408,7 @@ fn live_endpoint_round_trip_on_fixture() {
         .unwrap_or(0);
     let name = format!("talaria-live-{suffix}");
     runtime.block_on(async {
-        let service = ProviderService::new(client, rest, "fixture".into());
+        let service = ProviderService::new(client, rest, hermes_contract::pinned::live_profile());
         let before = service.execute(ProvidersEffect::LoadEndpoints, None).await;
         let starting = endpoint_ids(&before);
         assert!(
