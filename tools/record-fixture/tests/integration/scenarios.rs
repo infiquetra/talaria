@@ -1639,3 +1639,37 @@ async fn attempt_timeout_fails_attempt() {
     assert_eq!(detach, methods.len() - 1, "detach is the last request");
     assert_clean_requests(&rig.gateway);
 }
+
+#[test]
+fn sudo_and_secret_scenarios_are_named() {
+    let sudo = Scenario::named("sudo-prompt").expect("sudo-prompt scenario must be named");
+    assert_eq!(
+        sudo.prompts,
+        [
+            "Run this exact shell command with the terminal tool and then tell me its exit code: sudo -k true"
+        ]
+    );
+    assert!(
+        sudo.expected_statuses.is_empty(),
+        "sudo-prompt expected_statuses must be empty"
+    );
+
+    let secret = Scenario::named("secret-prompt").expect("secret-prompt scenario must be named");
+    assert_eq!(
+        secret.prompts,
+        ["View the skill named fixture-secret with the skill_view tool, then tell me its name."]
+    );
+    assert!(
+        secret.expected_statuses.is_empty(),
+        "secret-prompt expected_statuses must be empty"
+    );
+
+    assert!(
+        !SCENARIOS.contains(&"sudo-prompt"),
+        "sudo-prompt must not be in SCENARIOS"
+    );
+    assert!(
+        !SCENARIOS.contains(&"secret-prompt"),
+        "secret-prompt must not be in SCENARIOS"
+    );
+}

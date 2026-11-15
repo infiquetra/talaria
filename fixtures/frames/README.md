@@ -4,7 +4,7 @@ Small recorded frame fixtures will live here. P1-04 owns this folder; see the [r
 credential references, account labels, local paths, and other private values must be removed
 before committing it; replay and privacy tests verify the fixture.
 
-The inventory contains 33 JSONL fixtures. Journal fixtures use the workflow journal reader; the other fixtures use the gateway frame replay reader.
+The inventory contains 35 JSONL fixtures. Journal fixtures use the workflow journal reader; the other fixtures use the gateway frame replay reader.
 
 | Fixture | Reader |
 | --- | --- |
@@ -34,10 +34,12 @@ The inventory contains 33 JSONL fixtures. Journal fixtures use the workflow jour
 | [review-oneshot.jsonl](review-oneshot.jsonl) | Gateway frame replay |
 | [review-session-info.jsonl](review-session-info.jsonl) | Gateway frame replay |
 | [rewind-and-rollback.jsonl](rewind-and-rollback.jsonl) | Gateway frame replay |
+| [secret-prompt.jsonl](secret-prompt.jsonl) | Gateway frame replay |
 | [session-picker.jsonl](session-picker.jsonl) | Gateway frame replay |
 | [shell-and-btw.jsonl](shell-and-btw.jsonl) | Gateway frame replay |
 | [slash-palette.jsonl](slash-palette.jsonl) | Gateway frame replay |
 | [subagent-batch.jsonl](subagent-batch.jsonl) | Gateway frame replay |
 | [subagent-control.jsonl](subagent-control.jsonl) | Gateway frame replay |
+| [sudo-prompt.jsonl](sudo-prompt.jsonl) | Gateway frame replay |
 | [todo-checklist.jsonl](todo-checklist.jsonl) | Gateway frame replay |
 | [tool-diff.jsonl](tool-diff.jsonl) | Gateway frame replay |

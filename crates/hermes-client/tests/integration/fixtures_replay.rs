@@ -2,9 +2,11 @@
 //! function, and carry the evidence each scenario promises.
 //!
 //! These tests read the real files. They fail with the message
-//! `expected thirty-three fixtures in fixtures/frames, found N` when a file is missing. A failure
+//! `expected thirty-five fixtures in fixtures/frames, found N` when a file is missing. A failure
 //! names the fixture and the rule, never the content of a frame. The directory also holds
 //! the model-switch and the three queue recordings, covered by their own replay tests.
+
+use crate::support;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,7 +19,7 @@ use hermes_client::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-const NAMES: [&str; 29] = [
+const NAMES: [&str; 31] = [
     "background-work",
     "attachments-mention-image",
     "plain-answer",
@@ -47,6 +49,8 @@ const NAMES: [&str; 29] = [
     "review-oneshot",
     "profiles",
     "p5-09-ultracode-skill",
+    "sudo-prompt",
+    "secret-prompt",
 ];
 
 /// What each fixture's header must list as `expectedStatuses`, from the scenario table.
@@ -84,6 +88,8 @@ fn expected_statuses(name: &str) -> &'static [&'static str] {
         "review-session-info" | "review-oneshot" => &[],
         // The profiles list reads no session and runs no turn.
         "profiles" => &[],
+        // The sudo and secret recordings hold an empty expectedStatuses header.
+        "sudo-prompt" | "secret-prompt" => &[],
         _ => &["complete"],
     }
 }
@@ -115,8 +121,8 @@ fn jsonl_files() -> Vec<PathBuf> {
 fn listed_fixtures() -> Vec<(&'static str, PathBuf)> {
     let files = jsonl_files();
     assert!(
-        files.len() == 33,
-        "expected thirty-three fixtures in fixtures/frames, found {}",
+        files.len() == 35,
+        "expected thirty-five fixtures in fixtures/frames, found {}",
         files.len()
     );
     // The progress journal has its own reader; the idempotency capture has its own checks.
@@ -201,7 +207,7 @@ fn completed_statuses(events: &[(String, Value)]) -> Vec<String> {
 fn listed_fixtures_exist() {
     let fixtures = listed_fixtures();
     assert_eq!(fixtures.len(), NAMES.len());
-    assert_eq!(fixtures.len(), 29);
+    assert_eq!(fixtures.len(), 31);
 }
 
 #[test]
@@ -288,16 +294,28 @@ fn each_ends_with_expected_status() {
             })
             .map(|frame| turn_status(&frame.frame["params"]["payload"]))
             .collect();
-        let wanted: Vec<String> = expected_statuses(name)
-            .iter()
-            .map(|status| (*status).to_owned())
-            .collect();
-        assert_eq!(statuses, wanted, "{name}: final statuses");
-        assert_eq!(
-            source.header().expected_statuses,
-            wanted,
-            "{name}: header expectedStatuses"
-        );
+        if matches!(name, "sudo-prompt" | "secret-prompt") {
+            assert_eq!(
+                statuses.len(),
+                1,
+                "{name}: expected one message.complete event"
+            );
+            assert!(
+                source.header().expected_statuses.is_empty(),
+                "{name}: header expectedStatuses"
+            );
+        } else {
+            let wanted: Vec<String> = expected_statuses(name)
+                .iter()
+                .map(|status| (*status).to_owned())
+                .collect();
+            assert_eq!(statuses, wanted, "{name}: final statuses");
+            assert_eq!(
+                source.header().expected_statuses,
+                wanted,
+                "{name}: header expectedStatuses"
+            );
+        }
     }
 }
 
@@ -890,6 +908,60 @@ fn scenario_evidence_present() {
                     "{name}: profiles.describe names no profile"
                 );
             }
+            "sudo-prompt" | "secret-prompt" => {
+                let method = if name == "sudo-prompt" {
+                    "sudo"
+                } else {
+                    "secret"
+                };
+                let (req_index, session_id) = records
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, record)| {
+                        let frame = &record["frame"];
+                        if record["kind"] == "frame"
+                            && record["dir"] == "in"
+                            && frame["method"] == method
+                        {
+                            let params = &frame["params"];
+                            assert!(
+                                params["session_id"].is_string(),
+                                "{name}: {method} params.session_id must be a string"
+                            );
+                            if method == "sudo" {
+                                assert!(
+                                    params["command"].is_string(),
+                                    "{name}: sudo params.command must be a string"
+                                );
+                            } else {
+                                assert!(
+                                    params["env_var"].is_string(),
+                                    "{name}: secret params.env_var must be a string"
+                                );
+                                assert!(
+                                    params["prompt"].is_string(),
+                                    "{name}: secret params.prompt must be a string"
+                                );
+                            }
+                            Some((index, params["session_id"].as_str()?.to_owned()))
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| panic!("{name}: no inbound {method} frame"));
+                let has_complete = records.iter().skip(req_index + 1).any(|record| {
+                    let frame = &record["frame"];
+                    record["kind"] == "frame"
+                        && record["dir"] == "in"
+                        && frame["method"] == "event"
+                        && frame["params"]["type"] == "message.complete"
+                        && frame["params"]["session_id"] == session_id
+                });
+                assert!(
+                    has_complete,
+                    "{name}: no inbound message.complete for session {session_id} after {method}"
+                );
+            }
             other => panic!("unlisted fixture {other}"),
         }
     }
@@ -930,6 +1002,53 @@ fn clarify_answer_is_withheld() {
         assert_eq!(
             record["frame"]["params"]["answer"], "[redacted]",
             "{name} line {line}: the answer was not replaced by the marker"
+        );
+    }
+}
+
+#[test]
+fn sudo_and_secret_fixtures_replay() {
+    let (sudo_method, sudo_params) = support::replay_recorded_request("sudo-prompt");
+    assert_eq!(sudo_method, "sudo");
+    assert!(
+        sudo_params.get("session_id").is_some(),
+        "sudo params must contain session_id: {sudo_params:?}"
+    );
+    assert!(
+        sudo_params.get("command").is_some(),
+        "sudo params must contain command: {sudo_params:?}"
+    );
+
+    let (secret_method, secret_params) = support::replay_recorded_request("secret-prompt");
+    assert_eq!(secret_method, "secret");
+    assert!(
+        secret_params.get("session_id").is_some(),
+        "secret params must contain session_id: {secret_params:?}"
+    );
+    assert!(
+        secret_params.get("env_var").is_some(),
+        "secret params must contain env_var: {secret_params:?}"
+    );
+    assert!(
+        secret_params.get("prompt").is_some(),
+        "secret params must contain prompt: {secret_params:?}"
+    );
+
+    for (name, method) in [("sudo-prompt", "sudo"), ("secret-prompt", "secret")] {
+        let path = fixtures_dir().join(format!("{name}.jsonl"));
+        let source = ReplaySource::open(&path)
+            .unwrap_or_else(|error| panic!("{name}: could not open the fixture: {error}"));
+        let inbound: Vec<_> = source.inbound().collect();
+        let req_index = inbound
+            .iter()
+            .position(|frame| frame.frame["method"] == method)
+            .unwrap_or_else(|| panic!("{name}: no inbound {method} request"));
+        let has_complete_after = inbound.iter().skip(req_index + 1).any(|frame| {
+            frame.frame["method"] == "event" && frame.frame["params"]["type"] == "message.complete"
+        });
+        assert!(
+            has_complete_after,
+            "{name}: expected inbound message.complete after {method} request"
         );
     }
 }
