@@ -285,6 +285,8 @@ mod seat_status;
 mod session_cost;
 #[path = "integration/session_history_truncated.rs"]
 mod session_history_truncated;
+#[path = "integration/session_notices.rs"]
+mod session_notices;
 #[path = "integration/session_properties.rs"]
 mod session_properties;
 #[path = "integration/session_queue.rs"]

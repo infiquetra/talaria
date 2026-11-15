@@ -4,8 +4,8 @@ use hermes_contract::schemas::CanonicalSnapshot;
 use std::collections::{HashMap, VecDeque};
 
 use super::{
-    Cell, CellId, NoticeCell, NoticeKind, PromptCell, PromptKey, PromptState, SessionId,
-    Settlement, ToolStatus, UserCell,
+    Cell, CellId, NoticeCell, NoticeKind, NoticeStore, PromptCell, PromptKey, PromptState,
+    SessionId, Settlement, ToolStatus, UserCell,
 };
 use crate::automation::HermesCommandCell;
 use crate::background::BackgroundWork;
@@ -118,6 +118,7 @@ pub struct SessionState {
     pub(crate) activity: Option<String>,
     pub(crate) status: Option<StatusNote>,
     pub(crate) status_log: Vec<StatusNote>,
+    pub(crate) notices: NoticeStore,
     pub(crate) usage: Usage,
     pub(crate) todo: Option<TodoState>,
     pub(crate) cursor: ReplayCursor,
@@ -166,6 +167,7 @@ impl SessionState {
             activity: None,
             status: None,
             status_log: Vec::new(),
+            notices: NoticeStore::default(),
             usage: Usage::default(),
             todo: None,
             cursor: ReplayCursor {
@@ -284,6 +286,16 @@ impl SessionState {
     /// The last 50 status notes that were recorded. A repeat of the latest is not stored.
     pub fn status_log(&self) -> &[StatusNote] {
         &self.status_log
+    }
+
+    /// Session notices, independent of transcript cells and status notes.
+    pub fn notices(&self) -> &NoticeStore {
+        &self.notices
+    }
+
+    /// Advance notice lifetimes using milliseconds from the caller's fixed origin.
+    pub fn expire_notices(&mut self, now_ms: u64) {
+        self.notices.expire(now_ms);
     }
 
     /// Merged usage.

@@ -7,6 +7,7 @@ pub mod cell;
 pub mod effect;
 pub mod event;
 pub mod ids;
+pub mod notices;
 pub mod prompts;
 pub mod reducer;
 pub mod snapshot;
@@ -22,6 +23,7 @@ pub use cell::{
 pub use effect::Effect;
 pub use event::Event;
 pub use ids::{CellId, PromptKey, SessionId};
+pub use notices::{NoticeRow, NoticeStore};
 pub use reducer::update;
 pub use state::{ReplayCursor, SessionState, StatusNote, TodoState, TurnOutcome, TurnState, Usage};
 pub use tool_view::{
