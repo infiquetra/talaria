@@ -602,7 +602,12 @@ impl PromptSection<'_> {
                     add_choice(&mut rows, card.selected, index, label, width);
                 }
                 if card.field || !card.text.is_empty() {
-                    add_field(&mut rows, "note: ", &card.text, width);
+                    add_field(
+                        &mut rows,
+                        "note (sent after the answer) ",
+                        &card.text,
+                        width,
+                    );
                 }
                 format!(
                     "1-{} choose · Enter confirm · Esc deny · Tab note · Ctrl+C deny and stop",

@@ -2,6 +2,19 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — Remember approval notes across submission outcomes
+
+**Evidence.** The approval-note regression checks that a refused follow-up is
+offered as a draft and retained in a notice, while other submissions keep their
+existing behavior.
+
+**Mechanism.** `submit_outcome` offers ledger text only for a retry and reads the
+ledger only on the open session. `PromptDone` now remembers note text by submission
+id before applying the submit event.
+
+**Rule.** Keep the follow-up text with its submission id until a definitive outcome
+so a refusal can return it even after a session switch.
+
 ## 2026-11-14 — Clipboard requests need a finished reply and honest feedback
 
 **Evidence.** The copy command regression checks finished and interim replies,

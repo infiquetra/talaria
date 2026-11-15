@@ -774,6 +774,7 @@ pub struct AppState {
     remote_gateway: bool,
     remote_voice_noticed: BTreeSet<(String, String)>,
     voice_submissions: BTreeMap<String, String>,
+    remembered_notes: BTreeMap<String, String>,
     pub workflow_views: crate::workflow_progress::ProgressViews,
     pub ultracode: crate::ultracode::UltracodeService,
     ultracode_requests: std::collections::HashMap<SessionId, u64>,
@@ -1081,6 +1082,7 @@ impl AppState {
             remote_gateway: false,
             remote_voice_noticed: BTreeSet::new(),
             voice_submissions: BTreeMap::new(),
+            remembered_notes: BTreeMap::new(),
             configure: None,
             configure_service: None,
             configure_generation: 0,
@@ -4006,6 +4008,16 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             let mut effects: Vec<AppEffect> =
                 notices.iter().map(|text| notice_lines(text)).collect();
             for event in events {
+                if let Event::Submit {
+                    submission_id,
+                    text,
+                    ..
+                } = &event
+                {
+                    state
+                        .remembered_notes
+                        .insert(submission_id.clone(), text.clone());
+                }
                 effects.extend(reduce(state, event));
             }
             effects
@@ -9538,6 +9550,14 @@ fn submit_done(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec
 }
 
 fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> Vec<AppEffect> {
+    let remembered = match &outcome {
+        ExecuteOutcome::Sent => {
+            state.remembered_notes.remove(&id);
+            None
+        }
+        ExecuteOutcome::Refused { .. } => state.remembered_notes.remove(&id),
+        ExecuteOutcome::OutcomeUnknown | ExecuteOutcome::VoiceStopped => None,
+    };
     let voice_session = state.voice_submissions.remove(&id);
     let voice_stopped = matches!(outcome, ExecuteOutcome::VoiceStopped);
     let voice_effects = if voice_stopped {
@@ -9606,13 +9626,16 @@ fn submit_outcome(state: &mut AppState, id: String, outcome: ExecuteOutcome) -> 
         },
     );
     effects.push(notice_lines(&notice));
+    if let Some(text) = &remembered {
+        effects.push(notice_lines(&format!("note not sent: {text}")));
+    }
     effects.extend(voice_effects);
     effects.extend(attachment_notices);
     effects.extend(restore_failed_attachments(state));
     if voice_stopped {
         effects.retain(|effect| !matches!(effect, AppEffect::LoadDraft(_)));
     }
-    effects.extend(returned.map(AppEffect::OfferDraft));
+    effects.extend(remembered.or(returned).map(AppEffect::OfferDraft));
     effects
 }
 
