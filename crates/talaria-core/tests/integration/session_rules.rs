@@ -5,6 +5,9 @@
 
 use crate::drive;
 use crate::events;
+use crate::frames;
+
+use std::path::PathBuf;
 
 use hermes_contract::events::{EventFrame, Notification};
 use serde_json::{Value, json};
@@ -1803,4 +1806,103 @@ fn usage_top_level_counter_fills_only_an_empty_field() {
         ev(3, "session.usage", json!({"usage": {"cache_read": 4}})),
     ]);
     assert_eq!(kept.usage().cache_read, Some(4));
+}
+
+#[test]
+fn agent_print_keeps_its_text() {
+    let (state, effects) = run(vec![ev(1, "agent.print", json!({"text": "compacting"}))]);
+    let n = notices(&state);
+    assert_eq!(n.len(), 1);
+    assert_eq!(n[0].kind, NoticeKind::System);
+    assert_eq!(n[0].text, "compacting");
+    assert_eq!(n[0].detail, None);
+    assert_eq!(state.status(), None);
+    assert!(state.status_log().is_empty());
+    assert!(effects.is_empty());
+
+    let (trimmed, _) = run(vec![ev(
+        1,
+        "agent.print",
+        json!({"text": "  compacting  "}),
+    )]);
+    let n_trimmed = notices(&trimmed);
+    assert_eq!(n_trimmed.len(), 1);
+    assert_eq!(n_trimmed[0].kind, NoticeKind::System);
+    assert_eq!(n_trimmed[0].text, "compacting");
+
+    let (ordered, _) = run(vec![
+        ev(1, "agent.print", json!({"text": "compacting"})),
+        ev(2, "agent.print", json!({"text": "budget"})),
+    ]);
+    let ordered_texts: Vec<&str> = notices(&ordered).iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(ordered_texts, vec!["compacting", "budget"]);
+    assert!(
+        notices(&ordered)
+            .iter()
+            .all(|c| c.kind == NoticeKind::System)
+    );
+
+    let (repeated, _) = run(vec![
+        ev(1, "agent.print", json!({"text": "compacting"})),
+        ev(2, "agent.print", json!({"text": "compacting"})),
+    ]);
+    let repeated_texts: Vec<&str> = notices(&repeated).iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(repeated_texts, vec!["compacting", "compacting"]);
+    assert!(
+        notices(&repeated)
+            .iter()
+            .all(|c| c.kind == NoticeKind::System)
+    );
+
+    let (empty, _) = run(vec![
+        ev(1, "agent.print", json!({"text": ""})),
+        ev(2, "agent.print", json!({"text": "   "})),
+        ev(3, "agent.print", json!({"text": null})),
+        ev(4, "agent.print", json!({})),
+    ]);
+    assert!(empty.cells().is_empty());
+    assert!(empty.unknown_event_types().is_empty());
+
+    let (isolated, _) = run(vec![
+        ev(1, "agent.print", json!({"text": "compacting"})),
+        ev_session("other-session", 2, "agent.print", json!({"text": "other"})),
+    ]);
+    let isolated_texts: Vec<&str> = notices(&isolated).iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(isolated_texts, vec!["compacting"]);
+    assert!(!isolated_texts.contains(&"other"));
+}
+
+#[test]
+fn recorded_agent_print_is_visible() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/frames/queue-move-send-now.jsonl");
+    let log = frames::read_path(&path).expect("queue-move-send-now fixture must parse");
+    let session_id = log
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::Session { session_id, .. } if !session_id.as_str().is_empty() => {
+                Some(session_id.as_str().to_owned())
+            }
+            _ => None,
+        })
+        .expect("fixture must contain a non-empty Event::Session id");
+    assert_ne!(session_id, SESSION);
+
+    let (state, _) = drive::reduce(&session_id, log.events);
+    let system_matches: Vec<_> = notices(&state)
+        .into_iter()
+        .filter(|cell| {
+            cell.kind == NoticeKind::System && cell.text == "\u{26a1} Interrupted during API call."
+        })
+        .collect();
+    assert_eq!(
+        system_matches.len(),
+        1,
+        "expected one system notice for interrupted print, got {:?}",
+        notices(&state)
+            .iter()
+            .map(|c| (&c.kind, &c.text))
+            .collect::<Vec<_>>()
+    );
 }
