@@ -38,6 +38,8 @@ SCHEMA_REMOVALS = (
     ("ProviderUsageWindow", "scope", "title", "distinct inline Scope enums must not collapse"),
     ("SessionAutomationParams", "kind", "title", "distinct inline Kind enums must not collapse"),
     ("CanonicalPendingPrompt", "kind", "title", "distinct inline Kind enums must not collapse"),
+    ("CanonicalBotCancelResult", "status", "title", "distinct inline Status enums must not collapse"),
+    ("ImageRenderResult", "mode", "title", "distinct inline Mode enums must not collapse"),
 )
 KNOWN_DISCRIMINATORS = {
     "ConnectorPolicyLayer.body": "mode",
