@@ -90,6 +90,30 @@ impl NoticeStore {
         self.rows.last().map(|stored| &stored.row)
     }
 
+    /// The newest stored sign-in link and its first following code, if present.
+    pub fn sign_in_copy(&self) -> Option<(String, Option<String>)> {
+        let mut pair = None;
+        for stored in &self.rows {
+            let row = &stored.row;
+            if !row
+                .key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("login:"))
+            {
+                continue;
+            }
+            if row.text.contains("://") {
+                pair = Some((row.text.clone(), None));
+            } else if !row.text.starts_with("Do not share this code.")
+                && let Some((_, code)) = &mut pair
+                && code.is_none()
+            {
+                *code = Some(row.text.clone());
+            }
+        }
+        pair
+    }
+
     /// Count current warning and error notices.
     pub fn warning_count(&self) -> usize {
         self.rows

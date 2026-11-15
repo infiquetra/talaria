@@ -5810,6 +5810,25 @@ fn local_effect(
     }
     if action == LocalAction::Copy {
         let raw = argument.trim();
+        if raw == "link" {
+            let Some(opened) = state.opened.as_ref().filter(|_| !state.session_gone) else {
+                return vec![notice_lines("No session is open.")];
+            };
+            let Some((link, code)) = opened.state.notices().sign_in_copy() else {
+                return vec![notice_lines("No sign-in link to copy.")];
+            };
+            let (text, notice) = match code {
+                Some(code) => (
+                    format!("{link}\n{code}"),
+                    "Copy requested: sign-in link and code. Your terminal must allow clipboard access.",
+                ),
+                None => (
+                    link,
+                    "Copy requested: sign-in link. Your terminal must allow clipboard access.",
+                ),
+            };
+            return vec![notice_lines(notice), AppEffect::CopyReply { text }];
+        }
         let raw = if raw.is_empty() { "1" } else { raw };
         let digits = raw.strip_prefix('+').unwrap_or(raw);
         if digits.is_empty()

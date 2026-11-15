@@ -1,7 +1,11 @@
 use hermes_client::replay::Cursor;
+use hermes_contract::events::EventFrame;
+use serde_json::json;
 use talaria_app::app::{AppEffect, AppMessage, AppState, UserAction, update};
 use talaria_app::sessions::{OpenedSession, SessionInfoSummary};
-use talaria_core::session::{AssistantCell, Cell, CellId, SessionId, SessionState};
+use talaria_core::session::{
+    AssistantCell, Cell, CellId, Event, SessionId, SessionState, update as session_update,
+};
 
 fn opened_state(session_id: &str) -> AppState {
     let mut state = AppState::new("launch");
@@ -149,19 +153,6 @@ fn copy_emits_clipboard_text_and_a_notice() {
         "closed session /copy 4294967296 must not emit CopyReply"
     );
 
-    let link = update(
-        &mut state,
-        AppMessage::User(UserAction::Submit("/copy link".into())),
-    );
-    assert!(
-        has_notice(&link, "Usage: /copy [N]"),
-        "expected usage notice for /copy link"
-    );
-    assert!(
-        !has_copy_reply(&link, None),
-        "/copy link must not emit CopyReply"
-    );
-
     let mut exact = opened_state("s");
     let max_text = "a".repeat(100_000);
     exact
@@ -218,5 +209,129 @@ fn copy_emits_clipboard_text_and_a_notice() {
     assert!(
         !has_copy_reply(&too_long, None),
         "100001 chars must not emit CopyReply"
+    );
+}
+
+fn show_event(session_id: &str, seq: u64, key: &str, text: &str) -> Event {
+    let raw = json!({
+        "type": "notification.show",
+        "session_id": session_id,
+        "seq": seq,
+        "replay_epoch": "epoch-1",
+        "authority_epoch": 1,
+        "execution_generation": 1,
+        "payload": {
+            "text": text,
+            "level": "info",
+            "kind": "sticky",
+            "key": key,
+        }
+    });
+    let frame = EventFrame::from_params(&raw).expect("valid notification.show frame");
+    Event::Session {
+        session_id: SessionId::new(session_id),
+        frame,
+        raw,
+    }
+}
+
+#[test]
+fn copy_link_requests_the_sign_in_text() {
+    let mut state = opened_state("s");
+    {
+        let session = &mut state.opened.as_mut().expect("opened").state;
+        let _ = session_update(
+            session,
+            show_event("s", 1, "login:aaaa0001", "https://example.test/device"),
+        );
+        let _ = session_update(session, show_event("s", 2, "login:aaaa0002", "ABCD-EFGH"));
+        let _ = session_update(
+            session,
+            show_event(
+                "s",
+                3,
+                "login:aaaa0003",
+                "Do not share this code. Waiting for sign-in, up to 15.",
+            ),
+        );
+    }
+
+    let pair = update(
+        &mut state,
+        AppMessage::User(UserAction::Submit("/copy link".into())),
+    );
+    assert!(
+        has_copy_reply(&pair, Some("https://example.test/device\nABCD-EFGH")),
+        "expected CopyReply with link and code"
+    );
+    assert!(
+        has_notice(
+            &pair,
+            "Copy requested: sign-in link and code. Your terminal must allow clipboard access."
+        ),
+        "expected link+code notice"
+    );
+    assert!(
+        !pair
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::RunCommand { .. })),
+        "/copy link must not emit RunCommand"
+    );
+
+    let mut link_only_state = opened_state("s");
+    let _ = session_update(
+        &mut link_only_state.opened.as_mut().expect("opened").state,
+        show_event("s", 1, "login:aaaa0001", "https://example.test/device"),
+    );
+    let link_only = update(
+        &mut link_only_state,
+        AppMessage::User(UserAction::Submit("/copy link".into())),
+    );
+    assert!(
+        has_copy_reply(&link_only, Some("https://example.test/device")),
+        "expected CopyReply with link alone"
+    );
+    assert!(
+        has_notice(
+            &link_only,
+            "Copy requested: sign-in link. Your terminal must allow clipboard access."
+        ),
+        "expected link-only notice"
+    );
+
+    let mut empty_state = opened_state("s");
+    let empty = update(
+        &mut empty_state,
+        AppMessage::User(UserAction::Submit("/copy link".into())),
+    );
+    assert!(
+        has_notice(&empty, "No sign-in link to copy."),
+        "expected missing link notice"
+    );
+    assert!(
+        !has_copy_reply(&empty, None),
+        "empty state must not emit CopyReply"
+    );
+
+    let mut other_notice_state = opened_state("s");
+    let _ = session_update(
+        &mut other_notice_state.opened.as_mut().expect("opened").state,
+        show_event("s", 1, "sessions.auto_prune", "disk"),
+    );
+    let other = update(
+        &mut other_notice_state,
+        AppMessage::User(UserAction::Submit("/copy link".into())),
+    );
+    assert!(
+        has_notice(&other, "No sign-in link to copy."),
+        "expected missing link notice for non-login notice"
+    );
+    assert!(
+        !has_copy_reply(&other, None),
+        "non-login notice must not emit CopyReply"
+    );
+    assert!(
+        !has_notice(&other, "disk"),
+        "non-login notice must not print disk"
     );
 }

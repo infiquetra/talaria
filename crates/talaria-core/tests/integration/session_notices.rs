@@ -496,7 +496,10 @@ fn sign_in_text_commits_once() {
             }),
         )],
     );
-    assert_eq!(notice_texts(&state), vec!["https://example.test"]);
+    assert_eq!(
+        notice_texts(&state),
+        vec!["https://example.test\nType /copy link to copy it."]
+    );
 
     let _ = update(
         &mut state,
@@ -511,7 +514,10 @@ fn sign_in_text_commits_once() {
             }),
         ),
     );
-    assert_eq!(notice_texts(&state), vec!["https://example.test"]);
+    assert_eq!(
+        notice_texts(&state),
+        vec!["https://example.test\nType /copy link to copy it."]
+    );
 }
 
 #[test]
@@ -553,4 +559,196 @@ fn next_deadline_follows_the_stamp() {
         )],
     );
     assert_eq!(sticky_only.next_notice_deadline(), None);
+}
+
+#[test]
+fn sign_in_cells_end_with_the_copy_line() {
+    let link_show = ev(
+        1,
+        "notification.show",
+        json!({
+            "text": "https://example.test/device",
+            "level": "info",
+            "kind": "sticky",
+            "key": "login:aaaa0001",
+        }),
+    );
+    let (mut state, _) = drive::reduce(
+        SESSION,
+        vec![
+            link_show,
+            ev(
+                2,
+                "notification.show",
+                json!({
+                    "text": "ABCD-EFGH",
+                    "level": "info",
+                    "kind": "sticky",
+                    "key": "login:aaaa0002",
+                }),
+            ),
+            ev(
+                3,
+                "notification.show",
+                json!({
+                    "text": "Do not share this code. Waiting for sign-in, up to 15.",
+                    "level": "info",
+                    "kind": "sticky",
+                    "key": "login:aaaa0003",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(
+        notice_texts(&state),
+        vec![
+            "https://example.test/device\nType /copy link to copy it.",
+            "ABCD-EFGH\nType /copy link to copy it.",
+            "Do not share this code. Waiting for sign-in, up to 15.\nType /copy link to copy it.",
+        ]
+    );
+    assert_eq!(
+        state.notices().most_recent().map(|r| r.text.as_str()),
+        Some("Do not share this code. Waiting for sign-in, up to 15.")
+    );
+
+    let _ = update(
+        &mut state,
+        ev(
+            4,
+            "notification.show",
+            json!({
+                "text": "https://example.test/device",
+                "level": "info",
+                "kind": "sticky",
+                "key": "login:aaaa0001",
+            }),
+        ),
+    );
+    assert_eq!(state.cells().len(), 3);
+}
+
+#[test]
+fn sign_in_copy_returns_the_newest_link_and_code() {
+    let (mut state, _) = drive::reduce(
+        SESSION,
+        vec![
+            ev(
+                1,
+                "notification.show",
+                json!({
+                    "text": "https://example.test/device",
+                    "level": "info",
+                    "kind": "sticky",
+                    "key": "login:aaaa0001",
+                }),
+            ),
+            ev(
+                2,
+                "notification.show",
+                json!({
+                    "text": "ABCD-EFGH",
+                    "level": "info",
+                    "kind": "sticky",
+                    "key": "login:aaaa0002",
+                }),
+            ),
+            ev(
+                3,
+                "notification.show",
+                json!({
+                    "text": "Do not share this code. Waiting for sign-in, up to 15.",
+                    "level": "info",
+                    "kind": "sticky",
+                    "key": "login:aaaa0003",
+                }),
+            ),
+            ev(
+                4,
+                "notification.show",
+                json!({
+                    "text": "Signed in.",
+                    "level": "info",
+                    "kind": "sticky",
+                    "key": "login:aaaa0004",
+                }),
+            ),
+        ],
+    );
+    assert_eq!(
+        state.notices().sign_in_copy(),
+        Some((
+            "https://example.test/device".to_owned(),
+            Some("ABCD-EFGH".to_owned())
+        ))
+    );
+
+    let _ = update(
+        &mut state,
+        ev(
+            5,
+            "notification.show",
+            json!({
+                "text": "https://example.test/device-2",
+                "level": "info",
+                "kind": "sticky",
+                "key": "login:bbbb0001",
+            }),
+        ),
+    );
+    assert_eq!(
+        state.notices().sign_in_copy(),
+        Some(("https://example.test/device-2".to_owned(), None))
+    );
+
+    let _ = update(
+        &mut state,
+        ev(
+            6,
+            "notification.show",
+            json!({
+                "text": "WXYZ-1234",
+                "level": "info",
+                "kind": "sticky",
+                "key": "login:bbbb0002",
+            }),
+        ),
+    );
+    assert_eq!(
+        state.notices().sign_in_copy(),
+        Some((
+            "https://example.test/device-2".to_owned(),
+            Some("WXYZ-1234".to_owned())
+        ))
+    );
+
+    let _ = update(
+        &mut state,
+        ev(
+            7,
+            "notification.clear",
+            json!({
+                "key": "login:bbbb0001",
+            }),
+        ),
+    );
+    assert_eq!(
+        state.notices().sign_in_copy(),
+        Some((
+            "https://example.test/device".to_owned(),
+            Some("ABCD-EFGH".to_owned())
+        ))
+    );
+
+    let _ = update(
+        &mut state,
+        ev(
+            8,
+            "notification.clear",
+            json!({
+                "key": "login:aaaa0001",
+            }),
+        ),
+    );
+    assert_eq!(state.notices().sign_in_copy(), None);
 }
