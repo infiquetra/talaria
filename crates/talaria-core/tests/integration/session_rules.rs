@@ -1906,3 +1906,61 @@ fn recorded_agent_print_is_visible() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn review_summary_is_a_system_line() {
+    let (state, effects) = run(vec![ev(
+        1,
+        "review.summary",
+        json!({"text": "saved one skill"}),
+    )]);
+    let list = notices(&state);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].kind, NoticeKind::System);
+    assert_eq!(list[0].text, "saved one skill");
+    assert_eq!(list[0].detail, None);
+    assert_eq!(state.status(), None);
+    assert!(state.status_log().is_empty());
+    assert!(effects.is_empty());
+
+    let (trimmed, _) = run(vec![ev(
+        1,
+        "review.summary",
+        json!({"text": "  saved one skill  "}),
+    )]);
+    let list = notices(&trimmed);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].kind, NoticeKind::System);
+    assert_eq!(list[0].text, "saved one skill");
+
+    let (two, _) = run(vec![
+        ev(1, "review.summary", json!({"text": "saved one skill"})),
+        ev(2, "review.summary", json!({"text": "saved a second skill"})),
+    ]);
+    let list = notices(&two);
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].kind, NoticeKind::System);
+    assert_eq!(list[0].text, "saved one skill");
+    assert_eq!(list[1].kind, NoticeKind::System);
+    assert_eq!(list[1].text, "saved a second skill");
+
+    let (repeated, _) = run(vec![
+        ev(1, "review.summary", json!({"text": "saved one skill"})),
+        ev(2, "review.summary", json!({"text": "saved one skill"})),
+    ]);
+    let list = notices(&repeated);
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].kind, NoticeKind::System);
+    assert_eq!(list[0].text, "saved one skill");
+    assert_eq!(list[1].kind, NoticeKind::System);
+    assert_eq!(list[1].text, "saved one skill");
+
+    let (empty, _) = run(vec![
+        ev(1, "review.summary", json!({"text": ""})),
+        ev(2, "review.summary", json!({"text": "   "})),
+        ev(3, "review.summary", json!({"text": null})),
+        ev(4, "review.summary", json!({})),
+    ]);
+    assert!(empty.cells().is_empty());
+    assert!(empty.unknown_event_types().is_empty());
+}
