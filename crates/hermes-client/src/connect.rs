@@ -509,9 +509,10 @@ pub async fn handshake_with(
         loop {
             let (raw, value) = read_frame(conn).await?;
             if value["method"] == "event" && value["params"]["type"] == "gateway.ready" {
+                let mut payload = value["params"]["payload"].clone();
+                hermes_contract::overrides::skin_payload_lenient(&mut payload);
                 let ready: GatewayReadyPayload =
-                    serde_json::from_value(value["params"]["payload"].clone())
-                        .map_err(|_| HandshakeError::BadReady)?;
+                    serde_json::from_value(payload).map_err(|_| HandshakeError::BadReady)?;
                 if ready.session_authority != Some(true) {
                     return Err(HandshakeError::NotSessionAuthority);
                 }
@@ -571,8 +572,10 @@ pub async fn handshake_with(
     if value["result"].get("session_create").is_none() {
         return Err(HandshakeError::BadDescribe);
     }
+    let mut result = value["result"].clone();
+    hermes_contract::overrides::skin_payload_lenient(&mut result);
     let describe: RuntimeDescribeResult =
-        serde_json::from_value(value["result"].clone()).map_err(|_| HandshakeError::BadDescribe)?;
+        serde_json::from_value(result).map_err(|_| HandshakeError::BadDescribe)?;
     if !conn.identity_unknown
         && (describe.instance_id != conn.instance_id
             || conn

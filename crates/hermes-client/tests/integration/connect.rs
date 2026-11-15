@@ -2235,7 +2235,10 @@ mod handshake {
         format!(r#"{{"jsonrpc":"2.0","id":2,"method":"{name}","params":{{}}}}"#)
     }
 
-    async fn opened(home: &Home, plan: WsPlan) -> (AttachMock, hermes_client::Connection) {
+    pub(super) async fn opened(
+        home: &Home,
+        plan: WsPlan,
+    ) -> (AttachMock, hermes_client::Connection) {
         ensure_fixture(home.path());
         let canonical = home.canonical();
         let fixture = format!("{canonical}/profiles/fixture");
@@ -2917,4 +2920,55 @@ mod properties {
             secret,
         );
     }
+}
+
+#[tokio::test]
+async fn null_skin_colour_does_not_fail_describe() {
+    let home = Home::new();
+    let fixture = format!("{}/profiles/fixture", home.canonical());
+    let skin = json!({
+        "name": "nullcolour",
+        "colors": {"banner": null, "prompt": "#FFD700"},
+        "light_colors": {"ui_ok": null},
+        "dark_colors": {"ui_warn": null},
+    });
+    let mut ready = serde_json::from_str::<Value>(&frame_ready()).expect("ready json");
+    ready["params"]["payload"]["skin"] = skin.clone();
+    let mut describe =
+        serde_json::from_str::<Value>(&frame_describe(&fixture)).expect("describe json");
+    describe["result"]["skin"] = skin;
+    let steps = vec![
+        WsStep::Send(ready.to_string()),
+        WsStep::Take,
+        WsStep::Send(frame_capabilities()),
+        WsStep::Take,
+        WsStep::Send(describe.to_string()),
+    ];
+    let (_mock, mut connection) = handshake::opened(
+        &home,
+        WsPlan::Talk {
+            echo: Echo::Version1,
+            steps,
+            guard: false,
+        },
+    )
+    .await;
+    let outcome = hermes_client::handshake(&mut connection)
+        .await
+        .expect("null skin colour");
+    assert_eq!(
+        outcome.ready.skin.colors.get("prompt").map(String::as_str),
+        Some("#FFD700")
+    );
+    assert!(!outcome.ready.skin.colors.contains_key("banner"));
+    assert!(!outcome.ready.skin.light_colors.contains_key("ui_ok"));
+    assert!(!outcome.ready.skin.dark_colors.contains_key("ui_warn"));
+    let describe_skin = outcome.describe.skin.expect("describe skin");
+    assert_eq!(
+        describe_skin.colors.get("prompt").map(String::as_str),
+        Some("#FFD700")
+    );
+    assert!(!describe_skin.colors.contains_key("banner"));
+    assert!(!describe_skin.light_colors.contains_key("ui_ok"));
+    assert!(!describe_skin.dark_colors.contains_key("ui_warn"));
 }

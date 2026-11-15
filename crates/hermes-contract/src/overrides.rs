@@ -36,6 +36,21 @@ impl fmt::Display for OverrideError {
 
 impl Error for OverrideError {}
 
+/// Drop null colour entries before decoding a skin-bearing gateway payload.
+pub fn skin_payload_lenient(value: &mut serde_json::Value) {
+    let Some(skin) = value
+        .get_mut("skin")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    for key in ["colors", "light_colors", "dark_colors"] {
+        if let Some(colors) = skin.get_mut(key).and_then(serde_json::Value::as_object_mut) {
+            colors.retain(|_, value| !value.is_null());
+        }
+    }
+}
+
 /// Supply the submission identifier required by Hermes
 /// `gateway/session_controls.py:751-758` at commit
 /// `4d04303818b61bf3aa09278af48356315515965b`.
