@@ -27,6 +27,7 @@ GENERATED_FILES = (
     "events.rs",
     "server_requests.rs",
     "native.rs",
+    "profile_methods.rs",
 )
 
 REF_PREFIX = "#/components/schemas/"

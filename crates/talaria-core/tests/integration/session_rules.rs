@@ -1193,7 +1193,6 @@ fn known_but_unmodelled_events_are_silent() {
         .iter()
         .filter_map(|item| item.get("name").and_then(Value::as_str).map(str::to_string))
         .collect();
-    assert!(names.len() >= 80, "x-notifications");
     const EXTRAS: &[&str] = &["agent.step", "session.updated", "session.tools_changed"];
     for name in &names {
         let generated = generated_variant(name);

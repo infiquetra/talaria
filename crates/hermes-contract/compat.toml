@@ -1,0 +1,13 @@
+[[release]]
+talaria = "0.8.0"
+floor = "v0.22.3"
+pinned_tag = "v0.22.4"
+pinned_commit = "4d04303818b61bf3aa09278af48356315515965b"
+newest_tested = "v0.22.4"
+
+[[release]]
+talaria = "0.8.1"
+floor = "v0.22.3"
+pinned_tag = "v0.22.4"
+pinned_commit = "4d04303818b61bf3aa09278af48356315515965b"
+newest_tested = "v0.22.4"

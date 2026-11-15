@@ -322,6 +322,17 @@ fn matrix_validation_and_gate() {
     assert!(evidence_gate(&json!({"runs":unrun})).is_err());
 }
 #[test]
+fn recorded_release_need_not_match_the_pin() {
+    let mut r: Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/gateway-concurrency/results.json"
+    ))
+    .unwrap();
+    let obj = r.as_object_mut().unwrap();
+    obj.remove("hermes_release");
+    obj.insert("recorded_against".to_owned(), json!("v0.0.0"));
+    assert_eq!(validate_results(&r), Ok(()));
+}
+#[test]
 fn gate_requires_recovery() {
     let runs: Vec<_> = matrix()
         .into_iter()
