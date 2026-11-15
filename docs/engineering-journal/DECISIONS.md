@@ -2,6 +2,17 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-14 — Name transcript and search in the workspace footer
+
+**Context.** The footer names the checklist chord but not the transcript chord.
+
+**Decision.** Add `Ctrl+O transcript, / search` in `ChecklistStyle.hint`, keeping
+the existing hint. Draw the new row when both hint strings and one separator fit
+the footer width and the sections plus the new row fit `max_live_height`.
+
+**Costs and revisit conditions.** The width rule does not measure the checklist
+line. Revisit when a later change needs the rule to read that line.
+
 ## 2026-11-14 — Lock withdrawal of an approval
 
 **Context.** A test-only regression locks how a displayed approval is withdrawn.

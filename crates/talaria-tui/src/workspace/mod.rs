@@ -9,11 +9,12 @@ use crate::{
     pager::{Details, TranscriptBody, TranscriptEntry},
     theme::surfaces::{ViewStyles, tokens as t},
 };
-use ratatui::{buffer::Buffer, layout::Rect};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use talaria_core::{
     checklist::Checklist,
     layout::{DOCK_COLUMNS, DOCK_ROWS, MIN_ROWS, PANEL_COLUMNS, PanelVisibility},
 };
+use unicode_width::UnicodeWidthStr;
 
 /// Borrowed workspace contents. The footer keeps its existing section order,
 /// excluding the streaming tail. A checklist supplied here is hosted in the panel,
@@ -84,6 +85,31 @@ pub fn geometry(
     }
 }
 
+const TRANSCRIPT_HINT: &str = "Ctrl+O transcript, / search";
+
+struct HintRow<'a> {
+    text: &'a str,
+    style: Style,
+}
+
+impl LiveSection for HintRow<'_> {
+    fn height(&self, _width: u16) -> u16 {
+        1
+    }
+
+    fn render(&self, area: Rect, buffer: &mut Buffer) {
+        if !area.is_empty() {
+            buffer.set_stringn(
+                area.x,
+                area.y,
+                self.text,
+                usize::from(area.width),
+                self.style,
+            );
+        }
+    }
+}
+
 /// A retained render cache; no application or gateway state lives here.
 #[derive(Default)]
 pub struct Workspace {
@@ -102,9 +128,18 @@ impl Workspace {
         buffer: &mut Buffer,
         other: &dyn CellLines,
     ) {
-        self.draw_with_style(view, area, buffer, other, &ChecklistStyle::default(), None);
+        self.draw_with_style(
+            view,
+            area,
+            buffer,
+            other,
+            &ChecklistStyle::default(),
+            None,
+            Some(String::from(TRANSCRIPT_HINT)),
+        );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_with_style(
         &mut self,
         view: &WorkspaceView<'_>,
@@ -113,6 +148,7 @@ impl Workspace {
         other: &dyn CellLines,
         style: &ChecklistStyle,
         hint: Option<String>,
+        transcript_hint: Option<String>,
     ) {
         self.draw_with_style_and_theme(
             view,
@@ -121,6 +157,7 @@ impl Workspace {
             other,
             style,
             hint,
+            transcript_hint,
             &ViewStyles::default(),
         );
     }
@@ -134,7 +171,16 @@ impl Workspace {
         views: &ViewStyles,
     ) {
         let style = panel::checklist_style(&ChecklistStyle::default(), views);
-        self.draw_with_style_and_theme(view, area, buffer, other, &style, None, views);
+        self.draw_with_style_and_theme(
+            view,
+            area,
+            buffer,
+            other,
+            &style,
+            None,
+            Some(String::from(TRANSCRIPT_HINT)),
+            views,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -146,6 +192,7 @@ impl Workspace {
         other: &dyn CellLines,
         style: &ChecklistStyle,
         hint: Option<String>,
+        transcript_hint: Option<String>,
         views: &ViewStyles,
     ) {
         let visible = geometry(area, 0, 0, view.panel).panel.is_some();
@@ -162,6 +209,22 @@ impl Workspace {
             sections.push(checklist);
         }
         sections.extend(view.footer.sections.iter().copied());
+        let extra = transcript_hint.as_deref().map(|text| HintRow {
+            text,
+            style: style.hint,
+        });
+        if let Some(extra) = &extra {
+            let hint_width = hint.as_deref().map_or(0, |text| text.width() + 3);
+            let fits_width =
+                hint_width.saturating_add(extra.text.width()) <= usize::from(area.width);
+            let existing_height: u32 = sections
+                .iter()
+                .map(|section| u32::from(section.height(area.width)))
+                .sum();
+            if fits_width && existing_height < u32::from(max_live_height(area.height)) {
+                sections.push(extra);
+            }
+        }
         let footer = LiveView { sections };
         let rows = footer.layout(area.width, max_live_height(area.height));
         let footer_rows = rows
