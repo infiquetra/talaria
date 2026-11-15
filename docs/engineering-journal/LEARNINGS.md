@@ -2,6 +2,17 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+### 2026-11-14 — Rewrite fleet approval hints after painting
+
+**Evidence.** Fleet peek screen checks distinguish the card row from the answer
+footer, which reads `card_hint` from the shared prompt stack.
+
+**Mechanism.** The peek rewrites only the card rectangle after `session_body`.
+`card_hint` must still see `Ctrl+C deny and stop`; otherwise the answer-focus
+overlay footer repeats its replacement clause.
+
+**Rule.** Rewrite the painted card, leaving the shared stack hint intact.
+
 ## 2026-11-14 — Inline theme colours need their own drawing path
 
 **Evidence.** `inline_user_and_notice_use_theme_colours` checks the four inline

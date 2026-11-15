@@ -16,7 +16,9 @@ use talaria_core::directory::rows::{RowKey, format_age};
 use talaria_core::fleet::{
     FleetRow, NeedDetail, NeedItem, NeedSummary, Outcome, ProfileStatus, RowState,
 };
-use talaria_core::fleet_view::{FleetViewInput, FleetViewState, update};
+use talaria_core::fleet_view::{
+    FleetAction, FleetViewInput, FleetViewState, Focus, PeekStatus, update,
+};
 use talaria_core::session::{
     CellId, PromptCell, PromptKey, PromptKind, PromptState, SessionId, SessionState,
 };
@@ -656,7 +658,7 @@ fn peek_panel_tail_card_and_outcome() {
         "$ rm -rf ./talaria-peek-probe".to_owned(),
         "\u{203a} 1. once".to_owned(),
         "  2. deny".to_owned(),
-        "1-2 choose \u{b7} Enter confirm \u{b7} Esc deny \u{b7} Tab note \u{b7} Ctrl+C deny and stop".to_owned(),
+        "1-2 choose \u{b7} Enter confirm \u{b7} Esc deny \u{b7} Tab note \u{b7} ctrl+c close".to_owned(),
         "\u{2713} completed".to_owned(),
     ];
     let stack = approval_stack();
@@ -719,6 +721,118 @@ fn peek_panel_tail_card_and_outcome() {
         24,
     );
     assert_drawn(&actual, &expected);
+}
+
+#[test]
+fn peek_approval_card_clause_follows_focus() {
+    let session = finished_session();
+    let stack = approval_stack();
+    let sample = peek_row(Outcome::Completed);
+    let profiles = listed(&["fixture"]);
+
+    // Answer focus: card row ends with `ctrl+c back to list`, and the overlay footer shows it once.
+    let mut state = hold(vec![sample.clone()], profiles.clone(), None, None);
+    let _ = update(
+        &mut state,
+        FleetViewInput::Peek {
+            key: sample.key.clone(),
+            status: PeekStatus::Open {
+                has_open_prompt: true,
+                running: true,
+            },
+        },
+        8,
+    );
+    let _ = update(&mut state, FleetViewInput::Action(FleetAction::Answer), 8);
+    assert_eq!(state.focus(), &Focus::Answer);
+    let (actual, _) = paint(
+        &state,
+        Some(PeekPanel {
+            session: &session,
+            stack: Some(&stack),
+            now: NOW,
+        }),
+        80,
+        24,
+    );
+    let answer_row = "1-2 choose \u{b7} Enter confirm \u{b7} Esc deny \u{b7} Tab note \u{b7} ctrl+c back to list";
+    let body = &actual[..actual.len() - 1];
+    assert!(
+        body.iter().any(|line| line.trim_end() == answer_row),
+        "expected answer-focus card row `{answer_row}` in peek body:\n{}",
+        body.join("\n")
+    );
+    let footer = actual.last().expect("footer row");
+    assert_eq!(
+        footer.matches("ctrl+c back to list").count(),
+        1,
+        "footer must show `ctrl+c back to list` once: {footer:?}"
+    );
+    assert!(
+        !footer.contains("deny and stop"),
+        "footer must not contain `deny and stop`: {footer:?}"
+    );
+
+    let shared_row = "1-2 choose \u{b7} Enter confirm \u{b7} Esc deny \u{b7} Tab note \u{b7} Ctrl+C deny and stop";
+
+    // Filter focus: card row keeps the shared hint.
+    let mut filter_state = hold(vec![sample.clone()], profiles.clone(), None, None);
+    let _ = update(
+        &mut filter_state,
+        FleetViewInput::Action(FleetAction::Filter),
+        8,
+    );
+    assert_eq!(filter_state.focus(), &Focus::Filter);
+    let (actual, _) = paint(
+        &filter_state,
+        Some(PeekPanel {
+            session: &session,
+            stack: Some(&stack),
+            now: NOW,
+        }),
+        80,
+        24,
+    );
+    assert!(
+        actual.iter().any(|line| line.trim_end() == shared_row),
+        "expected filter-focus card row `{shared_row}` in:\n{}",
+        actual.join("\n")
+    );
+
+    // Reply focus: card row keeps the shared hint.
+    let mut reply_state = hold(vec![sample.clone()], profiles, None, None);
+    let _ = update(
+        &mut reply_state,
+        FleetViewInput::Peek {
+            key: sample.key,
+            status: PeekStatus::Open {
+                has_open_prompt: true,
+                running: true,
+            },
+        },
+        8,
+    );
+    let _ = update(
+        &mut reply_state,
+        FleetViewInput::Action(FleetAction::Reply),
+        8,
+    );
+    assert_eq!(reply_state.focus(), &Focus::Reply);
+    let (actual, _) = paint(
+        &reply_state,
+        Some(PeekPanel {
+            session: &session,
+            stack: Some(&stack),
+            now: NOW,
+        }),
+        80,
+        24,
+    );
+    assert!(
+        actual.iter().any(|line| line.trim_end() == shared_row),
+        "expected reply-focus card row `{shared_row}` in:\n{}",
+        actual.join("\n")
+    );
 }
 
 #[test]

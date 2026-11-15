@@ -7,7 +7,7 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use talaria_core::directory::rows::format_age;
 use talaria_core::fleet::{FleetRow, Outcome, RowState};
-use talaria_core::fleet_view::{FleetViewState, glyph, row_detail, title_or_untitled};
+use talaria_core::fleet_view::{FleetViewState, Focus, glyph, row_detail, title_or_untitled};
 use talaria_core::session::{Cell, NoticeKind, PromptState, SessionState, TurnOutcome, TurnState};
 
 use super::rows::cut;
@@ -136,7 +136,7 @@ fn render(
             }
         }
         Panel::Session(panel) => {
-            session_body(
+            let card_area = session_body(
                 panel,
                 row,
                 scratch,
@@ -145,10 +145,43 @@ fn render(
                 height.max(CHROME_ROWS),
                 views,
             );
+            if let Some(area) = card_area {
+                rewrite_approval_hint(scratch, area, state.focus());
+            }
         }
         Panel::External(panel) => external_body(panel, scratch, theme, &mut y, height, views),
     }
     y.min(height)
+}
+
+fn rewrite_approval_hint(scratch: &mut Buffer, area: Rect, focus: &Focus) {
+    let replacement = match focus {
+        Focus::List => "ctrl+c close",
+        Focus::Answer => "ctrl+c back to list",
+        _ => return,
+    };
+    let suffix = "Ctrl+C deny and stop";
+    let suffix_width = suffix.len();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            if usize::from(area.right() - x) < suffix_width {
+                break;
+            }
+            if suffix.bytes().enumerate().all(|(offset, byte)| {
+                scratch[(x + u16::try_from(offset).unwrap_or(0), y)]
+                    .symbol()
+                    .as_bytes()
+                    == [byte]
+            }) {
+                let style = scratch[(x, y)].style();
+                for offset in 0..suffix_width {
+                    scratch[(x + u16::try_from(offset).unwrap_or(0), y)].set_symbol(" ");
+                }
+                scratch.set_stringn(x, y, replacement, suffix_width, style);
+                break;
+            }
+        }
+    }
 }
 
 fn external_body(
@@ -308,7 +341,7 @@ fn session_body(
     y: &mut usize,
     height: usize,
     views: Option<&ViewStyles>,
-) {
+) -> Option<Rect> {
     let width = scratch.area.width;
     let session = panel.session;
     let running = matches!(session.turn(), TurnState::Running);
@@ -327,11 +360,13 @@ fn session_body(
     let room = height.saturating_sub(*y).saturating_sub(footer.len());
 
     let section = panel.stack.and_then(PromptStack::section);
+    let mut card_area = None;
     if let Some(section) = section {
         let shown = usize::from(section.height(width)).min(room);
         if shown > 0 {
             let area = Rect::new(0, u16::try_from(*y).unwrap_or(0), width, width_u16(shown));
             section.render(area, scratch);
+            card_area = Some(area);
             *y += shown;
         }
     } else {
@@ -359,6 +394,7 @@ fn session_body(
             *y += 1;
         }
     }
+    card_area
 }
 
 fn ended_of(session: &SessionState, row: Option<&FleetRow>) -> Option<Ended> {
