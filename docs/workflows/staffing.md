@@ -2,8 +2,9 @@
 
 `staffing.toml` maps workflow tiers to Hermes models. Talaria reads it from
 `$TALARIA_CONFIG_DIR/staffing.toml`, or `~/.talaria/staffing.toml` when that variable
-is absent or empty. A missing file means no tiers, ten simultaneous agents and
-no budget. The library never creates or rewrites your staffing file.
+is absent or empty.
+A missing file means no tiers, five simultaneous agents and no budget.
+The library never creates or rewrites your staffing file.
 
 ```toml
 version = 1
