@@ -1123,6 +1123,75 @@ case_workflow() {
   ok
 }
 
+case_proof_gates_and_acceptance() {
+  begin proof_gates_and_acceptance
+  list_out=$(sh "$RC" --list 2>&1) || {
+    fail "rc.sh --list failed"
+    return
+  }
+  for gate_id in replay-sudo replay-secret live-exact; do
+    if ! printf '%s\n' "$list_out" | grep -F -q -- "$gate_id"; then
+      fail "rc.sh --list is missing $gate_id"
+      return
+    fi
+  done
+
+  live_exact_cmd=$(awk -F '\t' '$1 == "live-exact" { print $4 }' "$GATES")
+  live_tests_cmd=$(awk -F '\t' '$1 == "live-tests" { print $4 }' "$GATES")
+  case "$live_exact_cmd" in
+    *"TALARIA_LIVE_EXACT=1 TALARIA_LIVE_REQUIRE=1"*) ;;
+    *)
+      fail "live-exact must set TALARIA_LIVE_EXACT=1 immediately before TALARIA_LIVE_REQUIRE=1"
+      return
+      ;;
+  esac
+  case "$live_tests_cmd" in
+    *"TALARIA_LIVE_EXACT"*)
+      fail "live-tests must not contain TALARIA_LIVE_EXACT"
+      return
+      ;;
+  esac
+
+  for entry in \
+    "pin.md:# pin acceptance record" \
+    "hermes-sync.md:# hermes-sync acceptance record" \
+    "signal.md:# signal acceptance record" \
+    "act.md:# act acceptance record" \
+    "truth.md:# truth acceptance record" \
+    "crew.md:# crew acceptance record" \
+    "ship.md:# ship acceptance record"
+  do
+    name=${entry%%:*}
+    title=${entry#*:}
+    path="$ROOT/docs/acceptance/v0.9.0/$name"
+    if [ ! -f "$path" ]; then
+      fail "missing acceptance file $path"
+      return
+    fi
+    first_line=$(head -n 1 "$path")
+    if [ "$first_line" != "$title" ]; then
+      fail "$name first line mismatch: $first_line"
+      return
+    fi
+    if ! grep -F -q -- "| id | persona | result | evidence | commit |" "$path"; then
+      fail "$name is missing table header"
+      return
+    fi
+    if grep -F -q -- "v0.22.4" "$path"; then
+      fail "$name must not contain v0.22.4"
+      return
+    fi
+  done
+
+  sh "$RC" run --only not-a-gate >/dev/null 2>&1
+  ec=$?
+  if [ "$ec" -ne 2 ]; then
+    fail "rc.sh run --only not-a-gate exited $ec instead of 2"
+    return
+  fi
+  ok
+}
+
 OUTSIDE=$(mktemp -d)
 
 case_run_all_pass
@@ -1148,13 +1217,14 @@ case_gate_flag
 case_gate_trailer
 case_gate_scan
 case_workflow
+case_proof_gates_and_acceptance
 
-if [ "$NRAN" -ne 23 ]; then
+if [ "$NRAN" -ne 24 ]; then
   printf 'RC_TESTS: FAILED (%s failed)\n' "$NFAIL"
   exit 1
 fi
 if [ "$NFAIL" -eq 0 ]; then
-  printf 'RC_TESTS: PASSED (23 cases)\n'
+  printf 'RC_TESTS: PASSED (24 cases)\n'
   exit 0
 fi
 printf 'RC_TESTS: FAILED (%s failed)\n' "$NFAIL"
