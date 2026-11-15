@@ -14,10 +14,15 @@ fn installed_binary_reports_its_version() {
         .output()
         .unwrap_or_else(|_| panic!("the talaria binary could not be started"));
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(
-        stdout.as_ref(),
-        format!("talaria {}\n", env!("CARGO_PKG_VERSION")),
-        "stdout"
+    let current = hermes_contract::compat::CURRENT;
+    let expected = format!(
+        "talaria {}\nhermes: pinned {} ({}), supported from {}, tested to {}\n",
+        env!("CARGO_PKG_VERSION"),
+        current.pinned_tag,
+        &current.pinned_commit[..8],
+        current.floor,
+        current.newest_tested,
     );
+    assert_eq!(stdout.as_ref(), expected, "stdout");
     assert_eq!(output.status.code(), Some(0), "exit code");
 }

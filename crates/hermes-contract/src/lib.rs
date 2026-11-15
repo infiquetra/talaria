@@ -1,6 +1,8 @@
 //! Generated Hermes protocol types and canonical event payloads.
 
 pub mod canonical_events;
+#[path = "generated/compat.rs"]
+pub mod compat;
 pub mod events;
 pub mod generated;
 pub mod method;
