@@ -125,7 +125,20 @@ impl Cli {
 pub fn render_usage(error: &clap::Error) -> (String, u8) {
     use clap::error::ErrorKind;
     match error.kind() {
-        ErrorKind::DisplayVersion => (format!("talaria {}\n", env!("CARGO_PKG_VERSION")), 0),
+        ErrorKind::DisplayVersion => {
+            let current = &hermes_contract::compat::CURRENT;
+            (
+                format!(
+                    "talaria {}\nhermes: pinned {} ({}), supported from {}, tested to {}\n",
+                    env!("CARGO_PKG_VERSION"),
+                    current.pinned_tag,
+                    current.pinned_commit[..8].to_ascii_lowercase(),
+                    current.floor,
+                    current.newest_tested,
+                ),
+                0,
+            )
+        }
         ErrorKind::DisplayHelp => {
             let mut command = Cli::command();
             let mut text = Vec::new();

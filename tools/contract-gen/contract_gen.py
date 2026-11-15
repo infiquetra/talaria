@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 TYPIFY_VERSION = "0.8.0"
 ROOT = Path(__file__).resolve().parents[2]
@@ -596,13 +597,87 @@ def check(require_typify=False):
         return 1 if require_typify or os.environ.get("CONTRACT_GEN_REQUIRE_TYPIFY") == "1" else 0
     with tempfile.TemporaryDirectory(prefix="contract-check-") as temp:
         generate(out=Path(temp))
-        differences = sorted(n for n in {p.name for p in Path(temp).glob("*.rs")} | {p.name for p in OUT.glob("*.rs")}
+        names = ({p.name for p in Path(temp).glob("*.rs")} | {p.name for p in OUT.glob("*.rs")}) - {"compat.rs"}
+        differences = sorted(n for n in names
                              if not (OUT / n).exists() or not (Path(temp) / n).exists() or (OUT / n).read_bytes() != (Path(temp) / n).read_bytes())
         for name in differences:
             print("generated file differs: " + name)
         if not differences:
             print("every generated file is current")
         return int(bool(differences))
+
+
+COMPAT_KEYS = ("talaria", "floor", "pinned_tag", "pinned_commit", "newest_tested")
+COMPAT_START = "<!-- hermes-compat:start -->"
+COMPAT_END = "<!-- hermes-compat:end -->"
+
+
+def read_compat():
+    with (CRATE / "compat.toml").open("rb") as source:
+        rows = tomllib.load(source).get("release")
+    if not isinstance(rows, list) or not rows:
+        raise ContractError("compat.toml is missing a non-empty [[release]] entry")
+    for index, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            raise ContractError("compat.toml release entry {} must be a table".format(index))
+        for key in COMPAT_KEYS:
+            if key not in row:
+                raise ContractError("compat.toml release entry {} is missing key {}".format(index, key))
+            if not isinstance(row[key], str):
+                raise ContractError("compat.toml release entry {} key {} must be a string".format(index, key))
+    return rows
+
+
+def compat_line(row):
+    return "hermes: pinned {} ({}), supported from {}, tested to {}".format(
+        row["pinned_tag"], row["pinned_commit"][:8].lower(), row["floor"], row["newest_tested"])
+
+
+def compat_readme(text, line):
+    body = line + "\n[docs/compatibility.md](docs/compatibility.md)\n"
+    if COMPAT_START not in text and COMPAT_END not in text:
+        install = re.search(r"(?m)^## Install$", text)
+        if install is None:
+            raise ContractError("README.md is missing the ## Install heading")
+        block = COMPAT_START + "\n" + body + COMPAT_END + "\n\n"
+        return text[:install.start()] + block + text[install.start():]
+    if text.count(COMPAT_START) != 1 or text.count(COMPAT_END) != 1:
+        raise ContractError("README.md must have exactly one compatibility marker pair")
+    start = text.index(COMPAT_START) + len(COMPAT_START)
+    end = text.index(COMPAT_END)
+    if start >= end or not text[end + len(COMPAT_END):].startswith("\n\n## Install"):
+        raise ContractError("README.md compatibility block must precede ## Install")
+    return text[:start] + "\n" + body + text[end:]
+
+
+def compat(write=False):
+    rows = read_compat()
+    current = rows[-1]
+    table = ["# Compatibility", "", "| Talaria | Floor | Pinned Hermes | Newest tested |",
+             "| --- | --- | --- | --- |"]
+    table.extend("| {} | {} | {} {} | {} |".format(
+        row["talaria"], row["floor"], row["pinned_tag"], row["pinned_commit"][:8].lower(), row["newest_tested"])
+        for row in rows)
+    rust = ["// Generated from crates/hermes-contract/compat.toml. Do not edit.", "", "pub struct CompatRow {"]
+    rust.extend("    pub {}: &'static str,".format(key) for key in COMPAT_KEYS)
+    rust.extend(["}", "", "pub const CURRENT: CompatRow = CompatRow {"])
+    rust.extend("    {}: {},".format(key, json.dumps(current[key])) for key in COMPAT_KEYS)
+    rust.append("};")
+    files = {
+        ROOT / "docs/compatibility.md": "\n".join(table) + "\n",
+        ROOT / "README.md": compat_readme((ROOT / "README.md").read_text(), compat_line(current)),
+        OUT / "compat.rs": "\n".join(rust) + "\n",
+    }
+    differences = []
+    for path, text in files.items():
+        expected = text.encode("utf-8")
+        if write:
+            path.write_bytes(expected)
+        elif not path.exists() or path.read_bytes() != expected:
+            differences.append(path.relative_to(ROOT).as_posix())
+    for path in differences:
+        print("compatibility file differs: " + path)
+    return int(bool(differences))
 
 
 def gh_raw(path, ref):
@@ -755,6 +830,10 @@ def main(argv=None):
     gen.add_argument("--check", action="store_true")
     chk = sub.add_parser("check")
     chk.add_argument("--require-typify", action="store_true")
+    compat_parser = sub.add_parser("compat")
+    compat_mode = compat_parser.add_mutually_exclusive_group(required=True)
+    compat_mode.add_argument("--write", action="store_true")
+    compat_mode.add_argument("--check", action="store_true")
     verify = sub.add_parser("verify-vendor")
     verify.add_argument("--contract", type=Path, default=CONTRACT)
     pin = sub.add_parser("pin", help="validate and print the current pin; does not bump it")
@@ -771,6 +850,8 @@ def main(argv=None):
             generate(args.contract, args.out, args.hermes_checkout)
         elif args.command == "check":
             return check(args.require_typify)
+        elif args.command == "compat":
+            return compat(args.write)
         elif args.command == "verify-vendor":
             return verify_vendor(args.contract)
         elif args.command == "pin":

@@ -6,6 +6,8 @@ on:
     paths: &contract-paths
       - 'tools/contract-gen/**'
       - 'crates/hermes-contract/**'
+      - 'README.md'
+      - 'docs/compatibility.md'
       - '.github/workflows/contract.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -61,6 +63,8 @@ jobs:
         run: python3 -I -m unittest discover -s tools/contract-gen/tests -t tools/contract-gen
       - name: Check generated bindings
         run: python3 -I tools/contract-gen/contract_gen.py check --require-typify
+      - name: Check compatibility copies
+        run: python3 -I tools/contract-gen/contract_gen.py compat --check
       - name: Test bindings
         run: cargo test -p hermes-contract
 

@@ -25,6 +25,7 @@ chrono.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 hermes-client.workspace = true
+hermes-contract.workspace = true
 ratatui.workspace = true
 serde_json.workspace = true
 talaria-app.workspace = true
@@ -41,7 +42,6 @@ toml.workspace = true
 chrono.workspace = true
 shell-words.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
-hermes-contract.workspace = true
 portable-pty.workspace = true
 proptest.workspace = true
 http.workspace = true
