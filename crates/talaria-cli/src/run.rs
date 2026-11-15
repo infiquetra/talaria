@@ -4527,6 +4527,7 @@ impl Screen for TuiScreen {
                     &renderer,
                     style,
                     hint,
+                    Some(String::from("Ctrl+O transcript, / search")),
                     &self.theme.views,
                 );
             });

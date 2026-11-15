@@ -9,10 +9,11 @@ use talaria_core::{checklist::Checklist, layout::PanelVisibility};
 use talaria_tui::status::TurnState;
 use talaria_tui::workspace::panel::{WaitingRequest, WorkContents};
 use talaria_tui::{
+    checklist::ChecklistStyle,
     history::PlainCellLines,
-    live::{LiveView, PlainTextSection},
+    live::{LiveView, PlainTextSection, max_live_height},
     pager::{Details, Pager, SearchIndex, TranscriptEntry, draw_transcript_body},
-    workspace::{self, WorkspaceView},
+    workspace::{self, Workspace, WorkspaceView},
 };
 
 fn text(buffer: &Buffer) -> String {
@@ -156,11 +157,15 @@ fn workspace_snapshots_at_80x24_and_120x40() {
             left.trim_end().starts_with("No messages yet"),
             "{width}x{height}: no menu row: {left}"
         );
-        assert_eq!(support::row_text(&buffer, height - 4), "composer top");
-        assert_eq!(support::row_text(&buffer, height - 3), "composer draft");
-        assert_eq!(support::row_text(&buffer, height - 2), "composer bottom");
-        assert_eq!(support::row_text(&buffer, height - 1), "status voice");
-        let body = height - 4;
+        assert_eq!(support::row_text(&buffer, height - 5), "composer top");
+        assert_eq!(support::row_text(&buffer, height - 4), "composer draft");
+        assert_eq!(support::row_text(&buffer, height - 3), "composer bottom");
+        assert_eq!(support::row_text(&buffer, height - 2), "status voice");
+        assert_eq!(
+            support::row_text(&buffer, height - 1),
+            "Ctrl+O transcript, / search"
+        );
+        let body = height - 5;
         let mut rendered = panel_column(&buffer, divider, body);
         assert_eq!(rendered.len(), usize::from(body));
         while rendered.last().is_some_and(String::is_empty) {
@@ -307,15 +312,19 @@ fn footer_matches_the_inline_footer() {
     };
     let mut buffer = Buffer::empty(Rect::new(0, 0, 120, 40));
     workspace::draw(&view, buffer.area, &mut buffer, &PlainCellLines);
-    assert_eq!(support::row_text(&buffer, 38), "composer draft");
+    assert_eq!(support::row_text(&buffer, 37), "composer draft");
+    assert_eq!(
+        support::row_text(&buffer, 38),
+        "model · listening · read-aloud"
+    );
     assert_eq!(
         support::row_text(&buffer, 39),
-        "model · listening · read-aloud"
+        "Ctrl+O transcript, / search"
     );
     assert!(
         !text(&buffer)
             .lines()
-            .take(38)
+            .take(37)
             .any(|line| line.contains("listening") || line.contains("read-aloud"))
     );
 }
@@ -521,4 +530,157 @@ fn view_menu_open_and_focused() {
             });
         assert!(marked, "focus needs reverse video or a text marker: {row}");
     }
+}
+
+#[test]
+fn footer_names_transcript_open_and_search() {
+    let checklist = Checklist::from_values(
+        1,
+        &[
+            json!({"id": "1", "content": "Read inputs", "status": "completed"}),
+            json!({"id": "2", "content": "Compare layouts", "status": "in_progress"}),
+            json!({"id": "3", "content": "Review screens", "status": "pending"}),
+        ],
+    );
+    let composer = PlainTextSection::new("composer draft");
+    let status = PlainTextSection::new("status line");
+    let footer = LiveView {
+        sections: vec![&composer, &status],
+    };
+    let view = WorkspaceView {
+        entries: &[],
+        details: Details::Expanded,
+        panel: PanelVisibility::Dismissed,
+        checklist: Some(&checklist),
+        checklist_expanded: true,
+        menu: workspace::menu::MenuState::hidden(),
+        footer: &footer,
+        work: None,
+    };
+
+    let mut wide = Buffer::empty(Rect::new(0, 0, 120, 24));
+    Workspace::default().draw_with_style(
+        &view,
+        wide.area,
+        &mut wide,
+        &PlainCellLines,
+        &ChecklistStyle::default(),
+        Some(String::from("Ctrl+T")),
+        Some(String::from("Ctrl+O transcript, / search")),
+    );
+    let wide_rows: Vec<String> = (0..24).map(|y| support::row_text(&wide, y)).collect();
+    assert!(
+        wide_rows
+            .iter()
+            .any(|row| row == "Ctrl+O transcript, / search"),
+        "{wide_rows:?}"
+    );
+    assert!(
+        wide_rows
+            .iter()
+            .any(|row| row.contains("Ctrl+T to collapse")),
+        "{wide_rows:?}"
+    );
+    assert!(
+        wide_rows.iter().any(|row| row == "composer draft"),
+        "{wide_rows:?}"
+    );
+
+    let mut boundary = Buffer::empty(Rect::new(0, 0, 36, 24));
+    Workspace::default().draw_with_style(
+        &view,
+        boundary.area,
+        &mut boundary,
+        &PlainCellLines,
+        &ChecklistStyle::default(),
+        Some(String::from("Ctrl+T")),
+        Some(String::from("Ctrl+O transcript, / search")),
+    );
+    let boundary_rows: Vec<String> = (0..24).map(|y| support::row_text(&boundary, y)).collect();
+    assert!(
+        boundary_rows
+            .iter()
+            .any(|row| row == "Ctrl+O transcript, / search"),
+        "{boundary_rows:?}"
+    );
+    assert!(
+        boundary_rows
+            .iter()
+            .any(|row| row.contains("Ctrl+T to collapse")),
+        "{boundary_rows:?}"
+    );
+
+    let mut narrow = Buffer::empty(Rect::new(0, 0, 35, 24));
+    Workspace::default().draw_with_style(
+        &view,
+        narrow.area,
+        &mut narrow,
+        &PlainCellLines,
+        &ChecklistStyle::default(),
+        Some(String::from("Ctrl+T")),
+        Some(String::from("Ctrl+O transcript, / search")),
+    );
+    let narrow_rows: Vec<String> = (0..24).map(|y| support::row_text(&narrow, y)).collect();
+    assert!(
+        narrow_rows
+            .iter()
+            .any(|row| row.contains("Ctrl+T to collapse")),
+        "{narrow_rows:?}"
+    );
+    assert!(
+        !narrow_rows
+            .iter()
+            .any(|row| row.contains("Ctrl+O transcript, / search")),
+        "{narrow_rows:?}"
+    );
+
+    let short_view = WorkspaceView {
+        checklist: None,
+        ..view
+    };
+    let mut short = Buffer::empty(Rect::new(0, 0, 120, 4));
+    Workspace::default().draw_with_style(
+        &short_view,
+        short.area,
+        &mut short,
+        &PlainCellLines,
+        &ChecklistStyle::default(),
+        Some(String::from("Ctrl+T")),
+        Some(String::from("Ctrl+O transcript, / search")),
+    );
+    let short_rows: Vec<String> = (0..4).map(|y| support::row_text(&short, y)).collect();
+    assert!(
+        !short_rows
+            .iter()
+            .any(|row| row.contains("Ctrl+O transcript, / search")),
+        "{short_rows:?}"
+    );
+    assert!(
+        short_rows.iter().any(|row| row == "composer draft"),
+        "{short_rows:?}"
+    );
+    assert!(
+        short_rows.iter().any(|row| row == "status line"),
+        "{short_rows:?}"
+    );
+
+    let mut inline = Buffer::empty(Rect::new(0, 0, 120, 24));
+    for (section, rect) in footer
+        .sections
+        .iter()
+        .zip(footer.layout(120, max_live_height(24)))
+    {
+        section.render(rect, &mut inline);
+    }
+    let inline_rows: Vec<String> = (0..24).map(|y| support::row_text(&inline, y)).collect();
+    assert!(
+        !inline_rows
+            .iter()
+            .any(|row| row.contains("Ctrl+O transcript, / search")),
+        "{inline_rows:?}"
+    );
+    assert!(
+        inline_rows.iter().any(|row| row == "composer draft"),
+        "{inline_rows:?}"
+    );
 }

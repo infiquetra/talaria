@@ -2,6 +2,17 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+### 2026-11-14 — Workspace hints need their own layout budget
+
+**Evidence.** The workspace draw takes one hint, the checklist chord.
+
+**Mechanism.** A footer that prints only that hint can name the checklist while
+hiding the transcript key.
+
+**Generalizable rule.** Draw a second hint from the hint strings and available
+width in `ChecklistStyle.hint`; omit it before layout if the sections and the
+new row exceed `max_live_height`.
+
 ### 2026-11-14 — A withdrawn approval settles without a cancellation handler
 
 **Evidence.** `withdrawn_approval_leaves_on_settled_and_cancelled_leaves_it`
