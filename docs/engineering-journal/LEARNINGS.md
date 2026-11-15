@@ -198,6 +198,23 @@ naming `p1` leaves that cell open. `open_prompts` excludes the settled cell.
 
 **Rule.** Do not take `approval.cancelled` off the silent list.
 
+### 2026-11-14 — Prompt recordings depend on the gateway asking
+
+**Evidence.** At Hermes v0.23.0, `gateway/session_sudo_prompt.py` and
+`gateway/session_secret_prompt.py` send viewer requests with methods `sudo`
+and `secret`. Both accept an empty `value` as a skip. The terminal tool can
+bypass a sudo request when a password is already available or unnecessary;
+the skill viewer requests only missing required environment variables.
+
+**Mechanism.** The recorder answers these requests with an empty value and
+requires a later completion for the same session before accepting a recording.
+The completion status is not evidence of a prompt. An absent request produces
+an environment precondition diagnostic and discards the temporary recording.
+
+**Generalizable rule.** Prove an interactive prompt with its recorded request
+and subsequent completion; do not manufacture a fixture when the environment
+does not exercise that interaction.
+
 ### 2026-11-14 — A generated-contract pin and a live gateway floor answer different questions
 
 **Evidence.** At Hermes v0.23.0, `gateway/control_socket.py` includes the identity
