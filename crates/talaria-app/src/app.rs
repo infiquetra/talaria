@@ -4498,6 +4498,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
             // sources never ring twice in a burst.
             && let Some(alert) = state.hub.on_foreground_alert(alert, state.attention_at)
         {
+            state
+                .attention
+                .record_admitted(state.attention_at, alert.kind);
             effects.push(AppEffect::Alert(alert));
         }
     }
