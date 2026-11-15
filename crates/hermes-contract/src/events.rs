@@ -186,8 +186,6 @@ notifications! {
     "background.complete" => BackgroundComplete,
     "billing.step_up.verification" => BillingStepUpVerification,
     "bot_relay.outbox.pending" => BotRelayOutboxPending,
-    "browser.controller.cancel" => BrowserControllerCancel,
-    "browser.controller.command" => BrowserControllerCommand,
     "browser.progress" => BrowserProgress,
     "btw.complete" => BtwComplete,
     "clarify.request" => ClarifyRequest,

@@ -578,7 +578,7 @@ def generate(contract_path=CONTRACT, out=OUT, hermes_checkout=None, pin=None, ow
         for name, contents in files.items():
             allowances = ""
             if name == "schemas.rs":
-                allowances = "#![allow(clippy::derivable_impls, clippy::should_implement_trait, clippy::unit_arg)]\n"
+                allowances = "#![allow(dead_code, clippy::derivable_impls, clippy::should_implement_trait, clippy::unit_arg)]\n"
             elif name == "events.rs":
                 allowances = "#![allow(clippy::large_enum_variant)]\n"
             (temp / name).write_text(header + allowances + contents)

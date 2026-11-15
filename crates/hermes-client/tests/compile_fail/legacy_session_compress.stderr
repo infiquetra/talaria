@@ -9,12 +9,12 @@ error[E0277]: the trait bound `hermes_contract::methods::legacy::session_compres
   = help: the following other types implement trait `NativeMethod`:
             hermes_contract::methods::canonical::a2a_forward::Marker
             hermes_contract::methods::canonical::approval_respond::Marker
+            hermes_contract::methods::canonical::bot_relay_cancel::Marker
             hermes_contract::methods::canonical::bot_relay_deliver::Marker
             hermes_contract::methods::canonical::bot_relay_settle::Marker
             hermes_contract::methods::canonical::clarify_lock::Marker
             hermes_contract::methods::canonical::clarify_respond::Marker
             hermes_contract::methods::canonical::command_observe::Marker
-            hermes_contract::methods::canonical::config_get::Marker
           and $N others
 note: required by a bound in `rpc::<impl Client>::call`
  --> src/rpc.rs
@@ -41,12 +41,12 @@ error[E0277]: the trait bound `hermes_contract::methods::legacy::session_compres
   = help: the following other types implement trait `NativeMethod`:
             hermes_contract::methods::canonical::a2a_forward::Marker
             hermes_contract::methods::canonical::approval_respond::Marker
+            hermes_contract::methods::canonical::bot_relay_cancel::Marker
             hermes_contract::methods::canonical::bot_relay_deliver::Marker
             hermes_contract::methods::canonical::bot_relay_settle::Marker
             hermes_contract::methods::canonical::clarify_lock::Marker
             hermes_contract::methods::canonical::clarify_respond::Marker
             hermes_contract::methods::canonical::command_observe::Marker
-            hermes_contract::methods::canonical::config_get::Marker
           and $N others
 note: required by a bound in `rpc::<impl Client>::call`
  --> src/rpc.rs
@@ -63,12 +63,12 @@ error[E0277]: the trait bound `hermes_contract::methods::legacy::session_compres
   = help: the following other types implement trait `NativeMethod`:
             hermes_contract::methods::canonical::a2a_forward::Marker
             hermes_contract::methods::canonical::approval_respond::Marker
+            hermes_contract::methods::canonical::bot_relay_cancel::Marker
             hermes_contract::methods::canonical::bot_relay_deliver::Marker
             hermes_contract::methods::canonical::bot_relay_settle::Marker
             hermes_contract::methods::canonical::clarify_lock::Marker
             hermes_contract::methods::canonical::clarify_respond::Marker
             hermes_contract::methods::canonical::command_observe::Marker
-            hermes_contract::methods::canonical::config_get::Marker
           and $N others
 note: required by a bound in `rpc::<impl Client>::call`
  --> src/rpc.rs

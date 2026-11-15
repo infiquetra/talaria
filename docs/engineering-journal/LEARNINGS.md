@@ -2,6 +2,26 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — Allow unused helpers in generated schema modules
+
+**Evidence.** Hermes v0.23.1 defines `SubagentRosterEntry.background` and
+`SubagentRosterEntry.subagents` as integers with default `0`. With cargo-typify
+0.8.0, `generated/schemas.rs` uses `#[serde(default)]` on both fields but still
+emits `default_i64` in `pub mod defaults`. The unused helper fails clippy with
+`-D warnings`.
+
+**Mechanism.** cargo-typify 0.8.0 optimizes an integer default of `0` to serde's
+intrinsic default while still emitting `default_i64`. The published schema and
+the generated field behavior agree; the helper has no remaining caller.
+
+**Generalizable rule.** Put justified lint allowances in the generator's schema
+module header and regenerate. Keep generated helper bodies untouched and keep
+consumer code subject to the workspace's warning checks.
+
+`0.22.10` changes from `NewerThanPin` to `OlderThanPin` when the pin moves from
+v0.22.4 to v0.23.1; it remains above the current minimum until #549 raises
+`MIN_COMPATIBLE_VERSION`.
+
 ## 2026-11-15 — Keep local printed lines alongside existing notices
 
 **Evidence.** At pinned Hermes v0.22.4, `gateway/local_viewer_events.py` joins

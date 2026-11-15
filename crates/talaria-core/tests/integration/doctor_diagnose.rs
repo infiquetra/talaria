@@ -124,7 +124,7 @@ fn version_verdicts() {
         ),
         (Some("0.22.2"), None, VersionVerdict::TooOld),
         (Some("0.21.9"), None, VersionVerdict::TooOld),
-        (Some("0.22.10"), None, VersionVerdict::NewerThanPin),
+        (Some("0.22.10"), None, VersionVerdict::OlderThanPin),
         (Some("1.0.0"), None, VersionVerdict::NewerThanPin),
         (Some("unknown"), None, VersionVerdict::Unknown),
         (None, None, VersionVerdict::Unknown),

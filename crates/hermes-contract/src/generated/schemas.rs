@@ -1,5 +1,6 @@
-// Hermes v0.22.4 commit 4d04303818b61bf3aa09278af48356315515965b contract sha256 248ce12519dcc1e830a15c5819c93e6d27ef18404d19da38c960570710f83d00
+// Hermes v0.23.1 commit 3b421578588243f920886e6fe79a6faa87ea026e contract sha256 c2f48466a3e4fa98babceb066ab5d053d1573f0202146cd6e6fdb319ddd81f19
 #![allow(
+    dead_code,
     clippy::derivable_impls,
     clippy::should_implement_trait,
     clippy::unit_arg
@@ -188,6 +189,8 @@ pub struct AgentPluginRow {
     pub settings_schema: ::std::option::Option<::std::vec::Vec<PluginSettingField>>,
     pub source: ::std::string::String,
     pub status: ::std::string::String,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub tools: ::std::vec::Vec<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub update_available: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -991,6 +994,19 @@ impl BillingChargeStatusResult {
         Default::default()
     }
 }
+#[doc = "`BillingKeepGoingOnCreditsParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
+pub struct BillingKeepGoingOnCreditsParams {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+}
+impl BillingKeepGoingOnCreditsParams {
+    pub fn builder() -> builder::BillingKeepGoingOnCreditsParams {
+        Default::default()
+    }
+}
 #[doc = "`BillingMonthlyCap`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct BillingMonthlyCap {
@@ -1112,6 +1128,8 @@ pub struct BillingStateResult {
     pub free_tier_model: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub is_admin: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub keep_going_on_credits: ::std::option::Option<bool>,
     pub logged_in: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_usd: ::std::option::Option<::std::string::String>,
@@ -1126,6 +1144,8 @@ pub struct BillingStateResult {
     pub org_slug: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub payment_method: ::std::option::Option<BillingPaymentMethod>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan_usage: ::std::option::Option<PlanUsage>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub portal_url: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -1329,8 +1349,6 @@ pub enum BrowserAction {
     Connect,
     #[serde(rename = "disconnect")]
     Disconnect,
-    #[serde(rename = "use")]
-    Use,
 }
 impl ::std::fmt::Display for BrowserAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1338,7 +1356,6 @@ impl ::std::fmt::Display for BrowserAction {
             Self::Status => f.write_str("status"),
             Self::Connect => f.write_str("connect"),
             Self::Disconnect => f.write_str("disconnect"),
-            Self::Use => f.write_str("use"),
         }
     }
 }
@@ -1349,7 +1366,6 @@ impl ::std::str::FromStr for BrowserAction {
             "status" => Ok(Self::Status),
             "connect" => Ok(Self::Connect),
             "disconnect" => Ok(Self::Disconnect),
-            "use" => Ok(Self::Use),
             _ => Err("invalid value".into()),
         }
     }
@@ -1368,126 +1384,11 @@ impl ::std::convert::TryFrom<::std::string::String> for BrowserAction {
         value.parse()
     }
 }
-#[doc = "``gateway/browser_control_broker.py::_cancel_frame``."]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct BrowserControllerCancelPayload {
-    pub command_id: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tool_call_id: ::std::option::Option<::std::string::String>,
-}
-impl BrowserControllerCancelPayload {
-    pub fn builder() -> builder::BrowserControllerCancelPayload {
-        Default::default()
-    }
-}
-#[doc = "``gateway/browser_control_broker.py`` FRAME_COMMAND params."]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct BrowserControllerCommandPayload {
-    pub action: ::std::string::String,
-    pub arguments: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub browser_profile_id: ::std::option::Option<::std::string::String>,
-    pub command_id: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub controller_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tool_call_id: ::std::option::Option<::std::string::String>,
-}
-impl BrowserControllerCommandPayload {
-    pub fn builder() -> builder::BrowserControllerCommandPayload {
-        Default::default()
-    }
-}
-#[doc = "`BrowserControllerDetachResult`"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct BrowserControllerDetachResult {
-    #[serde(default = "defaults::default_bool::<true>")]
-    pub detached: bool,
-}
-impl ::std::default::Default for BrowserControllerDetachResult {
-    fn default() -> Self {
-        Self {
-            detached: defaults::default_bool::<true>(),
-        }
-    }
-}
-impl BrowserControllerDetachResult {
-    pub fn builder() -> builder::BrowserControllerDetachResult {
-        Default::default()
-    }
-}
-#[doc = "Every controller call names the session the controller is attached to."]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct BrowserControllerParams {
-    pub session_id: ::std::string::String,
-}
-impl BrowserControllerParams {
-    pub fn builder() -> builder::BrowserControllerParams {
-        Default::default()
-    }
-}
-#[doc = "`BrowserControllerRegisterParams`"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct BrowserControllerRegisterParams {
-    pub browser_profile_id: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub capabilities: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    pub controller_id: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub principal_id: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub protocol_version: ::std::option::Option<::serde_json::Value>,
-    pub session_id: ::std::string::String,
-}
-impl BrowserControllerRegisterParams {
-    pub fn builder() -> builder::BrowserControllerRegisterParams {
-        Default::default()
-    }
-}
-#[doc = "`BrowserControllerRegisterResult`"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct BrowserControllerRegisterResult {
-    pub scope: ControllerScope,
-}
-impl BrowserControllerRegisterResult {
-    pub fn builder() -> builder::BrowserControllerRegisterResult {
-        Default::default()
-    }
-}
-#[doc = "`BrowserControllerResultParams`"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct BrowserControllerResultParams {
-    pub command_id: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub error: ::std::option::Option<::serde_json::Value>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub ok: ::std::option::Option<::serde_json::Value>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub result: ::std::option::Option<::serde_json::Value>,
-    pub session_id: ::std::string::String,
-}
-impl BrowserControllerResultParams {
-    pub fn builder() -> builder::BrowserControllerResultParams {
-        Default::default()
-    }
-}
-#[doc = "`BrowserControllerResultResult`"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct BrowserControllerResultResult {
-    pub accepted: bool,
-}
-impl BrowserControllerResultResult {
-    pub fn builder() -> builder::BrowserControllerResultResult {
-        Default::default()
-    }
-}
 #[doc = "`BrowserManageParams`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct BrowserManageParams {
     #[serde(default = "defaults::browser_manage_params_action")]
     pub action: BrowserAction,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub enabled: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub profile: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -1499,7 +1400,6 @@ impl ::std::default::Default for BrowserManageParams {
     fn default() -> Self {
         Self {
             action: defaults::browser_manage_params_action(),
-            enabled: Default::default(),
             profile: Default::default(),
             session_id: Default::default(),
             url: Default::default(),
@@ -1514,8 +1414,6 @@ impl BrowserManageParams {
 #[doc = "`BrowserManageResult`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct BrowserManageResult {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub browser_use: ::std::option::Option<bool>,
     pub connected: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub messages: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
@@ -1595,6 +1493,87 @@ impl CanonicalAttachment {
         Default::default()
     }
 }
+#[doc = "`CanonicalBotCancelParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct CanonicalBotCancelParams {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub author_id: ::std::option::Option<::std::string::String>,
+    pub id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+}
+impl CanonicalBotCancelParams {
+    pub fn builder() -> builder::CanonicalBotCancelParams {
+        Default::default()
+    }
+}
+#[doc = "``gateway/session_bot_cancel.py``: ``cancelled`` (withdrawn before it ran, or its pending\nautomatic retry withdrawn), ``stopping`` (its running turn was told to stop), or ``finished``\n(nothing left to cancel); ``receipt_status`` is the delivery receipt's status after it."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct CanonicalBotCancelResult {
+    pub delivery_id: ::std::string::String,
+    pub receipt_status: ::std::string::String,
+    pub status: CanonicalBotCancelResultStatus,
+}
+impl CanonicalBotCancelResult {
+    pub fn builder() -> builder::CanonicalBotCancelResult {
+        Default::default()
+    }
+}
+#[doc = "`CanonicalBotCancelResultStatus`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CanonicalBotCancelResultStatus {
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "stopping")]
+    Stopping,
+    #[serde(rename = "finished")]
+    Finished,
+}
+impl ::std::fmt::Display for CanonicalBotCancelResultStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Cancelled => f.write_str("cancelled"),
+            Self::Stopping => f.write_str("stopping"),
+            Self::Finished => f.write_str("finished"),
+        }
+    }
+}
+impl ::std::str::FromStr for CanonicalBotCancelResultStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "cancelled" => Ok(Self::Cancelled),
+            "stopping" => Ok(Self::Stopping),
+            "finished" => Ok(Self::Finished),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CanonicalBotCancelResultStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CanonicalBotCancelResultStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`CanonicalBotDeliverParams`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct CanonicalBotDeliverParams {
@@ -1635,9 +1614,98 @@ pub struct CanonicalBotDeliverResult {
     pub retry_admission_id: ::std::option::Option<::std::string::String>,
     pub session_id: ::std::string::String,
     pub status: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target_state: ::std::option::Option<CanonicalBotDeliverResultTargetState>,
 }
 impl CanonicalBotDeliverResult {
     pub fn builder() -> builder::CanonicalBotDeliverResult {
+        Default::default()
+    }
+}
+#[doc = "`CanonicalBotDeliverResultTargetState`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CanonicalBotDeliverResultTargetState {
+    #[serde(rename = "idle")]
+    Idle,
+    #[serde(rename = "working")]
+    Working,
+    #[serde(rename = "waiting_approval")]
+    WaitingApproval,
+    #[serde(rename = "waiting_clarify")]
+    WaitingClarify,
+    #[serde(rename = "paused")]
+    Paused,
+}
+impl ::std::fmt::Display for CanonicalBotDeliverResultTargetState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Idle => f.write_str("idle"),
+            Self::Working => f.write_str("working"),
+            Self::WaitingApproval => f.write_str("waiting_approval"),
+            Self::WaitingClarify => f.write_str("waiting_clarify"),
+            Self::Paused => f.write_str("paused"),
+        }
+    }
+}
+impl ::std::str::FromStr for CanonicalBotDeliverResultTargetState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "idle" => Ok(Self::Idle),
+            "working" => Ok(Self::Working),
+            "waiting_approval" => Ok(Self::WaitingApproval),
+            "waiting_clarify" => Ok(Self::WaitingClarify),
+            "paused" => Ok(Self::Paused),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CanonicalBotDeliverResultTargetState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CanonicalBotDeliverResultTargetState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "A client naming itself: ``name`` matches ``[a-z0-9][a-z0-9._-]{0,63}``, ``version`` is 1-64\nprintable ASCII without spaces. Attribution only (owners advertising ``session-client-v1``)."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct CanonicalClientIdentity {
+    pub name: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub version: ::std::option::Option<::std::string::String>,
+}
+impl CanonicalClientIdentity {
+    pub fn builder() -> builder::CanonicalClientIdentity {
+        Default::default()
+    }
+}
+#[doc = "The client a session's creator declared itself as (``session.create`` ``client``)."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct CanonicalClientLabel {
+    pub name: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub version: ::std::option::Option<::std::string::String>,
+}
+impl CanonicalClientLabel {
+    pub fn builder() -> builder::CanonicalClientLabel {
         Default::default()
     }
 }
@@ -1664,6 +1732,8 @@ pub struct CanonicalConfigGetResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mtime: ::std::option::Option<f64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<::std::vec::Vec<CanonicalConfigGetResultOptionsItem>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub prompt: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub provider: ::std::option::Option<::std::string::String>,
@@ -1679,6 +1749,69 @@ pub struct CanonicalConfigGetResult {
 impl CanonicalConfigGetResult {
     pub fn builder() -> builder::CanonicalConfigGetResult {
         Default::default()
+    }
+}
+#[doc = "`CanonicalConfigGetResultOptionsItem`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CanonicalConfigGetResultOptionsItem {
+    #[serde(rename = "normal")]
+    Normal,
+    #[serde(rename = "fast")]
+    Fast,
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "cold")]
+    Cold,
+    #[serde(rename = "ultrafast")]
+    Ultrafast,
+}
+impl ::std::fmt::Display for CanonicalConfigGetResultOptionsItem {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Normal => f.write_str("normal"),
+            Self::Fast => f.write_str("fast"),
+            Self::Auto => f.write_str("auto"),
+            Self::Cold => f.write_str("cold"),
+            Self::Ultrafast => f.write_str("ultrafast"),
+        }
+    }
+}
+impl ::std::str::FromStr for CanonicalConfigGetResultOptionsItem {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "normal" => Ok(Self::Normal),
+            "fast" => Ok(Self::Fast),
+            "auto" => Ok(Self::Auto),
+            "cold" => Ok(Self::Cold),
+            "ultrafast" => Ok(Self::Ultrafast),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CanonicalConfigGetResultOptionsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CanonicalConfigGetResultOptionsItem {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "Session controls (``busy`` / ``verbose`` / ``yolo`` / ``show_reasoning`` / ``service_tier``, which\nneed ``session_id``) and the TUI's profile preferences (``gateway/session_tui_config.py``;\n``session_id`` optional). ``model`` is recognised only to be refused with\n``use_session_mutation_model``: a model pick is the revision-fenced ``session.mutate`` operation,\nnever a config write."]
@@ -1878,6 +2011,8 @@ pub struct CanonicalCreateParams {
     #[serde(default)]
     pub checkpoints: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub client: ::std::option::Option<CanonicalClientIdentity>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub client_env: ::std::option::Option<
         ::std::collections::HashMap<::std::string::String, ::std::string::String>,
     >,
@@ -1938,6 +2073,7 @@ impl ::std::default::Default for CanonicalCreateParams {
             api_key: Default::default(),
             base_url: Default::default(),
             checkpoints: Default::default(),
+            client: Default::default(),
             client_env: Default::default(),
             cwd: Default::default(),
             cwd_explicit: Default::default(),
@@ -1997,12 +2133,63 @@ pub struct CanonicalEventsResult {
     pub events: ::std::vec::Vec<CanonicalReplayEvent>,
     pub last_sequence: i64,
     pub latest_seq: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub open_requests: ::std::option::Option<::std::vec::Vec<OpenRequestEntry>>,
     pub replay_epoch: ::std::string::String,
     pub snapshot_required: bool,
     pub truncated: bool,
 }
 impl CanonicalEventsResult {
     pub fn builder() -> builder::CanonicalEventsResult {
+        Default::default()
+    }
+}
+#[doc = "`CanonicalGroupsPeerInviteParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct CanonicalGroupsPeerInviteParams {
+    pub authority_epoch: i64,
+    pub authority_gateway_id: ::std::string::String,
+    pub home_install_id: ::std::string::String,
+    pub member_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+    pub room_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub status_ttl_seconds: ::std::option::Option<f64>,
+    #[serde(default = "defaults::canonical_groups_peer_invite_params_ttl_seconds")]
+    pub ttl_seconds: f64,
+}
+impl CanonicalGroupsPeerInviteParams {
+    pub fn builder() -> builder::CanonicalGroupsPeerInviteParams {
+        Default::default()
+    }
+}
+#[doc = "`CanonicalGroupsPeerRegisterParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct CanonicalGroupsPeerRegisterParams {
+    pub catalog: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    pub grant: ::std::string::String,
+    pub member_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+    pub room_id: ::std::string::String,
+    pub target_profile: ::std::string::String,
+    pub target_url: ::std::string::String,
+}
+impl CanonicalGroupsPeerRegisterParams {
+    pub fn builder() -> builder::CanonicalGroupsPeerRegisterParams {
+        Default::default()
+    }
+}
+#[doc = "`CanonicalGroupsPeerRevokeParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct CanonicalGroupsPeerRevokeParams {
+    pub grant: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+}
+impl CanonicalGroupsPeerRevokeParams {
+    pub fn builder() -> builder::CanonicalGroupsPeerRevokeParams {
         Default::default()
     }
 }
@@ -2013,21 +2200,27 @@ pub struct CanonicalListParams {
     pub include_hidden: bool,
     #[serde(default = "defaults::default_u64::<i64, 200>")]
     pub limit: i64,
+    #[serde(default)]
+    pub picker: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub profile: ::std::option::Option<::std::string::String>,
     #[serde(default = "defaults::canonical_list_params_scope")]
     pub scope: Scope,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub title: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub workspace: ::std::option::Option<::std::string::String>,
 }
 impl ::std::default::Default for CanonicalListParams {
     fn default() -> Self {
         Self {
             include_hidden: Default::default(),
             limit: defaults::default_u64::<i64, 200>(),
+            picker: Default::default(),
             profile: Default::default(),
             scope: defaults::canonical_list_params_scope(),
             title: Default::default(),
+            workspace: Default::default(),
         }
     }
 }
@@ -2484,9 +2677,11 @@ pub struct CanonicalSessionInfo {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub api_mode: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub archived: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub branch: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub browser_backend_notice: ::std::option::Option<::std::string::String>,
+    pub client: ::std::option::Option<CanonicalClientLabel>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub config_warning: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -2554,6 +2749,8 @@ pub struct CanonicalSessionInfo {
     pub update_behind: ::std::option::Option<::serde_json::Value>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub update_command: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub usage: ::std::option::Option<Usage>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub version: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -2632,10 +2829,22 @@ impl CanonicalSessionInfoParams {
 #[doc = "`CanonicalSessionListRow`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct CanonicalSessionListRow {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cwd: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub git_branch: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub last_active_at: ::std::option::Option<f64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub last_reply: ::std::option::Option<::std::string::String>,
     pub message_count: i64,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub model: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub pinned: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub preview: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub resolved_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -2647,6 +2856,8 @@ pub struct CanonicalSessionListRow {
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub started_at: ::std::option::Option<f64>,
     pub title: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub workspace: ::std::option::Option<::std::string::String>,
 }
 impl CanonicalSessionListRow {
     pub fn builder() -> builder::CanonicalSessionListRow {
@@ -2688,6 +2899,10 @@ pub struct CanonicalSnapshot {
     pub last_sequence: i64,
     pub message_count: i64,
     pub messages: ::std::vec::Vec<TranscriptMessage>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub messages_omitted: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub open_requests: ::std::option::Option<::std::vec::Vec<OpenRequestEntry>>,
     pub pending: ::std::vec::Vec<CanonicalPendingAdmission>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub pending_connection: ::std::option::Option<ConnectionRequestPayload>,
@@ -2712,9 +2927,11 @@ pub struct CanonicalSnapshotInfo {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub api_mode: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub archived: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub branch: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub browser_backend_notice: ::std::option::Option<::std::string::String>,
+    pub client: ::std::option::Option<CanonicalClientLabel>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub config_warning: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -2786,6 +3003,8 @@ pub struct CanonicalSnapshotInfo {
     pub update_behind: ::std::option::Option<::serde_json::Value>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub update_command: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub usage: ::std::option::Option<Usage>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub version: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -3541,6 +3760,8 @@ impl CliExecResult {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
 pub struct ClientCapabilitiesParams {
     #[serde(default)]
+    pub desktop_local: bool,
+    #[serde(default)]
     pub server_requests: bool,
 }
 impl ClientCapabilitiesParams {
@@ -3551,6 +3772,8 @@ impl ClientCapabilitiesParams {
 #[doc = "`ClientCapabilitiesResult`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct ClientCapabilitiesResult {
+    #[serde(default)]
+    pub canonical_clarify_batch: bool,
     #[serde(default)]
     pub declines_not_shown: bool,
     pub server_requests: ::std::vec::Vec<::std::string::String>,
@@ -4315,6 +4538,8 @@ pub struct ConnectionOperationTarget {
     pub instructions: ::std::option::Option<::std::string::String>,
     pub kind: ConnectionTargetKind,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub launch: ::std::option::Option<ConnectionTargetLaunch>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub missing_env: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     pub name: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -4584,6 +4809,72 @@ impl ::std::convert::TryFrom<&str> for ConnectionTargetKind {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for ConnectionTargetKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "What an MCP row will run (``stdio`` command line) or contact (``remote`` URL); scrubbed\ndisplay text, never env values or headers."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct ConnectionTargetLaunch {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cwd: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub env: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    pub kind: ConnectionTargetLaunchKind,
+    pub target: ::std::string::String,
+}
+impl ConnectionTargetLaunch {
+    pub fn builder() -> builder::ConnectionTargetLaunch {
+        Default::default()
+    }
+}
+#[doc = "`ConnectionTargetLaunchKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ConnectionTargetLaunchKind {
+    #[serde(rename = "remote")]
+    Remote,
+    #[serde(rename = "stdio")]
+    Stdio,
+}
+impl ::std::fmt::Display for ConnectionTargetLaunchKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Remote => f.write_str("remote"),
+            Self::Stdio => f.write_str("stdio"),
+        }
+    }
+}
+impl ::std::str::FromStr for ConnectionTargetLaunchKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "remote" => Ok(Self::Remote),
+            "stdio" => Ok(Self::Stdio),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionTargetLaunchKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionTargetLaunchKind {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -6291,22 +6582,6 @@ impl ::std::convert::From<bool> for Continuity {
         Self::Boolean(value)
     }
 }
-#[doc = "`ControllerScope`"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
-pub struct ControllerScope {
-    pub browser_profile_id: ::std::string::String,
-    pub capabilities: ::std::vec::Vec<::std::string::String>,
-    pub controller_id: ::std::string::String,
-    pub principal_id: ::std::string::String,
-    pub profile_id: ::std::string::String,
-    pub session_id: ::std::string::String,
-    pub transport_family: ::std::string::String,
-}
-impl ControllerScope {
-    pub fn builder() -> builder::ControllerScope {
-        Default::default()
-    }
-}
 #[doc = "`CorrectionStatus`"]
 #[derive(
     :: serde :: Deserialize,
@@ -7376,7 +7651,7 @@ impl ErrorPayload {
         Default::default()
     }
 }
-#[doc = "``agent/error_surface.py::_surface`` — advisory {layer, code, retryable} (+ identity, + auth hint,\n+ ``resets_at`` epoch seconds when the provider named when its limit lifts)."]
+#[doc = "``agent/error_surface.py::_surface`` — advisory {layer, code, retryable} (+ identity, + auth hint,\n+ ``resets_at`` epoch seconds when the provider named when its limit lifts, + ``usage_limit`` on a\nusage-window plan's limit)."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorSurface {
     pub code: ::std::string::String,
@@ -7388,6 +7663,8 @@ pub struct ErrorSurface {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub resets_at: ::std::option::Option<f64>,
     pub retryable: bool,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub usage_limit: ::std::option::Option<UsageLimit>,
 }
 impl ErrorSurface {
     pub fn builder() -> builder::ErrorSurface {
@@ -7544,6 +7821,8 @@ pub struct FileAttachParams {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub profile: ::std::option::Option<::std::string::String>,
     pub session_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub staged_upload: ::std::option::Option<StagedFileUpload>,
 }
 impl FileAttachParams {
     pub fn builder() -> builder::FileAttachParams {
@@ -7727,6 +8006,27 @@ impl FreeTierChallengeResultParams {
         Default::default()
     }
 }
+#[doc = "`FreeTierClaimNudgeParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct FreeTierClaimNudgeParams {
+    #[serde(default = "defaults::free_tier_claim_nudge_params_kind")]
+    pub kind: Kind,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+}
+impl ::std::default::Default for FreeTierClaimNudgeParams {
+    fn default() -> Self {
+        Self {
+            kind: defaults::free_tier_claim_nudge_params_kind(),
+            profile: Default::default(),
+        }
+    }
+}
+impl FreeTierClaimNudgeParams {
+    pub fn builder() -> builder::FreeTierClaimNudgeParams {
+        Default::default()
+    }
+}
 #[doc = "`FreeTierClaimNudgeResult`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct FreeTierClaimNudgeResult {
@@ -7762,6 +8062,8 @@ pub struct FreeTierStatusResult {
     pub available: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub challenge: ::std::option::Option<FreeTierChallengePayload>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub connector_nudge_due_in: ::std::option::Option<i64>,
     pub enabled: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error: ::std::option::Option<::std::string::String>,
@@ -7978,6 +8280,116 @@ impl GroupsCapabilitiesResult {
         Default::default()
     }
 }
+#[doc = "`GroupsContextParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct GroupsContextParams {
+    pub event_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub lead_member_id: ::std::option::Option<::std::string::String>,
+    pub notes: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+    pub purpose: ::std::string::String,
+    pub room_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub routing: ::std::option::Option<GroupsContextParamsRouting>,
+}
+impl GroupsContextParams {
+    pub fn builder() -> builder::GroupsContextParams {
+        Default::default()
+    }
+}
+#[doc = "`GroupsContextParamsRouting`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum GroupsContextParamsRouting {
+    #[serde(rename = "everyone")]
+    Everyone,
+    #[serde(rename = "lead")]
+    Lead,
+    #[serde(rename = "auto")]
+    Auto,
+}
+impl ::std::fmt::Display for GroupsContextParamsRouting {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Everyone => f.write_str("everyone"),
+            Self::Lead => f.write_str("lead"),
+            Self::Auto => f.write_str("auto"),
+        }
+    }
+}
+impl ::std::str::FromStr for GroupsContextParamsRouting {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "everyone" => Ok(Self::Everyone),
+            "lead" => Ok(Self::Lead),
+            "auto" => Ok(Self::Auto),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for GroupsContextParamsRouting {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for GroupsContextParamsRouting {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`GroupsContextResult`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct GroupsContextResult {
+    pub context: RoomContext,
+    pub event: RoomEvent,
+}
+impl GroupsContextResult {
+    pub fn builder() -> builder::GroupsContextResult {
+        Default::default()
+    }
+}
+#[doc = "`GroupsContinueParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct GroupsContinueParams {
+    pub discussion_event_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+    pub room_id: ::std::string::String,
+}
+impl GroupsContinueParams {
+    pub fn builder() -> builder::GroupsContinueParams {
+        Default::default()
+    }
+}
+#[doc = "`GroupsContinueResult`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct GroupsContinueResult {
+    #[serde(default = "defaults::default_bool::<true>")]
+    pub continued: bool,
+    pub event: RoomEvent,
+}
+impl GroupsContinueResult {
+    pub fn builder() -> builder::GroupsContinueResult {
+        Default::default()
+    }
+}
 #[doc = "`GroupsCreateParams`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct GroupsCreateParams {
@@ -8160,6 +8572,8 @@ pub struct GroupsPeerInviteParams {
     pub profile: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub room_id: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub status_ttl_seconds: ::std::option::Option<f64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub ttl_seconds: ::std::option::Option<f64>,
 }
@@ -8366,6 +8780,10 @@ impl GroupsReplicateResult {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct GroupsRetryParams {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub execution_generation: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub member_id: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub profile: ::std::option::Option<::std::string::String>,
     pub room_id: ::std::string::String,
     pub task_id: ::std::string::String,
@@ -8435,6 +8853,8 @@ impl GroupsStateParams {
 #[doc = "`GroupsStateResult`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct GroupsStateResult {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub context: ::std::option::Option<RoomContext>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub driver_status: ::std::option::Option<RoomDriverStatus>,
     pub room: Room,
@@ -8672,6 +9092,99 @@ pub struct ImageGenerateResult {
 impl ImageGenerateResult {
     pub fn builder() -> builder::ImageGenerateResult {
         Default::default()
+    }
+}
+#[doc = "`ImageRenderParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct ImageRenderParams {
+    pub cols: i64,
+    #[serde(default)]
+    pub graphics: bool,
+    pub path: ::std::string::String,
+    pub rows: i64,
+    #[serde(default = "defaults::image_render_params_terminal")]
+    pub terminal: Terminal,
+}
+impl ImageRenderParams {
+    pub fn builder() -> builder::ImageRenderParams {
+        Default::default()
+    }
+}
+#[doc = "``mode`` follows ``display.inline_images``. ``kitty``: write ``transmit`` once, then paint\n``placeholder`` rows in ``color``. ``unicode``: paint ``cells`` (``[tr,tg,tb,ta, br,bg,bb,ba]``)\nas half-blocks. ``off``: inline images are disabled or the file is not a readable image."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct ImageRenderResult {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cells: ::std::option::Option<::std::vec::Vec<::std::vec::Vec<::std::vec::Vec<i64>>>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub color: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cols: ::std::option::Option<i64>,
+    pub mode: ImageRenderResultMode,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub placeholder: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub rows: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub transmit: ::std::option::Option<::std::string::String>,
+}
+impl ImageRenderResult {
+    pub fn builder() -> builder::ImageRenderResult {
+        Default::default()
+    }
+}
+#[doc = "`ImageRenderResultMode`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum ImageRenderResultMode {
+    #[serde(rename = "kitty")]
+    Kitty,
+    #[serde(rename = "unicode")]
+    Unicode,
+    #[serde(rename = "off")]
+    Off,
+}
+impl ::std::fmt::Display for ImageRenderResultMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Kitty => f.write_str("kitty"),
+            Self::Unicode => f.write_str("unicode"),
+            Self::Off => f.write_str("off"),
+        }
+    }
+}
+impl ::std::str::FromStr for ImageRenderResultMode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "kitty" => Ok(Self::Kitty),
+            "unicode" => Ok(Self::Unicode),
+            "off" => Ok(Self::Off),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ImageRenderResultMode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ImageRenderResultMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "`IncludeDisabled`"]
@@ -8940,13 +9453,70 @@ impl KanbanRunResult {
         Default::default()
     }
 }
-#[doc = "``agent.i18n_languages.language_options`` row. ``source`` is ``bundled``, ``overlay`` or\n``plugin:<name>`` — the highest layer that supplies the language."]
+#[doc = "`Kind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum Kind {
+    #[serde(rename = "trial")]
+    Trial,
+    #[serde(rename = "connector")]
+    Connector,
+}
+impl ::std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Trial => f.write_str("trial"),
+            Self::Connector => f.write_str("connector"),
+        }
+    }
+}
+impl ::std::str::FromStr for Kind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "trial" => Ok(Self::Trial),
+            "connector" => Ok(Self::Connector),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for Kind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::default::Default for Kind {
+    fn default() -> Self {
+        Kind::Trial
+    }
+}
+#[doc = "``agent.i18n_languages.language_options`` row. ``source`` is ``bundled``, ``overlay`` or\n``plugin:<name>`` — the highest layer that supplies the language. ``surfaces`` are the surfaces some\nlayer has strings for; a renderer leaves out a language it does not bundle and that lacks its surface,\nsince picking it would only show English."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct LanguageOption {
     pub endonym: ::std::string::String,
     pub id: ::std::string::String,
     pub rtl: bool,
     pub source: ::std::string::String,
+    pub surfaces: ::std::vec::Vec<LocaleSurface>,
 }
 impl LanguageOption {
     pub fn builder() -> builder::LanguageOption {
@@ -9852,6 +10422,8 @@ pub struct McpServerRuntimeRow {
     pub connected: bool,
     pub disabled: bool,
     pub name: ::std::string::String,
+    #[serde(default)]
+    pub needs_auth: bool,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin: ::std::option::Option<::std::string::String>,
     pub source: McpServerSource,
@@ -10111,13 +10683,19 @@ impl MessageCompletePayload {
         Default::default()
     }
 }
-#[doc = "``message.delta``. A session-authority local-viewer turn also publishes ``text: null``: the\nreply segment boundary (the agent's ``stream_delta_callback(None)``, before tool lines) that\ncloses the classic CLI's reply box. Every other viewer ignores an empty chunk."]
+#[doc = "``message.delta``. A session-authority local-viewer turn also publishes ``text: null``: the\nreply segment boundary (the agent's ``stream_delta_callback(None)``, before tool lines) that\ncloses the classic CLI's reply box. Every other viewer ignores an empty chunk.\n\nA prompt turn stamps ``turn_id`` + ``segment`` (interim seals before it) + ``offset`` (UTF-16 code\nunits of that segment already sent): a client drops a re-sent chunk it already applied."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct MessageDeltaPayload {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub offset: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub rendered: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub segment: ::std::option::Option<i64>,
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub text: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub turn_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub verbose: ::std::option::Option<bool>,
 }
@@ -10130,7 +10708,11 @@ impl MessageDeltaPayload {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct MessageInterimPayload {
     pub already_streamed: bool,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub segment: ::std::option::Option<i64>,
     pub text: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub turn_id: ::std::option::Option<::std::string::String>,
 }
 impl MessageInterimPayload {
     pub fn builder() -> builder::MessageInterimPayload {
@@ -10206,6 +10788,8 @@ pub struct MessageStartPayload {
     pub notification_category: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub turn_id: ::std::option::Option<::std::string::String>,
 }
 impl MessageStartPayload {
     pub fn builder() -> builder::MessageStartPayload {
@@ -10339,6 +10923,8 @@ impl ::std::convert::TryFrom<::std::string::String> for Mode {
 pub struct ModelCapabilities {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub can_disable_reasoning: ::std::option::Option<bool>,
+    #[serde(default)]
+    pub daybreak: bool,
     pub fast: bool,
     pub reasoning: bool,
     #[serde(default)]
@@ -10408,6 +10994,8 @@ pub struct ModelOptionProvider {
     pub models: ::std::vec::Vec<::std::string::String>,
     pub name: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan_usage: ::std::option::Option<PlanUsage>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub pricing:
         ::std::option::Option<::std::collections::HashMap<::std::string::String, ModelPricing>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -10421,6 +11009,10 @@ pub struct ModelOptionProvider {
     pub unavailable_models: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub usage: ::std::option::Option<ProviderUsage>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub usage_levels: ::std::option::Option<
+        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+    >,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub warning: ::std::option::Option<::std::string::String>,
 }
@@ -10852,6 +11444,61 @@ impl OpenRequestEntry {
         Default::default()
     }
 }
+#[doc = "`Operation`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum Operation {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "evaluate")]
+    Evaluate,
+    #[serde(rename = "close")]
+    Close,
+}
+impl ::std::fmt::Display for Operation {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Open => f.write_str("open"),
+            Self::Evaluate => f.write_str("evaluate"),
+            Self::Close => f.write_str("close"),
+        }
+    }
+}
+impl ::std::str::FromStr for Operation {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "open" => Ok(Self::Open),
+            "evaluate" => Ok(Self::Evaluate),
+            "close" => Ok(Self::Close),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for Operation {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for Operation {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`OptionalProjectResult`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
 pub struct OptionalProjectResult {
@@ -10861,6 +11508,62 @@ pub struct OptionalProjectResult {
 impl OptionalProjectResult {
     pub fn builder() -> builder::OptionalProjectResult {
         Default::default()
+    }
+}
+#[doc = "`Order`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum Order {
+    #[serde(rename = "oldest")]
+    Oldest,
+    #[serde(rename = "latest")]
+    Latest,
+}
+impl ::std::fmt::Display for Order {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Oldest => f.write_str("oldest"),
+            Self::Latest => f.write_str("latest"),
+        }
+    }
+}
+impl ::std::str::FromStr for Order {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "oldest" => Ok(Self::Oldest),
+            "latest" => Ok(Self::Latest),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for Order {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for Order {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::default::Default for Order {
+    fn default() -> Self {
+        Order::Oldest
     }
 }
 #[doc = "`Outcome`"]
@@ -11255,7 +11958,7 @@ impl PetCancelResult {
     }
 }
 #[doc = "``graphics`` opts into the kitty payload when the TTY speaks it; ``cols`` overrides the width."]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct PetCellsParams {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub cols: ::std::option::Option<i64>,
@@ -11265,6 +11968,19 @@ pub struct PetCellsParams {
     pub profile: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub state: ::std::option::Option<::std::string::String>,
+    #[serde(default = "defaults::pet_cells_params_terminal")]
+    pub terminal: Terminal,
+}
+impl ::std::default::Default for PetCellsParams {
+    fn default() -> Self {
+        Self {
+            cols: Default::default(),
+            graphics: Default::default(),
+            profile: Default::default(),
+            state: Default::default(),
+            terminal: defaults::pet_cells_params_terminal(),
+        }
+    }
 }
 impl PetCellsParams {
     pub fn builder() -> builder::PetCellsParams {
@@ -11865,7 +12581,63 @@ impl PingResult {
         Default::default()
     }
 }
-#[doc = "What a plugin loaded mid-run does NOW vs later (``hermes_cli.plugins_activation``). ``activated_now``\nkinds (``{kind: [names]}``): ``gateway_commands`` (slash names), ``locales`` (``<lang>.<surface>``\nlanguage-pack layers), ``gateway_transforms`` / ``hooks`` (hook\nnames), ``callbacks`` (platforms / ``slack:<action_id>``) — live in the running gateway once it reloaded\n(``gateway_reloaded``). ``live_now``: the plugin's MCP servers (connected, with their tools, or the\nerror) and skills, usable in every open chat of the profile from its next turn — the chats also get a\nnote listing them. ``deferred`` kinds: ``tools`` (Python tool names) and ``prompt`` (section ids)\napply from the next session."]
+#[doc = "``gateway/session_usage.py::plan_gauge``: a window plan's allowance for the status bar."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct PlanGauge {
+    pub id: ::std::string::String,
+    pub label: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resets_at_ms: ::std::option::Option<i64>,
+    pub used_bp: i64,
+}
+impl PlanGauge {
+    pub fn builder() -> builder::PlanGauge {
+        Default::default()
+    }
+}
+#[doc = "``hermes_cli/model_picker_usage.py::PickerUsage.to_payload`` — usage-window plan chrome."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct PlanUsage {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub credits_pay: ::std::option::Option<bool>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub featured_model_ids: ::std::vec::Vec<::std::string::String>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub gauges: ::std::vec::Vec<PlanUsageGauge>,
+    pub kind: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub paused_reason: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan: ::std::option::Option<::std::string::String>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub subscription_model_ids: ::std::vec::Vec<::std::string::String>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub top_tier_model_ids: ::std::vec::Vec<::std::string::String>,
+}
+impl PlanUsage {
+    pub fn builder() -> builder::PlanUsage {
+        Default::default()
+    }
+}
+#[doc = "One server allowance on ``ModelOptionProvider.plan_usage``, in the server's order. ``label`` is the\nserver's id (``day`` / ``week`` / ``month`` / ``top_tier`` have client words; any other id shows\n``title``). ``scope``: which models a full one stops (``all`` / ``top_tier``)."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct PlanUsageGauge {
+    pub label: ::std::string::String,
+    pub left_fraction: f64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resets_at_ms: ::std::option::Option<i64>,
+    #[serde(default = "defaults::plan_usage_gauge_scope")]
+    pub scope: ::std::string::String,
+    pub style: ::std::string::String,
+    #[serde(default)]
+    pub title: ::std::string::String,
+}
+impl PlanUsageGauge {
+    pub fn builder() -> builder::PlanUsageGauge {
+        Default::default()
+    }
+}
+#[doc = "What a plugin loaded mid-run does NOW vs later (``hermes_cli.plugins_activation``). ``activated_now``\nkinds (``{kind: [names]}``): ``gateway_commands`` (slash names), ``locales`` (``<lang>.<surface>``\nlanguage-pack layers), ``gateway_transforms`` / ``hooks`` (hook\nnames), ``callbacks`` (platforms / ``slack:<action_id>``) — live in the running gateway once it reloaded\n(``gateway_reloaded``). ``live_now``: the plugin's MCP servers (connected, with their tools, or the\nerror) and skills, usable in every open chat of the profile from its next turn — the chats also get a\nnote listing them. ``deferred`` kinds: ``tools`` (Python tool names) and ``prompt`` (section ids)\napply from the next session. ``missing_dependencies``: the plugin's declared Python requirements a\nrunning process cannot import (installed after it booted, or never); ``missing_in`` names which\nprocesses (``gateway``, ``backend`` = the Desktop / dashboard process) — only restarting them loads them."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct PluginActivation {
     #[serde(
@@ -11883,6 +12655,10 @@ pub struct PluginActivation {
     pub key: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub live_now: ::std::option::Option<PluginLiveNow>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub missing_dependencies: ::std::vec::Vec<::std::string::String>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub missing_in: ::std::vec::Vec<PluginRestartTarget>,
     pub name: ::std::string::String,
 }
 impl PluginActivation {
@@ -11897,6 +12673,8 @@ pub struct PluginCatalogLookupEntry {
     pub repo: ::std::string::String,
     pub sha: ::std::string::String,
     pub subdir: ::std::string::String,
+    #[serde(default = "defaults::plugin_catalog_lookup_entry_tier")]
+    pub tier: ::std::string::String,
 }
 impl PluginCatalogLookupEntry {
     pub fn builder() -> builder::PluginCatalogLookupEntry {
@@ -12023,6 +12801,68 @@ pub struct PluginLiveSkill {
 }
 impl PluginLiveSkill {
     pub fn builder() -> builder::PluginLiveSkill {
+        Default::default()
+    }
+}
+#[doc = "`PluginRestartTarget`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PluginRestartTarget {
+    #[serde(rename = "gateway")]
+    Gateway,
+    #[serde(rename = "backend")]
+    Backend,
+}
+impl ::std::fmt::Display for PluginRestartTarget {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Gateway => f.write_str("gateway"),
+            Self::Backend => f.write_str("backend"),
+        }
+    }
+}
+impl ::std::str::FromStr for PluginRestartTarget {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "gateway" => Ok(Self::Gateway),
+            "backend" => Ok(Self::Backend),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PluginRestartTarget {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PluginRestartTarget {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "Open: the plugin's handler owns every other key. ``session_id`` names the session the call\nacts in and passes that session's authorization first."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
+pub struct PluginRpcParams {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub session_id: ::std::option::Option<::std::string::String>,
+}
+impl PluginRpcParams {
+    pub fn builder() -> builder::PluginRpcParams {
         Default::default()
     }
 }
@@ -12236,6 +13076,89 @@ impl PluginToolsetRow {
         Default::default()
     }
 }
+#[doc = "One plugin ``update_all`` tried. ``needs_review``: nothing changed because the update widens the\nplugin or its scan returned caution; the plugin's own ``update`` walks that review."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct PluginUpdateAllRow {
+    #[serde(default)]
+    pub detail: ::std::string::String,
+    pub name: ::std::string::String,
+    pub status: PluginUpdateAllStatus,
+}
+impl PluginUpdateAllRow {
+    pub fn builder() -> builder::PluginUpdateAllRow {
+        Default::default()
+    }
+}
+#[doc = "`PluginUpdateAllSkip`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct PluginUpdateAllSkip {
+    pub name: ::std::string::String,
+    pub reason: ::std::string::String,
+}
+impl PluginUpdateAllSkip {
+    pub fn builder() -> builder::PluginUpdateAllSkip {
+        Default::default()
+    }
+}
+#[doc = "`PluginUpdateAllStatus`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum PluginUpdateAllStatus {
+    #[serde(rename = "updated")]
+    Updated,
+    #[serde(rename = "current")]
+    Current,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "needs_review")]
+    NeedsReview,
+}
+impl ::std::fmt::Display for PluginUpdateAllStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Updated => f.write_str("updated"),
+            Self::Current => f.write_str("current"),
+            Self::Failed => f.write_str("failed"),
+            Self::NeedsReview => f.write_str("needs_review"),
+        }
+    }
+}
+impl ::std::str::FromStr for PluginUpdateAllStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "updated" => Ok(Self::Updated),
+            "current" => Ok(Self::Current),
+            "failed" => Ok(Self::Failed),
+            "needs_review" => Ok(Self::NeedsReview),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for PluginUpdateAllStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for PluginUpdateAllStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`PluginsAction`"]
 #[derive(
     :: serde :: Deserialize,
@@ -12256,6 +13179,12 @@ pub enum PluginsAction {
     Toggle,
     #[serde(rename = "install")]
     Install,
+    #[serde(rename = "inspect")]
+    Inspect,
+    #[serde(rename = "install_desktop")]
+    InstallDesktop,
+    #[serde(rename = "remove_desktop")]
+    RemoveDesktop,
     #[serde(rename = "update")]
     Update,
     #[serde(rename = "remove")]
@@ -12266,6 +13195,10 @@ pub enum PluginsAction {
     Onboarding,
     #[serde(rename = "presence")]
     Presence,
+    #[serde(rename = "update_all")]
+    UpdateAll,
+    #[serde(rename = "auto_update")]
+    AutoUpdate,
 }
 impl ::std::fmt::Display for PluginsAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -12273,11 +13206,16 @@ impl ::std::fmt::Display for PluginsAction {
             Self::List => f.write_str("list"),
             Self::Toggle => f.write_str("toggle"),
             Self::Install => f.write_str("install"),
+            Self::Inspect => f.write_str("inspect"),
+            Self::InstallDesktop => f.write_str("install_desktop"),
+            Self::RemoveDesktop => f.write_str("remove_desktop"),
             Self::Update => f.write_str("update"),
             Self::Remove => f.write_str("remove"),
             Self::Settings => f.write_str("settings"),
             Self::Onboarding => f.write_str("onboarding"),
             Self::Presence => f.write_str("presence"),
+            Self::UpdateAll => f.write_str("update_all"),
+            Self::AutoUpdate => f.write_str("auto_update"),
         }
     }
 }
@@ -12288,11 +13226,16 @@ impl ::std::str::FromStr for PluginsAction {
             "list" => Ok(Self::List),
             "toggle" => Ok(Self::Toggle),
             "install" => Ok(Self::Install),
+            "inspect" => Ok(Self::Inspect),
+            "install_desktop" => Ok(Self::InstallDesktop),
+            "remove_desktop" => Ok(Self::RemoveDesktop),
             "update" => Ok(Self::Update),
             "remove" => Ok(Self::Remove),
             "settings" => Ok(Self::Settings),
             "onboarding" => Ok(Self::Onboarding),
             "presence" => Ok(Self::Presence),
+            "update_all" => Ok(Self::UpdateAll),
+            "auto_update" => Ok(Self::AutoUpdate),
             _ => Err("invalid value".into()),
         }
     }
@@ -12349,7 +13292,7 @@ impl PluginsListResult {
         Default::default()
     }
 }
-#[doc = "``toggle``: ``key``/``name`` + ``enable``; ``install``: ``identifier``/``repo`` or ``catalog_name``\n(+ ``force``, ``enable``, ``ref``); ``update``: ``name`` (+ ``accept_capabilities`` to apply a re-pin\nthat widened the plugin after the user confirmed the ``delta``, + ``force`` to apply an update whose\nsecurity scan returned caution after the user saw the findings); ``remove``: ``name`` (user installs only);\n``settings``: ``key`` + ``values`` (``{setting_key: value}``, non-secret schema keys only);\n``presence``: ``names`` (catalog names, answered in that order)."]
+#[doc = "``toggle``: ``key``/``name`` + ``enable``; ``install``: ``identifier``/``repo`` or ``catalog_name``\n(+ ``force``, ``enable``, ``ref``, ``inspected_sha`` = the commit ``inspect`` read: a custom source with no\n``ref`` whose branch moved since is refused); ``inspect``: ``identifier``/``repo`` or ``catalog_name``;\n``install_desktop``: ``identifier``/``repo`` (any source ``install`` takes) or ``catalog_name``, always\nwith ``ref`` (the commit ``inspect`` read and the dialog showed; another commit is refused) (+ ``force``) — the desktop half onto\nthe host that serves this client; ``remove_desktop``: ``name``\n(+ ``force`` for a package's own half); ``update``: ``name`` (+ ``accept_capabilities`` to apply a re-pin\nthat widened the plugin after the user confirmed the ``delta``, + ``force`` to apply an update whose\nsecurity scan returned caution after the user saw the findings); ``remove``: ``name`` (user installs only);\n``settings``: ``key`` + ``values`` (``{setting_key: value}``, non-secret schema keys only);\n``presence``: ``names`` (catalog names, answered in that order); ``update_all``: no fields;\n``auto_update``: ``enable`` to set ``plugins.auto_apply`` (omit to read it)."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct PluginsManageParams {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -12364,6 +13307,8 @@ pub struct PluginsManageParams {
     pub force: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub identifier: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub inspected_sha: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub key: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -12389,6 +13334,7 @@ impl ::std::default::Default for PluginsManageParams {
             enable: Default::default(),
             force: Default::default(),
             identifier: Default::default(),
+            inspected_sha: Default::default(),
             key: Default::default(),
             name: Default::default(),
             names: Default::default(),
@@ -12404,7 +13350,7 @@ impl PluginsManageParams {
         Default::default()
     }
 }
-#[doc = "``list`` → ``plugins`` + counts; ``toggle`` → ``ok``/``unchanged``/``restart_required``/``name``\n(the canonical key written)/``plugin``; ``install`` → ``hermes_cli.plugins_cmd.dashboard_install_plugin``'s\nok payload; ``toggle``/``install``/``update`` that loaded a plugin also carry ``gateway_reloaded`` (the\nrunning gateway picked it up and re-wired its handlers) and ``activation`` — the honest split of what is\nlive now vs deferred, so ``restart_required`` is True only when no gateway answered; ``update`` → ``ok``/``unchanged``/``sha``, or ``ok=false`` + ``consent_required`` with the\n``delta`` (``{surface: [added...]}``) / ``delta_lines`` a widened pin adds — nothing changed until the\nclient retries with ``accept_capabilities`` — or ``ok=false`` + ``scan_blocked`` with ``scan_verdict`` /\n``scan_findings`` (retry a caution verdict with ``force``); ``remove`` → ``ok``/``name`` plus\n``cleared_memory_provider`` when the removed plugin was the live ``memory.provider``."]
+#[doc = "``list`` → ``plugins`` + counts; ``toggle`` → ``ok``/``unchanged``/``restart_required``/``name``\n(the canonical key written)/``plugin``; ``install`` → ``hermes_cli.plugins_cmd.dashboard_install_plugin``'s\nok payload; ``inspect`` → ``ok``/``agent``/``desktop``/``agent_name``/``desktop_name``/``sha`` (the commit\nread)/``warnings``/``insecure`` or ``ok=false`` + ``error``; ``toggle``/``install``/``update`` that loaded a plugin also carry ``gateway_reloaded`` (the\nrunning gateway picked it up and re-wired its handlers) and ``activation`` — the honest split of what is\nlive now vs deferred, so ``restart_required`` is True only when no gateway answered or the running\ngateway/backend cannot import the plugin's Python dependencies (``activation.missing_dependencies``); ``update`` → ``ok``/``unchanged``/``sha``, or ``ok=false`` + ``consent_required`` with the\n``delta`` (``{surface: [added...]}``) / ``delta_lines`` a widened pin adds — nothing changed until the\nclient retries with ``accept_capabilities`` — or ``ok=false`` + ``scan_blocked`` with ``scan_verdict`` /\n``scan_findings`` (retry a caution verdict with ``force``); ``remove`` → ``ok``/``name`` plus\n``cleared_memory_provider`` when the removed plugin was the live ``memory.provider``."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
 pub struct PluginsManageResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -12412,11 +13358,21 @@ pub struct PluginsManageResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub after_install_path: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub agent_name: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub auto_apply: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub bundled_count: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub check_hours: ::std::option::Option<f64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub cleared_memory_provider: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub consent_required: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub current: ::std::option::Option<i64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub delta: ::std::option::Option<
         ::std::collections::HashMap<::std::string::String, ::std::vec::Vec<::std::string::String>>,
@@ -12424,11 +13380,17 @@ pub struct PluginsManageResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub delta_lines: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub desktop: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub desktop_name: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub enabled: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub gateway_reloaded: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub insecure: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub known_issues: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -12439,6 +13401,10 @@ pub struct PluginsManageResult {
     pub ok: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub onboarding: ::std::option::Option<::std::vec::Vec<OnboardingCatalogPlugin>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub paired_with_agent: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub path: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin: ::std::option::Option<AgentPluginRow>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -12452,6 +13418,8 @@ pub struct PluginsManageResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub restart_required: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub results: ::std::option::Option<::std::vec::Vec<PluginUpdateAllRow>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub scan_blocked: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub scan_findings: ::std::option::Option<::std::vec::Vec<PluginScanFinding>>,
@@ -12460,7 +13428,11 @@ pub struct PluginsManageResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub sha: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub skipped: ::std::option::Option<::std::vec::Vec<PluginUpdateAllSkip>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub unchanged: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub unpaired_from: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user_count: ::std::option::Option<i64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -12498,6 +13470,8 @@ pub struct PreviewActRequestParams {
     pub text: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub to: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub vault: ::std::option::Option<PreviewVaultOperation>,
 }
 impl PreviewActRequestParams {
     pub fn builder() -> builder::PreviewActRequestParams {
@@ -12554,6 +13528,20 @@ pub struct PreviewRestartProgressPayload {
 }
 impl PreviewRestartProgressPayload {
     pub fn builder() -> builder::PreviewRestartProgressPayload {
+        Default::default()
+    }
+}
+#[doc = "Internal vault transport, never arguments exposed to the model."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct PreviewVaultOperation {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub expression: ::std::option::Option<::std::string::String>,
+    pub operation: Operation,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+}
+impl PreviewVaultOperation {
+    pub fn builder() -> builder::PreviewVaultOperation {
         Default::default()
     }
 }
@@ -14695,6 +15683,10 @@ pub struct RollbackListParams {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub profile: ::std::option::Option<::std::string::String>,
     pub session_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub undo_message_id: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub undo_since: ::std::option::Option<f64>,
 }
 impl RollbackListParams {
     pub fn builder() -> builder::RollbackListParams {
@@ -14707,6 +15699,8 @@ pub struct RollbackListResult {
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub checkpoints: ::std::vec::Vec<RollbackCheckpoint>,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub undo_hint: ::std::option::Option<UndoRollbackHint>,
 }
 impl RollbackListResult {
     pub fn builder() -> builder::RollbackListResult {
@@ -14827,11 +15821,17 @@ impl Room {
         Default::default()
     }
 }
-#[doc = "`RoomActor`"]
+#[doc = "``hosted_rooms._ACTOR_FIELDS``; member replies carry ``profile`` plus, when known,\n``display_name`` and the peer ``connection_id`` (``hosted_room_discussion._member_actor``)."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct RoomActor {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub connection_id: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub display_name: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
     pub kind: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
 }
 impl RoomActor {
     pub fn builder() -> builder::RoomActor {
@@ -14890,14 +15890,39 @@ impl RoomAuthority {
         Default::default()
     }
 }
-#[doc = "``HostedRoomService.status(room_id)``; ``pending_actions`` rows are ``{kind: retry, task_id}``\nor the driver's approval action (``kind: approval`` + run/session/approval context)."]
+#[doc = "``gateway/hosted_room_context.py::room_context``: the purpose and shared notes every member's turn\nprompt carries (inside the user-role message)."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct RoomContext {
+    #[serde(default)]
+    pub lead_member_id: ::std::string::String,
+    pub notes: ::std::string::String,
+    pub purpose: ::std::string::String,
+    #[serde(default = "defaults::room_context_routing")]
+    pub routing: Routing,
+}
+impl RoomContext {
+    pub fn builder() -> builder::RoomContext {
+        Default::default()
+    }
+}
+#[doc = "``HostedRoomService.status(room_id)``; ``pending_actions`` rows are the exact attempt\n(``hosted_room_service.attempt_action``: ``kind`` + ``member_id``/``task_id``/``execution_generation``)\nor the driver's approval action (``kind: approval`` + run/session/approval context), or a stalled\nroom preparation's Retry (``task_id`` ``prepare:<room_id>``, ``member_id`` the members not woken).\n``member_activity`` lists live tasks in admission order (absent from older gateways).\n``last_error`` is this room's last preparation failure, null once one succeeds."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct RoomDriverStatus {
     pub blocked: bool,
     pub counts: ::std::collections::HashMap<::std::string::String, i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub last_error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_continues: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_rounds: ::std::option::Option<i64>,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub member_activity: ::std::vec::Vec<RoomMemberActivity>,
     pub peer_routes: ::std::vec::Vec<PeerRouteStatus>,
     pub pending_actions:
         ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub routing_modes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     pub running: bool,
     pub working: bool,
 }
@@ -15014,6 +16039,27 @@ impl RoomMember {
         Default::default()
     }
 }
+#[doc = "One live room task: ``status`` is ``queued``, ``running`` or ``stopping``. ``thread_id`` and\n``round_index`` name the thread and 0-based round it works in; ``started_at`` is when it began running;\n``tool`` (the tool it is in now) and ``progress_at`` (its last frame) come only from the process running\nthe turn."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct RoomMemberActivity {
+    pub member_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub progress_at: ::std::option::Option<f64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub round_index: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub started_at: ::std::option::Option<f64>,
+    pub status: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub thread_id: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tool: ::std::option::Option<::std::string::String>,
+}
+impl RoomMemberActivity {
+    pub fn builder() -> builder::RoomMemberActivity {
+        Default::default()
+    }
+}
 #[doc = "A roster row as the client proposes it; ``validate_roster`` owns the exact rules."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
 pub struct RoomMemberInput {
@@ -15064,6 +16110,117 @@ pub struct RoomTombstone {
 impl RoomTombstone {
     pub fn builder() -> builder::RoomTombstone {
         Default::default()
+    }
+}
+#[doc = "`Routing`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum Routing {
+    #[serde(rename = "everyone")]
+    Everyone,
+    #[serde(rename = "lead")]
+    Lead,
+    #[serde(rename = "auto")]
+    Auto,
+}
+impl ::std::fmt::Display for Routing {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Everyone => f.write_str("everyone"),
+            Self::Lead => f.write_str("lead"),
+            Self::Auto => f.write_str("auto"),
+        }
+    }
+}
+impl ::std::str::FromStr for Routing {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "everyone" => Ok(Self::Everyone),
+            "lead" => Ok(Self::Lead),
+            "auto" => Ok(Self::Auto),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for Routing {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for Routing {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::default::Default for Routing {
+    fn default() -> Self {
+        Routing::Everyone
+    }
+}
+#[doc = "`RowKind`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum RowKind {
+    #[serde(rename = "message")]
+    Message,
+    #[serde(rename = "compaction")]
+    Compaction,
+}
+impl ::std::fmt::Display for RowKind {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Message => f.write_str("message"),
+            Self::Compaction => f.write_str("compaction"),
+        }
+    }
+}
+impl ::std::str::FromStr for RowKind {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "message" => Ok(Self::Message),
+            "compaction" => Ok(Self::Compaction),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RowKind {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RowKind {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "`RuntimeDescribeParams`"]
@@ -16805,6 +17962,8 @@ pub struct SessionStats {
     pub last_turn_tokens: i64,
     pub model: ::std::string::String,
     pub output_tokens: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan_gauge: ::std::option::Option<PlanGauge>,
     pub prompt_tokens: i64,
     pub provider: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -16909,6 +18068,8 @@ impl SessionUndoParams {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct SessionUndoResult {
     pub removed: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub undo_hint: ::std::option::Option<UndoRollbackHint>,
 }
 impl SessionUndoResult {
     pub fn builder() -> builder::SessionUndoResult {
@@ -16964,6 +18125,8 @@ pub struct SessionUsagePayload {
     pub model: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub output_tokens: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan_gauge: ::std::option::Option<PlanGauge>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub prompt_tokens: ::std::option::Option<i64>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -17023,6 +18186,8 @@ pub struct SessionUsageResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub credits_lines: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub credits_usage_window: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dev_credits_spent_micros: ::std::option::Option<i64>,
     #[serde(default)]
     pub input: i64,
@@ -17030,6 +18195,8 @@ pub struct SessionUsageResult {
     pub model: ::std::string::String,
     #[serde(default)]
     pub output: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan_gauge: ::std::option::Option<PlanGauge>,
     #[serde(default)]
     pub prompt: i64,
     #[serde(default)]
@@ -17330,6 +18497,8 @@ impl SetupRuntimeCheckParams {
 pub struct SetupRuntimeCheckResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub free_tier_route: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -18266,6 +19435,18 @@ impl SpawnTreeSaveResult {
         Default::default()
     }
 }
+#[doc = "Source identity returned by the browser upload route, checked against the live profile."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct StagedFileUpload {
+    pub install_id: ::std::string::String,
+    pub path: ::std::string::String,
+    pub profile_home: ::std::string::String,
+}
+impl StagedFileUpload {
+    pub fn builder() -> builder::StagedFileUpload {
+        Default::default()
+    }
+}
 #[doc = "`StartedAt`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 #[serde(untagged)]
@@ -18502,6 +19683,89 @@ impl ::std::convert::TryFrom<::std::string::String> for SteerStatus {
         value.parse()
     }
 }
+#[doc = "`StoredTranscriptParams`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct StoredTranscriptParams {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub cursor: ::std::option::Option<::std::string::String>,
+    #[serde(default)]
+    pub inline_images: bool,
+    #[serde(default = "defaults::default_u64::<i64, 100>")]
+    pub limit: i64,
+    #[serde(default = "defaults::stored_transcript_params_order")]
+    pub order: Order,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+    pub session_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub subagent_id: ::std::option::Option<::std::string::String>,
+}
+impl StoredTranscriptParams {
+    pub fn builder() -> builder::StoredTranscriptParams {
+        Default::default()
+    }
+}
+#[doc = "`StoredTranscriptResult`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct StoredTranscriptResult {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub available: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub child_session_id: ::std::option::Option<::std::string::String>,
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
+    pub reset: bool,
+    pub rows: ::std::vec::Vec<StoredTranscriptRow>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub running: ::std::option::Option<bool>,
+    pub session_id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub subagent_id: ::std::option::Option<::std::string::String>,
+}
+impl StoredTranscriptResult {
+    pub fn builder() -> builder::StoredTranscriptResult {
+        Default::default()
+    }
+}
+#[doc = "``row_kind: 'message'`` is a ``session.resume`` ``display_messages`` row. ``row_kind: 'compaction'``\nis a compaction handoff at its position: ``role: 'system'``, ``text`` the summary a reader sees (not\nthe parts written for the model), ``compacted_messages``, ``timestamp`` and the stored ``row_id``."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct StoredTranscriptRow {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub args: ::std::option::Option<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub compacted_messages: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub content: ::std::option::Option<::serde_json::Value>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub context: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub display_kind: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub display_metadata: ::std::option::Option<::serde_json::Value>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub labels: ::std::option::Option<::std::vec::Vec<ToolLabel>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub name: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub reasoning: ::std::option::Option<::std::string::String>,
+    pub role: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub row_id: ::std::option::Option<i64>,
+    pub row_kind: RowKind,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub text: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub timestamp: ::std::option::Option<f64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub tool_call_id: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub truncated: ::std::option::Option<bool>,
+}
+impl StoredTranscriptRow {
+    pub fn builder() -> builder::StoredTranscriptRow {
+        Default::default()
+    }
+}
 #[doc = "``prompt_turn._invoke_agent._stream`` (message.delta: ``text`` + optional ``rendered``),\n``agent_callbacks._agent_cbs`` (reasoning.delta / thinking.delta), ``tool_progress._progress_reasoning``\n(reasoning.available). ``verbose`` rides only when the session's verbose reasoning mode is on."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct StreamDeltaPayload {
@@ -18619,11 +19883,38 @@ impl SubagentOutputTailEntry {
         Default::default()
     }
 }
+#[doc = "`SubagentRosterEntry`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct SubagentRosterEntry {
+    #[serde(default)]
+    pub background: i64,
+    pub session_id: ::std::string::String,
+    #[serde(default)]
+    pub subagents: i64,
+}
+impl SubagentRosterEntry {
+    pub fn builder() -> builder::SubagentRosterEntry {
+        Default::default()
+    }
+}
+#[doc = "`SubagentRosterResult`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
+pub struct SubagentRosterResult {
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub sessions: ::std::vec::Vec<SubagentRosterEntry>,
+}
+impl SubagentRosterResult {
+    pub fn builder() -> builder::SubagentRosterResult {
+        Default::default()
+    }
+}
 #[doc = "``methods_subagents._SUBAGENT_SNAPSHOT_FIELDS`` projection of one live child record."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct SubagentSnapshot {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub accepting_steer: ::std::option::Option<bool>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub child_session_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub delegation_id: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -18965,6 +20256,8 @@ pub struct SubscriptionStateResult {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub org_name: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan_usage: ::std::option::Option<PlanUsage>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub portal_url: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub role: ::std::option::Option<::std::string::String>,
@@ -19114,6 +20407,62 @@ pub struct TaskIdResult {
 impl TaskIdResult {
     pub fn builder() -> builder::TaskIdResult {
         Default::default()
+    }
+}
+#[doc = "`Terminal`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum Terminal {
+    #[serde(rename = "kitty")]
+    Kitty,
+    #[serde(rename = "unicode")]
+    Unicode,
+}
+impl ::std::fmt::Display for Terminal {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Kitty => f.write_str("kitty"),
+            Self::Unicode => f.write_str("unicode"),
+        }
+    }
+}
+impl ::std::str::FromStr for Terminal {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "kitty" => Ok(Self::Kitty),
+            "unicode" => Ok(Self::Unicode),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for Terminal {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for Terminal {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::default::Default for Terminal {
+    fn default() -> Self {
+        Terminal::Unicode
     }
 }
 #[doc = "`TerminalClosePayload`"]
@@ -19386,6 +20735,8 @@ pub struct ToolCompletePayload {
     pub args: ::std::option::Option<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub duration_s: ::std::option::Option<f64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub image_path: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub inline_diff: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -20092,6 +21443,18 @@ impl ::std::convert::TryFrom<::std::string::String> for UndoIntent {
         value.parse()
     }
 }
+#[doc = "``/undo``'s line naming the files the undone turns changed and pointing at ``/rollback``: ``files`` are\nthe changed paths, ``text`` is the rendered line in the backend's language."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct UndoRollbackHint {
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub files: ::std::vec::Vec<::std::string::String>,
+    pub text: ::std::string::String,
+}
+impl UndoRollbackHint {
+    pub fn builder() -> builder::UndoRollbackHint {
+        Default::default()
+    }
+}
 #[doc = "``tui_gateway/server.py::_get_usage`` + ``agent/context_breakdown.py::context_usage_fields``."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Usage {
@@ -20135,6 +21498,8 @@ pub struct Usage {
     pub model: ::std::string::String,
     #[serde(default)]
     pub output: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan_gauge: ::std::option::Option<PlanGauge>,
     #[serde(default)]
     pub prompt: i64,
     #[serde(default)]
@@ -20212,6 +21577,51 @@ impl ::std::convert::TryFrom<::std::string::String> for UsageBarKind {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
+    }
+}
+#[doc = "``agent/plan_limits.py::LimitHit`` — a usage-window plan's limit: what ran out, when it resets, and\nthe one-click ways on (switch to a recommended model, use / add credits)."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct UsageLimit {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub credits: ::std::option::Option<UsageLimitCredits>,
+    #[serde(default)]
+    pub current_model: ::std::string::String,
+    pub gauge_id: ::std::string::String,
+    pub limit_name: ::std::string::String,
+    pub message: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub resets_at_ms: ::std::option::Option<i64>,
+    pub scope: ::std::string::String,
+    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+    pub suggestions: ::std::vec::Vec<UsageLimitSuggestion>,
+}
+impl UsageLimit {
+    pub fn builder() -> builder::UsageLimit {
+        Default::default()
+    }
+}
+#[doc = "``agent/plan_limits.py::CreditsOption`` — ``use_credits`` (turn on Keep going), ``add_credits``, or\n``add_credits_and_keep_going`` (both: Keep going is off and there is no balance)."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct UsageLimitCredits {
+    pub action: ::std::string::String,
+}
+impl UsageLimitCredits {
+    pub fn builder() -> builder::UsageLimitCredits {
+        Default::default()
+    }
+}
+#[doc = "``agent/plan_limits.py::ModelSuggestion`` — a recommended model that still works past the limit."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct UsageLimitSuggestion {
+    pub label: ::std::string::String,
+    pub model: ::std::string::String,
+    pub note: ::std::string::String,
+    #[serde(default = "defaults::usage_limit_suggestion_provider")]
+    pub provider: ::std::string::String,
+}
+impl UsageLimitSuggestion {
+    pub fn builder() -> builder::UsageLimitSuggestion {
+        Default::default()
     }
 }
 #[doc = "``_serialize_usage_model`` — also embedded as ``usage`` in the billing / subscription states,\nwhere the fail-open form is a bare ``{available: false}`` (no ``ok``)."]
@@ -20321,6 +21731,8 @@ impl VaultCodeRequestParams {
 #[doc = "Metadata-only view (``VaultItemMeta.to_dict`` + ``backend``); never a secret."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
 pub struct VaultItem {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub allowed_origins: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     pub backend: ::std::string::String,
     #[serde(default)]
     pub created_at: ::std::string::String,
@@ -20435,6 +21847,37 @@ impl ::std::default::Default for VaultLockResult {
 }
 impl VaultLockResult {
     pub fn builder() -> builder::VaultLockResult {
+        Default::default()
+    }
+}
+#[doc = "``target`` is the opaque binding the renderer minted for one in-app browser tab."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct VaultPreviewFillParams {
+    pub handle: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub profile: ::std::option::Option<::std::string::String>,
+    pub target: ::std::string::String,
+}
+impl VaultPreviewFillParams {
+    pub fn builder() -> builder::VaultPreviewFillParams {
+        Default::default()
+    }
+}
+#[doc = "Counts and the page origin only: never a secret."]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, PartialEq)]
+pub struct VaultPreviewFillResult {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_type: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub filled_fields: ::std::option::Option<i64>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub origin: ::std::option::Option<::std::string::String>,
+    pub success: bool,
+}
+impl VaultPreviewFillResult {
+    pub fn builder() -> builder::VaultPreviewFillResult {
         Default::default()
     }
 }
@@ -22104,6 +23547,7 @@ pub mod builder {
         >,
         source: ::std::result::Result<::std::string::String, ::std::string::String>,
         status: ::std::result::Result<::std::string::String, ::std::string::String>,
+        tools: ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
         update_available: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         update_target: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
@@ -22130,6 +23574,7 @@ pub mod builder {
                 settings_schema: Ok(Default::default()),
                 source: Err("no value supplied for source".to_string()),
                 status: Err("no value supplied for status".to_string()),
+                tools: Ok(Default::default()),
                 update_available: Ok(Default::default()),
                 update_target: Ok(Default::default()),
                 version: Err("no value supplied for version".to_string()),
@@ -22299,6 +23744,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for status: {e}"));
             self
         }
+        pub fn tools<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.tools = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for tools: {e}"));
+            self
+        }
         pub fn update_available<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<bool>>,
@@ -22352,6 +23807,7 @@ pub mod builder {
                 settings_schema: value.settings_schema?,
                 source: value.source?,
                 status: value.status?,
+                tools: value.tools?,
                 update_available: value.update_available?,
                 update_target: value.update_target?,
                 version: value.version?,
@@ -22377,6 +23833,7 @@ pub mod builder {
                 settings_schema: Ok(value.settings_schema),
                 source: Ok(value.source),
                 status: Ok(value.status),
+                tools: Ok(value.tools),
                 update_available: Ok(value.update_available),
                 update_target: Ok(value.update_target),
                 version: Ok(value.version),
@@ -24626,6 +26083,67 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct BillingKeepGoingOnCreditsParams {
+        enabled: ::std::result::Result<bool, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for BillingKeepGoingOnCreditsParams {
+        fn default() -> Self {
+            Self {
+                enabled: Ok(Default::default()),
+                profile: Ok(Default::default()),
+            }
+        }
+    }
+    impl BillingKeepGoingOnCreditsParams {
+        pub fn enabled<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.enabled = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for enabled: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<BillingKeepGoingOnCreditsParams>
+        for super::BillingKeepGoingOnCreditsParams
+    {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: BillingKeepGoingOnCreditsParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                enabled: value.enabled?,
+                profile: value.profile?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::BillingKeepGoingOnCreditsParams>
+        for BillingKeepGoingOnCreditsParams
+    {
+        fn from(value: super::BillingKeepGoingOnCreditsParams) -> Self {
+            Self {
+                enabled: Ok(value.enabled),
+                profile: Ok(value.profile),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct BillingMonthlyCap {
         is_default_ceiling: ::std::result::Result<bool, ::std::string::String>,
         limit_display: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -25263,6 +26781,8 @@ pub mod builder {
             ::std::string::String,
         >,
         is_admin: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        keep_going_on_credits:
+            ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         logged_in: ::std::result::Result<bool, ::std::string::String>,
         max_usd: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
@@ -25289,6 +26809,8 @@ pub mod builder {
             ::std::option::Option<super::BillingPaymentMethod>,
             ::std::string::String,
         >,
+        plan_usage:
+            ::std::result::Result<::std::option::Option<super::PlanUsage>, ::std::string::String>,
         portal_url: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -25316,6 +26838,7 @@ pub mod builder {
                 free_tier_account: Ok(Default::default()),
                 free_tier_model: Ok(Default::default()),
                 is_admin: Ok(Default::default()),
+                keep_going_on_credits: Ok(Default::default()),
                 logged_in: Err("no value supplied for logged_in".to_string()),
                 max_usd: Ok(Default::default()),
                 min_usd: Ok(Default::default()),
@@ -25324,6 +26847,7 @@ pub mod builder {
                 org_name: Ok(Default::default()),
                 org_slug: Ok(Default::default()),
                 payment_method: Ok(Default::default()),
+                plan_usage: Ok(Default::default()),
                 portal_url: Ok(Default::default()),
                 role: Ok(Default::default()),
                 usage: Ok(Default::default()),
@@ -25465,6 +26989,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for is_admin: {e}"));
             self
         }
+        pub fn keep_going_on_credits<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.keep_going_on_credits = value.try_into().map_err(|e| {
+                format!("error converting supplied value for keep_going_on_credits: {e}")
+            });
+            self
+        }
         pub fn logged_in<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<bool>,
@@ -25545,6 +27079,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for payment_method: {e}"));
             self
         }
+        pub fn plan_usage<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::PlanUsage>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.plan_usage = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for plan_usage: {e}"));
+            self
+        }
         pub fn portal_url<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -25595,6 +27139,7 @@ pub mod builder {
                 free_tier_account: value.free_tier_account?,
                 free_tier_model: value.free_tier_model?,
                 is_admin: value.is_admin?,
+                keep_going_on_credits: value.keep_going_on_credits?,
                 logged_in: value.logged_in?,
                 max_usd: value.max_usd?,
                 min_usd: value.min_usd?,
@@ -25603,6 +27148,7 @@ pub mod builder {
                 org_name: value.org_name?,
                 org_slug: value.org_slug?,
                 payment_method: value.payment_method?,
+                plan_usage: value.plan_usage?,
                 portal_url: value.portal_url?,
                 role: value.role?,
                 usage: value.usage?,
@@ -25625,6 +27171,7 @@ pub mod builder {
                 free_tier_account: Ok(value.free_tier_account),
                 free_tier_model: Ok(value.free_tier_model),
                 is_admin: Ok(value.is_admin),
+                keep_going_on_credits: Ok(value.keep_going_on_credits),
                 logged_in: Ok(value.logged_in),
                 max_usd: Ok(value.max_usd),
                 min_usd: Ok(value.min_usd),
@@ -25633,6 +27180,7 @@ pub mod builder {
                 org_name: Ok(value.org_name),
                 org_slug: Ok(value.org_slug),
                 payment_method: Ok(value.payment_method),
+                plan_usage: Ok(value.plan_usage),
                 portal_url: Ok(value.portal_url),
                 role: Ok(value.role),
                 usage: Ok(value.usage),
@@ -26388,598 +27936,8 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
-    pub struct BrowserControllerCancelPayload {
-        command_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        tool_call_id: ::std::result::Result<
-            ::std::option::Option<::std::string::String>,
-            ::std::string::String,
-        >,
-    }
-    impl ::std::default::Default for BrowserControllerCancelPayload {
-        fn default() -> Self {
-            Self {
-                command_id: Err("no value supplied for command_id".to_string()),
-                tool_call_id: Ok(Default::default()),
-            }
-        }
-    }
-    impl BrowserControllerCancelPayload {
-        pub fn command_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.command_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for command_id: {e}"));
-            self
-        }
-        pub fn tool_call_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.tool_call_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for tool_call_id: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<BrowserControllerCancelPayload>
-        for super::BrowserControllerCancelPayload
-    {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: BrowserControllerCancelPayload,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                command_id: value.command_id?,
-                tool_call_id: value.tool_call_id?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::BrowserControllerCancelPayload>
-        for BrowserControllerCancelPayload
-    {
-        fn from(value: super::BrowserControllerCancelPayload) -> Self {
-            Self {
-                command_id: Ok(value.command_id),
-                tool_call_id: Ok(value.tool_call_id),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct BrowserControllerCommandPayload {
-        action: ::std::result::Result<::std::string::String, ::std::string::String>,
-        arguments: ::std::result::Result<
-            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-            ::std::string::String,
-        >,
-        browser_profile_id: ::std::result::Result<
-            ::std::option::Option<::std::string::String>,
-            ::std::string::String,
-        >,
-        command_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        controller_id: ::std::result::Result<
-            ::std::option::Option<::std::string::String>,
-            ::std::string::String,
-        >,
-        tool_call_id: ::std::result::Result<
-            ::std::option::Option<::std::string::String>,
-            ::std::string::String,
-        >,
-    }
-    impl ::std::default::Default for BrowserControllerCommandPayload {
-        fn default() -> Self {
-            Self {
-                action: Err("no value supplied for action".to_string()),
-                arguments: Err("no value supplied for arguments".to_string()),
-                browser_profile_id: Ok(Default::default()),
-                command_id: Err("no value supplied for command_id".to_string()),
-                controller_id: Ok(Default::default()),
-                tool_call_id: Ok(Default::default()),
-            }
-        }
-    }
-    impl BrowserControllerCommandPayload {
-        pub fn action<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.action = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for action: {e}"));
-            self
-        }
-        pub fn arguments<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<
-                    ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-                >,
-            T::Error: ::std::fmt::Display,
-        {
-            self.arguments = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for arguments: {e}"));
-            self
-        }
-        pub fn browser_profile_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.browser_profile_id = value.try_into().map_err(|e| {
-                format!("error converting supplied value for browser_profile_id: {e}")
-            });
-            self
-        }
-        pub fn command_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.command_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for command_id: {e}"));
-            self
-        }
-        pub fn controller_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.controller_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for controller_id: {e}"));
-            self
-        }
-        pub fn tool_call_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.tool_call_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for tool_call_id: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<BrowserControllerCommandPayload>
-        for super::BrowserControllerCommandPayload
-    {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: BrowserControllerCommandPayload,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                action: value.action?,
-                arguments: value.arguments?,
-                browser_profile_id: value.browser_profile_id?,
-                command_id: value.command_id?,
-                controller_id: value.controller_id?,
-                tool_call_id: value.tool_call_id?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::BrowserControllerCommandPayload>
-        for BrowserControllerCommandPayload
-    {
-        fn from(value: super::BrowserControllerCommandPayload) -> Self {
-            Self {
-                action: Ok(value.action),
-                arguments: Ok(value.arguments),
-                browser_profile_id: Ok(value.browser_profile_id),
-                command_id: Ok(value.command_id),
-                controller_id: Ok(value.controller_id),
-                tool_call_id: Ok(value.tool_call_id),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct BrowserControllerDetachResult {
-        detached: ::std::result::Result<bool, ::std::string::String>,
-    }
-    impl ::std::default::Default for BrowserControllerDetachResult {
-        fn default() -> Self {
-            Self {
-                detached: Ok(super::defaults::default_bool::<true>()),
-            }
-        }
-    }
-    impl BrowserControllerDetachResult {
-        pub fn detached<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<bool>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.detached = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for detached: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<BrowserControllerDetachResult>
-        for super::BrowserControllerDetachResult
-    {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: BrowserControllerDetachResult,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                detached: value.detached?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::BrowserControllerDetachResult> for BrowserControllerDetachResult {
-        fn from(value: super::BrowserControllerDetachResult) -> Self {
-            Self {
-                detached: Ok(value.detached),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct BrowserControllerParams {
-        session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-    }
-    impl ::std::default::Default for BrowserControllerParams {
-        fn default() -> Self {
-            Self {
-                session_id: Err("no value supplied for session_id".to_string()),
-            }
-        }
-    }
-    impl BrowserControllerParams {
-        pub fn session_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.session_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<BrowserControllerParams> for super::BrowserControllerParams {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: BrowserControllerParams,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                session_id: value.session_id?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::BrowserControllerParams> for BrowserControllerParams {
-        fn from(value: super::BrowserControllerParams) -> Self {
-            Self {
-                session_id: Ok(value.session_id),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct BrowserControllerRegisterParams {
-        browser_profile_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        capabilities: ::std::result::Result<
-            ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-            ::std::string::String,
-        >,
-        controller_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        principal_id: ::std::result::Result<
-            ::std::option::Option<::std::string::String>,
-            ::std::string::String,
-        >,
-        protocol_version: ::std::result::Result<
-            ::std::option::Option<::serde_json::Value>,
-            ::std::string::String,
-        >,
-        session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-    }
-    impl ::std::default::Default for BrowserControllerRegisterParams {
-        fn default() -> Self {
-            Self {
-                browser_profile_id: Err("no value supplied for browser_profile_id".to_string()),
-                capabilities: Ok(Default::default()),
-                controller_id: Err("no value supplied for controller_id".to_string()),
-                principal_id: Ok(Default::default()),
-                protocol_version: Ok(Default::default()),
-                session_id: Err("no value supplied for session_id".to_string()),
-            }
-        }
-    }
-    impl BrowserControllerRegisterParams {
-        pub fn browser_profile_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.browser_profile_id = value.try_into().map_err(|e| {
-                format!("error converting supplied value for browser_profile_id: {e}")
-            });
-            self
-        }
-        pub fn capabilities<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<
-                    ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-                >,
-            T::Error: ::std::fmt::Display,
-        {
-            self.capabilities = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for capabilities: {e}"));
-            self
-        }
-        pub fn controller_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.controller_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for controller_id: {e}"));
-            self
-        }
-        pub fn principal_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.principal_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for principal_id: {e}"));
-            self
-        }
-        pub fn protocol_version<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.protocol_version = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for protocol_version: {e}"));
-            self
-        }
-        pub fn session_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.session_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<BrowserControllerRegisterParams>
-        for super::BrowserControllerRegisterParams
-    {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: BrowserControllerRegisterParams,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                browser_profile_id: value.browser_profile_id?,
-                capabilities: value.capabilities?,
-                controller_id: value.controller_id?,
-                principal_id: value.principal_id?,
-                protocol_version: value.protocol_version?,
-                session_id: value.session_id?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::BrowserControllerRegisterParams>
-        for BrowserControllerRegisterParams
-    {
-        fn from(value: super::BrowserControllerRegisterParams) -> Self {
-            Self {
-                browser_profile_id: Ok(value.browser_profile_id),
-                capabilities: Ok(value.capabilities),
-                controller_id: Ok(value.controller_id),
-                principal_id: Ok(value.principal_id),
-                protocol_version: Ok(value.protocol_version),
-                session_id: Ok(value.session_id),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct BrowserControllerRegisterResult {
-        scope: ::std::result::Result<super::ControllerScope, ::std::string::String>,
-    }
-    impl ::std::default::Default for BrowserControllerRegisterResult {
-        fn default() -> Self {
-            Self {
-                scope: Err("no value supplied for scope".to_string()),
-            }
-        }
-    }
-    impl BrowserControllerRegisterResult {
-        pub fn scope<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<super::ControllerScope>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.scope = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for scope: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<BrowserControllerRegisterResult>
-        for super::BrowserControllerRegisterResult
-    {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: BrowserControllerRegisterResult,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                scope: value.scope?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::BrowserControllerRegisterResult>
-        for BrowserControllerRegisterResult
-    {
-        fn from(value: super::BrowserControllerRegisterResult) -> Self {
-            Self {
-                scope: Ok(value.scope),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct BrowserControllerResultParams {
-        command_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        error: ::std::result::Result<
-            ::std::option::Option<::serde_json::Value>,
-            ::std::string::String,
-        >,
-        ok: ::std::result::Result<
-            ::std::option::Option<::serde_json::Value>,
-            ::std::string::String,
-        >,
-        result: ::std::result::Result<
-            ::std::option::Option<::serde_json::Value>,
-            ::std::string::String,
-        >,
-        session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-    }
-    impl ::std::default::Default for BrowserControllerResultParams {
-        fn default() -> Self {
-            Self {
-                command_id: Err("no value supplied for command_id".to_string()),
-                error: Ok(Default::default()),
-                ok: Ok(Default::default()),
-                result: Ok(Default::default()),
-                session_id: Err("no value supplied for session_id".to_string()),
-            }
-        }
-    }
-    impl BrowserControllerResultParams {
-        pub fn command_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.command_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for command_id: {e}"));
-            self
-        }
-        pub fn error<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.error = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for error: {e}"));
-            self
-        }
-        pub fn ok<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.ok = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for ok: {e}"));
-            self
-        }
-        pub fn result<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.result = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for result: {e}"));
-            self
-        }
-        pub fn session_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.session_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<BrowserControllerResultParams>
-        for super::BrowserControllerResultParams
-    {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: BrowserControllerResultParams,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                command_id: value.command_id?,
-                error: value.error?,
-                ok: value.ok?,
-                result: value.result?,
-                session_id: value.session_id?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::BrowserControllerResultParams> for BrowserControllerResultParams {
-        fn from(value: super::BrowserControllerResultParams) -> Self {
-            Self {
-                command_id: Ok(value.command_id),
-                error: Ok(value.error),
-                ok: Ok(value.ok),
-                result: Ok(value.result),
-                session_id: Ok(value.session_id),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct BrowserControllerResultResult {
-        accepted: ::std::result::Result<bool, ::std::string::String>,
-    }
-    impl ::std::default::Default for BrowserControllerResultResult {
-        fn default() -> Self {
-            Self {
-                accepted: Err("no value supplied for accepted".to_string()),
-            }
-        }
-    }
-    impl BrowserControllerResultResult {
-        pub fn accepted<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<bool>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.accepted = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for accepted: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<BrowserControllerResultResult>
-        for super::BrowserControllerResultResult
-    {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: BrowserControllerResultResult,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                accepted: value.accepted?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::BrowserControllerResultResult> for BrowserControllerResultResult {
-        fn from(value: super::BrowserControllerResultResult) -> Self {
-            Self {
-                accepted: Ok(value.accepted),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
     pub struct BrowserManageParams {
         action: ::std::result::Result<super::BrowserAction, ::std::string::String>,
-        enabled: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         profile: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -26997,7 +27955,6 @@ pub mod builder {
         fn default() -> Self {
             Self {
                 action: Ok(super::defaults::browser_manage_params_action()),
-                enabled: Ok(Default::default()),
                 profile: Ok(Default::default()),
                 session_id: Ok(Default::default()),
                 url: Ok(Default::default()),
@@ -27013,16 +27970,6 @@ pub mod builder {
             self.action = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for action: {e}"));
-            self
-        }
-        pub fn enabled<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<bool>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.enabled = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for enabled: {e}"));
             self
         }
         pub fn profile<T>(mut self, value: T) -> Self
@@ -27063,7 +28010,6 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 action: value.action?,
-                enabled: value.enabled?,
                 profile: value.profile?,
                 session_id: value.session_id?,
                 url: value.url?,
@@ -27074,7 +28020,6 @@ pub mod builder {
         fn from(value: super::BrowserManageParams) -> Self {
             Self {
                 action: Ok(value.action),
-                enabled: Ok(value.enabled),
                 profile: Ok(value.profile),
                 session_id: Ok(value.session_id),
                 url: Ok(value.url),
@@ -27083,7 +28028,6 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct BrowserManageResult {
-        browser_use: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         connected: ::std::result::Result<bool, ::std::string::String>,
         messages: ::std::result::Result<
             ::std::option::Option<::std::vec::Vec<::std::string::String>>,
@@ -27097,7 +28041,6 @@ pub mod builder {
     impl ::std::default::Default for BrowserManageResult {
         fn default() -> Self {
             Self {
-                browser_use: Ok(Default::default()),
                 connected: Err("no value supplied for connected".to_string()),
                 messages: Ok(Default::default()),
                 url: Ok(Default::default()),
@@ -27105,16 +28048,6 @@ pub mod builder {
         }
     }
     impl BrowserManageResult {
-        pub fn browser_use<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::option::Option<bool>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.browser_use = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for browser_use: {e}"));
-            self
-        }
         pub fn connected<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<bool>,
@@ -27154,7 +28087,6 @@ pub mod builder {
             value: BrowserManageResult,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
-                browser_use: value.browser_use?,
                 connected: value.connected?,
                 messages: value.messages?,
                 url: value.url?,
@@ -27164,7 +28096,6 @@ pub mod builder {
     impl ::std::convert::From<super::BrowserManageResult> for BrowserManageResult {
         fn from(value: super::BrowserManageResult) -> Self {
             Self {
-                browser_use: Ok(value.browser_use),
                 connected: Ok(value.connected),
                 messages: Ok(value.messages),
                 url: Ok(value.url),
@@ -27588,6 +28519,148 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct CanonicalBotCancelParams {
+        author_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for CanonicalBotCancelParams {
+        fn default() -> Self {
+            Self {
+                author_id: Ok(Default::default()),
+                id: Err("no value supplied for id".to_string()),
+                profile: Ok(Default::default()),
+            }
+        }
+    }
+    impl CanonicalBotCancelParams {
+        pub fn author_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.author_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for author_id: {e}"));
+            self
+        }
+        pub fn id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for id: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CanonicalBotCancelParams> for super::CanonicalBotCancelParams {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CanonicalBotCancelParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                author_id: value.author_id?,
+                id: value.id?,
+                profile: value.profile?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CanonicalBotCancelParams> for CanonicalBotCancelParams {
+        fn from(value: super::CanonicalBotCancelParams) -> Self {
+            Self {
+                author_id: Ok(value.author_id),
+                id: Ok(value.id),
+                profile: Ok(value.profile),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct CanonicalBotCancelResult {
+        delivery_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        receipt_status: ::std::result::Result<::std::string::String, ::std::string::String>,
+        status: ::std::result::Result<super::CanonicalBotCancelResultStatus, ::std::string::String>,
+    }
+    impl ::std::default::Default for CanonicalBotCancelResult {
+        fn default() -> Self {
+            Self {
+                delivery_id: Err("no value supplied for delivery_id".to_string()),
+                receipt_status: Err("no value supplied for receipt_status".to_string()),
+                status: Err("no value supplied for status".to_string()),
+            }
+        }
+    }
+    impl CanonicalBotCancelResult {
+        pub fn delivery_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.delivery_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for delivery_id: {e}"));
+            self
+        }
+        pub fn receipt_status<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.receipt_status = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for receipt_status: {e}"));
+            self
+        }
+        pub fn status<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::CanonicalBotCancelResultStatus>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for status: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CanonicalBotCancelResult> for super::CanonicalBotCancelResult {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CanonicalBotCancelResult,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                delivery_id: value.delivery_id?,
+                receipt_status: value.receipt_status?,
+                status: value.status?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CanonicalBotCancelResult> for CanonicalBotCancelResult {
+        fn from(value: super::CanonicalBotCancelResult) -> Self {
+            Self {
+                delivery_id: Ok(value.delivery_id),
+                receipt_status: Ok(value.receipt_status),
+                status: Ok(value.status),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct CanonicalBotDeliverParams {
         author: ::std::result::Result<
             ::std::option::Option<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
@@ -27741,6 +28814,10 @@ pub mod builder {
         >,
         session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
         status: ::std::result::Result<::std::string::String, ::std::string::String>,
+        target_state: ::std::result::Result<
+            ::std::option::Option<super::CanonicalBotDeliverResultTargetState>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for CanonicalBotDeliverResult {
         fn default() -> Self {
@@ -27756,6 +28833,7 @@ pub mod builder {
                 retry_admission_id: Ok(Default::default()),
                 session_id: Err("no value supplied for session_id".to_string()),
                 status: Err("no value supplied for status".to_string()),
+                target_state: Ok(Default::default()),
             }
         }
     }
@@ -27870,6 +28948,18 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for status: {e}"));
             self
         }
+        pub fn target_state<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<super::CanonicalBotDeliverResultTargetState>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.target_state = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for target_state: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<CanonicalBotDeliverResult> for super::CanonicalBotDeliverResult {
         type Error = super::error::ConversionError;
@@ -27888,6 +28978,7 @@ pub mod builder {
                 retry_admission_id: value.retry_admission_id?,
                 session_id: value.session_id?,
                 status: value.status?,
+                target_state: value.target_state?,
             })
         }
     }
@@ -27905,6 +28996,121 @@ pub mod builder {
                 retry_admission_id: Ok(value.retry_admission_id),
                 session_id: Ok(value.session_id),
                 status: Ok(value.status),
+                target_state: Ok(value.target_state),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct CanonicalClientIdentity {
+        name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        version: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for CanonicalClientIdentity {
+        fn default() -> Self {
+            Self {
+                name: Err("no value supplied for name".to_string()),
+                version: Ok(Default::default()),
+            }
+        }
+    }
+    impl CanonicalClientIdentity {
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn version<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.version = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for version: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CanonicalClientIdentity> for super::CanonicalClientIdentity {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CanonicalClientIdentity,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                name: value.name?,
+                version: value.version?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CanonicalClientIdentity> for CanonicalClientIdentity {
+        fn from(value: super::CanonicalClientIdentity) -> Self {
+            Self {
+                name: Ok(value.name),
+                version: Ok(value.version),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct CanonicalClientLabel {
+        name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        version: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for CanonicalClientLabel {
+        fn default() -> Self {
+            Self {
+                name: Err("no value supplied for name".to_string()),
+                version: Ok(Default::default()),
+            }
+        }
+    }
+    impl CanonicalClientLabel {
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn version<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.version = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for version: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CanonicalClientLabel> for super::CanonicalClientLabel {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CanonicalClientLabel,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                name: value.name?,
+                version: value.version?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CanonicalClientLabel> for CanonicalClientLabel {
+        fn from(value: super::CanonicalClientLabel) -> Self {
+            Self {
+                name: Ok(value.name),
+                version: Ok(value.version),
             }
         }
     }
@@ -27943,6 +29149,10 @@ pub mod builder {
             ::std::string::String,
         >,
         mtime: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        options: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<super::CanonicalConfigGetResultOptionsItem>>,
+            ::std::string::String,
+        >,
         prompt: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -27980,6 +29190,7 @@ pub mod builder {
                 mcp_rev: Ok(Default::default()),
                 model: Ok(Default::default()),
                 mtime: Ok(Default::default()),
+                options: Ok(Default::default()),
                 prompt: Ok(Default::default()),
                 provider: Ok(Default::default()),
                 providers: Ok(Default::default()),
@@ -28084,6 +29295,20 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for mtime: {e}"));
             self
         }
+        pub fn options<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<
+                        ::std::vec::Vec<super::CanonicalConfigGetResultOptionsItem>,
+                    >,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.options = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for options: {e}"));
+            self
+        }
         pub fn prompt<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -28162,6 +29387,7 @@ pub mod builder {
                 mcp_rev: value.mcp_rev?,
                 model: value.model?,
                 mtime: value.mtime?,
+                options: value.options?,
                 prompt: value.prompt?,
                 provider: value.provider?,
                 providers: value.providers?,
@@ -28183,6 +29409,7 @@ pub mod builder {
                 mcp_rev: Ok(value.mcp_rev),
                 model: Ok(value.model),
                 mtime: Ok(value.mtime),
+                options: Ok(value.options),
                 prompt: Ok(value.prompt),
                 provider: Ok(value.provider),
                 providers: Ok(value.providers),
@@ -28576,6 +29803,10 @@ pub mod builder {
             ::std::string::String,
         >,
         checkpoints: ::std::result::Result<bool, ::std::string::String>,
+        client: ::std::result::Result<
+            ::std::option::Option<super::CanonicalClientIdentity>,
+            ::std::string::String,
+        >,
         client_env: ::std::result::Result<
             ::std::option::Option<
                 ::std::collections::HashMap<::std::string::String, ::std::string::String>,
@@ -28651,6 +29882,7 @@ pub mod builder {
                 api_key: Ok(Default::default()),
                 base_url: Ok(Default::default()),
                 checkpoints: Ok(Default::default()),
+                client: Ok(Default::default()),
                 client_env: Ok(Default::default()),
                 cwd: Ok(Default::default()),
                 cwd_explicit: Ok(Default::default()),
@@ -28718,6 +29950,16 @@ pub mod builder {
             self.checkpoints = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for checkpoints: {e}"));
+            self
+        }
+        pub fn client<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::CanonicalClientIdentity>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.client = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for client: {e}"));
             self
         }
         pub fn client_env<T>(mut self, value: T) -> Self
@@ -28993,6 +30235,7 @@ pub mod builder {
                 api_key: value.api_key?,
                 base_url: value.base_url?,
                 checkpoints: value.checkpoints?,
+                client: value.client?,
                 client_env: value.client_env?,
                 cwd: value.cwd?,
                 cwd_explicit: value.cwd_explicit?,
@@ -29028,6 +30271,7 @@ pub mod builder {
                 api_key: Ok(value.api_key),
                 base_url: Ok(value.base_url),
                 checkpoints: Ok(value.checkpoints),
+                client: Ok(value.client),
                 client_env: Ok(value.client_env),
                 cwd: Ok(value.cwd),
                 cwd_explicit: Ok(value.cwd_explicit),
@@ -29168,6 +30412,10 @@ pub mod builder {
         >,
         last_sequence: ::std::result::Result<i64, ::std::string::String>,
         latest_seq: ::std::result::Result<i64, ::std::string::String>,
+        open_requests: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<super::OpenRequestEntry>>,
+            ::std::string::String,
+        >,
         replay_epoch: ::std::result::Result<::std::string::String, ::std::string::String>,
         snapshot_required: ::std::result::Result<bool, ::std::string::String>,
         truncated: ::std::result::Result<bool, ::std::string::String>,
@@ -29180,6 +30428,7 @@ pub mod builder {
                 events: Err("no value supplied for events".to_string()),
                 last_sequence: Err("no value supplied for last_sequence".to_string()),
                 latest_seq: Err("no value supplied for latest_seq".to_string()),
+                open_requests: Ok(Default::default()),
                 replay_epoch: Err("no value supplied for replay_epoch".to_string()),
                 snapshot_required: Err("no value supplied for snapshot_required".to_string()),
                 truncated: Err("no value supplied for truncated".to_string()),
@@ -29237,6 +30486,18 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for latest_seq: {e}"));
             self
         }
+        pub fn open_requests<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<super::OpenRequestEntry>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.open_requests = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for open_requests: {e}"));
+            self
+        }
         pub fn replay_epoch<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::string::String>,
@@ -29279,6 +30540,7 @@ pub mod builder {
                 events: value.events?,
                 last_sequence: value.last_sequence?,
                 latest_seq: value.latest_seq?,
+                open_requests: value.open_requests?,
                 replay_epoch: value.replay_epoch?,
                 snapshot_required: value.snapshot_required?,
                 truncated: value.truncated?,
@@ -29293,6 +30555,7 @@ pub mod builder {
                 events: Ok(value.events),
                 last_sequence: Ok(value.last_sequence),
                 latest_seq: Ok(value.latest_seq),
+                open_requests: Ok(value.open_requests),
                 replay_epoch: Ok(value.replay_epoch),
                 snapshot_required: Ok(value.snapshot_required),
                 truncated: Ok(value.truncated),
@@ -29300,9 +30563,353 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct CanonicalGroupsPeerInviteParams {
+        authority_epoch: ::std::result::Result<i64, ::std::string::String>,
+        authority_gateway_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        home_install_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        member_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        room_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        status_ttl_seconds:
+            ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        ttl_seconds: ::std::result::Result<f64, ::std::string::String>,
+    }
+    impl ::std::default::Default for CanonicalGroupsPeerInviteParams {
+        fn default() -> Self {
+            Self {
+                authority_epoch: Err("no value supplied for authority_epoch".to_string()),
+                authority_gateway_id: Err("no value supplied for authority_gateway_id".to_string()),
+                home_install_id: Err("no value supplied for home_install_id".to_string()),
+                member_id: Err("no value supplied for member_id".to_string()),
+                profile: Ok(Default::default()),
+                room_id: Err("no value supplied for room_id".to_string()),
+                status_ttl_seconds: Ok(Default::default()),
+                ttl_seconds: Ok(super::defaults::canonical_groups_peer_invite_params_ttl_seconds()),
+            }
+        }
+    }
+    impl CanonicalGroupsPeerInviteParams {
+        pub fn authority_epoch<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<i64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.authority_epoch = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for authority_epoch: {e}"));
+            self
+        }
+        pub fn authority_gateway_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.authority_gateway_id = value.try_into().map_err(|e| {
+                format!("error converting supplied value for authority_gateway_id: {e}")
+            });
+            self
+        }
+        pub fn home_install_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.home_install_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for home_install_id: {e}"));
+            self
+        }
+        pub fn member_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.member_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for member_id: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+        pub fn room_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.room_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for room_id: {e}"));
+            self
+        }
+        pub fn status_ttl_seconds<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<f64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status_ttl_seconds = value.try_into().map_err(|e| {
+                format!("error converting supplied value for status_ttl_seconds: {e}")
+            });
+            self
+        }
+        pub fn ttl_seconds<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<f64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.ttl_seconds = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for ttl_seconds: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CanonicalGroupsPeerInviteParams>
+        for super::CanonicalGroupsPeerInviteParams
+    {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CanonicalGroupsPeerInviteParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                authority_epoch: value.authority_epoch?,
+                authority_gateway_id: value.authority_gateway_id?,
+                home_install_id: value.home_install_id?,
+                member_id: value.member_id?,
+                profile: value.profile?,
+                room_id: value.room_id?,
+                status_ttl_seconds: value.status_ttl_seconds?,
+                ttl_seconds: value.ttl_seconds?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CanonicalGroupsPeerInviteParams>
+        for CanonicalGroupsPeerInviteParams
+    {
+        fn from(value: super::CanonicalGroupsPeerInviteParams) -> Self {
+            Self {
+                authority_epoch: Ok(value.authority_epoch),
+                authority_gateway_id: Ok(value.authority_gateway_id),
+                home_install_id: Ok(value.home_install_id),
+                member_id: Ok(value.member_id),
+                profile: Ok(value.profile),
+                room_id: Ok(value.room_id),
+                status_ttl_seconds: Ok(value.status_ttl_seconds),
+                ttl_seconds: Ok(value.ttl_seconds),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct CanonicalGroupsPeerRegisterParams {
+        catalog: ::std::result::Result<
+            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+            ::std::string::String,
+        >,
+        grant: ::std::result::Result<::std::string::String, ::std::string::String>,
+        member_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        room_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        target_profile: ::std::result::Result<::std::string::String, ::std::string::String>,
+        target_url: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for CanonicalGroupsPeerRegisterParams {
+        fn default() -> Self {
+            Self {
+                catalog: Err("no value supplied for catalog".to_string()),
+                grant: Err("no value supplied for grant".to_string()),
+                member_id: Err("no value supplied for member_id".to_string()),
+                profile: Ok(Default::default()),
+                room_id: Err("no value supplied for room_id".to_string()),
+                target_profile: Err("no value supplied for target_profile".to_string()),
+                target_url: Err("no value supplied for target_url".to_string()),
+            }
+        }
+    }
+    impl CanonicalGroupsPeerRegisterParams {
+        pub fn catalog<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.catalog = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for catalog: {e}"));
+            self
+        }
+        pub fn grant<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.grant = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for grant: {e}"));
+            self
+        }
+        pub fn member_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.member_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for member_id: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+        pub fn room_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.room_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for room_id: {e}"));
+            self
+        }
+        pub fn target_profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.target_profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for target_profile: {e}"));
+            self
+        }
+        pub fn target_url<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.target_url = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for target_url: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CanonicalGroupsPeerRegisterParams>
+        for super::CanonicalGroupsPeerRegisterParams
+    {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CanonicalGroupsPeerRegisterParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                catalog: value.catalog?,
+                grant: value.grant?,
+                member_id: value.member_id?,
+                profile: value.profile?,
+                room_id: value.room_id?,
+                target_profile: value.target_profile?,
+                target_url: value.target_url?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CanonicalGroupsPeerRegisterParams>
+        for CanonicalGroupsPeerRegisterParams
+    {
+        fn from(value: super::CanonicalGroupsPeerRegisterParams) -> Self {
+            Self {
+                catalog: Ok(value.catalog),
+                grant: Ok(value.grant),
+                member_id: Ok(value.member_id),
+                profile: Ok(value.profile),
+                room_id: Ok(value.room_id),
+                target_profile: Ok(value.target_profile),
+                target_url: Ok(value.target_url),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct CanonicalGroupsPeerRevokeParams {
+        grant: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for CanonicalGroupsPeerRevokeParams {
+        fn default() -> Self {
+            Self {
+                grant: Err("no value supplied for grant".to_string()),
+                profile: Ok(Default::default()),
+            }
+        }
+    }
+    impl CanonicalGroupsPeerRevokeParams {
+        pub fn grant<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.grant = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for grant: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<CanonicalGroupsPeerRevokeParams>
+        for super::CanonicalGroupsPeerRevokeParams
+    {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: CanonicalGroupsPeerRevokeParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                grant: value.grant?,
+                profile: value.profile?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::CanonicalGroupsPeerRevokeParams>
+        for CanonicalGroupsPeerRevokeParams
+    {
+        fn from(value: super::CanonicalGroupsPeerRevokeParams) -> Self {
+            Self {
+                grant: Ok(value.grant),
+                profile: Ok(value.profile),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct CanonicalListParams {
         include_hidden: ::std::result::Result<bool, ::std::string::String>,
         limit: ::std::result::Result<i64, ::std::string::String>,
+        picker: ::std::result::Result<bool, ::std::string::String>,
         profile: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -29312,15 +30919,21 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        workspace: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for CanonicalListParams {
         fn default() -> Self {
             Self {
                 include_hidden: Ok(Default::default()),
                 limit: Ok(super::defaults::default_u64::<i64, 200>()),
+                picker: Ok(Default::default()),
                 profile: Ok(Default::default()),
                 scope: Ok(super::defaults::canonical_list_params_scope()),
                 title: Ok(Default::default()),
+                workspace: Ok(Default::default()),
             }
         }
     }
@@ -29343,6 +30956,16 @@ pub mod builder {
             self.limit = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for limit: {e}"));
+            self
+        }
+        pub fn picker<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.picker = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for picker: {e}"));
             self
         }
         pub fn profile<T>(mut self, value: T) -> Self
@@ -29375,6 +30998,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for title: {e}"));
             self
         }
+        pub fn workspace<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.workspace = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for workspace: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<CanonicalListParams> for super::CanonicalListParams {
         type Error = super::error::ConversionError;
@@ -29384,9 +31017,11 @@ pub mod builder {
             Ok(Self {
                 include_hidden: value.include_hidden?,
                 limit: value.limit?,
+                picker: value.picker?,
                 profile: value.profile?,
                 scope: value.scope?,
                 title: value.title?,
+                workspace: value.workspace?,
             })
         }
     }
@@ -29395,9 +31030,11 @@ pub mod builder {
             Self {
                 include_hidden: Ok(value.include_hidden),
                 limit: Ok(value.limit),
+                picker: Ok(value.picker),
                 profile: Ok(value.profile),
                 scope: Ok(value.scope),
                 title: Ok(value.title),
+                workspace: Ok(value.workspace),
             }
         }
     }
@@ -31242,12 +32879,13 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        archived: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         branch: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
-        browser_backend_notice: ::std::result::Result<
-            ::std::option::Option<::std::string::String>,
+        client: ::std::result::Result<
+            ::std::option::Option<super::CanonicalClientLabel>,
             ::std::string::String,
         >,
         config_warning: ::std::result::Result<
@@ -31360,6 +32998,7 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        usage: ::std::result::Result<::std::option::Option<super::Usage>, ::std::string::String>,
         version: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -31370,8 +33009,9 @@ pub mod builder {
         fn default() -> Self {
             Self {
                 api_mode: Ok(Default::default()),
+                archived: Ok(Default::default()),
                 branch: Ok(Default::default()),
-                browser_backend_notice: Ok(Default::default()),
+                client: Ok(Default::default()),
                 config_warning: Ok(Default::default()),
                 context_length: Ok(Default::default()),
                 credential_hint: Ok(Default::default()),
@@ -31405,6 +33045,7 @@ pub mod builder {
                 unknown_toolsets: Ok(Default::default()),
                 update_behind: Ok(Default::default()),
                 update_command: Ok(Default::default()),
+                usage: Ok(Default::default()),
                 version: Ok(Default::default()),
                 yolo: Ok(Default::default()),
             }
@@ -31421,6 +33062,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for api_mode: {e}"));
             self
         }
+        pub fn archived<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.archived = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for archived: {e}"));
+            self
+        }
         pub fn branch<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -31431,14 +33082,14 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for branch: {e}"));
             self
         }
-        pub fn browser_backend_notice<T>(mut self, value: T) -> Self
+        pub fn client<T>(mut self, value: T) -> Self
         where
-            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T: ::std::convert::TryInto<::std::option::Option<super::CanonicalClientLabel>>,
             T::Error: ::std::fmt::Display,
         {
-            self.browser_backend_notice = value.try_into().map_err(|e| {
-                format!("error converting supplied value for browser_backend_notice: {e}")
-            });
+            self.client = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for client: {e}"));
             self
         }
         pub fn config_warning<T>(mut self, value: T) -> Self
@@ -31803,6 +33454,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for update_command: {e}"));
             self
         }
+        pub fn usage<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::Usage>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.usage = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for usage: {e}"));
+            self
+        }
         pub fn version<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -31831,8 +33492,9 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 api_mode: value.api_mode?,
+                archived: value.archived?,
                 branch: value.branch?,
-                browser_backend_notice: value.browser_backend_notice?,
+                client: value.client?,
                 config_warning: value.config_warning?,
                 context_length: value.context_length?,
                 credential_hint: value.credential_hint?,
@@ -31866,6 +33528,7 @@ pub mod builder {
                 unknown_toolsets: value.unknown_toolsets?,
                 update_behind: value.update_behind?,
                 update_command: value.update_command?,
+                usage: value.usage?,
                 version: value.version?,
                 yolo: value.yolo?,
             })
@@ -31875,8 +33538,9 @@ pub mod builder {
         fn from(value: super::CanonicalSessionInfo) -> Self {
             Self {
                 api_mode: Ok(value.api_mode),
+                archived: Ok(value.archived),
                 branch: Ok(value.branch),
-                browser_backend_notice: Ok(value.browser_backend_notice),
+                client: Ok(value.client),
                 config_warning: Ok(value.config_warning),
                 context_length: Ok(value.context_length),
                 credential_hint: Ok(value.credential_hint),
@@ -31910,6 +33574,7 @@ pub mod builder {
                 unknown_toolsets: Ok(value.unknown_toolsets),
                 update_behind: Ok(value.update_behind),
                 update_command: Ok(value.update_command),
+                usage: Ok(value.usage),
                 version: Ok(value.version),
                 yolo: Ok(value.yolo),
             }
@@ -31957,9 +33622,27 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct CanonicalSessionListRow {
+        cwd: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        git_branch: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        last_active_at: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        last_reply: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         message_count: ::std::result::Result<i64, ::std::string::String>,
         model: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        pinned: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        preview: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
@@ -31979,13 +33662,23 @@ pub mod builder {
         >,
         started_at: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
         title: ::std::result::Result<::std::string::String, ::std::string::String>,
+        workspace: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for CanonicalSessionListRow {
         fn default() -> Self {
             Self {
+                cwd: Ok(Default::default()),
+                git_branch: Ok(Default::default()),
                 id: Err("no value supplied for id".to_string()),
+                last_active_at: Ok(Default::default()),
+                last_reply: Ok(Default::default()),
                 message_count: Err("no value supplied for message_count".to_string()),
                 model: Ok(Default::default()),
+                pinned: Ok(Default::default()),
+                preview: Ok(Default::default()),
                 resolved_id: Ok(Default::default()),
                 root_title: Ok(Default::default()),
                 running: Err("no value supplied for running".to_string()),
@@ -31993,10 +33686,31 @@ pub mod builder {
                 source: Err("no value supplied for source".to_string()),
                 started_at: Err("no value supplied for started_at".to_string()),
                 title: Err("no value supplied for title".to_string()),
+                workspace: Ok(Default::default()),
             }
         }
     }
     impl CanonicalSessionListRow {
+        pub fn cwd<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.cwd = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for cwd: {e}"));
+            self
+        }
+        pub fn git_branch<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.git_branch = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for git_branch: {e}"));
+            self
+        }
         pub fn id<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::string::String>,
@@ -32005,6 +33719,26 @@ pub mod builder {
             self.id = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for id: {e}"));
+            self
+        }
+        pub fn last_active_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<f64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.last_active_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for last_active_at: {e}"));
+            self
+        }
+        pub fn last_reply<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.last_reply = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for last_reply: {e}"));
             self
         }
         pub fn message_count<T>(mut self, value: T) -> Self
@@ -32025,6 +33759,26 @@ pub mod builder {
             self.model = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for model: {e}"));
+            self
+        }
+        pub fn pinned<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.pinned = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for pinned: {e}"));
+            self
+        }
+        pub fn preview<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.preview = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for preview: {e}"));
             self
         }
         pub fn resolved_id<T>(mut self, value: T) -> Self
@@ -32097,6 +33851,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for title: {e}"));
             self
         }
+        pub fn workspace<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.workspace = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for workspace: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<CanonicalSessionListRow> for super::CanonicalSessionListRow {
         type Error = super::error::ConversionError;
@@ -32104,9 +33868,15 @@ pub mod builder {
             value: CanonicalSessionListRow,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                cwd: value.cwd?,
+                git_branch: value.git_branch?,
                 id: value.id?,
+                last_active_at: value.last_active_at?,
+                last_reply: value.last_reply?,
                 message_count: value.message_count?,
                 model: value.model?,
+                pinned: value.pinned?,
+                preview: value.preview?,
                 resolved_id: value.resolved_id?,
                 root_title: value.root_title?,
                 running: value.running?,
@@ -32114,15 +33884,22 @@ pub mod builder {
                 source: value.source?,
                 started_at: value.started_at?,
                 title: value.title?,
+                workspace: value.workspace?,
             })
         }
     }
     impl ::std::convert::From<super::CanonicalSessionListRow> for CanonicalSessionListRow {
         fn from(value: super::CanonicalSessionListRow) -> Self {
             Self {
+                cwd: Ok(value.cwd),
+                git_branch: Ok(value.git_branch),
                 id: Ok(value.id),
+                last_active_at: Ok(value.last_active_at),
+                last_reply: Ok(value.last_reply),
                 message_count: Ok(value.message_count),
                 model: Ok(value.model),
+                pinned: Ok(value.pinned),
+                preview: Ok(value.preview),
                 resolved_id: Ok(value.resolved_id),
                 root_title: Ok(value.root_title),
                 running: Ok(value.running),
@@ -32130,6 +33907,7 @@ pub mod builder {
                 source: Ok(value.source),
                 started_at: Ok(value.started_at),
                 title: Ok(value.title),
+                workspace: Ok(value.workspace),
             }
         }
     }
@@ -32271,6 +34049,11 @@ pub mod builder {
         message_count: ::std::result::Result<i64, ::std::string::String>,
         messages:
             ::std::result::Result<::std::vec::Vec<super::TranscriptMessage>, ::std::string::String>,
+        messages_omitted: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        open_requests: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<super::OpenRequestEntry>>,
+            ::std::string::String,
+        >,
         pending: ::std::result::Result<
             ::std::vec::Vec<super::CanonicalPendingAdmission>,
             ::std::string::String,
@@ -32302,6 +34085,8 @@ pub mod builder {
                 last_sequence: Err("no value supplied for last_sequence".to_string()),
                 message_count: Err("no value supplied for message_count".to_string()),
                 messages: Err("no value supplied for messages".to_string()),
+                messages_omitted: Ok(Default::default()),
+                open_requests: Ok(Default::default()),
                 pending: Err("no value supplied for pending".to_string()),
                 pending_connection: Ok(Default::default()),
                 prompts: Err("no value supplied for prompts".to_string()),
@@ -32386,6 +34171,28 @@ pub mod builder {
             self.messages = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for messages: {e}"));
+            self
+        }
+        pub fn messages_omitted<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.messages_omitted = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for messages_omitted: {e}"));
+            self
+        }
+        pub fn open_requests<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<super::OpenRequestEntry>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.open_requests = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for open_requests: {e}"));
             self
         }
         pub fn pending<T>(mut self, value: T) -> Self
@@ -32502,6 +34309,8 @@ pub mod builder {
                 last_sequence: value.last_sequence?,
                 message_count: value.message_count?,
                 messages: value.messages?,
+                messages_omitted: value.messages_omitted?,
+                open_requests: value.open_requests?,
                 pending: value.pending?,
                 pending_connection: value.pending_connection?,
                 prompts: value.prompts?,
@@ -32525,6 +34334,8 @@ pub mod builder {
                 last_sequence: Ok(value.last_sequence),
                 message_count: Ok(value.message_count),
                 messages: Ok(value.messages),
+                messages_omitted: Ok(value.messages_omitted),
+                open_requests: Ok(value.open_requests),
                 pending: Ok(value.pending),
                 pending_connection: Ok(value.pending_connection),
                 prompts: Ok(value.prompts),
@@ -32544,12 +34355,13 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        archived: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         branch: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
-        browser_backend_notice: ::std::result::Result<
-            ::std::option::Option<::std::string::String>,
+        client: ::std::result::Result<
+            ::std::option::Option<super::CanonicalClientLabel>,
             ::std::string::String,
         >,
         config_warning: ::std::result::Result<
@@ -32671,6 +34483,7 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        usage: ::std::result::Result<::std::option::Option<super::Usage>, ::std::string::String>,
         version: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -32681,8 +34494,9 @@ pub mod builder {
         fn default() -> Self {
             Self {
                 api_mode: Ok(Default::default()),
+                archived: Ok(Default::default()),
                 branch: Ok(Default::default()),
-                browser_backend_notice: Ok(Default::default()),
+                client: Ok(Default::default()),
                 config_warning: Ok(Default::default()),
                 context_length: Ok(Default::default()),
                 credential_hint: Ok(Default::default()),
@@ -32716,6 +34530,7 @@ pub mod builder {
                 unknown_toolsets: Ok(Default::default()),
                 update_behind: Ok(Default::default()),
                 update_command: Ok(Default::default()),
+                usage: Ok(Default::default()),
                 version: Ok(Default::default()),
                 yolo: Ok(Default::default()),
             }
@@ -32732,6 +34547,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for api_mode: {e}"));
             self
         }
+        pub fn archived<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.archived = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for archived: {e}"));
+            self
+        }
         pub fn branch<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -32742,14 +34567,14 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for branch: {e}"));
             self
         }
-        pub fn browser_backend_notice<T>(mut self, value: T) -> Self
+        pub fn client<T>(mut self, value: T) -> Self
         where
-            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T: ::std::convert::TryInto<::std::option::Option<super::CanonicalClientLabel>>,
             T::Error: ::std::fmt::Display,
         {
-            self.browser_backend_notice = value.try_into().map_err(|e| {
-                format!("error converting supplied value for browser_backend_notice: {e}")
-            });
+            self.client = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for client: {e}"));
             self
         }
         pub fn config_warning<T>(mut self, value: T) -> Self
@@ -33114,6 +34939,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for update_command: {e}"));
             self
         }
+        pub fn usage<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::Usage>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.usage = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for usage: {e}"));
+            self
+        }
         pub fn version<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -33142,8 +34977,9 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 api_mode: value.api_mode?,
+                archived: value.archived?,
                 branch: value.branch?,
-                browser_backend_notice: value.browser_backend_notice?,
+                client: value.client?,
                 config_warning: value.config_warning?,
                 context_length: value.context_length?,
                 credential_hint: value.credential_hint?,
@@ -33177,6 +35013,7 @@ pub mod builder {
                 unknown_toolsets: value.unknown_toolsets?,
                 update_behind: value.update_behind?,
                 update_command: value.update_command?,
+                usage: value.usage?,
                 version: value.version?,
                 yolo: value.yolo?,
             })
@@ -33186,8 +35023,9 @@ pub mod builder {
         fn from(value: super::CanonicalSnapshotInfo) -> Self {
             Self {
                 api_mode: Ok(value.api_mode),
+                archived: Ok(value.archived),
                 branch: Ok(value.branch),
-                browser_backend_notice: Ok(value.browser_backend_notice),
+                client: Ok(value.client),
                 config_warning: Ok(value.config_warning),
                 context_length: Ok(value.context_length),
                 credential_hint: Ok(value.credential_hint),
@@ -33221,6 +35059,7 @@ pub mod builder {
                 unknown_toolsets: Ok(value.unknown_toolsets),
                 update_behind: Ok(value.update_behind),
                 update_command: Ok(value.update_command),
+                usage: Ok(value.usage),
                 version: Ok(value.version),
                 yolo: Ok(value.yolo),
             }
@@ -34820,16 +36659,28 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct ClientCapabilitiesParams {
+        desktop_local: ::std::result::Result<bool, ::std::string::String>,
         server_requests: ::std::result::Result<bool, ::std::string::String>,
     }
     impl ::std::default::Default for ClientCapabilitiesParams {
         fn default() -> Self {
             Self {
+                desktop_local: Ok(Default::default()),
                 server_requests: Ok(Default::default()),
             }
         }
     }
     impl ClientCapabilitiesParams {
+        pub fn desktop_local<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.desktop_local = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for desktop_local: {e}"));
+            self
+        }
         pub fn server_requests<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<bool>,
@@ -34847,6 +36698,7 @@ pub mod builder {
             value: ClientCapabilitiesParams,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                desktop_local: value.desktop_local?,
                 server_requests: value.server_requests?,
             })
         }
@@ -34854,12 +36706,14 @@ pub mod builder {
     impl ::std::convert::From<super::ClientCapabilitiesParams> for ClientCapabilitiesParams {
         fn from(value: super::ClientCapabilitiesParams) -> Self {
             Self {
+                desktop_local: Ok(value.desktop_local),
                 server_requests: Ok(value.server_requests),
             }
         }
     }
     #[derive(Clone, Debug)]
     pub struct ClientCapabilitiesResult {
+        canonical_clarify_batch: ::std::result::Result<bool, ::std::string::String>,
         declines_not_shown: ::std::result::Result<bool, ::std::string::String>,
         server_requests:
             ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
@@ -34867,12 +36721,23 @@ pub mod builder {
     impl ::std::default::Default for ClientCapabilitiesResult {
         fn default() -> Self {
             Self {
+                canonical_clarify_batch: Ok(Default::default()),
                 declines_not_shown: Ok(Default::default()),
                 server_requests: Err("no value supplied for server_requests".to_string()),
             }
         }
     }
     impl ClientCapabilitiesResult {
+        pub fn canonical_clarify_batch<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.canonical_clarify_batch = value.try_into().map_err(|e| {
+                format!("error converting supplied value for canonical_clarify_batch: {e}")
+            });
+            self
+        }
         pub fn declines_not_shown<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<bool>,
@@ -34900,6 +36765,7 @@ pub mod builder {
             value: ClientCapabilitiesResult,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                canonical_clarify_batch: value.canonical_clarify_batch?,
                 declines_not_shown: value.declines_not_shown?,
                 server_requests: value.server_requests?,
             })
@@ -34908,6 +36774,7 @@ pub mod builder {
     impl ::std::convert::From<super::ClientCapabilitiesResult> for ClientCapabilitiesResult {
         fn from(value: super::ClientCapabilitiesResult) -> Self {
             Self {
+                canonical_clarify_batch: Ok(value.canonical_clarify_batch),
                 declines_not_shown: Ok(value.declines_not_shown),
                 server_requests: Ok(value.server_requests),
             }
@@ -37719,6 +39586,10 @@ pub mod builder {
             ::std::string::String,
         >,
         kind: ::std::result::Result<super::ConnectionTargetKind, ::std::string::String>,
+        launch: ::std::result::Result<
+            ::std::option::Option<super::ConnectionTargetLaunch>,
+            ::std::string::String,
+        >,
         missing_env: ::std::result::Result<
             ::std::option::Option<::std::vec::Vec<::std::string::String>>,
             ::std::string::String,
@@ -37795,6 +39666,7 @@ pub mod builder {
                 hint: Ok(Default::default()),
                 instructions: Ok(Default::default()),
                 kind: Err("no value supplied for kind".to_string()),
+                launch: Ok(Default::default()),
                 missing_env: Ok(Default::default()),
                 name: Err("no value supplied for name".to_string()),
                 phase: Ok(Default::default()),
@@ -37984,6 +39856,16 @@ pub mod builder {
             self.kind = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for kind: {e}"));
+            self
+        }
+        pub fn launch<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::ConnectionTargetLaunch>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.launch = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for launch: {e}"));
             self
         }
         pub fn missing_env<T>(mut self, value: T) -> Self
@@ -38190,6 +40072,7 @@ pub mod builder {
                 hint: value.hint?,
                 instructions: value.instructions?,
                 kind: value.kind?,
+                launch: value.launch?,
                 missing_env: value.missing_env?,
                 name: value.name?,
                 phase: value.phase?,
@@ -38230,6 +40113,7 @@ pub mod builder {
                 hint: Ok(value.hint),
                 instructions: Ok(value.instructions),
                 kind: Ok(value.kind),
+                launch: Ok(value.launch),
                 missing_env: Ok(value.missing_env),
                 name: Ok(value.name),
                 phase: Ok(value.phase),
@@ -38618,6 +40502,96 @@ pub mod builder {
                 prompt: Ok(value.prompt),
                 required: Ok(value.required),
                 secret: Ok(value.secret),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct ConnectionTargetLaunch {
+        cwd: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        env: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+            ::std::string::String,
+        >,
+        kind: ::std::result::Result<super::ConnectionTargetLaunchKind, ::std::string::String>,
+        target: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for ConnectionTargetLaunch {
+        fn default() -> Self {
+            Self {
+                cwd: Ok(Default::default()),
+                env: Ok(Default::default()),
+                kind: Err("no value supplied for kind".to_string()),
+                target: Err("no value supplied for target".to_string()),
+            }
+        }
+    }
+    impl ConnectionTargetLaunch {
+        pub fn cwd<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.cwd = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for cwd: {e}"));
+            self
+        }
+        pub fn env<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.env = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for env: {e}"));
+            self
+        }
+        pub fn kind<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ConnectionTargetLaunchKind>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.kind = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for kind: {e}"));
+            self
+        }
+        pub fn target<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.target = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for target: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<ConnectionTargetLaunch> for super::ConnectionTargetLaunch {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: ConnectionTargetLaunch,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                cwd: value.cwd?,
+                env: value.env?,
+                kind: value.kind?,
+                target: value.target?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::ConnectionTargetLaunch> for ConnectionTargetLaunch {
+        fn from(value: super::ConnectionTargetLaunch) -> Self {
+            Self {
+                cwd: Ok(value.cwd),
+                env: Ok(value.env),
+                kind: Ok(value.kind),
+                target: Ok(value.target),
             }
         }
     }
@@ -41670,131 +43644,6 @@ pub mod builder {
                 loaded: Ok(value.loaded),
                 path: Ok(value.path),
                 status: Ok(value.status),
-            }
-        }
-    }
-    #[derive(Clone, Debug)]
-    pub struct ControllerScope {
-        browser_profile_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        capabilities:
-            ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
-        controller_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        principal_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        profile_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-        transport_family: ::std::result::Result<::std::string::String, ::std::string::String>,
-    }
-    impl ::std::default::Default for ControllerScope {
-        fn default() -> Self {
-            Self {
-                browser_profile_id: Err("no value supplied for browser_profile_id".to_string()),
-                capabilities: Err("no value supplied for capabilities".to_string()),
-                controller_id: Err("no value supplied for controller_id".to_string()),
-                principal_id: Err("no value supplied for principal_id".to_string()),
-                profile_id: Err("no value supplied for profile_id".to_string()),
-                session_id: Err("no value supplied for session_id".to_string()),
-                transport_family: Err("no value supplied for transport_family".to_string()),
-            }
-        }
-    }
-    impl ControllerScope {
-        pub fn browser_profile_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.browser_profile_id = value.try_into().map_err(|e| {
-                format!("error converting supplied value for browser_profile_id: {e}")
-            });
-            self
-        }
-        pub fn capabilities<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.capabilities = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for capabilities: {e}"));
-            self
-        }
-        pub fn controller_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.controller_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for controller_id: {e}"));
-            self
-        }
-        pub fn principal_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.principal_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for principal_id: {e}"));
-            self
-        }
-        pub fn profile_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.profile_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for profile_id: {e}"));
-            self
-        }
-        pub fn session_id<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.session_id = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
-            self
-        }
-        pub fn transport_family<T>(mut self, value: T) -> Self
-        where
-            T: ::std::convert::TryInto<::std::string::String>,
-            T::Error: ::std::fmt::Display,
-        {
-            self.transport_family = value
-                .try_into()
-                .map_err(|e| format!("error converting supplied value for transport_family: {e}"));
-            self
-        }
-    }
-    impl ::std::convert::TryFrom<ControllerScope> for super::ControllerScope {
-        type Error = super::error::ConversionError;
-        fn try_from(
-            value: ControllerScope,
-        ) -> ::std::result::Result<Self, super::error::ConversionError> {
-            Ok(Self {
-                browser_profile_id: value.browser_profile_id?,
-                capabilities: value.capabilities?,
-                controller_id: value.controller_id?,
-                principal_id: value.principal_id?,
-                profile_id: value.profile_id?,
-                session_id: value.session_id?,
-                transport_family: value.transport_family?,
-            })
-        }
-    }
-    impl ::std::convert::From<super::ControllerScope> for ControllerScope {
-        fn from(value: super::ControllerScope) -> Self {
-            Self {
-                browser_profile_id: Ok(value.browser_profile_id),
-                capabilities: Ok(value.capabilities),
-                controller_id: Ok(value.controller_id),
-                principal_id: Ok(value.principal_id),
-                profile_id: Ok(value.profile_id),
-                session_id: Ok(value.session_id),
-                transport_family: Ok(value.transport_family),
             }
         }
     }
@@ -46479,6 +48328,8 @@ pub mod builder {
         >,
         resets_at: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
         retryable: ::std::result::Result<bool, ::std::string::String>,
+        usage_limit:
+            ::std::result::Result<::std::option::Option<super::UsageLimit>, ::std::string::String>,
     }
     impl ::std::default::Default for ErrorSurface {
         fn default() -> Self {
@@ -46489,6 +48340,7 @@ pub mod builder {
                 provider: Ok(Default::default()),
                 resets_at: Ok(Default::default()),
                 retryable: Err("no value supplied for retryable".to_string()),
+                usage_limit: Ok(Default::default()),
             }
         }
     }
@@ -46553,6 +48405,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for retryable: {e}"));
             self
         }
+        pub fn usage_limit<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::UsageLimit>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.usage_limit = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for usage_limit: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<ErrorSurface> for super::ErrorSurface {
         type Error = super::error::ConversionError;
@@ -46566,6 +48428,7 @@ pub mod builder {
                 provider: value.provider?,
                 resets_at: value.resets_at?,
                 retryable: value.retryable?,
+                usage_limit: value.usage_limit?,
             })
         }
     }
@@ -46578,6 +48441,7 @@ pub mod builder {
                 provider: Ok(value.provider),
                 resets_at: Ok(value.resets_at),
                 retryable: Ok(value.retryable),
+                usage_limit: Ok(value.usage_limit),
             }
         }
     }
@@ -46727,6 +48591,10 @@ pub mod builder {
             ::std::string::String,
         >,
         session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        staged_upload: ::std::result::Result<
+            ::std::option::Option<super::StagedFileUpload>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for FileAttachParams {
         fn default() -> Self {
@@ -46736,6 +48604,7 @@ pub mod builder {
                 path: Ok(Default::default()),
                 profile: Ok(Default::default()),
                 session_id: Err("no value supplied for session_id".to_string()),
+                staged_upload: Ok(Default::default()),
             }
         }
     }
@@ -46790,6 +48659,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for session_id: {e}"));
             self
         }
+        pub fn staged_upload<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::StagedFileUpload>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.staged_upload = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for staged_upload: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<FileAttachParams> for super::FileAttachParams {
         type Error = super::error::ConversionError;
@@ -46802,6 +48681,7 @@ pub mod builder {
                 path: value.path?,
                 profile: value.profile?,
                 session_id: value.session_id?,
+                staged_upload: value.staged_upload?,
             })
         }
     }
@@ -46813,6 +48693,7 @@ pub mod builder {
                 path: Ok(value.path),
                 profile: Ok(value.profile),
                 session_id: Ok(value.session_id),
+                staged_upload: Ok(value.staged_upload),
             }
         }
     }
@@ -47399,6 +49280,63 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct FreeTierClaimNudgeParams {
+        kind: ::std::result::Result<super::Kind, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for FreeTierClaimNudgeParams {
+        fn default() -> Self {
+            Self {
+                kind: Ok(super::defaults::free_tier_claim_nudge_params_kind()),
+                profile: Ok(Default::default()),
+            }
+        }
+    }
+    impl FreeTierClaimNudgeParams {
+        pub fn kind<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Kind>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.kind = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for kind: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<FreeTierClaimNudgeParams> for super::FreeTierClaimNudgeParams {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: FreeTierClaimNudgeParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                kind: value.kind?,
+                profile: value.profile?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::FreeTierClaimNudgeParams> for FreeTierClaimNudgeParams {
+        fn from(value: super::FreeTierClaimNudgeParams) -> Self {
+            Self {
+                kind: Ok(value.kind),
+                profile: Ok(value.profile),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct FreeTierClaimNudgeResult {
         claimed: ::std::result::Result<bool, ::std::string::String>,
     }
@@ -47561,6 +49499,8 @@ pub mod builder {
             ::std::option::Option<super::FreeTierChallengePayload>,
             ::std::string::String,
         >,
+        connector_nudge_due_in:
+            ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         enabled: ::std::result::Result<bool, ::std::string::String>,
         error: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
@@ -47583,6 +49523,7 @@ pub mod builder {
             Self {
                 available: Err("no value supplied for available".to_string()),
                 challenge: Ok(Default::default()),
+                connector_nudge_due_in: Ok(Default::default()),
                 enabled: Err("no value supplied for enabled".to_string()),
                 error: Ok(Default::default()),
                 error_code: Ok(Default::default()),
@@ -47615,6 +49556,16 @@ pub mod builder {
             self.challenge = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for challenge: {e}"));
+            self
+        }
+        pub fn connector_nudge_due_in<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.connector_nudge_due_in = value.try_into().map_err(|e| {
+                format!("error converting supplied value for connector_nudge_due_in: {e}")
+            });
             self
         }
         pub fn enabled<T>(mut self, value: T) -> Self
@@ -47726,6 +49677,7 @@ pub mod builder {
             Ok(Self {
                 available: value.available?,
                 challenge: value.challenge?,
+                connector_nudge_due_in: value.connector_nudge_due_in?,
                 enabled: value.enabled?,
                 error: value.error?,
                 error_code: value.error_code?,
@@ -47744,6 +49696,7 @@ pub mod builder {
             Self {
                 available: Ok(value.available),
                 challenge: Ok(value.challenge),
+                connector_nudge_due_in: Ok(value.connector_nudge_due_in),
                 enabled: Ok(value.enabled),
                 error: Ok(value.error),
                 error_code: Ok(value.error_code),
@@ -48915,6 +50868,318 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct GroupsContextParams {
+        event_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        lead_member_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        notes: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        purpose: ::std::result::Result<::std::string::String, ::std::string::String>,
+        room_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        routing: ::std::result::Result<
+            ::std::option::Option<super::GroupsContextParamsRouting>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for GroupsContextParams {
+        fn default() -> Self {
+            Self {
+                event_id: Err("no value supplied for event_id".to_string()),
+                lead_member_id: Ok(Default::default()),
+                notes: Err("no value supplied for notes".to_string()),
+                profile: Ok(Default::default()),
+                purpose: Err("no value supplied for purpose".to_string()),
+                room_id: Err("no value supplied for room_id".to_string()),
+                routing: Ok(Default::default()),
+            }
+        }
+    }
+    impl GroupsContextParams {
+        pub fn event_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.event_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for event_id: {e}"));
+            self
+        }
+        pub fn lead_member_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.lead_member_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for lead_member_id: {e}"));
+            self
+        }
+        pub fn notes<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.notes = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for notes: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+        pub fn purpose<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.purpose = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for purpose: {e}"));
+            self
+        }
+        pub fn room_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.room_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for room_id: {e}"));
+            self
+        }
+        pub fn routing<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::GroupsContextParamsRouting>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.routing = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for routing: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<GroupsContextParams> for super::GroupsContextParams {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: GroupsContextParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                event_id: value.event_id?,
+                lead_member_id: value.lead_member_id?,
+                notes: value.notes?,
+                profile: value.profile?,
+                purpose: value.purpose?,
+                room_id: value.room_id?,
+                routing: value.routing?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::GroupsContextParams> for GroupsContextParams {
+        fn from(value: super::GroupsContextParams) -> Self {
+            Self {
+                event_id: Ok(value.event_id),
+                lead_member_id: Ok(value.lead_member_id),
+                notes: Ok(value.notes),
+                profile: Ok(value.profile),
+                purpose: Ok(value.purpose),
+                room_id: Ok(value.room_id),
+                routing: Ok(value.routing),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct GroupsContextResult {
+        context: ::std::result::Result<super::RoomContext, ::std::string::String>,
+        event: ::std::result::Result<super::RoomEvent, ::std::string::String>,
+    }
+    impl ::std::default::Default for GroupsContextResult {
+        fn default() -> Self {
+            Self {
+                context: Err("no value supplied for context".to_string()),
+                event: Err("no value supplied for event".to_string()),
+            }
+        }
+    }
+    impl GroupsContextResult {
+        pub fn context<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::RoomContext>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.context = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for context: {e}"));
+            self
+        }
+        pub fn event<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::RoomEvent>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.event = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for event: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<GroupsContextResult> for super::GroupsContextResult {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: GroupsContextResult,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                context: value.context?,
+                event: value.event?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::GroupsContextResult> for GroupsContextResult {
+        fn from(value: super::GroupsContextResult) -> Self {
+            Self {
+                context: Ok(value.context),
+                event: Ok(value.event),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct GroupsContinueParams {
+        discussion_event_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        room_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for GroupsContinueParams {
+        fn default() -> Self {
+            Self {
+                discussion_event_id: Err("no value supplied for discussion_event_id".to_string()),
+                profile: Ok(Default::default()),
+                room_id: Err("no value supplied for room_id".to_string()),
+            }
+        }
+    }
+    impl GroupsContinueParams {
+        pub fn discussion_event_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.discussion_event_id = value.try_into().map_err(|e| {
+                format!("error converting supplied value for discussion_event_id: {e}")
+            });
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+        pub fn room_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.room_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for room_id: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<GroupsContinueParams> for super::GroupsContinueParams {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: GroupsContinueParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                discussion_event_id: value.discussion_event_id?,
+                profile: value.profile?,
+                room_id: value.room_id?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::GroupsContinueParams> for GroupsContinueParams {
+        fn from(value: super::GroupsContinueParams) -> Self {
+            Self {
+                discussion_event_id: Ok(value.discussion_event_id),
+                profile: Ok(value.profile),
+                room_id: Ok(value.room_id),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct GroupsContinueResult {
+        continued: ::std::result::Result<bool, ::std::string::String>,
+        event: ::std::result::Result<super::RoomEvent, ::std::string::String>,
+    }
+    impl ::std::default::Default for GroupsContinueResult {
+        fn default() -> Self {
+            Self {
+                continued: Ok(super::defaults::default_bool::<true>()),
+                event: Err("no value supplied for event".to_string()),
+            }
+        }
+    }
+    impl GroupsContinueResult {
+        pub fn continued<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.continued = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for continued: {e}"));
+            self
+        }
+        pub fn event<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::RoomEvent>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.event = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for event: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<GroupsContinueResult> for super::GroupsContinueResult {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: GroupsContinueResult,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                continued: value.continued?,
+                event: value.event?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::GroupsContinueResult> for GroupsContinueResult {
+        fn from(value: super::GroupsContinueResult) -> Self {
+            Self {
+                continued: Ok(value.continued),
+                event: Ok(value.event),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct GroupsCreateParams {
         authority_gateway_id: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
@@ -49852,6 +52117,8 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        status_ttl_seconds:
+            ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
         ttl_seconds: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
     }
     impl ::std::default::Default for GroupsPeerInviteParams {
@@ -49864,6 +52131,7 @@ pub mod builder {
                 member_id: Ok(Default::default()),
                 profile: Ok(Default::default()),
                 room_id: Ok(Default::default()),
+                status_ttl_seconds: Ok(Default::default()),
                 ttl_seconds: Ok(Default::default()),
             }
         }
@@ -49939,6 +52207,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for room_id: {e}"));
             self
         }
+        pub fn status_ttl_seconds<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<f64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status_ttl_seconds = value.try_into().map_err(|e| {
+                format!("error converting supplied value for status_ttl_seconds: {e}")
+            });
+            self
+        }
         pub fn ttl_seconds<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<f64>>,
@@ -49963,6 +52241,7 @@ pub mod builder {
                 member_id: value.member_id?,
                 profile: value.profile?,
                 room_id: value.room_id?,
+                status_ttl_seconds: value.status_ttl_seconds?,
                 ttl_seconds: value.ttl_seconds?,
             })
         }
@@ -49977,6 +52256,7 @@ pub mod builder {
                 member_id: Ok(value.member_id),
                 profile: Ok(value.profile),
                 room_id: Ok(value.room_id),
+                status_ttl_seconds: Ok(value.status_ttl_seconds),
                 ttl_seconds: Ok(value.ttl_seconds),
             }
         }
@@ -51169,6 +53449,12 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct GroupsRetryParams {
+        execution_generation:
+            ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        member_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         profile: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -51179,6 +53465,8 @@ pub mod builder {
     impl ::std::default::Default for GroupsRetryParams {
         fn default() -> Self {
             Self {
+                execution_generation: Ok(Default::default()),
+                member_id: Ok(Default::default()),
                 profile: Ok(Default::default()),
                 room_id: Err("no value supplied for room_id".to_string()),
                 task_id: Err("no value supplied for task_id".to_string()),
@@ -51186,6 +53474,26 @@ pub mod builder {
         }
     }
     impl GroupsRetryParams {
+        pub fn execution_generation<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.execution_generation = value.try_into().map_err(|e| {
+                format!("error converting supplied value for execution_generation: {e}")
+            });
+            self
+        }
+        pub fn member_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.member_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for member_id: {e}"));
+            self
+        }
         pub fn profile<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -51223,6 +53531,8 @@ pub mod builder {
             value: GroupsRetryParams,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                execution_generation: value.execution_generation?,
+                member_id: value.member_id?,
                 profile: value.profile?,
                 room_id: value.room_id?,
                 task_id: value.task_id?,
@@ -51232,6 +53542,8 @@ pub mod builder {
     impl ::std::convert::From<super::GroupsRetryParams> for GroupsRetryParams {
         fn from(value: super::GroupsRetryParams) -> Self {
             Self {
+                execution_generation: Ok(value.execution_generation),
+                member_id: Ok(value.member_id),
                 profile: Ok(value.profile),
                 room_id: Ok(value.room_id),
                 task_id: Ok(value.task_id),
@@ -51544,6 +53856,8 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct GroupsStateResult {
+        context:
+            ::std::result::Result<::std::option::Option<super::RoomContext>, ::std::string::String>,
         driver_status: ::std::result::Result<
             ::std::option::Option<super::RoomDriverStatus>,
             ::std::string::String,
@@ -51553,12 +53867,23 @@ pub mod builder {
     impl ::std::default::Default for GroupsStateResult {
         fn default() -> Self {
             Self {
+                context: Ok(Default::default()),
                 driver_status: Ok(Default::default()),
                 room: Err("no value supplied for room".to_string()),
             }
         }
     }
     impl GroupsStateResult {
+        pub fn context<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::RoomContext>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.context = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for context: {e}"));
+            self
+        }
         pub fn driver_status<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<super::RoomDriverStatus>>,
@@ -51586,6 +53911,7 @@ pub mod builder {
             value: GroupsStateResult,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                context: value.context?,
                 driver_status: value.driver_status?,
                 room: value.room?,
             })
@@ -51594,6 +53920,7 @@ pub mod builder {
     impl ::std::convert::From<super::GroupsStateResult> for GroupsStateResult {
         fn from(value: super::GroupsStateResult) -> Self {
             Self {
+                context: Ok(value.context),
                 driver_status: Ok(value.driver_status),
                 room: Ok(value.room),
             }
@@ -52875,6 +55202,242 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct ImageRenderParams {
+        cols: ::std::result::Result<i64, ::std::string::String>,
+        graphics: ::std::result::Result<bool, ::std::string::String>,
+        path: ::std::result::Result<::std::string::String, ::std::string::String>,
+        rows: ::std::result::Result<i64, ::std::string::String>,
+        terminal: ::std::result::Result<super::Terminal, ::std::string::String>,
+    }
+    impl ::std::default::Default for ImageRenderParams {
+        fn default() -> Self {
+            Self {
+                cols: Err("no value supplied for cols".to_string()),
+                graphics: Ok(Default::default()),
+                path: Err("no value supplied for path".to_string()),
+                rows: Err("no value supplied for rows".to_string()),
+                terminal: Ok(super::defaults::image_render_params_terminal()),
+            }
+        }
+    }
+    impl ImageRenderParams {
+        pub fn cols<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<i64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.cols = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for cols: {e}"));
+            self
+        }
+        pub fn graphics<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.graphics = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for graphics: {e}"));
+            self
+        }
+        pub fn path<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.path = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for path: {e}"));
+            self
+        }
+        pub fn rows<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<i64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.rows = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for rows: {e}"));
+            self
+        }
+        pub fn terminal<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Terminal>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.terminal = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for terminal: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<ImageRenderParams> for super::ImageRenderParams {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: ImageRenderParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                cols: value.cols?,
+                graphics: value.graphics?,
+                path: value.path?,
+                rows: value.rows?,
+                terminal: value.terminal?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::ImageRenderParams> for ImageRenderParams {
+        fn from(value: super::ImageRenderParams) -> Self {
+            Self {
+                cols: Ok(value.cols),
+                graphics: Ok(value.graphics),
+                path: Ok(value.path),
+                rows: Ok(value.rows),
+                terminal: Ok(value.terminal),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct ImageRenderResult {
+        cells: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<::std::vec::Vec<::std::vec::Vec<i64>>>>,
+            ::std::string::String,
+        >,
+        color: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        cols: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        mode: ::std::result::Result<super::ImageRenderResultMode, ::std::string::String>,
+        placeholder: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+            ::std::string::String,
+        >,
+        rows: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        transmit: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for ImageRenderResult {
+        fn default() -> Self {
+            Self {
+                cells: Ok(Default::default()),
+                color: Ok(Default::default()),
+                cols: Ok(Default::default()),
+                mode: Err("no value supplied for mode".to_string()),
+                placeholder: Ok(Default::default()),
+                rows: Ok(Default::default()),
+                transmit: Ok(Default::default()),
+            }
+        }
+    }
+    impl ImageRenderResult {
+        pub fn cells<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<::std::vec::Vec<::std::vec::Vec<i64>>>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.cells = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for cells: {e}"));
+            self
+        }
+        pub fn color<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.color = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for color: {e}"));
+            self
+        }
+        pub fn cols<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.cols = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for cols: {e}"));
+            self
+        }
+        pub fn mode<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::ImageRenderResultMode>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.mode = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for mode: {e}"));
+            self
+        }
+        pub fn placeholder<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.placeholder = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for placeholder: {e}"));
+            self
+        }
+        pub fn rows<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.rows = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for rows: {e}"));
+            self
+        }
+        pub fn transmit<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.transmit = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for transmit: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<ImageRenderResult> for super::ImageRenderResult {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: ImageRenderResult,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                cells: value.cells?,
+                color: value.color?,
+                cols: value.cols?,
+                mode: value.mode?,
+                placeholder: value.placeholder?,
+                rows: value.rows?,
+                transmit: value.transmit?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::ImageRenderResult> for ImageRenderResult {
+        fn from(value: super::ImageRenderResult) -> Self {
+            Self {
+                cells: Ok(value.cells),
+                color: Ok(value.color),
+                cols: Ok(value.cols),
+                mode: Ok(value.mode),
+                placeholder: Ok(value.placeholder),
+                rows: Ok(value.rows),
+                transmit: Ok(value.transmit),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct InflightTurn {
         assistant: ::std::result::Result<::std::string::String, ::std::string::String>,
         correction_offsets: ::std::result::Result<
@@ -53604,6 +56167,8 @@ pub mod builder {
         id: ::std::result::Result<::std::string::String, ::std::string::String>,
         rtl: ::std::result::Result<bool, ::std::string::String>,
         source: ::std::result::Result<::std::string::String, ::std::string::String>,
+        surfaces:
+            ::std::result::Result<::std::vec::Vec<super::LocaleSurface>, ::std::string::String>,
     }
     impl ::std::default::Default for LanguageOption {
         fn default() -> Self {
@@ -53612,6 +56177,7 @@ pub mod builder {
                 id: Err("no value supplied for id".to_string()),
                 rtl: Err("no value supplied for rtl".to_string()),
                 source: Err("no value supplied for source".to_string()),
+                surfaces: Err("no value supplied for surfaces".to_string()),
             }
         }
     }
@@ -53656,6 +56222,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for source: {e}"));
             self
         }
+        pub fn surfaces<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::LocaleSurface>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.surfaces = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for surfaces: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<LanguageOption> for super::LanguageOption {
         type Error = super::error::ConversionError;
@@ -53667,6 +56243,7 @@ pub mod builder {
                 id: value.id?,
                 rtl: value.rtl?,
                 source: value.source?,
+                surfaces: value.surfaces?,
             })
         }
     }
@@ -53677,6 +56254,7 @@ pub mod builder {
                 id: Ok(value.id),
                 rtl: Ok(value.rtl),
                 source: Ok(value.source),
+                surfaces: Ok(value.surfaces),
             }
         }
     }
@@ -56596,6 +59174,7 @@ pub mod builder {
         connected: ::std::result::Result<bool, ::std::string::String>,
         disabled: ::std::result::Result<bool, ::std::string::String>,
         name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        needs_auth: ::std::result::Result<bool, ::std::string::String>,
         plugin: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -56611,6 +59190,7 @@ pub mod builder {
                 connected: Err("no value supplied for connected".to_string()),
                 disabled: Err("no value supplied for disabled".to_string()),
                 name: Err("no value supplied for name".to_string()),
+                needs_auth: Ok(Default::default()),
                 plugin: Ok(Default::default()),
                 source: Err("no value supplied for source".to_string()),
                 status: Err("no value supplied for status".to_string()),
@@ -56648,6 +59228,16 @@ pub mod builder {
             self.name = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn needs_auth<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.needs_auth = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for needs_auth: {e}"));
             self
         }
         pub fn plugin<T>(mut self, value: T) -> Self
@@ -56710,6 +59300,7 @@ pub mod builder {
                 connected: value.connected?,
                 disabled: value.disabled?,
                 name: value.name?,
+                needs_auth: value.needs_auth?,
                 plugin: value.plugin?,
                 source: value.source?,
                 status: value.status?,
@@ -56724,6 +59315,7 @@ pub mod builder {
                 connected: Ok(value.connected),
                 disabled: Ok(value.disabled),
                 name: Ok(value.name),
+                needs_auth: Ok(value.needs_auth),
                 plugin: Ok(value.plugin),
                 source: Ok(value.source),
                 status: Ok(value.status),
@@ -57942,11 +60534,17 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct MessageDeltaPayload {
+        offset: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         rendered: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        segment: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         text: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        turn_id: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
@@ -57955,13 +60553,26 @@ pub mod builder {
     impl ::std::default::Default for MessageDeltaPayload {
         fn default() -> Self {
             Self {
+                offset: Ok(Default::default()),
                 rendered: Ok(Default::default()),
+                segment: Ok(Default::default()),
                 text: Err("no value supplied for text".to_string()),
+                turn_id: Ok(Default::default()),
                 verbose: Ok(Default::default()),
             }
         }
     }
     impl MessageDeltaPayload {
+        pub fn offset<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.offset = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for offset: {e}"));
+            self
+        }
         pub fn rendered<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -57972,6 +60583,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for rendered: {e}"));
             self
         }
+        pub fn segment<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.segment = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for segment: {e}"));
+            self
+        }
         pub fn text<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -57980,6 +60601,16 @@ pub mod builder {
             self.text = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for text: {e}"));
+            self
+        }
+        pub fn turn_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.turn_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for turn_id: {e}"));
             self
         }
         pub fn verbose<T>(mut self, value: T) -> Self
@@ -57999,8 +60630,11 @@ pub mod builder {
             value: MessageDeltaPayload,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                offset: value.offset?,
                 rendered: value.rendered?,
+                segment: value.segment?,
                 text: value.text?,
+                turn_id: value.turn_id?,
                 verbose: value.verbose?,
             })
         }
@@ -58008,8 +60642,11 @@ pub mod builder {
     impl ::std::convert::From<super::MessageDeltaPayload> for MessageDeltaPayload {
         fn from(value: super::MessageDeltaPayload) -> Self {
             Self {
+                offset: Ok(value.offset),
                 rendered: Ok(value.rendered),
+                segment: Ok(value.segment),
                 text: Ok(value.text),
+                turn_id: Ok(value.turn_id),
                 verbose: Ok(value.verbose),
             }
         }
@@ -58017,13 +60654,20 @@ pub mod builder {
     #[derive(Clone, Debug)]
     pub struct MessageInterimPayload {
         already_streamed: ::std::result::Result<bool, ::std::string::String>,
+        segment: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         text: ::std::result::Result<::std::string::String, ::std::string::String>,
+        turn_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for MessageInterimPayload {
         fn default() -> Self {
             Self {
                 already_streamed: Err("no value supplied for already_streamed".to_string()),
+                segment: Ok(Default::default()),
                 text: Err("no value supplied for text".to_string()),
+                turn_id: Ok(Default::default()),
             }
         }
     }
@@ -58038,6 +60682,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for already_streamed: {e}"));
             self
         }
+        pub fn segment<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.segment = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for segment: {e}"));
+            self
+        }
         pub fn text<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::string::String>,
@@ -58048,6 +60702,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for text: {e}"));
             self
         }
+        pub fn turn_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.turn_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for turn_id: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<MessageInterimPayload> for super::MessageInterimPayload {
         type Error = super::error::ConversionError;
@@ -58056,7 +60720,9 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 already_streamed: value.already_streamed?,
+                segment: value.segment?,
                 text: value.text?,
+                turn_id: value.turn_id?,
             })
         }
     }
@@ -58064,7 +60730,9 @@ pub mod builder {
         fn from(value: super::MessageInterimPayload) -> Self {
             Self {
                 already_streamed: Ok(value.already_streamed),
+                segment: Ok(value.segment),
                 text: Ok(value.text),
+                turn_id: Ok(value.turn_id),
             }
         }
     }
@@ -58414,6 +61082,10 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        turn_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for MessageStartPayload {
         fn default() -> Self {
@@ -58422,6 +61094,7 @@ pub mod builder {
                 display_text: Ok(Default::default()),
                 notification_category: Ok(Default::default()),
                 text: Ok(Default::default()),
+                turn_id: Ok(Default::default()),
             }
         }
     }
@@ -58466,6 +61139,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for text: {e}"));
             self
         }
+        pub fn turn_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.turn_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for turn_id: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<MessageStartPayload> for super::MessageStartPayload {
         type Error = super::error::ConversionError;
@@ -58477,6 +61160,7 @@ pub mod builder {
                 display_text: value.display_text?,
                 notification_category: value.notification_category?,
                 text: value.text?,
+                turn_id: value.turn_id?,
             })
         }
     }
@@ -58487,6 +61171,7 @@ pub mod builder {
                 display_text: Ok(value.display_text),
                 notification_category: Ok(value.notification_category),
                 text: Ok(value.text),
+                turn_id: Ok(value.turn_id),
             }
         }
     }
@@ -58769,6 +61454,7 @@ pub mod builder {
     pub struct ModelCapabilities {
         can_disable_reasoning:
             ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        daybreak: ::std::result::Result<bool, ::std::string::String>,
         fast: ::std::result::Result<bool, ::std::string::String>,
         reasoning: ::std::result::Result<bool, ::std::string::String>,
         ultrafast: ::std::result::Result<bool, ::std::string::String>,
@@ -58777,6 +61463,7 @@ pub mod builder {
         fn default() -> Self {
             Self {
                 can_disable_reasoning: Ok(Default::default()),
+                daybreak: Ok(Default::default()),
                 fast: Err("no value supplied for fast".to_string()),
                 reasoning: Err("no value supplied for reasoning".to_string()),
                 ultrafast: Ok(Default::default()),
@@ -58792,6 +61479,16 @@ pub mod builder {
             self.can_disable_reasoning = value.try_into().map_err(|e| {
                 format!("error converting supplied value for can_disable_reasoning: {e}")
             });
+            self
+        }
+        pub fn daybreak<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.daybreak = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for daybreak: {e}"));
             self
         }
         pub fn fast<T>(mut self, value: T) -> Self
@@ -58832,6 +61529,7 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 can_disable_reasoning: value.can_disable_reasoning?,
+                daybreak: value.daybreak?,
                 fast: value.fast?,
                 reasoning: value.reasoning?,
                 ultrafast: value.ultrafast?,
@@ -58842,6 +61540,7 @@ pub mod builder {
         fn from(value: super::ModelCapabilities) -> Self {
             Self {
                 can_disable_reasoning: Ok(value.can_disable_reasoning),
+                daybreak: Ok(value.daybreak),
                 fast: Ok(value.fast),
                 reasoning: Ok(value.reasoning),
                 ultrafast: Ok(value.ultrafast),
@@ -59015,6 +61714,8 @@ pub mod builder {
         models:
             ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
         name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        plan_usage:
+            ::std::result::Result<::std::option::Option<super::PlanUsage>, ::std::string::String>,
         pricing: ::std::result::Result<
             ::std::option::Option<
                 ::std::collections::HashMap<::std::string::String, super::ModelPricing>,
@@ -59034,6 +61735,12 @@ pub mod builder {
         >,
         usage: ::std::result::Result<
             ::std::option::Option<super::ProviderUsage>,
+            ::std::string::String,
+        >,
+        usage_levels: ::std::result::Result<
+            ::std::option::Option<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+            >,
             ::std::string::String,
         >,
         warning: ::std::result::Result<
@@ -59059,6 +61766,7 @@ pub mod builder {
                 limit: Ok(Default::default()),
                 models: Ok(Default::default()),
                 name: Err("no value supplied for name".to_string()),
+                plan_usage: Ok(Default::default()),
                 pricing: Ok(Default::default()),
                 pricing_pending: Ok(Default::default()),
                 slug: Err("no value supplied for slug".to_string()),
@@ -59066,6 +61774,7 @@ pub mod builder {
                 total_models: Ok(Default::default()),
                 unavailable_models: Ok(Default::default()),
                 usage: Ok(Default::default()),
+                usage_levels: Ok(Default::default()),
                 warning: Ok(Default::default()),
             }
         }
@@ -59232,6 +61941,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for name: {e}"));
             self
         }
+        pub fn plan_usage<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::PlanUsage>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.plan_usage = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for plan_usage: {e}"));
+            self
+        }
         pub fn pricing<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<
@@ -59308,6 +62027,20 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for usage: {e}"));
             self
         }
+        pub fn usage_levels<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.usage_levels = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for usage_levels: {e}"));
+            self
+        }
         pub fn warning<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -59340,6 +62073,7 @@ pub mod builder {
                 limit: value.limit?,
                 models: value.models?,
                 name: value.name?,
+                plan_usage: value.plan_usage?,
                 pricing: value.pricing?,
                 pricing_pending: value.pricing_pending?,
                 slug: value.slug?,
@@ -59347,6 +62081,7 @@ pub mod builder {
                 total_models: value.total_models?,
                 unavailable_models: value.unavailable_models?,
                 usage: value.usage?,
+                usage_levels: value.usage_levels?,
                 warning: value.warning?,
             })
         }
@@ -59369,6 +62104,7 @@ pub mod builder {
                 limit: Ok(value.limit),
                 models: Ok(value.models),
                 name: Ok(value.name),
+                plan_usage: Ok(value.plan_usage),
                 pricing: Ok(value.pricing),
                 pricing_pending: Ok(value.pricing_pending),
                 slug: Ok(value.slug),
@@ -59376,6 +62112,7 @@ pub mod builder {
                 total_models: Ok(value.total_models),
                 unavailable_models: Ok(value.unavailable_models),
                 usage: Ok(value.usage),
+                usage_levels: Ok(value.usage_levels),
                 warning: Ok(value.warning),
             }
         }
@@ -61812,6 +64549,7 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        terminal: ::std::result::Result<super::Terminal, ::std::string::String>,
     }
     impl ::std::default::Default for PetCellsParams {
         fn default() -> Self {
@@ -61820,6 +64558,7 @@ pub mod builder {
                 graphics: Ok(Default::default()),
                 profile: Ok(Default::default()),
                 state: Ok(Default::default()),
+                terminal: Ok(super::defaults::pet_cells_params_terminal()),
             }
         }
     }
@@ -61864,6 +64603,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for state: {e}"));
             self
         }
+        pub fn terminal<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Terminal>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.terminal = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for terminal: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<PetCellsParams> for super::PetCellsParams {
         type Error = super::error::ConversionError;
@@ -61875,6 +64624,7 @@ pub mod builder {
                 graphics: value.graphics?,
                 profile: value.profile?,
                 state: value.state?,
+                terminal: value.terminal?,
             })
         }
     }
@@ -61885,6 +64635,7 @@ pub mod builder {
                 graphics: Ok(value.graphics),
                 profile: Ok(value.profile),
                 state: Ok(value.state),
+                terminal: Ok(value.terminal),
             }
         }
     }
@@ -64516,6 +67267,346 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct PlanGauge {
+        id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        label: ::std::result::Result<::std::string::String, ::std::string::String>,
+        resets_at_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        used_bp: ::std::result::Result<i64, ::std::string::String>,
+    }
+    impl ::std::default::Default for PlanGauge {
+        fn default() -> Self {
+            Self {
+                id: Err("no value supplied for id".to_string()),
+                label: Err("no value supplied for label".to_string()),
+                resets_at_ms: Ok(Default::default()),
+                used_bp: Err("no value supplied for used_bp".to_string()),
+            }
+        }
+    }
+    impl PlanGauge {
+        pub fn id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for id: {e}"));
+            self
+        }
+        pub fn label<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.label = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for label: {e}"));
+            self
+        }
+        pub fn resets_at_ms<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.resets_at_ms = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for resets_at_ms: {e}"));
+            self
+        }
+        pub fn used_bp<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<i64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.used_bp = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for used_bp: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<PlanGauge> for super::PlanGauge {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: PlanGauge,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                id: value.id?,
+                label: value.label?,
+                resets_at_ms: value.resets_at_ms?,
+                used_bp: value.used_bp?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::PlanGauge> for PlanGauge {
+        fn from(value: super::PlanGauge) -> Self {
+            Self {
+                id: Ok(value.id),
+                label: Ok(value.label),
+                resets_at_ms: Ok(value.resets_at_ms),
+                used_bp: Ok(value.used_bp),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct PlanUsage {
+        credits_pay: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        featured_model_ids:
+            ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
+        gauges:
+            ::std::result::Result<::std::vec::Vec<super::PlanUsageGauge>, ::std::string::String>,
+        kind: ::std::result::Result<::std::string::String, ::std::string::String>,
+        paused_reason: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        plan: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        subscription_model_ids:
+            ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
+        top_tier_model_ids:
+            ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
+    }
+    impl ::std::default::Default for PlanUsage {
+        fn default() -> Self {
+            Self {
+                credits_pay: Ok(Default::default()),
+                featured_model_ids: Ok(Default::default()),
+                gauges: Ok(Default::default()),
+                kind: Err("no value supplied for kind".to_string()),
+                paused_reason: Ok(Default::default()),
+                plan: Ok(Default::default()),
+                subscription_model_ids: Ok(Default::default()),
+                top_tier_model_ids: Ok(Default::default()),
+            }
+        }
+    }
+    impl PlanUsage {
+        pub fn credits_pay<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.credits_pay = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for credits_pay: {e}"));
+            self
+        }
+        pub fn featured_model_ids<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.featured_model_ids = value.try_into().map_err(|e| {
+                format!("error converting supplied value for featured_model_ids: {e}")
+            });
+            self
+        }
+        pub fn gauges<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::PlanUsageGauge>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.gauges = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for gauges: {e}"));
+            self
+        }
+        pub fn kind<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.kind = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for kind: {e}"));
+            self
+        }
+        pub fn paused_reason<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.paused_reason = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for paused_reason: {e}"));
+            self
+        }
+        pub fn plan<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.plan = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for plan: {e}"));
+            self
+        }
+        pub fn subscription_model_ids<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.subscription_model_ids = value.try_into().map_err(|e| {
+                format!("error converting supplied value for subscription_model_ids: {e}")
+            });
+            self
+        }
+        pub fn top_tier_model_ids<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.top_tier_model_ids = value.try_into().map_err(|e| {
+                format!("error converting supplied value for top_tier_model_ids: {e}")
+            });
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<PlanUsage> for super::PlanUsage {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: PlanUsage,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                credits_pay: value.credits_pay?,
+                featured_model_ids: value.featured_model_ids?,
+                gauges: value.gauges?,
+                kind: value.kind?,
+                paused_reason: value.paused_reason?,
+                plan: value.plan?,
+                subscription_model_ids: value.subscription_model_ids?,
+                top_tier_model_ids: value.top_tier_model_ids?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::PlanUsage> for PlanUsage {
+        fn from(value: super::PlanUsage) -> Self {
+            Self {
+                credits_pay: Ok(value.credits_pay),
+                featured_model_ids: Ok(value.featured_model_ids),
+                gauges: Ok(value.gauges),
+                kind: Ok(value.kind),
+                paused_reason: Ok(value.paused_reason),
+                plan: Ok(value.plan),
+                subscription_model_ids: Ok(value.subscription_model_ids),
+                top_tier_model_ids: Ok(value.top_tier_model_ids),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct PlanUsageGauge {
+        label: ::std::result::Result<::std::string::String, ::std::string::String>,
+        left_fraction: ::std::result::Result<f64, ::std::string::String>,
+        resets_at_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        scope: ::std::result::Result<::std::string::String, ::std::string::String>,
+        style: ::std::result::Result<::std::string::String, ::std::string::String>,
+        title: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for PlanUsageGauge {
+        fn default() -> Self {
+            Self {
+                label: Err("no value supplied for label".to_string()),
+                left_fraction: Err("no value supplied for left_fraction".to_string()),
+                resets_at_ms: Ok(Default::default()),
+                scope: Ok(super::defaults::plan_usage_gauge_scope()),
+                style: Err("no value supplied for style".to_string()),
+                title: Ok(Default::default()),
+            }
+        }
+    }
+    impl PlanUsageGauge {
+        pub fn label<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.label = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for label: {e}"));
+            self
+        }
+        pub fn left_fraction<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<f64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.left_fraction = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for left_fraction: {e}"));
+            self
+        }
+        pub fn resets_at_ms<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.resets_at_ms = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for resets_at_ms: {e}"));
+            self
+        }
+        pub fn scope<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.scope = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for scope: {e}"));
+            self
+        }
+        pub fn style<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.style = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for style: {e}"));
+            self
+        }
+        pub fn title<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.title = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for title: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<PlanUsageGauge> for super::PlanUsageGauge {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: PlanUsageGauge,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                label: value.label?,
+                left_fraction: value.left_fraction?,
+                resets_at_ms: value.resets_at_ms?,
+                scope: value.scope?,
+                style: value.style?,
+                title: value.title?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::PlanUsageGauge> for PlanUsageGauge {
+        fn from(value: super::PlanUsageGauge) -> Self {
+            Self {
+                label: Ok(value.label),
+                left_fraction: Ok(value.left_fraction),
+                resets_at_ms: Ok(value.resets_at_ms),
+                scope: Ok(value.scope),
+                style: Ok(value.style),
+                title: Ok(value.title),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct PluginActivation {
         activated_now: ::std::result::Result<
             ::std::collections::HashMap<
@@ -64536,6 +67627,12 @@ pub mod builder {
             ::std::option::Option<super::PluginLiveNow>,
             ::std::string::String,
         >,
+        missing_dependencies:
+            ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
+        missing_in: ::std::result::Result<
+            ::std::vec::Vec<super::PluginRestartTarget>,
+            ::std::string::String,
+        >,
         name: ::std::result::Result<::std::string::String, ::std::string::String>,
     }
     impl ::std::default::Default for PluginActivation {
@@ -64545,6 +67642,8 @@ pub mod builder {
                 deferred: Ok(Default::default()),
                 key: Err("no value supplied for key".to_string()),
                 live_now: Ok(Default::default()),
+                missing_dependencies: Ok(Default::default()),
+                missing_in: Ok(Default::default()),
                 name: Err("no value supplied for name".to_string()),
             }
         }
@@ -64600,6 +67699,26 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for live_now: {e}"));
             self
         }
+        pub fn missing_dependencies<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.missing_dependencies = value.try_into().map_err(|e| {
+                format!("error converting supplied value for missing_dependencies: {e}")
+            });
+            self
+        }
+        pub fn missing_in<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::PluginRestartTarget>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.missing_in = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for missing_in: {e}"));
+            self
+        }
         pub fn name<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::string::String>,
@@ -64621,6 +67740,8 @@ pub mod builder {
                 deferred: value.deferred?,
                 key: value.key?,
                 live_now: value.live_now?,
+                missing_dependencies: value.missing_dependencies?,
+                missing_in: value.missing_in?,
                 name: value.name?,
             })
         }
@@ -64632,6 +67753,8 @@ pub mod builder {
                 deferred: Ok(value.deferred),
                 key: Ok(value.key),
                 live_now: Ok(value.live_now),
+                missing_dependencies: Ok(value.missing_dependencies),
+                missing_in: Ok(value.missing_in),
                 name: Ok(value.name),
             }
         }
@@ -64642,6 +67765,7 @@ pub mod builder {
         repo: ::std::result::Result<::std::string::String, ::std::string::String>,
         sha: ::std::result::Result<::std::string::String, ::std::string::String>,
         subdir: ::std::result::Result<::std::string::String, ::std::string::String>,
+        tier: ::std::result::Result<::std::string::String, ::std::string::String>,
     }
     impl ::std::default::Default for PluginCatalogLookupEntry {
         fn default() -> Self {
@@ -64650,6 +67774,7 @@ pub mod builder {
                 repo: Err("no value supplied for repo".to_string()),
                 sha: Err("no value supplied for sha".to_string()),
                 subdir: Err("no value supplied for subdir".to_string()),
+                tier: Ok(super::defaults::plugin_catalog_lookup_entry_tier()),
             }
         }
     }
@@ -64694,6 +67819,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for subdir: {e}"));
             self
         }
+        pub fn tier<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.tier = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for tier: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<PluginCatalogLookupEntry> for super::PluginCatalogLookupEntry {
         type Error = super::error::ConversionError;
@@ -64705,6 +67840,7 @@ pub mod builder {
                 repo: value.repo?,
                 sha: value.sha?,
                 subdir: value.subdir?,
+                tier: value.tier?,
             })
         }
     }
@@ -64715,6 +67851,7 @@ pub mod builder {
                 repo: Ok(value.repo),
                 sha: Ok(value.sha),
                 subdir: Ok(value.subdir),
+                tier: Ok(value.tier),
             }
         }
     }
@@ -65024,6 +68161,49 @@ pub mod builder {
             Self {
                 description: Ok(value.description),
                 name: Ok(value.name),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct PluginRpcParams {
+        session_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for PluginRpcParams {
+        fn default() -> Self {
+            Self {
+                session_id: Ok(Default::default()),
+            }
+        }
+    }
+    impl PluginRpcParams {
+        pub fn session_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.session_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<PluginRpcParams> for super::PluginRpcParams {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: PluginRpcParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                session_id: value.session_id?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::PluginRpcParams> for PluginRpcParams {
+        fn from(value: super::PluginRpcParams) -> Self {
+            Self {
+                session_id: Ok(value.session_id),
             }
         }
     }
@@ -65454,6 +68634,128 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct PluginUpdateAllRow {
+        detail: ::std::result::Result<::std::string::String, ::std::string::String>,
+        name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        status: ::std::result::Result<super::PluginUpdateAllStatus, ::std::string::String>,
+    }
+    impl ::std::default::Default for PluginUpdateAllRow {
+        fn default() -> Self {
+            Self {
+                detail: Ok(Default::default()),
+                name: Err("no value supplied for name".to_string()),
+                status: Err("no value supplied for status".to_string()),
+            }
+        }
+    }
+    impl PluginUpdateAllRow {
+        pub fn detail<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.detail = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for detail: {e}"));
+            self
+        }
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn status<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::PluginUpdateAllStatus>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for status: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<PluginUpdateAllRow> for super::PluginUpdateAllRow {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: PluginUpdateAllRow,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                detail: value.detail?,
+                name: value.name?,
+                status: value.status?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::PluginUpdateAllRow> for PluginUpdateAllRow {
+        fn from(value: super::PluginUpdateAllRow) -> Self {
+            Self {
+                detail: Ok(value.detail),
+                name: Ok(value.name),
+                status: Ok(value.status),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct PluginUpdateAllSkip {
+        name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        reason: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for PluginUpdateAllSkip {
+        fn default() -> Self {
+            Self {
+                name: Err("no value supplied for name".to_string()),
+                reason: Err("no value supplied for reason".to_string()),
+            }
+        }
+    }
+    impl PluginUpdateAllSkip {
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn reason<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.reason = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for reason: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<PluginUpdateAllSkip> for super::PluginUpdateAllSkip {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: PluginUpdateAllSkip,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                name: value.name?,
+                reason: value.reason?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::PluginUpdateAllSkip> for PluginUpdateAllSkip {
+        fn from(value: super::PluginUpdateAllSkip) -> Self {
+            Self {
+                name: Ok(value.name),
+                reason: Ok(value.reason),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct PluginsListResult {
         plugins:
             ::std::result::Result<::std::vec::Vec<super::LegacyPluginRow>, ::std::string::String>,
@@ -65547,6 +68849,10 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        inspected_sha: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         key: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -65585,6 +68891,7 @@ pub mod builder {
                 enable: Ok(Default::default()),
                 force: Ok(Default::default()),
                 identifier: Ok(Default::default()),
+                inspected_sha: Ok(Default::default()),
                 key: Ok(Default::default()),
                 name: Ok(Default::default()),
                 names: Ok(Default::default()),
@@ -65654,6 +68961,16 @@ pub mod builder {
             self.identifier = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for identifier: {e}"));
+            self
+        }
+        pub fn inspected_sha<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.inspected_sha = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for inspected_sha: {e}"));
             self
         }
         pub fn key<T>(mut self, value: T) -> Self
@@ -65745,6 +69062,7 @@ pub mod builder {
                 enable: value.enable?,
                 force: value.force?,
                 identifier: value.identifier?,
+                inspected_sha: value.inspected_sha?,
                 key: value.key?,
                 name: value.name?,
                 names: value.names?,
@@ -65764,6 +69082,7 @@ pub mod builder {
                 enable: Ok(value.enable),
                 force: Ok(value.force),
                 identifier: Ok(value.identifier),
+                inspected_sha: Ok(value.inspected_sha),
                 key: Ok(value.key),
                 name: Ok(value.name),
                 names: Ok(value.names),
@@ -65784,10 +69103,18 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        agent: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        agent_name: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        auto_apply: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         bundled_count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        check_hours: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
         cleared_memory_provider:
             ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         consent_required: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        current: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         delta: ::std::result::Result<
             ::std::option::Option<
                 ::std::collections::HashMap<
@@ -65801,12 +69128,18 @@ pub mod builder {
             ::std::option::Option<::std::vec::Vec<::std::string::String>>,
             ::std::string::String,
         >,
+        desktop: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        desktop_name: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         enabled: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         error: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
         gateway_reloaded: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        insecure: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         known_issues: ::std::result::Result<
             ::std::option::Option<::std::vec::Vec<::std::string::String>>,
             ::std::string::String,
@@ -65822,6 +69155,12 @@ pub mod builder {
         ok: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         onboarding: ::std::result::Result<
             ::std::option::Option<::std::vec::Vec<super::OnboardingCatalogPlugin>>,
+            ::std::string::String,
+        >,
+        paired_with_agent:
+            ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        path: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
         plugin: ::std::result::Result<
@@ -65845,6 +69184,10 @@ pub mod builder {
             ::std::string::String,
         >,
         restart_required: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        results: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<super::PluginUpdateAllRow>>,
+            ::std::string::String,
+        >,
         scan_blocked: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         scan_findings: ::std::result::Result<
             ::std::option::Option<::std::vec::Vec<super::PluginScanFinding>>,
@@ -65858,7 +69201,15 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        skipped: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<super::PluginUpdateAllSkip>>,
+            ::std::string::String,
+        >,
         unchanged: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        unpaired_from: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         user_count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         warnings: ::std::result::Result<
             ::std::option::Option<::std::vec::Vec<::std::string::String>>,
@@ -65874,30 +69225,43 @@ pub mod builder {
             Self {
                 activation: Ok(Default::default()),
                 after_install_path: Ok(Default::default()),
+                agent: Ok(Default::default()),
+                agent_name: Ok(Default::default()),
+                auto_apply: Ok(Default::default()),
                 bundled_count: Ok(Default::default()),
+                check_hours: Ok(Default::default()),
                 cleared_memory_provider: Ok(Default::default()),
                 consent_required: Ok(Default::default()),
+                current: Ok(Default::default()),
                 delta: Ok(Default::default()),
                 delta_lines: Ok(Default::default()),
+                desktop: Ok(Default::default()),
+                desktop_name: Ok(Default::default()),
                 enabled: Ok(Default::default()),
                 error: Ok(Default::default()),
                 gateway_reloaded: Ok(Default::default()),
+                insecure: Ok(Default::default()),
                 known_issues: Ok(Default::default()),
                 missing_env: Ok(Default::default()),
                 name: Ok(Default::default()),
                 ok: Ok(Default::default()),
                 onboarding: Ok(Default::default()),
+                paired_with_agent: Ok(Default::default()),
+                path: Ok(Default::default()),
                 plugin: Ok(Default::default()),
                 plugin_name: Ok(Default::default()),
                 plugins: Ok(Default::default()),
                 presence: Ok(Default::default()),
                 python_dependencies: Ok(Default::default()),
                 restart_required: Ok(Default::default()),
+                results: Ok(Default::default()),
                 scan_blocked: Ok(Default::default()),
                 scan_findings: Ok(Default::default()),
                 scan_verdict: Ok(Default::default()),
                 sha: Ok(Default::default()),
+                skipped: Ok(Default::default()),
                 unchanged: Ok(Default::default()),
+                unpaired_from: Ok(Default::default()),
                 user_count: Ok(Default::default()),
                 warnings: Ok(Default::default()),
                 written: Ok(Default::default()),
@@ -65925,6 +69289,36 @@ pub mod builder {
             });
             self
         }
+        pub fn agent<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.agent = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for agent: {e}"));
+            self
+        }
+        pub fn agent_name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.agent_name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for agent_name: {e}"));
+            self
+        }
+        pub fn auto_apply<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.auto_apply = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for auto_apply: {e}"));
+            self
+        }
         pub fn bundled_count<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<i64>>,
@@ -65933,6 +69327,16 @@ pub mod builder {
             self.bundled_count = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for bundled_count: {e}"));
+            self
+        }
+        pub fn check_hours<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<f64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.check_hours = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for check_hours: {e}"));
             self
         }
         pub fn cleared_memory_provider<T>(mut self, value: T) -> Self
@@ -65953,6 +69357,16 @@ pub mod builder {
             self.consent_required = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for consent_required: {e}"));
+            self
+        }
+        pub fn current<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.current = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for current: {e}"));
             self
         }
         pub fn delta<T>(mut self, value: T) -> Self
@@ -65984,6 +69398,26 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for delta_lines: {e}"));
             self
         }
+        pub fn desktop<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.desktop = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for desktop: {e}"));
+            self
+        }
+        pub fn desktop_name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.desktop_name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for desktop_name: {e}"));
+            self
+        }
         pub fn enabled<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<bool>>,
@@ -66012,6 +69446,16 @@ pub mod builder {
             self.gateway_reloaded = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for gateway_reloaded: {e}"));
+            self
+        }
+        pub fn insecure<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.insecure = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for insecure: {e}"));
             self
         }
         pub fn known_issues<T>(mut self, value: T) -> Self
@@ -66068,6 +69512,26 @@ pub mod builder {
             self.onboarding = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for onboarding: {e}"));
+            self
+        }
+        pub fn paired_with_agent<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.paired_with_agent = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for paired_with_agent: {e}"));
+            self
+        }
+        pub fn path<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.path = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for path: {e}"));
             self
         }
         pub fn plugin<T>(mut self, value: T) -> Self
@@ -66136,6 +69600,18 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for restart_required: {e}"));
             self
         }
+        pub fn results<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<super::PluginUpdateAllRow>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.results = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for results: {e}"));
+            self
+        }
         pub fn scan_blocked<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<bool>>,
@@ -66178,6 +69654,18 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for sha: {e}"));
             self
         }
+        pub fn skipped<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<super::PluginUpdateAllSkip>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.skipped = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for skipped: {e}"));
+            self
+        }
         pub fn unchanged<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<bool>>,
@@ -66186,6 +69674,16 @@ pub mod builder {
             self.unchanged = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for unchanged: {e}"));
+            self
+        }
+        pub fn unpaired_from<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.unpaired_from = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for unpaired_from: {e}"));
             self
         }
         pub fn user_count<T>(mut self, value: T) -> Self
@@ -66231,30 +69729,43 @@ pub mod builder {
             Ok(Self {
                 activation: value.activation?,
                 after_install_path: value.after_install_path?,
+                agent: value.agent?,
+                agent_name: value.agent_name?,
+                auto_apply: value.auto_apply?,
                 bundled_count: value.bundled_count?,
+                check_hours: value.check_hours?,
                 cleared_memory_provider: value.cleared_memory_provider?,
                 consent_required: value.consent_required?,
+                current: value.current?,
                 delta: value.delta?,
                 delta_lines: value.delta_lines?,
+                desktop: value.desktop?,
+                desktop_name: value.desktop_name?,
                 enabled: value.enabled?,
                 error: value.error?,
                 gateway_reloaded: value.gateway_reloaded?,
+                insecure: value.insecure?,
                 known_issues: value.known_issues?,
                 missing_env: value.missing_env?,
                 name: value.name?,
                 ok: value.ok?,
                 onboarding: value.onboarding?,
+                paired_with_agent: value.paired_with_agent?,
+                path: value.path?,
                 plugin: value.plugin?,
                 plugin_name: value.plugin_name?,
                 plugins: value.plugins?,
                 presence: value.presence?,
                 python_dependencies: value.python_dependencies?,
                 restart_required: value.restart_required?,
+                results: value.results?,
                 scan_blocked: value.scan_blocked?,
                 scan_findings: value.scan_findings?,
                 scan_verdict: value.scan_verdict?,
                 sha: value.sha?,
+                skipped: value.skipped?,
                 unchanged: value.unchanged?,
+                unpaired_from: value.unpaired_from?,
                 user_count: value.user_count?,
                 warnings: value.warnings?,
                 written: value.written?,
@@ -66266,30 +69777,43 @@ pub mod builder {
             Self {
                 activation: Ok(value.activation),
                 after_install_path: Ok(value.after_install_path),
+                agent: Ok(value.agent),
+                agent_name: Ok(value.agent_name),
+                auto_apply: Ok(value.auto_apply),
                 bundled_count: Ok(value.bundled_count),
+                check_hours: Ok(value.check_hours),
                 cleared_memory_provider: Ok(value.cleared_memory_provider),
                 consent_required: Ok(value.consent_required),
+                current: Ok(value.current),
                 delta: Ok(value.delta),
                 delta_lines: Ok(value.delta_lines),
+                desktop: Ok(value.desktop),
+                desktop_name: Ok(value.desktop_name),
                 enabled: Ok(value.enabled),
                 error: Ok(value.error),
                 gateway_reloaded: Ok(value.gateway_reloaded),
+                insecure: Ok(value.insecure),
                 known_issues: Ok(value.known_issues),
                 missing_env: Ok(value.missing_env),
                 name: Ok(value.name),
                 ok: Ok(value.ok),
                 onboarding: Ok(value.onboarding),
+                paired_with_agent: Ok(value.paired_with_agent),
+                path: Ok(value.path),
                 plugin: Ok(value.plugin),
                 plugin_name: Ok(value.plugin_name),
                 plugins: Ok(value.plugins),
                 presence: Ok(value.presence),
                 python_dependencies: Ok(value.python_dependencies),
                 restart_required: Ok(value.restart_required),
+                results: Ok(value.results),
                 scan_blocked: Ok(value.scan_blocked),
                 scan_findings: Ok(value.scan_findings),
                 scan_verdict: Ok(value.scan_verdict),
                 sha: Ok(value.sha),
+                skipped: Ok(value.skipped),
                 unchanged: Ok(value.unchanged),
+                unpaired_from: Ok(value.unpaired_from),
                 user_count: Ok(value.user_count),
                 warnings: Ok(value.warnings),
                 written: Ok(value.written),
@@ -66325,6 +69849,10 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        vault: ::std::result::Result<
+            ::std::option::Option<super::PreviewVaultOperation>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for PreviewActRequestParams {
         fn default() -> Self {
@@ -66341,6 +69869,7 @@ pub mod builder {
                 submit: Ok(Default::default()),
                 text: Ok(Default::default()),
                 to: Ok(Default::default()),
+                vault: Ok(Default::default()),
             }
         }
     }
@@ -66465,6 +69994,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for to: {e}"));
             self
         }
+        pub fn vault<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::PreviewVaultOperation>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.vault = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for vault: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<PreviewActRequestParams> for super::PreviewActRequestParams {
         type Error = super::error::ConversionError;
@@ -66484,6 +70023,7 @@ pub mod builder {
                 submit: value.submit?,
                 text: value.text?,
                 to: value.to?,
+                vault: value.vault?,
             })
         }
     }
@@ -66502,6 +70042,7 @@ pub mod builder {
                 submit: Ok(value.submit),
                 text: Ok(value.text),
                 to: Ok(value.to),
+                vault: Ok(value.vault),
             }
         }
     }
@@ -66770,6 +70311,80 @@ pub mod builder {
                 level: Ok(value.level),
                 task_id: Ok(value.task_id),
                 text: Ok(value.text),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct PreviewVaultOperation {
+        expression: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        operation: ::std::result::Result<super::Operation, ::std::string::String>,
+        target: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for PreviewVaultOperation {
+        fn default() -> Self {
+            Self {
+                expression: Ok(Default::default()),
+                operation: Err("no value supplied for operation".to_string()),
+                target: Ok(Default::default()),
+            }
+        }
+    }
+    impl PreviewVaultOperation {
+        pub fn expression<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.expression = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for expression: {e}"));
+            self
+        }
+        pub fn operation<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Operation>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.operation = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for operation: {e}"));
+            self
+        }
+        pub fn target<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.target = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for target: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<PreviewVaultOperation> for super::PreviewVaultOperation {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: PreviewVaultOperation,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                expression: value.expression?,
+                operation: value.operation?,
+                target: value.target?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::PreviewVaultOperation> for PreviewVaultOperation {
+        fn from(value: super::PreviewVaultOperation) -> Self {
+            Self {
+                expression: Ok(value.expression),
+                operation: Ok(value.operation),
+                target: Ok(value.target),
             }
         }
     }
@@ -75457,12 +79072,16 @@ pub mod builder {
             ::std::string::String,
         >,
         session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        undo_message_id: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        undo_since: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
     }
     impl ::std::default::Default for RollbackListParams {
         fn default() -> Self {
             Self {
                 profile: Ok(Default::default()),
                 session_id: Err("no value supplied for session_id".to_string()),
+                undo_message_id: Ok(Default::default()),
+                undo_since: Ok(Default::default()),
             }
         }
     }
@@ -75487,6 +79106,26 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for session_id: {e}"));
             self
         }
+        pub fn undo_message_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.undo_message_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for undo_message_id: {e}"));
+            self
+        }
+        pub fn undo_since<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<f64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.undo_since = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for undo_since: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<RollbackListParams> for super::RollbackListParams {
         type Error = super::error::ConversionError;
@@ -75496,6 +79135,8 @@ pub mod builder {
             Ok(Self {
                 profile: value.profile?,
                 session_id: value.session_id?,
+                undo_message_id: value.undo_message_id?,
+                undo_since: value.undo_since?,
             })
         }
     }
@@ -75504,6 +79145,8 @@ pub mod builder {
             Self {
                 profile: Ok(value.profile),
                 session_id: Ok(value.session_id),
+                undo_message_id: Ok(value.undo_message_id),
+                undo_since: Ok(value.undo_since),
             }
         }
     }
@@ -75514,12 +79157,17 @@ pub mod builder {
             ::std::string::String,
         >,
         enabled: ::std::result::Result<bool, ::std::string::String>,
+        undo_hint: ::std::result::Result<
+            ::std::option::Option<super::UndoRollbackHint>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for RollbackListResult {
         fn default() -> Self {
             Self {
                 checkpoints: Ok(Default::default()),
                 enabled: Err("no value supplied for enabled".to_string()),
+                undo_hint: Ok(Default::default()),
             }
         }
     }
@@ -75544,6 +79192,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for enabled: {e}"));
             self
         }
+        pub fn undo_hint<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::UndoRollbackHint>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.undo_hint = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for undo_hint: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<RollbackListResult> for super::RollbackListResult {
         type Error = super::error::ConversionError;
@@ -75553,6 +79211,7 @@ pub mod builder {
             Ok(Self {
                 checkpoints: value.checkpoints?,
                 enabled: value.enabled?,
+                undo_hint: value.undo_hint?,
             })
         }
     }
@@ -75561,6 +79220,7 @@ pub mod builder {
             Self {
                 checkpoints: Ok(value.checkpoints),
                 enabled: Ok(value.enabled),
+                undo_hint: Ok(value.undo_hint),
             }
         }
     }
@@ -76321,18 +79981,53 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct RoomActor {
+        connection_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        display_name: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         id: ::std::result::Result<::std::string::String, ::std::string::String>,
         kind: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for RoomActor {
         fn default() -> Self {
             Self {
+                connection_id: Ok(Default::default()),
+                display_name: Ok(Default::default()),
                 id: Err("no value supplied for id".to_string()),
                 kind: Err("no value supplied for kind".to_string()),
+                profile: Ok(Default::default()),
             }
         }
     }
     impl RoomActor {
+        pub fn connection_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.connection_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for connection_id: {e}"));
+            self
+        }
+        pub fn display_name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.display_name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for display_name: {e}"));
+            self
+        }
         pub fn id<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::string::String>,
@@ -76353,6 +80048,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for kind: {e}"));
             self
         }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<RoomActor> for super::RoomActor {
         type Error = super::error::ConversionError;
@@ -76360,16 +80065,22 @@ pub mod builder {
             value: RoomActor,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                connection_id: value.connection_id?,
+                display_name: value.display_name?,
                 id: value.id?,
                 kind: value.kind?,
+                profile: value.profile?,
             })
         }
     }
     impl ::std::convert::From<super::RoomActor> for RoomActor {
         fn from(value: super::RoomActor) -> Self {
             Self {
+                connection_id: Ok(value.connection_id),
+                display_name: Ok(value.display_name),
                 id: Ok(value.id),
                 kind: Ok(value.kind),
+                profile: Ok(value.profile),
             }
         }
     }
@@ -76780,16 +80491,112 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct RoomContext {
+        lead_member_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        notes: ::std::result::Result<::std::string::String, ::std::string::String>,
+        purpose: ::std::result::Result<::std::string::String, ::std::string::String>,
+        routing: ::std::result::Result<super::Routing, ::std::string::String>,
+    }
+    impl ::std::default::Default for RoomContext {
+        fn default() -> Self {
+            Self {
+                lead_member_id: Ok(Default::default()),
+                notes: Err("no value supplied for notes".to_string()),
+                purpose: Err("no value supplied for purpose".to_string()),
+                routing: Ok(super::defaults::room_context_routing()),
+            }
+        }
+    }
+    impl RoomContext {
+        pub fn lead_member_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.lead_member_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for lead_member_id: {e}"));
+            self
+        }
+        pub fn notes<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.notes = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for notes: {e}"));
+            self
+        }
+        pub fn purpose<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.purpose = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for purpose: {e}"));
+            self
+        }
+        pub fn routing<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Routing>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.routing = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for routing: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<RoomContext> for super::RoomContext {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: RoomContext,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                lead_member_id: value.lead_member_id?,
+                notes: value.notes?,
+                purpose: value.purpose?,
+                routing: value.routing?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::RoomContext> for RoomContext {
+        fn from(value: super::RoomContext) -> Self {
+            Self {
+                lead_member_id: Ok(value.lead_member_id),
+                notes: Ok(value.notes),
+                purpose: Ok(value.purpose),
+                routing: Ok(value.routing),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct RoomDriverStatus {
         blocked: ::std::result::Result<bool, ::std::string::String>,
         counts: ::std::result::Result<
             ::std::collections::HashMap<::std::string::String, i64>,
             ::std::string::String,
         >,
+        last_error: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        max_continues: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        max_rounds: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        member_activity: ::std::result::Result<
+            ::std::vec::Vec<super::RoomMemberActivity>,
+            ::std::string::String,
+        >,
         peer_routes:
             ::std::result::Result<::std::vec::Vec<super::PeerRouteStatus>, ::std::string::String>,
         pending_actions: ::std::result::Result<
             ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+            ::std::string::String,
+        >,
+        routing_modes: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<::std::string::String>>,
             ::std::string::String,
         >,
         running: ::std::result::Result<bool, ::std::string::String>,
@@ -76800,8 +80607,13 @@ pub mod builder {
             Self {
                 blocked: Err("no value supplied for blocked".to_string()),
                 counts: Err("no value supplied for counts".to_string()),
+                last_error: Ok(Default::default()),
+                max_continues: Ok(Default::default()),
+                max_rounds: Ok(Default::default()),
+                member_activity: Ok(Default::default()),
                 peer_routes: Err("no value supplied for peer_routes".to_string()),
                 pending_actions: Err("no value supplied for pending_actions".to_string()),
+                routing_modes: Ok(Default::default()),
                 running: Err("no value supplied for running".to_string()),
                 working: Err("no value supplied for working".to_string()),
             }
@@ -76828,6 +80640,46 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for counts: {e}"));
             self
         }
+        pub fn last_error<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.last_error = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for last_error: {e}"));
+            self
+        }
+        pub fn max_continues<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.max_continues = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for max_continues: {e}"));
+            self
+        }
+        pub fn max_rounds<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.max_rounds = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for max_rounds: {e}"));
+            self
+        }
+        pub fn member_activity<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::RoomMemberActivity>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.member_activity = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for member_activity: {e}"));
+            self
+        }
         pub fn peer_routes<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::vec::Vec<super::PeerRouteStatus>>,
@@ -76848,6 +80700,18 @@ pub mod builder {
             self.pending_actions = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for pending_actions: {e}"));
+            self
+        }
+        pub fn routing_modes<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.routing_modes = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for routing_modes: {e}"));
             self
         }
         pub fn running<T>(mut self, value: T) -> Self
@@ -76879,8 +80743,13 @@ pub mod builder {
             Ok(Self {
                 blocked: value.blocked?,
                 counts: value.counts?,
+                last_error: value.last_error?,
+                max_continues: value.max_continues?,
+                max_rounds: value.max_rounds?,
+                member_activity: value.member_activity?,
                 peer_routes: value.peer_routes?,
                 pending_actions: value.pending_actions?,
+                routing_modes: value.routing_modes?,
                 running: value.running?,
                 working: value.working?,
             })
@@ -76891,8 +80760,13 @@ pub mod builder {
             Self {
                 blocked: Ok(value.blocked),
                 counts: Ok(value.counts),
+                last_error: Ok(value.last_error),
+                max_continues: Ok(value.max_continues),
+                max_rounds: Ok(value.max_rounds),
+                member_activity: Ok(value.member_activity),
                 peer_routes: Ok(value.peer_routes),
                 pending_actions: Ok(value.pending_actions),
+                routing_modes: Ok(value.routing_modes),
                 running: Ok(value.running),
                 working: Ok(value.working),
             }
@@ -77633,6 +81507,136 @@ pub mod builder {
                 member_id: Ok(value.member_id),
                 profile: Ok(value.profile),
                 target: Ok(value.target),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct RoomMemberActivity {
+        member_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        progress_at: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        round_index: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        started_at: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        status: ::std::result::Result<::std::string::String, ::std::string::String>,
+        thread_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        tool: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for RoomMemberActivity {
+        fn default() -> Self {
+            Self {
+                member_id: Err("no value supplied for member_id".to_string()),
+                progress_at: Ok(Default::default()),
+                round_index: Ok(Default::default()),
+                started_at: Ok(Default::default()),
+                status: Err("no value supplied for status".to_string()),
+                thread_id: Ok(Default::default()),
+                tool: Ok(Default::default()),
+            }
+        }
+    }
+    impl RoomMemberActivity {
+        pub fn member_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.member_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for member_id: {e}"));
+            self
+        }
+        pub fn progress_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<f64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.progress_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for progress_at: {e}"));
+            self
+        }
+        pub fn round_index<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.round_index = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for round_index: {e}"));
+            self
+        }
+        pub fn started_at<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<f64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.started_at = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for started_at: {e}"));
+            self
+        }
+        pub fn status<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.status = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for status: {e}"));
+            self
+        }
+        pub fn thread_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.thread_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for thread_id: {e}"));
+            self
+        }
+        pub fn tool<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.tool = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for tool: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<RoomMemberActivity> for super::RoomMemberActivity {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: RoomMemberActivity,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                member_id: value.member_id?,
+                progress_at: value.progress_at?,
+                round_index: value.round_index?,
+                started_at: value.started_at?,
+                status: value.status?,
+                thread_id: value.thread_id?,
+                tool: value.tool?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::RoomMemberActivity> for RoomMemberActivity {
+        fn from(value: super::RoomMemberActivity) -> Self {
+            Self {
+                member_id: Ok(value.member_id),
+                progress_at: Ok(value.progress_at),
+                round_index: Ok(value.round_index),
+                started_at: Ok(value.started_at),
+                status: Ok(value.status),
+                thread_id: Ok(value.thread_id),
+                tool: Ok(value.tool),
             }
         }
     }
@@ -86025,6 +90029,8 @@ pub mod builder {
         last_turn_tokens: ::std::result::Result<i64, ::std::string::String>,
         model: ::std::result::Result<::std::string::String, ::std::string::String>,
         output_tokens: ::std::result::Result<i64, ::std::string::String>,
+        plan_gauge:
+            ::std::result::Result<::std::option::Option<super::PlanGauge>, ::std::string::String>,
         prompt_tokens: ::std::result::Result<i64, ::std::string::String>,
         provider: ::std::result::Result<::std::string::String, ::std::string::String>,
         rate_limit: ::std::result::Result<
@@ -86055,6 +90061,7 @@ pub mod builder {
                 last_turn_tokens: Err("no value supplied for last_turn_tokens".to_string()),
                 model: Err("no value supplied for model".to_string()),
                 output_tokens: Err("no value supplied for output_tokens".to_string()),
+                plan_gauge: Ok(Default::default()),
                 prompt_tokens: Err("no value supplied for prompt_tokens".to_string()),
                 provider: Err("no value supplied for provider".to_string()),
                 rate_limit: Ok(Default::default()),
@@ -86235,6 +90242,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for output_tokens: {e}"));
             self
         }
+        pub fn plan_gauge<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::PlanGauge>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.plan_gauge = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for plan_gauge: {e}"));
+            self
+        }
         pub fn prompt_tokens<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<i64>,
@@ -86323,6 +90340,7 @@ pub mod builder {
                 last_turn_tokens: value.last_turn_tokens?,
                 model: value.model?,
                 output_tokens: value.output_tokens?,
+                plan_gauge: value.plan_gauge?,
                 prompt_tokens: value.prompt_tokens?,
                 provider: value.provider?,
                 rate_limit: value.rate_limit?,
@@ -86352,6 +90370,7 @@ pub mod builder {
                 last_turn_tokens: Ok(value.last_turn_tokens),
                 model: Ok(value.model),
                 output_tokens: Ok(value.output_tokens),
+                plan_gauge: Ok(value.plan_gauge),
                 prompt_tokens: Ok(value.prompt_tokens),
                 provider: Ok(value.provider),
                 rate_limit: Ok(value.rate_limit),
@@ -86772,11 +90791,16 @@ pub mod builder {
     #[derive(Clone, Debug)]
     pub struct SessionUndoResult {
         removed: ::std::result::Result<i64, ::std::string::String>,
+        undo_hint: ::std::result::Result<
+            ::std::option::Option<super::UndoRollbackHint>,
+            ::std::string::String,
+        >,
     }
     impl ::std::default::Default for SessionUndoResult {
         fn default() -> Self {
             Self {
                 removed: Err("no value supplied for removed".to_string()),
+                undo_hint: Ok(Default::default()),
             }
         }
     }
@@ -86791,6 +90815,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for removed: {e}"));
             self
         }
+        pub fn undo_hint<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::UndoRollbackHint>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.undo_hint = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for undo_hint: {e}"));
+            self
+        }
     }
     impl ::std::convert::TryFrom<SessionUndoResult> for super::SessionUndoResult {
         type Error = super::error::ConversionError;
@@ -86799,6 +90833,7 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 removed: value.removed?,
+                undo_hint: value.undo_hint?,
             })
         }
     }
@@ -86806,6 +90841,7 @@ pub mod builder {
         fn from(value: super::SessionUndoResult) -> Self {
             Self {
                 removed: Ok(value.removed),
+                undo_hint: Ok(value.undo_hint),
             }
         }
     }
@@ -86897,6 +90933,8 @@ pub mod builder {
             ::std::string::String,
         >,
         output_tokens: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        plan_gauge:
+            ::std::result::Result<::std::option::Option<super::PlanGauge>, ::std::string::String>,
         prompt_tokens: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         provider: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
@@ -86931,6 +90969,7 @@ pub mod builder {
                 last_turn_tokens: Ok(Default::default()),
                 model: Ok(Default::default()),
                 output_tokens: Ok(Default::default()),
+                plan_gauge: Ok(Default::default()),
                 prompt_tokens: Ok(Default::default()),
                 provider: Ok(Default::default()),
                 rate_limit: Ok(Default::default()),
@@ -87112,6 +91151,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for output_tokens: {e}"));
             self
         }
+        pub fn plan_gauge<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::PlanGauge>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.plan_gauge = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for plan_gauge: {e}"));
+            self
+        }
         pub fn prompt_tokens<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<i64>>,
@@ -87210,6 +91259,7 @@ pub mod builder {
                 last_turn_tokens: value.last_turn_tokens?,
                 model: value.model?,
                 output_tokens: value.output_tokens?,
+                plan_gauge: value.plan_gauge?,
                 prompt_tokens: value.prompt_tokens?,
                 provider: value.provider?,
                 rate_limit: value.rate_limit?,
@@ -87240,6 +91290,7 @@ pub mod builder {
                 last_turn_tokens: Ok(value.last_turn_tokens),
                 model: Ok(value.model),
                 output_tokens: Ok(value.output_tokens),
+                plan_gauge: Ok(value.plan_gauge),
                 prompt_tokens: Ok(value.prompt_tokens),
                 provider: Ok(value.provider),
                 rate_limit: Ok(value.rate_limit),
@@ -87279,11 +91330,15 @@ pub mod builder {
             ::std::option::Option<::std::vec::Vec<::std::string::String>>,
             ::std::string::String,
         >,
+        credits_usage_window:
+            ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         dev_credits_spent_micros:
             ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         input: ::std::result::Result<i64, ::std::string::String>,
         model: ::std::result::Result<::std::string::String, ::std::string::String>,
         output: ::std::result::Result<i64, ::std::string::String>,
+        plan_gauge:
+            ::std::result::Result<::std::option::Option<super::PlanGauge>, ::std::string::String>,
         prompt: ::std::result::Result<i64, ::std::string::String>,
         reasoning: ::std::result::Result<i64, ::std::string::String>,
         total: ::std::result::Result<i64, ::std::string::String>,
@@ -87308,10 +91363,12 @@ pub mod builder {
                 cost_status: Ok(Default::default()),
                 cost_usd: Ok(Default::default()),
                 credits_lines: Ok(Default::default()),
+                credits_usage_window: Ok(Default::default()),
                 dev_credits_spent_micros: Ok(Default::default()),
                 input: Ok(Default::default()),
                 model: Ok(Default::default()),
                 output: Ok(Default::default()),
+                plan_gauge: Ok(Default::default()),
                 prompt: Ok(Default::default()),
                 reasoning: Ok(Default::default()),
                 total: Ok(Default::default()),
@@ -87491,6 +91548,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for credits_lines: {e}"));
             self
         }
+        pub fn credits_usage_window<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.credits_usage_window = value.try_into().map_err(|e| {
+                format!("error converting supplied value for credits_usage_window: {e}")
+            });
+            self
+        }
         pub fn dev_credits_spent_micros<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<i64>>,
@@ -87529,6 +91596,16 @@ pub mod builder {
             self.output = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for output: {e}"));
+            self
+        }
+        pub fn plan_gauge<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::PlanGauge>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.plan_gauge = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for plan_gauge: {e}"));
             self
         }
         pub fn prompt<T>(mut self, value: T) -> Self
@@ -87585,10 +91662,12 @@ pub mod builder {
                 cost_status: value.cost_status?,
                 cost_usd: value.cost_usd?,
                 credits_lines: value.credits_lines?,
+                credits_usage_window: value.credits_usage_window?,
                 dev_credits_spent_micros: value.dev_credits_spent_micros?,
                 input: value.input?,
                 model: value.model?,
                 output: value.output?,
+                plan_gauge: value.plan_gauge?,
                 prompt: value.prompt?,
                 reasoning: value.reasoning?,
                 total: value.total?,
@@ -87615,10 +91694,12 @@ pub mod builder {
                 cost_status: Ok(value.cost_status),
                 cost_usd: Ok(value.cost_usd),
                 credits_lines: Ok(value.credits_lines),
+                credits_usage_window: Ok(value.credits_usage_window),
                 dev_credits_spent_micros: Ok(value.dev_credits_spent_micros),
                 input: Ok(value.input),
                 model: Ok(value.model),
                 output: Ok(value.output),
+                plan_gauge: Ok(value.plan_gauge),
                 prompt: Ok(value.prompt),
                 reasoning: Ok(value.reasoning),
                 total: Ok(value.total),
@@ -88660,6 +92741,10 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        error_code: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         free_tier_route: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
         model: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
@@ -88683,6 +92768,7 @@ pub mod builder {
         fn default() -> Self {
             Self {
                 error: Ok(Default::default()),
+                error_code: Ok(Default::default()),
                 free_tier_route: Ok(Default::default()),
                 model: Ok(Default::default()),
                 ok: Err("no value supplied for ok".to_string()),
@@ -88701,6 +92787,16 @@ pub mod builder {
             self.error = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for error: {e}"));
+            self
+        }
+        pub fn error_code<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.error_code = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for error_code: {e}"));
             self
         }
         pub fn free_tier_route<T>(mut self, value: T) -> Self
@@ -88771,6 +92867,7 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 error: value.error?,
+                error_code: value.error_code?,
                 free_tier_route: value.free_tier_route?,
                 model: value.model?,
                 ok: value.ok?,
@@ -88784,6 +92881,7 @@ pub mod builder {
         fn from(value: super::SetupRuntimeCheckResult) -> Self {
             Self {
                 error: Ok(value.error),
+                error_code: Ok(value.error_code),
                 free_tier_route: Ok(value.free_tier_route),
                 model: Ok(value.model),
                 ok: Ok(value.ok),
@@ -92507,6 +96605,74 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct StagedFileUpload {
+        install_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        path: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile_home: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for StagedFileUpload {
+        fn default() -> Self {
+            Self {
+                install_id: Err("no value supplied for install_id".to_string()),
+                path: Err("no value supplied for path".to_string()),
+                profile_home: Err("no value supplied for profile_home".to_string()),
+            }
+        }
+    }
+    impl StagedFileUpload {
+        pub fn install_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.install_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for install_id: {e}"));
+            self
+        }
+        pub fn path<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.path = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for path: {e}"));
+            self
+        }
+        pub fn profile_home<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile_home = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile_home: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<StagedFileUpload> for super::StagedFileUpload {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: StagedFileUpload,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                install_id: value.install_id?,
+                path: value.path?,
+                profile_home: value.profile_home?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::StagedFileUpload> for StagedFileUpload {
+        fn from(value: super::StagedFileUpload) -> Self {
+            Self {
+                install_id: Ok(value.install_id),
+                path: Ok(value.path),
+                profile_home: Ok(value.profile_home),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct StatusUpdatePayload {
         kind: ::std::result::Result<::std::string::String, ::std::string::String>,
         text: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -92557,6 +96723,574 @@ pub mod builder {
             Self {
                 kind: Ok(value.kind),
                 text: Ok(value.text),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct StoredTranscriptParams {
+        cursor: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        inline_images: ::std::result::Result<bool, ::std::string::String>,
+        limit: ::std::result::Result<i64, ::std::string::String>,
+        order: ::std::result::Result<super::Order, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        subagent_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for StoredTranscriptParams {
+        fn default() -> Self {
+            Self {
+                cursor: Ok(Default::default()),
+                inline_images: Ok(Default::default()),
+                limit: Ok(super::defaults::default_u64::<i64, 100>()),
+                order: Ok(super::defaults::stored_transcript_params_order()),
+                profile: Ok(Default::default()),
+                session_id: Err("no value supplied for session_id".to_string()),
+                subagent_id: Ok(Default::default()),
+            }
+        }
+    }
+    impl StoredTranscriptParams {
+        pub fn cursor<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.cursor = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for cursor: {e}"));
+            self
+        }
+        pub fn inline_images<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.inline_images = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for inline_images: {e}"));
+            self
+        }
+        pub fn limit<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<i64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.limit = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for limit: {e}"));
+            self
+        }
+        pub fn order<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::Order>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.order = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for order: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+        pub fn session_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.session_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
+            self
+        }
+        pub fn subagent_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.subagent_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for subagent_id: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<StoredTranscriptParams> for super::StoredTranscriptParams {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: StoredTranscriptParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                cursor: value.cursor?,
+                inline_images: value.inline_images?,
+                limit: value.limit?,
+                order: value.order?,
+                profile: value.profile?,
+                session_id: value.session_id?,
+                subagent_id: value.subagent_id?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::StoredTranscriptParams> for StoredTranscriptParams {
+        fn from(value: super::StoredTranscriptParams) -> Self {
+            Self {
+                cursor: Ok(value.cursor),
+                inline_images: Ok(value.inline_images),
+                limit: Ok(value.limit),
+                order: Ok(value.order),
+                profile: Ok(value.profile),
+                session_id: Ok(value.session_id),
+                subagent_id: Ok(value.subagent_id),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct StoredTranscriptResult {
+        available: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        child_session_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        next_cursor: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        reset: ::std::result::Result<bool, ::std::string::String>,
+        rows: ::std::result::Result<
+            ::std::vec::Vec<super::StoredTranscriptRow>,
+            ::std::string::String,
+        >,
+        running: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        subagent_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for StoredTranscriptResult {
+        fn default() -> Self {
+            Self {
+                available: Ok(Default::default()),
+                child_session_id: Ok(Default::default()),
+                next_cursor: Err("no value supplied for next_cursor".to_string()),
+                reset: Err("no value supplied for reset".to_string()),
+                rows: Err("no value supplied for rows".to_string()),
+                running: Ok(Default::default()),
+                session_id: Err("no value supplied for session_id".to_string()),
+                subagent_id: Ok(Default::default()),
+            }
+        }
+    }
+    impl StoredTranscriptResult {
+        pub fn available<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.available = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for available: {e}"));
+            self
+        }
+        pub fn child_session_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.child_session_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for child_session_id: {e}"));
+            self
+        }
+        pub fn next_cursor<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.next_cursor = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for next_cursor: {e}"));
+            self
+        }
+        pub fn reset<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.reset = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for reset: {e}"));
+            self
+        }
+        pub fn rows<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::StoredTranscriptRow>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.rows = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for rows: {e}"));
+            self
+        }
+        pub fn running<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.running = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for running: {e}"));
+            self
+        }
+        pub fn session_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.session_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
+            self
+        }
+        pub fn subagent_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.subagent_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for subagent_id: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<StoredTranscriptResult> for super::StoredTranscriptResult {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: StoredTranscriptResult,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                available: value.available?,
+                child_session_id: value.child_session_id?,
+                next_cursor: value.next_cursor?,
+                reset: value.reset?,
+                rows: value.rows?,
+                running: value.running?,
+                session_id: value.session_id?,
+                subagent_id: value.subagent_id?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::StoredTranscriptResult> for StoredTranscriptResult {
+        fn from(value: super::StoredTranscriptResult) -> Self {
+            Self {
+                available: Ok(value.available),
+                child_session_id: Ok(value.child_session_id),
+                next_cursor: Ok(value.next_cursor),
+                reset: Ok(value.reset),
+                rows: Ok(value.rows),
+                running: Ok(value.running),
+                session_id: Ok(value.session_id),
+                subagent_id: Ok(value.subagent_id),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct StoredTranscriptRow {
+        args: ::std::result::Result<
+            ::std::option::Option<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+            ::std::string::String,
+        >,
+        compacted_messages:
+            ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        content: ::std::result::Result<
+            ::std::option::Option<::serde_json::Value>,
+            ::std::string::String,
+        >,
+        context: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        display_kind: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        display_metadata: ::std::result::Result<
+            ::std::option::Option<::serde_json::Value>,
+            ::std::string::String,
+        >,
+        labels: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<super::ToolLabel>>,
+            ::std::string::String,
+        >,
+        name: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        reasoning: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        role: ::std::result::Result<::std::string::String, ::std::string::String>,
+        row_id: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        row_kind: ::std::result::Result<super::RowKind, ::std::string::String>,
+        text: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        timestamp: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        tool_call_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        truncated: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+    }
+    impl ::std::default::Default for StoredTranscriptRow {
+        fn default() -> Self {
+            Self {
+                args: Ok(Default::default()),
+                compacted_messages: Ok(Default::default()),
+                content: Ok(Default::default()),
+                context: Ok(Default::default()),
+                display_kind: Ok(Default::default()),
+                display_metadata: Ok(Default::default()),
+                labels: Ok(Default::default()),
+                name: Ok(Default::default()),
+                reasoning: Ok(Default::default()),
+                role: Err("no value supplied for role".to_string()),
+                row_id: Ok(Default::default()),
+                row_kind: Err("no value supplied for row_kind".to_string()),
+                text: Ok(Default::default()),
+                timestamp: Ok(Default::default()),
+                tool_call_id: Ok(Default::default()),
+                truncated: Ok(Default::default()),
+            }
+        }
+    }
+    impl StoredTranscriptRow {
+        pub fn args<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.args = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for args: {e}"));
+            self
+        }
+        pub fn compacted_messages<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.compacted_messages = value.try_into().map_err(|e| {
+                format!("error converting supplied value for compacted_messages: {e}")
+            });
+            self
+        }
+        pub fn content<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.content = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for content: {e}"));
+            self
+        }
+        pub fn context<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.context = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for context: {e}"));
+            self
+        }
+        pub fn display_kind<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.display_kind = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for display_kind: {e}"));
+            self
+        }
+        pub fn display_metadata<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.display_metadata = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for display_metadata: {e}"));
+            self
+        }
+        pub fn labels<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::vec::Vec<super::ToolLabel>>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.labels = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for labels: {e}"));
+            self
+        }
+        pub fn name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for name: {e}"));
+            self
+        }
+        pub fn reasoning<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.reasoning = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for reasoning: {e}"));
+            self
+        }
+        pub fn role<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.role = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for role: {e}"));
+            self
+        }
+        pub fn row_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.row_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for row_id: {e}"));
+            self
+        }
+        pub fn row_kind<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<super::RowKind>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.row_kind = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for row_kind: {e}"));
+            self
+        }
+        pub fn text<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.text = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for text: {e}"));
+            self
+        }
+        pub fn timestamp<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<f64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.timestamp = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for timestamp: {e}"));
+            self
+        }
+        pub fn tool_call_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.tool_call_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for tool_call_id: {e}"));
+            self
+        }
+        pub fn truncated<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<bool>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.truncated = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for truncated: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<StoredTranscriptRow> for super::StoredTranscriptRow {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: StoredTranscriptRow,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                args: value.args?,
+                compacted_messages: value.compacted_messages?,
+                content: value.content?,
+                context: value.context?,
+                display_kind: value.display_kind?,
+                display_metadata: value.display_metadata?,
+                labels: value.labels?,
+                name: value.name?,
+                reasoning: value.reasoning?,
+                role: value.role?,
+                row_id: value.row_id?,
+                row_kind: value.row_kind?,
+                text: value.text?,
+                timestamp: value.timestamp?,
+                tool_call_id: value.tool_call_id?,
+                truncated: value.truncated?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::StoredTranscriptRow> for StoredTranscriptRow {
+        fn from(value: super::StoredTranscriptRow) -> Self {
+            Self {
+                args: Ok(value.args),
+                compacted_messages: Ok(value.compacted_messages),
+                content: Ok(value.content),
+                context: Ok(value.context),
+                display_kind: Ok(value.display_kind),
+                display_metadata: Ok(value.display_metadata),
+                labels: Ok(value.labels),
+                name: Ok(value.name),
+                reasoning: Ok(value.reasoning),
+                role: Ok(value.role),
+                row_id: Ok(value.row_id),
+                row_kind: Ok(value.row_kind),
+                text: Ok(value.text),
+                timestamp: Ok(value.timestamp),
+                tool_call_id: Ok(value.tool_call_id),
+                truncated: Ok(value.truncated),
             }
         }
     }
@@ -93293,8 +98027,123 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct SubagentRosterEntry {
+        background: ::std::result::Result<i64, ::std::string::String>,
+        session_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        subagents: ::std::result::Result<i64, ::std::string::String>,
+    }
+    impl ::std::default::Default for SubagentRosterEntry {
+        fn default() -> Self {
+            Self {
+                background: Ok(Default::default()),
+                session_id: Err("no value supplied for session_id".to_string()),
+                subagents: Ok(Default::default()),
+            }
+        }
+    }
+    impl SubagentRosterEntry {
+        pub fn background<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<i64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.background = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for background: {e}"));
+            self
+        }
+        pub fn session_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.session_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for session_id: {e}"));
+            self
+        }
+        pub fn subagents<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<i64>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.subagents = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for subagents: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<SubagentRosterEntry> for super::SubagentRosterEntry {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: SubagentRosterEntry,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                background: value.background?,
+                session_id: value.session_id?,
+                subagents: value.subagents?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::SubagentRosterEntry> for SubagentRosterEntry {
+        fn from(value: super::SubagentRosterEntry) -> Self {
+            Self {
+                background: Ok(value.background),
+                session_id: Ok(value.session_id),
+                subagents: Ok(value.subagents),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct SubagentRosterResult {
+        sessions: ::std::result::Result<
+            ::std::vec::Vec<super::SubagentRosterEntry>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for SubagentRosterResult {
+        fn default() -> Self {
+            Self {
+                sessions: Ok(Default::default()),
+            }
+        }
+    }
+    impl SubagentRosterResult {
+        pub fn sessions<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::SubagentRosterEntry>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.sessions = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for sessions: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<SubagentRosterResult> for super::SubagentRosterResult {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: SubagentRosterResult,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                sessions: value.sessions?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::SubagentRosterResult> for SubagentRosterResult {
+        fn from(value: super::SubagentRosterResult) -> Self {
+            Self {
+                sessions: Ok(value.sessions),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct SubagentSnapshot {
         accepting_steer: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+        child_session_id: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         delegation_id: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -93328,6 +98177,7 @@ pub mod builder {
         fn default() -> Self {
             Self {
                 accepting_steer: Ok(Default::default()),
+                child_session_id: Ok(Default::default()),
                 delegation_id: Ok(Default::default()),
                 depth: Ok(Default::default()),
                 goal: Ok(Default::default()),
@@ -93350,6 +98200,16 @@ pub mod builder {
             self.accepting_steer = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for accepting_steer: {e}"));
+            self
+        }
+        pub fn child_session_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.child_session_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for child_session_id: {e}"));
             self
         }
         pub fn delegation_id<T>(mut self, value: T) -> Self
@@ -93460,6 +98320,7 @@ pub mod builder {
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
                 accepting_steer: value.accepting_steer?,
+                child_session_id: value.child_session_id?,
                 delegation_id: value.delegation_id?,
                 depth: value.depth?,
                 goal: value.goal?,
@@ -93477,6 +98338,7 @@ pub mod builder {
         fn from(value: super::SubagentSnapshot) -> Self {
             Self {
                 accepting_steer: Ok(value.accepting_steer),
+                child_session_id: Ok(value.child_session_id),
                 delegation_id: Ok(value.delegation_id),
                 depth: Ok(value.depth),
                 goal: Ok(value.goal),
@@ -94213,6 +99075,8 @@ pub mod builder {
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
         >,
+        plan_usage:
+            ::std::result::Result<::std::option::Option<super::PlanUsage>, ::std::string::String>,
         portal_url: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -94240,6 +99104,7 @@ pub mod builder {
                 ok: Err("no value supplied for ok".to_string()),
                 org_id: Ok(Default::default()),
                 org_name: Ok(Default::default()),
+                plan_usage: Ok(Default::default()),
                 portal_url: Ok(Default::default()),
                 role: Ok(Default::default()),
                 tiers: Ok(Default::default()),
@@ -94338,6 +99203,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for org_name: {e}"));
             self
         }
+        pub fn plan_usage<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::PlanUsage>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.plan_usage = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for plan_usage: {e}"));
+            self
+        }
         pub fn portal_url<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
@@ -94396,6 +99271,7 @@ pub mod builder {
                 ok: value.ok?,
                 org_id: value.org_id?,
                 org_name: value.org_name?,
+                plan_usage: value.plan_usage?,
                 portal_url: value.portal_url?,
                 role: value.role?,
                 tiers: value.tiers?,
@@ -94415,6 +99291,7 @@ pub mod builder {
                 ok: Ok(value.ok),
                 org_id: Ok(value.org_id),
                 org_name: Ok(value.org_name),
+                plan_usage: Ok(value.plan_usage),
                 portal_url: Ok(value.portal_url),
                 role: Ok(value.role),
                 tiers: Ok(value.tiers),
@@ -95809,6 +100686,10 @@ pub mod builder {
             ::std::string::String,
         >,
         duration_s: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        image_path: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
         inline_diff: ::std::result::Result<
             ::std::option::Option<::std::string::String>,
             ::std::string::String,
@@ -95839,6 +100720,7 @@ pub mod builder {
             Self {
                 args: Ok(Default::default()),
                 duration_s: Ok(Default::default()),
+                image_path: Ok(Default::default()),
                 inline_diff: Ok(Default::default()),
                 labels: Ok(Default::default()),
                 name: Err("no value supplied for name".to_string()),
@@ -95874,6 +100756,16 @@ pub mod builder {
             self.duration_s = value
                 .try_into()
                 .map_err(|e| format!("error converting supplied value for duration_s: {e}"));
+            self
+        }
+        pub fn image_path<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.image_path = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for image_path: {e}"));
             self
         }
         pub fn inline_diff<T>(mut self, value: T) -> Self
@@ -95975,6 +100867,7 @@ pub mod builder {
             Ok(Self {
                 args: value.args?,
                 duration_s: value.duration_s?,
+                image_path: value.image_path?,
                 inline_diff: value.inline_diff?,
                 labels: value.labels?,
                 name: value.name?,
@@ -95992,6 +100885,7 @@ pub mod builder {
             Self {
                 args: Ok(value.args),
                 duration_s: Ok(value.duration_s),
+                image_path: Ok(value.image_path),
                 inline_diff: Ok(value.inline_diff),
                 labels: Ok(value.labels),
                 name: Ok(value.name),
@@ -97782,6 +102676,60 @@ pub mod builder {
         }
     }
     #[derive(Clone, Debug)]
+    pub struct UndoRollbackHint {
+        files: ::std::result::Result<::std::vec::Vec<::std::string::String>, ::std::string::String>,
+        text: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for UndoRollbackHint {
+        fn default() -> Self {
+            Self {
+                files: Ok(Default::default()),
+                text: Err("no value supplied for text".to_string()),
+            }
+        }
+    }
+    impl UndoRollbackHint {
+        pub fn files<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.files = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for files: {e}"));
+            self
+        }
+        pub fn text<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.text = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for text: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<UndoRollbackHint> for super::UndoRollbackHint {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: UndoRollbackHint,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                files: value.files?,
+                text: value.text?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::UndoRollbackHint> for UndoRollbackHint {
+        fn from(value: super::UndoRollbackHint) -> Self {
+            Self {
+                files: Ok(value.files),
+                text: Ok(value.text),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
     pub struct Usage {
         active_subagents: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
         avg_latency_s: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
@@ -97811,6 +102759,8 @@ pub mod builder {
         input: ::std::result::Result<i64, ::std::string::String>,
         model: ::std::result::Result<::std::string::String, ::std::string::String>,
         output: ::std::result::Result<i64, ::std::string::String>,
+        plan_gauge:
+            ::std::result::Result<::std::option::Option<super::PlanGauge>, ::std::string::String>,
         prompt: ::std::result::Result<i64, ::std::string::String>,
         reasoning: ::std::result::Result<i64, ::std::string::String>,
         total: ::std::result::Result<i64, ::std::string::String>,
@@ -97838,6 +102788,7 @@ pub mod builder {
                 input: Ok(Default::default()),
                 model: Ok(Default::default()),
                 output: Ok(Default::default()),
+                plan_gauge: Ok(Default::default()),
                 prompt: Ok(Default::default()),
                 reasoning: Ok(Default::default()),
                 total: Ok(Default::default()),
@@ -98045,6 +102996,16 @@ pub mod builder {
                 .map_err(|e| format!("error converting supplied value for output: {e}"));
             self
         }
+        pub fn plan_gauge<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::PlanGauge>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.plan_gauge = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for plan_gauge: {e}"));
+            self
+        }
         pub fn prompt<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<i64>,
@@ -98100,6 +103061,7 @@ pub mod builder {
                 input: value.input?,
                 model: value.model?,
                 output: value.output?,
+                plan_gauge: value.plan_gauge?,
                 prompt: value.prompt?,
                 reasoning: value.reasoning?,
                 total: value.total?,
@@ -98129,6 +103091,7 @@ pub mod builder {
                 input: Ok(value.input),
                 model: Ok(value.model),
                 output: Ok(value.output),
+                plan_gauge: Ok(value.plan_gauge),
                 prompt: Ok(value.prompt),
                 reasoning: Ok(value.reasoning),
                 total: Ok(value.total),
@@ -98240,6 +103203,272 @@ pub mod builder {
                 remaining_display: Ok(value.remaining_display),
                 spent_display: Ok(value.spent_display),
                 total_display: Ok(value.total_display),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct UsageLimit {
+        credits: ::std::result::Result<
+            ::std::option::Option<super::UsageLimitCredits>,
+            ::std::string::String,
+        >,
+        current_model: ::std::result::Result<::std::string::String, ::std::string::String>,
+        gauge_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        limit_name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        message: ::std::result::Result<::std::string::String, ::std::string::String>,
+        resets_at_ms: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        scope: ::std::result::Result<::std::string::String, ::std::string::String>,
+        suggestions: ::std::result::Result<
+            ::std::vec::Vec<super::UsageLimitSuggestion>,
+            ::std::string::String,
+        >,
+    }
+    impl ::std::default::Default for UsageLimit {
+        fn default() -> Self {
+            Self {
+                credits: Ok(Default::default()),
+                current_model: Ok(Default::default()),
+                gauge_id: Err("no value supplied for gauge_id".to_string()),
+                limit_name: Err("no value supplied for limit_name".to_string()),
+                message: Err("no value supplied for message".to_string()),
+                resets_at_ms: Ok(Default::default()),
+                scope: Err("no value supplied for scope".to_string()),
+                suggestions: Ok(Default::default()),
+            }
+        }
+    }
+    impl UsageLimit {
+        pub fn credits<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<super::UsageLimitCredits>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.credits = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for credits: {e}"));
+            self
+        }
+        pub fn current_model<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.current_model = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for current_model: {e}"));
+            self
+        }
+        pub fn gauge_id<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.gauge_id = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for gauge_id: {e}"));
+            self
+        }
+        pub fn limit_name<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.limit_name = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for limit_name: {e}"));
+            self
+        }
+        pub fn message<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.message = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for message: {e}"));
+            self
+        }
+        pub fn resets_at_ms<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.resets_at_ms = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for resets_at_ms: {e}"));
+            self
+        }
+        pub fn scope<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.scope = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for scope: {e}"));
+            self
+        }
+        pub fn suggestions<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::vec::Vec<super::UsageLimitSuggestion>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.suggestions = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for suggestions: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<UsageLimit> for super::UsageLimit {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: UsageLimit,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                credits: value.credits?,
+                current_model: value.current_model?,
+                gauge_id: value.gauge_id?,
+                limit_name: value.limit_name?,
+                message: value.message?,
+                resets_at_ms: value.resets_at_ms?,
+                scope: value.scope?,
+                suggestions: value.suggestions?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::UsageLimit> for UsageLimit {
+        fn from(value: super::UsageLimit) -> Self {
+            Self {
+                credits: Ok(value.credits),
+                current_model: Ok(value.current_model),
+                gauge_id: Ok(value.gauge_id),
+                limit_name: Ok(value.limit_name),
+                message: Ok(value.message),
+                resets_at_ms: Ok(value.resets_at_ms),
+                scope: Ok(value.scope),
+                suggestions: Ok(value.suggestions),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct UsageLimitCredits {
+        action: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for UsageLimitCredits {
+        fn default() -> Self {
+            Self {
+                action: Err("no value supplied for action".to_string()),
+            }
+        }
+    }
+    impl UsageLimitCredits {
+        pub fn action<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.action = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for action: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<UsageLimitCredits> for super::UsageLimitCredits {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: UsageLimitCredits,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                action: value.action?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::UsageLimitCredits> for UsageLimitCredits {
+        fn from(value: super::UsageLimitCredits) -> Self {
+            Self {
+                action: Ok(value.action),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct UsageLimitSuggestion {
+        label: ::std::result::Result<::std::string::String, ::std::string::String>,
+        model: ::std::result::Result<::std::string::String, ::std::string::String>,
+        note: ::std::result::Result<::std::string::String, ::std::string::String>,
+        provider: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for UsageLimitSuggestion {
+        fn default() -> Self {
+            Self {
+                label: Err("no value supplied for label".to_string()),
+                model: Err("no value supplied for model".to_string()),
+                note: Err("no value supplied for note".to_string()),
+                provider: Ok(super::defaults::usage_limit_suggestion_provider()),
+            }
+        }
+    }
+    impl UsageLimitSuggestion {
+        pub fn label<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.label = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for label: {e}"));
+            self
+        }
+        pub fn model<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.model = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for model: {e}"));
+            self
+        }
+        pub fn note<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.note = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for note: {e}"));
+            self
+        }
+        pub fn provider<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.provider = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for provider: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<UsageLimitSuggestion> for super::UsageLimitSuggestion {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: UsageLimitSuggestion,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                label: value.label?,
+                model: value.model?,
+                note: value.note?,
+                provider: value.provider?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::UsageLimitSuggestion> for UsageLimitSuggestion {
+        fn from(value: super::UsageLimitSuggestion) -> Self {
+            Self {
+                label: Ok(value.label),
+                model: Ok(value.model),
+                note: Ok(value.note),
+                provider: Ok(value.provider),
             }
         }
     }
@@ -98724,6 +103953,10 @@ pub mod builder {
     }
     #[derive(Clone, Debug)]
     pub struct VaultItem {
+        allowed_origins: ::std::result::Result<
+            ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+            ::std::string::String,
+        >,
         backend: ::std::result::Result<::std::string::String, ::std::string::String>,
         created_at: ::std::result::Result<::std::string::String, ::std::string::String>,
         has_otp: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
@@ -98746,6 +103979,7 @@ pub mod builder {
     impl ::std::default::Default for VaultItem {
         fn default() -> Self {
             Self {
+                allowed_origins: Ok(Default::default()),
                 backend: Err("no value supplied for backend".to_string()),
                 created_at: Ok(Default::default()),
                 has_otp: Ok(Default::default()),
@@ -98759,6 +103993,18 @@ pub mod builder {
         }
     }
     impl VaultItem {
+        pub fn allowed_origins<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<
+                    ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+                >,
+            T::Error: ::std::fmt::Display,
+        {
+            self.allowed_origins = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for allowed_origins: {e}"));
+            self
+        }
         pub fn backend<T>(mut self, value: T) -> Self
         where
             T: ::std::convert::TryInto<::std::string::String>,
@@ -98856,6 +104102,7 @@ pub mod builder {
             value: VaultItem,
         ) -> ::std::result::Result<Self, super::error::ConversionError> {
             Ok(Self {
+                allowed_origins: value.allowed_origins?,
                 backend: value.backend?,
                 created_at: value.created_at?,
                 has_otp: value.has_otp?,
@@ -98871,6 +104118,7 @@ pub mod builder {
     impl ::std::convert::From<super::VaultItem> for VaultItem {
         fn from(value: super::VaultItem) -> Self {
             Self {
+                allowed_origins: Ok(value.allowed_origins),
                 backend: Ok(value.backend),
                 created_at: Ok(value.created_at),
                 has_otp: Ok(value.has_otp),
@@ -99020,6 +104268,182 @@ pub mod builder {
         fn from(value: super::VaultLockResult) -> Self {
             Self {
                 locked: Ok(value.locked),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct VaultPreviewFillParams {
+        handle: ::std::result::Result<::std::string::String, ::std::string::String>,
+        profile: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        target: ::std::result::Result<::std::string::String, ::std::string::String>,
+    }
+    impl ::std::default::Default for VaultPreviewFillParams {
+        fn default() -> Self {
+            Self {
+                handle: Err("no value supplied for handle".to_string()),
+                profile: Ok(Default::default()),
+                target: Err("no value supplied for target".to_string()),
+            }
+        }
+    }
+    impl VaultPreviewFillParams {
+        pub fn handle<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.handle = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for handle: {e}"));
+            self
+        }
+        pub fn profile<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.profile = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for profile: {e}"));
+            self
+        }
+        pub fn target<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::string::String>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.target = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for target: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<VaultPreviewFillParams> for super::VaultPreviewFillParams {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: VaultPreviewFillParams,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                handle: value.handle?,
+                profile: value.profile?,
+                target: value.target?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::VaultPreviewFillParams> for VaultPreviewFillParams {
+        fn from(value: super::VaultPreviewFillParams) -> Self {
+            Self {
+                handle: Ok(value.handle),
+                profile: Ok(value.profile),
+                target: Ok(value.target),
+            }
+        }
+    }
+    #[derive(Clone, Debug)]
+    pub struct VaultPreviewFillResult {
+        error: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        error_type: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        filled_fields: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+        origin: ::std::result::Result<
+            ::std::option::Option<::std::string::String>,
+            ::std::string::String,
+        >,
+        success: ::std::result::Result<bool, ::std::string::String>,
+    }
+    impl ::std::default::Default for VaultPreviewFillResult {
+        fn default() -> Self {
+            Self {
+                error: Ok(Default::default()),
+                error_type: Ok(Default::default()),
+                filled_fields: Ok(Default::default()),
+                origin: Ok(Default::default()),
+                success: Err("no value supplied for success".to_string()),
+            }
+        }
+    }
+    impl VaultPreviewFillResult {
+        pub fn error<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.error = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for error: {e}"));
+            self
+        }
+        pub fn error_type<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.error_type = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for error_type: {e}"));
+            self
+        }
+        pub fn filled_fields<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<i64>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.filled_fields = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for filled_fields: {e}"));
+            self
+        }
+        pub fn origin<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.origin = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for origin: {e}"));
+            self
+        }
+        pub fn success<T>(mut self, value: T) -> Self
+        where
+            T: ::std::convert::TryInto<bool>,
+            T::Error: ::std::fmt::Display,
+        {
+            self.success = value
+                .try_into()
+                .map_err(|e| format!("error converting supplied value for success: {e}"));
+            self
+        }
+    }
+    impl ::std::convert::TryFrom<VaultPreviewFillResult> for super::VaultPreviewFillResult {
+        type Error = super::error::ConversionError;
+        fn try_from(
+            value: VaultPreviewFillResult,
+        ) -> ::std::result::Result<Self, super::error::ConversionError> {
+            Ok(Self {
+                error: value.error?,
+                error_type: value.error_type?,
+                filled_fields: value.filled_fields?,
+                origin: value.origin?,
+                success: value.success?,
+            })
+        }
+    }
+    impl ::std::convert::From<super::VaultPreviewFillResult> for VaultPreviewFillResult {
+        fn from(value: super::VaultPreviewFillResult) -> Self {
+            Self {
+                error: Ok(value.error),
+                error_type: Ok(value.error_type),
+                filled_fields: Ok(value.filled_fields),
+                origin: Ok(value.origin),
+                success: Ok(value.success),
             }
         }
     }
@@ -102685,6 +108109,13 @@ pub mod defaults {
     pub(super) fn default_bool<const V: bool>() -> bool {
         V
     }
+    pub(super) fn default_i64<T, const V: i64>() -> T
+    where
+        T: ::std::convert::TryFrom<i64>,
+        <T as ::std::convert::TryFrom<i64>>::Error: ::std::fmt::Debug,
+    {
+        T::try_from(V).unwrap()
+    }
     pub(super) fn default_u64<T, const V: u64>() -> T
     where
         T: ::std::convert::TryFrom<u64>,
@@ -102730,6 +108161,9 @@ pub mod defaults {
     }
     pub(super) fn canonical_create_params_source() -> super::Source {
         super::Source::Cli
+    }
+    pub(super) fn canonical_groups_peer_invite_params_ttl_seconds() -> f64 {
+        3600_f64
     }
     pub(super) fn canonical_list_params_scope() -> super::Scope {
         super::Scope::Live
@@ -102782,8 +108216,14 @@ pub mod defaults {
     pub(super) fn display_switch_sandbox_image_result_placement() -> ::std::string::String {
         "gateway".to_string()
     }
+    pub(super) fn free_tier_claim_nudge_params_kind() -> super::Kind {
+        super::Kind::Trial
+    }
     pub(super) fn i18n_catalog_params_surface() -> super::LocaleSurface {
         super::LocaleSurface::Core
+    }
+    pub(super) fn image_render_params_terminal() -> super::Terminal {
+        super::Terminal::Unicode
     }
     pub(super) fn mcp_server_entry_transport() -> ::std::string::String {
         "stdio".to_string()
@@ -102791,11 +108231,20 @@ pub mod defaults {
     pub(super) fn onboarding_start_params_facts_source() -> super::OnboardingFactsSource {
         super::OnboardingFactsSource::Local
     }
+    pub(super) fn pet_cells_params_terminal() -> super::Terminal {
+        super::Terminal::Unicode
+    }
     pub(super) fn pet_cells_result_frames() -> super::Frames {
         super::Frames::Variant2
     }
     pub(super) fn pet_scale_params_scale() -> ::serde_json::Value {
         ::serde_json::from_str::<::serde_json::Value>("null").unwrap()
+    }
+    pub(super) fn plan_usage_gauge_scope() -> ::std::string::String {
+        "all".to_string()
+    }
+    pub(super) fn plugin_catalog_lookup_entry_tier() -> ::std::string::String {
+        "community".to_string()
     }
     pub(super) fn plugins_manage_params_action() -> super::PluginsAction {
         super::PluginsAction::List
@@ -102858,6 +108307,9 @@ pub mod defaults {
     pub(super) fn prompt_submit_params_text() -> ::serde_json::Value {
         ::serde_json::from_str::<::serde_json::Value>("\"\"").unwrap()
     }
+    pub(super) fn room_context_routing() -> super::Routing {
+        super::Routing::Everyone
+    }
     pub(super) fn session_cwd_set_result_approval_mode() -> ::std::string::String {
         "manual".to_string()
     }
@@ -102888,6 +108340,9 @@ pub mod defaults {
     pub(super) fn skills_manage_params_action() -> super::SkillsAction {
         super::SkillsAction::List
     }
+    pub(super) fn stored_transcript_params_order() -> super::Order {
+        super::Order::Oldest
+    }
     pub(super) fn subscription_preview_result_retry_after() -> super::RetryAfter {
         super::RetryAfter::Null
     }
@@ -102902,6 +108357,9 @@ pub mod defaults {
     }
     pub(super) fn ui_meta_conflict_expected() -> ::serde_json::Value {
         ::serde_json::from_str::<::serde_json::Value>("null").unwrap()
+    }
+    pub(super) fn usage_limit_suggestion_provider() -> ::std::string::String {
+        "nous".to_string()
     }
     pub(super) fn voice_record_params_action() -> super::VoiceRecordAction {
         super::VoiceRecordAction::Start

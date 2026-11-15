@@ -1,4 +1,4 @@
-// Hermes v0.22.4 commit 4d04303818b61bf3aa09278af48356315515965b contract sha256 248ce12519dcc1e830a15c5819c93e6d27ef18404d19da38c960570710f83d00
+// Hermes v0.23.1 commit 3b421578588243f920886e6fe79a6faa87ea026e contract sha256 c2f48466a3e4fa98babceb066ab5d053d1573f0202146cd6e6fdb319ddd81f19
 pub mod legacy {
     pub mod agents_list {
         pub const NAME: &str = "agents.list";
@@ -77,6 +77,17 @@ pub mod legacy {
             type Result = Result;
         }
     }
+    pub mod billing_keep_going_on_credits {
+        pub const NAME: &str = "billing.keep_going_on_credits";
+        pub type Params = crate::schemas::BillingKeepGoingOnCreditsParams;
+        pub type Result = crate::schemas::BillingMutationResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
     pub mod billing_state {
         pub const NAME: &str = "billing.state";
         pub type Params = crate::schemas::ProfileParams;
@@ -136,50 +147,6 @@ pub mod legacy {
         pub const NAME: &str = "bot_relay.roster.sync";
         pub type Params = crate::schemas::BotRelayRosterSyncParams;
         pub type Result = crate::schemas::BotRelayRosterSyncResult;
-        pub struct Marker;
-        impl crate::method::Method for Marker {
-            const NAME: &'static str = NAME;
-            type Params = Params;
-            type Result = Result;
-        }
-    }
-    pub mod browser_controller_detach {
-        pub const NAME: &str = "browser.controller.detach";
-        pub type Params = crate::schemas::BrowserControllerParams;
-        pub type Result = crate::schemas::BrowserControllerDetachResult;
-        pub struct Marker;
-        impl crate::method::Method for Marker {
-            const NAME: &'static str = NAME;
-            type Params = Params;
-            type Result = Result;
-        }
-    }
-    pub mod browser_controller_heartbeat {
-        pub const NAME: &str = "browser.controller.heartbeat";
-        pub type Params = crate::schemas::BrowserControllerParams;
-        pub type Result = crate::schemas::OkResult;
-        pub struct Marker;
-        impl crate::method::Method for Marker {
-            const NAME: &'static str = NAME;
-            type Params = Params;
-            type Result = Result;
-        }
-    }
-    pub mod browser_controller_register {
-        pub const NAME: &str = "browser.controller.register";
-        pub type Params = crate::schemas::BrowserControllerRegisterParams;
-        pub type Result = crate::schemas::BrowserControllerRegisterResult;
-        pub struct Marker;
-        impl crate::method::Method for Marker {
-            const NAME: &'static str = NAME;
-            type Params = Params;
-            type Result = Result;
-        }
-    }
-    pub mod browser_controller_result {
-        pub const NAME: &str = "browser.controller.result";
-        pub type Params = crate::schemas::BrowserControllerResultParams;
-        pub type Result = crate::schemas::BrowserControllerResultResult;
         pub struct Marker;
         impl crate::method::Method for Marker {
             const NAME: &'static str = NAME;
@@ -640,7 +607,7 @@ pub mod legacy {
     }
     pub mod free_tier_claim_nudge {
         pub const NAME: &str = "free_tier.claim_nudge";
-        pub type Params = crate::schemas::ProfileParams;
+        pub type Params = crate::schemas::FreeTierClaimNudgeParams;
         pub type Result = crate::schemas::FreeTierClaimNudgeResult;
         pub struct Marker;
         impl crate::method::Method for Marker {
@@ -693,10 +660,54 @@ pub mod legacy {
             type Result = Result;
         }
     }
+    pub mod groups_attachment_download {
+        pub const NAME: &str = "groups.attachment.download";
+        pub type Params = crate::schemas::GroupsAttachmentDownloadParams;
+        pub type Result = crate::schemas::RoomAttachmentBytes;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod groups_attachment_upload {
+        pub const NAME: &str = "groups.attachment.upload";
+        pub type Params = crate::schemas::GroupsAttachmentUploadParams;
+        pub type Result = crate::schemas::RoomAttachment;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
     pub mod groups_capabilities {
         pub const NAME: &str = "groups.capabilities";
         pub type Params = crate::schemas::GroupsCapabilitiesParams;
         pub type Result = crate::schemas::GroupsCapabilitiesResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod groups_context {
+        pub const NAME: &str = "groups.context";
+        pub type Params = crate::schemas::GroupsContextParams;
+        pub type Result = crate::schemas::GroupsContextResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod groups_continue {
+        pub const NAME: &str = "groups.continue";
+        pub type Params = crate::schemas::GroupsContinueParams;
+        pub type Result = crate::schemas::GroupsContinueResult;
         pub struct Marker;
         impl crate::method::Method for Marker {
             const NAME: &'static str = NAME;
@@ -730,6 +741,17 @@ pub mod legacy {
         pub const NAME: &str = "groups.disband";
         pub type Params = crate::schemas::GroupsDisbandParams;
         pub type Result = crate::schemas::GroupsDisbandResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod groups_discard {
+        pub const NAME: &str = "groups.discard";
+        pub type Params = crate::schemas::GroupsDiscardParams;
+        pub type Result = crate::schemas::GroupsDiscardResult;
         pub struct Marker;
         impl crate::method::Method for Marker {
             const NAME: &'static str = NAME;
@@ -972,6 +994,17 @@ pub mod legacy {
         pub const NAME: &str = "image.generate";
         pub type Params = crate::schemas::ImageGenerateParams;
         pub type Result = crate::schemas::ImageGenerateResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod image_render {
+        pub const NAME: &str = "image.render";
+        pub type Params = crate::schemas::ImageRenderParams;
+        pub type Result = crate::schemas::ImageRenderResult;
         pub struct Marker;
         impl crate::method::Method for Marker {
             const NAME: &'static str = NAME;
@@ -2486,6 +2519,17 @@ pub mod legacy {
             type Result = Result;
         }
     }
+    pub mod subagent_roster {
+        pub const NAME: &str = "subagent.roster";
+        pub type Params = crate::schemas::ProfileParams;
+        pub type Result = crate::schemas::SubagentRosterResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
     pub mod subagent_steer {
         pub const NAME: &str = "subagent.steer";
         pub type Params = crate::schemas::SubagentSteerParams;
@@ -2673,6 +2717,17 @@ pub mod legacy {
             type Result = Result;
         }
     }
+    pub mod vault_preview_fill {
+        pub const NAME: &str = "vault.preview.fill";
+        pub type Params = crate::schemas::VaultPreviewFillParams;
+        pub type Result = crate::schemas::VaultPreviewFillResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
     pub mod vault_remove {
         pub const NAME: &str = "vault.remove";
         pub type Params = crate::schemas::VaultRemoveParams;
@@ -2851,6 +2906,17 @@ pub mod canonical {
             type Result = Result;
         }
     }
+    pub mod bot_relay_cancel {
+        pub const NAME: &str = "bot_relay.cancel";
+        pub type Params = crate::schemas::CanonicalBotCancelParams;
+        pub type Result = crate::schemas::CanonicalBotCancelResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
     pub mod bot_relay_deliver {
         pub const NAME: &str = "bot_relay.deliver";
         pub type Params = crate::schemas::CanonicalBotDeliverParams;
@@ -3020,6 +3086,39 @@ pub mod canonical {
         pub const NAME: &str = "groups.discard";
         pub type Params = crate::schemas::GroupsDiscardParams;
         pub type Result = crate::schemas::GroupsDiscardResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod groups_peer_invite {
+        pub const NAME: &str = "groups.peer.invite";
+        pub type Params = crate::schemas::CanonicalGroupsPeerInviteParams;
+        pub type Result = crate::schemas::GroupsPeerInviteResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod groups_peer_register {
+        pub const NAME: &str = "groups.peer.register";
+        pub type Params = crate::schemas::CanonicalGroupsPeerRegisterParams;
+        pub type Result = crate::schemas::GroupsPeerRegisterResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod groups_peer_revoke {
+        pub const NAME: &str = "groups.peer.revoke";
+        pub type Params = crate::schemas::CanonicalGroupsPeerRevokeParams;
+        pub type Result = crate::schemas::GroupsPeerRevokeResult;
         pub struct Marker;
         impl crate::method::Method for Marker {
             const NAME: &'static str = NAME;
@@ -3306,6 +3405,17 @@ pub mod canonical {
         pub const NAME: &str = "session.steer";
         pub type Params = crate::schemas::CanonicalCorrectionParams;
         pub type Result = crate::schemas::CanonicalCorrectionResult;
+        pub struct Marker;
+        impl crate::method::Method for Marker {
+            const NAME: &'static str = NAME;
+            type Params = Params;
+            type Result = Result;
+        }
+    }
+    pub mod session_transcript {
+        pub const NAME: &str = "session.transcript";
+        pub type Params = crate::schemas::StoredTranscriptParams;
+        pub type Result = crate::schemas::StoredTranscriptResult;
         pub struct Marker;
         impl crate::method::Method for Marker {
             const NAME: &'static str = NAME;

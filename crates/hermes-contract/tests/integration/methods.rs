@@ -92,6 +92,9 @@ fn shared_names_have_distinct_parameter_types() {
         "config.set",
         "groups.approve",
         "groups.create",
+        "groups.peer.invite",
+        "groups.peer.register",
+        "groups.peer.revoke",
         "groups.retry",
         "image.attach_bytes",
         "profiles.list",
@@ -115,6 +118,9 @@ fn shared_names_have_distinct_parameter_types() {
     assert_distinct!(config_set);
     assert_distinct!(groups_approve);
     assert_distinct!(groups_create);
+    assert_distinct!(groups_peer_invite);
+    assert_distinct!(groups_peer_register);
+    assert_distinct!(groups_peer_revoke);
     assert_distinct!(groups_retry);
     assert_distinct!(image_attach_bytes);
     assert_distinct!(profiles_list);

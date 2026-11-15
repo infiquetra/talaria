@@ -3012,7 +3012,7 @@ fn client_shape(method: &str, params: &Value) -> (Vec<&'static str>, Vec<&'stati
             let keys = vec!["session_id", "text"];
             (keys.clone(), keys)
         }
-        "client.capabilities" => (Vec::new(), vec!["server_requests"]),
+        "client.capabilities" => (Vec::new(), vec!["desktop_local", "server_requests"]),
         "commands.catalog" => (Vec::new(), vec!["profile", "session_id"]),
         "complete.slash" => (Vec::new(), vec!["profile", "session_id", "text"]),
         "slash.exec" => (
