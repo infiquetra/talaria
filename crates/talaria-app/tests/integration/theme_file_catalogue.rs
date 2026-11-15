@@ -10,7 +10,7 @@ fn catalogue_is_complete_and_self_consistent() {
     assert_eq!(ROLES.iter().collect::<BTreeSet<_>>().len(), 14);
     let names: BTreeSet<_> = entries.iter().map(|entry| entry.token).collect();
     assert_eq!(names.len(), 323);
-    assert_eq!(entries.iter().filter(|entry| entry.reserved).count(), 30);
+    assert_eq!(entries.iter().filter(|entry| entry.reserved).count(), 33);
     for entry in entries {
         assert!(ROLES.contains(&entry.role), "{}", entry.token);
         assert!(!entry.description.is_empty());
@@ -20,7 +20,14 @@ fn catalogue_is_complete_and_self_consistent() {
                     .bytes()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
         }));
-        assert_eq!(entry.reserved, entry.token.starts_with("picker."));
+        assert_eq!(
+            entry.reserved,
+            entry.token.starts_with("picker.")
+                || matches!(
+                    entry.token,
+                    "transcript.user.label" | "transcript.assistant.label" | "transcript.system"
+                )
+        );
         for attr in entry.attributes.split(',').filter(|attr| !attr.is_empty()) {
             assert!(
                 [

@@ -1,18 +1,18 @@
 # Theme element catalogue
 
 Each name is independently overridable under `[elements."<name>"]`. Unspecified fields inherit
-from its semantic role and area background; attributes below are the defaults. The 30 `picker.*`
-names are reserved and accepted in files, pending the picker implementation. See [themes](themes.md)
+from its semantic role and area background; attributes below are the defaults. The 30 `picker.*` names are reserved and accepted in files, pending the picker implementation. `transcript.user.label`, `transcript.assistant.label`, and `transcript.system` are reserved the same way, because the inline view draws no user label, assistant label, or system text.
+See [themes](themes.md)
 for the format, layering, constraints and current drawing coverage.
 
 | Token | Role | Attributes | What it styles | Status |
 | --- | --- | --- | --- | --- |
 | `transcript.background` | background | none | Workspace conversation surface | defined |
 | `transcript.text` | text | none | Assistant body and ordinary text | defined |
-| `transcript.user.label` | accent | bold | User label | defined |
+| `transcript.user.label` | accent | bold | User label | reserved |
 | `transcript.user.text` | text | none | User message | defined |
-| `transcript.assistant.label` | primary | bold | Assistant label | defined |
-| `transcript.system` | muted | none | System messages | defined |
+| `transcript.assistant.label` | primary | bold | Assistant label | reserved |
+| `transcript.system` | muted | none | System messages | reserved |
 | `transcript.timestamp` | muted | none | Message time | defined |
 | `transcript.reasoning` | muted | italic | Reasoning text | defined |
 | `transcript.reasoning.label` | muted | bold | Reasoning heading | defined |

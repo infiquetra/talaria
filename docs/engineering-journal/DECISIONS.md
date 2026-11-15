@@ -4,6 +4,18 @@
 
 ## 2026-11-14
 
+### Apply theme colours to inline conversation text
+
+**Context.** Inline user text and notices ignore a loaded theme file.
+
+**Decision.** Use the user text and notice tokens, the error alert token for
+error notices, and the reasoning label token for the thinking heading. Reserve
+the user label, assistant label and system text names until the inline view draws
+them. Keep inline backgrounds clear and leave the rewind overlay's empty
+`NO_COLOR` exception unchanged.
+
+**Revisit when.** The inline view draws a user label, an assistant label, or system text.
+
 ### Normalize null skin colours at connection boundaries
 
 **Context.** A null colour from a YAML skin prevents generated contract types from
