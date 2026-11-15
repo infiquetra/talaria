@@ -2,6 +2,16 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — A dropped alert must not move the tracker window
+
+**Evidence.** The foreground and fleet alert regression exercises a shared gate
+that drops an alert before another alert of the same urgency arrives.
+
+**Mechanism.** `observe` recorded `last_alert` before `on_foreground_alert`
+could drop the alert, moving the tracker window while the gate window stayed put.
+
+**Rule.** Record the tracker time only after the shared gate admits the alert.
+
 ## 2026-11-15 — Remember approval notes across submission outcomes
 
 **Evidence.** The approval-note regression checks that a refused follow-up is

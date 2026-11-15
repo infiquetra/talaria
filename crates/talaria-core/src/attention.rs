@@ -173,6 +173,11 @@ pub struct AttentionTracker {
 }
 
 impl AttentionTracker {
+    /// Record an alert only after the shared gate admits it.
+    pub fn record_admitted(&mut self, at: Instant, kind: AlertKind) {
+        self.last_alert = Some((at, kind));
+    }
+
     /// A tracker with no open needs and no running turn.
     pub fn new(config: AttentionConfig) -> Self {
         Self {
@@ -263,7 +268,6 @@ impl AttentionTracker {
             }) {
                 return None;
             }
-            self.last_alert = Some((at, kind));
             Some(Alert {
                 kind,
                 bell,

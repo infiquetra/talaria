@@ -2,6 +2,17 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-15 — Record alerts after gate admission
+
+**Context.** A dropped foreground alert could move the tracker's window and
+suppress a later alert even though the shared gate did not move its window.
+
+**Decision.** The caller records `last_alert` only after `AlertGate::admit`
+returns the alert. Both two-second checks remain in place.
+
+**Revisit when.** Alert admission or coordination between foreground and
+background sources changes.
+
 ## 2026-11-15 — Return refused approval-note follow-ups
 
 **Context.** Approval notes are submitted after the answer, and a refused
