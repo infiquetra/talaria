@@ -50,7 +50,7 @@ In an interactive Talaria session:
 ```
 
 Bare `/ultracode` toggles. Turning on and checking status read a fresh command catalogue.
-A missing skill prints its install command. Check that the skill is enabled in Hermes if it
+A missing skill on a local session asks once: `Install talaria-workflows into profile <name> now? [y/N]`. `y` installs it and prints the installer's result. Any other answer prints the install command. A session started with `--remote` does not ask; its notice says the skill must be installed on the machine that runs the gateway. Check that the skill is enabled in Hermes if it
 is installed but absent from the catalogue. A quick command, plugin, or alias that takes
 `/talaria-workflows` is refused. A project-local skill can take precedence over the installed
 copy; status shows the catalogue's reported origin.

@@ -1,6 +1,6 @@
 //! Workflow routing decisions; the application executes every read through its event channel.
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use talaria_core::{
     commands::{CommandCatalog, CommandOutcome, ErrorView, SlashLine, describe_error},
     session::SessionId,
@@ -28,6 +28,10 @@ pub enum Action {
         submission_id: String,
     },
     RestoreComposer(String),
+    InstallSkill {
+        session: SessionId,
+        profile: String,
+    },
     Changed,
 }
 pub struct Foreground<'a> {
@@ -37,6 +41,10 @@ pub struct Foreground<'a> {
 pub struct UltracodeService {
     state: UltracodeState,
     profiles: HashMap<SessionId, String>,
+    asked: HashSet<SessionId>,
+    kept: HashSet<SessionId>,
+    pending: HashMap<SessionId, String>,
+    remote: bool,
 }
 impl Default for UltracodeService {
     fn default() -> Self {
@@ -48,10 +56,43 @@ impl UltracodeService {
         Self {
             state: UltracodeState::new(default_on),
             profiles: HashMap::new(),
+            asked: HashSet::new(),
+            kept: HashSet::new(),
+            pending: HashMap::new(),
+            remote: false,
         }
     }
     pub fn state(&self) -> &UltracodeState {
         &self.state
+    }
+    pub fn set_remote(&mut self, remote: bool) {
+        self.remote = remote;
+    }
+    pub fn record_shown(&mut self, session: &SessionId) {
+        let profile = self.profiles.get(session).map_or("default", String::as_str);
+        self.pending.insert(session.clone(), profile.to_owned());
+        self.asked.insert(session.clone());
+        self.kept.remove(session);
+    }
+    pub fn show_kept(&mut self, session: &SessionId) -> Option<String> {
+        if !self.kept.contains(session) {
+            return None;
+        }
+        let profile = self.profiles.get(session).map_or("default", String::as_str);
+        let text = notice::offer(profile);
+        self.record_shown(session);
+        Some(text)
+    }
+    pub fn answer_install(&mut self, session: &SessionId, line: &str) -> Option<Vec<Action>> {
+        let profile = self.pending.remove(session)?;
+        Some(vec![if line.trim() == "y" {
+            Action::InstallSkill {
+                session: session.clone(),
+                profile,
+            }
+        } else {
+            Action::Notice(notice::missing(&profile))
+        }])
     }
     pub fn bind(&mut self, session: &SessionId, profile: &str) {
         self.profiles.insert(session.clone(), profile.into());
@@ -94,6 +135,9 @@ impl UltracodeService {
             Ok(c) => skill_availability(&c),
             Err(reason) => SkillAvailability::Unknown { reason },
         };
+        if !matches!(availability, SkillAvailability::Missing) {
+            self.kept.remove(session);
+        }
         if command == UltracodeCommand::Status {
             return vec![Action::Notice(notice::status(
                 self.state.is_on(session),
@@ -105,6 +149,14 @@ impl UltracodeService {
             SkillAvailability::Installed { .. } => {
                 self.state.set(session, true);
                 return vec![Action::Notice(notice::ON.into()), Action::Changed];
+            }
+            SkillAvailability::Missing if self.remote => format!(
+                "{}. The skill must be installed on the machine that runs the gateway.",
+                notice::missing(profile)
+            ),
+            SkillAvailability::Missing if !self.asked.contains(session) => {
+                self.kept.insert(session.clone());
+                notice::offer(profile)
             }
             SkillAvailability::Missing => notice::missing(profile),
             SkillAvailability::Collision => notice::collision(profile),
@@ -163,7 +215,18 @@ impl UltracodeService {
             Err(ErrorView::Rpc {
                 reason: Some(reason),
                 ..
-            }) if reason == "unsupported_command" => notice::missing(profile),
+            }) if reason == "unsupported_command" => {
+                if self.remote {
+                    format!(
+                        "{}. The skill must be installed on the machine that runs the gateway.",
+                        notice::missing(profile)
+                    )
+                } else if self.asked.contains(session) {
+                    notice::missing(profile)
+                } else {
+                    notice::offer(profile)
+                }
+            }
             Err(ErrorView::Rpc {
                 reason: Some(reason),
                 ..

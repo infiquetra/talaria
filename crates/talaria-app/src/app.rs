@@ -1758,6 +1758,9 @@ pub enum AppMessage {
         original_text: String,
         outcome: Result<Value, talaria_core::commands::ErrorView>,
     },
+    UltracodeNotice {
+        text: String,
+    },
     Configure {
         generation: u64,
         service: Option<Arc<crate::configure::Service>>,
@@ -4120,6 +4123,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 .ultracode
                 .on_catalog_reply(&session, &profile, command, result);
             if is_foreground(state, session.as_str()) {
+                if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&profile))) {
+                    state.ultracode.record_shown(&session);
+                }
                 ultracode_actions(state, actions)
             } else {
                 Vec::new()
@@ -4134,6 +4140,9 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 let actions = state
                     .ultracode
                     .on_command_outcome(&session, &original_text, outcome);
+                if actions.iter().any(|action| matches!(action, crate::ultracode::Action::Notice(text) if *text == talaria_core::ultracode::notice::offer(&state.profile))) {
+                    state.ultracode.record_shown(&session);
+                }
                 ultracode_actions(state, actions)
             } else {
                 vec![notice_lines(
@@ -4141,6 +4150,7 @@ pub fn update(state: &mut AppState, message: AppMessage) -> Vec<AppEffect> {
                 )]
             }
         }
+        AppMessage::UltracodeNotice { text } => vec![notice_lines(&text)],
         AppMessage::CommandDone { typed, outcome } => command_done(state, &typed, outcome),
         AppMessage::ContextDone { block } => context_done(state, block),
         AppMessage::CompactDone {
@@ -7156,6 +7166,10 @@ fn apply_ultracode(
                 };
                 effects.push(AppEffect::Ultracode { action, request_id });
             }
+            action @ Action::InstallSkill { .. } => effects.push(AppEffect::Ultracode {
+                action,
+                request_id: 0,
+            }),
         }
     }
     effects
@@ -8428,6 +8442,15 @@ fn tasks_key(state: &AppState, key: &InputKey) -> bool {
 /// nor a side question is ever held or queued behind a turn.
 fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
     if text.trim().is_empty() {
+        if let Some(session) = state
+            .opened
+            .as_ref()
+            .filter(|_| !state.session_gone)
+            .map(|opened| SessionId::new(opened.session_id.clone()))
+            && let Some(actions) = state.ultracode.answer_install(&session, &text)
+        {
+            return ultracode_actions(state, actions);
+        }
         return Vec::new();
     }
     if let Some(Ok((LocalAction::Configure, request))) = local_line(&text) {
@@ -8522,6 +8545,9 @@ fn submit(state: &mut AppState, text: String) -> Vec<AppEffect> {
         .map(|s| SessionId::new(s.session_id.clone()))
     {
         state.ultracode.bind(&session, &state.profile);
+        if let Some(actions) = state.ultracode.answer_install(&session, &text) {
+            return ultracode_actions(state, actions);
+        }
         if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
             return ultracode_actions(state, actions);
         }
@@ -9434,6 +9460,14 @@ fn opened_session(
         state,
         PermissionsInput::SessionOpened { session_id },
     ));
+    if let Some(session) = state
+        .opened
+        .as_ref()
+        .map(|opened| SessionId::new(opened.session_id.clone()))
+        && let Some(text) = state.ultracode.show_kept(&session)
+    {
+        effects.push(notice_lines(&text));
+    }
     while let Some(text) = state.held.pop_front() {
         if let Some(session) = state
             .opened
@@ -9441,6 +9475,10 @@ fn opened_session(
             .map(|opened| SessionId::new(opened.session_id.clone()))
         {
             state.ultracode.bind(&session, &state.profile);
+            if let Some(actions) = state.ultracode.answer_install(&session, &text) {
+                effects.extend(apply_ultracode(state, actions, false));
+                continue;
+            }
             if let Some(actions) = state.ultracode.intercept_submit(&session, &text) {
                 if state
                     .held_attachments
@@ -12768,6 +12806,46 @@ fn apply<S: Screen>(
                         }
                     });
                 }
+                crate::ultracode::Action::InstallSkill { profile, .. } => {
+                    executor.send_later(async move {
+                        let result = async {
+                            let (target, warnings) =
+                                talaria_workflow::skill::resolve_target(&profile).await?;
+                            let home =
+                                talaria_workflow::staffing::talaria_home().ok_or_else(|| {
+                                    talaria_workflow::skill::SkillError::Template(
+                                        "no home folder for Talaria".into(),
+                                    )
+                                })?;
+                            let options = talaria_workflow::skill::InstallOptions {
+                                command: "talaria".into(),
+                                force: false,
+                                dry_run: false,
+                                talaria_home: home,
+                                now: chrono::Utc::now(),
+                                lock_wait: Duration::from_secs(10),
+                            };
+                            let owned_target = target.clone();
+                            let mut report = tokio::task::spawn_blocking(move || {
+                                talaria_workflow::skill::install(&owned_target, &options)
+                            })
+                            .await
+                            .map_err(|error| {
+                                talaria_workflow::skill::SkillError::Template(error.to_string())
+                            })??;
+                            report.warnings.splice(0..0, warnings);
+                            Ok::<_, talaria_workflow::skill::SkillError>(
+                                talaria_workflow::skill::report_text(
+                                    &target, &report, false, false,
+                                ),
+                            )
+                        }
+                        .await;
+                        AppMessage::UltracodeNotice {
+                            text: result.unwrap_or_else(|error| error.to_string()),
+                        }
+                    });
+                }
                 _ => {}
             },
             AppEffect::RunCommand { session_id, typed } => {
@@ -14659,6 +14737,9 @@ async fn run_inner<S: Screen>(
         state.attached_to_remote_gateway();
     }
     state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
+    if setup.remote_gateway {
+        state.ultracode.set_remote(true);
+    }
     let voice_config = screen.voice_config();
     state.configure_voice(voice_config);
     state.models = ModelsState::new(

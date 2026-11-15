@@ -17,6 +17,7 @@ name = "mock-herdr"
 path = "src/bin/mock_herdr.rs"
 
 [dependencies]
+chrono.workspace = true
 talaria-workflow.workspace = true
 futures-util = { workspace = true, features = ["sink"] }
 serde.workspace = true

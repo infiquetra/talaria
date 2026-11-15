@@ -3324,6 +3324,7 @@ version = "0.8.1"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
+ "chrono",
  "crossterm",
  "futures-util",
  "getrandom 0.3.4",

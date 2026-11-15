@@ -7,7 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 pub mod install;
+pub mod report;
 pub use install::*;
+pub use report::{report_text, resolve_target};
 pub const SKILL_NAME: &str = "talaria-workflows";
 pub const SKILL_VERSION: &str = "1.0.0";
 pub const SKILL_FILES: &[(&str, &str)] = &[
