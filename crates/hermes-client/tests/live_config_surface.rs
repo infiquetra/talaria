@@ -1472,7 +1472,7 @@ fn merge_matrix(rows: &[Value]) -> Result<(), String> {
             let bytes = std::fs::read(seed).map_err(|_| "static rows could not be read")?;
             let seed: Value =
                 serde_json::from_slice(&bytes).map_err(|_| "static rows did not parse")?;
-            json!({"hermes_release": hermes_contract::pinned::TAG, "rows": seed["rows"].clone()})
+            json!({"recorded_against": hermes_contract::pinned::TAG, "rows": seed["rows"].clone()})
         }
     };
     let list = document["rows"]

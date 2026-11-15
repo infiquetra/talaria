@@ -7,6 +7,14 @@ fn pin() -> Pin {
         commit: hermes_contract::pinned::COMMIT.into(),
     }
 }
+fn pin_version() -> &'static str {
+    hermes_contract::pinned::TAG
+        .strip_prefix('v')
+        .unwrap_or(hermes_contract::pinned::TAG)
+}
+fn pin_prefix() -> String {
+    hermes_contract::pinned::COMMIT.chars().take(8).collect()
+}
 fn status() -> StatusPage {
     StatusPage {
         config_version: Some(23),
@@ -35,7 +43,7 @@ fn ready() -> DoctorFacts {
             launch: Some("manual".into()),
         },
         identity: Some(IdentityFacts {
-            code_version: Some("0.22.4".into()),
+            code_version: Some(pin_version().into()),
             code_sha: Some(hermes_contract::pinned::COMMIT.into()),
             capabilities: vec![
                 "session-authority-v1".into(),
@@ -82,25 +90,30 @@ fn version_verdicts() {
     let p = pin();
     let upper = p.commit[..7].to_uppercase();
     let six = &p.commit[..6];
+    let build = format!("{}+3", pin_version());
     for (version, sha, expected) in [
         (
-            Some("0.22.4"),
+            Some(pin_version()),
             Some(p.commit.as_str()),
             VersionVerdict::Pinned,
         ),
-        (Some("0.22.4"), Some(upper.as_str()), VersionVerdict::Pinned),
         (
-            Some("0.22.4"),
+            Some(pin_version()),
+            Some(upper.as_str()),
+            VersionVerdict::Pinned,
+        ),
+        (
+            Some(pin_version()),
             Some(six),
             VersionVerdict::SameReleaseOtherCommit,
         ),
         (
-            Some("0.22.4"),
+            Some(pin_version()),
             Some("ffffffff"),
             VersionVerdict::SameReleaseOtherCommit,
         ),
         (
-            Some("0.22.4"),
+            Some(pin_version()),
             None,
             VersionVerdict::SameReleaseUnknownCommit,
         ),
@@ -116,8 +129,12 @@ fn version_verdicts() {
         (Some("unknown"), None, VersionVerdict::Unknown),
         (None, None, VersionVerdict::Unknown),
         (Some("0.22"), None, VersionVerdict::Unknown),
-        (Some("v0.22.4"), None, VersionVerdict::Unknown),
-        (Some("0.22.4+3"), None, VersionVerdict::Unknown),
+        (
+            Some(hermes_contract::pinned::TAG),
+            None,
+            VersionVerdict::Unknown,
+        ),
+        (Some(build.as_str()), None, VersionVerdict::Unknown),
         (Some(""), None, VersionVerdict::Unknown),
         (Some("0.22.x"), None, VersionVerdict::Unknown),
         (
@@ -136,8 +153,12 @@ fn version_verdicts() {
     assert_eq!(
         r.details,
         vec![
-            "running: 0.22.4 at 4d043038",
-            "built for: v0.22.4 (4d043038)"
+            format!("running: {} at {}", pin_version(), pin_prefix()),
+            format!(
+                "built for: {} ({})",
+                hermes_contract::pinned::TAG,
+                pin_prefix()
+            )
         ]
     );
 }
@@ -185,7 +206,10 @@ fn capability_rows() {
         CheckId::Capabilities,
         Severity::Fail,
         "missing: durable-admission-v1",
-        Some("Update Hermes to v0.22.4 or later and restart its gateway."),
+        Some(&format!(
+            "Update Hermes to {} or later and restart its gateway.",
+            hermes_contract::pinned::TAG
+        )),
     );
     let identity = f.identity.as_mut().unwrap();
     identity
@@ -606,19 +630,24 @@ fn text_and_json_golden() {
     s.config_version = Some(22);
     f.status = StatusFacts::Read(s);
     let report = diagnose(&f);
-    let expected = concat!(
-        "Talaria doctor (profile fixture)\n",
-        "ok    Talaria         Talaria 0.7.0, built for Hermes v0.22.4 (4d043038)\n",
-        "ok    Gateway         ready · instance 9f2c41aa · epoch 3 · started by hand\n",
-        "ok    Hermes version  0.22.4 (4d043038), the release Talaria was built for\n",
-        "ok    Capabilities    all 5 capabilities Talaria needs are offered\n",
-        "ok    Profiles        fixture is served; the gateway serves 2 profiles\n",
-        "ok    Attach          attached to fixture in 36 ms\n",
-        "warn  Runtime health  the gateway's housekeeping has not run for 125 s\n",
-        "      Fix: Restart the gateway: press R here, or run talaria doctor --restart.\n",
-        "      also: Hermes configuration is at version 22; this Hermes expects 23. Fix: Run hermes config migrate.\n",
-        "Result: 6 ok, 1 warning, 0 failures.\n",
-        "For provider keys, tools and dependencies, run hermes doctor.\n"
+    let expected = format!(
+        concat!(
+            "Talaria doctor (profile fixture)\n",
+            "ok    Talaria         Talaria 0.7.0, built for Hermes {tag} ({commit})\n",
+            "ok    Gateway         ready · instance 9f2c41aa · epoch 3 · started by hand\n",
+            "ok    Hermes version  {version} ({commit}), the release Talaria was built for\n",
+            "ok    Capabilities    all 5 capabilities Talaria needs are offered\n",
+            "ok    Profiles        fixture is served; the gateway serves 2 profiles\n",
+            "ok    Attach          attached to fixture in 36 ms\n",
+            "warn  Runtime health  the gateway's housekeeping has not run for 125 s\n",
+            "      Fix: Restart the gateway: press R here, or run talaria doctor --restart.\n",
+            "      also: Hermes configuration is at version 22; this Hermes expects 23. Fix: Run hermes config migrate.\n",
+            "Result: 6 ok, 1 warning, 0 failures.\n",
+            "For provider keys, tools and dependencies, run hermes doctor.\n"
+        ),
+        tag = hermes_contract::pinned::TAG,
+        version = pin_version(),
+        commit = pin_prefix()
     );
     assert_eq!(render_text(&report), expected);
     let parse = |outcome| -> serde_json::Value {

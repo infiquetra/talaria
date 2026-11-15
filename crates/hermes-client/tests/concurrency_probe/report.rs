@@ -632,9 +632,9 @@ pub fn merge_raw_record(
         serde_json::from_slice::<Value>(&std::fs::read(path).map_err(|_| "results read")?)
             .map_err(|_| "results decode")?
     } else {
-        json!({"hermes_release":release,"execution_mode":mode,"runs":[],"recommendations":null})
+        json!({"recorded_against":release,"execution_mode":mode,"runs":[],"recommendations":null})
     };
-    if results["hermes_release"] != release {
+    if results["recorded_against"] != release {
         return Err("Hermes release differs".into());
     }
     let runs = results["runs"].as_array_mut().ok_or("runs")?;
@@ -682,7 +682,7 @@ pub fn validate_results(results: &Value) -> Result<(), String> {
     let object = results.as_object().ok_or("results object")?;
     if object.len() != 4
         || ![
-            "hermes_release",
+            "recorded_against",
             "execution_mode",
             "runs",
             "recommendations",
@@ -692,7 +692,7 @@ pub fn validate_results(results: &Value) -> Result<(), String> {
     {
         return Err("results keys".into());
     }
-    if results["hermes_release"] != RELEASE
+    if results["recorded_against"].as_str().is_none()
         || !results["execution_mode"]
             .as_str()
             .is_some_and(|s| ["in-process", "managed-worker", "unknown"].contains(&s))

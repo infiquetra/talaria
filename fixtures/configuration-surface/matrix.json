@@ -1,5 +1,5 @@
 {
-  "hermes_release": "v0.22.4",
+  "recorded_against": "v0.22.4",
   "rows": [
     {
       "call": "config.get",

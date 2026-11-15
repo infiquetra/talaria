@@ -443,9 +443,21 @@ fn final_version_requires_release_notes() {
             "level-two headings are not the eight release sections"
         )
     );
-    let pinned = pinned_tag(&root);
+    let compat_text = read(&root, "crates/hermes-contract/compat.toml");
+    let compat: toml::Value = toml::from_str(&compat_text).expect("compat.toml parses");
+    let release = compat
+        .get("release")
+        .and_then(toml::Value::as_array)
+        .expect("compat.toml has [[release]] array")
+        .iter()
+        .find(|entry| entry.get("talaria").and_then(toml::Value::as_str) == Some(version.as_str()))
+        .expect("workspace version has a compatibility entry");
+    let pinned = release
+        .get("pinned_tag")
+        .and_then(toml::Value::as_str)
+        .expect("release entry has pinned_tag");
     assert!(
-        text.contains(&pinned),
+        text.contains(pinned),
         "{}",
         blame(&rel, 1, "pinned tag is missing")
     );
@@ -1086,19 +1098,6 @@ fn outside_h2(text: &str) -> Vec<&str> {
         }
     }
     headings
-}
-
-fn pinned_tag(root: &Path) -> String {
-    let text = read(root, "crates/hermes-contract/PINNED");
-    for line in text.lines() {
-        if let Some(value) = line.strip_prefix("tag=") {
-            return value.trim().to_string();
-        }
-    }
-    panic!(
-        "{}",
-        blame("crates/hermes-contract/PINNED", 1, "tag line is missing")
-    )
 }
 
 fn scan_blob_links(root: &Path, file: &str, lines: &[(usize, String)], prefix: &str) {

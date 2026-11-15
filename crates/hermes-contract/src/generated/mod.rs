@@ -2,5 +2,6 @@
 pub mod events;
 pub mod methods;
 pub mod native;
+pub mod profile_methods;
 pub mod schemas;
 pub mod server_requests;

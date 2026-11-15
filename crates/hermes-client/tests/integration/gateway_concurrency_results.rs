@@ -38,7 +38,7 @@ const MATRIX: &[&str] = &[
 
 const FILE_KEYS: &[&str] = &[
     "execution_mode",
-    "hermes_release",
+    "recorded_against",
     "recommendations",
     "runs",
 ];
@@ -1154,7 +1154,7 @@ fn skeleton(id: &str, evidence: &str, notes: &str) -> Value {
 
 fn document(runs: Vec<Value>) -> Value {
     json!({
-        "hermes_release": "v0.22.4",
+        "recorded_against": "v0.22.4",
         "execution_mode": "in-process",
         "runs": runs,
         "recommendations": {

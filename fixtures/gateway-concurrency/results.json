@@ -1,6 +1,6 @@
 {
   "execution_mode": "unknown",
-  "hermes_release": "v0.22.4",
+  "recorded_against": "v0.22.4",
   "recommendations": {
     "cited_runs": [
       "A-shared-1"

@@ -413,6 +413,41 @@ def typify_available():
         return False
 
 
+def profile_methods(contract):
+    def has_profile(schema, depth=0):
+        if depth > 32 or not isinstance(schema, dict):
+            return False
+        properties = schema.get("properties")
+        if isinstance(properties, dict) and "profile" in properties:
+            return True
+        reference = schema.get("$ref")
+        if isinstance(reference, str):
+            if not reference.startswith("#"):
+                return False
+            pointer = reference[1:]
+            if pointer and not pointer.startswith("/"):
+                return False
+            target = contract
+            for part in pointer.split("/")[1:]:
+                part = part.replace("~1", "/").replace("~0", "~")
+                if isinstance(target, dict):
+                    target = target.get(part)
+                elif isinstance(target, list) and re.fullmatch(r"0|[1-9][0-9]*", part) and int(part) < len(target):
+                    target = target[int(part)]
+                else:
+                    return False
+            return has_profile(target, depth + 1)
+        return any(has_profile(part, depth + 1)
+                   for keyword in ("allOf", "anyOf", "oneOf")
+                   if isinstance(schema.get(keyword), list)
+                   for part in schema[keyword])
+
+    return sorted({entry["name"]
+                   for catalogue in ("methods", "x-canonical-methods")
+                   for entry in contract[catalogue]
+                   if any(has_profile(param.get("schema", {})) for param in entry.get("params", []))})
+
+
 def render_methods(entries):
     chunks = []
     for entry in sorted(entries, key=lambda e: e["name"]):
@@ -534,7 +569,8 @@ def generate(contract_path=CONTRACT, out=OUT, hermes_checkout=None, pin=None, ow
                 if transport == "canonical" or (name not in canonical and native_method(name, owners)):
                     native += "impl NativeMethod for crate::methods::{}::{}::Marker {{}}\n".format(transport, snake_case(name))
         files = {
-            "mod.rs": "pub mod schemas;\npub mod methods;\npub mod native;\npub mod events;\npub mod server_requests;\n",
+            "mod.rs": "pub mod schemas;\npub mod methods;\npub mod native;\npub mod events;\npub mod server_requests;\npub mod profile_methods;\n",
+            "profile_methods.rs": "pub const PROFILE_METHODS: &[&str] = &[\n" + "".join("    {},\n".format(json.dumps(name)) for name in profile_methods(contract)) + "];\n",
             "schemas.rs": schemas,
             "methods.rs": "pub mod legacy {\n" + render_methods(contract["methods"]) + "}\npub mod canonical {\n" + render_methods(contract["x-canonical-methods"]) + "}\n",
             "events.rs": render_events(contract), "server_requests.rs": render_events(contract, True), "native.rs": native,

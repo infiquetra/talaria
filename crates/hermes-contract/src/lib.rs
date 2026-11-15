@@ -2,7 +2,7 @@
 
 pub mod canonical_events;
 pub mod events;
-mod generated;
+pub mod generated;
 pub mod method;
 pub mod overrides;
 pub mod pinned;
