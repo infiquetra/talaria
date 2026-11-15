@@ -2,6 +2,23 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — Keep local printed lines alongside existing notices
+
+**Evidence.** At pinned Hermes v0.22.4, `gateway/local_viewer_events.py` joins
+printed arguments into `agent.print` text. `gateway/run_turn_runner.py` installs
+that callback only for an unmuted local-viewer turn and restores it afterward.
+The recorded delegation and interruption both contain printed lines.
+
+**Mechanism.** An explicit reducer arm trims Unicode whitespace at the ends and
+appends one final system notice for each nonempty line. Interior spaces and
+repetitions remain. Missing or invalid text is consumed without a diagnostic
+for an unknown event, and status and attention are unchanged.
+
+**Generalizable rule.** Keep printed local-turn text in sequence without turning
+it into status or a request for attention.
+
+**Revisit.** the lines may repeat what Talaria already shows for a delegation or an interruption, and that this is revisited if operators find it noisy.
+
 ## 2026-11-15 — A dropped alert must not move the tracker window
 
 **Evidence.** The foreground and fleet alert regression exercises a shared gate
