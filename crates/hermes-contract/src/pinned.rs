@@ -1,7 +1,7 @@
 //! The Hermes release whose published contract this crate implements.
 
-pub const TAG: &str = "v0.23.1";
-pub const COMMIT: &str = "3b421578588243f920886e6fe79a6faa87ea026e";
+pub const TAG: &str = crate::compat::CURRENT.pinned_tag;
+pub const COMMIT: &str = crate::compat::CURRENT.pinned_commit;
 
 /// The oldest Hermes release accepted by live tests and fixture recording.
 pub const OLDEST_SUPPORTED: (u64, u64, u64) = (0, 23, 0);

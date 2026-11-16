@@ -2,6 +2,20 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-15 — Update pin metadata and generated copies as one operation
+
+**Context.** The compatibility table supplies the pin and tested range, while
+Rust constants, vendor files, and generated documentation must agree with it.
+
+**Decision.** Read the last local release entry before fetching, derive the Rust
+pin constants from `compat::CURRENT`, and edit only the pin and tested cells as
+text. Fetch only the contract and licence, regenerate through the existing
+compatibility command, and restore all remembered outputs if an update fails.
+Recording a newer tested release makes no network request and never moves the pin.
+
+**Revisit when.** Generation adds an output that must join the snapshot, or a new
+failure category needs a distinct operator remedy.
+
 ## 2026-11-15 — Record alerts after gate admission
 
 **Context.** A dropped foreground alert could move the tracker's window and

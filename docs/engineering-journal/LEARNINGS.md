@@ -2,6 +2,21 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — Restore path kinds across failed generated updates
+
+**Evidence.** The compatibility-write failure test starts with a directory at
+`docs/compatibility.md`; restoring it as file bytes would destroy its original
+kind. A pin update also generates files that may not have existed before the run.
+Compiler paths that select a runbook case can precede the final diagnostic lines.
+
+**Mechanism.** The update snapshots file bytes, directories, and absent outputs
+before writing, including the complete generated tree. Failure removes additions
+and restores original paths. Full stderr remains available for classification
+while the displayed error stays on one line with its last three stderr lines.
+
+**Generalizable rule.** Snapshot every derived output and its original path kind,
+and preserve diagnostic evidence separately from its compact presentation.
+
 ## 2026-11-15 — Restore waiting requests from the canonical resume snapshot
 
 **Evidence.** At Hermes v0.23.1, `gateway/session_server_requests.py` returns
