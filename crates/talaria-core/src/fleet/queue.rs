@@ -9,6 +9,8 @@ pub enum NeedSlot {
     Prompt(String),
     /// A masked request id from an attached session.
     Masked(String),
+    /// A connection operation id.
+    Connection(String),
     /// The response belongs to an external backend.
     External(String),
     /// The detail is not known yet.

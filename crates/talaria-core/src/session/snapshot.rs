@@ -167,6 +167,7 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
         };
         super::prompts::insert(&mut state, cell);
     }
+    state.connection_card = snapshot.pending_connection.map(Into::into);
     state.advance_prefix();
     state
 }

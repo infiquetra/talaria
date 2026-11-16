@@ -47,11 +47,15 @@ pub enum NeedKey {
     Prompt(PromptKey),
     /// A masked request id.
     Masked(String),
+    /// A connection operation id.
+    Connection(String),
 }
 
 /// What a need asks for, for alert and pane message text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NeedSummary {
+    /// A connection request.
+    Connection,
     /// An approval: raw command and description; the tracker picks the first line.
     Approval {
         /// Raw command text, may be blank.
@@ -299,7 +303,7 @@ impl AttentionTracker {
     pub fn seat_state(&self) -> SeatState {
         if let Some((_, summary)) = self.needs.first() {
             let kind = match summary {
-                NeedSummary::Approval { .. } => BlockKind::Permission,
+                NeedSummary::Approval { .. } | NeedSummary::Connection => BlockKind::Permission,
                 NeedSummary::Question(_) => BlockKind::Question,
                 NeedSummary::Sudo
                 | NeedSummary::Secret
@@ -378,6 +382,7 @@ fn summary_text(summary: &NeedSummary) -> String {
                 format!("approval: {text}")
             }
         }
+        NeedSummary::Connection => "connection request".into(),
         NeedSummary::Question(text) => format!("question: {}", first(text)),
         NeedSummary::Sudo => "password for sudo".into(),
         NeedSummary::Secret => "a secret".into(),

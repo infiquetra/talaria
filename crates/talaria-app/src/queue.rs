@@ -127,6 +127,7 @@ impl QueueService {
             | Effect::AskSide { .. }
             | Effect::Interrupt { .. }
             | Effect::RespondApproval { .. }
+            | Effect::RespondConnection { .. }
             | Effect::RespondClarify { .. }
             | Effect::RefuseAnswer { .. }
             | Effect::Background(_) => {

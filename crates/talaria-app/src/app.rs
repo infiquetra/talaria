@@ -71,8 +71,8 @@ use talaria_core::rewind::{
     parse_undo, text as rewind_text, update as rewind_update,
 };
 use talaria_core::session::{
-    Cell, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState, SessionId, SessionState,
-    TurnState,
+    Cell, ConnectionChoice, Effect, Event, NoticeKind, PromptKey, PromptKind, PromptState,
+    SessionId, SessionState, TurnState,
 };
 use talaria_core::side::{
     NO_SESSION_NOTICE, SHELL_EMPTY_HINT, SIDE_USAGE, Submission, btw_command, carry_over, classify,
@@ -302,6 +302,12 @@ pub enum UserAction {
     Quit,
     /// A key the transcript screen owns.
     Input(InputKey),
+    /// A connection operation card was answered.
+    Connect {
+        session_id: String,
+        op_id: String,
+        choice: ConnectionChoice,
+    },
     /// An approval card was answered.
     Approve {
         key: PromptKey,
@@ -4669,6 +4675,7 @@ fn foreground_open(state: &AppState) -> u32 {
                     )
             })
             .count()
+            + usize::from(opened.state.connection_card().is_some())
     });
     u32::try_from(open).unwrap_or(u32::MAX)
 }
@@ -6318,6 +6325,7 @@ fn route(
                 }
             }
             Effect::RespondApproval { .. }
+            | Effect::RespondConnection { .. }
             | Effect::RespondClarify { .. }
             | Effect::RefuseAnswer { .. } => effects.push(AppEffect::Respond {
                 effect,
@@ -6875,6 +6883,73 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         UserAction::Quit => {
             state.quitting = true;
             vec![AppEffect::Quit]
+        }
+        UserAction::Connect {
+            session_id,
+            op_id,
+            choice,
+        } => {
+            use hermes_contract::schemas::{
+                ConnectionAnswer, ConnectionAnswerStatus, ConnectionAnswerTarget,
+                ConnectionSettleReason,
+            };
+            let Some(opened) = state
+                .opened
+                .as_ref()
+                .filter(|opened| opened.session_id == session_id)
+            else {
+                return Vec::new();
+            };
+            let Some(card) = opened
+                .state
+                .connection_card()
+                .filter(|card| card.op_id == op_id)
+            else {
+                return Vec::new();
+            };
+            if choice == ConnectionChoice::Approve
+                && card.targets.iter().any(|target| {
+                    target
+                        .required_env
+                        .as_ref()
+                        .is_some_and(|env| !env.is_empty())
+                })
+            {
+                return Vec::new();
+            }
+            let result = if choice == ConnectionChoice::Continue {
+                ConnectionAnswer {
+                    settled_by: Some(ConnectionSettleReason::Continue),
+                    ..ConnectionAnswer::default()
+                }
+            } else {
+                ConnectionAnswer {
+                    targets: card
+                        .targets
+                        .iter()
+                        .map(|target| ConnectionAnswerTarget {
+                            name: target.name.clone(),
+                            status: if choice == ConnectionChoice::Approve {
+                                ConnectionAnswerStatus::Approved
+                            } else {
+                                ConnectionAnswerStatus::Skipped
+                            },
+                            env: None,
+                            detail: None,
+                        })
+                        .collect(),
+                    ..ConnectionAnswer::default()
+                }
+            };
+            route(
+                state,
+                vec![Effect::RespondConnection {
+                    session_id: SessionId::new(session_id),
+                    op_id,
+                    result,
+                }],
+                None,
+            )
         }
         UserAction::Approve { key, choice, note } => {
             let Some(opened) = state.opened.as_mut() else {

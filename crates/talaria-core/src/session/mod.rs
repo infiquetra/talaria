@@ -26,7 +26,10 @@ pub use event::Event;
 pub use ids::{CellId, PromptKey, SessionId};
 pub use notices::{NoticeRow, NoticeStore};
 pub use reducer::update;
-pub use state::{ReplayCursor, SessionState, StatusNote, TodoState, TurnOutcome, TurnState, Usage};
+pub use state::{
+    ConnectionCard, ConnectionChoice, ReplayCursor, SessionState, StatusNote, TodoState,
+    TurnOutcome, TurnState, Usage,
+};
 pub use tool_view::{
     OutcomeView, OutputView, ToolView, format_duration, format_progress, tool_view,
 };

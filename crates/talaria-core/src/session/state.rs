@@ -1,6 +1,8 @@
 //! [`SessionState`] and the values its accessors return.
 
-use hermes_contract::schemas::CanonicalSnapshot;
+use hermes_contract::schemas::{
+    CanonicalSnapshot, ConnectionOperationTarget, ConnectionRequestPayload,
+};
 use std::collections::{HashMap, VecDeque};
 
 use super::{
@@ -10,6 +12,34 @@ use super::{
 use crate::automation::HermesCommandCell;
 use crate::background::BackgroundWork;
 use crate::side::SideTasks;
+
+/// An answer offered for a connection operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectionChoice {
+    Approve,
+    Skip,
+    Continue,
+}
+
+/// An outstanding connection operation from the gateway.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConnectionCard {
+    pub op_id: String,
+    pub seq: i64,
+    pub deadline_at: f64,
+    pub targets: Vec<ConnectionOperationTarget>,
+}
+
+impl From<ConnectionRequestPayload> for ConnectionCard {
+    fn from(value: ConnectionRequestPayload) -> Self {
+        Self {
+            op_id: value.op_id,
+            seq: value.seq,
+            deadline_at: value.deadline_at,
+            targets: value.targets,
+        }
+    }
+}
 
 /// Whether a turn is idle, running, or finished.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,6 +132,7 @@ pub struct Usage {
 /// The whole transcript model for one session.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionState {
+    pub(crate) connection_card: Option<ConnectionCard>,
     pub(crate) session_id: SessionId,
     pub(crate) cells: Vec<Cell>,
     pub(crate) final_prefix: usize,
@@ -151,6 +182,7 @@ impl SessionState {
     /// An empty session. No cells, idle turn, no cursor epoch.
     pub fn empty(session_id: SessionId) -> Self {
         Self {
+            connection_card: None,
             session_id,
             cells: Vec::new(),
             final_prefix: 0,
@@ -199,6 +231,11 @@ impl SessionState {
     /// Every cell, oldest first.
     pub fn cells(&self) -> &[Cell] {
         &self.cells
+    }
+
+    /// The outstanding connection request, if any.
+    pub fn connection_card(&self) -> Option<&ConnectionCard> {
+        self.connection_card.as_ref()
     }
 
     /// The tool name still being written, if the gateway said one.

@@ -7,6 +7,7 @@ pub mod stack;
 
 use std::fmt;
 
+pub use talaria_core::session::ConnectionChoice;
 use talaria_core::session::PromptKey;
 
 pub use approval::display_choices;
@@ -16,6 +17,11 @@ pub use stack::{PromptSection, PromptStack};
 
 /// What a key press asks the application to do.
 pub enum PromptIntent {
+    Connect {
+        session_id: String,
+        op_id: String,
+        choice: ConnectionChoice,
+    },
     Approve {
         key: PromptKey,
         choice: String,
@@ -35,6 +41,10 @@ pub enum PromptIntent {
 impl fmt::Debug for PromptIntent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Connect { choice, .. } => f
+                .debug_struct("Connect")
+                .field("choice", choice)
+                .finish_non_exhaustive(),
             Self::Approve { choice, note, .. } => f
                 .debug_struct("Approve")
                 .field("choice_chars", &choice.chars().count())

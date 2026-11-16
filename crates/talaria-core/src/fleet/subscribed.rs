@@ -101,6 +101,15 @@ impl SubscribedView {
             execution_generation: None,
             timeout_s: None,
         }));
+        if let Some(card) = state.connection_card() {
+            needs.push(SubscribedNeed {
+                slot: NeedSlot::Connection(card.op_id.clone()),
+                summary: NeedSummary::Connection,
+                choices: Vec::new(),
+                execution_generation: None,
+                timeout_s: None,
+            });
+        }
         SubscribedView {
             turn,
             needs,

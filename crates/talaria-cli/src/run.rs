@@ -707,15 +707,16 @@ fn fleet_action(action: Action) -> Option<FleetAction> {
 }
 
 /// A card intent in the peek's terms.
-fn card_answer(intent: PromptIntent) -> CardAnswer {
-    match intent {
+fn card_answer(intent: PromptIntent) -> Option<CardAnswer> {
+    Some(match intent {
+        PromptIntent::Connect { .. } => return None,
         PromptIntent::Approve { key, choice, note } => CardAnswer::Approve { key, choice, note },
         PromptIntent::Clarify { key, answer } => CardAnswer::Clarify { key, answer },
         PromptIntent::Masked { request_id, value } => CardAnswer::Masked {
             request_id,
             value: value.into_inner().to_string(),
         },
-    }
+    })
 }
 
 fn fleet_peek_is_foreground(
@@ -756,8 +757,8 @@ fn fleet_card_actions(outcome: KeyOutcome) -> Vec<UserAction> {
         return Vec::new();
     };
     let mut actions = vec![UserAction::FleetAnswerEdited];
-    if let Some(intent) = intent {
-        actions.push(UserAction::FleetAnswer(card_answer(intent)));
+    if let Some(answer) = intent.and_then(card_answer) {
+        actions.push(UserAction::FleetAnswer(answer));
     }
     if interrupt_requested {
         actions.push(UserAction::Fleet(FleetViewInput::CtrlC));
@@ -1223,7 +1224,9 @@ fn connectors_editor_key(key: Key) -> Option<talaria_core::connectors::Connector
 }
 
 fn status_inputs(view: &View<'_>, home_dir: Option<String>) -> StatusInputs {
-    let open = view.state.map_or(0, |state| state.open_prompts().count());
+    let open = view.state.map_or(0, |state| {
+        state.open_prompts().count() + usize::from(state.connection_card().is_some())
+    });
     let context_percent = if view.context_hidden {
         None
     } else {
@@ -1946,6 +1949,17 @@ impl TuiScreen {
     }
 
     fn sync_prompts(&mut self, view: &View<'_>, now: Instant) {
+        let (connection, session_id) = match (view.state, view.session_id) {
+            (Some(state), Some(session_id)) => (state.connection_card(), session_id),
+            _ => (None, ""),
+        };
+        self.prompts.show_connection(
+            connection,
+            session_id,
+            self.composer.is_empty(),
+            now,
+            unix_now(),
+        );
         let open: Vec<&PromptCell> = view
             .state
             .map(|state| state.open_prompts().collect())
@@ -2005,6 +2019,17 @@ impl TuiScreen {
         };
         let mut actions = Vec::new();
         match intent {
+            Some(PromptIntent::Connect {
+                session_id,
+                op_id,
+                choice,
+            }) => {
+                actions.push(UserAction::Connect {
+                    session_id,
+                    op_id,
+                    choice,
+                });
+            }
             Some(PromptIntent::Approve { key, choice, note }) => {
                 actions.push(UserAction::Approve { key, choice, note });
             }
