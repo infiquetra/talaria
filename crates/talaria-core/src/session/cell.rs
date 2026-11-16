@@ -199,6 +199,8 @@ pub enum PromptKind {
     Approval,
     /// `clarify.request`.
     Clarify,
+    /// A waiting server request recovered from a snapshot.
+    ServerRequest,
 }
 
 /// How a prompt left the open state.

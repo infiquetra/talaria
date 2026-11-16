@@ -246,8 +246,9 @@ fn prompt_line(cell: &PromptCell) -> String {
     let kind = match cell.kind {
         PromptKind::Approval => "approval",
         PromptKind::Clarify => "clarify",
+        PromptKind::ServerRequest => "server-request",
     };
-    let subject = if cell.kind == PromptKind::Approval {
+    let subject = if matches!(cell.kind, PromptKind::Approval | PromptKind::ServerRequest) {
         match &cell.command {
             Some(command) => format!("command={}", quote(command)),
             None => "command=\"\"".to_string(),
@@ -277,7 +278,7 @@ fn prompt_state(state: &PromptState, kind: PromptKind) -> String {
 
 fn prompt_value(value: &str, kind: PromptKind) -> String {
     match kind {
-        PromptKind::Approval => value.to_string(),
+        PromptKind::Approval | PromptKind::ServerRequest => value.to_string(),
         PromptKind::Clarify => quote(value),
     }
 }

@@ -107,6 +107,9 @@ impl Card {
         let Content::Prompt(cell) = &self.content else {
             return None;
         };
+        if cell.kind == PromptKind::ServerRequest {
+            return None;
+        }
         if cell.kind == PromptKind::Approval {
             let note = (!self.text.trim().is_empty()).then(|| self.text.clone());
             self.sent = true;
@@ -181,7 +184,9 @@ impl PromptStack {
             .chain(
                 prompts
                     .iter()
-                    .filter(|cell| !self.hidden.contains(&cell.key))
+                    .filter(|cell| {
+                        cell.kind != PromptKind::ServerRequest && !self.hidden.contains(&cell.key)
+                    })
                     .map(|cell| {
                         (
                             Identity::Prompt(cell.key.clone()),

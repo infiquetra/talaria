@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use talaria_core::directory::fences::branch_may_retry;
 use talaria_core::directory::rows::RowKey;
 use talaria_core::mutation::{MutationOutcome, MutationRequest};
-use talaria_core::session::PromptState;
+use talaria_core::session::{PromptKind, PromptState};
 
 use super::app::{AppState, session_title};
 use super::connection::{ConnectionService, OpenConnection};
@@ -187,7 +187,7 @@ fn switch_notice(app: &AppState, new: &OpenedSession, old: &OpenedSession) -> St
     if old
         .state
         .open_prompts()
-        .any(|prompt| prompt.state == PromptState::Open)
+        .any(|prompt| prompt.state == PromptState::Open && prompt.kind != PromptKind::ServerRequest)
     {
         notice.push_str(" It is waiting for your answer.");
     }

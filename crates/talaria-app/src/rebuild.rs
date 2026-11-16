@@ -7,7 +7,7 @@ use talaria_core::directory::rows::RowKey;
 use talaria_core::models::ModelsInput;
 use talaria_core::permissions::PermissionsInput;
 use talaria_core::rewind::text as rewind_text;
-use talaria_core::session::Cell;
+use talaria_core::session::{Cell, PromptKind};
 use talaria_core::side::carry_over;
 use talaria_core::workspace::SessionFolder;
 
@@ -212,6 +212,12 @@ pub(crate) fn recovered(
         fresh.title = old.title;
     }
     let session_id = fresh.session_id.clone();
+    let ids: Vec<String> = fresh
+        .state
+        .open_prompts()
+        .filter(|prompt| prompt.kind == PromptKind::ServerRequest)
+        .map(|prompt| prompt.key.prompt_id.clone())
+        .collect();
     state.folder =
         SessionFolder::from_snapshot(fresh.info.cwd.as_deref(), fresh.info.branch.as_deref());
     state
@@ -219,6 +225,9 @@ pub(crate) fn recovered(
         .fences_mut(&fresh.session_id)
         .adopt(Some(fresh.revision), Some(fresh.execution_generation));
     state.opened = Some(fresh);
+    if !ids.is_empty() {
+        effects.push(AppEffect::InstallRecovered { ids });
+    }
     if let (Some(hub), Some(key)) = (
         state.subagents.as_mut(),
         Some(RowKey {
@@ -276,7 +285,16 @@ pub(crate) fn recover_retained(
         session_id: fresh.session_id.clone(),
         cursor: fresh.cursor.clone(),
     }];
+    let ids: Vec<String> = fresh
+        .state
+        .open_prompts()
+        .filter(|prompt| prompt.kind == PromptKind::ServerRequest)
+        .map(|prompt| prompt.key.prompt_id.clone())
+        .collect();
     state.retained_sessions.insert(key, fresh);
+    if !ids.is_empty() {
+        effects.push(AppEffect::InstallRecovered { ids });
+    }
     effects.extend(background_event(
         state,
         session_id,

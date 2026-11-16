@@ -25,7 +25,9 @@ use talaria_core::attention::NeedSummary;
 use talaria_core::directory::rows::RowKey;
 use talaria_core::fleet::SubscribedView;
 use talaria_core::fleet_view::{PeekStatus, ReplyOutcome, StopOutcome};
-use talaria_core::session::{self, Effect, Event, PromptKey, SessionId, SessionState, TurnState};
+use talaria_core::session::{
+    self, Effect, Event, PromptKey, PromptKind, SessionId, SessionState, TurnState,
+};
 use tokio::sync::mpsc;
 use zeroize::Zeroizing;
 
@@ -390,7 +392,10 @@ impl PeekService {
     pub fn status(&self) -> Option<PeekStatus> {
         let session = self.session.as_ref()?;
         Some(PeekStatus::Open {
-            has_open_prompt: session.state.open_prompts().next().is_some()
+            has_open_prompt: session
+                .state
+                .open_prompts()
+                .any(|prompt| prompt.kind != PromptKind::ServerRequest)
                 || !session.prompts.masked_requests().is_empty(),
             running: *session.state.turn() == TurnState::Running,
         })

@@ -2,6 +2,22 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — Restore waiting requests from the canonical resume snapshot
+
+**Evidence.** At Hermes v0.23.1, `gateway/session_server_requests.py` returns
+waiting replayable requests as `{id, method, params}`. The vendored canonical
+snapshot exposes that list as optional `open_requests`, separate from `prompts`.
+An unanswered client responder sends an error when dropped unless ignored.
+
+**Mechanism.** Snapshot reduction restores one open request cell per id, skips
+clarify entries already represented by prompts, and preserves the snapshot's
+execution generation. Recovery removes matching masked responders with
+`ignore()`, leaving the existing connection-replacement drain in place and
+sending no answer. Recovered requests contribute to attention while awaiting
+their own presentation and answer path.
+
+**Generalizable rule.** after a reconnect, the sudo, secret and clarify requests that are still waiting come from the resume result's open-requests list, not from replayed events
+
 ## 2026-11-15 — Deduplicate sign-in notices before changing their order
 
 **Evidence.** `NoticeStore::apply_show` moves a replaced key to the newest slot.

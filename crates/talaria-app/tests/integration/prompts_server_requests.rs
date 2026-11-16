@@ -925,3 +925,69 @@ async fn connection_replaced_drops_masked_cards() {
     assert!(rig.mock.answers_for(&orphan).is_empty());
     rig.mock.assert_no_duplicate_answers();
 }
+
+#[tokio::test]
+async fn reconnect_list_does_not_duplicate_a_live_card() {
+    let mut rig = Rig::new().await;
+    let (req_id, _) = rig.offer("sudo", json!({"command": "sudo -n true"})).await;
+    assert_eq!(rig.service.masked_requests().len(), 1);
+    assert_eq!(rig.service.masked_requests()[0].id, req_id);
+
+    let snapshot: hermes_contract::schemas::CanonicalSnapshot = serde_json::from_value(json!({
+        "session_id": SESSION_ID,
+        "stored_session_id": "stored-1",
+        "messages": [],
+        "message_count": 0,
+        "running": false,
+        "authority_epoch": 1,
+        "replay_epoch": "epoch-1",
+        "last_sequence": 0,
+        "subscription_id": "sub-1",
+        "revision": 1,
+        "execution_generation": 1,
+        "pending": [],
+        "prompts": [],
+        "open_requests": [
+            {
+                "id": req_id,
+                "method": "sudo",
+                "params": {},
+            }
+        ],
+        "info": {"desktop_protocol": "1"},
+    }))
+    .expect("snapshot JSON must deserialize as CanonicalSnapshot");
+
+    rig.state = talaria_core::session::SessionState::from_snapshot(snapshot);
+    rig.service.install_recovered(std::slice::from_ref(&req_id));
+
+    let matching: Vec<_> = rig
+        .state
+        .open_prompts()
+        .filter(|cell| cell.key.prompt_id == req_id)
+        .collect();
+    assert_eq!(matching.len(), 1, "expected one card for {req_id}");
+    assert!(
+        !rig.service
+            .masked_requests()
+            .iter()
+            .any(|entry| entry.id == req_id),
+        "masked request {req_id} must be removed by install_recovered"
+    );
+
+    rig.service.install_recovered(std::slice::from_ref(&req_id));
+    let matching_after: Vec<_> = rig
+        .state
+        .open_prompts()
+        .filter(|cell| cell.key.prompt_id == req_id)
+        .collect();
+    assert_eq!(matching_after.len(), 1, "count must remain one");
+
+    assert!(
+        rig.mock
+            .no_new_frames_within(Duration::from_millis(100))
+            .await,
+        "install_recovered must not write answer or error frames"
+    );
+    assert!(rig.mock.answers_for(&req_id).is_empty());
+}
