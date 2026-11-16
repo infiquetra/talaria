@@ -567,3 +567,27 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn connection_card_is_a_need_and_blocks_the_pane() {
+    use talaria_core::{BlockKind, SeatState};
+
+    let mut tracker = AttentionTracker::new(all_channels());
+    let base = Instant::now();
+    let key = NeedKey::Connection("op-1".to_owned());
+    let out = tracker.observe(opened(key.clone(), NeedSummary::Connection, base));
+    assert_eq!(tracker.pane().state, PaneState::Blocked);
+    assert_eq!(
+        tracker.pane().message.as_deref(),
+        Some("connection request")
+    );
+    let alert = out.alert.expect("connection request must alert");
+    assert_eq!(alert.text, "needs you: connection request");
+    assert_eq!(
+        tracker.seat_state(),
+        SeatState::Blocked(Some(BlockKind::Permission))
+    );
+
+    tracker.observe(Activity::NeedClosed { key });
+    assert_ne!(tracker.pane().state, PaneState::Blocked);
+}

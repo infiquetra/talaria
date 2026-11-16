@@ -1964,3 +1964,139 @@ fn review_summary_is_a_system_line() {
     assert!(empty.cells().is_empty());
     assert!(empty.unknown_event_types().is_empty());
 }
+
+#[test]
+fn connection_request_opens_one_card_keyed_by_op_id() {
+    let target = |name: &str| {
+        json!({
+            "action": "connect",
+            "kind": "connector",
+            "name": name,
+            "state": "pending",
+        })
+    };
+    let req = |op_id: &str, seq: i64, deadline_at: f64, name: &str| {
+        json!({
+            "op_id": op_id,
+            "seq": seq,
+            "deadline_at": deadline_at,
+            "timeout_seconds": 600,
+            "targets": [target(name)],
+        })
+    };
+    let upd = |op_id: &str, seq: i64, deadline_at: f64, settled: bool, name: &str| {
+        json!({
+            "op_id": op_id,
+            "seq": seq,
+            "deadline_at": deadline_at,
+            "settled": settled,
+            "targets": [target(name)],
+            "owner": {"type": "session", "session_id": SESSION},
+        })
+    };
+
+    let (state, _) = run(vec![ev(
+        1,
+        "connection.request",
+        req("op-1", 1, 1_700_000_090.0, "github"),
+    )]);
+    let card: &talaria_core::session::ConnectionCard = state
+        .connection_card()
+        .expect("connection.request opens one card");
+    assert_eq!(card.op_id, "op-1");
+    assert_eq!(card.seq, 1);
+    assert_eq!(card.deadline_at, 1_700_000_090.0);
+
+    let (state, _) = run(vec![
+        ev(
+            1,
+            "connection.request",
+            req("op-1", 1, 1_700_000_090.0, "github"),
+        ),
+        ev(
+            2,
+            "connection.request",
+            req("op-1", 1, 1_700_000_120.0, "ignored-same-seq"),
+        ),
+        ev(
+            3,
+            "connection.request",
+            req("op-1", 0, 1_700_000_130.0, "ignored-lower-seq"),
+        ),
+    ]);
+    let card = state.connection_card().expect("card stays");
+    assert_eq!(card.op_id, "op-1");
+    assert_eq!(card.seq, 1);
+    assert_eq!(card.deadline_at, 1_700_000_090.0);
+    assert_eq!(card.targets[0].name, "github");
+
+    let (state, _) = run(vec![
+        ev(
+            1,
+            "connection.request",
+            req("op-1", 1, 1_700_000_090.0, "github"),
+        ),
+        ev(
+            2,
+            "connection.request",
+            req("op-1", 2, 1_700_000_100.0, "other"),
+        ),
+        ev(
+            3,
+            "connection.request",
+            req("op-2", 1, 1_700_000_200.0, "second"),
+        ),
+        ev(
+            4,
+            "connection.update",
+            upd("op-1", 2, 1_700_000_300.0, false, "ignored-same-seq"),
+        ),
+    ]);
+    let card = state.connection_card().expect("card updated to seq 2");
+    assert_eq!(card.op_id, "op-1");
+    assert_eq!(card.seq, 2);
+    assert_eq!(card.deadline_at, 1_700_000_100.0);
+    assert_eq!(card.targets[0].name, "other");
+
+    let (cleared, _) = run(vec![
+        ev(
+            1,
+            "connection.request",
+            req("op-1", 1, 1_700_000_090.0, "github"),
+        ),
+        ev(
+            2,
+            "connection.request",
+            req("op-1", 2, 1_700_000_100.0, "other"),
+        ),
+        ev(
+            3,
+            "connection.update",
+            upd("op-1", 1, 1_700_000_100.0, true, "other"),
+        ),
+    ]);
+    assert!(cleared.connection_card().is_none());
+
+    let (reopened, _) = run(vec![
+        ev(
+            1,
+            "connection.request",
+            req("op-1", 1, 1_700_000_090.0, "github"),
+        ),
+        ev(
+            2,
+            "connection.update",
+            upd("op-1", 1, 1_700_000_090.0, true, "github"),
+        ),
+        ev(
+            3,
+            "connection.update",
+            upd("op-3", 4, 1_700_000_400.0, false, "slack"),
+        ),
+    ]);
+    let card = reopened
+        .connection_card()
+        .expect("unsettled update opens op-3");
+    assert_eq!(card.op_id, "op-3");
+    assert_eq!(card.seq, 4);
+}

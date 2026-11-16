@@ -1008,3 +1008,164 @@ async fn answer_recovered_returns_the_effect() {
         "answer_recovered must not write a request.answer frame"
     );
 }
+
+#[tokio::test]
+async fn connection_answer_sends_connection_respond() {
+    use hermes_contract::schemas::{
+        CanonicalSnapshot, ConnectionAnswer, ConnectionAnswerStatus, ConnectionAnswerTarget,
+        ConnectionOperationTarget, ConnectionSettleReason,
+    };
+    use talaria_app::comforts::activities_for;
+    use talaria_core::attention::{Activity, NeedKey, NeedSummary};
+    use talaria_core::session::ConnectionCard;
+
+    let mut rig = Rig::new().await;
+    let target_json = json!({
+        "action": "connect",
+        "kind": "connector",
+        "name": "github",
+        "state": "pending",
+    });
+    let snapshot: CanonicalSnapshot = serde_json::from_value(json!({
+        "session_id": SESSION_ID,
+        "stored_session_id": "stored-1",
+        "messages": [],
+        "message_count": 0,
+        "running": false,
+        "authority_epoch": 1,
+        "replay_epoch": "epoch-1",
+        "last_sequence": 0,
+        "subscription_id": "sub-1",
+        "revision": 1,
+        "execution_generation": 1,
+        "pending": [],
+        "prompts": [],
+        "pending_connection": {
+            "op_id": "op-1",
+            "seq": 1,
+            "deadline_at": 1_700_000_090.0,
+            "timeout_seconds": 600,
+            "targets": [target_json.clone()],
+            "display": {"suggested": ["slack"]},
+        },
+        "info": {"desktop_protocol": "1"},
+    }))
+    .expect("snapshot");
+
+    let state = SessionState::from_snapshot(snapshot);
+    let expected_target: ConnectionOperationTarget =
+        serde_json::from_value(target_json).expect("target");
+    assert_eq!(
+        state.connection_card(),
+        Some(&ConnectionCard {
+            op_id: "op-1".to_owned(),
+            seq: 1,
+            deadline_at: 1_700_000_090.0,
+            targets: vec![expected_target],
+        })
+    );
+
+    let activities = activities_for(
+        &SessionState::empty(SessionId::new(SESSION_ID)),
+        &state,
+        &[],
+        &[],
+        false,
+        Instant::now(),
+    );
+    assert_eq!(activities.len(), 1, "expected one activity: {activities:?}");
+    assert!(matches!(
+        &activities[0],
+        Activity::NeedOpened {
+            key: NeedKey::Connection(op_id),
+            summary: NeedSummary::Connection,
+            ..
+        } if op_id == "op-1"
+    ));
+
+    let skip_answer = ConnectionAnswer {
+        targets: vec![ConnectionAnswerTarget {
+            name: "github".to_owned(),
+            status: ConnectionAnswerStatus::Skipped,
+            env: None,
+            detail: None,
+        }],
+        settled_by: None,
+        said: None,
+    };
+    let approve_answer = ConnectionAnswer {
+        targets: vec![ConnectionAnswerTarget {
+            name: "github".to_owned(),
+            status: ConnectionAnswerStatus::Approved,
+            env: None,
+            detail: None,
+        }],
+        settled_by: None,
+        said: None,
+    };
+    let continue_answer = ConnectionAnswer {
+        targets: Vec::new(),
+        settled_by: Some(ConnectionSettleReason::Continue),
+        said: None,
+    };
+
+    for answer in [skip_answer, approve_answer, continue_answer] {
+        rig.mock
+            .push_result(json!({"status": "ok", "settled": true}));
+        let executed = rig
+            .service
+            .execute(
+                &rig.client,
+                Effect::RespondConnection {
+                    session_id: SessionId::new(SESSION_ID),
+                    op_id: "op-1".to_owned(),
+                    result: answer,
+                },
+            )
+            .await;
+        assert!(
+            executed.events.is_empty(),
+            "unexpected events: {:?}",
+            executed.events
+        );
+        assert!(
+            executed.notices.is_empty(),
+            "unexpected notices: {:?}",
+            executed.notices
+        );
+    }
+
+    let calls = rig.mock.requests("connection.respond");
+    assert_eq!(calls.len(), 3, "expected 3 connection.respond calls");
+
+    let skip_params = &calls[0].params;
+    assert_eq!(skip_params["op_id"], "op-1");
+    assert_eq!(skip_params["owner"]["type"], "session");
+    assert_eq!(skip_params["owner"]["session_id"], SESSION_ID);
+    assert!(skip_params.get("profile").is_none());
+    let skip_target = &skip_params["result"]["targets"][0];
+    assert_eq!(skip_target["status"], "skipped");
+    assert!(skip_target.get("env").is_none());
+    assert!(skip_target.get("detail").is_none());
+    assert!(skip_params["result"].get("settled_by").is_none());
+    assert!(skip_params["result"].get("said").is_none());
+
+    let approve_params = &calls[1].params;
+    let approve_target = &approve_params["result"]["targets"][0];
+    assert_eq!(approve_target["status"], "approved");
+    assert!(approve_target.get("env").is_none());
+    assert!(approve_params["result"].get("said").is_none());
+
+    let continue_params = &calls[2].params;
+    assert_eq!(continue_params["result"]["settled_by"], "continue");
+    let continue_targets_empty = match continue_params["result"].get("targets") {
+        None => true,
+        Some(Value::Array(items)) => items.is_empty(),
+        Some(_) => false,
+    };
+    assert!(
+        continue_targets_empty,
+        "continue must send targets empty or absent"
+    );
+    assert!(continue_params["result"].get("said").is_none());
+}
