@@ -68,6 +68,10 @@ KEYWORDS = set("as break const continue crate else enum extern false fn for if i
 class ContractError(Exception):
     """An expected user-facing failure."""
 
+    def __init__(self, message, stderr=""):
+        super().__init__(message)
+        self.stderr = stderr
+
 
 class PinError(ContractError):
     """Invalid pinned version or commit."""
@@ -90,8 +94,9 @@ def run(args, cwd=None, env=None):
         raise ContractError("{} is not installed".format(args[0])) from None
     if result.returncode:
         # Collapse diagnostics to one line; paths and tracebacks are not CLI output.
-        detail = result.stderr.decode(errors="replace").strip().splitlines()
-        raise ContractError("{} failed: {}".format(args[0], " ".join(detail[-3:])))
+        stderr = result.stderr.decode(errors="replace")
+        detail = stderr.strip().splitlines()
+        raise ContractError("{} failed: {}".format(args[0], " ".join(detail[-3:])), stderr=stderr)
     return result.stdout
 
 
@@ -712,8 +717,183 @@ def resolve_tag(tag):
         if obj["type"] != "commit":
             raise ContractError("tag does not point to a commit")
         return tag, obj["sha"]
-    except ContractError:
+    except ContractError as error:
+        if str(error) == "gh is not installed":
+            raise
         raise ContractError("tag {} was not found in {}".format(tag, REPO)) from None
+
+
+class OutputSnapshot:
+    """Restore output bytes and path kinds, including an entire generated tree."""
+
+    def __init__(self, paths):
+        self.roots = tuple(paths)
+        self.saved = {}
+        for path in self.roots:
+            self.remember(path, recursive=True)
+            for parent in path.parents:
+                if parent == ROOT:
+                    break
+                self.remember(parent)
+
+    def remember(self, path, recursive=False):
+        if path in self.saved:
+            return
+        if path.is_symlink():
+            raise ContractError("cannot snapshot a symbolic-link output: {}".format(path))
+        if path.is_dir():
+            self.saved[path] = ("directory", None)
+            if recursive:
+                for child in path.iterdir():
+                    self.remember(child, recursive=True)
+        elif path.exists():
+            self.saved[path] = ("file", path.read_bytes())
+        else:
+            self.saved[path] = ("missing", None)
+
+    @staticmethod
+    def remove(path):
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+
+    def restore(self):
+        current = set()
+        for root in self.roots:
+            current.add(root)
+            if root.is_dir() and not root.is_symlink():
+                current.update(root.rglob("*"))
+        for path in sorted(current - self.saved.keys(), key=lambda p: len(p.parts), reverse=True):
+            self.remove(path)
+        for path in sorted(self.saved, key=lambda p: len(p.parts), reverse=True):
+            if self.saved[path][0] == "missing":
+                self.remove(path)
+        for path in sorted(self.saved, key=lambda p: len(p.parts)):
+            kind, data = self.saved[path]
+            if kind == "directory":
+                if path.is_symlink() or not path.is_dir():
+                    self.remove(path)
+                    path.mkdir(parents=True, exist_ok=True)
+            elif kind == "file":
+                if path.is_symlink() or not path.is_file():
+                    self.remove(path)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists() or path.read_bytes() != data:
+                    path.write_bytes(data)
+
+
+def update_compat_cells(changes):
+    path = CRATE / "compat.toml"
+    text = path.read_bytes().decode("utf-8")
+    headers = list(re.finditer(r"(?m)^[ \t]*\[\[[ \t]*release[ \t]*\]\][^\r\n]*", text))
+    if not headers:
+        raise ContractError("compat.toml is missing a non-empty [[release]] entry")
+    start = headers[-1].end()
+    following = re.search(r"(?m)^[ \t]*\[", text[start:])
+    end = start + following.start() if following else len(text)
+    block = text[start:end]
+    for key, value in changes.items():
+        names = r'''(?:{0}|"{0}"|'{0}')'''.format(re.escape(key))
+        pattern = r'''(?m)^([ \t]*{}[ \t]*=[ \t]*)("(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')'''.format(names)
+        def replace(match):
+            literal = json.dumps(value) if match[2].startswith('"') else "'" + value + "'"
+            return match[1] + literal
+        block, count = re.subn(pattern, replace, block)
+        if count != 1:
+            raise ContractError("compat.toml last release entry needs one {} cell".format(key))
+    path.write_bytes((text[:start] + block + text[end:]).encode("utf-8"))
+
+
+def bump_error(error):
+    print(" ".join(str(error).splitlines()))
+    detail = getattr(error, "stderr", "") or str(error)
+    for needle, phrase in (
+        ("inline string enum title collision", "a title collision in the generator"),
+        ("crates/hermes-contract/src/events.rs", "a removed event still named in crates/hermes-contract/src/events.rs"),
+        ("/tests/", "a recorded frame or a mock that rejects a new field"),
+        ("error[E0063]", "a new field that a hand-written struct literal must name"),
+    ):
+        if needle in detail:
+            print(phrase)
+            break
+    return 1
+
+
+def older_recordings(tag):
+    try:
+        paths = run(["git", "ls-files", "-z", "--", "crates/", "fixtures/"], cwd=ROOT)
+    except ContractError:
+        return
+    for name in paths.decode(errors="replace").split("\0"):
+        if not name.endswith(".json") or not name.startswith(("crates/", "fixtures/")):
+            continue
+        try:
+            value = json.loads((ROOT / name).read_bytes())
+            release = value.get("recorded_against") if isinstance(value, dict) else None
+            if isinstance(release, str) and compare_versions(release, tag) < 0:
+                print(name)
+        except (ContractError, OSError, ValueError):
+            continue
+
+
+def bump(tag):
+    current = read_compat()[-1]
+    tag, commit = resolve_tag(tag)
+    commit = commit.lower()
+    validate_pinned(Pin(tag, commit))
+    raw = gh_raw(CONTRACT_PATH, commit)
+    licence = gh_raw("LICENSE", commit)
+    try:
+        validate(json.loads(raw.decode("utf-8-sig")))
+    except (ContractError, ValueError, KeyError) as error:
+        return bump_error(error)
+    changes = {"pinned_tag": tag, "pinned_commit": commit}
+    if compare_versions(tag, current["newest_tested"]) > 0:
+        changes["newest_tested"] = tag
+    checksum = CONTRACT.with_name(CONTRACT.name + ".sha256")
+    licence_path = CONTRACT.parent / "LICENSE.hermes"
+    snapshot = OutputSnapshot([CRATE / "PINNED", CONTRACT, checksum, licence_path,
+                               CRATE / "compat.toml", ROOT / "README.md", ROOT / "docs/compatibility.md", OUT])
+    classify = False
+    try:
+        (CRATE / "PINNED").write_text("tag={}\ncommit={}\n".format(tag, commit))
+        CONTRACT.write_bytes(raw)
+        checksum.write_text(hashlib.sha256(raw).hexdigest() + "  " + CONTRACT.name + "\n")
+        licence_path.write_bytes(licence)
+        update_compat_cells(changes)
+        classify = True
+        generate()
+        classify = False
+        if main(["compat", "--write"]):
+            snapshot.restore()
+            return 1
+        classify = True
+        run(["cargo", "check", "--workspace", "--all-targets"], cwd=ROOT)
+    except (ContractError, OSError, ValueError, KeyError) as error:
+        snapshot.restore()
+        if classify:
+            return bump_error(error)
+        raise
+    older_recordings(tag)
+    return 0
+
+
+def tested(tag):
+    version(tag)
+    current = read_compat()[-1]
+    if compare_versions(tag, current["newest_tested"]) <= 0:
+        raise ContractError("newest tested is already {}".format(current["newest_tested"]))
+    snapshot = OutputSnapshot([CRATE / "compat.toml", ROOT / "README.md", ROOT / "docs/compatibility.md", OUT / "compat.rs"])
+    try:
+        update_compat_cells({"newest_tested": tag})
+        if main(["compat", "--write"]):
+            snapshot.restore()
+            return 1
+    except (ContractError, OSError, ValueError, KeyError):
+        snapshot.restore()
+        raise
+    return 0
 
 
 def catalogue_diff(old, new, owners_before=(), owners_after=()):
@@ -842,6 +1022,9 @@ def main(argv=None):
     drift_parser.add_argument("--tag", required=True)
     drift_parser.add_argument("--summary", type=Path)
     drift_parser.add_argument("--hermes-checkout", type=Path)
+    for command in ("bump", "tested"):
+        update = sub.add_parser(command)
+        update.add_argument("--tag", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "generate":
@@ -859,6 +1042,10 @@ def main(argv=None):
             print("tag={}\ncommit={}".format(tag, commit))
         elif args.command == "drift":
             return drift(args.tag, args.summary, args.hermes_checkout)
+        elif args.command == "bump":
+            return bump(args.tag)
+        elif args.command == "tested":
+            return tested(args.tag)
         return 0
     except (ContractError, OSError, ValueError, KeyError) as error:
         print(" ".join(str(error).splitlines()))
