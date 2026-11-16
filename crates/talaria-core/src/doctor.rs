@@ -5,7 +5,6 @@ use std::{collections::BTreeSet, time::Duration};
 use serde::Serialize;
 use serde_json::json;
 
-pub const MIN_HERMES: (u64, u64, u64) = (0, 22, 3);
 pub const RESTART_DEADLINE: Duration = Duration::from_secs(90);
 pub const PROBE_INTERVAL: Duration = Duration::from_secs(1);
 pub const FOOTER: &str = "For provider keys, tools and dependencies, run hermes doctor.";
@@ -190,6 +189,36 @@ fn version(text: &str) -> Option<(u64, u64, u64)> {
     ))
 }
 
+pub fn connect_notice(
+    version: Option<&str>,
+    row: &hermes_contract::compat::CompatRow,
+    shown: &mut bool,
+) -> Option<String> {
+    if *shown {
+        return None;
+    }
+    let raw = version?;
+    let parse = |text: &str| self::version(text.strip_prefix('v').unwrap_or(text));
+    let running = parse(raw)?;
+    let floor = parse(row.floor)?;
+    let newest = parse(row.newest_tested)?;
+    let notice = if running < floor {
+        format!(
+            "This gateway runs Hermes {raw}. This Talaria supports {} and later, and some features will not work. See docs/compatibility.md.",
+            row.floor
+        )
+    } else if running > newest {
+        format!(
+            "This gateway runs Hermes {raw}. This Talaria was tested up to {}. See docs/compatibility.md.",
+            row.newest_tested
+        )
+    } else {
+        return None;
+    };
+    *shown = true;
+    Some(notice)
+}
+
 pub fn compare_hermes_version(
     code_version: Option<&str>,
     code_sha: Option<&str>,
@@ -207,12 +236,13 @@ pub fn compare_hermes_version(
     let Some(running) = code_version.and_then(version) else {
         return VersionVerdict::Unknown;
     };
+    if running < hermes_contract::pinned::OLDEST_SUPPORTED {
+        return VersionVerdict::TooOld;
+    }
     let Some(built) = version(pin.tag.strip_prefix('v').unwrap_or(&pin.tag)) else {
         return VersionVerdict::Unknown;
     };
-    if running < MIN_HERMES {
-        VersionVerdict::TooOld
-    } else if running < built {
+    if running < built {
         VersionVerdict::OlderThanPin
     } else if running > built {
         VersionVerdict::NewerThanPin
@@ -423,7 +453,12 @@ fn version_check(facts: &DoctorFacts) -> Check {
         ),
         VersionVerdict::TooOld => (
             Severity::Fail,
-            format!("{v}; Talaria needs 0.22.3 or later"),
+            format!(
+                "{v}; Talaria needs {}.{}.{} or later",
+                hermes_contract::pinned::OLDEST_SUPPORTED.0,
+                hermes_contract::pinned::OLDEST_SUPPORTED.1,
+                hermes_contract::pinned::OLDEST_SUPPORTED.2
+            ),
             Some("Run hermes update, then restart the gateway."),
         ),
         VersionVerdict::NewerThanPin => (

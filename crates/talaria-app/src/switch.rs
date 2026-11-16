@@ -118,6 +118,7 @@ pub async fn switch_foreground(app: &mut AppState, target: RowKey) -> SwitchOutc
         inbound,
         describe,
         profile_name,
+        ..
     } = connection;
     let service = SessionService::with_client(&app.launch_id, link.client())
         .with_create_defaults(&profile_name, &describe.session_create.parameters);
