@@ -376,6 +376,16 @@ this release, and `[herdr] report_state` switches both reporters.
 the same moment, because the old one has no `done`; revisit when old Herdr support
 is removed, which the operator has decided for a later release.
 
+## 2026-11-11 — A Hermes sync pull request is reviewed like any other
+
+**Context.** On 2026-11-11 the operator said: "Default, but something about this seems inflexible as well. Can we not signal that there is a new version of hermes? Maybe somehow automatically update talaria based on hermes updates. I don't know, we are missing something in the talaria ecosystem that keeps talaria in sync with hermes. They are, at least currently, coupled and we should try to keep talaria working with the latest and maybe considering some sort of release making table. Such that anyone using it knows what release of each match." The same day the operator also said: "Agree, we don't want to request any updates to hermes if we can avoid it... we want talaria working with stock hermes, not a patched version." Those words are why a watcher may signal a new Hermes release. The watcher opens an issue titled "Hermes <tag> is ready to sync" when the pin move passes. The watcher opens an issue titled "Hermes <tag> needs a manual sync" when that preparation fails. A person opens the pull request titled "Sync with Hermes <tag>" from the link in the ready issue. This entry states no cadence for Hermes releases.
+
+**Decision.** A sync pull request is reviewed and merged like any other pull request. The watcher opens an issue titled "Hermes <tag> is ready to sync" when the pin move passes. The watcher opens an issue titled "Hermes <tag> needs a manual sync" when that preparation fails. A person opens the pull request titled "Sync with Hermes <tag>" from the link in the ready issue. A merged sync ships in the next release. A patch release for it is cut when the operator asks, with a release card. The release tag is always the operator's. No agent pushes that tag.
+
+**Rejected.** Treating the merge itself as a patch release with no release card. An agent pushing the release tag. Naming a Hermes release cadence the operator did not state.
+
+**Revisit when.** The operator asks for that watcher to merge a pull request, or for an agent to push a release tag.
+
 ## 2026-11-04
 
 ### Optional workspace: one transcript body and independent terminal ownership
