@@ -73,6 +73,7 @@ fn ensure_policy(no_ensure: bool) -> EnsurePolicy {
 }
 
 pub struct OpenConnection {
+    pub(crate) gateway_version: Option<String>,
     pub link: Link,
     pub inbound: mpsc::Receiver<LinkEvent>,
     pub describe: RuntimeDescribeResult,
@@ -175,6 +176,7 @@ impl ConnectionService {
             });
         match describe {
             Ok(describe) => Ok(OpenConnection {
+                gateway_version: None,
                 link,
                 inbound,
                 describe,
@@ -199,6 +201,7 @@ impl ConnectionService {
             ..DiscoverOptions::default()
         };
         let endpoint = hermes_client::discover_with(home, &options).await?;
+        let gateway_version = endpoint.code_version().map(str::to_owned);
         let profile = endpoint.resolve_profile(&launch.profile)?;
         let describe = Arc::new(Mutex::new(None));
         let dial = LaunchDial {
@@ -217,6 +220,7 @@ impl ConnectionService {
                 LaunchFailure::from(hermes_client::connect::HandshakeError::BadDescribe)
             })?;
         Ok(OpenConnection {
+            gateway_version,
             link,
             inbound,
             describe,

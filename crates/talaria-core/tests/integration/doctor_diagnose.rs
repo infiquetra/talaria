@@ -117,14 +117,10 @@ fn version_verdicts() {
             None,
             VersionVerdict::SameReleaseUnknownCommit,
         ),
-        (
-            Some("0.22.3"),
-            Some("ffffffff"),
-            VersionVerdict::OlderThanPin,
-        ),
+        (Some("0.22.3"), Some("ffffffff"), VersionVerdict::TooOld),
         (Some("0.22.2"), None, VersionVerdict::TooOld),
         (Some("0.21.9"), None, VersionVerdict::TooOld),
-        (Some("0.22.10"), None, VersionVerdict::OlderThanPin),
+        (Some("0.22.10"), None, VersionVerdict::TooOld),
         (Some("1.0.0"), None, VersionVerdict::NewerThanPin),
         (Some("unknown"), None, VersionVerdict::Unknown),
         (None, None, VersionVerdict::Unknown),
@@ -161,6 +157,63 @@ fn version_verdicts() {
             )
         ]
     );
+
+    let mut too_old = ready();
+    let identity = too_old.identity.as_mut().expect("ready has identity");
+    identity.code_version = Some("0.22.2".into());
+    identity.code_sha = None;
+    let old_row = row(&too_old, CheckId::HermesVersion);
+    assert_eq!(old_row.severity, Severity::Fail);
+    assert_eq!(old_row.summary, "0.22.2; Talaria needs 0.23.0 or later");
+}
+
+#[test]
+fn connect_notice_uses_the_table() {
+    let bare_tag = hermes_contract::pinned::TAG
+        .strip_prefix('v')
+        .unwrap_or(hermes_contract::pinned::TAG);
+    let row = hermes_contract::compat::CompatRow {
+        talaria: "0.9.0",
+        floor: "v0.23.0",
+        pinned_tag: hermes_contract::pinned::TAG,
+        pinned_commit: hermes_contract::pinned::COMMIT,
+        newest_tested: "v0.23.0",
+    };
+
+    let mut shown = false;
+    assert_eq!(
+        connect_notice(Some(bare_tag), &row, &mut shown),
+        Some(format!(
+            "This gateway runs Hermes {bare_tag}. This Talaria was tested up to v0.23.0. See docs/compatibility.md."
+        ))
+    );
+    assert!(shown);
+    assert_eq!(connect_notice(Some(bare_tag), &row, &mut shown), None);
+    assert!(shown);
+
+    let mut shown_old = false;
+    let older = connect_notice(Some("0.22.4"), &row, &mut shown_old);
+    assert_eq!(
+        older,
+        Some(
+            "This gateway runs Hermes 0.22.4. This Talaria supports v0.23.0 and later, and some features will not work. See docs/compatibility.md."
+                .to_string()
+        )
+    );
+    assert!(
+        !older
+            .as_deref()
+            .unwrap_or_default()
+            .contains("This Talaria was tested up to")
+    );
+
+    let mut shown_floor = false;
+    assert_eq!(connect_notice(Some("0.23.0"), &row, &mut shown_floor), None);
+    assert!(!shown_floor);
+
+    let mut shown_none = false;
+    assert_eq!(connect_notice(None, &row, &mut shown_none), None);
+    assert!(!shown_none);
 }
 
 #[test]

@@ -7,7 +7,7 @@ use talaria_core::directory::rows::RowKey;
 use talaria_core::models::ModelsInput;
 use talaria_core::permissions::PermissionsInput;
 use talaria_core::rewind::text as rewind_text;
-use talaria_core::session::{Cell, PromptKind};
+use talaria_core::session::{Cell, NoticeKind, PromptKind};
 use talaria_core::side::carry_over;
 use talaria_core::workspace::SessionFolder;
 
@@ -148,6 +148,20 @@ pub(crate) fn rebuild_after_rewind(
     effects
 }
 
+fn same_cell_content(left: &Cell, right: &Cell) -> bool {
+    let mut normalized = left.clone();
+    match (&mut normalized, right) {
+        (Cell::User(a), Cell::User(b)) => a.id = b.id,
+        (Cell::Assistant(a), Cell::Assistant(b)) => a.id = b.id,
+        (Cell::Reasoning(a), Cell::Reasoning(b)) => a.id = b.id,
+        (Cell::Tool(a), Cell::Tool(b)) => a.id = b.id,
+        (Cell::Notice(a), Cell::Notice(b)) => a.id = b.id,
+        (Cell::Prompt(a), Cell::Prompt(b)) => a.id = b.id,
+        _ => {}
+    }
+    normalized == *right
+}
+
 pub(crate) fn recovered(
     state: &mut AppState,
     result: Result<OpenedSession, OpenError>,
@@ -171,12 +185,25 @@ pub(crate) fn recovered(
     carry_over(&mut old.state, &mut fresh.state);
     fresh.state.queue.carry_waiting_from(&old.state.queue);
     fresh.carry_background_from(&old);
-    let shown = state.committed_cells;
+    let shown = state.committed_cells.min(old.state.cells().len());
+    let canonical_prefix: Vec<_> = old.state.cells()[..shown]
+        .iter()
+        .filter(|cell| {
+            !matches!(cell, Cell::Notice(notice)
+                if notice.kind != NoticeKind::System
+                    && notice.text != talaria_core::side::SIDE_UNKNOWN_NOTICE)
+        })
+        .collect();
+    let count = canonical_prefix.len();
     let mut effects = Vec::new();
-    let keeps_prefix = fresh.state.cells().len() >= shown
-        && old.state.cells().len() >= shown
-        && fresh.state.cells()[..shown] == old.state.cells()[..shown];
-    if !keeps_prefix {
+    let keeps_prefix = fresh.state.cells().len() >= count
+        && canonical_prefix
+            .iter()
+            .zip(&fresh.state.cells()[..count])
+            .all(|(old, fresh)| same_cell_content(old, fresh));
+    if keeps_prefix {
+        state.committed_cells = count;
+    } else {
         let cells = fresh.state.cells();
         let total = final_prefix(cells);
         let start = total.saturating_sub(RESUME_HISTORY_CELLS);

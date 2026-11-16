@@ -750,6 +750,8 @@ struct CronBinding {
 }
 
 pub struct AppState {
+    pub gateway_version: Option<String>,
+    compat_notice_shown: bool,
     pub layout: talaria_core::layout::LayoutState,
     pub kanban: Option<talaria_core::kanban::KanbanBoardState>,
     kanban_service: Option<crate::kanban::KanbanService>,
@@ -1061,6 +1063,8 @@ impl AppState {
         let ledger = MutationLedger::new(&launch_id);
         let cd_ledger = MutationLedger::new(&format!("{launch_id}-cd"));
         Self {
+            gateway_version: None,
+            compat_notice_shown: false,
             voice: crate::voice::VoiceService::new(),
             client_voice: talaria_core::voice::client::ClientVoice::default(),
             client_voice_config: crate::config::VoiceConfig::default(),
@@ -1478,6 +1482,8 @@ impl AppState {
     #[must_use]
     pub fn working_copy(&self) -> AppState {
         let mut copy = AppState::new(self.launch_id.clone());
+        copy.gateway_version = self.gateway_version.clone();
+        copy.compat_notice_shown = self.compat_notice_shown;
         copy.service = self.service.clone();
         copy.voice = self.voice.clone();
         copy.client_voice_config = self.client_voice_config.clone();
@@ -8844,6 +8850,19 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 .max(state.background_generation_base.saturating_add(generation));
             state.link_state = LinkView::Connected;
             let mut effects = vec![AppEffect::ConnectionOpened(generation)];
+            if let Some(text) = talaria_core::doctor::connect_notice(
+                state.gateway_version.as_deref(),
+                &hermes_contract::compat::CURRENT,
+                &mut state.compat_notice_shown,
+            ) {
+                effects.extend(reduce(
+                    state,
+                    Event::Notice {
+                        kind: talaria_core::session::NoticeKind::Warning,
+                        text,
+                    },
+                ));
+            }
             if state.uses_client_voice() {
                 let _ = state
                     .client_voice
@@ -13641,6 +13660,7 @@ fn install(state: &mut AppState, ready: Ready, executor: &Executor) -> AppMessag
         opened,
         notice,
     } = ready;
+    state.gateway_version = connection.gateway_version.clone();
     let OpenConnection {
         link,
         mut inbound,

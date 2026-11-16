@@ -1460,11 +1460,16 @@ async fn gap_resumes_rebuilds_resyncs_without_duplicates() {
         resumes[1].params,
         json!({"session_id": "local-session-1", "display_projection": true})
     );
-    let shown: Vec<String> = SessionState::from_snapshot(snapshot_of(&extended))
+    let compat_notice = "notice: This gateway runs Hermes 0.22.4. This Talaria supports v0.23.0 and later, and some features will not work. See docs/compatibility.md.".to_string();
+    let initial_len = SessionState::from_snapshot(snapshot_of(&first))
+        .cells()
+        .len();
+    let mut shown: Vec<String> = SessionState::from_snapshot(snapshot_of(&extended))
         .cells()
         .iter()
         .map(cell_text)
         .collect();
+    shown.insert(initial_len, compat_notice.clone());
     assert_eq!(
         locked(&log).cells,
         shown,
@@ -1532,9 +1537,10 @@ async fn gap_resumes_rebuilds_resyncs_without_duplicates() {
         .map(cell_text)
         .collect();
     let committed = locked(&log).cells.clone();
-    assert_eq!(committed.len(), before.len() + after.len());
-    assert_eq!(committed[..before.len()], before);
-    assert_eq!(committed[before.len()..], after);
+    let mut expected = before;
+    expected.push(compat_notice);
+    expected.extend(after);
+    assert_eq!(committed, expected);
     let lines = locked(&log).lines.clone();
     let marker = lines
         .iter()

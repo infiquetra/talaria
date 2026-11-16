@@ -2,7 +2,7 @@ use hermes_client::liveness::{LinkEvent, LinkState};
 use talaria_app::app::{AppEffect, AppMessage, AppState, UserAction, update};
 use talaria_app::sessions::{OpenError, OpenedSession, SessionInfoSummary};
 use talaria_core::background::{BackgroundEffect, BackgroundEvent, BgState};
-use talaria_core::session::{SessionId, SessionState};
+use talaria_core::session::{Cell, NoticeKind, SessionId, SessionState};
 
 #[test]
 fn unknown_output_uses_current_app_time_without_a_frame_tick() {
@@ -231,4 +231,57 @@ fn a_background_reply_from_an_older_connection_is_dropped() {
         state.cells().len() > cells_before,
         "the same reply on the current connection is applied"
     );
+}
+
+#[test]
+fn connected_gateway_notice_is_shown_once() {
+    let newest_tested = hermes_contract::compat::CURRENT.newest_tested;
+    let parts: Vec<u64> = newest_tested
+        .strip_prefix('v')
+        .unwrap_or(newest_tested)
+        .split('.')
+        .map(|part| part.parse::<u64>().expect("numeric version component"))
+        .collect();
+    let above = format!("{}.{}.{}", parts[0], parts[1], parts[2] + 1);
+    let expected = format!(
+        "This gateway runs Hermes {above}. This Talaria was tested up to {newest_tested}. See docs/compatibility.md."
+    );
+
+    let mut app = AppState::new("launch-connect-notice");
+    app.gateway_version = Some(above);
+    let _ = update(
+        &mut app,
+        AppMessage::Opened {
+            opened: opened_fixture(),
+            notice: None,
+        },
+    );
+
+    let _ = update(
+        &mut app,
+        AppMessage::Link(LinkEvent::State(LinkState::Connected { generation: 1 })),
+    );
+    let warnings = |state: &AppState| -> Vec<String> {
+        state
+            .opened
+            .as_ref()
+            .expect("open session")
+            .state
+            .cells()
+            .iter()
+            .filter_map(|cell| match cell {
+                Cell::Notice(notice) if notice.kind == NoticeKind::Warning => {
+                    Some(notice.text.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(warnings(&app), vec![expected.clone()]);
+
+    let _ = update(
+        &mut app,
+        AppMessage::Link(LinkEvent::State(LinkState::Connected { generation: 2 })),
+    );
+    assert_eq!(warnings(&app), vec![expected]);
 }
