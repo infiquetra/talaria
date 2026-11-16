@@ -991,3 +991,20 @@ async fn reconnect_list_does_not_duplicate_a_live_card() {
     );
     assert!(rig.mock.answers_for(&req_id).is_empty());
 }
+
+#[tokio::test]
+async fn answer_recovered_returns_the_effect() {
+    let rig = Rig::new().await;
+    let effect = PromptService::answer_recovered("req-1", Zeroizing::new(String::new()));
+    match effect {
+        talaria_app::app::AppEffect::AnswerRecovered { request_id, value } => {
+            assert_eq!(request_id, "req-1");
+            assert_eq!(value.as_str(), "");
+        }
+        other => panic!("expected AnswerRecovered, got {other:?}"),
+    }
+    assert!(
+        rig.mock.no_new_frames_within(BUDGET).await,
+        "answer_recovered must not write a request.answer frame"
+    );
+}

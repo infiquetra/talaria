@@ -17368,4 +17368,40 @@ mod voice_ownership_tests {
             Some(talaria_core::voice::VoicePhase::Off)
         );
     }
+
+    #[test]
+    fn read_only_card_is_absent_from_foreground_open() {
+        let make_state = |method: &str| {
+            let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+                serde_json::from_value(serde_json::json!({
+                    "session_id": "sess-1",
+                    "stored_session_id": "stored-1",
+                    "messages": [],
+                    "message_count": 0,
+                    "running": false,
+                    "authority_epoch": 1,
+                    "replay_epoch": "epoch-1",
+                    "last_sequence": 0,
+                    "subscription_id": "sub-1",
+                    "revision": 1,
+                    "execution_generation": 1,
+                    "pending": [],
+                    "prompts": [],
+                    "open_requests": [
+                        {"id": "req-1", "method": method, "params": {}}
+                    ],
+                    "info": {"desktop_protocol": "1"},
+                }))
+                .expect("snapshot");
+            let mut state = AppState::new("fixture");
+            state.opened = Some(OpenedSession::from_snapshot(snapshot));
+            state
+        };
+
+        let read_only = make_state("vault.save_login");
+        assert_eq!(foreground_open(&read_only), 0);
+
+        let sudo = make_state("sudo");
+        assert_eq!(foreground_open(&sudo), 1);
+    }
 }

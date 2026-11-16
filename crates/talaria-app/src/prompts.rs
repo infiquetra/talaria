@@ -473,3 +473,59 @@ fn sanitize(text: &str) -> String {
     }
     sanitized
 }
+
+#[cfg(test)]
+mod tests {
+    use talaria_core::session::{Cell, Event, PromptState, SessionState, Settlement, update};
+
+    #[test]
+    fn cancel_timeout_settles_a_recovered_sudo_card() {
+        let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+            serde_json::from_value(serde_json::json!({
+                "session_id": "sess-1",
+                "stored_session_id": "stored-1",
+                "messages": [],
+                "message_count": 0,
+                "running": false,
+                "authority_epoch": 1,
+                "replay_epoch": "epoch-1",
+                "last_sequence": 0,
+                "subscription_id": "sub-1",
+                "revision": 1,
+                "execution_generation": 1,
+                "pending": [],
+                "prompts": [],
+                "open_requests": [
+                    {"id": "req-1", "method": "sudo", "params": {}}
+                ],
+                "info": {"desktop_protocol": "1"},
+            }))
+            .expect("snapshot");
+        let mut state = SessionState::from_snapshot(snapshot);
+        let _effects = update(
+            &mut state,
+            Event::ServerRequestCancelled {
+                id: "req-1".to_owned(),
+            },
+        );
+        assert!(
+            !state
+                .open_prompts()
+                .any(|cell| cell.key.prompt_id == "req-1"),
+            "cancelled card must no longer be open"
+        );
+        let card = state
+            .cells()
+            .iter()
+            .find_map(|cell| match cell {
+                Cell::Prompt(prompt) if prompt.key.prompt_id == "req-1" => Some(prompt),
+                _ => None,
+            })
+            .expect("cancelled card must remain in cells");
+        assert_eq!(card.state, PromptState::Settled(Settlement::Elsewhere));
+        assert_eq!(
+            super::cancel_reason_notice("timeout"),
+            "timed out; the agent continued without it"
+        );
+    }
+}
