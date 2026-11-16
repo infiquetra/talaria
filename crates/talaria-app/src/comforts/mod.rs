@@ -35,6 +35,15 @@ impl AttentionSnapshot {
                     PromptKind::Clarify => {
                         NeedSummary::Question(prompt.question.clone().unwrap_or_default())
                     }
+                    PromptKind::ServerRequest => {
+                        match prompt.command.as_deref().unwrap_or_default() {
+                            "sudo" => NeedSummary::Sudo,
+                            "secret" => NeedSummary::Secret,
+                            "vault.code" => NeedSummary::VaultCode,
+                            "vault.unlock_prompt" => NeedSummary::VaultUnlock,
+                            method => NeedSummary::Question(method.to_owned()),
+                        }
+                    }
                 };
                 (NeedKey::Prompt(prompt.key.clone()), summary)
             })

@@ -2269,6 +2269,10 @@ pub enum AppEffect {
         reason: String,
     },
     ConnectionOpened(u64),
+    /// Remove masked duplicates of the requests restored by a snapshot.
+    InstallRecovered {
+        ids: Vec<String>,
+    },
     PromptsChanged(Vec<PromptKey>),
     Track {
         session_id: String,
@@ -2394,10 +2398,11 @@ pub(crate) fn notice_lines(text: &str) -> AppEffect {
 
 fn model_card_blocked(state: &AppState) -> bool {
     !state.masked.is_empty()
-        || state
-            .opened
-            .as_ref()
-            .is_some_and(|s| s.state.open_prompts().any(|p| p.state == PromptState::Open))
+        || state.opened.as_ref().is_some_and(|s| {
+            s.state
+                .open_prompts()
+                .any(|p| p.state == PromptState::Open && p.kind != PromptKind::ServerRequest)
+        })
 }
 
 fn sync_models<S: Screen>(state: &mut AppState, screen: &mut S) {
@@ -12778,6 +12783,15 @@ fn apply<S: Screen>(
                     (Vec::new(), notice_texts(notices))
                 });
             }
+            AppEffect::InstallRecovered { ids } => {
+                let Some(prompts) = &state.prompts else {
+                    continue;
+                };
+                executor.prompt_task(prompts, move |prompts| async move {
+                    prompts.lock().await.install_recovered(&ids);
+                    (Vec::new(), Vec::new())
+                });
+            }
             AppEffect::PromptsChanged(open) => {
                 let Some(prompts) = &state.prompts else {
                     continue;
@@ -14674,7 +14688,11 @@ fn peek_report(state: &mut AppState, report: crate::fleet_actions::PeekReport) -
             {
                 return Vec::new();
             }
-            let card = frame.state.open_prompts().next().is_some() || !frame.masked.is_empty();
+            let card = frame
+                .state
+                .open_prompts()
+                .any(|prompt| prompt.kind != PromptKind::ServerRequest)
+                || !frame.masked.is_empty();
             state.peek_frame = Some(*frame);
             let mut effects = vec![AppEffect::Redraw];
             if !card

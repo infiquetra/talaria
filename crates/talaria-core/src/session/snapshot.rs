@@ -139,6 +139,34 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
         };
         super::prompts::insert(&mut state, cell);
     }
+    for request in snapshot.open_requests.unwrap_or_default() {
+        if request.method == "clarify"
+            || state
+                .open_prompts()
+                .any(|prompt| prompt.key.prompt_id == request.id)
+        {
+            continue;
+        }
+        let cell = PromptCell {
+            id: state.next_id(),
+            key: PromptKey {
+                session_id: state.session_id.clone(),
+                prompt_id: request.id,
+                execution_generation: snapshot.execution_generation,
+            },
+            kind: PromptKind::ServerRequest,
+            command: Some(request.method),
+            description: None,
+            question: None,
+            choices: Vec::new(),
+            multi_select: false,
+            edit: None,
+            timeout_s: None,
+            state: PromptState::Open,
+            sealed: false,
+        };
+        super::prompts::insert(&mut state, cell);
+    }
     state.advance_prefix();
     state
 }

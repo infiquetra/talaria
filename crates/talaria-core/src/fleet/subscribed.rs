@@ -77,6 +77,13 @@ impl SubscribedView {
                     PromptKind::Clarify => {
                         NeedSummary::Question(prompt.question.clone().unwrap_or_default())
                     }
+                    PromptKind::ServerRequest => match prompt.command.as_deref() {
+                        Some("sudo") => NeedSummary::Sudo,
+                        Some("secret") => NeedSummary::Secret,
+                        Some("vault.code") => NeedSummary::VaultCode,
+                        Some("vault.unlock_prompt") => NeedSummary::VaultUnlock,
+                        method => NeedSummary::Question(method.unwrap_or_default().to_owned()),
+                    },
                 },
                 choices: prompt.choices.clone(),
                 execution_generation: Some(prompt.key.execution_generation),

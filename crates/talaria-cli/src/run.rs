@@ -56,7 +56,7 @@ use talaria_core::providers::{ProvidersEffect, ProvidersView};
 use talaria_core::queue::{AdmissionId, QueueIntent, QueueView};
 use talaria_core::review::{ReviewFocus, ReviewKey, ReviewView};
 use talaria_core::session::{
-    AssistantCell, Cell, CellId, PromptCell, ReasoningCell, TurnState as SessionTurn,
+    AssistantCell, Cell, CellId, PromptCell, PromptKind, ReasoningCell, TurnState as SessionTurn,
 };
 use talaria_core::subagents::{Clock as SubagentClock, FinishedBatch};
 use talaria_tui::automation::AutomationSection;
@@ -3144,9 +3144,11 @@ fn transcript_context<'a>(view: &'a View<'a>) -> PagerContext<'a> {
     let title = view.title.unwrap_or("");
     let running = view.turn_running();
     let needs_answer = !view.masked.is_empty()
-        || view
-            .state
-            .is_some_and(|state| state.open_prompts().next().is_some());
+        || view.state.is_some_and(|state| {
+            state
+                .open_prompts()
+                .any(|prompt| prompt.kind != PromptKind::ServerRequest)
+        });
     let connection = match view.link {
         LinkView::Connected => ConnectionBanner::Connected,
         LinkView::Connecting | LinkView::Reconnecting => ConnectionBanner::Reconnecting,

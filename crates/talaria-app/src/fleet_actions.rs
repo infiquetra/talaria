@@ -15,7 +15,7 @@ use talaria_core::directory::rows::RowKey;
 use talaria_core::fleet_view::{
     FleetViewEffect, FleetViewInput, FleetViewState, PeekStatus, ReplyOutcome, StopOutcome,
 };
-use talaria_core::session::{SessionState, TurnState};
+use talaria_core::session::{PromptKind, SessionState, TurnState};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::app::{AppEffect, AppMessage, AppState};
@@ -251,7 +251,10 @@ async fn run_effect(peek: &mut PeekService, effect: FleetViewEffect) -> Vec<Flee
 #[must_use]
 pub fn foreground_status(state: &SessionState, masked: bool) -> PeekStatus {
     PeekStatus::Open {
-        has_open_prompt: state.open_prompts().next().is_some() || masked,
+        has_open_prompt: state
+            .open_prompts()
+            .any(|prompt| prompt.kind != PromptKind::ServerRequest)
+            || masked,
         running: *state.turn() == TurnState::Running,
     }
 }

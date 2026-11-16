@@ -193,6 +193,16 @@ impl PromptService {
             .collect()
     }
 
+    /// Remove live masked duplicates without answering the recovered requests.
+    pub fn install_recovered(&mut self, ids: &[String]) {
+        for (_, responder) in self
+            .masked
+            .extract_if(.., |(info, _)| ids.contains(&info.id))
+        {
+            responder.ignore();
+        }
+    }
+
     pub async fn answer_masked(
         &mut self,
         request_id: &str,

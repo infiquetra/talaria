@@ -282,6 +282,7 @@ impl<'a> PagerCellLines<'a> {
                     .or(cell.command.as_deref())
                     .unwrap_or("")
             ),
+            talaria_core::session::PromptKind::ServerRequest => return Vec::new(),
         };
         out.push(Line::styled(header, self.theme.banner));
         if self.details == Details::Expanded {
