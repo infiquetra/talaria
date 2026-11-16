@@ -1,7 +1,7 @@
 //! What an attached session's owner reports.
 
 use super::{NeedSlot, NeedSummary, Outcome};
-use crate::session::{PromptKind, TurnOutcome, TurnState};
+use crate::session::{PromptKind, TurnOutcome, TurnState, is_answerable};
 
 /// One need taken from attached session state.
 #[derive(Clone, Debug, PartialEq)]
@@ -67,6 +67,10 @@ impl SubscribedView {
         };
         let mut needs: Vec<SubscribedNeed> = state
             .open_prompts()
+            .filter(|prompt| {
+                prompt.kind != PromptKind::ServerRequest
+                    || is_answerable(prompt.command.as_deref().unwrap_or_default())
+            })
             .map(|prompt| SubscribedNeed {
                 slot: NeedSlot::Prompt(prompt.key.prompt_id.clone()),
                 summary: match prompt.kind {

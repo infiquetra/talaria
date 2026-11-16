@@ -167,7 +167,8 @@ fn parts_of<'a>(cell: &'a Cell, other: &'a dyn CellLines) -> Vec<Cow<'a, str>> {
                 PromptState::Settled(Settlement::Answered(answer)) => {
                     parts.push(Cow::Borrowed(answer.as_str()));
                 }
-                PromptState::Open | PromptState::Settled(Settlement::Elsewhere) => {}
+                PromptState::Open
+                | PromptState::Settled(Settlement::Elsewhere | Settlement::Sent) => {}
             }
         }
         _ => {

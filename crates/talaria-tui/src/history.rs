@@ -103,6 +103,7 @@ fn prompt_line(prompt: &PromptCell) -> String {
         PromptState::Settled(Settlement::Elsewhere) => {
             line.push_str(" \u{2192} answered elsewhere");
         }
+        PromptState::Settled(Settlement::Sent) => line.push_str(" \u{2192} answer sent"),
         PromptState::Open | PromptState::Answering(_) => {}
     }
     line

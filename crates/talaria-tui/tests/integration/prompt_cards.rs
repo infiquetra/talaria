@@ -1430,3 +1430,75 @@ fn shift_tab_leaves_the_note_field_alone() {
         rig.rows()
     );
 }
+
+fn server_request(id: &str, method: &str) -> PromptCell {
+    PromptCell {
+        id: CellId::new(3),
+        key: prompt_key(MAIN, id, 1),
+        kind: PromptKind::ServerRequest,
+        command: Some(method.to_owned()),
+        description: None,
+        question: None,
+        choices: Vec::new(),
+        multi_select: false,
+        edit: None,
+        timeout_s: None,
+        state: PromptState::Open,
+        sealed: false,
+    }
+}
+
+#[test]
+fn recovered_sudo_says_asked_while_you_were_away() {
+    let cell = server_request("req-1", "sudo");
+    let rig = Rig::with(&[&cell], &[]);
+    let rows = draw(&rig.stack, 80, 24);
+    assert!(
+        has_row_containing(&rows, "asked while you were away"),
+        "missing away notice in {rows:?}"
+    );
+    assert!(
+        has_row_containing(&rows, "limit 120 s"),
+        "missing 120 s limit in {rows:?}"
+    );
+    assert!(
+        !has_row_containing(&rows, "remaining"),
+        "unexpected remaining countdown in {rows:?}"
+    );
+}
+
+#[test]
+fn recovered_enter_sends_the_typed_value() {
+    let cell = server_request("req-1", "sudo");
+    let mut rig = Rig::with(&[&cell], &[]);
+    rig.type_text("pw");
+    let (request_id, value) = rig.press(named(KeyCode::Enter)).masked();
+    assert_eq!(request_id, "req-1");
+    assert_eq!(value.into_inner().as_str(), "pw");
+
+    let mut esc_rig = Rig::with(&[&cell], &[]);
+    esc_rig.type_text("pw");
+    let (esc_id, esc_value) = esc_rig.press(named(KeyCode::Esc)).masked();
+    assert_eq!(esc_id, "req-1");
+    assert_eq!(esc_value.len_chars(), 0);
+}
+
+#[test]
+fn unanswerable_method_is_read_only() {
+    let cell = server_request("req-2", "vault.save_login");
+    let mut rig = Rig::with(&[&cell], &[]);
+    let rows = draw(&rig.stack, 80, 24);
+    assert!(
+        has_row_containing(&rows, "vault.save_login"),
+        "missing method name in {rows:?}"
+    );
+    assert!(
+        has_row_containing(&rows, "limit 180 s"),
+        "missing 180 s limit in {rows:?}"
+    );
+    assert!(
+        has_row_containing(&rows, "This request cannot be answered here."),
+        "missing read-only notice in {rows:?}"
+    );
+    rig.press(named(KeyCode::Enter)).nothing();
+}

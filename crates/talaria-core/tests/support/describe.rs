@@ -273,6 +273,7 @@ fn prompt_state(state: &PromptState, kind: PromptKind) -> String {
             format!("Settled(Answered({}))", prompt_value(value, kind))
         }
         PromptState::Settled(Settlement::Elsewhere) => "Settled(Elsewhere)".to_string(),
+        PromptState::Settled(Settlement::Sent) => "Settled(Sent)".to_string(),
     }
 }
 

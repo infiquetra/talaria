@@ -317,3 +317,33 @@ fn open_requests_become_cards_keyed_by_request_id() {
             .any(|cell| cell.kind == PromptKind::ServerRequest)
     );
 }
+
+#[test]
+fn server_request_answered_settles_without_a_value() {
+    let mut value = snapshot_json::base(SESSION);
+    value["open_requests"] = json!([
+        {"id": "req-1", "method": "sudo", "params": {}},
+    ]);
+    let mut state = SessionState::from_snapshot(snapshot_json::snapshot(value));
+    let _effects = talaria_core::session::update(
+        &mut state,
+        talaria_core::session::Event::ServerRequestAnswered {
+            id: "req-1".to_owned(),
+        },
+    );
+    assert!(
+        !state
+            .open_prompts()
+            .any(|cell| cell.key.prompt_id == "req-1"),
+        "answered card must no longer be open"
+    );
+    let settled = state.cells().iter().find_map(|cell| match cell {
+        Cell::Prompt(prompt) if prompt.key.prompt_id == "req-1" => Some(prompt),
+        _ => None,
+    });
+    let card = settled.expect("recovered card must remain in cells");
+    assert_eq!(
+        card.state,
+        talaria_core::session::PromptState::Settled(talaria_core::session::Settlement::Sent)
+    );
+}

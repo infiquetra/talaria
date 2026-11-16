@@ -937,3 +937,78 @@ fn dropped_foreground_alert_does_not_move_the_tracker_window() {
         "a dropped foreground alert must not move the tracker window"
     );
 }
+
+#[test]
+fn read_only_card_is_absent_from_the_attention_snapshot() {
+    let empty_snapshot: hermes_contract::schemas::CanonicalSnapshot =
+        serde_json::from_value(serde_json::json!({
+            "session_id": "session-a",
+            "stored_session_id": "stored-1",
+            "messages": [],
+            "message_count": 0,
+            "running": false,
+            "authority_epoch": 1,
+            "replay_epoch": "epoch-1",
+            "last_sequence": 0,
+            "subscription_id": "sub-1",
+            "revision": 1,
+            "execution_generation": 1,
+            "pending": [],
+            "prompts": [],
+            "info": {"desktop_protocol": "1"},
+        }))
+        .expect("empty snapshot");
+    let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+        serde_json::from_value(serde_json::json!({
+            "session_id": "session-a",
+            "stored_session_id": "stored-1",
+            "messages": [],
+            "message_count": 0,
+            "running": false,
+            "authority_epoch": 1,
+            "replay_epoch": "epoch-1",
+            "last_sequence": 0,
+            "subscription_id": "sub-1",
+            "revision": 1,
+            "execution_generation": 1,
+            "pending": [],
+            "prompts": [],
+            "open_requests": [
+                {"id": "req-1", "method": "sudo", "params": {}},
+                {"id": "req-2", "method": "vault.save_login", "params": {}},
+            ],
+            "info": {"desktop_protocol": "1"},
+        }))
+        .expect("snapshot with open_requests");
+
+    let empty = talaria_core::session::SessionState::from_snapshot(empty_snapshot);
+    let state = talaria_core::session::SessionState::from_snapshot(snapshot);
+    let activities = talaria_app::comforts::activities_between(
+        &talaria_app::comforts::AttentionSnapshot::from(&empty, &[]),
+        &talaria_app::comforts::AttentionSnapshot::from(&state, &[]),
+        true,
+        Instant::now(),
+    );
+
+    assert!(
+        activities.iter().any(|activity| matches!(
+            activity,
+            Activity::NeedOpened {
+                key: NeedKey::Prompt(prompt_key),
+                summary: NeedSummary::Sudo,
+                ..
+            } if prompt_key.prompt_id == "req-1"
+        )),
+        "expected sudo req-1 in {activities:?}"
+    );
+    assert!(
+        !activities.iter().any(|activity| matches!(
+            activity,
+            Activity::NeedOpened {
+                key: NeedKey::Prompt(prompt_key),
+                ..
+            } if prompt_key.prompt_id == "req-2"
+        )),
+        "read-only req-2 must be absent from {activities:?}"
+    );
+}

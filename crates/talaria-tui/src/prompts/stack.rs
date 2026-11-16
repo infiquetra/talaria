@@ -4,7 +4,9 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use ratatui::{buffer::Buffer, layout::Rect, text::Line};
-use talaria_core::session::{PromptCell, PromptKey, PromptKind, PromptState};
+use talaria_core::session::{
+    PromptCell, PromptKey, PromptKind, PromptState, is_answerable, recovered_limit_seconds,
+};
 
 use super::{
     KeyOutcome, MaskedValue, MaskedView, PromptIntent, display_choices, multi_select_answer,
@@ -40,6 +42,16 @@ struct Card {
 }
 
 impl Card {
+    fn masked(&self) -> bool {
+        match &self.content {
+            Content::Masked(_) => true,
+            Content::Prompt(cell) => {
+                cell.kind == PromptKind::ServerRequest
+                    && is_answerable(cell.command.as_deref().unwrap_or_default())
+            }
+        }
+    }
+
     fn new(id: Identity, content: Content) -> Self {
         let field = matches!(&content, Content::Prompt(cell) if cell.kind == PromptKind::Clarify && cell.choices.is_empty());
         Self {
@@ -70,7 +82,7 @@ impl Card {
 
     fn insert(&mut self, text: &str) {
         let text = text.split(['\r', '\n']).next().unwrap_or_default();
-        if matches!(self.content, Content::Masked(_)) {
+        if self.masked() {
             for ch in text.chars() {
                 if self.secret_chars == LIMIT {
                     self.too_long = Some(LIMIT);
@@ -87,10 +99,12 @@ impl Card {
     fn masked_answer(&mut self, decline: bool) -> PromptIntent {
         let value = std::mem::replace(&mut self.secret, MaskedValue::new());
         self.secret_chars = 0;
-        self.sent = true;
         let request_id = match &self.content {
-            Content::Masked(view) => view.request_id.clone(),
-            _ => String::new(),
+            Content::Masked(view) => {
+                self.sent = true;
+                view.request_id.clone()
+            }
+            Content::Prompt(cell) => cell.key.prompt_id.clone(),
         };
         PromptIntent::Masked {
             request_id,
@@ -184,9 +198,7 @@ impl PromptStack {
             .chain(
                 prompts
                     .iter()
-                    .filter(|cell| {
-                        cell.kind != PromptKind::ServerRequest && !self.hidden.contains(&cell.key)
-                    })
+                    .filter(|cell| !self.hidden.contains(&cell.key))
                     .map(|cell| {
                         (
                             Identity::Prompt(cell.key.clone()),
@@ -249,7 +261,7 @@ impl PromptStack {
         if control_c {
             let card = &mut self.cards[0];
             let intent = match &card.content {
-                Content::Masked(_) if !card.sent => Some(card.masked_answer(true)),
+                _ if card.masked() && !card.sent => Some(card.masked_answer(true)),
                 Content::Prompt(cell) if cell.kind == PromptKind::Clarify && !card.answering() => {
                     card.answer(String::new())
                 }
@@ -273,7 +285,7 @@ impl PromptStack {
         }
         let card = &mut self.cards[0];
         let intent = match &card.content {
-            Content::Masked(_) => match key.code {
+            _ if card.masked() => match key.code {
                 KeyCode::Enter => Some(card.masked_answer(false)),
                 KeyCode::Esc => Some(card.masked_answer(true)),
                 KeyCode::Backspace => {
@@ -358,7 +370,10 @@ impl PromptStack {
                     }
                 }
             }
-            Content::Prompt(_) => clarify_key(card, key.code),
+            Content::Prompt(cell) if cell.kind == PromptKind::Clarify => {
+                clarify_key(card, key.code)
+            }
+            _ => None,
         };
         if let KeyOutcome::Consumed { intent: output, .. } = &mut result {
             *output = intent;
@@ -481,7 +496,9 @@ impl PromptSection<'_> {
         let mut rows = Vec::new();
         let (title, masked_detail) = match &card.content {
             Content::Prompt(cell) => (
-                if cell.kind == PromptKind::Approval {
+                if cell.kind == PromptKind::ServerRequest {
+                    cell.command.as_deref().unwrap_or_default()
+                } else if cell.kind == PromptKind::Approval {
                     "Approval needed"
                 } else {
                     "Question"
@@ -541,6 +558,31 @@ impl PromptSection<'_> {
         }
         add(&mut rows, &header, width);
         let hint = match &card.content {
+            Content::Prompt(cell) if cell.kind == PromptKind::ServerRequest => {
+                let method = cell.command.as_deref().unwrap_or_default();
+                add(&mut rows, "asked while you were away", width);
+                if let Some(seconds) = recovered_limit_seconds(method) {
+                    add(&mut rows, &format!("limit {seconds} s"), width);
+                }
+                if is_answerable(method) {
+                    add(
+                        &mut rows,
+                        &format!("value: {}", "•".repeat(card.secret_chars.min(32))),
+                        width,
+                    );
+                    if card.too_long.is_some() {
+                        add(
+                            &mut rows,
+                            "value too long (16,384 characters at most)",
+                            width,
+                        );
+                    }
+                    "Enter send · Esc decline · Ctrl+C decline and stop".to_owned()
+                } else {
+                    add(&mut rows, "This request cannot be answered here.", width);
+                    String::new()
+                }
+            }
             Content::Masked(view) => {
                 if let Some(detail) = masked_detail {
                     add(&mut rows, &detail, width);
@@ -682,7 +724,7 @@ impl PromptSection<'_> {
         let hint = if stack.stopping.contains(&card.session().map(str::to_owned)) {
             "stopping…".into()
         } else if !stack.draft_empty {
-            if matches!(card.content, Content::Masked(_)) {
+            if card.masked() {
                 "Clear your draft to type the value here".into()
             } else {
                 "Send or clear your draft to answer".into()

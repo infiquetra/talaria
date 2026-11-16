@@ -26,6 +26,12 @@ impl AttentionSnapshot {
     pub fn from(state: &SessionState, masked: &[MaskedRequestInfo]) -> Self {
         let mut needs: Vec<_> = state
             .open_prompts()
+            .filter(|prompt| {
+                prompt.kind != PromptKind::ServerRequest
+                    || talaria_core::session::is_answerable(
+                        prompt.command.as_deref().unwrap_or_default(),
+                    )
+            })
             .map(|prompt| {
                 let summary = match prompt.kind {
                     PromptKind::Approval => NeedSummary::Approval {

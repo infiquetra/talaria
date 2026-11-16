@@ -2267,6 +2267,10 @@ pub enum AppEffect {
         request_id: String,
         value: Zeroizing<String>,
     },
+    AnswerRecovered {
+        request_id: String,
+        value: Zeroizing<String>,
+    },
     ServerRequest(ServerRequest),
     /// Settle a server request that Hermes withdrew.
     CancelRequest {
@@ -2396,6 +2400,15 @@ pub enum AppEffect {
     WakeAt(Instant),
     /// Open the fleet view on this row.
     OpenFleetViewAt(RowKey),
+}
+
+// Effect payloads can contain secrets; formatting exposes only the variant's discriminant.
+impl std::fmt::Debug for AppEffect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppEffect")
+            .field("kind", &std::mem::discriminant(self))
+            .finish_non_exhaustive()
+    }
 }
 
 pub(crate) fn notice_lines(text: &str) -> AppEffect {
@@ -4645,10 +4658,18 @@ fn hub_effects(state: &mut AppState, out: HubOutput) -> Vec<AppEffect> {
 
 /// The foreground session's open requests.
 fn foreground_open(state: &AppState) -> u32 {
-    let open = state
-        .opened
-        .as_ref()
-        .map_or(0, |opened| opened.state.open_prompts().count());
+    let open = state.opened.as_ref().map_or(0, |opened| {
+        opened
+            .state
+            .open_prompts()
+            .filter(|prompt| {
+                prompt.kind != PromptKind::ServerRequest
+                    || talaria_core::session::is_answerable(
+                        prompt.command.as_deref().unwrap_or_default(),
+                    )
+            })
+            .count()
+    });
     u32::try_from(open).unwrap_or(u32::MAX)
 }
 
@@ -6868,7 +6889,17 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
         }
         UserAction::Clarify { key, answer } => reduce(state, Event::AnswerClarify { key, answer }),
         UserAction::Masked { request_id, value } => {
-            vec![AppEffect::AnswerMasked { request_id, value }]
+            if state.opened.as_ref().is_some_and(|opened| {
+                opened.state.open_prompts().any(|prompt| {
+                    prompt.kind == PromptKind::ServerRequest
+                        && prompt.state == PromptState::Open
+                        && prompt.key.prompt_id == request_id
+                })
+            }) {
+                vec![PromptService::answer_recovered(&request_id, value)]
+            } else {
+                vec![AppEffect::AnswerMasked { request_id, value }]
+            }
         }
         UserAction::Notice(text) => vec![notice_lines(&text)],
         UserAction::Queue(intent) => queue_intent(state, intent),
@@ -12681,6 +12712,53 @@ fn apply<S: Screen>(
                     (Vec::new(), notices)
                 });
             }
+            AppEffect::AnswerRecovered { request_id, value } => {
+                let client = state
+                    .service
+                    .as_ref()
+                    .and_then(SessionService::client)
+                    .cloned();
+                executor.send_later(async move {
+                    let result =
+                        match client {
+                            Some(client) => client
+                                .call::<hermes_contract::methods::legacy::request_answer::Marker>(
+                                    hermes_contract::schemas::RequestAnswerParams {
+                                        id: request_id.clone(),
+                                        profile: None,
+                                        result: serde_json::Map::from_iter([(
+                                            "value".to_owned(),
+                                            json!(value.as_str()),
+                                        )]),
+                                    },
+                                )
+                                .await,
+                            None => Err(hermes_client::CallError::NotConnected),
+                        };
+                    let fallback = "The answer could not be sent; Hermes may have moved on.";
+                    let (events, notices) = match result {
+                        Ok(reply)
+                            if reply.status == hermes_contract::schemas::ClarifyLockStatus::Ok =>
+                        {
+                            (
+                                vec![Event::ServerRequestAnswered { id: request_id }],
+                                Vec::new(),
+                            )
+                        }
+                        Err(hermes_client::CallError::Rpc(error))
+                            if !error.message.trim().is_empty() =>
+                        {
+                            (Vec::new(), vec![error.message])
+                        }
+                        _ => (Vec::new(), vec![fallback.to_owned()]),
+                    };
+                    AppMessage::PromptDone {
+                        events,
+                        notices,
+                        masked: None,
+                    }
+                });
+            }
             AppEffect::ServerRequest(request) => {
                 let Some(prompts) = &state.prompts else {
                     continue;
@@ -12691,6 +12769,22 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::CancelRequest { id, method, reason } => {
+                if state.opened.as_ref().is_some_and(|opened| {
+                    opened.state.open_prompts().any(|prompt| {
+                        prompt.kind == PromptKind::ServerRequest
+                            && prompt.state == PromptState::Open
+                            && prompt.key.prompt_id == id
+                    })
+                }) {
+                    executor.send_later(async move {
+                        AppMessage::PromptDone {
+                            events: vec![Event::ServerRequestCancelled { id }],
+                            notices: vec![crate::prompts::cancel_reason_notice(&reason)],
+                            masked: None,
+                        }
+                    });
+                    continue;
+                }
                 let Some(prompts) = &state.prompts else {
                     continue;
                 };
@@ -17367,5 +17461,41 @@ mod voice_ownership_tests {
                 .map(talaria_core::voice::VoiceState::phase),
             Some(talaria_core::voice::VoicePhase::Off)
         );
+    }
+
+    #[test]
+    fn read_only_card_is_absent_from_foreground_open() {
+        let make_state = |method: &str| {
+            let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+                serde_json::from_value(serde_json::json!({
+                    "session_id": "sess-1",
+                    "stored_session_id": "stored-1",
+                    "messages": [],
+                    "message_count": 0,
+                    "running": false,
+                    "authority_epoch": 1,
+                    "replay_epoch": "epoch-1",
+                    "last_sequence": 0,
+                    "subscription_id": "sub-1",
+                    "revision": 1,
+                    "execution_generation": 1,
+                    "pending": [],
+                    "prompts": [],
+                    "open_requests": [
+                        {"id": "req-1", "method": method, "params": {}}
+                    ],
+                    "info": {"desktop_protocol": "1"},
+                }))
+                .expect("snapshot");
+            let mut state = AppState::new("fixture");
+            state.opened = Some(OpenedSession::from_snapshot(snapshot));
+            state
+        };
+
+        let read_only = make_state("vault.save_login");
+        assert_eq!(foreground_open(&read_only), 0);
+
+        let sudo = make_state("sudo");
+        assert_eq!(foreground_open(&sudo), 1);
     }
 }

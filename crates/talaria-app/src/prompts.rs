@@ -12,6 +12,8 @@ use talaria_core::session::{
 };
 use zeroize::Zeroizing;
 
+use crate::app::AppEffect;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaskedKind {
     Sudo,
@@ -28,12 +30,24 @@ pub enum ServerRequestPolicy {
 
 /// `Refuse` for every name that is not one of the four masked kinds.
 pub fn policy_for(method: &str) -> ServerRequestPolicy {
+    if !talaria_core::session::is_answerable(method) {
+        return ServerRequestPolicy::Refuse;
+    }
     match method {
         "sudo" => ServerRequestPolicy::Masked(MaskedKind::Sudo),
         "secret" => ServerRequestPolicy::Masked(MaskedKind::Secret),
         "vault.code" => ServerRequestPolicy::Masked(MaskedKind::VaultCode),
         "vault.unlock_prompt" => ServerRequestPolicy::Masked(MaskedKind::VaultUnlockPrompt),
         _ => ServerRequestPolicy::Refuse,
+    }
+}
+
+pub(crate) fn cancel_reason_notice(reason: &str) -> String {
+    match reason {
+        "timeout" => "timed out; the agent continued without it".to_owned(),
+        "interrupted" => "withdrawn: the turn was interrupted".to_owned(),
+        "resolved" => "answered in another window".to_owned(),
+        _ => format!("withdrawn by Hermes ({})", sanitize(reason)),
     }
 }
 
@@ -149,12 +163,7 @@ impl PromptService {
         if let Some(index) = self.masked.iter().position(|(info, _)| info.id == id) {
             let (info, responder) = self.masked.remove(index);
             responder.ignore();
-            let text = match reason {
-                "timeout" => "timed out; the agent continued without it".to_owned(),
-                "interrupted" => "withdrawn: the turn was interrupted".to_owned(),
-                "resolved" => "answered in another window".to_owned(),
-                _ => format!("withdrawn by Hermes ({})", sanitize(reason)),
-            };
+            let text = cancel_reason_notice(reason);
             return vec![PromptNotice {
                 session_id: info.session_id,
                 text,
@@ -200,6 +209,14 @@ impl PromptService {
             .extract_if(.., |(info, _)| ids.contains(&info.id))
         {
             responder.ignore();
+        }
+    }
+
+    /// Request an answer without retaining its value in session state.
+    pub fn answer_recovered(request_id: &str, value: Zeroizing<String>) -> AppEffect {
+        AppEffect::AnswerRecovered {
+            request_id: request_id.to_owned(),
+            value,
         }
     }
 
@@ -472,4 +489,60 @@ fn sanitize(text: &str) -> String {
         }
     }
     sanitized
+}
+
+#[cfg(test)]
+mod tests {
+    use talaria_core::session::{Cell, Event, PromptState, SessionState, Settlement, update};
+
+    #[test]
+    fn cancel_timeout_settles_a_recovered_sudo_card() {
+        let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+            serde_json::from_value(serde_json::json!({
+                "session_id": "sess-1",
+                "stored_session_id": "stored-1",
+                "messages": [],
+                "message_count": 0,
+                "running": false,
+                "authority_epoch": 1,
+                "replay_epoch": "epoch-1",
+                "last_sequence": 0,
+                "subscription_id": "sub-1",
+                "revision": 1,
+                "execution_generation": 1,
+                "pending": [],
+                "prompts": [],
+                "open_requests": [
+                    {"id": "req-1", "method": "sudo", "params": {}}
+                ],
+                "info": {"desktop_protocol": "1"},
+            }))
+            .expect("snapshot");
+        let mut state = SessionState::from_snapshot(snapshot);
+        let _effects = update(
+            &mut state,
+            Event::ServerRequestCancelled {
+                id: "req-1".to_owned(),
+            },
+        );
+        assert!(
+            !state
+                .open_prompts()
+                .any(|cell| cell.key.prompt_id == "req-1"),
+            "cancelled card must no longer be open"
+        );
+        let card = state
+            .cells()
+            .iter()
+            .find_map(|cell| match cell {
+                Cell::Prompt(prompt) if prompt.key.prompt_id == "req-1" => Some(prompt),
+                _ => None,
+            })
+            .expect("cancelled card must remain in cells");
+        assert_eq!(card.state, PromptState::Settled(Settlement::Elsewhere));
+        assert_eq!(
+            super::cancel_reason_notice("timeout"),
+            "timed out; the agent continued without it"
+        );
+    }
 }

@@ -80,6 +80,16 @@ pub enum Event {
         /// Prompt key.
         key: PromptKey,
     },
+    /// Hermes accepted an answer to a recovered server request.
+    ServerRequestAnswered {
+        /// Server request id.
+        id: String,
+    },
+    /// Hermes cancelled a recovered server request.
+    ServerRequestCancelled {
+        /// Server request id.
+        id: String,
+    },
     /// A slash command sent `text` to the model and shows `display` in the user cell.
     ///
     /// Same waiting and placement rules as [`Event::Submit`]. Issue #223.
