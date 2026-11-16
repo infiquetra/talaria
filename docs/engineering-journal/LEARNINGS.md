@@ -2,6 +2,17 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-15 — Isolate the release comparison step
+
+**Evidence.** Watcher checks identify a step from its id to the next named step,
+and an issue search can return titles that only contain the query.
+
+**Mechanism.** Named boundaries keep installation outside comparison; exact
+title matching prevents unrelated search results from suppressing a release.
+
+**Generalizable rule.** Keep discovery separate from costly work and verify
+search results against the exact identifier before using them as a guard.
+
 ## 2026-11-15 — Restore path kinds across failed generated updates
 
 **Evidence.** The compatibility-write failure test starts with a directory at

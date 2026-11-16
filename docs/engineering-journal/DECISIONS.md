@@ -2,6 +2,17 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-15 — Watch Hermes releases with bounded reports
+
+**Context.** A newer release needs a reviewable pin update without repeated work.
+
+**Decision.** Run the watcher at 07:23 UTC, away from the weekly contract
+check. Exact issue titles and a remote branch check whose exit 2 means absent
+guard repeated work. Report failures with the last 100 lines, capped at 50,000
+characters.
+
+**Revisit when.** Release discovery or the review workflow changes.
+
 ## 2026-11-15 — Update pin metadata and generated copies as one operation
 
 **Context.** The compatibility table supplies the pin and tested range, while
