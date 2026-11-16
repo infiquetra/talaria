@@ -366,6 +366,7 @@ fn prompt_state(state: &PromptState) -> String {
         PromptState::Answering(answer) => format!("answering: {answer}"),
         PromptState::Settled(Settlement::Answered(answer)) => format!("answered: {answer}"),
         PromptState::Settled(Settlement::Elsewhere) => "answered elsewhere".to_string(),
+        PromptState::Settled(Settlement::Sent) => "answer sent".to_string(),
     }
 }
 

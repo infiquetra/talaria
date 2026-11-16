@@ -19,7 +19,7 @@ pub mod usage;
 pub use cell::{
     AnswerRefusal, AssistantCell, Cell, NoticeCell, NoticeKind, PromptCell, PromptKind,
     PromptState, ReasoningCell, ReplyMiss, Settlement, ToolCell, ToolProgress, ToolStatus,
-    UserCell, assistant_reply,
+    UserCell, assistant_reply, is_answerable, recovered_limit_seconds,
 };
 pub use effect::Effect;
 pub use event::Event;

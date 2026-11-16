@@ -203,11 +203,32 @@ pub enum PromptKind {
     ServerRequest,
 }
 
+/// Whether Talaria can answer a recovered server request.
+#[must_use]
+pub fn is_answerable(method: &str) -> bool {
+    matches!(
+        method,
+        "sudo" | "secret" | "vault.code" | "vault.unlock_prompt"
+    )
+}
+
+/// The configured wait limit for a recovered request, when known.
+#[must_use]
+pub fn recovered_limit_seconds(method: &str) -> Option<u32> {
+    match method {
+        "sudo" | "secret" | "vault.unlock_prompt" => Some(120),
+        "vault.code" | "vault.save_login" => Some(180),
+        _ => None,
+    }
+}
+
 /// How a prompt left the open state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Settlement {
     /// This client was answering and Hermes settled it.
     Answered(String),
+    /// This client sent a recovered server request answer.
+    Sent,
     /// Someone else, a sweep, or `already_resolved`.
     Elsewhere,
 }

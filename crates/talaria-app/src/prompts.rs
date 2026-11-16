@@ -12,6 +12,8 @@ use talaria_core::session::{
 };
 use zeroize::Zeroizing;
 
+use crate::app::AppEffect;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaskedKind {
     Sudo,
@@ -28,12 +30,24 @@ pub enum ServerRequestPolicy {
 
 /// `Refuse` for every name that is not one of the four masked kinds.
 pub fn policy_for(method: &str) -> ServerRequestPolicy {
+    if !talaria_core::session::is_answerable(method) {
+        return ServerRequestPolicy::Refuse;
+    }
     match method {
         "sudo" => ServerRequestPolicy::Masked(MaskedKind::Sudo),
         "secret" => ServerRequestPolicy::Masked(MaskedKind::Secret),
         "vault.code" => ServerRequestPolicy::Masked(MaskedKind::VaultCode),
         "vault.unlock_prompt" => ServerRequestPolicy::Masked(MaskedKind::VaultUnlockPrompt),
         _ => ServerRequestPolicy::Refuse,
+    }
+}
+
+pub(crate) fn cancel_reason_notice(reason: &str) -> String {
+    match reason {
+        "timeout" => "timed out; the agent continued without it".to_owned(),
+        "interrupted" => "withdrawn: the turn was interrupted".to_owned(),
+        "resolved" => "answered in another window".to_owned(),
+        _ => format!("withdrawn by Hermes ({})", sanitize(reason)),
     }
 }
 
@@ -149,12 +163,7 @@ impl PromptService {
         if let Some(index) = self.masked.iter().position(|(info, _)| info.id == id) {
             let (info, responder) = self.masked.remove(index);
             responder.ignore();
-            let text = match reason {
-                "timeout" => "timed out; the agent continued without it".to_owned(),
-                "interrupted" => "withdrawn: the turn was interrupted".to_owned(),
-                "resolved" => "answered in another window".to_owned(),
-                _ => format!("withdrawn by Hermes ({})", sanitize(reason)),
-            };
+            let text = cancel_reason_notice(reason);
             return vec![PromptNotice {
                 session_id: info.session_id,
                 text,
@@ -200,6 +209,14 @@ impl PromptService {
             .extract_if(.., |(info, _)| ids.contains(&info.id))
         {
             responder.ignore();
+        }
+    }
+
+    /// Request an answer without retaining its value in session state.
+    pub fn answer_recovered(request_id: &str, value: Zeroizing<String>) -> AppEffect {
+        AppEffect::AnswerRecovered {
+            request_id: request_id.to_owned(),
+            value,
         }
     }
 

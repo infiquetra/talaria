@@ -8,6 +8,28 @@ use serde_json::Value;
 
 pub(crate) fn apply(state: &mut SessionState, event: &Event) -> Vec<Effect> {
     let (key, kind, value) = match event {
+        Event::ServerRequestAnswered { id } | Event::ServerRequestCancelled { id } => {
+            let prompt = state.cells.iter_mut().find_map(|cell| match cell {
+                super::Cell::Prompt(prompt)
+                    if prompt.kind == PromptKind::ServerRequest
+                        && prompt.key.prompt_id == *id
+                        && prompt.state == PromptState::Open =>
+                {
+                    Some(prompt)
+                }
+                _ => None,
+            });
+            if let Some(prompt) = prompt {
+                let settlement = if matches!(event, Event::ServerRequestAnswered { .. }) {
+                    Settlement::Sent
+                } else {
+                    Settlement::Elsewhere
+                };
+                prompt.state = PromptState::Settled(settlement);
+                prompt.sealed = true;
+            }
+            return Vec::new();
+        }
         Event::AnswerApproval { key, choice } => (key, PromptKind::Approval, choice),
         Event::AnswerClarify { key, answer } => (key, PromptKind::Clarify, answer),
         Event::AnswerFailed { key } | Event::AnswerAlreadyResolved { key } => {
