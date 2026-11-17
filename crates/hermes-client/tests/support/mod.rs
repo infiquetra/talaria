@@ -903,7 +903,7 @@ async fn incompatible_live_revision(home: &Path) -> Option<String> {
             .and_then(serde_json::Value::as_str);
         let sha = result.get("code_sha").and_then(serde_json::Value::as_str);
         println!(
-            "{}",
+            "\n{}",
             hermes_contract::pinned::gateway_version_line(version, sha)
         );
         hermes_contract::pinned::live_test_skip(version, sha, hermes_contract::pinned::live_exact())
@@ -927,7 +927,7 @@ pub async fn live_preconditions_for(feature: Option<(&str, &str)>) -> Result<Liv
         Ok(endpoint) => endpoint,
         Err(DiscoveryError::NoGateway) => {
             println!(
-                "{}",
+                "\n{}",
                 hermes_contract::pinned::gateway_version_line(None, None)
             );
             return Err("no Hermes gateway is running for this home".to_string());
@@ -942,7 +942,7 @@ pub async fn live_preconditions_for(feature: Option<(&str, &str)>) -> Result<Liv
         Err(err) => panic!("discovery failed: {err} | {}", err.next_step()),
     };
     println!(
-        "{}",
+        "\n{}",
         hermes_contract::pinned::gateway_version_line(endpoint.code_version(), endpoint.code_sha())
     );
     if let Some(reason) = hermes_contract::pinned::live_test_skip(

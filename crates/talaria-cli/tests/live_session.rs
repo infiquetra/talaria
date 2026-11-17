@@ -43,7 +43,7 @@ fn gateway_skip_reason(home: &Path) -> Result<Option<String>, String> {
             .await
             .map(|endpoint| {
                 println!(
-                    "{}",
+                    "\n{}",
                     hermes_contract::pinned::gateway_version_line(
                         endpoint.code_version(),
                         endpoint.code_sha()
@@ -57,7 +57,7 @@ fn gateway_skip_reason(home: &Path) -> Result<Option<String>, String> {
             })
             .map_err(|error| {
                 println!(
-                    "{}",
+                    "\n{}",
                     hermes_contract::pinned::gateway_version_line(None, None)
                 );
                 error.to_string()
@@ -475,7 +475,7 @@ fn interrupt_and_resume_list() {
     let mut session = new_session(user_home.path(), project.path());
     assert!(session.wait_first_frame(Duration::from_secs(5)).is_some());
     type_line(&mut session, "Reply with only the word OK.");
-    assert!(session.wait_for_text("OK", ANSWER_LIMIT));
+    assert!(wait_for_line(&mut session, "OK", ANSWER_LIMIT));
     assert!(wait_idle(
         &mut session,
         Duration::from_secs(2),
