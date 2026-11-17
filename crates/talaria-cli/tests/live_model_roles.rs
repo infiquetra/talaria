@@ -22,10 +22,9 @@ use serde_json::{Value, json};
 fn profile_name() -> String {
     hermes_contract::pinned::live_profile()
 }
-const BUILTIN_TASKS: [&str; 12] = [
+const BUILTIN_TASKS: [&str; 11] = [
     "vision",
     "compression",
-    "skills_hub",
     "approval",
     "mcp",
     "title_generation",
@@ -285,7 +284,7 @@ async fn reads_all_sections() {
         .collect();
     assert!(
         tasks.starts_with(&BUILTIN_TASKS),
-        "helper order starts with the twelve built-in slots"
+        "helper order starts with the eleven built-in slots"
     );
     if info.config_context_length > 0 {
         assert_eq!(info.effective_context_length, info.config_context_length);
