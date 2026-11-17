@@ -64,6 +64,21 @@ pub const FLEET_REGISTRY: &str = "fleet-registry";
 /// The explicit live subagent control scenario, recorded only when selected.
 pub const SUBAGENT_CONTROL: &str = "subagent-control";
 
+pub const SUDO_PROMPT: &str = "sudo-prompt";
+pub const SECRET_PROMPT: &str = "secret-prompt";
+
+fn prompt_precondition(name: &str) -> Option<&'static str> {
+    match name {
+        SUDO_PROMPT => Some(
+            "no sudo request arrived: sudo must ask for a password and SUDO_PASSWORD must be unset",
+        ),
+        SECRET_PROMPT => Some(
+            "no secret request arrived: the skill fixture-secret must exist and FIXTURE_SECRET must be absent from the profile .env",
+        ),
+        _ => None,
+    }
+}
+
 /// The fleet scenario's finished session answers this.
 const FLEET_READY_PROMPT: &str = "Reply with the single word: ready";
 
@@ -132,6 +147,18 @@ impl Scenario {
                     "Run this exact shell command and then tell me its exit code: rm -rf .pytest_cache",
                 ],
                 &["complete"],
+            ),
+            SUDO_PROMPT => (
+                &[
+                    "Run this exact shell command with the terminal tool and then tell me its exit code: sudo -k true",
+                ],
+                &[],
+            ),
+            SECRET_PROMPT => (
+                &[
+                    "View the skill named fixture-secret with the skill_view tool, then tell me its name.",
+                ],
+                &[],
             ),
             "clarification" => (
                 &[
@@ -530,6 +557,34 @@ pub fn check_evidence(scenario: &Scenario, source: &ReplaySource) -> Result<(), 
     if scenario.name == FLEET_REGISTRY {
         return fleet_registry_evidence(source);
     }
+    if matches!(scenario.name.as_str(), SUDO_PROMPT | SECRET_PROMPT) {
+        let (method, fields): (&str, &[&str]) = if scenario.name == SUDO_PROMPT {
+            ("sudo", &["session_id", "command"])
+        } else {
+            ("secret", &["session_id", "env_var", "prompt"])
+        };
+        let mut request_session = None;
+        for entry in source.inbound() {
+            let frame = &entry.frame;
+            let params = &frame["params"];
+            if frame["method"] == method
+                && frame.get("id").is_some()
+                && fields.iter().all(|field| params.get(*field).is_some())
+            {
+                request_session = params["session_id"].as_str().map(str::to_owned);
+            } else if frame["method"] == "event"
+                && params["type"] == "message.complete"
+                && request_session
+                    .as_deref()
+                    .is_some_and(|id| params["session_id"].as_str() == Some(id))
+            {
+                return Ok(());
+            }
+        }
+        return Err(format!(
+            "no {method} request followed by message.complete for its session"
+        ));
+    }
     let events = recorded_events(source);
     let statuses: Vec<String> = events
         .iter()
@@ -790,6 +845,7 @@ struct Session {
     pending_clarifications: Vec<(Value, Value)>,
     turn_running: bool,
     statuses: Vec<String>,
+    prompt_request_seen: bool,
     approval_seen: bool,
     approval_answered: bool,
     clarify_answered: bool,
@@ -1840,6 +1896,11 @@ pub async fn run_scenario(
     )
     .await
     .unwrap_or_else(|_| {
+        if !session.prompt_request_seen
+            && let Some(reason) = prompt_precondition(&scenario.name)
+        {
+            return AttemptResult::PreconditionAbsent(reason.to_owned());
+        }
         AttemptResult::Failed(format!(
             "the attempt ran longer than {} s",
             config.attempt_timeout.as_secs()
@@ -1968,7 +2029,8 @@ async fn drive(
         return subagent_control::drive(client, inbound, scenario, session).await;
     }
     // The fleet scenario's second turn runs on a second session, driven below.
-    let turns = if scenario.name == FLEET_REGISTRY {
+    let turns = if scenario.name == FLEET_REGISTRY || prompt_precondition(&scenario.name).is_some()
+    {
         1
     } else {
         scenario.expected_statuses.len()
@@ -1992,10 +2054,7 @@ async fn drive(
                     }
                 }
                 Ok(Some(Inbound::ServerRequest(request))) => {
-                    let _ = request
-                        .responder
-                        .fail(-32601, "the fixture script does not answer this request")
-                        .await;
+                    answer_server_request(request, scenario, session).await;
                 }
                 Ok(Some(Inbound::Malformed(_))) => {}
                 Ok(Some(Inbound::Closed(_)) | None) | Err(_) => break,
@@ -2011,6 +2070,12 @@ async fn drive(
         } else {
             NO_TODO_TOOL.to_owned()
         });
+    }
+    if let Some(reason) = prompt_precondition(&scenario.name) {
+        if !session.prompt_request_seen {
+            return AttemptResult::PreconditionAbsent(reason.to_owned());
+        }
+        return AttemptResult::Ok;
     }
     if session.statuses != scenario.expected_statuses {
         return AttemptResult::Failed(format!(
@@ -2040,10 +2105,7 @@ async fn wait_for_turns(
                 }
             }
             Inbound::ServerRequest(request) => {
-                let _ = request
-                    .responder
-                    .fail(-32601, "the fixture script does not answer this request")
-                    .await;
+                answer_server_request(request, scenario, session).await;
             }
             Inbound::Closed(_) => {
                 return Err(AttemptResult::Failed(
@@ -2054,6 +2116,32 @@ async fn wait_for_turns(
         }
     }
     Ok(())
+}
+
+async fn answer_server_request(
+    request: hermes_client::ServerRequest,
+    scenario: &Scenario,
+    session: &mut Session,
+) {
+    use hermes_contract::events::ServerRequest;
+    let method = match &request.request {
+        ServerRequest::Sudo(_) => Some(SUDO_PROMPT),
+        ServerRequest::Secret(_) => Some(SECRET_PROMPT),
+        _ => None,
+    };
+    if let Some(method) = method {
+        if method == scenario.name
+            && request.session_id.as_deref() == Some(session.session_id.as_str())
+        {
+            session.prompt_request_seen = true;
+        }
+        let _ = request.responder.respond(&json!({"value": ""})).await;
+    } else {
+        let _ = request
+            .responder
+            .fail(-32601, "the fixture script does not answer this request")
+            .await;
+    }
 }
 
 /// 32 lower-case hex characters no other request of this process shares.

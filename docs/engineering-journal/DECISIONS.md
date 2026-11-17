@@ -173,6 +173,21 @@ open. This lock makes no product change.
 
 **Revisit when.** The reducer starts reading `approval.cancelled`.
 
+## 2026-11-14 — Record sudo and secret prompts with empty skip replies
+
+**Context.** Prompt replay needs actual gateway requests and their parameters.
+Successful model output alone cannot establish that a sudo or secret request
+was delivered, and an operator's environment may prevent either request.
+
+**Decision.** Keep `sudo-prompt` and `secret-prompt` explicitly selected recorder
+scenarios. Answer each request with an empty value, require its recorded
+parameters and a later completion, and replay the stored method and parameters.
+Do not constrain the model's completion status. Missing requests exit with a
+precondition diagnostic and leave no completed recording.
+
+**Revisit when.** Hermes changes prompt parameters or skip semantics, or the
+recorder gains a way to verify prompt preconditions without accessing secrets.
+
 ## 2026-11-14 — Live tests admit supported gateway versions
 
 **Context.** The release used to generate Talaria's contract types remains pinned,

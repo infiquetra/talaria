@@ -155,6 +155,8 @@ async fn record(settings: &RecordSettings) -> Outcome {
                 known.push(FLEET_REGISTRY);
                 known.push(FLEET_PEEK);
                 known.push(record_fixture::SUBAGENT_CONTROL);
+                known.push(record_fixture::SUDO_PROMPT);
+                known.push(record_fixture::SECRET_PROMPT);
                 known.extend_from_slice(&SCRIPTED_SCENARIOS);
                 eprintln!(
                     "unknown scenario {name}; the scenarios are: {}",

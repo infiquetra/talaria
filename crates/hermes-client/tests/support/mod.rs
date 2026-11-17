@@ -980,3 +980,24 @@ pub fn report_skip(prefix: &str, reason: &str) {
         panic!("live gateway required");
     }
 }
+
+/// Return the first recorded sudo or secret request without constructing a frame.
+pub fn replay_recorded_request(name: &str) -> (String, serde_json::Value) {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("fixtures/frames")
+        .join(format!("{name}.jsonl"));
+    let source = hermes_client::ReplaySource::open(&path)
+        .unwrap_or_else(|error| panic!("could not open recorded {name}: {error}"));
+    let request = source
+        .inbound()
+        .find(|entry| matches!(entry.frame["method"].as_str(), Some("sudo" | "secret")))
+        .unwrap_or_else(|| panic!("recorded {name} has no sudo or secret request"));
+    (
+        request.frame["method"]
+            .as_str()
+            .expect("the recorded request has a method")
+            .to_owned(),
+        request.frame["params"].clone(),
+    )
+}
