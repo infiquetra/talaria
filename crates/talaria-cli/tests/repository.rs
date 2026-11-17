@@ -20,6 +20,7 @@ const REMOVED_PATHS: &[&str] = &[
     "docs/acceptance/",
     ":(exclude)docs/acceptance/v0.7.0/",
     ":(exclude)docs/acceptance/v0.8.1/",
+    ":(exclude)docs/acceptance/v0.9.0/",
     "docs/plans/",
     "docs/reviews/",
     "docs/code-reviews/",
