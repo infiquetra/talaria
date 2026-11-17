@@ -459,6 +459,7 @@ pub fn need_phrase(summary: &NeedSummary) -> String {
                 format!("approval: {text}")
             }
         }
+        NeedSummary::Connection => "connection request".into(),
         NeedSummary::Question(text) => format!("question: {}", first(text)),
         NeedSummary::Sudo => "password for sudo".into(),
         NeedSummary::Secret => "a secret".into(),

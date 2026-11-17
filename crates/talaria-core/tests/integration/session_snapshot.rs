@@ -347,3 +347,53 @@ fn server_request_answered_settles_without_a_value() {
         talaria_core::session::PromptState::Settled(talaria_core::session::Settlement::Sent)
     );
 }
+
+#[test]
+fn pending_connection_becomes_the_same_card() {
+    let prompt = json!({
+        "prompt_id": "p-1",
+        "execution_generation": 1,
+        "kind": "approval",
+        "choices": ["once"],
+        "command": "ls",
+    });
+    let pending_connection = json!({
+        "op_id": "op-1",
+        "seq": 1,
+        "deadline_at": 1_700_000_090.0,
+        "timeout_seconds": 600,
+        "targets": [{
+            "action": "connect",
+            "kind": "connector",
+            "name": "github",
+            "state": "pending",
+        }],
+    });
+
+    let mut with_conn = snapshot_json::base(SESSION);
+    with_conn["pending_connection"] = pending_connection;
+    with_conn["prompts"] = json!([prompt.clone()]);
+    let state = SessionState::from_snapshot(snapshot_json::snapshot(with_conn));
+    let card = state
+        .connection_card()
+        .expect("pending_connection opens a connection card");
+    assert_eq!(card.op_id, "op-1");
+    assert!(
+        state
+            .open_prompts()
+            .any(|cell| cell.kind == PromptKind::Approval && cell.key.prompt_id == "p-1"),
+        "approval p-1 must remain open"
+    );
+
+    let mut without_conn = snapshot_json::base(SESSION);
+    without_conn["pending_connection"] = Value::Null;
+    without_conn["prompts"] = json!([prompt]);
+    let cleared = SessionState::from_snapshot(snapshot_json::snapshot(without_conn));
+    assert!(cleared.connection_card().is_none());
+    assert!(
+        cleared
+            .open_prompts()
+            .any(|cell| cell.kind == PromptKind::Approval && cell.key.prompt_id == "p-1"),
+        "approval p-1 must remain open when pending_connection is null"
+    );
+}

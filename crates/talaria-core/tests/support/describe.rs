@@ -136,6 +136,7 @@ pub fn effect_line(effect: &Effect) -> String {
             admission_id.0
         ),
         Effect::Background(effect) => format!(" Background {effect:?}"),
+        Effect::RespondConnection { op_id, .. } => format!(" connection.respond op={op_id}"),
     }
 }
 

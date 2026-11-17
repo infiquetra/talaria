@@ -63,6 +63,7 @@ fn need_text(item: &NeedItem) -> String {
                 };
                 format!("approval: {shown}")
             }
+            NeedSummary::Connection => "connection request".to_owned(),
             NeedSummary::Question(question) => format!("question: {question}"),
             NeedSummary::Sudo => "sudo password".to_owned(),
             NeedSummary::Secret => "secret".to_owned(),

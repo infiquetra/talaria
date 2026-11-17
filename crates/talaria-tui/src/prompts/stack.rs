@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use ratatui::{buffer::Buffer, layout::Rect, text::Line};
 use talaria_core::session::{
-    PromptCell, PromptKey, PromptKind, PromptState, is_answerable, recovered_limit_seconds,
+    ConnectionCard, ConnectionChoice, PromptCell, PromptKey, PromptKind, PromptState,
+    is_answerable, recovered_limit_seconds,
 };
 
 use super::{
@@ -19,13 +20,21 @@ const LIMIT: usize = 16_384;
 
 #[derive(Clone, PartialEq, Eq)]
 enum Identity {
+    Connection(String),
     Prompt(PromptKey),
     Masked(String),
 }
 
 enum Content {
+    Connection(ConnectionContent),
     Prompt(PromptCell),
     Masked(MaskedView),
+}
+
+struct ConnectionContent {
+    card: ConnectionCard,
+    session_id: String,
+    now_unix: f64,
 }
 
 struct Card {
@@ -39,11 +48,13 @@ struct Card {
     secret_chars: usize,
     too_long: Option<usize>,
     sent: bool,
+    sent_at: Option<Instant>,
 }
 
 impl Card {
     fn masked(&self) -> bool {
         match &self.content {
+            Content::Connection(_) => false,
             Content::Masked(_) => true,
             Content::Prompt(cell) => {
                 cell.kind == PromptKind::ServerRequest
@@ -65,11 +76,13 @@ impl Card {
             secret_chars: 0,
             too_long: None,
             sent: false,
+            sent_at: None,
         }
     }
 
     fn session(&self) -> Option<&str> {
         match &self.content {
+            Content::Connection(connection) => Some(&connection.session_id),
             Content::Prompt(cell) => Some(cell.key.session_id.as_str()),
             Content::Masked(view) => view.session_id.as_deref(),
         }
@@ -96,17 +109,18 @@ impl Card {
         }
     }
 
-    fn masked_answer(&mut self, decline: bool) -> PromptIntent {
+    fn masked_answer(&mut self, decline: bool) -> Option<PromptIntent> {
         let value = std::mem::replace(&mut self.secret, MaskedValue::new());
         self.secret_chars = 0;
         let request_id = match &self.content {
+            Content::Connection(_) => return None,
             Content::Masked(view) => {
                 self.sent = true;
                 view.request_id.clone()
             }
             Content::Prompt(cell) => cell.key.prompt_id.clone(),
         };
-        PromptIntent::Masked {
+        Some(PromptIntent::Masked {
             request_id,
             value: if decline {
                 drop(value);
@@ -114,7 +128,37 @@ impl Card {
             } else {
                 value
             },
+        })
+    }
+
+    fn expire_connection_sent(&mut self, now: Instant) {
+        if matches!(self.content, Content::Connection(_))
+            && self
+                .sent_at
+                .is_some_and(|sent| now.saturating_duration_since(sent) >= Duration::from_secs(5))
+        {
+            self.sent = false;
+            self.sent_at = None;
         }
+    }
+
+    fn connection_answer(
+        &mut self,
+        choice: ConnectionChoice,
+        now: Instant,
+    ) -> Option<PromptIntent> {
+        let Content::Connection(connection) = &self.content else {
+            return None;
+        };
+        let choices = connection_choices(&connection.card);
+        self.selected = choices.iter().position(|offered| *offered == choice)?;
+        self.sent = true;
+        self.sent_at = Some(now);
+        Some(PromptIntent::Connect {
+            session_id: connection.session_id.clone(),
+            op_id: connection.card.op_id.clone(),
+            choice,
+        })
     }
 
     fn answer(&mut self, value: String) -> Option<PromptIntent> {
@@ -175,6 +219,132 @@ impl PromptStack {
         }
     }
 
+    pub fn show_connection(
+        &mut self,
+        card: Option<&ConnectionCard>,
+        session_id: &str,
+        draft_empty: bool,
+        now: Instant,
+        now_unix: f64,
+    ) {
+        let old_first = self.cards.first().map(|card| card.id.clone());
+        let old_connection = self
+            .cards
+            .iter()
+            .position(|card| matches!(card.id, Identity::Connection(_)))
+            .map(|index| self.cards.remove(index));
+        if let Some(connection) = card {
+            let id = Identity::Connection(connection.op_id.clone());
+            let mut card = match old_connection {
+                Some(card) if card.id == id => card,
+                _ => Card::new(
+                    id,
+                    Content::Connection(ConnectionContent {
+                        card: connection.clone(),
+                        session_id: session_id.to_owned(),
+                        now_unix,
+                    }),
+                ),
+            };
+            let selected = match &card.content {
+                Content::Connection(old) => {
+                    connection_choices(&old.card).get(card.selected).copied()
+                }
+                _ => None,
+            };
+            card.content = Content::Connection(ConnectionContent {
+                card: connection.clone(),
+                session_id: session_id.to_owned(),
+                now_unix,
+            });
+            card.selected = selected
+                .and_then(|choice| {
+                    connection_choices(connection)
+                        .iter()
+                        .position(|offered| *offered == choice)
+                })
+                .unwrap_or(0);
+            card.expire_connection_sent(now);
+            self.cards.insert(0, card);
+        }
+        if draft_empty
+            && (!self.draft_empty || old_first != self.cards.first().map(|card| card.id.clone()))
+        {
+            self.focused_at = Some(now);
+        }
+        self.draft_empty = draft_empty;
+        self.foreground = Some(session_id.to_owned());
+    }
+
+    pub fn connection_remaining_seconds(&self) -> Option<i64> {
+        self.cards.iter().find_map(|card| match &card.content {
+            Content::Connection(connection) => Some(
+                (connection.card.deadline_at - connection.now_unix)
+                    .floor()
+                    .max(0.0) as i64,
+            ),
+            _ => None,
+        })
+    }
+
+    pub fn connection_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let Some(card) = self
+            .cards
+            .iter()
+            .find(|card| matches!(card.content, Content::Connection(_)))
+        else {
+            return Vec::new();
+        };
+        let Content::Connection(connection) = &card.content else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        add(&mut rows, "Connection request", width);
+        for target in &connection.card.targets {
+            let suffix = if target
+                .required_env
+                .as_ref()
+                .is_some_and(|env| !env.is_empty())
+            {
+                " — cannot be approved here"
+            } else {
+                ""
+            };
+            add(
+                &mut rows,
+                &format!("{}: {}{suffix}", target.name, target.state),
+                width,
+            );
+            if let Some(url) = &target.connect_url {
+                add(&mut rows, url, width);
+            }
+        }
+        if let Some(seconds) = self.connection_remaining_seconds() {
+            add(&mut rows, &format!("{seconds} s remaining"), width);
+        }
+        let choices = connection_choices(&connection.card);
+        for (index, choice) in choices.iter().enumerate() {
+            add_choice(
+                &mut rows,
+                card.selected,
+                index,
+                connection_word(*choice),
+                width,
+            );
+        }
+        let hint = if self.stopping.contains(&Some(connection.session_id.clone())) {
+            "stopping…"
+        } else if !self.draft_empty {
+            "Send or clear your draft to answer"
+        } else if card.sent {
+            "sending…"
+        } else {
+            "Digits choose · Arrows select · Enter confirm · Esc Skip · Ctrl+C interrupt"
+        };
+        add(&mut rows, hint, width);
+        rows
+    }
+
     pub fn sync(
         &mut self,
         foreground: Option<&str>,
@@ -187,6 +357,12 @@ impl PromptStack {
         self.hidden
             .retain(|key| prompts.iter().any(|cell| cell.key == *key));
         let mut old = std::mem::take(&mut self.cards);
+        if let Some(index) = old
+            .iter()
+            .position(|card| matches!(card.id, Identity::Connection(_)))
+        {
+            self.cards.push(old.remove(index));
+        }
         let incoming = masked
             .iter()
             .map(|view| {
@@ -253,6 +429,7 @@ impl PromptStack {
         if key.kind == KeyKind::Release {
             return result;
         }
+        self.cards[0].expire_connection_sent(now);
         let control_c = key.mods.ctrl && matches!(key.code, KeyCode::Char('c' | 'C'));
         let session = self.cards[0].session().map(str::to_owned);
         if self.stopping.contains(&session) {
@@ -261,7 +438,7 @@ impl PromptStack {
         if control_c {
             let card = &mut self.cards[0];
             let intent = match &card.content {
-                _ if card.masked() && !card.sent => Some(card.masked_answer(true)),
+                _ if card.masked() && !card.sent => card.masked_answer(true),
                 Content::Prompt(cell) if cell.kind == PromptKind::Clarify && !card.answering() => {
                     card.answer(String::new())
                 }
@@ -285,9 +462,29 @@ impl PromptStack {
         }
         let card = &mut self.cards[0];
         let intent = match &card.content {
+            Content::Connection(connection) => {
+                let choices = connection_choices(&connection.card);
+                match key.code {
+                    KeyCode::Up => {
+                        card.selected = card.selected.saturating_sub(1);
+                        None
+                    }
+                    KeyCode::Down => {
+                        card.selected = (card.selected + 1).min(choices.len() - 1);
+                        None
+                    }
+                    KeyCode::Enter => card.connection_answer(choices[card.selected], now),
+                    KeyCode::Char(ch @ '1'..='9') => choices
+                        .get(ch as usize - '1' as usize)
+                        .copied()
+                        .and_then(|choice| card.connection_answer(choice, now)),
+                    KeyCode::Esc => card.connection_answer(ConnectionChoice::Skip, now),
+                    _ => None,
+                }
+            }
             _ if card.masked() => match key.code {
-                KeyCode::Enter => Some(card.masked_answer(false)),
-                KeyCode::Esc => Some(card.masked_answer(true)),
+                KeyCode::Enter => card.masked_answer(false),
+                KeyCode::Esc => card.masked_answer(true),
                 KeyCode::Backspace => {
                     card.secret.pop();
                     card.secret_chars = card.secret_chars.saturating_sub(1);
@@ -407,6 +604,31 @@ impl PromptStack {
     }
 }
 
+fn connection_choices(card: &ConnectionCard) -> &'static [ConnectionChoice] {
+    if card.targets.iter().any(|target| {
+        target
+            .required_env
+            .as_ref()
+            .is_some_and(|env| !env.is_empty())
+    }) {
+        &[ConnectionChoice::Skip, ConnectionChoice::Continue]
+    } else {
+        &[
+            ConnectionChoice::Approve,
+            ConnectionChoice::Skip,
+            ConnectionChoice::Continue,
+        ]
+    }
+}
+
+fn connection_word(choice: ConnectionChoice) -> &'static str {
+    match choice {
+        ConnectionChoice::Approve => "Approve",
+        ConnectionChoice::Skip => "Skip",
+        ConnectionChoice::Continue => "Continue",
+    }
+}
+
 fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
     let Content::Prompt(cell) = &card.content else {
         return None;
@@ -495,6 +717,7 @@ impl PromptSection<'_> {
         let card = &stack.cards[0];
         let mut rows = Vec::new();
         let (title, masked_detail) = match &card.content {
+            Content::Connection(_) => return stack.connection_lines(width),
             Content::Prompt(cell) => (
                 if cell.kind == PromptKind::ServerRequest {
                     cell.command.as_deref().unwrap_or_default()
@@ -558,6 +781,7 @@ impl PromptSection<'_> {
         }
         add(&mut rows, &header, width);
         let hint = match &card.content {
+            Content::Connection(_) => return stack.connection_lines(width),
             Content::Prompt(cell) if cell.kind == PromptKind::ServerRequest => {
                 let method = cell.command.as_deref().unwrap_or_default();
                 add(&mut rows, "asked while you were away", width);

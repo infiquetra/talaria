@@ -387,6 +387,7 @@ fn need_text(item: &NeedItem) -> String {
             NeedSummary::Secret => "secret".to_owned(),
             NeedSummary::VaultCode => "vault code".to_owned(),
             NeedSummary::VaultUnlock => "vault unlock".to_owned(),
+            NeedSummary::Connection => "connection request".to_owned(),
         },
     };
     shown(&text, DETAIL_CHARS)
@@ -602,6 +603,7 @@ fn slot_json(slot: &NeedSlot) -> (&'static str, Option<&str>) {
     match slot {
         NeedSlot::Prompt(id) => ("prompt", Some(id)),
         NeedSlot::Masked(id) => ("masked", Some(id)),
+        NeedSlot::Connection(id) => ("connection", Some(id)),
         NeedSlot::Waiting => ("waiting", None),
         NeedSlot::External(id) => ("external", Some(id)),
     }
@@ -618,6 +620,7 @@ fn need_json(item: &NeedItem) -> Value {
             NeedSummary::Secret => ("secret", None),
             NeedSummary::VaultCode => ("vault_code", None),
             NeedSummary::VaultUnlock => ("vault_unlock", None),
+            NeedSummary::Connection => ("connection", None),
         },
     };
     json!({

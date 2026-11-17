@@ -36,6 +36,12 @@ pub enum Effect {
         /// Offered choice.
         choice: String,
     },
+    /// Answer an outstanding connection operation.
+    RespondConnection {
+        session_id: SessionId,
+        op_id: String,
+        result: hermes_contract::schemas::ConnectionAnswer,
+    },
     /// `clarify.respond` with exactly the four canonical keys.
     RespondClarify {
         /// Prompt key.

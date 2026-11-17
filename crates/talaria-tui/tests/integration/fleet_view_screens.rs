@@ -160,6 +160,7 @@ fn detail_text(row: &FleetRow, queue: &[NeedItem]) -> String {
             }
             Some(NeedDetail::Known(NeedSummary::Sudo)) => "sudo password".to_owned(),
             Some(NeedDetail::Known(NeedSummary::Secret)) => "secret".to_owned(),
+            Some(NeedDetail::Known(NeedSummary::Connection)) => "connection request".to_owned(),
             Some(
                 NeedDetail::Known(NeedSummary::VaultCode | NeedSummary::VaultUnlock)
                 | NeedDetail::Waiting,

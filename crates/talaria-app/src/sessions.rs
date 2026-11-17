@@ -358,6 +358,7 @@ impl SessionService {
                 self.call("session.interrupt", params, None).await.map(drop)
             }
             Effect::RespondApproval { .. }
+            | Effect::RespondConnection { .. }
             | Effect::RespondClarify { .. }
             | Effect::RefuseAnswer { .. }
             | Effect::RunShell { .. }

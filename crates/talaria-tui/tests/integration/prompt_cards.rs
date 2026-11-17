@@ -169,6 +169,7 @@ fn intent_kind(intent: &Option<PromptIntent>) -> &'static str {
         Some(PromptIntent::Approve { .. }) => "an approval intent",
         Some(PromptIntent::Clarify { .. }) => "a clarification intent",
         Some(PromptIntent::Masked { .. }) => "a masked intent",
+        Some(PromptIntent::Connect { .. }) => "a connect intent",
     }
 }
 
@@ -1501,4 +1502,122 @@ fn unanswerable_method_is_read_only() {
         "missing read-only notice in {rows:?}"
     );
     rig.press(named(KeyCode::Enter)).nothing();
+}
+
+#[test]
+fn connection_card_esc_skips_and_ctrl_c_sends_nothing() {
+    use hermes_contract::schemas::ConnectionOperationTarget;
+    use talaria_core::session::ConnectionCard;
+    use talaria_tui::prompts::ConnectionChoice;
+
+    let open_target: ConnectionOperationTarget = serde_json::from_value(json!({
+        "action": "connect",
+        "kind": "connector",
+        "name": "github",
+        "state": "pending",
+        "connect_url": "https://example.test/connect",
+    }))
+    .expect("target");
+    let card = ConnectionCard {
+        op_id: "op-1".to_owned(),
+        seq: 1,
+        deadline_at: 1_700_000_090.0,
+        targets: vec![open_target],
+    };
+
+    let start = Instant::now();
+    let mut stack = PromptStack::new();
+    stack.show_connection(Some(&card), MAIN, true, start, 1_700_000_000.0);
+    assert_eq!(stack.connection_remaining_seconds(), Some(90));
+    assert!(!stack.connection_lines(80).is_empty());
+
+    let rows = draw(&stack, 80, 24);
+    assert!(
+        has_row_containing(&rows, "https://example.test/connect"),
+        "missing connect_url in {rows:?}"
+    );
+    assert!(
+        !has_row_containing(&rows, "600"),
+        "card must not show 600: {rows:?}"
+    );
+    for choice in ["Approve", "Skip", "Continue"] {
+        assert!(
+            has_row_containing(&rows, choice),
+            "missing choice {choice} in {rows:?}"
+        );
+    }
+
+    stack.show_connection(Some(&card), MAIN, true, start, 1_700_000_095.0);
+    assert_eq!(stack.connection_remaining_seconds(), Some(0));
+
+    let answered_at = start + Duration::from_millis(250);
+    let outcome = consumed(stack.handle_key(named(KeyCode::Esc), answered_at));
+    assert!(!outcome.interrupt_requested);
+    assert!(matches!(
+        outcome.intent,
+        Some(PromptIntent::Connect {
+            ref session_id,
+            ref op_id,
+            choice: ConnectionChoice::Skip,
+        }) if session_id == MAIN && op_id == "op-1"
+    ));
+
+    consumed(stack.handle_key(named(KeyCode::Esc), answered_at + Duration::from_secs(1))).nothing();
+
+    let after_lapse =
+        consumed(stack.handle_key(named(KeyCode::Enter), answered_at + Duration::from_secs(5)));
+    assert!(matches!(
+        after_lapse.intent,
+        Some(PromptIntent::Connect { .. })
+    ));
+
+    let mut ctrl_c_stack = PromptStack::new();
+    ctrl_c_stack.show_connection(Some(&card), MAIN, true, start, 1_700_000_000.0);
+    let ctrl_c_outcome = consumed(ctrl_c_stack.handle_key(ctrl_c(), answered_at));
+    assert!(ctrl_c_outcome.interrupting().is_none());
+
+    let mut paste_stack = PromptStack::new();
+    paste_stack.show_connection(Some(&card), MAIN, true, start, 1_700_000_000.0);
+    consumed(paste_stack.handle_paste("abc", answered_at)).nothing();
+    let enter_after_paste = consumed(paste_stack.handle_key(named(KeyCode::Enter), answered_at));
+    assert!(matches!(
+        enter_after_paste.intent,
+        Some(PromptIntent::Connect {
+            choice: ConnectionChoice::Approve,
+            ..
+        })
+    ));
+
+    let env_target: ConnectionOperationTarget = serde_json::from_value(json!({
+        "action": "connect",
+        "kind": "connector",
+        "name": "github",
+        "state": "pending",
+        "required_env": [{
+            "default": "",
+            "name": "TOKEN",
+            "required": true,
+            "secret": true,
+        }],
+    }))
+    .expect("env target");
+    let env_card = ConnectionCard {
+        op_id: "op-1".to_owned(),
+        seq: 1,
+        deadline_at: 1_700_000_090.0,
+        targets: vec![env_target],
+    };
+    let mut env_stack = PromptStack::new();
+    env_stack.show_connection(Some(&env_card), MAIN, true, start, 1_700_000_000.0);
+    let env_rows = draw(&env_stack, 80, 24);
+    assert!(
+        has_row_containing(&env_rows, "cannot be approved here"),
+        "missing cannot be approved here in {env_rows:?}"
+    );
+    assert!(has_row_containing(&env_rows, "Skip"));
+    assert!(has_row_containing(&env_rows, "Continue"));
+    assert!(
+        !has_row_containing(&env_rows, "Approve"),
+        "Approve must not be offered when required_env is non-empty: {env_rows:?}"
+    );
 }

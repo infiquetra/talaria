@@ -63,6 +63,12 @@ impl AttentionSnapshot {
             };
             (NeedKey::Masked(request.id.clone()), summary)
         }));
+        if let Some(card) = state.connection_card() {
+            needs.push((
+                NeedKey::Connection(card.op_id.clone()),
+                NeedSummary::Connection,
+            ));
+        }
         Self {
             turn: state.turn().clone(),
             needs,

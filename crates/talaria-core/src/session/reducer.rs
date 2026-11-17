@@ -42,6 +42,26 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
                 }
                 state.cursor.last_seq = seq;
             }
+            match &frame.notification {
+                Notification::ConnectionRequest(payload) => {
+                    connection_card(state, payload.clone().into(), false);
+                    return Vec::new();
+                }
+                Notification::ConnectionUpdate(payload) => {
+                    connection_card(
+                        state,
+                        super::ConnectionCard {
+                            op_id: payload.op_id.clone(),
+                            seq: payload.seq,
+                            deadline_at: payload.deadline_at,
+                            targets: payload.targets.clone(),
+                        },
+                        payload.settled,
+                    );
+                    return Vec::new();
+                }
+                _ => {}
+            }
             // A running turn can precede its queue fanout; remember a new authority so
             // send-now remains bound to its original turn while that fanout is in flight.
             if name == "message.start"
@@ -178,6 +198,16 @@ pub fn update(state: &mut SessionState, event: Event) -> Vec<Effect> {
     };
     state.advance_prefix();
     effects
+}
+
+fn connection_card(state: &mut SessionState, incoming: super::ConnectionCard, settled: bool) {
+    match &state.connection_card {
+        Some(current) if current.op_id != incoming.op_id => {}
+        Some(_) if settled => state.connection_card = None,
+        Some(current) if incoming.seq <= current.seq => {}
+        None if settled => {}
+        _ => state.connection_card = Some(incoming),
+    }
 }
 
 fn background_frame(state: &mut SessionState, name: &str, payload: &Value) -> Vec<Effect> {

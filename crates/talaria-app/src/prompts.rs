@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use hermes_client::{CallError, Client, RespondError, Responder, ServerRequest};
 use hermes_contract::methods::canonical::{approval_respond, clarify_respond};
+use hermes_contract::methods::legacy::connection_respond;
 use hermes_contract::schemas::{PromptResponseResult, PromptResponseResultStatus};
 use hermes_contract::server_requests::ServerRequest as ContractRequest;
 use talaria_core::session::{
@@ -266,6 +267,40 @@ impl PromptService {
 
     pub async fn execute(&mut self, client: &Client, effect: Effect) -> Executed {
         let (key, result) = match effect {
+            Effect::RespondConnection {
+                session_id,
+                op_id,
+                result,
+            } => {
+                use hermes_contract::schemas::{
+                    ConnectionRespondParams, Owner, SessionOwner, SessionOwnerType,
+                };
+                let failed = || Executed {
+                    events: Vec::new(),
+                    notices: vec![PromptNotice {
+                        session_id: Some(session_id.as_str().to_owned()),
+                        text: "could not answer the connection request".to_owned(),
+                    }],
+                };
+                let Ok(owner_id) = session_id.as_str().parse() else {
+                    return failed();
+                };
+                let reply = client
+                    .call::<connection_respond::Marker>(ConnectionRespondParams {
+                        op_id,
+                        owner: Owner::SessionOwner(SessionOwner {
+                            session_id: owner_id,
+                            type_: SessionOwnerType::Session,
+                        }),
+                        profile: None,
+                        result,
+                    })
+                    .await;
+                return match reply {
+                    Ok(reply) if reply.status == "ok" => Executed::default(),
+                    _ => failed(),
+                };
+            }
             Effect::RespondApproval { key, choice } => {
                 let result = client
                     .call::<approval_respond::Marker>(approval_params(&key, choice))
