@@ -2,6 +2,24 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-16
+
+### Runtime compatibility against a current Hermes
+
+**Context.** A live compatibility pass used a gateway reporting `code_version` `0.23.1`, newer than the release used to generate the client's contract.
+
+**Decision.**
+
+1. Doctor - confirmed: the report identified the gateway as newer than the release the client was built for.
+2. Turn - confirmed: the turn exited successfully and returned `pong`.
+3. Waiting session - confirmed: an unanswered approval appeared in the fleet list with state `needs_you`.
+4. Reasoning - confirmed: `/reasoning` displayed `Reasoning Settings`.
+5. Background - refuted: the one-shot fleet list left the finished session's outcome null (#710).
+6. Managed key - confirmed: Talaria showed `<key>: not saved. Hermes kept the previous value; an administrator or a package-managed install may control this setting.`
+7. Reconnect - confirmed: the dropped link reattached, replayed events, and reported no duplicate or missing sequence entries.
+
+**Costs and revisit conditions.** These observations cover one gateway release and the checks performed; repeat them when supported gateway behavior or the affected client paths change.
+
 ## 2026-11-15 — Add release proof gates and blank acceptance records
 
 **Context.** Fixture replay and live compatibility each need a release gate,
