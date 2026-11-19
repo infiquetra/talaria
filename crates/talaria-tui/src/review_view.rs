@@ -2,6 +2,8 @@
 //! notice line and the footer. Reads the view by reference and writes only into the buffer.
 //! Issue #245.
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -176,16 +178,20 @@ fn files_text(count: usize) -> String {
 
 fn header_line(view: &ReviewView<'_>, theme: &ToolTheme, width: u16) -> Line<'static> {
     let title = sanitize(view.title);
-    let left = match view.head {
+    let folder_text = view.folder.display().to_string();
+    let folder = talaria_core::text::sanitize(&folder_text);
+    let prefix = format!("Review \u{b7} {title} \u{b7} ");
+    let suffix = match view.head {
         Some(head) => format!(
-            "Review \u{b7} {title} \u{b7} {} \u{b7} {} \u{b7} +{} \u{2212}{}",
+            " \u{b7} {} \u{b7} {} \u{b7} +{} \u{2212}{}",
             sanitize(&branch_text(head)),
             files_text(view.total),
             view.added,
             view.removed
         ),
-        None => format!("Review \u{b7} {title}"),
+        None => String::new(),
     };
+    let full = format!("{prefix}{folder}{suffix}");
     let right = view.head.map(|head| {
         if head.upstream.is_some() {
             format!("\u{2191}{} \u{2193}{}", head.ahead, head.behind)
@@ -197,7 +203,11 @@ fn header_line(view: &ReviewView<'_>, theme: &ToolTheme, width: u16) -> Line<'st
     let right_width = right.as_ref().map_or(0, |text| text_width(text) + 1)
         + view.pr.as_ref().map_or(0, label_width);
     let room = usize::from(width).saturating_sub(right_width + 1);
-    let left = cut_to(&left, room);
+    let left = if text_width(&full) <= room {
+        full
+    } else {
+        fit_repository_path(&prefix, folder.as_ref(), &suffix, room)
+    };
     let pad = usize::from(width).saturating_sub(text_width(&left) + right_width);
     let mut spans = vec![Span::styled(left, theme.title), Span::raw(" ".repeat(pad))];
     if let Some(right) = right {
@@ -208,6 +218,48 @@ fn header_line(view: &ReviewView<'_>, theme: &ToolTheme, width: u16) -> Line<'st
         spans.push(draw_pr_label(label, width));
     }
     Line::from(spans)
+}
+
+/// Keep the repository path when the header is narrower than the full line.
+///
+/// The title and branch give up columns first. A path that still does not fit
+/// keeps its tail, which is what distinguishes neighbouring checkouts.
+fn fit_repository_path(prefix: &str, path: &str, suffix: &str, room: usize) -> String {
+    let path_shown = if text_width(path) <= room {
+        path.to_owned()
+    } else {
+        cut_tail(path, room)
+    };
+    let spare = room.saturating_sub(text_width(&path_shown));
+    let prefix_shown = cut_to(prefix, spare.min(text_width(prefix)));
+    let spare = spare.saturating_sub(text_width(&prefix_shown));
+    let suffix_shown = cut_to(suffix, spare);
+    format!("{prefix_shown}{path_shown}{suffix_shown}")
+}
+
+/// The end of `text`, cut with `…` so it is at most `max` columns.
+fn cut_tail(text: &str, max: usize) -> String {
+    if max == 0 || text_width(text) <= max {
+        return if max == 0 {
+            String::new()
+        } else {
+            text.to_owned()
+        };
+    }
+    let keep = max - 1;
+    let mut used = 0;
+    let mut start = text.len();
+    for (index, cluster) in text.grapheme_indices(true).rev() {
+        let columns = text_width(cluster);
+        if used + columns > keep {
+            break;
+        }
+        used += columns;
+        start = index;
+    }
+    let mut cut = String::from("\u{2026}");
+    cut.push_str(&text[start..]);
+    cut
 }
 
 fn decision_text(decision: ReviewDecision) -> &'static str {

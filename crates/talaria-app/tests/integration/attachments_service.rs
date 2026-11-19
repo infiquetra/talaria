@@ -3,7 +3,7 @@
 use crate::mock_gateway;
 
 use std::collections::BTreeSet;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -600,7 +600,11 @@ async fn file_attach_inside_and_outside() {
         BTreeSet::from(["session_id".to_string(), "path".to_string()])
     );
     assert_eq!(calls[0].params["session_id"], session.as_str());
-    assert_eq!(calls[0].params["path"], inside.display().to_string());
+    let canonical = std::fs::canonicalize(&inside).expect("canonical notes");
+    assert_eq!(
+        calls[0].params["path"],
+        canonical.to_str().expect("canonical path")
+    );
     assert!(inside.is_absolute());
     match log.lock().expect("log").as_slice() {
         [
@@ -906,4 +910,315 @@ async fn never_calls_legacy_attach_methods() {
     ] {
         assert!(seen.iter().all(|method| method != name), "saw {name}");
     }
+}
+
+const CREDENTIAL_NOTICE: &str = "Talaria does not attach credential files.";
+
+fn plant(path: &Path) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("parent");
+    }
+    std::fs::write(path, b"secret").expect("file");
+}
+
+async fn dropped(
+    attachment: &AttachmentService,
+    log: &Arc<Mutex<Vec<AttachmentEvent>>>,
+    session: &SessionId,
+    folder: &Path,
+    path: PathBuf,
+) -> AttachmentEvent {
+    log.lock().expect("event log").clear();
+    attachment.execute(AttachmentEffect::ResolveDrop {
+        session: session.clone(),
+        folder: folder.to_path_buf(),
+        candidates: vec![DropCandidate {
+            path,
+            remainder: String::new(),
+        }],
+        original: "dropped".to_string(),
+    });
+    settle_until(|| !log.lock().expect("event log").is_empty()).await;
+    log.lock()
+        .expect("event log")
+        .first()
+        .expect("drop event")
+        .clone()
+}
+
+fn assert_credential(event: &AttachmentEvent, label: &str) {
+    match event {
+        AttachmentEvent::DropRefused { notice, .. } => {
+            assert_eq!(notice, CREDENTIAL_NOTICE, "{label}");
+        }
+        other => panic!("{label} was not refused: {other:?}"),
+    }
+}
+
+fn assert_attached(event: &AttachmentEvent, path: &Path) {
+    match event {
+        AttachmentEvent::DropFile { path: dropped, .. } => assert_eq!(dropped, path),
+        other => panic!("{} was refused: {other:?}", path.display()),
+    }
+}
+
+/// Stores, private-key names, and env files are refused. Ordinary neighbours attach.
+#[tokio::test]
+async fn credential_denylist_matches_stores_keys_and_env_names() {
+    let (_gateway, client, _inbound) = MockGateway::start().await;
+    tokio::time::pause();
+    let home_dir = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let attachment = service(client, &log, home_dir.path().to_path_buf());
+    let session = session();
+    let home = home_dir.path();
+    let folder = project.path();
+
+    let denied = [
+        home.join("Library/Keychains/login.keychain-db"),
+        home.join("Library/Keychains/foo/bar/login.keychain"),
+        home.join(".password-store/foo.gpg"),
+        home.join(".password-store/sub/dir/secret.gpg"),
+        home.join(".config/op/config"),
+        home.join(".config/op/accounts/personal/config"),
+        home.join(".config/1password/config"),
+        home.join(".config/1password/profiles/nested/secret"),
+        home.join(".local/share/keyrings/login.keyring"),
+        home.join(".local/share/keyrings/nested/default.keyring"),
+        home.join(".git-credentials"),
+        home.join(".config/git/credentials"),
+        home.join(".config/age/keys.txt"),
+        home.join(".config/age/nested/keys.txt"),
+        home.join(".config/sops/age/keys.txt"),
+        home.join(".config/sops/nested/age/keys.txt"),
+        home.join("library/keychains/login.keychain-db"),
+        home.join(".Password-Store/secret.gpg"),
+        home.join(".Config/OP/config"),
+        home.join(".Config/1Password/profiles/nested/secret"),
+        home.join(".Local/Share/Keyrings/login.keyring"),
+        home.join(".CONFIG/age/keys.txt"),
+        home.join(".Config/Sops/age/keys.txt"),
+        home.join(".Config/Git/Credentials"),
+        home.join(".GIT-CREDENTIALS"),
+        folder.join(".env.prod.local"),
+        folder.join("server.pem"),
+        folder.join("tls.key"),
+        folder.join("cert.p12"),
+        folder.join("cert.pfx"),
+        folder.join("Server.PEM"),
+        folder.join("TLS.KEY"),
+        folder.join("Cert.P12"),
+        folder.join("Archive.PFX"),
+        folder.join("id_rsa"),
+        folder.join("id_ed25519"),
+        folder.join("id_ecdsa"),
+        folder.join("id_dsa"),
+        folder.join("ID_ED25519"),
+    ];
+    for path in &denied {
+        plant(path);
+    }
+    let notes = folder.join("notes.txt");
+    let source = folder.join("main.rs");
+    let public_key = folder.join("id_ed25519.pub");
+    let near_env = folder.join("readme.env.txt");
+    plant(&notes);
+    plant(&source);
+    plant(&public_key);
+    plant(&near_env);
+
+    for path in &denied {
+        let event = dropped(&attachment, &log, &session, folder, path.clone()).await;
+        assert_credential(&event, &path.display().to_string());
+    }
+
+    let mut env_names = Vec::new();
+    for stem in [
+        "prod",
+        "staging",
+        "foo",
+        "development",
+        "test",
+        "ci",
+        "preview",
+        "example",
+    ] {
+        for tail in ["", ".local"] {
+            let name = format!(".env.{stem}{tail}");
+            env_names.push(name.to_ascii_uppercase());
+            env_names.push(name);
+        }
+    }
+    env_names.extend([
+        ".ENV.PROD".to_owned(),
+        ".Env.Local".to_owned(),
+        ".ENV".to_owned(),
+        ".ENVRC".to_owned(),
+    ]);
+    for name in &env_names {
+        let folded = name.to_ascii_lowercase();
+        assert!(
+            folded == ".env" || folded == ".envrc" || folded.starts_with(".env."),
+            "{name} is outside the env-file property"
+        );
+        let path = folder.join(name);
+        plant(&path);
+        let event = dropped(&attachment, &log, &session, folder, path.clone()).await;
+        assert_credential(&event, name);
+    }
+
+    for path in [&notes, &source, &public_key, &near_env] {
+        let event = dropped(&attachment, &log, &session, folder, path.clone()).await;
+        assert_attached(&event, path);
+    }
+
+    let named = folder.join("via-name.pem");
+    symlink(&notes, &named).expect("name symlink");
+    assert_credential(
+        &dropped(&attachment, &log, &session, folder, named).await,
+        "private-key symlink name",
+    );
+    let targeted = folder.join("via-target.txt");
+    symlink(home.join(".password-store/foo.gpg"), &targeted).expect("target symlink");
+    assert_credential(
+        &dropped(&attachment, &log, &session, folder, targeted).await,
+        "symlink into a credential store",
+    );
+    let linked_store = folder.join("linked-store");
+    symlink(home.join(".password-store"), &linked_store).expect("store symlink");
+    let linked_file = linked_store.join("foo.gpg");
+    assert_credential(
+        &dropped(&attachment, &log, &session, folder, linked_file).await,
+        "file reached through a store symlink",
+    );
+    let ordinary = folder.join("ok.txt");
+    symlink(&notes, &ordinary).expect("ordinary symlink");
+    assert_attached(
+        &dropped(&attachment, &log, &session, folder, ordinary.clone()).await,
+        &ordinary,
+    );
+
+    std::fs::remove_file(home.join(".config/git/credentials")).expect("remove credentials file");
+    let _ = std::fs::remove_file(home.join(".Config/Git/Credentials"));
+    let nested_git = home.join(".config/git/credentials/nested/token");
+    plant(&nested_git);
+    assert_credential(
+        &dropped(&attachment, &log, &session, folder, nested_git).await,
+        "nested git credentials",
+    );
+    let nested_alias = home.join(".Config/Git/Credentials/nested/token");
+    plant(&nested_alias);
+    assert_credential(
+        &dropped(&attachment, &log, &session, folder, nested_alias).await,
+        "nested git credentials, alternate case",
+    );
+
+    let outside = tempfile::tempdir().expect("outside store");
+    let link_home_dir = tempfile::tempdir().expect("link home");
+    let outside_key = outside.path().join("keys.txt");
+    plant(&outside_key);
+    std::fs::create_dir(link_home_dir.path().join(".config")).expect("config dir");
+    symlink(outside.path(), link_home_dir.path().join(".config/age")).expect("age symlink");
+    let link_log = Arc::new(Mutex::new(Vec::new()));
+    let (_gateway, link_client, _inbound) = MockGateway::start().await;
+    let link_attachment = service(link_client, &link_log, link_home_dir.path().to_path_buf());
+    let through = link_home_dir.path().join(".config/age/keys.txt");
+    assert_credential(
+        &dropped(&link_attachment, &link_log, &session, folder, through).await,
+        "symlink store path",
+    );
+    assert_credential(
+        &dropped(&link_attachment, &link_log, &session, folder, outside_key).await,
+        "canonical target of a symlinked store",
+    );
+
+    // APFS refuses file names that are not valid UTF-8.
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut env_bytes = b".env.prod".to_vec();
+        env_bytes.push(0xff);
+        let raw_env = folder.join(OsString::from_vec(env_bytes));
+        plant(&raw_env);
+        assert_credential(
+            &dropped(&attachment, &log, &session, folder, raw_env.clone()).await,
+            "non-utf8 dotenv name",
+        );
+        let mut key_bytes = b"key".to_vec();
+        key_bytes.push(0xff);
+        key_bytes.extend_from_slice(b".pem");
+        let raw_key = folder.join(OsString::from_vec(key_bytes));
+        plant(&raw_key);
+        assert_credential(
+            &dropped(&attachment, &log, &session, folder, raw_key).await,
+            "non-utf8 private-key suffix",
+        );
+        let alias = folder.join("utf8-alias.txt");
+        symlink(&raw_env, &alias).expect("utf8 alias");
+        assert_credential(
+            &dropped(&attachment, &log, &session, folder, alias).await,
+            "utf8 symlink to a non-utf8 credential",
+        );
+    }
+}
+
+/// Hermes reparses `file.attach` paths, so a local name that would change meaning is refused.
+#[tokio::test]
+async fn file_attach_refuses_hermes_reinterpreted_paths() {
+    let (gateway, client, _inbound) = MockGateway::start().await;
+    tokio::time::pause();
+    let home_dir = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let attachment = service(client, &log, home_dir.path().to_path_buf());
+    let session = session();
+    let folder = project.path();
+    let notes = folder.join("notes.txt");
+    plant(&notes);
+    let spaced = folder.join("report.txt ");
+    plant(&spaced);
+    let dollar = folder.join("note$HOME.txt");
+    plant(&dollar);
+    let braced = folder.join("note${HOME}.txt");
+    plant(&braced);
+    let tilde = folder.join("~id_ed25519");
+    plant(&tilde);
+    let nested_tilde = folder.join("~").join("id_ed25519");
+    plant(&nested_tilde);
+
+    for path in [&spaced, &dollar, &braced, &tilde, &nested_tilde] {
+        log.lock().expect("event log").clear();
+        attachment.execute(AttachmentEffect::AttachFile {
+            session: session.clone(),
+            path: path.clone(),
+            remainder: String::new(),
+        });
+        settle_until(|| !log.lock().expect("event log").is_empty()).await;
+        match log.lock().expect("event log").as_slice() {
+            [AttachmentEvent::AttachFailed { notice, .. }] => {
+                assert_eq!(notice, CREDENTIAL_NOTICE, "{}", path.display());
+            }
+            other => panic!("{} was sent to Hermes: {other:?}", path.display()),
+        }
+    }
+    assert!(gateway.requests(file_attach::NAME).is_empty());
+
+    gateway.push_result(file_result("notes.txt", false, "@file:notes.txt"));
+    log.lock().expect("event log").clear();
+    attachment.execute(AttachmentEffect::AttachFile {
+        session,
+        path: notes,
+        remainder: String::new(),
+    });
+    settle_until(|| !log.lock().expect("event log").is_empty()).await;
+    let calls = gateway.requests(file_attach::NAME);
+    assert_eq!(calls.len(), 1);
+    let canonical = std::fs::canonicalize(folder.join("notes.txt")).expect("canonical");
+    assert_eq!(
+        calls[0].params["path"],
+        canonical.to_str().expect("canonical path")
+    );
 }

@@ -185,33 +185,19 @@ pub fn write_usage(error: &clap::Error) -> u8 {
     code
 }
 
-fn is_bidi(character: char) -> bool {
-    matches!(
-        character,
-        '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
-    )
-}
-
-pub(crate) fn neutralise(raw: &str) -> String {
-    let mut line = String::new();
-    for character in raw.chars() {
-        if character == '\n' || character == '\r' {
-            if !line.ends_with(' ') && !line.is_empty() {
-                line.push(' ');
-            }
-            continue;
-        }
-        if character.is_control() || is_bidi(character) {
-            line.push('?');
-        } else {
-            line.push(character);
-        }
-    }
-    let mut line = cut_quoted(&line);
+pub fn neutralise(raw: &str) -> String {
+    let clean = talaria_core::text::sanitize_with_options(
+        raw,
+        talaria_core::text::SanitizeOptions::LAYOUT,
+        talaria_core::text::Replacement::Char('?'),
+    );
+    let mut line = cut_quoted(&clean);
     while line.ends_with(' ') {
         line.pop();
     }
-    line.push('\n');
+    if !line.ends_with('\n') {
+        line.push('\n');
+    }
     line
 }
 
@@ -228,7 +214,7 @@ fn cut_quoted(text: &str) -> String {
                 inner.push(next);
             }
             if inner.chars().count() > 64 {
-                inner = inner.chars().take(64).collect();
+                inner = truncate_quote(&inner);
             }
             out.push(character);
             out.push_str(&inner);
@@ -238,6 +224,17 @@ fn cut_quoted(text: &str) -> String {
         }
     }
     out
+}
+
+/// Keep the first 64 characters, and every newline and tab after that.
+fn truncate_quote(text: &str) -> String {
+    let mut kept = String::new();
+    for (index, character) in text.chars().enumerate() {
+        if index < 64 || character == '\n' || character == '\t' {
+            kept.push(character);
+        }
+    }
+    kept
 }
 
 /// Why the print options are unusable.

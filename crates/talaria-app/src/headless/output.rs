@@ -246,28 +246,22 @@ pub fn render_stderr(result: &HeadlessResult) -> Vec<u8> {
 
 /// The answer for a terminal: controls become `?`, newline and tab stay.
 pub fn terminal_safe(text: &str) -> String {
-    text.chars()
-        .map(|ch| {
-            if ch != '\n' && ch != '\t' && is_control(ch) {
-                '?'
-            } else {
-                ch
-            }
-        })
-        .collect()
+    talaria_core::text::sanitize_with_options(
+        text,
+        talaria_core::text::SanitizeOptions::LAYOUT,
+        talaria_core::text::Replacement::Char('?'),
+    )
+    .into_owned()
 }
 
 /// A warning or failure piece: every control becomes `?`, nothing stays.
 pub fn neutralise_line(text: &str) -> String {
-    text.chars()
-        .map(|ch| if is_control(ch) { '?' } else { ch })
-        .collect()
-}
-
-fn is_control(ch: char) -> bool {
-    ch.is_control()
-        || matches!(ch,
-        '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+    talaria_core::text::sanitize_with_options(
+        text,
+        talaria_core::text::SanitizeOptions::CLI,
+        talaria_core::text::Replacement::Char('?'),
+    )
+    .into_owned()
 }
 
 #[cfg(test)]

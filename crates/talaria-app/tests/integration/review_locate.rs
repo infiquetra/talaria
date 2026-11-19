@@ -135,7 +135,8 @@ async fn record_then_foreground_then_session_info() {
     let conn = LaunchConn::Link(link);
     let source = GatewaySource { conn: &conn };
     let runner = GitRunner::from_env();
-    let repos = KnownRepos::new();
+    let mut repos = KnownRepos::new();
+    repos.insert(std::fs::canonicalize(&git.repo).expect("canonical repo"));
     let foreground = row("fixture", "local-foreground");
 
     // The recorded folder answers through `session.info`.
@@ -575,6 +576,49 @@ async fn plain_directory_under_worktrees_is_refused() {
     );
 }
 
+#[tokio::test]
+async fn record_whose_git_file_points_at_a_sibling_worktree_is_not_attached() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    git.ok(
+        &git.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "talaria/foo",
+            ".worktrees/foo",
+            "main",
+        ],
+    );
+    git.ok(
+        &git.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "talaria/bar",
+            ".worktrees/bar",
+            "main",
+        ],
+    );
+    write_record(&git, "talaria/foo", ".worktrees/foo", "local-foo");
+    let sibling_admin = git.repo.join(".git/worktrees/bar");
+    std::fs::write(
+        git.repo.join(".worktrees/foo/.git"),
+        format!("gitdir: {}\n", sibling_admin.display()),
+    )
+    .expect("point foo at the sibling worktree admin directory");
+
+    let found = locate_recorded(&git, "local-foo").await;
+    assert!(
+        !matches!(&found, Located::Found(target) if target.record.is_some()),
+        "the sibling worktree admin directory must not validate the record: {found:?}"
+    );
+}
+
 /// An out-of-scope record is not attached when the folder is chosen another way.
 #[tokio::test]
 async fn fallback_lookup_ignores_an_uncontained_record() {
@@ -705,5 +749,399 @@ async fn record_backed_review_stops_when_the_worktree_changes() {
     assert!(
         listed.is_err(),
         "a replaced worktree must not be read: {listed:?}"
+    );
+}
+
+/// A `session.info` answer whose `cwd` is fixed, with no gateway.
+struct FixedInfo {
+    cwd: String,
+}
+
+impl SessionInfoSource for FixedInfo {
+    fn info<'a>(
+        &'a self,
+        _row: &'a RowKey,
+    ) -> Pin<Box<dyn Future<Output = Result<SessionInfoReply, SessionInfoError>> + Send + 'a>> {
+        let cwd = self.cwd.clone();
+        Box::pin(async move {
+            Ok(SessionInfoReply {
+                cwd: Some(cwd),
+                model: None,
+                lazy: true,
+                branch: None,
+            })
+        })
+    }
+}
+
+fn trusted(root: &std::path::Path) -> KnownRepos {
+    let mut repos = KnownRepos::new();
+    repos.insert(root.to_path_buf());
+    repos
+}
+
+fn refused(found: &Located) -> bool {
+    matches!(
+        found,
+        Located::NotFound(text) if text == "Talaria cannot find this session's folder."
+    )
+}
+
+/// The foreground row's gateway `cwd` is not a review target when it sits outside
+/// every locally trusted root.
+#[tokio::test]
+async fn review_foreground_cwd_outside_trusted_roots_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let launch = std::fs::canonicalize(&git.repo).expect("canonical launch folder");
+    let hostile = git.path().join("other");
+    let repos = trusted(&launch);
+    let runner = GitRunner::from_env();
+    let key = row("fixture", "local-foreground");
+    let cwd = hostile.to_string_lossy().into_owned();
+    let info = FixedInfo { cwd: cwd.clone() };
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: Some((&key, Some(cwd.as_str()))),
+        info: &info,
+    };
+    let found = locate(&key, &ctx).await;
+    assert!(
+        refused(&found),
+        "a foreground cwd outside trusted roots must not build a ReviewTarget: {found:?}"
+    );
+}
+
+/// `session.info.cwd` outside every locally trusted root is not a review target.
+#[tokio::test]
+async fn review_session_info_cwd_outside_trusted_roots_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let launch = std::fs::canonicalize(&git.repo).expect("canonical launch folder");
+    let hostile = git.path().join("other");
+    let repos = trusted(&launch);
+    let runner = GitRunner::from_env();
+    let info = FixedInfo {
+        cwd: hostile.to_string_lossy().into_owned(),
+    };
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &info,
+    };
+    let found = locate(&row("fixture", "local-moved"), &ctx).await;
+    assert!(
+        refused(&found),
+        "session.info cwd outside trusted roots must not build a ReviewTarget: {found:?}"
+    );
+}
+
+/// A symlink whose target leaves the trusted root is refused, even when the link
+/// itself sits inside that root.
+#[tokio::test]
+async fn review_symlink_cwd_outside_trusted_roots_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let launch = std::fs::canonicalize(&git.repo).expect("canonical launch folder");
+    let outside = git.path().join("other");
+    let link = launch.join("escape");
+    std::os::unix::fs::symlink(&outside, &link).expect("symlink");
+    let repos = trusted(&launch);
+    let runner = GitRunner::from_env();
+    let info = FixedInfo {
+        cwd: link.to_string_lossy().into_owned(),
+    };
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &info,
+    };
+    let found = locate(&row("fixture", "local-link"), &ctx).await;
+    assert!(
+        refused(&found),
+        "a symlink that resolves outside trusted roots must not build a ReviewTarget: {found:?}"
+    );
+}
+
+/// `/trusted-evil` is not inside `/trusted`: containment is by path component.
+#[tokio::test]
+async fn review_sibling_prefix_cwd_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let trusted_root = git.path().join("trusted");
+    let sibling = git.path().join("trusted-evil");
+    git.ok(git.path(), &["init", "-b", "main", "trusted"]);
+    git.ok(git.path(), &["init", "-b", "main", "trusted-evil"]);
+    let trusted_root = std::fs::canonicalize(&trusted_root).expect("canonical trusted");
+    let sibling = std::fs::canonicalize(&sibling).expect("canonical sibling");
+    let sibling_text = sibling.to_string_lossy();
+    let trusted_text = trusted_root.to_string_lossy();
+    assert!(
+        sibling_text.starts_with(trusted_text.as_ref()),
+        "the fixture must be a string prefix so a naive check would accept it"
+    );
+    let repos = trusted(&trusted_root);
+    let runner = GitRunner::from_env();
+    let info = FixedInfo {
+        cwd: sibling.to_string_lossy().into_owned(),
+    };
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &info,
+    };
+    let found = locate(&row("fixture", "local-sibling"), &ctx).await;
+    assert!(
+        refused(&found),
+        "a sibling whose name shares a prefix must not build a ReviewTarget: {found:?}"
+    );
+
+    let key = row("fixture", "local-sibling-fg");
+    let cwd = sibling.to_string_lossy().into_owned();
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: Some((&key, Some(cwd.as_str()))),
+        info: &info,
+    };
+    let found = locate(&key, &ctx).await;
+    assert!(
+        refused(&found),
+        "foreground sibling prefix must not build a ReviewTarget: {found:?}"
+    );
+}
+
+/// The launch folder opens, and the review target keeps the canonical path that
+/// passed the trust check rather than the gateway's original spelling.
+#[tokio::test]
+async fn review_launch_folder_opens_on_its_canonical_path() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let launch = std::fs::canonicalize(&git.repo).expect("canonical launch folder");
+    let indirect = launch
+        .join("..")
+        .join(launch.file_name().expect("launch name"));
+    assert_ne!(
+        indirect, launch,
+        "the gateway spelling differs from the canonical path"
+    );
+    assert_eq!(
+        std::fs::canonicalize(&indirect).expect("indirect canonical"),
+        launch
+    );
+    let repos = trusted(&launch);
+    let runner = GitRunner::from_env();
+    let key = row("fixture", "local-launch");
+    let cwd = indirect.to_string_lossy().into_owned();
+    let info = FixedInfo { cwd: cwd.clone() };
+
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: Some((&key, Some(cwd.as_str()))),
+        info: &info,
+    };
+    let found = locate(&key, &ctx).await;
+    let Located::Found(target) = found else {
+        panic!("the launch folder opens from the foreground row: {found:?}");
+    };
+    assert_eq!(
+        target.folder, launch,
+        "the review keeps the canonical path that passed containment"
+    );
+
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &info,
+    };
+    let found = locate(&row("fixture", "local-launch-info"), &ctx).await;
+    let Located::Found(target) = found else {
+        panic!("the launch folder opens from session.info: {found:?}");
+    };
+    assert_eq!(target.folder, launch);
+
+    let alias = git.path().join("launch-alias");
+    std::os::unix::fs::symlink(&launch, &alias).expect("alias");
+    let info = FixedInfo {
+        cwd: alias.to_string_lossy().into_owned(),
+    };
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &info,
+    };
+    let found = locate(&row("fixture", "local-alias"), &ctx).await;
+    let Located::Found(target) = found else {
+        panic!("a symlink that resolves to the launch folder opens: {found:?}");
+    };
+    assert_eq!(target.folder, launch);
+    assert_ne!(target.folder, alias);
+}
+
+/// A linked checkout inside the trusted folder whose main checkout is outside
+/// is not a review target, from either gateway cwd.
+#[tokio::test]
+async fn review_linked_worktree_outside_main_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let trusted_root = std::fs::canonicalize(&git.repo).expect("trusted");
+    let outside = git.path().join("other");
+    let linked = trusted_root.join("linked");
+    let linked_arg = linked.to_string_lossy().into_owned();
+    git.ok(
+        &outside,
+        &[
+            "worktree",
+            "add",
+            "--no-track",
+            "-b",
+            "talaria/sneak",
+            &linked_arg,
+            "main",
+        ],
+    );
+    let repos = trusted(&trusted_root);
+    let runner = GitRunner::from_env();
+    let cwd = linked.to_string_lossy().into_owned();
+    let info = FixedInfo { cwd: cwd.clone() };
+    let key = row("fixture", "local-linked");
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: Some((&key, Some(cwd.as_str()))),
+        info: &info,
+    };
+    let found = locate(&key, &ctx).await;
+    assert!(
+        refused(&found),
+        "foreground linked checkout with an outside main must not open: {found:?}"
+    );
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &info,
+    };
+    let found = locate(&row("fixture", "local-linked-info"), &ctx).await;
+    assert!(
+        refused(&found),
+        "session.info linked checkout with an outside main must not open: {found:?}"
+    );
+}
+
+/// A record whose path is outside the trusted root does not open that checkout.
+#[tokio::test]
+async fn review_record_outside_trusted_root_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let outside = git.path().join("other");
+    write_record(
+        &git,
+        "talaria/evil",
+        &outside.to_string_lossy(),
+        "local-evil",
+    );
+    let repos = trusted(&git.repo);
+    let runner = GitRunner::from_env();
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &NeverAsked,
+    };
+    let found = locate(&row("fixture", "local-evil"), &ctx).await;
+    assert!(
+        refused(&found),
+        "an outside record path must not open a review: {found:?}"
+    );
+}
+
+/// A record under a symlinked `.worktrees` does not open the link target.
+#[tokio::test]
+async fn review_record_symlinked_worktrees_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    git.ok(git.path(), &["init", "-b", "main", "elsewhere/evil"]);
+    std::os::unix::fs::symlink(git.path().join("elsewhere"), git.repo.join(".worktrees"))
+        .expect("symlink");
+    write_record(&git, "talaria/evil", ".worktrees/evil", "local-evil");
+    let repos = trusted(&git.repo);
+    let runner = GitRunner::from_env();
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &NeverAsked,
+    };
+    let found = locate(&row("fixture", "local-evil"), &ctx).await;
+    assert!(
+        refused(&found),
+        "a symlinked .worktrees record must not open a review: {found:?}"
+    );
+}
+
+/// Fallback record attachment ignores an outside path and a symlink that
+/// resolves to the folder being opened.
+#[tokio::test]
+async fn review_record_at_ignores_outside_and_symlinked_records() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let launch = std::fs::canonicalize(&git.repo).expect("launch");
+    let outside = git.path().join("other");
+    write_record(
+        &git,
+        "talaria/outside",
+        &outside.to_string_lossy(),
+        "other-session",
+    );
+    std::fs::create_dir(launch.join(".worktrees")).expect("worktrees");
+    std::os::unix::fs::symlink(&launch, launch.join(".worktrees/alias")).expect("alias");
+    write_record(&git, "talaria/pwned", ".worktrees/alias", "another-session");
+    let repos = trusted(&launch);
+    let runner = GitRunner::from_env();
+    let info = FixedInfo {
+        cwd: launch.to_string_lossy().into_owned(),
+    };
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &info,
+    };
+    let found = locate(&row("fixture", "local-open"), &ctx).await;
+    let Located::Found(target) = found else {
+        panic!("the trusted folder still opens: {found:?}");
+    };
+    assert_eq!(target.folder, launch);
+    assert_ne!(target.folder, outside);
+    assert!(
+        target.record.is_none(),
+        "neither the outside record nor the symlink record attaches: {:?}",
+        target.record
     );
 }

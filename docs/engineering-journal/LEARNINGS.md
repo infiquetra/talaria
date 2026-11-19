@@ -12,6 +12,39 @@ measurement.
 **Generalizable rule.** Bound prompt fields at admission, keep cell ids monotonic across pruning,
 and measure the sanitized text when enforcing a render limit.
 
+## 2026-11-19 — The attachment denylist is the credential-path property
+
+**Evidence.** `credential_path` named seven env files and nine home directories.
+Dropping `Library/Keychains/login.keychain-db` attached it as an ordinary file.
+`attachments_service::credential_denylist_matches_stores_keys_and_env_names`
+then refused that path, each nested store path, case-insensitive `.pem`, `.key`,
+`.p12` and `.pfx` names, the generated `.env.<name>[.local]` matrix, and a
+symlink whose canonical target sits in a store. A follow-up review still
+attached `.ENV.PROD`, a non-UTF-8 `.env.prod` byte, `library/keychains`, a
+UTF-8 symlink onto that byte name, a trailing-space path Hermes would strip,
+and an accepted `@file:.env.prod` completion. Those rows now refuse as well.
+
+**Mechanism.** A basename is credential material, in any directory and on the
+raw filename bytes, when its ASCII-lowercased bytes are `.env`, `.envrc`, or
+start with `.env.`, or when they are `id_rsa`, `id_ed25519`, `id_ecdsa`,
+`id_dsa`, or end in `.pem`, `.key`, `.p12`, or `.pfx`. A home path is a store
+when a component-wise ASCII-case-insensitive prefix matches `Library/Keychains`,
+`.password-store`, `.config/op`, `.config/1password`, `.local/share/keyrings`,
+`.config/age`, `.config/sops`, or `.config/git/credentials`, or when the whole
+path matches `.git-credentials` the same way. The check also runs on the
+canonical path. Before `file.attach`, Talaria checks how local stripping,
+quote removal, and common `~` and `$` expansions affect that path. The guard
+checks dropped and pasted paths, completion acceptance, and `@file:` references
+visible in the submitted draft. It does not check references inside collapsed
+pastes, references followed by punctuation or a line range, or gateway-side
+path fallbacks. Drafts held before a session opens are checked against the
+launch folder without a second check in the opened session's workspace.
+`HERMES_HOME` and the inode check stay as they were.
+
+**Generalizable rule.** When a security control is a list, state the
+machine-checkable property the list samples and assert the list against that
+property.
+
 ## 2026-11-19 — A passive channel never answers a server request
 
 **Evidence.** A workflow progress link that matched `Inbound::ServerRequest` with `_ => vec![]`

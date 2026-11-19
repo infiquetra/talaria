@@ -1060,3 +1060,30 @@ async fn listing_shares_one_origin_lookup_and_never_contacts_the_remote() {
             .any(|args| args.iter().any(|arg| arg == "ls-remote"))
     );
 }
+
+/// Git operations stay on the authorized checkout.
+#[tokio::test]
+async fn review_git_binds_to_the_authorized_checkout() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let runner = GitRunner::from_env();
+    let link = git.path().join("swap");
+    std::os::unix::fs::symlink(&git.repo, &link).expect("symlink");
+    let mut swapped = review_target(&link, None);
+    swapped.main_root = git.repo.clone();
+    let listed = list(&runner, &swapped, Scope::Uncommitted).await;
+    assert!(
+        listed.is_err(),
+        "a symlink in place of the checkout is not listed: {listed:?}"
+    );
+
+    let mut mismatched = review_target(&git.repo, None);
+    mismatched.main_root = git.path().join("other");
+    let listed = list(&runner, &mismatched, Scope::Uncommitted).await;
+    assert!(
+        listed.is_err(),
+        "a different main checkout is not used: {listed:?}"
+    );
+}

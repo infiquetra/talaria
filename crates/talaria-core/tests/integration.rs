@@ -335,6 +335,8 @@ mod speakable_summary;
 mod subagent_batch;
 #[path = "integration/subagent_tree.rs"]
 mod subagent_tree;
+#[path = "integration/text_sanitize.rs"]
+mod text_sanitize;
 #[path = "integration/tool_generating.rs"]
 mod tool_generating;
 #[path = "integration/tool_view.rs"]

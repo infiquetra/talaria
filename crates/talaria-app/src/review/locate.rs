@@ -25,7 +25,9 @@ pub enum Located {
 }
 
 /// Find a row's folder: the worktree record, else the foreground row's own
-/// folder, else `session.info`. Never Talaria's own folder.
+/// folder, else `session.info`. A gateway folder opens only when its canonical
+/// path sits inside a root this process already holds. Talaria's own process
+/// folder stays closed unless that folder is itself one of those roots.
 pub async fn locate(row: &RowKey, ctx: &LocateContext<'_>) -> Located {
     for root in ctx.known_roots.roots() {
         let records = records_in(ctx.git, &root).await;
@@ -34,7 +36,7 @@ pub async fn locate(row: &RowKey, ctx: &LocateContext<'_>) -> Located {
                 && record.profile == row.profile
                 && review_tree_is_contained(&record.main_root, &record.path)
         }) {
-            return open_record(ctx.git, row, record).await;
+            return open_contained_record(ctx.git, row, record).await;
         }
     }
     let title_row = Some(row.clone());
@@ -42,20 +44,71 @@ pub async fn locate(row: &RowKey, ctx: &LocateContext<'_>) -> Located {
         && foreground == row
         && !cwd.is_empty()
     {
-        return open_folder(ctx.git, Path::new(cwd), title_row, None).await;
+        return open_trusted(ctx, cwd, title_row).await;
     }
     match ctx.info.info(row).await {
         Ok(SessionInfoReply { cwd: Some(cwd), .. }) if !cwd.is_empty() => {
-            if is_own_folder(Path::new(&cwd)) {
-                return Located::NotFound(NO_FOLDER.to_owned());
-            }
-            open_folder(ctx.git, Path::new(&cwd), title_row, None).await
+            open_trusted(ctx, &cwd, title_row).await
         }
         Ok(_) | Err(SessionInfoError::Refused(_) | SessionInfoError::Other(_)) => {
             Located::NotFound(NO_FOLDER.to_owned())
         }
         Err(SessionInfoError::NotFound) => Located::NotFound(SESSION_GONE.to_owned()),
     }
+}
+
+/// Open `cwd` only when the candidate, its main checkout, and its git toplevel
+/// are each inside a locally trusted root. The review keeps the candidate's
+/// canonical path.
+async fn open_trusted(ctx: &LocateContext<'_>, cwd: &str, session: Option<RowKey>) -> Located {
+    let Some(folder) = trusted_canonical(Path::new(cwd), ctx.known_roots) else {
+        return Located::NotFound(NO_FOLDER.to_owned());
+    };
+    if is_own_folder(&folder) && !ctx.known_roots.explicit_operator_folder(&folder) {
+        return Located::NotFound(NO_FOLDER.to_owned());
+    }
+    let main = match main_root_of(ctx.git, &folder).await {
+        Ok(root) => root,
+        Err(error) => return Located::NotFound(error.what),
+    };
+    let Some(main) = trusted_canonical(&main, ctx.known_roots) else {
+        return Located::NotFound(NO_FOLDER.to_owned());
+    };
+    let Some(toplevel) = git_text(
+        ctx.git,
+        &folder,
+        &["-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"],
+    )
+    .await
+    else {
+        return Located::NotFound(NO_FOLDER.to_owned());
+    };
+    let Some(toplevel) = trusted_canonical(Path::new(&toplevel), ctx.known_roots) else {
+        return Located::NotFound(NO_FOLDER.to_owned());
+    };
+    if toplevel != folder && !folder.starts_with(&toplevel) {
+        return Located::NotFound(NO_FOLDER.to_owned());
+    }
+    open_folder(ctx.git, &folder, session, Some((main, None))).await
+}
+
+/// Canonical path of `folder` when it is equal to or inside a trusted root.
+///
+/// Both sides are canonicalized and compared by path component, so a sibling
+/// such as `trusted-evil` and a symlink that resolves outside the root are refused.
+fn trusted_canonical(folder: &Path, roots: &KnownRepos) -> Option<PathBuf> {
+    let canon = std::fs::canonicalize(folder).ok()?;
+    canon_inside(&canon, roots).then_some(canon)
+}
+
+/// Whether `canon` is equal to or inside a trusted root. `canon` is already canonical.
+fn canon_inside(canon: &Path, roots: &KnownRepos) -> bool {
+    roots.roots().iter().any(|root| {
+        let Ok(root) = std::fs::canonicalize(root) else {
+            return false;
+        };
+        canon == root || canon.starts_with(&root)
+    })
 }
 
 /// Talaria's own working folder is never a session's folder by default.
@@ -67,7 +120,7 @@ fn is_own_folder(folder: &Path) -> bool {
 }
 
 /// A recorded tree opens only when Git's linked worktree is that directory.
-async fn open_record(git: &GitRunner, row: &RowKey, record: WorktreeRecord) -> Located {
+async fn open_contained_record(git: &GitRunner, row: &RowKey, record: WorktreeRecord) -> Located {
     if validated_worktree_root(git, &record.main_root, &record.path)
         .await
         .is_none()
@@ -83,7 +136,7 @@ async fn open_record(git: &GitRunner, row: &RowKey, record: WorktreeRecord) -> L
         git,
         &record.path,
         Some(row.clone()),
-        Some((record.main_root, view)),
+        Some((record.main_root, Some(view))),
     )
     .await
 }
@@ -97,11 +150,13 @@ fn record_view(record: &WorktreeRecord) -> RecordView {
 }
 
 /// Check a folder holds a work tree and build the review target for it.
+///
+/// `known` carries an already identified main checkout and any record view.
 async fn open_folder(
     git: &GitRunner,
     folder: &Path,
     session: Option<RowKey>,
-    known: Option<(PathBuf, RecordView)>,
+    known: Option<(PathBuf, Option<RecordView>)>,
 ) -> Located {
     if !folder.is_dir() {
         return Located::NotFound(format!(
@@ -109,15 +164,15 @@ async fn open_folder(
             folder.to_string_lossy()
         ));
     }
-    let mut main_root = match &known {
-        Some((main_root, _)) => main_root.clone(),
+    let (mut main_root, preset) = match known {
+        Some((main_root, record)) => (main_root, record),
         None => match main_root_of(git, folder).await {
-            Ok(root) => root,
+            Ok(root) => (root, None),
             Err(error) => return Located::NotFound(error.what),
         },
     };
-    let record = match known {
-        Some((_, view)) => Some(view),
+    let record = match preset {
+        Some(view) => Some(view),
         None => record_at(git, &main_root, folder).await,
     };
     let folder = if record.is_some() {
@@ -322,10 +377,14 @@ pub async fn locate_folder(
     }
 }
 
-/// The main roots this Talaria has seen.
+/// Folders this Talaria may review.
+///
+/// `roots` are the containment boundary. `explicit` is the subset the operator
+/// chose. A main checkout discovered from a gateway folder is neither.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KnownRepos {
     roots: BTreeSet<PathBuf>,
+    explicit: BTreeSet<PathBuf>,
 }
 
 impl KnownRepos {
@@ -335,15 +394,28 @@ impl KnownRepos {
         Self::default()
     }
 
-    /// Remember a main root.
+    /// Remember a containment root.
     pub fn insert(&mut self, main_root: PathBuf) {
         self.roots.insert(main_root);
     }
 
-    /// The known roots.
+    /// Remember a folder the operator selected. It is also a containment root.
+    pub fn insert_explicit(&mut self, folder: PathBuf) {
+        self.explicit.insert(folder.clone());
+        self.roots.insert(folder);
+    }
+
+    /// The containment roots.
     #[must_use]
     pub fn roots(&self) -> Vec<PathBuf> {
         self.roots.iter().cloned().collect()
+    }
+
+    /// Whether `canon` is a folder the operator selected, not a discovered checkout.
+    fn explicit_operator_folder(&self, canon: &Path) -> bool {
+        self.explicit
+            .iter()
+            .any(|folder| std::fs::canonicalize(folder).is_ok_and(|folder| folder == canon))
     }
 }
 
