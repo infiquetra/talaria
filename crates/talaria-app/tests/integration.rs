@@ -189,6 +189,8 @@ mod fleet_wire;
 
 #[path = "integration/headless_flow.rs"]
 mod headless_flow;
+#[path = "integration/headless_sanitize.rs"]
+mod headless_sanitize;
 
 #[path = "integration/headless_stream.rs"]
 mod headless_stream;

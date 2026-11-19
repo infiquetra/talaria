@@ -255,9 +255,9 @@ pub fn merge_rows(live: Vec<ListRow>, stored: Vec<ListRow>) -> Vec<ListRow> {
     rows
 }
 
-/// Text from the gateway with escape sequences and control characters removed.
-pub(crate) fn plain(text: &str) -> String {
-    let mut out = String::new();
+/// Text from the gateway with escape sequences and unsafe characters removed.
+pub fn plain(text: &str) -> String {
+    let mut stripped = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\u{1b}' {
@@ -271,12 +271,14 @@ pub(crate) fn plain(text: &str) -> String {
             }
             continue;
         }
-        let bidi = matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
-        if !ch.is_control() && !bidi {
-            out.push(ch);
-        }
+        stripped.push(ch);
     }
-    out
+    talaria_core::text::sanitize_with_options(
+        &stripped,
+        talaria_core::text::SanitizeOptions::CLI,
+        talaria_core::text::Replacement::Drop,
+    )
+    .into_owned()
 }
 
 fn age(started_at: Option<f64>, now: f64) -> String {

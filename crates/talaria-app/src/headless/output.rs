@@ -246,15 +246,12 @@ pub fn render_stderr(result: &HeadlessResult) -> Vec<u8> {
 
 /// The answer for a terminal: controls become `?`, newline and tab stay.
 pub fn terminal_safe(text: &str) -> String {
-    text.chars()
-        .map(|ch| {
-            if ch != '\n' && ch != '\t' && is_control(ch) {
-                '?'
-            } else {
-                ch
-            }
-        })
-        .collect()
+    talaria_core::text::sanitize_with_options(
+        text,
+        talaria_core::text::SanitizeOptions::LAYOUT,
+        talaria_core::text::Replacement::Char('?'),
+    )
+    .into_owned()
 }
 
 /// A warning or failure piece: every control becomes `?`, nothing stays.

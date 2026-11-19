@@ -20,6 +20,8 @@ mod cli;
 mod cli_args;
 #[path = "integration/cli_process.rs"]
 mod cli_process;
+#[path = "integration/cli_sanitizers.rs"]
+mod cli_sanitizers;
 #[path = "integration/configure_cmd.rs"]
 mod configure_cmd;
 #[path = "integration/doctor_cli.rs"]

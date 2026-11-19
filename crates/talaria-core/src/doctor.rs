@@ -261,7 +261,12 @@ fn path_start(c: char) -> bool {
 }
 
 pub fn scrub_text(text: &str, home: Option<&str>) -> String {
-    let mut clean: String = text.chars().map(|c| if c.is_control() || matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') { '?' } else { c }).collect();
+    let mut clean = crate::text::sanitize_with_options(
+        text,
+        crate::text::SanitizeOptions::CLI,
+        crate::text::Replacement::Char('?'),
+    )
+    .into_owned();
     if let Some(home) = home.filter(|home| !home.is_empty()) {
         let mut replaced = String::new();
         let mut rest = clean.as_str();
