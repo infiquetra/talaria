@@ -66,18 +66,169 @@ def _split_yaml_key(text):
     raise ValueError(f"expected a YAML key: {text!r}")
 
 
+_ANCHOR_OR_ALIAS = re.compile(r"(^|\s)[&*](?![&*])[A-Za-z0-9_-]+")
+_DOUBLE_ESCAPES = {
+    "0": "\0",
+    "a": "\a",
+    "b": "\b",
+    "t": "\t",
+    "n": "\n",
+    "v": "\v",
+    "f": "\f",
+    "r": "\r",
+    "e": "\x1b",
+    " ": " ",
+    '"': '"',
+    "/": "/",
+    "\\": "\\",
+    "N": "\u0085",
+    "_": "\u00a0",
+    "L": "\u2028",
+    "P": "\u2029",
+}
+
+
+def _unquoted_pieces(token):
+    pieces = []
+    buffer = []
+    index = 0
+    in_single = False
+    in_double = False
+    while index < len(token):
+        char = token[index]
+        if in_double:
+            if char == "\\":
+                index += 2
+                continue
+            if char == '"':
+                in_double = False
+            index += 1
+            continue
+        if in_single:
+            if char == "'" and index + 1 < len(token) and token[index + 1] == "'":
+                index += 2
+                continue
+            if char == "'":
+                in_single = False
+            index += 1
+            continue
+        if char == '"':
+            if buffer:
+                pieces.append("".join(buffer))
+                buffer = []
+            in_double = True
+            index += 1
+            continue
+        if char == "'":
+            if buffer:
+                pieces.append("".join(buffer))
+                buffer = []
+            in_single = True
+            index += 1
+            continue
+        buffer.append(char)
+        index += 1
+    if in_single or in_double:
+        raise ValueError(f"unclosed quoted YAML scalar: {token!r}")
+    if buffer:
+        pieces.append("".join(buffer))
+    return pieces
+
+
+def _reject_anchor_alias_or_merge(token, *, key):
+    outside = " ".join(_unquoted_pieces(token))
+    if _ANCHOR_OR_ALIAS.search(outside):
+        raise ValueError(f"unsupported YAML anchor or alias: {token!r}")
+    if key and outside.strip().startswith("<<"):
+        raise ValueError(f"unsupported YAML merge key: {token!r}")
+
+
+def _unescape_double_quoted(body):
+    chosen = []
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char != "\\":
+            chosen.append(char)
+            index += 1
+            continue
+        if index + 1 >= len(body):
+            raise ValueError("dangling escape in double-quoted YAML")
+        marker = body[index + 1]
+        if marker in _DOUBLE_ESCAPES:
+            chosen.append(_DOUBLE_ESCAPES[marker])
+            index += 2
+            continue
+        width = {"x": 2, "u": 4, "U": 8}.get(marker)
+        if width is None:
+            raise ValueError(f"unsupported YAML escape: \\{marker}")
+        digits = body[index + 2 : index + 2 + width]
+        if len(digits) != width or any(item not in "0123456789abcdefABCDEF" for item in digits):
+            raise ValueError(f"unsupported YAML escape: \\{marker}{digits}")
+        chosen.append(chr(int(digits, 16)))
+        index += 2 + width
+    return "".join(chosen)
+
+
+def _parse_quoted_scalar(token):
+    quote = token[:1]
+    if quote not in {"'", '"'}:
+        raise ValueError(f"expected a quoted YAML scalar: {token!r}")
+    index = 1
+    body = []
+    while index < len(token):
+        char = token[index]
+        if quote == "'" and char == "'":
+            if index + 1 < len(token) and token[index + 1] == "'":
+                body.append("'")
+                index += 2
+                continue
+            return "".join(body), index + 1
+        if quote == '"' and char == "\\":
+            if index + 1 >= len(token):
+                raise ValueError(f"dangling escape in double-quoted YAML: {token!r}")
+            body.append(char)
+            body.append(token[index + 1])
+            index += 2
+            continue
+        if quote == '"' and char == '"':
+            return _unescape_double_quoted("".join(body)), index + 1
+        body.append(char)
+        index += 1
+    raise ValueError(f"unclosed quoted YAML scalar: {token!r}")
+
+
 def _parse_yaml_scalar(token):
-    if len(token) >= 2 and token[0] == token[-1] == '"':
-        body = token[1:-1]
-        return (
-            body.replace("\\n", "\n")
-            .replace("\\t", "\t")
-            .replace('\\"', '"')
-            .replace("\\\\", "\\")
-        )
-    if len(token) >= 2 and token[0] == token[-1] == "'":
-        return token[1:-1].replace("''", "'")
-    return token
+    stripped = token.strip()
+    if stripped[:1] in {"'", '"'}:
+        value, end = _parse_quoted_scalar(stripped)
+        if stripped[end:].strip():
+            raise ValueError(f"unsupported YAML scalar syntax: {token!r}")
+        return value
+    if stripped[:1] in {"&", "*", "!", "{", "["} or stripped.startswith("<<"):
+        raise ValueError(f"unsupported YAML syntax: {token!r}")
+    return stripped
+
+
+def _decode_mapping_key(token):
+    _reject_anchor_alias_or_merge(token, key=True)
+    stripped = token.strip()
+    if stripped[:1] in {"'", '"'}:
+        value, end = _parse_quoted_scalar(stripped)
+        if stripped[end:].strip():
+            raise ValueError(f"unsupported YAML key syntax: {token!r}")
+        if value == "<<":
+            raise ValueError(f"unsupported YAML merge key: {token!r}")
+        if value == "":
+            raise ValueError(f"empty YAML key: {token!r}")
+        return value
+    if stripped.startswith("<<"):
+        raise ValueError(f"unsupported YAML merge key: {token!r}")
+    if stripped[:1] in {"&", "*", "!", "{", "["}:
+        raise ValueError(f"unsupported YAML key syntax: {token!r}")
+    if stripped == "":
+        raise ValueError(f"empty YAML key: {token!r}")
+    return stripped
 
 
 def _flow_items(text, start, end):
@@ -113,24 +264,22 @@ def _flow_items(text, start, end):
     return items
 
 
-def _parse_flow(token):
-    if token.startswith("["):
-        closing = token.rfind("]")
-        if closing < 1:
-            raise ValueError(f"unclosed flow sequence: {token!r}")
-        return [_parse_yaml_scalar(item) if item else None for item in _flow_items(token, 1, closing)]
-    if token.startswith("{"):
-        closing = token.rfind("}")
-        if closing < 1:
-            raise ValueError(f"unclosed flow mapping: {token!r}")
-        mapping = {}
-        for item in _flow_items(token, 1, closing):
-            if not item:
-                continue
-            key, value = _split_yaml_key(item)
-            mapping[key] = _parse_yaml_scalar(value) if value else None
-        return mapping
-    raise ValueError(f"expected a flow collection: {token!r}")
+def _parse_flow_sequence(token):
+    if not token.startswith("["):
+        raise ValueError(f"expected a flow sequence: {token!r}")
+    closing = token.rfind("]")
+    if closing < 1 or token[closing + 1 :].strip():
+        raise ValueError(f"unclosed flow sequence: {token!r}")
+    items = []
+    for item in _flow_items(token, 1, closing):
+        if not item:
+            items.append(None)
+            continue
+        _reject_anchor_alias_or_merge(item, key=False)
+        if item[:1] == "{":
+            raise ValueError(f"unsupported YAML flow mapping: {item!r}")
+        items.append(_parse_yaml_scalar(item))
+    return items
 
 
 def _is_block_scalar(token):
@@ -187,7 +336,7 @@ class _WorkflowYaml:
                 break
             self.index = position + 1
             key, value = _split_yaml_key(content)
-            mapping[key] = self._value(key_indent, value)
+            mapping[_decode_mapping_key(key)] = self._value(key_indent, value)
         return mapping
 
     def _value(self, key_indent, token):
@@ -200,8 +349,11 @@ class _WorkflowYaml:
             if line.lstrip().startswith("-"):
                 return self._sequence(indent)
             return self._mapping(indent)
-        if token[:1] in "[{":
-            return _parse_flow(token)
+        _reject_anchor_alias_or_merge(token, key=False)
+        if token[:1] == "{":
+            raise ValueError(f"unsupported YAML flow mapping: {token!r}")
+        if token[:1] == "[":
+            return _parse_flow_sequence(token)
         return _parse_yaml_scalar(token)
 
     def _sequence(self, dash_indent):
@@ -226,8 +378,10 @@ class _WorkflowYaml:
                     items.append(self._sequence(nested_indent))
                 else:
                     items.append(self._mapping(nested_indent))
-            elif rest[:1] in "[{":
-                items.append(_parse_flow(rest))
+            elif rest[:1] == "{":
+                raise ValueError(f"unsupported YAML flow mapping: {rest!r}")
+            elif rest[:1] == "[":
+                items.append(_parse_flow_sequence(rest))
             elif ":" in rest:
                 key, value = _split_yaml_key(rest)
                 items.append(self._mapping_from(dash_indent + 2, key, value))
@@ -236,7 +390,7 @@ class _WorkflowYaml:
         return items
 
     def _mapping_from(self, key_indent, key, token):
-        mapping = {key: self._value(key_indent, token)}
+        mapping = {_decode_mapping_key(key): self._value(key_indent, token)}
         mapping.update(self._mapping(key_indent))
         return mapping
 
@@ -363,9 +517,9 @@ class WorkflowTests(unittest.TestCase):
         with self.subTest("tap"):
             self.assertEqual(jobs["tap"]["permissions"], {"contents": "read"})
 
-        declared = [name for name, job in jobs.items() if "permissions" in job]
+        declared = {name for name, job in jobs.items() if "permissions" in job}
         with self.subTest("declared"):
-            self.assertEqual(declared, ["publish", "tap"])
+            self.assertEqual(declared, {"publish", "tap"})
 
         writers = []
         for name, job in jobs.items():
@@ -379,3 +533,36 @@ class WorkflowTests(unittest.TestCase):
 
         with self.subTest("writers"):
             self.assertEqual(writers, ["publish"])
+
+    def test_quoted_permission_keys_cannot_hide_a_write_override(self):
+        spellings = (
+            '"permissions"',
+            "'permissions'",
+            '"permiss\\u0069ons"',
+        )
+        for spelling in spellings:
+            text = (
+                "permissions:\n"
+                "  contents: read\n"
+                "jobs:\n"
+                "  check:\n"
+                f"    {spelling}:\n"
+                "      contents: write\n"
+            )
+            with self.subTest(spelling=spelling):
+                document = _load_workflow_yaml(text)
+                granted = document["jobs"]["check"]["permissions"]
+                self.assertEqual(granted, {"contents": "write"})
+                self.assertTrue(_grants_write(granted))
+
+    def test_unsupported_workflow_yaml_fails_closed(self):
+        samples = {
+            "flow mapping": "jobs:\n  check:\n    permissions: {contents: write}\n",
+            "merge key": "jobs:\n  check:\n    <<: *base\n",
+            "anchor": "jobs:\n  check: &job\n    runs-on: ubuntu-latest\n",
+            "alias": "jobs:\n  check:\n    permissions: *alias\n",
+        }
+        for name, text in samples.items():
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    _load_workflow_yaml(text)
