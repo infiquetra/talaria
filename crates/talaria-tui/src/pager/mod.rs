@@ -15,7 +15,7 @@ use ratatui::text::Line;
 use talaria_core::session::Cell;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::history::{CellLines, PlainCellLines};
+use crate::history::{CellLines, PlainCellLines, sanitize};
 use crate::theme::surfaces::{ViewStyles, tokens as t};
 
 pub use render::{
@@ -526,10 +526,11 @@ impl Pager {
         let right = if ctx.running { "working" } else { "idle" };
         let right_width = right.width();
         let avail = usize::from(area.width).saturating_sub(right_width + 1);
-        let title = if ctx.title.is_empty() {
+        let sanitized_title = sanitize(ctx.title);
+        let title = if sanitized_title.is_empty() {
             "untitled session"
         } else {
-            ctx.title
+            sanitized_title.as_ref()
         };
         let count = format!(" · {} cells", ctx.cells.len());
         let mut left = format!(" Transcript · {title}{count}");
@@ -672,27 +673,35 @@ impl Pager {
             buf[(x, row)].reset();
         }
         buf.set_style(footer, theme.footer);
-        let right = self.right_part(ctx);
+        let right_raw = self.right_part(ctx);
+        let right = sanitize(&right_raw);
         let right_width = right.width();
         let avail = usize::from(area.width).saturating_sub(right_width + 1);
-        let left = self.left_part(ctx);
+        let left_raw = self.left_part(ctx);
+        let left_clean = sanitize(&left_raw);
         let left = if avail < 2 {
             String::new()
         } else {
-            fit(&left, avail)
+            fit(&left_clean, avail)
         };
         buf.set_stringn(area.x, row, left, avail, theme.footer);
         if right_width <= usize::from(area.width) {
-            let x = area.x
-                + area
-                    .width
-                    .saturating_sub(u16::try_from(right_width).unwrap_or(0));
-            buf.set_stringn(x, row, right, right_width, theme.footer);
+            let right_cols = u16::try_from(right_width).unwrap_or(area.width);
+            let x = area
+                .x
+                .saturating_add(area.width.saturating_sub(right_cols.min(area.width)));
+            buf.set_stringn(
+                x,
+                row,
+                right.as_ref(),
+                right_width.min(usize::from(area.right().saturating_sub(x))),
+                theme.footer,
+            );
         } else {
             buf.set_stringn(
                 area.x,
                 row,
-                fit(&right, usize::from(area.width)),
+                fit(right.as_ref(), usize::from(area.width)),
                 usize::from(area.width),
                 theme.footer,
             );
@@ -1294,7 +1303,12 @@ fn rendered_hits(lines: &[Line<'static>], query: Option<&Query>) -> RenderedHits
 }
 
 /// The text cut to a width, with an ellipsis when it does not fit.
+///
+/// Controls and line separators are stand-ins before the width is measured, so a
+/// multi-cell stand-in cannot spill past `width` or into the next row.
 fn fit(text: &str, width: usize) -> String {
+    let clean = sanitize(text);
+    let text = clean.as_ref();
     if text.width() <= width {
         return text.to_string();
     }

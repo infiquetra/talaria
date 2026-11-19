@@ -260,7 +260,7 @@ fn masked_view_of(info: &MaskedRequestInfo) -> MaskedView {
         MaskedKind::VaultUnlockPrompt => "vault.unlock_prompt",
     };
     MaskedView {
-        request_id: info.id.clone(),
+        request_id: info.token.clone(),
         session_id: info.session_id.clone(),
         method: method.to_owned(),
         fields: info
@@ -268,7 +268,30 @@ fn masked_view_of(info: &MaskedRequestInfo) -> MaskedView {
             .iter()
             .map(|(name, value)| ((*name).to_owned(), value.clone()))
             .collect(),
+        target: info.target().into_shown(),
     }
+}
+
+trait ShownTarget {
+    fn into_shown(self) -> talaria_tui::prompts::LiveMaskedTarget;
+}
+
+impl ShownTarget for talaria_app::prompts::LiveMaskedTarget {
+    fn into_shown(self) -> talaria_tui::prompts::LiveMaskedTarget {
+        talaria_tui::prompts::LiveMaskedTarget {
+            token: self.token,
+            session_id: self.session_id,
+            generation: self.generation,
+            instance_id: self.instance_id,
+            service_id: self.service_id,
+        }
+    }
+}
+
+fn open_target(service: &PromptService, id: &str) -> talaria_app::prompts::LiveMaskedTarget {
+    masked_info(service, id)
+        .unwrap_or_else(|| panic!("masked request {id} is not open"))
+        .target()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -629,9 +652,13 @@ async fn request_cancel_reasons() {
 
     // An answer after a withdrawal writes nothing.
     let (late, _) = rig.offer("sudo", json!({})).await;
+    let late_target = open_target(&rig.service, &late);
     let notices = rig.withdraw(&late, "sudo", "timeout").await;
     assert_eq!(texts(&notices), [TIMED_OUT]);
-    let result = rig.service.answer_masked(&late, secret("late-value")).await;
+    let result = rig
+        .service
+        .answer_masked(&late_target, secret("late-value"))
+        .await;
     assert!(
         result.is_err(),
         "an answer to a withdrawn request must fail"
@@ -649,7 +676,7 @@ async fn request_cancel_reasons() {
     rig.mock.publish_cancel_after_response(Some("resolved"));
     let (answered, _) = rig.offer("sudo", json!({})).await;
     rig.service
-        .answer_masked(&answered, secret("typed-value"))
+        .answer_masked(&open_target(&rig.service, &answered), secret("typed-value"))
         .await
         .expect("the answer should be written");
     rig.mock.wait_for_answer(&answered, 0).await;
@@ -673,7 +700,7 @@ async fn request_cancel_reasons() {
     for reason in ["timeout", "interrupted"] {
         let (id, _) = rig.offer("sudo", json!({})).await;
         rig.service
-            .answer_masked(&id, secret("typed-value"))
+            .answer_masked(&open_target(&rig.service, &id), secret("typed-value"))
             .await
             .expect("the answer should be written");
         rig.mock.wait_for_answer(&id, 0).await;
@@ -872,6 +899,7 @@ async fn connection_replaced_drops_masked_cards() {
     let (orphan, _) = rig
         .offer("sudo", json!({"command": "sudo apt-get install jq"}))
         .await;
+    let orphan_target = open_target(&rig.service, &orphan);
     assert_eq!(rig.service.masked_requests().len(), 1);
 
     let generation = rig.mock.replace_connection(&rig.client).await;
@@ -887,7 +915,7 @@ async fn connection_replaced_drops_masked_cards() {
     // The old request can no longer be answered, and nothing goes out on either connection.
     let result = rig
         .service
-        .answer_masked(&orphan, secret("late-value"))
+        .answer_masked(&orphan_target, secret("late-value"))
         .await;
     assert!(
         result.is_err(),
@@ -917,7 +945,7 @@ async fn connection_replaced_drops_masked_cards() {
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].id, fresh);
     rig.service
-        .answer_masked(&fresh, secret("typed-value"))
+        .answer_masked(&open_target(&rig.service, &fresh), secret("typed-value"))
         .await
         .expect("an answer on the new connection should be written");
     let answer = rig.mock.wait_for_answer(&fresh, 0).await;
@@ -1168,4 +1196,45 @@ async fn connection_answer_sends_connection_respond() {
         "continue must send targets empty or absent"
     );
     assert!(continue_params["result"].get("said").is_none());
+}
+
+#[tokio::test]
+async fn stale_masked_target_writes_nothing() {
+    let mut rig = Rig::new().await;
+    let (id, _) = rig
+        .offer("secret", json!({"env_var": "SAFE_KEY", "prompt": "key"}))
+        .await;
+    let mut stale = open_target(&rig.service, &id);
+    stale.service_id = stale.service_id.wrapping_add(1);
+    let result = rig
+        .service
+        .answer_masked(&stale, secret("typed-for-the-wrong-service"))
+        .await;
+    assert!(matches!(result, Err(RespondError::Cancelled)));
+    assert!(
+        rig.mock
+            .no_new_frames_within(Duration::from_millis(100))
+            .await,
+        "a mismatched service must not write"
+    );
+    assert!(rig.mock.answers_for(&id).is_empty());
+
+    let mut other_session = open_target(&rig.service, &id);
+    other_session.session_id = Some("other-session".to_owned());
+    let result = rig
+        .service
+        .answer_masked(&other_session, secret("typed-for-the-wrong-session"))
+        .await;
+    assert!(matches!(result, Err(RespondError::Cancelled)));
+    assert!(rig.mock.answers_for(&id).is_empty());
+
+    rig.service
+        .answer_masked(
+            &open_target(&rig.service, &id),
+            secret("typed-for-the-card"),
+        )
+        .await
+        .expect("the original card stays answerable");
+    let answer = rig.mock.wait_for_answer(&id, 0).await;
+    assert_eq!(answer.params["value"], json!("typed-for-the-card"));
 }

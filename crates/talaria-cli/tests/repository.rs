@@ -427,8 +427,12 @@ const CHECKED_PLACES: &[&str] = &[
     ":(exclude)crates/talaria-cli/tests/repository.rs",
 ];
 
-const CLASSIFY_COMMAND: &str =
-    r#"sh tools/ci/change-scope.sh "origin/$BASE_REF" >> "$GITHUB_OUTPUT""#;
+const TRUSTED_CLASSIFY: &[&str] = &[
+    r#"BASE_SHA=$(git show-ref --verify --hash "refs/remotes/origin/$BASE_REF")"#,
+    r#"classifier="$RUNNER_TEMP/change-scope.sh""#,
+    r#"git show "${BASE_SHA}:tools/ci/change-scope.sh" > "$classifier""#,
+    r#"sh "$classifier" "$BASE_SHA" >> "$GITHUB_OUTPUT""#,
+];
 
 #[test]
 fn docs_only_fast_path_keeps_the_required_checks_reporting() {
@@ -464,9 +468,19 @@ fn docs_only_fast_path_keeps_the_required_checks_reporting() {
 
     for workflow in [".github/workflows/ci.yml", ".github/workflows/bench.yml"] {
         let text = read_repo_file(&root, workflow);
+        for command in TRUSTED_CLASSIFY {
+            assert!(
+                text.contains(command),
+                "{workflow} must classify the change from the base branch blob"
+            );
+        }
         assert!(
-            text.contains(CLASSIFY_COMMAND),
-            "{workflow} must classify the change with tools/ci/change-scope.sh"
+            !text.contains(r#"sh tools/ci/change-scope.sh"#),
+            "{workflow} must not execute change-scope.sh from the checkout"
+        );
+        assert!(
+            !text.contains(r#"origin/$BASE_REF:"#) && !text.contains(r#""origin/$BASE_REF""#),
+            "{workflow} must not pass the short ref origin/$BASE_REF to git"
         );
         // A path filter stops the workflow from running, and a required check that never
         // reports blocks the pull request for good.

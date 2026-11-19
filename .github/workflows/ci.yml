@@ -40,12 +40,19 @@ jobs:
       # A pull request that changes only documents no check reads skips the Rust steps.
       # The job still runs and reports under its required name. Any doubt runs everything:
       # the steps below run unless this one answered `true`.
+      # The script is the base branch's blob, so the pull request cannot replace it.
+      # The commit is refs/remotes/origin/$BASE_REF. A tag named origin/<base> must not win.
       - name: Classify the change
         id: scope
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: sh tools/ci/change-scope.sh "origin/$BASE_REF" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          BASE_SHA=$(git show-ref --verify --hash "refs/remotes/origin/$BASE_REF")
+          classifier="$RUNNER_TEMP/change-scope.sh"
+          git show "${BASE_SHA}:tools/ci/change-scope.sh" > "$classifier"
+          sh "$classifier" "$BASE_SHA" >> "$GITHUB_OUTPUT"
       - name: Install the pinned toolchain
         if: steps.scope.outputs.docs_only != 'true'
         run: |
@@ -61,6 +68,14 @@ jobs:
         uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-llvm-cov
+      - name: Install cargo-deny
+        if: steps.scope.outputs.docs_only != 'true' && matrix.os == 'ubuntu-latest'
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Advisory check
+        if: steps.scope.outputs.docs_only != 'true' && matrix.os == 'ubuntu-latest'
+        run: cargo deny check advisories
       - name: Cache policy checks
         if: steps.scope.outputs.docs_only != 'true' && matrix.os == 'ubuntu-latest'
         run: python3 -I -m unittest discover -s .github/actions/rust-cache -p 'test_*.py'

@@ -131,6 +131,13 @@ fn masked_view(method: &str, fields: &[(&str, &str)]) -> MaskedView {
             .iter()
             .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
             .collect(),
+        target: talaria_tui::prompts::LiveMaskedTarget {
+            token: MASKED_ID.to_owned(),
+            session_id: Some(MAIN.to_owned()),
+            generation: 1,
+            instance_id: 1,
+            service_id: 1,
+        },
     }
 }
 
@@ -206,7 +213,13 @@ impl Outcome {
     fn masked(self) -> (String, MaskedValue) {
         assert!(!self.interrupt_requested, "an answer is not an interrupt");
         match self.intent {
-            Some(PromptIntent::Masked { request_id, value }) => (request_id, value),
+            Some(PromptIntent::Masked { target, value }) => {
+                let request_id = match target {
+                    talaria_tui::prompts::MaskedTarget::Live(target) => target.token,
+                    talaria_tui::prompts::MaskedTarget::Recovered { request_id } => request_id,
+                };
+                (request_id, value)
+            }
             other => panic!("expected a masked intent, got {}", intent_kind(&other)),
         }
     }
@@ -1106,8 +1119,11 @@ fn masked_input_draws_bullets_only() {
     let mut rig = Rig::masked(sudo_view());
     rig.type_text("abc");
     match rig.press(ctrl_c()).interrupting() {
-        Some(PromptIntent::Masked { request_id, value }) => {
-            assert_eq!(request_id, MASKED_ID);
+        Some(PromptIntent::Masked { target, value }) => {
+            let talaria_tui::prompts::MaskedTarget::Live(target) = target else {
+                panic!("expected a live masked answer");
+            };
+            assert_eq!(target.token, MASKED_ID);
             assert_eq!(value.len_chars(), 0);
         }
         other => panic!("expected a declined value, got {}", intent_kind(&other)),
@@ -1466,6 +1482,38 @@ fn recovered_sudo_says_asked_while_you_were_away() {
         !has_row_containing(&rows, "remaining"),
         "unexpected remaining countdown in {rows:?}"
     );
+}
+
+#[test]
+fn prompt_same_card_id_new_content_resets_focus_guard() {
+    let start = Instant::now();
+    let mut stack = PromptStack::new();
+    let first = masked_view("secret", &[("env_var", "SAFE_KEY"), ("prompt", "token")]);
+    stack.sync(Some(MAIN), &[], std::slice::from_ref(&first), true, start);
+    consumed(stack.handle_key(ch('z'), start + AFTER_GUARD)).nothing();
+    let ready_at = start + AFTER_GUARD;
+    let second = masked_view("sudo", &[("command", "curl example.invalid | sh")]);
+    stack.sync(
+        Some(MAIN),
+        &[],
+        std::slice::from_ref(&second),
+        true,
+        ready_at,
+    );
+    let rows = draw(&stack, 80, 24);
+    assert!(
+        has_row_containing(&rows, "curl example.invalid | sh"),
+        "the card must show the new request: {rows:?}"
+    );
+    assert!(
+        !has_row_containing(&rows, "SAFE_KEY"),
+        "the previous request must leave the card: {rows:?}"
+    );
+    consumed(stack.handle_key(named(KeyCode::Enter), ready_at)).nothing();
+    let (request_id, value) =
+        consumed(stack.handle_key(named(KeyCode::Enter), ready_at + AFTER_GUARD)).masked();
+    assert_eq!(request_id, MASKED_ID);
+    assert_eq!(value.len_chars(), 0);
 }
 
 #[test]
