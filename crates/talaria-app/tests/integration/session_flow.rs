@@ -263,6 +263,7 @@ struct ScreenLog {
     draws_after_restore: usize,
     session: Option<String>,
     restored: bool,
+    masked: Vec<talaria_app::prompts::LiveMaskedTarget>,
 }
 
 type Log = Arc<Mutex<ScreenLog>>;
@@ -311,6 +312,7 @@ impl Screen for Probe {
             log.draws_after_restore += 1;
         }
         log.session = view.session_id.map(str::to_string);
+        log.masked = view.masked.iter().map(|info| info.target()).collect();
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
@@ -366,6 +368,15 @@ impl Driver {
             locked(&log).lines.iter().any(|line| line.contains(&text))
         })
         .await;
+    }
+
+    async fn masked_targets(&self, count: usize) -> Vec<talaria_app::prompts::LiveMaskedTarget> {
+        let log = self.log.clone();
+        eventually("the masked cards", move || {
+            locked(&log).masked.len() >= count
+        })
+        .await;
+        locked(&self.log).masked.clone()
     }
 
     /// Wait until the loop has given the terminal back, which is the last thing it does.
@@ -2058,9 +2069,10 @@ async fn every_server_request_gets_one_answer() {
             }
 
             // The masked kinds wait for the person; declining each one answers it.
-            for (_, id) in &masked {
+            let targets = driver.masked_targets(masked.len()).await;
+            for target in targets {
                 driver.send(UserAction::Masked {
-                    request_id: id.clone(),
+                    target: talaria_app::prompts::MaskedTarget::Live(target),
                     value: Zeroizing::new(String::new()),
                 });
             }
