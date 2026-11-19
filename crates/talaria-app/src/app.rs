@@ -9499,6 +9499,7 @@ fn opened_session(
             effects.push(AppEffect::CommitCells(range.clone()));
         }
     }
+    opened.state.publish_commit_cursor(range.end);
     state.committed_cells = range.end;
     effects.push(AppEffect::Track {
         session_id: opened.session_id.clone(),
@@ -9892,18 +9893,20 @@ fn interrupt_done(
 
 /// Commit cells that became final, and tell the prompt service when the open prompts changed.
 fn commit_ready(state: &mut AppState) -> Vec<AppEffect> {
-    let Some(opened) = state.opened.as_ref() else {
+    let Some(opened) = state.opened.as_mut() else {
         return Vec::new();
     };
     let mut effects = Vec::new();
     let ready = opened.state.final_prefix_len();
-    if ready > state.committed_cells {
-        effects.push(AppEffect::CommitCells(state.committed_cells..ready));
+    // Compaction moves this cursor with the cells, so a newly final cell that
+    // slid behind the old position is still committed.
+    let baseline = opened.state.commit_cursor();
+    if ready > baseline {
+        effects.push(AppEffect::CommitCells(baseline..ready));
     }
-    state.committed_cells = state
-        .committed_cells
-        .max(ready)
-        .min(opened.state.cells().len());
+    let committed = ready.min(opened.state.cells().len());
+    state.committed_cells = committed;
+    opened.state.publish_commit_cursor(committed);
     let open: Vec<PromptKey> = opened
         .state
         .open_prompts()

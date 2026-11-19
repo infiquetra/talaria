@@ -143,6 +143,12 @@ pub struct SessionState {
     pub(crate) had_reasoning: bool,
     pub(crate) tools: HashMap<String, usize>,
     pub(crate) prompts: HashMap<PromptKey, usize>,
+    /// Prompts currently `Open` or `Answering`. Admission stops at 64.
+    pub(crate) open_prompt_count: usize,
+    /// Settled prompt keys, oldest first. Length is the settled count.
+    pub(crate) settled_order: VecDeque<PromptKey>,
+    /// Native-scrollback cells already handed to the terminal, in current cell order.
+    pub(crate) commit_cursor: usize,
     pub(crate) submissions: VecDeque<Submission>,
     pub(crate) interrupted: bool,
     pub(crate) interrupt_notice: bool,
@@ -193,6 +199,9 @@ impl SessionState {
             had_reasoning: false,
             tools: HashMap::new(),
             prompts: HashMap::new(),
+            open_prompt_count: 0,
+            settled_order: VecDeque::new(),
+            commit_cursor: 0,
             submissions: VecDeque::new(),
             interrupted: false,
             interrupt_notice: false,
@@ -298,6 +307,16 @@ impl SessionState {
     /// How many leading cells are final. The count never shrinks.
     pub fn final_prefix_len(&self) -> usize {
         self.final_prefix
+    }
+
+    /// Record how many cells the terminal has already committed, before this update.
+    pub fn publish_commit_cursor(&mut self, committed: usize) {
+        self.commit_cursor = committed;
+    }
+
+    /// Cells already committed, after compaction in this update.
+    pub fn commit_cursor(&self) -> usize {
+        self.commit_cursor
     }
 
     /// Cells after [`Self::final_prefix_len`].

@@ -129,6 +129,7 @@ pub(crate) fn rebuild_after_rewind(
         .ledger
         .fences_mut(&fresh.session_id)
         .adopt(Some(fresh.revision), Some(fresh.execution_generation));
+    fresh.state.publish_commit_cursor(state.committed_cells);
     state.opened = Some(fresh);
     if let Some(session_id) = state
         .opened
@@ -251,6 +252,7 @@ pub(crate) fn recovered(
         .cd_ledger
         .fences_mut(&fresh.session_id)
         .adopt(Some(fresh.revision), Some(fresh.execution_generation));
+    fresh.state.publish_commit_cursor(state.committed_cells);
     state.opened = Some(fresh);
     if !ids.is_empty() {
         effects.push(AppEffect::InstallRecovered { ids });

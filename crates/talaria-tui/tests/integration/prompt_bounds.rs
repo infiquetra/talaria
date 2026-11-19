@@ -120,4 +120,39 @@ fn prompt_cards_render_oversized_fields_with_a_line_cap() {
     let mut labeled = PromptStack::new();
     labeled.sync(Some(MAIN), &[&choice], &[], true, now);
     assert_bounded("clarify choice", &labeled);
+
+    let wide = "é".repeat(8 * 1024 * 1024);
+    let marked = clarify("Which file?", &[&wide]);
+    let mut non_ascii = PromptStack::new();
+    non_ascii.sync(Some(MAIN), &[&marked], &[], true, now);
+    assert_bounded("non-ascii choice", &non_ascii);
+
+    let carriage = clarify("Which file?", &["a\rb"]);
+    let mut returns = PromptStack::new();
+    returns.sync(Some(MAIN), &[&carriage], &[], true, now);
+    let (_, lines, elapsed) = draw(&returns);
+    assert!(elapsed < TIME_BUDGET, "carriage return took {elapsed:?}");
+    assert!(
+        lines.iter().any(|line| line.contains('\u{240d}')),
+        "a bare CR was dropped: {lines:?}"
+    );
+
+    let many: Vec<String> = (0..1_000).map(|n| format!("choice-{n}")).collect();
+    let refs: Vec<&str> = many.iter().map(String::as_str).collect();
+    let flooded = clarify("Which file?", &refs);
+    let mut flood = PromptStack::new();
+    let started = Instant::now();
+    flood.sync(Some(MAIN), &[&flooded], &[], true, now);
+    let (height, lines, elapsed) = draw(&flood);
+    assert!(elapsed < TIME_BUDGET, "choice flood took {elapsed:?}");
+    assert!(
+        started.elapsed() < TIME_BUDGET,
+        "syncing the flood took {:?}",
+        started.elapsed()
+    );
+    assert!(height <= 80, "choice flood drew {height} lines");
+    assert!(
+        lines.iter().any(|line| line.contains("more choices")),
+        "hidden choices had no marker: {lines:?}"
+    );
 }

@@ -19,6 +19,7 @@ use crate::live::LiveSection;
 
 const LIMIT: usize = 16_384;
 const DRAWN_LINE_CAP: usize = 10;
+const MAX_RENDERED_CHOICES: usize = 16;
 
 #[derive(Clone, PartialEq, Eq)]
 enum Identity {
@@ -500,7 +501,7 @@ impl PromptStack {
                 _ => None,
             },
             Content::Prompt(cell) if cell.kind == PromptKind::Approval => {
-                let choices: Vec<String> = display_choices(&cell.choices)
+                let choices: Vec<String> = shown_approval_choices(&cell.choices)
                     .into_iter()
                     .map(str::to_owned)
                     .collect();
@@ -631,20 +632,37 @@ fn connection_word(choice: ConnectionChoice) -> &'static str {
     }
 }
 
-fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
-    let Content::Prompt(cell) = &card.content else {
-        return None;
-    };
-    let choices = cell.choices.clone();
-    let multi = cell.multi_select && !choices.is_empty();
-    let free = choices.is_empty();
-    let answer = |card: &Card| {
-        if multi {
-            multi_select_answer(&choices, &card.ticks, Some(&card.text))
-        } else {
-            card.text.clone()
+fn offered_choice_count(card: &Card) -> Option<usize> {
+    match &card.content {
+        Content::Prompt(cell) if cell.kind == PromptKind::Clarify => {
+            Some(cell.choices.len().min(MAX_RENDERED_CHOICES))
         }
+        _ => None,
+    }
+}
+
+fn clarify_answer(card: &Card, count: usize, multi: bool) -> String {
+    if !multi {
+        return card.text.clone();
+    }
+    let Content::Prompt(cell) = &card.content else {
+        return String::new();
     };
+    let choices: Vec<String> = (0..count)
+        .filter(|index| card.ticks.contains(index))
+        .filter_map(|index| cell.choices.get(index).cloned())
+        .collect();
+    multi_select_answer(
+        &choices,
+        &(0..choices.len()).collect::<Vec<_>>(),
+        Some(&card.text),
+    )
+}
+
+fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
+    let count = offered_choice_count(card)?;
+    let multi = matches!(&card.content, Content::Prompt(cell) if cell.multi_select && count > 0);
+    let free = count == 0;
     if card.field {
         return match key {
             KeyCode::Esc if free => card.answer(String::new()),
@@ -652,7 +670,9 @@ fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
                 card.field = false;
                 None
             }
-            KeyCode::Enter if multi || !card.text.trim().is_empty() => card.answer(answer(card)),
+            KeyCode::Enter if multi || !card.text.trim().is_empty() => {
+                card.answer(clarify_answer(card, count, multi))
+            }
             KeyCode::Backspace => {
                 card.text.pop();
                 card.too_long = None;
@@ -671,15 +691,15 @@ fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
             None
         }
         KeyCode::Down => {
-            card.selected = (card.selected + 1).min(choices.len());
+            card.selected = (card.selected + 1).min(count);
             None
         }
         KeyCode::Esc => card.answer(String::new()),
-        KeyCode::Enter if multi => card.answer(answer(card)),
-        KeyCode::Enter => select_clarify(card, &choices, multi, card.selected),
-        KeyCode::Char(' ') if multi => select_clarify(card, &choices, multi, card.selected),
+        KeyCode::Enter if multi => card.answer(clarify_answer(card, count, multi)),
+        KeyCode::Enter => select_clarify(card, count, multi, card.selected),
+        KeyCode::Char(' ') if multi => select_clarify(card, count, multi, card.selected),
         KeyCode::Char(ch @ '1'..='9') => {
-            select_clarify(card, &choices, multi, ch as usize - '1' as usize)
+            select_clarify(card, count, multi, ch as usize - '1' as usize)
         }
         _ => None,
     }
@@ -687,19 +707,23 @@ fn clarify_key(card: &mut Card, key: KeyCode) -> Option<PromptIntent> {
 
 fn select_clarify(
     card: &mut Card,
-    choices: &[String],
+    count: usize,
     multi: bool,
     index: usize,
 ) -> Option<PromptIntent> {
-    if index > choices.len() {
+    if index > count {
         return None;
     }
-    if index == choices.len() {
+    if index == count {
         card.field = true;
         return None;
     }
     if !multi {
-        return card.answer(choices[index].clone());
+        let answer = match &card.content {
+            Content::Prompt(cell) => cell.choices.get(index).cloned().unwrap_or_default(),
+            _ => return None,
+        };
+        return card.answer(answer);
     }
     if let Some(position) = card.ticks.iter().position(|&selected| selected == index) {
         card.ticks.remove(position);
@@ -707,6 +731,11 @@ fn select_clarify(
         card.ticks.push(index);
     }
     None
+}
+
+fn shown_approval_choices(choices: &[String]) -> Vec<&str> {
+    let end = choices.len().min(MAX_RENDERED_CHOICES);
+    display_choices(&choices[..end])
 }
 
 pub struct PromptSection<'a> {
@@ -854,9 +883,16 @@ impl PromptSection<'_> {
                         width,
                     );
                 }
-                let choices = display_choices(&cell.choices);
+                let choices = shown_approval_choices(&cell.choices);
                 for (index, label) in choices.iter().enumerate() {
                     add_choice(&mut rows, card.selected, index, label, width);
+                }
+                if cell.choices.len() > choices.len() {
+                    add(
+                        &mut rows,
+                        &format!("… ({} more choices)", cell.choices.len() - choices.len()),
+                        width,
+                    );
                 }
                 if card.field || !card.text.is_empty() {
                     add_field(
@@ -882,26 +918,33 @@ impl PromptSection<'_> {
                         width,
                     );
                 }
-                for (index, label) in cell.choices.iter().enumerate() {
-                    let label = if cell.multi_select {
-                        format!(
-                            "[{}] {label}",
-                            if card.ticks.contains(&index) {
-                                "x"
-                            } else {
-                                " "
-                            }
-                        )
+                let count = cell.choices.len().min(MAX_RENDERED_CHOICES);
+                for (index, label) in cell.choices.iter().take(count).enumerate() {
+                    if cell.multi_select {
+                        let (label, _) = bounded_source(label, width);
+                        let mark = if card.ticks.contains(&index) {
+                            "x"
+                        } else {
+                            " "
+                        };
+                        let label = format!("[{mark}] {label}");
+                        add_choice(&mut rows, card.selected, index, &label, width);
                     } else {
-                        label.clone()
-                    };
-                    add_choice(&mut rows, card.selected, index, &label, width);
+                        add_choice(&mut rows, card.selected, index, label, width);
+                    }
                 }
-                if !cell.choices.is_empty() {
+                if cell.choices.len() > count {
+                    add(
+                        &mut rows,
+                        &format!("… ({} more choices)", cell.choices.len() - count),
+                        width,
+                    );
+                }
+                if count > 0 {
                     add_choice(
                         &mut rows,
                         card.selected,
-                        cell.choices.len(),
+                        count,
                         "Other (type an answer)",
                         width,
                     );
@@ -921,12 +964,12 @@ impl PromptSection<'_> {
                 } else if cell.multi_select {
                     format!(
                         "Space or 1-{} tick · Enter send · Esc skip · Ctrl+C skip and stop",
-                        cell.choices.len() + 1
+                        cell.choices.len().min(MAX_RENDERED_CHOICES) + 1
                     )
                 } else {
                     format!(
                         "1-{} choose · Enter confirm · Esc skip · Ctrl+C skip and stop",
-                        cell.choices.len() + 1
+                        cell.choices.len().min(MAX_RENDERED_CHOICES) + 1
                     )
                 }
             }
@@ -968,12 +1011,15 @@ fn add_capped(rows: &mut Vec<Line<'static>>, text: &str, width: u16) {
     if text.is_empty() {
         return;
     }
-    let (wrapped, hidden) = if is_plain_ascii(text) {
+    let (text, cut) = bounded_source(text, width);
+    let (wrapped, mut hidden) = if is_plain_ascii(text) {
         capped_ascii(text, width.max(1), DRAWN_LINE_CAP)
     } else {
-        let clean = sanitize(text);
-        capped_wrap(clean.as_ref(), width, DRAWN_LINE_CAP)
+        capped_wrap(text, width, DRAWN_LINE_CAP)
     };
+    if cut {
+        hidden = hidden.max(1);
+    }
     rows.extend(wrapped);
     if hidden > 0 {
         add(rows, &format!("… ({hidden} more lines)"), width);
@@ -985,6 +1031,7 @@ fn add_capped_prefixed(rows: &mut Vec<Line<'static>>, prefix: &str, body: &str, 
         add_capped(rows, prefix, width);
         return;
     }
+    let (body, cut) = bounded_source(body, width);
     if !prefix.contains('\n') && is_plain_ascii_lines(body) {
         let width = width.max(1);
         let mut shown = Vec::new();
@@ -1001,6 +1048,9 @@ fn add_capped_prefixed(rows: &mut Vec<Line<'static>>, prefix: &str, body: &str, 
             shown.extend(wrapped);
             hidden += extra;
         }
+        if cut {
+            hidden = hidden.max(1);
+        }
         rows.extend(shown);
         if hidden > 0 {
             add(rows, &format!("… ({hidden} more lines)"), width);
@@ -1014,6 +1064,7 @@ fn add_capped_prefixed(rows: &mut Vec<Line<'static>>, prefix: &str, body: &str, 
 }
 
 fn append_approval_command(rows: &mut Vec<Line<'static>>, command: &str, width: u16) {
+    let (command, cut) = bounded_source(command, width);
     let inner = width.saturating_sub(2).max(1);
     let mut shown = Vec::new();
     let mut hidden = 0usize;
@@ -1030,6 +1081,9 @@ fn append_approval_command(rows: &mut Vec<Line<'static>>, command: &str, width: 
             shown.push(Line::from(format!("{prefix}{line}")));
         }
         hidden += extra;
+    }
+    if cut {
+        hidden = hidden.max(1);
     }
     rows.extend(shown);
     if hidden > 0 {
@@ -1050,11 +1104,7 @@ fn logical_lines(text: &str) -> impl Iterator<Item = &str> {
             Some(line)
         } else {
             rest = None;
-            let mut line = current;
-            if let Some(stripped) = line.strip_suffix('\r') {
-                line = stripped;
-            }
-            Some(line)
+            Some(current)
         }
     })
 }
@@ -1064,8 +1114,33 @@ fn is_plain_ascii(text: &str) -> bool {
 }
 
 fn is_plain_ascii_lines(text: &str) -> bool {
-    text.bytes()
-        .all(|byte| byte == b'\n' || byte == b'\r' || (0x20..=0x7e).contains(&byte))
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\n' => index += 1,
+            // A carriage return is a line break only as part of CRLF. A bare CR stays visible.
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => index += 1,
+            byte if (0x20..=0x7e).contains(&byte) => index += 1,
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn bounded_source(text: &str, width: u16) -> (&str, bool) {
+    let budget = usize::from(width.max(1))
+        .saturating_mul(DRAWN_LINE_CAP + 1)
+        .saturating_mul(8)
+        .max(64);
+    if text.len() <= budget {
+        return (text, false);
+    }
+    let mut end = budget;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&text[..end], true)
 }
 
 fn capped_wrap(text: &str, width: u16, limit: usize) -> (Vec<Line<'static>>, usize) {
@@ -1082,10 +1157,15 @@ fn capped_wrap(text: &str, width: u16, limit: usize) -> (Vec<Line<'static>>, usi
         return capped_ascii(text, width, limit);
     }
     let (total, end) = grapheme_rows(text, width, limit);
-    let shown = if end == 0 {
+    let visible = if end == 0 {
+        String::new()
+    } else {
+        sanitize(&text[..end]).into_owned()
+    };
+    let shown = if visible.is_empty() {
         Vec::new()
     } else {
-        wrap_lines(vec![Line::from(text[..end].to_owned())], width)
+        wrap_lines(vec![Line::from(visible)], width)
     };
     let hidden = total.saturating_sub(shown.len());
     (shown, hidden)
@@ -1152,23 +1232,37 @@ fn display_columns(text: &str) -> u16 {
 }
 
 fn grapheme_rows(text: &str, width: u16, limit: usize) -> (usize, usize) {
+    let width = width.max(1);
+    if text.is_empty() {
+        return (0, 0);
+    }
+    if limit == 0 {
+        return (1, 0);
+    }
     let mut rows = 1usize;
     let mut used = 0u16;
-    let mut cut = if limit == 0 { 0 } else { text.len() };
-    let mut cut_set = limit == 0;
+    let mut seen = 0usize;
+    let max_graphemes = limit
+        .saturating_mul(usize::from(width))
+        .saturating_add(limit)
+        .max(1);
     for (offset, grapheme) in text.grapheme_indices(true) {
+        seen += 1;
         let columns = crate::history::grapheme_width(grapheme);
         if used > 0 && used.saturating_add(columns) > width {
             rows += 1;
             used = 0;
-            if !cut_set && rows > limit {
-                cut = offset;
-                cut_set = true;
+            if rows > limit {
+                return (rows, offset);
             }
         }
         used = used.saturating_add(columns);
+        if seen >= max_graphemes {
+            let cut = offset.saturating_add(grapheme.len()).min(text.len());
+            return (limit + 1, cut);
+        }
     }
-    (rows, cut)
+    (rows, text.len())
 }
 
 fn add_choice(

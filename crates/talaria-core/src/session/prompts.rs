@@ -19,7 +19,7 @@ pub(crate) fn apply(state: &mut SessionState, event: &Event) -> Vec<Effect> {
                 }
                 _ => None,
             });
-            if let Some(prompt) = prompt {
+            let settled = if let Some(prompt) = prompt {
                 let settlement = if matches!(event, Event::ServerRequestAnswered { .. }) {
                     Settlement::Sent
                 } else {
@@ -27,13 +27,19 @@ pub(crate) fn apply(state: &mut SessionState, event: &Event) -> Vec<Effect> {
                 };
                 prompt.state = PromptState::Settled(settlement);
                 prompt.sealed = true;
+                Some(prompt.key.clone())
+            } else {
+                None
+            };
+            if let Some(key) = settled {
+                note_left_open(state, &key);
             }
-            prune_settled(state);
             return Vec::new();
         }
         Event::AnswerApproval { key, choice } => (key, PromptKind::Approval, choice),
         Event::AnswerClarify { key, answer } => (key, PromptKind::Clarify, answer),
         Event::AnswerFailed { key } | Event::AnswerAlreadyResolved { key } => {
+            let mut left_open = false;
             if let Some(prompt) = prompt_mut(state, key)
                 && !prompt.sealed
             {
@@ -50,13 +56,16 @@ pub(crate) fn apply(state: &mut SessionState, event: &Event) -> Vec<Effect> {
                                 | PromptState::Settled(Settlement::Answered(_))
                         ) =>
                     {
+                        left_open = matches!(prompt.state, PromptState::Answering(_));
                         prompt.state = PromptState::Settled(Settlement::Elsewhere);
                         prompt.sealed = true;
                     }
                     _ => {}
                 }
             }
-            prune_settled(state);
+            if left_open {
+                note_left_open(state, key);
+            }
             return Vec::new();
         }
         _ => return Vec::new(),
@@ -120,6 +129,9 @@ pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
     };
     if name.ends_with(".settled") {
         let running = state.turn == TurnState::Running;
+        let live = prompt_mut(state, &key).is_some_and(|prompt| {
+            matches!(prompt.state, PromptState::Open | PromptState::Answering(_))
+        });
         if let Some(prompt) = prompt_mut(state, &key) {
             match &prompt.state {
                 PromptState::Open => {
@@ -132,7 +144,9 @@ pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
                 }
                 PromptState::Settled(_) => {}
             }
-            prune_settled(state);
+        }
+        if live {
+            note_left_open(state, &key);
         }
     } else if !state.prompts.contains_key(&key) {
         insert(
@@ -148,16 +162,7 @@ pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
                 command: string(payload, "command"),
                 description: string(payload, "description"),
                 question: string(payload, "question"),
-                choices: payload["choices"]
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(bounded_text)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                choices: bounded_choices(payload.get("choices")),
                 multi_select: payload["multi_select"].as_bool().unwrap_or(false),
                 edit: payload["edit"]
                     .as_object()
@@ -170,37 +175,53 @@ pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
     }
 }
 
-pub(crate) fn insert(state: &mut SessionState, cell: PromptCell) {
-    if !state.prompts.contains_key(&cell.key) {
-        state.prompts.insert(cell.key.clone(), state.cells.len());
-        state.cells.push(super::Cell::Prompt(cell));
-        prune_settled(state);
-    }
-}
-
-const MAX_SETTLED_PROMPTS: usize = 256;
-const MAX_PROMPT_TEXT: usize = 4096;
-const PROMPT_TEXT_SUFFIX: &str = "… (truncated)";
-
-fn prune_settled(state: &mut SessionState) {
-    let settled: Vec<usize> = state
-        .cells
-        .iter()
-        .enumerate()
-        .filter_map(|(index, cell)| match cell {
-            super::Cell::Prompt(prompt) if matches!(prompt.state, PromptState::Settled(_)) => {
-                Some(index)
-            }
-            _ => None,
-        })
-        .collect();
-    if settled.len() <= MAX_SETTLED_PROMPTS {
+pub(crate) fn insert(state: &mut SessionState, mut cell: PromptCell) {
+    if state.prompts.contains_key(&cell.key) {
         return;
     }
-    let drop_count = settled.len() - MAX_SETTLED_PROMPTS;
+    let live = matches!(cell.state, PromptState::Open | PromptState::Answering(_));
+    if live && state.open_prompt_count >= MAX_OPEN_PROMPTS {
+        return;
+    }
+    bound_prompt_fields(&mut cell);
+    if live {
+        state.open_prompt_count += 1;
+    }
+    state.prompts.insert(cell.key.clone(), state.cells.len());
+    state.cells.push(super::Cell::Prompt(cell));
+}
+
+const MAX_OPEN_PROMPTS: usize = 64;
+const MAX_SETTLED_PROMPTS: usize = 256;
+const MAX_PROMPT_TEXT: usize = 4096;
+const MAX_CHOICE_BYTES: usize = 16 * 1024;
+const MAX_STORED_CHOICES: usize = 32;
+const PROMPT_TEXT_SUFFIX: &str = "… (truncated)";
+
+fn note_left_open(state: &mut SessionState, key: &PromptKey) {
+    state.open_prompt_count = state.open_prompt_count.saturating_sub(1);
+    state.settled_order.push_back(key.clone());
+    prune_settled(state);
+}
+
+fn prune_settled(state: &mut SessionState) {
+    if state.settled_order.len() <= MAX_SETTLED_PROMPTS {
+        return;
+    }
+    let drop_count = state.settled_order.len() - MAX_SETTLED_PROMPTS;
     let mut remove = vec![false; state.cells.len()];
-    for index in settled.into_iter().take(drop_count) {
-        remove[index] = true;
+    for _ in 0..drop_count {
+        let Some(key) = state.settled_order.pop_front() else {
+            break;
+        };
+        if let Some(index) = state.prompts.get(&key).copied()
+            && let Some(flag) = remove.get_mut(index)
+        {
+            *flag = true;
+        }
+    }
+    if !remove.iter().any(|flag| *flag) {
+        return;
     }
     let mut removed_keys = Vec::new();
     let mut new_index = vec![0; remove.len()];
@@ -245,10 +266,41 @@ fn prune_settled(state: &mut SessionState) {
     state.turn_start = state
         .turn_start
         .saturating_sub(removed_strictly_before(state.turn_start));
+    state.commit_cursor = state
+        .commit_cursor
+        .saturating_sub(removed_strictly_before(state.commit_cursor));
 }
 
 fn string(payload: &Value, key: &str) -> Option<String> {
     payload[key].as_str().map(bounded_text)
+}
+
+fn bounded_choices(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|choice| choice.len() <= MAX_CHOICE_BYTES)
+                .take(MAX_STORED_CHOICES)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn bound_prompt_fields(cell: &mut PromptCell) {
+    cell.command = cell.command.take().map(|value| bounded_text(&value));
+    cell.description = cell.description.take().map(|value| bounded_text(&value));
+    cell.question = cell.question.take().map(|value| bounded_text(&value));
+    cell.choices = cell
+        .choices
+        .iter()
+        .filter(|choice| choice.len() <= MAX_CHOICE_BYTES)
+        .take(MAX_STORED_CHOICES)
+        .cloned()
+        .collect();
 }
 
 fn bounded_text(value: &str) -> String {

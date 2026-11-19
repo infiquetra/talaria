@@ -89,11 +89,15 @@ fn open_prompt_cells_are_not_pruned_to_make_room() {
         ));
     }
     let (state, _) = drive::reduce(SESSION, events);
-    let open = prompt_ids(&state)
+    let open: Vec<_> = prompt_ids(&state)
         .into_iter()
         .filter(|(_, prompt_state)| matches!(prompt_state, PromptState::Open))
-        .count();
-    assert_eq!(open, 300);
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(open.len(), 64, "open prompts grew past 64");
+    assert_eq!(open.first().map(String::as_str), Some("open-0"));
+    assert_eq!(open.last().map(String::as_str), Some("open-63"));
+    assert!(!open.iter().any(|id| id == "open-64"));
 }
 
 #[test]
@@ -108,7 +112,7 @@ fn oversized_prompt_strings_are_truncated_before_they_are_stored() {
         "prompt_id": "q1",
         "execution_generation": 1,
         "question": huge,
-        "choices": [wide.clone()],
+        "choices": [wide.clone(), huge.clone()],
         "multi_select": false,
     });
     let (state, _) = drive::reduce(
@@ -143,14 +147,123 @@ fn oversized_prompt_strings_are_truncated_before_they_are_stored() {
             }
         }
         for choice in &prompt.choices {
+            assert!(
+                choice.len() <= 16 * 1024,
+                "a choice over the exact-answer cap was stored"
+            );
             if choice.starts_with('é') {
-                assert!(choice.len() <= TEXT_CAP);
-                assert!(choice.ends_with(SUFFIX));
-                let body = choice.strip_suffix(SUFFIX).expect("suffix");
-                assert!(wide.starts_with(body));
+                assert_eq!(choice, &wide, "the clarify answer was rewritten");
             }
         }
+        if prompt.kind == talaria_core::session::PromptKind::Clarify {
+            assert!(
+                !prompt.choices.iter().any(|choice| choice.len() > 16 * 1024),
+                "the oversized choice was offered"
+            );
+            assert!(prompt.choices.iter().any(|choice| choice == &wide));
+        }
     }
+}
+
+#[test]
+fn pruning_a_committed_prompt_leaves_the_new_final_cell_past_the_cursor() {
+    let mut events = Vec::new();
+    let mut seq = 1_u64;
+    for n in 0..=SETTLED_CAP {
+        let id = format!("p{n}");
+        events.push(ev(
+            seq,
+            "approval.request",
+            approval_request(&id, 1, &["once", "deny"]),
+        ));
+        seq += 1;
+        events.push(ev(
+            seq,
+            "approval.settled",
+            json!({"prompt_id": id, "execution_generation": 1}),
+        ));
+        seq += 1;
+    }
+    let (mut state, _) = drive::reduce(SESSION, events);
+    assert_eq!(
+        state
+            .cells()
+            .iter()
+            .filter(|cell| matches!(cell, Cell::Prompt(_)))
+            .count(),
+        SETTLED_CAP
+    );
+    state.publish_commit_cursor(state.final_prefix_len());
+    let before = state.commit_cursor();
+    let effects = update(
+        &mut state,
+        ev(
+            seq,
+            "approval.request",
+            approval_request("newest", 1, &["once", "deny"]),
+        ),
+    );
+    assert!(effects.is_empty());
+    let _ = update(
+        &mut state,
+        ev(
+            seq + 1,
+            "approval.settled",
+            json!({"prompt_id": "newest", "execution_generation": 1}),
+        ),
+    );
+    let cursor = state.commit_cursor();
+    assert!(
+        cursor < before,
+        "compaction left the commit cursor on the old index"
+    );
+    assert!(
+        state.final_prefix_len() > cursor,
+        "the newly final cell is not after the adjusted cursor"
+    );
+    assert!(
+        state.cells()[cursor..state.final_prefix_len()]
+            .iter()
+            .any(|cell| matches!(cell, Cell::Prompt(prompt) if prompt.key.prompt_id == "newest"))
+    );
+}
+
+#[test]
+fn resumed_prompt_fields_keep_exact_choices_and_a_bounded_label() {
+    let wide = "é".repeat(3000);
+    let huge = "B".repeat(8 * 1024 * 1024);
+    let raw = json!({
+        "session_id": SESSION,
+        "stored_session_id": SESSION,
+        "messages": [],
+        "message_count": 0,
+        "running": false,
+        "authority_epoch": 1,
+        "replay_epoch": "epoch-1",
+        "last_sequence": 1,
+        "subscription_id": "sub-1",
+        "revision": 1,
+        "execution_generation": 1,
+        "pending": [],
+        "prompts": [{
+            "kind": "clarify",
+            "prompt_id": "q-resume",
+            "execution_generation": 1,
+            "question": huge,
+            "choices": [wide.clone(), "B".repeat(20 * 1024)]
+        }],
+        "info": {"cwd": "/work", "desktop_protocol": "hermes-gateway-v1"}
+    });
+    let snapshot = serde_json::from_value::<hermes_contract::schemas::CanonicalSnapshot>(raw)
+        .expect("snapshot");
+    let state = talaria_core::session::SessionState::from_snapshot(snapshot);
+    let Cell::Prompt(prompt) = &state.cells()[0] else {
+        panic!("the resumed prompt was dropped");
+    };
+    let question = prompt.question.as_deref().expect("question");
+    assert!(question.len() <= TEXT_CAP);
+    assert!(question.ends_with(SUFFIX));
+    assert_eq!(prompt.choices, vec![wide]);
 }
 
 #[test]

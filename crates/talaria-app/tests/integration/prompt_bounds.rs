@@ -3,12 +3,17 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use hermes_client::{Generation, Responder, ServerRequest};
+use hermes_client::liveness::LinkEvent;
+use hermes_client::{Generation, Inbound, InboundEvent, Responder, ServerRequest};
+use hermes_contract::events::EventFrame;
 use hermes_contract::schemas::{
-    SecretRequestParams, SudoRequestParams, VaultCodeRequestParams, VaultUnlockRequestParams,
+    CanonicalSnapshot, SecretRequestParams, SudoRequestParams, VaultCodeRequestParams,
+    VaultUnlockRequestParams,
 };
 use hermes_contract::server_requests::ServerRequest as ContractRequest;
+use talaria_app::app::{AppEffect, AppMessage, AppState, update};
 use talaria_app::prompts::PromptService;
+use talaria_app::sessions::OpenedSession;
 
 const OPEN_CAP: usize = 64;
 const ANSWERED_CAP: usize = 256;
@@ -154,4 +159,67 @@ async fn answered_prompt_requests_stay_bounded() {
         !newest.is_empty(),
         "the newest answered request was dropped"
     );
+}
+
+fn approval_message(state: &AppState, seq: u64, type_name: &str, prompt_id: &str) -> AppMessage {
+    let opened = state.opened.as_ref().expect("session");
+    let raw = serde_json::json!({
+        "session_id": opened.session_id,
+        "replay_epoch": opened.cursor.replay_epoch,
+        "seq": seq,
+        "type": type_name,
+        "execution_generation": 1,
+        "payload": {
+            "prompt_id": prompt_id,
+            "execution_generation": 1,
+            "command": "true",
+            "choices": ["once", "deny"],
+        }
+    });
+    let frame = EventFrame::from_params(&raw).expect("approval event");
+    AppMessage::Link(LinkEvent::Inbound {
+        item: Inbound::Event(InboundEvent {
+            generation: Generation(1),
+            frame,
+            raw,
+        }),
+        replayed: false,
+    })
+}
+
+#[test]
+fn pruning_a_committed_prompt_still_commits_the_new_final_cell() {
+    let mut snapshot: CanonicalSnapshot =
+        serde_json::from_str(include_str!("../data/open_approval.json")).expect("snapshot");
+    snapshot.prompts.clear();
+    snapshot.messages.clear();
+    snapshot.display_messages = Some(Vec::new());
+    let mut state = AppState::new("0123456789abcdef");
+    state.profile = "fixture".to_string();
+    let _ = update(
+        &mut state,
+        AppMessage::Opened {
+            opened: OpenedSession::from_snapshot(snapshot),
+            notice: None,
+        },
+    );
+    let mut seq = state.opened.as_ref().expect("opened").cursor.last_sequence;
+    for n in 0..=256 {
+        let id = format!("p{n}");
+        seq += 1;
+        let request = approval_message(&state, seq, "approval.request", &id);
+        let _ = update(&mut state, request);
+        seq += 1;
+        let settled = approval_message(&state, seq, "approval.settled", &id);
+        let effects = update(&mut state, settled);
+        if n == 256 {
+            assert!(
+                effects.iter().any(|effect| matches!(
+                    effect,
+                    AppEffect::CommitCells(range) if !range.is_empty()
+                )),
+                "the cell that became final during compaction was skipped: {effects:?}"
+            );
+        }
+    }
 }
