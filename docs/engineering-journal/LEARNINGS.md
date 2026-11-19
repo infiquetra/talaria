@@ -7407,3 +7407,11 @@ can fail when a different machine checks or releases the build.
 **Generalizable rule.** Register each release acceptance directory explicitly and
 scrub runner host suffixes to `t70-c1-<host>` when assembling transcripts,
 regardless of which machine will check or release the build.
+
+## 2026-11-19 — Launch git children take the review path's config hardening
+
+**Evidence.** On git 2.43.0, `git status` ran a repository `core.fsmonitor` program until `-c core.fsmonitor=false` was present, and `git config --get core.sshCommand` inside the repository returned the worktree or local value ahead of global. `GIT_SSH_COMMAND` overrode that value. `GIT_SSH` and a global or system `core.sshCommand` did not: the repository command ran instead. `git config --global` and `git config --system` from `/`, with `GIT_DIR` unset, did not read `.git/config`. Tests `launch_git_fsmonitor_never_runs`, `launch_git_repo_ssh_command_cannot_run`, `launch_git_ssh_command_env_is_preserved`, `launch_git_global_ssh_command_is_preserved`, `launch_git_system_ssh_command_is_preserved`, and `launch_git_ssh_program_is_preserved` in `crates/talaria-app/tests/integration/worktree_git.rs`.
+
+**Mechanism.** The review path already prefixes every child with `-c core.fsmonitor=false`. The launch runner did not, and it treated any hit from `git config --get core.sshCommand` as the operator's ssh command, so a repository value suppressed `BatchMode` and executed on `fetch` and `ls-remote`. Command-line `-c` is the value git uses, so the runner pins the operator's global or system command, or `GIT_SSH`, and falls back to `ssh -o BatchMode=yes` only when none of those is set. `GIT_SSH_COMMAND` is left untouched because it already wins over config.
+
+**Generalizable rule.** Every git child that can see a repository's config carries `-c core.fsmonitor=false`, and a network git child pins `core.sshCommand` from the operator's environment, global config, or system config only.

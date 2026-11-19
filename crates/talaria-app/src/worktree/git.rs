@@ -49,8 +49,23 @@ pub enum GitError {
 #[derive(Clone, Debug)]
 pub struct GitRunner {
     program: PathBuf,
-    /// Whether ssh is configured, remembered per main worktree.
-    ssh_configured: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
+    /// Operator ssh policy, computed once. It does not depend on the repository.
+    ssh_policy: Arc<Mutex<Option<SshPolicy>>>,
+    /// When set, git children inherit this environment instead of the process environment.
+    environment: Option<BTreeMap<String, String>>,
+}
+
+/// How a network git call chooses `core.sshCommand`.
+///
+/// Repository-local and worktree config never count. `GIT_SSH_COMMAND` already
+/// overrides every config value, so it is left in the environment. A global or
+/// system command, or `GIT_SSH`, is pinned with `-c` because a repository value
+/// would otherwise replace it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SshPolicy {
+    Environment,
+    Pin(String),
+    BatchMode,
 }
 
 impl GitRunner {
@@ -65,8 +80,20 @@ impl GitRunner {
     pub fn with_program(program: PathBuf) -> Self {
         Self {
             program,
-            ssh_configured: Arc::new(Mutex::new(BTreeMap::new())),
+            ssh_policy: Arc::new(Mutex::new(None)),
+            environment: None,
         }
+    }
+
+    /// Git children inherit `environment` instead of the process environment.
+    ///
+    /// The map is the whole environment, so a test can point `GIT_CONFIG_GLOBAL`
+    /// at a fixture file without reading the operator's config. An empty map
+    /// still replaces the process environment.
+    #[must_use]
+    pub fn with_environment(mut self, environment: BTreeMap<String, String>) -> Self {
+        self.environment = Some(environment);
+        self
     }
 
     /// A call that may write (fetch, worktree add, config, branch).
@@ -119,9 +146,9 @@ impl GitRunner {
         read_only: bool,
         cancel: Option<&CancelToken>,
     ) -> Result<GitOutput, GitError> {
-        let base = process_env();
+        let base = self.base_env();
         let prefix = if reaches_network(args) {
-            git_prefix_args(self.ssh_is_configured(cwd, &base).await)
+            network_prefix(&self.ssh_policy(&base).await)
         } else {
             Vec::new()
         };
@@ -146,10 +173,10 @@ impl GitRunner {
         if cancel.is_some_and(CancelToken::is_cancelled) {
             return Err(GitError::Cancelled);
         }
+        let argv = with_fsmonitor_off(prefix, args);
         let mut command = Command::new(&self.program);
         command
-            .args(prefix)
-            .args(args)
+            .args(&argv)
             .current_dir(cwd)
             .envs(git_env(base, read_only))
             .stdin(Stdio::null())
@@ -209,39 +236,81 @@ impl GitRunner {
         })
     }
 
-    /// Whether a ssh command is already configured, so BatchMode is not forced over it.
-    async fn ssh_is_configured(&self, cwd: &Path, base: &BTreeMap<String, String>) -> bool {
-        let set = |key: &str| base.get(key).is_some_and(|value| !value.is_empty());
-        if set("GIT_SSH_COMMAND") || set("GIT_SSH") {
-            return true;
+    fn base_env(&self) -> BTreeMap<String, String> {
+        self.environment.clone().unwrap_or_else(process_env)
+    }
+
+    /// Operator ssh configuration, ignoring repository-local and worktree config.
+    async fn ssh_policy(&self, base: &BTreeMap<String, String>) -> SshPolicy {
+        if let Some(policy) = self.ssh_policy.lock().ok().and_then(|slot| slot.clone()) {
+            return policy;
         }
-        let cached = self
-            .ssh_configured
-            .lock()
-            .ok()
-            .and_then(|known| known.get(cwd).copied());
-        if let Some(configured) = cached {
-            return configured;
+        let policy = self.detect_ssh_policy(base).await;
+        if let Ok(mut slot) = self.ssh_policy.lock() {
+            *slot = Some(policy.clone());
         }
-        let found = self
+        policy
+    }
+
+    async fn detect_ssh_policy(&self, base: &BTreeMap<String, String>) -> SshPolicy {
+        let value = |key: &str| base.get(key).filter(|item| !item.is_empty()).cloned();
+        if value("GIT_SSH_COMMAND").is_some() {
+            return SshPolicy::Environment;
+        }
+        if let Some(command) = self.operator_ssh_command(base, "--global").await {
+            return SshPolicy::Pin(command);
+        }
+        if let Some(command) = self.operator_ssh_command(base, "--system").await {
+            return SshPolicy::Pin(command);
+        }
+        // `GIT_SSH` loses to repository `core.sshCommand`, so pin the program.
+        if let Some(program) = value("GIT_SSH") {
+            return SshPolicy::Pin(program);
+        }
+        SshPolicy::BatchMode
+    }
+
+    /// Read one operator scope from outside any repository.
+    ///
+    /// `--global` and `--system` do not open `.git/config`. The working directory
+    /// is `/`, and repository discovery variables are removed, so a repository
+    /// hook cannot run while the probe itself asks git.
+    async fn operator_ssh_command(
+        &self,
+        base: &BTreeMap<String, String>,
+        scope: &str,
+    ) -> Option<String> {
+        let mut env = base.clone();
+        for key in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_NAMESPACE",
+        ] {
+            env.remove(key);
+        }
+        let output = self
             .spawn(
-                cwd,
+                Path::new("/"),
                 &[],
-                &["config", "--get", "core.sshCommand"],
+                &["config", scope, "--get", "core.sshCommand"],
                 Duration::from_secs(10),
                 true,
-                base,
+                &env,
                 None,
             )
-            .await;
-        let configured = matches!(
-            found,
-            Ok(ref output) if output.status == 0 && !output.stdout.trim().is_empty()
-        );
-        if let Ok(mut known) = self.ssh_configured.lock() {
-            known.insert(cwd.to_path_buf(), configured);
+            .await
+            .ok()?;
+        if output.status != 0 {
+            return None;
         }
-        configured
+        let value = output.stdout.strip_suffix('\n').unwrap_or(&output.stdout);
+        let value = value.strip_suffix('\r').unwrap_or(value);
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_owned())
+        }
     }
 }
 
@@ -255,6 +324,44 @@ pub fn git_env(base: &BTreeMap<String, String>, read_only: bool) -> BTreeMap<Str
         env.insert("GIT_OPTIONAL_LOCKS".to_owned(), "0".to_owned());
     }
     env
+}
+
+/// `-c core.fsmonitor=false` unless the caller already passed that pair.
+///
+/// The review path passes it itself. Adding it again would change the argument
+/// list those tests record.
+fn with_fsmonitor_off(prefix: &[String], args: &[&str]) -> Vec<String> {
+    let mut argv = Vec::with_capacity(prefix.len() + args.len() + 2);
+    if !fsmonitor_already_off(prefix, args) {
+        argv.push("-c".to_owned());
+        argv.push("core.fsmonitor=false".to_owned());
+    }
+    argv.extend(prefix.iter().cloned());
+    argv.extend(args.iter().map(|arg| (*arg).to_owned()));
+    argv
+}
+
+fn fsmonitor_already_off(prefix: &[String], args: &[&str]) -> bool {
+    let mut previous = None;
+    for arg in prefix
+        .iter()
+        .map(String::as_str)
+        .chain(args.iter().copied())
+    {
+        if previous == Some("-c") && arg == "core.fsmonitor=false" {
+            return true;
+        }
+        previous = Some(arg);
+    }
+    false
+}
+
+fn network_prefix(policy: &SshPolicy) -> Vec<String> {
+    match policy {
+        SshPolicy::Environment => Vec::new(),
+        SshPolicy::Pin(command) => vec!["-c".to_owned(), format!("core.sshCommand={command}")],
+        SshPolicy::BatchMode => git_prefix_args(false),
+    }
 }
 
 /// The `-c core.sshCommand=...` prefix, or nothing when ssh is already configured.
