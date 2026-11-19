@@ -25,6 +25,7 @@ _ORDER = (
     ("test_cli.py", "CliTests", "test_usage_errors_and_exit_codes"),
     ("test_cli.py", "CliTests", "test_build_failure_paths"),
     ("test_workflows.py", "WorkflowTests", "test_release_and_package_workflows_shape"),
+    ("test_workflows.py", "WorkflowTests", "test_release_workflow_permissions_are_least_privilege"),
     ("test_docs.py", "DocsTests", "test_install_page_contents"),
     ("test_live_build.py", "LiveBuildTests", "test_host_target_builds_packs_and_checks"),
 )
