@@ -201,6 +201,42 @@ pub struct PromptStack {
     stopping: HashSet<Option<String>>,
 }
 
+fn content_fingerprint(content: &Content) -> String {
+    match content {
+        Content::Masked(view) => {
+            let mut text = format!(
+                "masked\u{1f}{}\u{1f}{}\u{1f}{}",
+                view.request_id,
+                view.session_id.as_deref().unwrap_or(""),
+                view.method
+            );
+            for (name, value) in &view.fields {
+                text.push('\u{1e}');
+                text.push_str(name);
+                text.push('\u{1f}');
+                text.push_str(value);
+            }
+            text
+        }
+        Content::Prompt(cell) => format!(
+            "prompt\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}",
+            cell.key.session_id.as_str(),
+            cell.key.prompt_id,
+            cell.key.execution_generation,
+            cell.kind,
+            cell.command.as_deref().unwrap_or(""),
+            cell.description.as_deref().unwrap_or(""),
+            cell.question.as_deref().unwrap_or(""),
+            cell.choices.join("\u{1f}"),
+            cell.state
+        ),
+        Content::Connection(connection) => format!(
+            "connection\u{1f}{}\u{1f}{}\u{1f}{:?}",
+            connection.card.op_id, connection.session_id, connection.card
+        ),
+    }
+}
+
 impl Default for PromptStack {
     fn default() -> Self {
         Self::new()
@@ -354,6 +390,10 @@ impl PromptStack {
         now: Instant,
     ) {
         let old_first = self.cards.first().map(|card| card.id.clone());
+        let old_top = self
+            .cards
+            .first()
+            .map(|card| content_fingerprint(&card.content));
         self.hidden
             .retain(|key| prompts.iter().any(|cell| cell.key == *key));
         let mut old = std::mem::take(&mut self.cards);
@@ -398,9 +438,13 @@ impl PromptStack {
             };
             self.cards.push(card);
         }
-        if draft_empty
-            && (!self.draft_empty || old_first != self.cards.first().map(|card| card.id.clone()))
-        {
+        let new_first = self.cards.first().map(|card| card.id.clone());
+        let new_top = self
+            .cards
+            .first()
+            .map(|card| content_fingerprint(&card.content));
+        let content_changed = old_first.is_some() && old_first == new_first && old_top != new_top;
+        if draft_empty && (!self.draft_empty || old_first != new_first || content_changed) {
             self.focused_at = Some(now);
         }
         self.draft_empty = draft_empty;

@@ -345,7 +345,7 @@ fn masked_view(info: &MaskedRequestInfo) -> MaskedView {
         MaskedKind::VaultUnlockPrompt => "vault.unlock_prompt",
     };
     MaskedView {
-        request_id: info.id.clone(),
+        request_id: info.token.clone(),
         session_id: info.session_id.clone(),
         method: method.to_owned(),
         fields: info

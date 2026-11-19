@@ -25,7 +25,7 @@
 
 use crate::rpc::{CallError, FrameClass, RpcError, classify, encode_request};
 use futures_util::{SinkExt, StreamExt};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -260,6 +260,8 @@ impl std::fmt::Display for ServerRequest {
 pub struct Responder {
     state: Arc<AtomicU8>,
     id: String,
+    instance_id: u64,
+    generation: Generation,
     sender: Option<mpsc::WeakUnboundedSender<Command>>,
     swallowed: Option<Arc<AtomicU64>>,
     ignored: bool,
@@ -304,6 +306,8 @@ impl Responder {
         Self {
             state: Arc::new(AtomicU8::new(OPEN)),
             id: String::new(),
+            instance_id: 0,
+            generation: Generation(0),
             sender: None,
             swallowed: Some(swallowed),
             ignored: false,
@@ -637,15 +641,33 @@ pub(crate) enum Answer {
     Error { code: i64, message: String },
 }
 
+/// One open server request, bound to the client instance and connection that delivered it.
+struct RequestSlot {
+    state: Arc<AtomicU8>,
+    instance_id: u64,
+    generation: Generation,
+}
+
+/// An id that was answered or cancelled. A later frame with this id must not bind a new request.
+struct SettledId {
+    id: String,
+    answered: bool,
+}
+
+/// How many answered or cancelled ids are remembered. Older ids fall out of the ring.
+const TOMBSTONE_LIMIT: usize = 256;
+
 /// The actor's data, with no socket, task, or clock.
 pub(crate) struct ChannelState {
     stats: ChannelStats,
     next_id: u64,
+    next_instance: u64,
     connected: bool,
     closed: bool,
     generation_closed: bool,
     calls: HashMap<u64, String>,
-    requests: HashMap<String, Arc<AtomicU8>>,
+    requests: HashMap<String, RequestSlot>,
+    tombstones: VecDeque<SettledId>,
     unknown_methods: HashSet<String>,
 }
 
@@ -654,11 +676,13 @@ impl ChannelState {
         Self {
             stats: ChannelStats::default(),
             next_id: next_request_id,
+            next_instance: 1,
             connected: false,
             closed: false,
             generation_closed: true,
             calls: HashMap::new(),
             requests: HashMap::new(),
+            tombstones: VecDeque::new(),
             unknown_methods: HashSet::new(),
         }
     }
@@ -726,7 +750,10 @@ impl ChannelState {
                     Vec::new()
                 }
             }
-            Decoded::Inbound(Inbound::ServerRequest(request)) => {
+            Decoded::Inbound(Inbound::ServerRequest(mut request)) => {
+                if self.id_blocked(&request.id) {
+                    return Vec::new();
+                }
                 if matches!(request.request, ContractServerRequest::Unknown(_)) {
                     let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
                     let method = value["method"].as_str().unwrap_or_default();
@@ -740,6 +767,7 @@ impl ChannelState {
                             },
                         ),
                     }];
+                    self.tombstone(&request.id, true);
                     self.stats.malformed_frames += 1;
                     if self.unknown_methods.insert(method.to_owned()) {
                         effects.push(Effect::Deliver(Inbound::Malformed(MalformedFrame {
@@ -751,8 +779,7 @@ impl ChannelState {
                     }
                     effects
                 } else {
-                    self.requests
-                        .insert(request.id.clone(), request.responder.state.clone());
+                    self.track_request(&mut request);
                     vec![Effect::Deliver(Inbound::ServerRequest(request))]
                 }
             }
@@ -771,18 +798,21 @@ impl ChannelState {
                     let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
                     let id = value["id"].as_str().unwrap_or_default();
                     let method = value["method"].as_str().unwrap_or_default();
-                    effects.push(Effect::Write {
-                        generation,
-                        text: answer_text(
-                            id,
-                            Answer::Error {
-                                code: -32603,
-                                message: format!(
-                                    "server request params could not be read: {method}"
-                                ),
-                            },
-                        ),
-                    });
+                    if !self.id_blocked(id) {
+                        effects.push(Effect::Write {
+                            generation,
+                            text: answer_text(
+                                id,
+                                Answer::Error {
+                                    code: -32603,
+                                    message: format!(
+                                        "server request params could not be read: {method}"
+                                    ),
+                                },
+                            ),
+                        });
+                        self.tombstone(id, true);
+                    }
                 }
                 effects.push(Effect::Deliver(Inbound::Malformed(frame)));
                 effects
@@ -819,15 +849,34 @@ impl ChannelState {
     }
 
     /// The first successful answer wins. A second call is [`RespondError::AlreadyAnswered`].
+    ///
+    /// The instance and the generation must be the ones stored for this id, and that generation
+    /// must still be the connection the client is speaking on. A responder from a replaced
+    /// connection is [`RespondError::Cancelled`] and writes nothing.
     pub(crate) fn answer(
         &mut self,
         request_id: &str,
+        instance_id: u64,
+        generation: Generation,
         answer: Answer,
     ) -> Result<Effect, RespondError> {
-        let state = self
-            .requests
-            .get(request_id)
-            .ok_or(RespondError::Cancelled)?;
+        let Some(slot) = self.requests.get(request_id) else {
+            let settled = self
+                .tombstones
+                .iter()
+                .find(|settled| settled.id == request_id);
+            return Err(match settled {
+                Some(settled) if settled.answered => RespondError::AlreadyAnswered,
+                _ => RespondError::Cancelled,
+            });
+        };
+        if slot.instance_id != instance_id
+            || slot.generation != generation
+            || slot.generation != self.stats.generation
+        {
+            return Err(RespondError::Cancelled);
+        }
+        let state = Arc::clone(&slot.state);
         match state.load(Ordering::SeqCst) {
             ANSWERED => return Err(RespondError::AlreadyAnswered),
             CANCELLED | ANSWERED_CANCELLED => return Err(RespondError::Cancelled),
@@ -846,26 +895,31 @@ impl ChannelState {
         })
     }
 
-    /// `ignore` writes nothing and closes the request.
+    /// `ignore` writes nothing and closes the request. The id stays reusable.
     pub(crate) fn ignore(&mut self, request_id: &str) {
-        if let Some(state) = self.requests.remove(request_id) {
-            state.store(ANSWERED, Ordering::SeqCst);
+        if let Some(slot) = self.requests.remove(request_id) {
+            slot.state.store(ANSWERED, Ordering::SeqCst);
         }
     }
 
     /// The responder was dropped. Counts [`ChannelStats::dropped_without_decision`].
     ///
-    /// With a current connection this emits the `-32603` answer. With none, it writes nothing.
+    /// With a current connection of the same generation this emits the `-32603` answer. With
+    /// none, or from a replaced connection, it writes nothing.
     pub(crate) fn drop_undecided(&mut self, request_id: &str) -> Vec<Effect> {
-        let Some(state) = self.requests.remove(request_id) else {
+        let Some(slot) = self.requests.remove(request_id) else {
             return Vec::new();
         };
-        if state.load(Ordering::SeqCst) != OPEN {
+        if slot.state.load(Ordering::SeqCst) != OPEN {
             return Vec::new();
         }
-        state.store(ANSWERED, Ordering::SeqCst);
+        slot.state.store(ANSWERED, Ordering::SeqCst);
         self.stats.dropped_without_decision += 1;
-        if self.connected {
+        let current = slot.generation == self.stats.generation;
+        if current {
+            self.tombstone(request_id, true);
+        }
+        if self.connected && current {
             vec![Effect::Write {
                 generation: self.stats.generation,
                 text: answer_text(
@@ -882,9 +936,56 @@ impl ChannelState {
     }
 
     /// `request.cancel`, or the same transition without a frame.
+    ///
+    /// The entry stays until a later drop or ignore so an in-flight write can still see the
+    /// cancelled state. The id is tombstoned immediately, so a new frame cannot bind it.
     pub(crate) fn cancel(&mut self, request_id: &str) {
-        if let Some(state) = self.requests.get(request_id) {
-            cancel_state(state);
+        if let Some(slot) = self.requests.get(request_id) {
+            cancel_state(&slot.state);
+            self.tombstone(request_id, false);
+        }
+    }
+
+    /// Remember a request the application may answer. A duplicate open or settled id is refused
+    /// before this runs.
+    fn track_request(&mut self, request: &mut ServerRequest) {
+        let instance_id = self.next_instance;
+        self.next_instance = self.next_instance.saturating_add(1);
+        request.responder.instance_id = instance_id;
+        request.responder.generation = request.generation;
+        self.requests.insert(
+            request.id.clone(),
+            RequestSlot {
+                state: Arc::clone(&request.responder.state),
+                instance_id,
+                generation: request.generation,
+            },
+        );
+    }
+
+    fn id_blocked(&self, id: &str) -> bool {
+        !id.is_empty()
+            && (self.requests.contains_key(id)
+                || self.tombstones.iter().any(|settled| settled.id == id))
+    }
+
+    fn tombstone(&mut self, id: &str, answered: bool) {
+        if id.is_empty() || self.tombstones.iter().any(|settled| settled.id == id) {
+            return;
+        }
+        if self.tombstones.len() == TOMBSTONE_LIMIT {
+            self.tombstones.pop_front();
+        }
+        self.tombstones.push_back(SettledId {
+            id: id.to_owned(),
+            answered,
+        });
+    }
+
+    /// The write finished. The id can no longer bind another request.
+    fn complete_answer(&mut self, id: &str) {
+        if self.requests.remove(id).is_some() {
+            self.tombstone(id, true);
         }
     }
 
@@ -894,8 +995,8 @@ impl ChannelState {
             return Vec::new();
         }
         self.closed = true;
-        for state in self.requests.values() {
-            cancel_state(state);
+        for slot in self.requests.values() {
+            cancel_state(&slot.state);
         }
         let mut effects = self.on_closed(self.stats.generation, CloseReason::ClientClosed);
         if effects.is_empty() {
@@ -913,7 +1014,7 @@ impl ChannelState {
         stats.open_server_requests = self
             .requests
             .values()
-            .filter(|state| matches!(state.load(Ordering::SeqCst), OPEN | WRITING))
+            .filter(|slot| matches!(slot.state.load(Ordering::SeqCst), OPEN | WRITING))
             .count();
         stats.inbound_backlog = inbound_backlog;
         stats
@@ -980,7 +1081,13 @@ impl Responder {
             .ok_or(RespondError::Cancelled)?;
         let (tx, rx) = oneshot::channel();
         sender
-            .send(Command::Answer(self.id.clone(), answer, tx))
+            .send(Command::Answer(
+                self.id.clone(),
+                self.instance_id,
+                self.generation,
+                answer,
+                tx,
+            ))
             .map_err(|_| RespondError::Cancelled)?;
         rx.await.unwrap_or(Err(RespondError::Cancelled))
     }
@@ -1044,7 +1151,13 @@ enum Command {
     Close(Option<oneshot::Sender<()>>),
     Gone,
     Stats(oneshot::Sender<ChannelStats>),
-    Answer(String, Answer, oneshot::Sender<Result<(), RespondError>>),
+    Answer(
+        String,
+        u64,
+        Generation,
+        Answer,
+        oneshot::Sender<Result<(), RespondError>>,
+    ),
     Ignore(String),
     DropResponder(String),
     Taken,
@@ -1226,7 +1339,7 @@ struct PendingCall {
     result: oneshot::Sender<Result<Value, CallError>>,
 }
 type AnswerResult = oneshot::Sender<Result<(), RespondError>>;
-type QueuedAnswers = std::collections::VecDeque<(Answer, AnswerResult)>;
+type QueuedAnswers = std::collections::VecDeque<(u64, Generation, Answer, AnswerResult)>;
 struct Actor {
     state: ChannelState,
     pending: HashMap<u64, PendingCall>,
@@ -1312,14 +1425,22 @@ impl Actor {
 
     fn finish_answers(&mut self) {
         for (id, result) in self.answers.drain() {
-            if let Some(state) = self.state.requests.get(&id) {
-                let _ = state.compare_exchange(WRITING, OPEN, Ordering::SeqCst, Ordering::SeqCst);
+            if let Some(slot) = self.state.requests.get(&id) {
+                let _ =
+                    slot.state
+                        .compare_exchange(WRITING, OPEN, Ordering::SeqCst, Ordering::SeqCst);
             }
-            let cancelled = self.state.requests.get(&id).is_some_and(|state| {
-                matches!(state.load(Ordering::SeqCst), CANCELLED | ANSWERED_CANCELLED)
+            let cancelled = self.state.requests.get(&id).is_some_and(|slot| {
+                matches!(
+                    slot.state.load(Ordering::SeqCst),
+                    CANCELLED | ANSWERED_CANCELLED
+                )
             });
-            let written = self.state.requests.get(&id).is_some_and(|state| {
-                matches!(state.load(Ordering::SeqCst), ANSWERED | ANSWERED_CANCELLED)
+            let written = self.state.requests.get(&id).is_some_and(|slot| {
+                matches!(
+                    slot.state.load(Ordering::SeqCst),
+                    ANSWERED | ANSWERED_CANCELLED
+                )
             });
             let _ = result.send(if written {
                 Ok(())
@@ -1336,14 +1457,14 @@ impl Actor {
                 .state
                 .requests
                 .get(&id)
-                .map(|state| state.load(Ordering::SeqCst))
+                .map(|slot| slot.state.load(Ordering::SeqCst))
             {
                 Some(CANCELLED | ANSWERED_CANCELLED) => RespondError::Cancelled,
                 Some(ANSWERED) => RespondError::AlreadyAnswered,
                 _ if self.state.closed => RespondError::Cancelled,
                 _ => RespondError::NotConnected,
             };
-            for (_, result) in answers {
+            for (_, _, _, result) in answers {
                 let _ = result.send(Err(outcome));
             }
         }
@@ -1408,7 +1529,9 @@ impl Actor {
             Command::Stats(result) => {
                 let _ = result.send(self.state.stats(self.backlog));
             }
-            Command::Answer(id, answer, result) => self.answer(id, answer, result),
+            Command::Answer(id, instance_id, generation, answer, result) => {
+                self.answer(id, instance_id, generation, answer, result)
+            }
             Command::Ignore(id) => self.state.ignore(&id),
             Command::DropResponder(id) => {
                 let effects = self.state.drop_undecided(&id);
@@ -1445,23 +1568,29 @@ impl Actor {
                         .state
                         .requests
                         .get(&id)
-                        .is_some_and(|state| state.load(Ordering::SeqCst) == CANCELLED);
-                    if let Some(state) = self.state.requests.get(&id) {
-                        let _ = state.compare_exchange(
+                        .is_some_and(|slot| slot.state.load(Ordering::SeqCst) == CANCELLED);
+                    if let Some(slot) = self.state.requests.get(&id) {
+                        let _ = slot.state.compare_exchange(
                             WRITING,
                             if outcome.is_ok() { ANSWERED } else { OPEN },
                             Ordering::SeqCst,
                             Ordering::SeqCst,
                         );
                     }
+                    let succeeded = outcome.is_ok() && !cancelled;
                     let _ = result.send(if cancelled {
                         Err(RespondError::Cancelled)
                     } else {
                         outcome
                     });
+                    if succeeded {
+                        self.state.complete_answer(&id);
+                    }
                     if let Some(mut queue) = self.answer_queue.remove(&id) {
-                        while let Some((answer, result)) = queue.pop_front() {
-                            self.answer(id.clone(), answer, result);
+                        while let Some((instance_id, generation, answer, result)) =
+                            queue.pop_front()
+                        {
+                            self.answer(id.clone(), instance_id, generation, answer, result);
                         }
                     }
                 }
@@ -1543,7 +1672,7 @@ impl Actor {
         let state = request
             .as_ref()
             .and_then(|id| self.state.requests.get(id))
-            .cloned();
+            .map(|slot| Arc::clone(&slot.state));
         let sent = self.transport.as_ref().is_some_and(|transport| {
             transport
                 .writer
@@ -1567,20 +1696,24 @@ impl Actor {
     fn answer(
         &mut self,
         id: String,
+        instance_id: u64,
+        generation: Generation,
         answer: Answer,
         result: oneshot::Sender<Result<(), RespondError>>,
     ) {
         if self.answers.contains_key(&id) {
-            self.answer_queue
-                .entry(id)
-                .or_default()
-                .push_back((answer, result));
+            self.answer_queue.entry(id).or_default().push_back((
+                instance_id,
+                generation,
+                answer,
+                result,
+            ));
             return;
         }
-        match self.state.answer(&id, answer) {
+        match self.state.answer(&id, instance_id, generation, answer) {
             Ok(Effect::Write { text, .. }) => {
-                if let Some(state) = self.state.requests.get(&id) {
-                    state.store(WRITING, Ordering::SeqCst);
+                if let Some(slot) = self.state.requests.get(&id) {
+                    slot.state.store(WRITING, Ordering::SeqCst);
                 }
                 self.answers.insert(id.clone(), result);
                 self.write(text, Some(id));
@@ -1647,7 +1780,12 @@ mod tests {
         let _ = state.begin_generation(Generation(1));
         let id = "srq-000000000005".to_owned();
         let _ = state.on_frame(Generation(1), &sudo_frame(&id), Instant::now());
-        state.requests[&id].store(WRITING, Ordering::SeqCst);
+        state
+            .requests
+            .get(&id)
+            .expect("request")
+            .state
+            .store(WRITING, Ordering::SeqCst);
         let (sender, _) = mpsc::unbounded_channel();
         let (inbound, _) = mpsc::unbounded_channel();
         let (result, receiver) = oneshot::channel();
@@ -1698,12 +1836,7 @@ mod tests {
             Err(RespondError::NotConnected)
         );
         assert_eq!(actor.state.stats(0).open_server_requests, 1);
-        assert!(
-            actor
-                .state
-                .answer(&id, Answer::Result(json!({"value":""})))
-                .is_ok()
-        );
+        assert!(answer_open(&mut actor.state, &id, Answer::Result(json!({"value":""}))).is_ok());
     }
 
     #[tokio::test]
@@ -1720,11 +1853,17 @@ mod tests {
     #[tokio::test]
     async fn completed_answer_is_not_reopened_when_replacing_its_writer() {
         let (mut actor, id, result) = pending_answer();
-        actor.state.requests[&id].store(ANSWERED, Ordering::SeqCst);
+        actor
+            .state
+            .requests
+            .get(&id)
+            .expect("request")
+            .state
+            .store(ANSWERED, Ordering::SeqCst);
         actor.disconnect_writer().await;
         assert_eq!(result.await.expect("answer completion"), Ok(()));
         assert!(matches!(
-            actor.state.answer(&id, Answer::Result(json!({"value":""}))),
+            answer_open(&mut actor.state, &id, Answer::Result(json!({"value":""}))),
             Err(RespondError::AlreadyAnswered)
         ));
     }
@@ -1736,11 +1875,11 @@ mod tests {
             if cancel_first {
                 actor.state.cancel(&id);
             }
-            mark_written(&actor.state.requests[&id]);
+            mark_written(&actor.state.requests.get(&id).expect("request").state);
             actor.shutdown().await;
             assert_eq!(result.await.expect("answer completion"), Ok(()));
             assert!(matches!(
-                actor.state.answer(&id, Answer::Result(json!({"value":""}))),
+                answer_open(&mut actor.state, &id, Answer::Result(json!({"value":""}))),
                 Err(RespondError::Cancelled)
             ));
         }
@@ -1786,6 +1925,18 @@ mod tests {
             actor.state.stats(0).frames_received,
             before.frames_received + 2
         );
+    }
+
+    fn answer_open(
+        state: &mut ChannelState,
+        id: &str,
+        answer: Answer,
+    ) -> Result<Effect, RespondError> {
+        let (instance_id, generation) = {
+            let slot = &state.requests[id];
+            (slot.instance_id, slot.generation)
+        };
+        state.answer(id, instance_id, generation, answer)
     }
 
     fn sudo_frame(id: &str) -> Vec<u8> {
@@ -1839,8 +1990,7 @@ mod tests {
         let _ = state.begin_generation(Generation(1));
         let id = "srq-0123456789ab";
         let _ = state.on_frame(Generation(1), &sudo_frame(id), Instant::now());
-        let first = state
-            .answer(id, Answer::Result(json!({"value": "one"})))
+        let first = answer_open(&mut state, id, Answer::Result(json!({"value": "one"})))
             .expect("first answer");
         let text = match first {
             Effect::Write { text, .. } => text,
@@ -1853,7 +2003,7 @@ mod tests {
             parsed.pointer("/result/value").and_then(Value::as_str),
             Some("one")
         );
-        let second = state.answer(id, Answer::Result(json!({"value": "two"})));
+        let second = answer_open(&mut state, id, Answer::Result(json!({"value": "two"})));
         assert!(matches!(second, Err(RespondError::AlreadyAnswered)));
 
         let event = decode_frame(
@@ -1913,7 +2063,11 @@ mod tests {
         assert_eq!(open.malformed_frames, 1);
         assert_eq!(open.open_server_requests, 1);
 
-        let _ = state.answer("srq-000000000001", Answer::Result(json!({"value": ""})));
+        let _ = answer_open(
+            &mut state,
+            "srq-000000000001",
+            Answer::Result(json!({"value": ""})),
+        );
         assert_eq!(state.stats(0).open_server_requests, 0);
 
         let _ = state.on_frame(Generation(1), &sudo_frame("srq-000000000002"), now);

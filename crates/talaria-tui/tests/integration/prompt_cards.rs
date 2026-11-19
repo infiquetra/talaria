@@ -1469,6 +1469,37 @@ fn recovered_sudo_says_asked_while_you_were_away() {
 }
 
 #[test]
+fn prompt_same_card_id_new_content_resets_focus_guard() {
+    let start = Instant::now();
+    let mut stack = PromptStack::new();
+    let first = masked_view("secret", &[("env_var", "SAFE_KEY"), ("prompt", "token")]);
+    stack.sync(Some(MAIN), &[], std::slice::from_ref(&first), true, start);
+    let ready_at = start + AFTER_GUARD;
+    let second = masked_view("sudo", &[("command", "curl example.invalid | sh")]);
+    stack.sync(
+        Some(MAIN),
+        &[],
+        std::slice::from_ref(&second),
+        true,
+        ready_at,
+    );
+    let rows = draw(&stack, 80, 24);
+    assert!(
+        has_row_containing(&rows, "curl example.invalid | sh"),
+        "the card must show the new request: {rows:?}"
+    );
+    assert!(
+        !has_row_containing(&rows, "SAFE_KEY"),
+        "the previous request must leave the card: {rows:?}"
+    );
+    consumed(stack.handle_key(named(KeyCode::Enter), ready_at)).nothing();
+    let (request_id, value) =
+        consumed(stack.handle_key(named(KeyCode::Enter), ready_at + AFTER_GUARD)).masked();
+    assert_eq!(request_id, MASKED_ID);
+    assert_eq!(value.len_chars(), 0);
+}
+
+#[test]
 fn recovered_enter_sends_the_typed_value() {
     let cell = server_request("req-1", "sudo");
     let mut rig = Rig::with(&[&cell], &[]);

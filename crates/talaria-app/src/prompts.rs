@@ -55,6 +55,10 @@ pub(crate) fn cancel_reason_notice(reason: &str) -> String {
 #[derive(Clone, Debug)]
 pub struct MaskedRequestInfo {
     pub id: String,
+    /// Client-generated identity for the card and for [`PromptService::answer_masked`].
+    pub token: String,
+    /// Connection generation that delivered the request.
+    pub generation: u64,
     pub session_id: Option<String>,
     pub kind: MaskedKind,
     pub fields: Vec<(&'static str, String)>,
@@ -74,6 +78,7 @@ pub struct Executed {
 
 pub struct PromptService {
     next_submission_id: Box<dyn FnMut() -> String + Send>,
+    next_token: u64,
     generation: Option<u64>,
     masked: Vec<(MaskedRequestInfo, Responder)>,
     answered_requests: HashMap<String, (Option<String>, &'static str)>,
@@ -87,6 +92,7 @@ impl PromptService {
     pub fn new(next_submission_id: Box<dyn FnMut() -> String + Send>) -> Self {
         Self {
             next_submission_id,
+            next_token: 0,
             generation: None,
             masked: Vec::new(),
             answered_requests: HashMap::new(),
@@ -148,9 +154,14 @@ impl PromptService {
                 return notices;
             }
         };
+        self.next_token = self.next_token.saturating_add(1);
+        let token = format!("masked-{}", self.next_token);
+        let generation = req.generation.0;
         self.masked.push((
             MaskedRequestInfo {
                 id: req.id,
+                token,
+                generation,
                 session_id,
                 kind,
                 fields,
@@ -223,16 +234,20 @@ impl PromptService {
 
     pub async fn answer_masked(
         &mut self,
-        request_id: &str,
+        token: &str,
         value: Zeroizing<String>,
     ) -> Result<(), RespondError> {
-        let Some(index) = self
-            .masked
-            .iter()
-            .position(|(info, _)| info.id == request_id)
-        else {
+        let Some(index) = self.masked_index(token) else {
             return Err(RespondError::Cancelled);
         };
+        if self
+            .generation
+            .is_some_and(|current| self.masked[index].0.generation != current)
+        {
+            let (_, responder) = self.masked.remove(index);
+            responder.ignore();
+            return Err(RespondError::Cancelled);
+        }
         // Borrow the zeroing buffer; the transport alone serializes the response value.
         let result = self.masked[index]
             .1
@@ -251,6 +266,23 @@ impl PromptService {
             responder.ignore();
         }
         result
+    }
+
+    /// A token matches one card. A gateway id matches only when exactly one open card has it.
+    fn masked_index(&self, key: &str) -> Option<usize> {
+        if let Some(index) = self.masked.iter().position(|(info, _)| info.token == key) {
+            return Some(index);
+        }
+        let mut found = None;
+        for (index, (info, _)) in self.masked.iter().enumerate() {
+            if info.id == key {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(index);
+            }
+        }
+        found
     }
 
     pub fn masked_requests(&self) -> Vec<MaskedRequestInfo> {

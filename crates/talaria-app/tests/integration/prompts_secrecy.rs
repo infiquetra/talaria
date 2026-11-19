@@ -219,7 +219,7 @@ async fn exercise(entry: Entry) {
     assert_eq!(infos[0].kind, MaskedKind::Sudo);
     observed.add("the masked request info (debug)", format!("{infos:?}"));
     let view = MaskedView {
-        request_id: infos[0].id.clone(),
+        request_id: infos[0].token.clone(),
         session_id: infos[0].session_id.clone(),
         method: "sudo".to_owned(),
         fields: infos[0]
@@ -288,7 +288,7 @@ async fn exercise(entry: Entry) {
     let PromptIntent::Masked { request_id, value } = intent else {
         panic!("the intent should be a masked answer");
     };
-    assert_eq!(request_id, id);
+    assert_eq!(request_id, infos[0].token);
     assert_eq!(value.len_chars(), marker_len);
     if stack.section().is_some() {
         observed.add_drawn("the card after Enter", &draw(&stack));

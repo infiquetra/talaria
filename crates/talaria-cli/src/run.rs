@@ -1117,7 +1117,7 @@ fn masked_views(masked: &[MaskedRequestInfo]) -> Vec<MaskedView> {
     masked
         .iter()
         .map(|info| MaskedView {
-            request_id: info.id.clone(),
+            request_id: info.token.clone(),
             session_id: info.session_id.clone(),
             method: masked_method(info.kind).to_string(),
             fields: info
