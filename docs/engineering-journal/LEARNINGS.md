@@ -10,6 +10,61 @@
 
 **Generalizable rule.** When a withdrawal list can omit ids, seal the named cards and treat the surplus count as "the rest of this session's open approvals are withdrawn."
 
+## 2026-11-19 — Dependency advisories need a pin or a named waiver
+
+**Evidence.** On the origin/main lock at `85890d4f`, `cargo deny check advisories`
+(`cargo-deny` 0.20.2) exited 1 with six findings, and `cargo audit` 0.23.0
+exited 1 with `2 vulnerabilities found` plus four warnings. The same advisory
+database (1550 advisories) reported no other vulnerability or unsound ID.
+crates.io lists `pulldown-cmark` 0.13.6 and `rustix` 1.1.6 as the newest
+non-yanked releases in those minor lines (`rustix` 1.1.0 is yanked). After
+those two pins, `cargo deny check advisories` exited 0 (`0 errors, 0 warnings,
+6 notes`) and `cargo audit` exited 0 with three unmaintained warnings and no
+vulnerability or unsound finding.
+
+**Reachability.**
+
+- `RUSTSEC-2026-0414` and `RUSTSEC-2026-0433` (`pulldown-cmark` 0.13.4) both
+  require `Options::ENABLE_WIKILINKS`. The advisory text says that option is
+  off by default, 0414 is fixed in 0.13.5, and 0433 is fixed in 0.13.6. The
+  workspace pin had `default-features = false`. The two parsers set only
+  `ENABLE_TABLES | ENABLE_STRIKETHROUGH | ENABLE_TASKLISTS`
+  (`crates/talaria-tui/src/markdown/render.rs`, `crates/talaria-tui/src/markdown/blocks.rs`).
+  A search of `crates/` found no `ENABLE_WIKILINKS` and no `Options::all()`.
+  The pin is now `=0.13.6`.
+- `RUSTSEC-2026-0486` (`rustix` 1.1.5) is the unsound zero-length xattr buffer
+  path in `getxattr`, `lgetxattr`, `fgetxattr`, `listxattr`, `llistxattr`, and
+  `flistxattr`. A search of `crates/` found none of those names. Talaria's own
+  `rustix` calls are `fs`, `process`, `termios`, `event`, `io`, and `pipe`.
+  The same crate also arrives through `crossterm`, `gethostname`, `tempfile`,
+  `alacritty_terminal`, `polling`, and `rustix-openpty`. The advisory's fix is
+  `>=1.1.6`, and the pin is now `=1.1.6`.
+- `RUSTSEC-2025-0141` (`bincode` 1.3.3, unmaintained) is only a dependency of
+  `syntect` 5.3.0, which `talaria-tui` uses for syntax highlighting. `crates/`
+  does not name `bincode`. No patched upgrade exists. The waiver stands until
+  `syntect` drops `bincode` 1.x.
+- `RUSTSEC-2025-0134` (`rustls-pemfile` 2.2.0, unmaintained) is a
+  dev-dependency of `hermes-client` and is used by the TLS mock fixture
+  (`crates/hermes-client/tests/support/mock_gated.rs`). The waiver stands until
+  those tests move to `rustls_pki_types::pem::PemObject`.
+- `RUSTSEC-2026-0543` (`chrono` 0.4.45, unmaintained, all versions) is a normal
+  dependency of `talaria-app`, `talaria-cli`, and `talaria-workflow`. Replacing
+  it with `jiff` or `time` is outside this gate. The waiver stands until a
+  dedicated migration.
+
+**Gate.** `deny.toml` uses cargo-deny schema version 2, denies yanked crates,
+sets `unsound = "all"` so an unsound advisory fails for every crate in the
+graph, denies every unmaintained advisory, and ignores only the three IDs
+above. cargo-deny 0.20.2's default `unsound = "workspace"` reports an unsound
+advisory only when a workspace member depends on that crate directly.
+`vulnerability` stays unset, and every vulnerability remains an error. Ubuntu
+CI runs `cargo deny check advisories` with `cargo-deny` 0.20.2 unless the
+change is docs-only. Dependabot watches the `cargo` ecosystem on the same
+monthly schedule as GitHub Actions.
+
+**Generalizable rule.** Ship a patched release for a vulnerability or unsound
+advisory, and keep an unmaintained advisory only with an explicit revisit.
+
 ## 2026-11-19 — Talaria-owned files are owner-only
 
 **Evidence.** The background client log created `~/.talaria`, `~/.talaria/logs`, and
