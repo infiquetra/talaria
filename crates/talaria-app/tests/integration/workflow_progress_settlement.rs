@@ -236,6 +236,7 @@ fn idle_interactive_loop_consumes_journal_without_keypresses_or_animation() {
         };
         let setup = app::RunSetup {
             remote_gateway: false,
+            remote_host: None,
             herdr: None,
             home: home.path().to_path_buf(),
             launch_id: "idle-workflow-test".into(),

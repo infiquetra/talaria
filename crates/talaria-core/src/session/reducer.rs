@@ -594,6 +594,7 @@ fn session(
         "approval.request" | "clarify.request" | "approval.settled" | "clarify.settled" => {
             super::prompts::session(state, name, payload)
         }
+        "approval.cancelled" => super::prompts::cancel_approvals(state, payload),
         "error" => {
             if let Some(text) = payload["message"].as_str() {
                 state.notice(NoticeKind::Error, text.to_owned(), None);
@@ -621,11 +622,7 @@ fn session(
             || name.starts_with("subagent.")
             || matches!(
                 name,
-                "agent.step"
-                    | "session.updated"
-                    | "session.tools_changed"
-                    | "approval.cancelled"
-                    | "request.cancel"
+                "agent.step" | "session.updated" | "session.tools_changed" | "request.cancel"
             ) => {}
         _ => {
             let safe = if !name.is_empty()

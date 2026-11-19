@@ -2,6 +2,20 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-19 — Withdraw `approval.cancelled` by prompt id, then by count
+
+**Context.** `ApprovalCancelledPayload` (`gateway-contract.openrpc.json`, `ApprovalCancelledPayload`) is the broadcast from `session_lifecycle._announce_cancelled_gateway_approvals`. Its description says one frame is sent for pending approvals dropped by an interrupt, reap, or teardown, and that `cancelled_count` is the number of dropped entries while `request_ids` omits empty or missing ids, so the two can disagree. The reducer previously ignored the event, which left the card open and able to send a late `approval.respond`. No live recording of the event is in the tree. The payload's `request_ids` are the approval request ids (the same ids `approval.request` carries as `prompt_id`). `session_id` names the session; `stored_session_id` is a second identity and is not used to choose cards.
+
+**Decision.** For an `approval.cancelled` event whose payload `session_id` equals the session that owns the cells:
+
+1. Seal every open or answering approval whose `prompt_id` is in `request_ids` (`Settled(Elsewhere)`, sealed). A later answer is refused and does not emit `approval.respond`.
+2. When `cancelled_count` is greater than the number of approvals sealed in step 1, including when `request_ids` is empty or missing, seal every approval still open or answering in that same session.
+3. Leave clarifications, already settled approvals, and every other session untouched. An event whose payload `session_id` differs from the session is ignored even if the envelope was delivered there.
+
+`request.cancel` for a masked card is separate: every such event, including one for a retained session, emits `AppEffect::CancelRequest` so the prompt service drops the card and ignores the responder. A blank `session_id` on a masked request is not stored and is drawn as `session unknown`, and prompt card headers include the profile and, when the gateway host is not local, that host.
+
+**Revisit when.** A live gateway shows `request_ids` are not prompt ids, or a withdrawal is always followed by `approval.settled` and the count rule withdraws a card the operator should still answer.
+
 ## 2026-11-16
 
 ### Runtime compatibility against a current Hermes

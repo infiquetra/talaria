@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-19 — `approval.cancelled` ids can be shorter than the count
+
+**Evidence.** The vendored `ApprovalCancelledPayload` description says `cancelled_count` is the number of dropped entries and `request_ids` omits empty or missing ids, so the two can disagree. Before this change the reducer ignored the event, and a following answer emitted `RespondApproval`.
+
+**Mechanism.** Named ids seal those approval cells. A count larger than the number sealed withdraws the rest of that session's open approvals. Another session's cells are not in that state, and a payload `session_id` that does not match is ignored.
+
+**Generalizable rule.** When a withdrawal list can omit ids, seal the named cards and treat the surplus count as "the rest of this session's open approvals are withdrawn."
+
 ## 2026-11-19 — Talaria-owned files are owner-only
 
 **Evidence.** The background client log created `~/.talaria`, `~/.talaria/logs`, and

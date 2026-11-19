@@ -43,6 +43,18 @@ pub fn policy_for(method: &str) -> ServerRequestPolicy {
     }
 }
 
+/// A blank id is not a session. Storing it would let a card look like the foreground one.
+fn present_session_id(session_id: Option<String>) -> Option<String> {
+    session_id.and_then(|id| {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    })
+}
+
 pub(crate) fn cancel_reason_notice(reason: &str) -> String {
     match reason {
         "timeout" => "timed out; the agent continued without it".to_owned(),
@@ -107,7 +119,7 @@ impl PromptService {
         }
         let mut notices = self.on_connection_replaced(req.generation.0);
         let method = request_method(&req.request);
-        let session_id = req.session_id.filter(|id| !id.is_empty());
+        let session_id = present_session_id(req.session_id);
         let (kind, fields) = match req.request {
             ContractRequest::Sudo(params) => (MaskedKind::Sudo, vec![("command", params.command)]),
             ContractRequest::Secret(params) => (
@@ -579,5 +591,47 @@ mod tests {
             super::cancel_reason_notice("timeout"),
             "timed out; the agent continued without it"
         );
+    }
+
+    #[test]
+    fn blank_session_id_is_not_stored_as_the_foreground_session() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            for session_id in [
+                Some(String::new()),
+                Some("   ".to_owned()),
+                Some("\t".to_owned()),
+                None,
+            ] {
+                let mut service =
+                    super::PromptService::new(Box::new(|| "talaria-blank-1".to_owned()));
+                service
+                    .on_server_request(hermes_client::ServerRequest {
+                        generation: hermes_client::Generation(1),
+                        id: "srq-blank".into(),
+                        session_id: session_id.clone(),
+                        request: hermes_contract::server_requests::ServerRequest::Sudo(
+                            hermes_contract::schemas::SudoRequestParams {
+                                command: "id".into(),
+                                session_id: "   ".into(),
+                            },
+                        ),
+                        responder: hermes_client::Responder::detached(std::sync::Arc::new(
+                            std::sync::atomic::AtomicU64::new(0),
+                        )),
+                    })
+                    .await;
+                let stored = service.masked_requests();
+                assert_eq!(stored.len(), 1);
+                assert_eq!(
+                    stored[0].session_id, None,
+                    "blank session id {:?} must not be stored as a named session",
+                    session_id
+                );
+            }
+        });
     }
 }

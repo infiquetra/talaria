@@ -13,7 +13,7 @@ use hermes_contract::events::{EventFrame, Notification};
 use serde_json::{Value, json};
 use talaria_core::session::{
     AnswerRefusal, Cell, Effect, Event, NoticeKind, PromptKind, PromptState, SessionState,
-    Settlement, ToolStatus, TurnOutcome, TurnState,
+    Settlement, ToolStatus, TurnOutcome, TurnState, update,
 };
 
 use events::{SESSION, approval_request, clarify_request, ev, ev_gen, ev_session, key, submit};
@@ -1033,7 +1033,7 @@ fn second_answer_is_refused_and_failure_reopens() {
 }
 
 #[test]
-fn withdrawn_approval_leaves_on_settled_and_cancelled_leaves_it() {
+fn withdrawn_approval_seals_on_settled_and_on_cancelled() {
     let (settled, effects) = run(vec![
         ev(1, "approval.request", approval_request("p1", 1, &["once"])),
         ev(
@@ -1066,12 +1066,171 @@ fn withdrawn_approval_leaves_on_settled_and_cancelled_leaves_it() {
         ),
     ]);
     assert!(effects.is_empty());
-    let open: Vec<_> = cancelled.open_prompts().collect();
-    assert_eq!(open.len(), 1);
-    assert_eq!(open[0].key.prompt_id, "p1");
-    assert_eq!(open[0].kind, PromptKind::Approval);
-    assert_eq!(open[0].state, PromptState::Open);
-    assert!(!open[0].sealed);
+    let cells = prompts(&cancelled);
+    assert_eq!(cells.len(), 1);
+    assert_eq!(cells[0].key.prompt_id, "p1");
+    assert_eq!(cells[0].kind, PromptKind::Approval);
+    assert_eq!(cells[0].state, PromptState::Settled(Settlement::Elsewhere));
+    assert!(cells[0].sealed);
+    assert_eq!(cancelled.open_prompts().count(), 0);
+}
+
+#[test]
+fn approval_cancelled_seals_named_cards_and_withdraws_the_unlisted_remainder() {
+    let payload = |count: i64, ids: &[&str], session: &str| {
+        json!({
+            "cancelled_count": count,
+            "reason": "interrupt",
+            "request_ids": ids,
+            "session_id": session,
+            "stored_session_id": "stored-1",
+        })
+    };
+
+    let (sealed, effects) = run(vec![
+        ev(
+            1,
+            "approval.request",
+            approval_request("p1", 1, &["once", "deny"]),
+        ),
+        ev(2, "approval.cancelled", payload(1, &["p1"], SESSION)),
+        Event::AnswerApproval {
+            key: key("p1", 1),
+            choice: "once".to_string(),
+        },
+    ]);
+    assert!(
+        effects
+            .iter()
+            .all(|effect| !matches!(effect, Effect::RespondApproval { .. })),
+        "a sealed approval must not emit approval.respond: {effects:?}"
+    );
+    assert!(matches!(
+        effects.last(),
+        Some(Effect::RefuseAnswer {
+            reason: AnswerRefusal::AlreadyAnswered,
+            ..
+        })
+    ));
+    let cell = prompts(&sealed)
+        .into_iter()
+        .find(|prompt| prompt.key.prompt_id == "p1")
+        .expect("named approval");
+    assert_eq!(cell.state, PromptState::Settled(Settlement::Elsewhere));
+    assert!(cell.sealed);
+    assert_eq!(sealed.open_prompts().count(), 0);
+
+    let (excess, effects) = run(vec![
+        ev(1, "approval.request", approval_request("p1", 1, &["once"])),
+        ev(2, "approval.request", approval_request("p2", 1, &["deny"])),
+        ev(
+            3,
+            "clarify.request",
+            clarify_request("c1", 1, "Which path?"),
+        ),
+        ev(4, "approval.cancelled", payload(2, &["p1"], SESSION)),
+        Event::AnswerApproval {
+            key: key("p2", 1),
+            choice: "deny".to_string(),
+        },
+    ]);
+    assert!(
+        effects
+            .iter()
+            .all(|effect| !matches!(effect, Effect::RespondApproval { .. })),
+        "an unlisted approval withdrawn by count must not be answerable: {effects:?}"
+    );
+    assert!(matches!(
+        effects.last(),
+        Some(Effect::RefuseAnswer {
+            reason: AnswerRefusal::AlreadyAnswered,
+            ..
+        })
+    ));
+    for id in ["p1", "p2"] {
+        let cell = prompts(&excess)
+            .into_iter()
+            .find(|prompt| prompt.key.prompt_id == id)
+            .expect(id);
+        assert_eq!(cell.state, PromptState::Settled(Settlement::Elsewhere));
+        assert!(cell.sealed, "{id} stays answerable");
+    }
+    let clarify = prompts(&excess)
+        .into_iter()
+        .find(|prompt| prompt.key.prompt_id == "c1")
+        .expect("clarify");
+    assert_eq!(clarify.kind, PromptKind::Clarify);
+    assert_eq!(clarify.state, PromptState::Open);
+    assert!(!clarify.sealed);
+
+    let (blank_ids, _) = run(vec![
+        ev(1, "approval.request", approval_request("p9", 1, &["once"])),
+        ev(2, "approval.cancelled", payload(1, &[], SESSION)),
+    ]);
+    assert_eq!(
+        blank_ids.open_prompts().count(),
+        0,
+        "a count with no request ids must withdraw the session's open approvals"
+    );
+
+    let (exact, _) = run(vec![
+        ev(1, "approval.request", approval_request("p1", 1, &["once"])),
+        ev(2, "approval.request", approval_request("p2", 1, &["deny"])),
+        ev(3, "approval.cancelled", payload(1, &["p1"], SESSION)),
+    ]);
+    assert!(
+        prompts(&exact)
+            .into_iter()
+            .find(|prompt| prompt.key.prompt_id == "p1")
+            .is_some_and(|prompt| prompt.sealed)
+    );
+    assert!(
+        prompts(&exact)
+            .into_iter()
+            .find(|prompt| prompt.key.prompt_id == "p2")
+            .is_some_and(|prompt| prompt.state == PromptState::Open && !prompt.sealed),
+        "a fully listed cancellation must leave other approvals open"
+    );
+
+    let (mut other, _) = drive::reduce(
+        "other-session",
+        vec![ev_session(
+            "other-session",
+            1,
+            "approval.request",
+            approval_request("p-other", 1, &["once"]),
+        )],
+    );
+    let _ = update(
+        &mut other,
+        ev_session(
+            "other-session",
+            2,
+            "approval.cancelled",
+            payload(3, &["p-other", "p1"], SESSION),
+        ),
+    );
+    let _ = update(
+        &mut other,
+        ev_session(
+            SESSION,
+            3,
+            "approval.cancelled",
+            payload(3, &["p-other"], SESSION),
+        ),
+    );
+    assert_eq!(other.open_prompts().count(), 1);
+    assert_eq!(
+        other
+            .open_prompts()
+            .next()
+            .map(|prompt| prompt.key.prompt_id.as_str()),
+        Some("p-other")
+    );
+    assert!(matches!(
+        other.open_prompts().next().map(|prompt| &prompt.state),
+        Some(PromptState::Open)
+    ));
 }
 
 #[test]

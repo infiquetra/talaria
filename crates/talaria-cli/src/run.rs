@@ -1953,6 +1953,7 @@ impl TuiScreen {
             (Some(state), Some(session_id)) => (state.connection_card(), session_id),
             _ => (None, ""),
         };
+        self.prompts.set_gateway(view.profile, view.gateway_host);
         self.prompts.show_connection(
             connection,
             session_id,
@@ -1979,6 +1980,8 @@ impl TuiScreen {
             .map(|session| session.open_prompts().collect())
             .unwrap_or_default();
         let session = open.first().map(|prompt| prompt.key.session_id.as_str());
+        self.configure_prompts
+            .set_gateway(view.profile, view.gateway_host);
         self.configure_prompts.sync(session, &open, &[], true, now);
     }
 
@@ -3771,6 +3774,8 @@ impl Screen for TuiScreen {
             .filter(|frame| peeked.as_ref() == Some(&frame.key))
         {
             let open: Vec<&PromptCell> = frame.state.open_prompts().collect();
+            self.peek_prompts
+                .set_gateway(view.profile, view.gateway_host);
             self.peek_prompts.sync(
                 Some(frame.key.session_id.as_str()),
                 &open,
@@ -5057,8 +5062,16 @@ fn run_selected(
     };
     let home = hermes_client::default_home();
     let launch_id = new_launch_id();
+    let remote_host = remote.as_ref().and_then(|(cfg, _)| {
+        let host = cfg.base_url.host_str()?;
+        Some(match cfg.base_url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_owned(),
+        })
+    });
     let mut setup = RunSetup {
         remote_gateway: remote.is_some(),
+        remote_host,
         herdr: loaded
             .config
             .herdr

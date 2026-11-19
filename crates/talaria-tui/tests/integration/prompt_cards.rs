@@ -1400,6 +1400,62 @@ fn stack_draws_a_foreign_session_and_a_counter_after_the_header() {
     assert_eq!(choice, "deny");
 }
 
+#[test]
+fn prompt_card_blank_session_shows_unknown_and_names_the_gateway() {
+    let now = Instant::now();
+    let mut blank = sudo_view();
+    blank.session_id = Some(String::new());
+    let mut whitespace = sudo_view();
+    whitespace.session_id = Some(" \t".to_owned());
+    let mut missing = sudo_view();
+    missing.session_id = None;
+    for view in [blank, whitespace, missing] {
+        let mut stack = PromptStack::new();
+        stack.set_gateway("work\u{202e}", Some("gateway.example\u{202e}"));
+        stack.sync(Some(MAIN), &[], std::slice::from_ref(&view), true, now);
+        let header = draw(&stack, 120, 24).first().cloned().unwrap_or_default();
+        assert!(
+            header.contains("session unknown"),
+            "blank session was drawn as the foreground: {header}"
+        );
+        assert!(
+            !header.contains(MAIN),
+            "blank session included the foreground id: {header}"
+        );
+        assert!(header.contains("profile work"), "{header}");
+        assert!(header.contains("host gateway.example"), "{header}");
+        assert!(header.contains("‹U+202E›"), "{header}");
+        assert!(!header.contains('\u{202e}'), "{header}");
+    }
+
+    let mut local = sudo_view();
+    local.session_id = Some(MAIN.to_owned());
+    let mut stack = PromptStack::new();
+    stack.set_gateway("work", Some("127.0.0.1"));
+    stack.sync(Some(MAIN), &[], std::slice::from_ref(&local), true, now);
+    let header = draw(&stack, 80, 24).first().cloned().unwrap_or_default();
+    assert!(!header.contains("session unknown"), "{header}");
+    assert!(!header.contains("session sess"), "{header}");
+    assert!(header.contains("profile work"), "{header}");
+    assert!(!header.contains("127.0.0.1"), "{header}");
+    assert!(!header.contains("host "), "{header}");
+
+    let approval_cell = standard_approval();
+    let question = clarify("Which environment?", &["staging"], false);
+    let mut stack = PromptStack::new();
+    stack.set_gateway("work", Some("gateway.example"));
+    stack.sync(Some(MAIN), &[&approval_cell], &[], true, now);
+    let header = draw(&stack, 100, 24).first().cloned().unwrap_or_default();
+    assert!(header.starts_with("Approval needed"), "{header}");
+    assert!(header.contains("profile work"), "{header}");
+    assert!(header.contains("host gateway.example"), "{header}");
+    stack.sync(Some(MAIN), &[&question], &[], true, now);
+    let header = draw(&stack, 100, 24).first().cloned().unwrap_or_default();
+    assert!(header.starts_with("Question"), "{header}");
+    assert!(header.contains("profile work"), "{header}");
+    assert!(header.contains("host gateway.example"), "{header}");
+}
+
 /// Shift+Tab is the approvals toggle's key (#237): a focused card takes it and keeps its state, so
 /// it never opens or closes the note field.
 #[test]

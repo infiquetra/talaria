@@ -332,7 +332,7 @@ fn application_loop_applies_theme_files_and_reports_reload_results() {
             bench_replay: None, no_ensure: true,
         };
         let setup = app::RunSetup {
-            remote_gateway: false, herdr: None, home: dir.path().to_path_buf(),
+            remote_gateway: false, remote_host: None, herdr: None, home: dir.path().to_path_buf(),
             launch_id: "theme-file-loop".into(), preopened: None, list_title: None,
             notices: vec![], keys: Default::default(), fleet: None,
         };
