@@ -115,6 +115,8 @@ pub enum OpenError {
     FolderUnknown,
     /// Any other refusal, by its `data.reason`.
     Refused { reason: String },
+    /// `session.resume` for one id returned a snapshot that names another session.
+    MismatchedSession { requested: String, returned: String },
     /// The create reply was lost twice.
     Unknown,
     /// No usable answer: not connected, timed out, or a result that did not decode.
@@ -285,8 +287,10 @@ impl SessionService {
                 }
             }
             SessionRequest::ById { session_id } => {
-                self.snapshot("session.resume", resume_params_id(&session_id))
-                    .await
+                let opened = self
+                    .snapshot("session.resume", resume_params_id(&session_id))
+                    .await?;
+                accept_requested_session(opened, &session_id)
             }
             SessionRequest::Pick => Err(OpenError::Link(
                 "a session must be chosen from the list first".to_string(),
@@ -405,8 +409,10 @@ impl SessionService {
 
     /// After a replay gap: resume the session again for a fresh snapshot.
     pub async fn recover(&self, gap: ReplayGap) -> Result<OpenedSession, OpenError> {
-        self.snapshot("session.resume", resume_params_id(&gap.session_id))
-            .await
+        let opened = self
+            .snapshot("session.resume", resume_params_id(&gap.session_id))
+            .await?;
+        accept_requested_session(opened, &gap.session_id)
     }
 
     /// `session.detach` with exactly the two ids, within [`DETACH_TIMEOUT`].
@@ -451,6 +457,22 @@ fn snapshot_from(value: Value) -> Result<OpenedSession, OpenError> {
     serde_json::from_value::<CanonicalSnapshot>(value)
         .map(OpenedSession::from_snapshot)
         .map_err(|_| OpenError::Link("the session reply did not decode".to_string()))
+}
+
+/// Keep a resume only when the snapshot names the id that was requested.
+fn accept_requested_session(
+    opened: OpenedSession,
+    requested_id: &str,
+) -> Result<OpenedSession, OpenError> {
+    let requested = requested_id.trim();
+    if opened.session_id == requested {
+        Ok(opened)
+    } else {
+        Err(OpenError::MismatchedSession {
+            requested: requested.to_string(),
+            returned: opened.session_id,
+        })
+    }
 }
 
 /// The rows of a `session.list` reply.

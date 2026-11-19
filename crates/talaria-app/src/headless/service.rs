@@ -331,6 +331,9 @@ fn open_failure(error: OpenError, launch: &Launch) -> LaunchFailure {
         }
         (OpenError::FolderUnknown, _) => failure::folder_unknown(),
         (OpenError::Refused { reason }, _) => failure::refusal(&reason),
+        (OpenError::MismatchedSession { .. }, _) => {
+            failure::link_failure("the gateway returned a snapshot for a different session")
+        }
         (OpenError::Unknown, StartMode::New) => failure::create_lost_twice(),
         (OpenError::Link(what), _) => failure::link_failure(&what),
         _ => failure::link_failure("the session could not be opened"),
