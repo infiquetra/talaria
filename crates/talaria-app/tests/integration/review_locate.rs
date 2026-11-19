@@ -318,9 +318,10 @@ impl SessionInfoSource for NeverAsked {
     }
 }
 
-/// A recorded tree answers before any call; a tree gone from disk says so.
+/// A recorded tree answers before any call. A tree gone from disk cannot be
+/// resolved, so the record is skipped and the lookup falls through.
 #[tokio::test]
-async fn recorded_tree_answers_first_and_a_missing_one_says_so() {
+async fn recorded_tree_answers_first_and_a_missing_one_falls_through() {
     if skip_unless_git() {
         return;
     }
@@ -383,7 +384,8 @@ async fn recorded_tree_answers_first_and_a_missing_one_says_so() {
         Located::NotFound("Talaria cannot find this session's folder.".to_owned())
     );
 
-    // The tree is gone from disk.
+    // The tree is gone from disk: resolution fails closed and the lookup
+    // falls through instead of opening the recorded path.
     git.ok(
         &repo,
         &["worktree", "remove", "--force", ".worktrees/talaria-rec"],
@@ -391,10 +393,122 @@ async fn recorded_tree_answers_first_and_a_missing_one_says_so() {
     let gone = locate(&row("fixture", "local-rec"), &ctx).await;
     assert_eq!(
         gone,
-        Located::NotFound(format!(
-            "The worktree {} is gone. Hermes may have archived it: run hermes worktree restore talaria-rec in {}, then press r.",
-            repo.join(".worktrees/talaria-rec").to_string_lossy(),
-            repo.to_string_lossy()
-        ))
+        Located::NotFound("Talaria cannot find this session's folder.".to_owned())
     );
+}
+
+const NO_FOLDER: &str = "Talaria cannot find this session's folder.";
+
+/// Write the keys `records_in` needs. `path` is stored as git config text.
+fn write_record(git: &GitRepo, branch: &str, path: &str, session: &str) {
+    for (key, value) in [
+        ("path", path),
+        ("base", "origin/main"),
+        ("base-commit", "0123456789abcdef0123456789abcdef01234567"),
+        ("profile", "fixture"),
+        ("session", session),
+    ] {
+        git.ok(
+            &git.repo,
+            &[
+                "config",
+                "--local",
+                &format!("branch.{branch}.talaria-{key}"),
+                value,
+            ],
+        );
+    }
+}
+
+async fn locate_recorded(git: &GitRepo, session: &str) -> Located {
+    let runner = GitRunner::from_env();
+    let mut repos = KnownRepos::new();
+    repos.insert(git.repo.clone());
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: None,
+        info: &NeverAsked,
+    };
+    locate(&row("fixture", session), &ctx).await
+}
+
+/// An absolute `talaria-path` outside `<main>/.worktrees` is not opened.
+#[tokio::test]
+async fn absolute_record_path_outside_worktrees_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let outside = git.path().join("outside-review");
+    std::fs::create_dir(&outside).expect("outside folder");
+    write_record(&git, "talaria/abs", &outside.to_string_lossy(), "local-abs");
+    let found = locate_recorded(&git, "local-abs").await;
+    assert_eq!(
+        found,
+        Located::NotFound(NO_FOLDER.to_owned()),
+        "an absolute path outside .worktrees must not open"
+    );
+}
+
+/// `<main>/.worktrees/evil` pointing outside the repository is not opened.
+#[tokio::test]
+async fn symlinked_worktree_path_outside_worktrees_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let outside = git.path().join("elsewhere");
+    std::fs::create_dir(&outside).expect("outside folder");
+    std::fs::create_dir(git.repo.join(".worktrees")).expect("worktrees");
+    std::os::unix::fs::symlink(&outside, git.repo.join(".worktrees/evil")).expect("symlink");
+    write_record(&git, "talaria/evil", ".worktrees/evil", "local-evil");
+    let found = locate_recorded(&git, "local-evil").await;
+    assert_eq!(
+        found,
+        Located::NotFound(NO_FOLDER.to_owned()),
+        "a symlink out of .worktrees must not open"
+    );
+}
+
+/// A `.worktrees` directory that is itself a symlink is not opened.
+#[tokio::test]
+async fn symlinked_worktrees_directory_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let outside = git.path().join("linked-trees");
+    std::fs::create_dir_all(outside.join("talaria-linked")).expect("outside tree");
+    std::os::unix::fs::symlink(&outside, git.repo.join(".worktrees")).expect("symlink");
+    write_record(
+        &git,
+        "talaria/linked",
+        ".worktrees/talaria-linked",
+        "local-linked",
+    );
+    let found = locate_recorded(&git, "local-linked").await;
+    assert_eq!(
+        found,
+        Located::NotFound(NO_FOLDER.to_owned()),
+        "a symlinked .worktrees directory must not open"
+    );
+}
+
+/// A real directory directly under `<main>/.worktrees` still opens.
+#[tokio::test]
+async fn legitimate_worktree_record_opens_review() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let tree = git.repo.join(".worktrees/talaria-ok");
+    std::fs::create_dir_all(&tree).expect("worktree");
+    write_record(&git, "talaria/ok", ".worktrees/talaria-ok", "local-ok");
+    let found = locate_recorded(&git, "local-ok").await;
+    let Located::Found(target) = found else {
+        panic!("a real worktree record opens: {found:?}");
+    };
+    assert_eq!(target.folder, tree);
+    assert_eq!(target.main_root, git.repo);
 }

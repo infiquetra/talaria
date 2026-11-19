@@ -8,6 +8,7 @@ use std::pin::Pin;
 use talaria_core::directory::rows::RowKey;
 use talaria_core::review::{RecordView, ReviewTarget};
 
+use crate::worktree::record::review_tree_is_contained;
 use crate::worktree::{GitRunner, WorktreeRecord, main_root_of, records_in};
 
 const NO_FOLDER: &str = "Talaria cannot find this session's folder.";
@@ -30,6 +31,7 @@ pub async fn locate(row: &RowKey, ctx: &LocateContext<'_>) -> Located {
         if let Some(record) = records.into_iter().find(|record| {
             record.session_id.as_deref() == Some(row.session_id.as_str())
                 && record.profile == row.profile
+                && review_tree_is_contained(&record.main_root, &record.path)
         }) {
             return open_record(ctx.git, row, record).await;
         }
