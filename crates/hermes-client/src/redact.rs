@@ -25,6 +25,12 @@ const TICKET_PREFIX: &str = "hermes-gateway-ticket.";
 /// The most open server requests the redactor remembers. The oldest is dropped first.
 const OPEN_REQUEST_LIMIT: usize = 1_024;
 
+/// JSON text stored inside a string is read only this many levels deep.
+const MAX_EMBEDDED_JSON_DEPTH: usize = 8;
+
+/// A string longer than this is not parsed as nested JSON.
+const MAX_EMBEDDED_JSON_BYTES: usize = 1_048_576;
+
 /// Names withheld by exact name at any depth: free text in a snapshot's `info` block.
 const FREE_TEXT: [&str; 4] = [
     "system_prompt",
@@ -208,6 +214,7 @@ impl Redactor {
             open: &mut self.open,
             substitutions: &self.substitutions,
             outbound,
+            json_depth: 0,
         };
         match &mut frame {
             Value::Array(items) => {
@@ -311,6 +318,7 @@ struct Walk<'a> {
     open: &'a mut OpenRequests,
     substitutions: &'a [(String, String)],
     outbound: bool,
+    json_depth: usize,
 }
 
 impl Walk<'_> {
@@ -353,17 +361,59 @@ impl Walk<'_> {
                     self.value(item, &child_path, rules);
                 }
             }
-            Value::String(text) => {
-                if text.contains(TICKET_PREFIX) {
-                    self.withhold(value, path, "ticket".into());
-                } else if let Some(clean) = clean_url(text)
-                    && clean != *text
-                {
-                    *text = clean;
+            Value::String(_) => match value.as_str().map(classify_string) {
+                Some(StringEdit::Ticket) => self.withhold(value, path, "ticket".into()),
+                Some(StringEdit::Replace(clean)) => {
+                    *value = Value::String(clean);
                     self.note(path, "url-credential".into());
                 }
-            }
+                Some(StringEdit::Nested) => {
+                    self.redact_embedded_json(value, path, rules);
+                }
+                None => {}
+            },
             _ => {}
+        }
+    }
+
+    /// Redact JSON that was stored as a string. The original text is kept when nothing inside
+    /// it changes, so a nested object that holds no credential keeps its spelling.
+    fn redact_embedded_json(&mut self, value: &mut Value, path: &str, rules: &Rules) -> bool {
+        let decision = {
+            let Some(text) = value.as_str() else {
+                return false;
+            };
+            if self.json_depth >= MAX_EMBEDDED_JSON_DEPTH || text.len() > MAX_EMBEDDED_JSON_BYTES {
+                if embedded_json_unreadable(text) {
+                    EmbeddedDecision::Withhold
+                } else {
+                    EmbeddedDecision::Leave
+                }
+            } else {
+                match parse_embedded_json(text) {
+                    Some(inner) => EmbeddedDecision::Walk(inner),
+                    None => EmbeddedDecision::Leave,
+                }
+            }
+        };
+        match decision {
+            EmbeddedDecision::Leave => false,
+            EmbeddedDecision::Withhold => {
+                self.withhold(value, path, "url-credential".into());
+                true
+            }
+            EmbeddedDecision::Walk(mut inner) => {
+                let notes = self.redactions.len();
+                self.json_depth += 1;
+                self.value(&mut inner, path, rules);
+                self.json_depth -= 1;
+                if self.redactions.len() == notes {
+                    false
+                } else {
+                    *value = Value::String(inner.to_string());
+                    true
+                }
+            }
         }
     }
 
@@ -547,12 +597,48 @@ pub fn is_suspicious_key(key: &str) -> bool {
 // URLs
 // ---------------------------------------------------------------------------------------------
 
-/// The cleaned URL, or `None` when `text` is not an absolute URL with a host. The result is
-/// made by editing the original string, never by re-serializing a parsed URL.
+enum StringEdit {
+    Ticket,
+    Replace(String),
+    Nested,
+}
+
+enum EmbeddedDecision {
+    Leave,
+    Withhold,
+    Walk(Value),
+}
+
+fn classify_string(text: &str) -> StringEdit {
+    if text.contains(TICKET_PREFIX) {
+        StringEdit::Ticket
+    } else if let Some(clean) = clean_url(text).filter(|clean| clean != text) {
+        StringEdit::Replace(clean)
+    } else {
+        StringEdit::Nested
+    }
+}
+
+fn is_ascii_tab_or_newline(ch: char) -> bool {
+    matches!(ch, '\t' | '\n' | '\r')
+}
+
+/// The cleaned URL, or `None` when `text` is not an absolute URL with a host. Ordinary bytes
+/// are edited in place. When that edit still leaves a credential the URL parser can see, or the
+/// edit no longer parses, the whole value is withheld.
 fn clean_url(text: &str) -> Option<String> {
     let scheme_end = text.find("://")?;
     let parsed = url::Url::parse(text).ok()?;
     parsed.host()?;
+    let edited = edit_url(text, scheme_end);
+    if url_rewrite_still_live(text, &edited) {
+        Some(REDACTED.to_owned())
+    } else {
+        Some(edited)
+    }
+}
+
+fn edit_url(text: &str, scheme_end: usize) -> String {
     let (head, rest) = text.split_at(scheme_end + 3);
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, tail) = rest.split_at(authority_end);
@@ -584,7 +670,20 @@ fn clean_url(text: &str) -> Option<String> {
         out.push('#');
         out.push_str(if fragment.is_empty() { "" } else { URL_MARK });
     }
-    Some(out)
+    out
+}
+
+fn url_rewrite_still_live(original: &str, edited: &str) -> bool {
+    if parsed_url_holds_live_secret(edited) {
+        return true;
+    }
+    !parses_with_host(edited) && parsed_url_holds_live_secret(original)
+}
+
+fn parses_with_host(text: &str) -> bool {
+    url::Url::parse(text)
+        .ok()
+        .is_some_and(|url| url.host().is_some())
 }
 
 fn clean_pair(pair: &str) -> String {
@@ -592,14 +691,29 @@ fn clean_pair(pair: &str) -> String {
         return pair.to_owned();
     };
     let (key, value) = (&pair[..eq], &pair[eq + 1..]);
-    let decoded = percent_decode(key).to_lowercase();
-    let credential =
-        matches!(decoded.as_str(), "token" | "ticket" | "internal") || is_suspicious_key(&decoded);
-    if credential && !value.is_empty() {
+    // The URL parser drops ASCII tab and newline before it splits parameters, then decodes
+    // `+` and percent-escapes. Classify the key the same way, and keep its original spelling.
+    if credential_query_key(&form_query_name(key)) && !value.is_empty() {
         format!("{key}={URL_MARK}")
     } else {
         pair.to_owned()
     }
+}
+
+/// The form-urlencoded name of a raw query key.
+fn form_query_name(key: &str) -> String {
+    let stripped: String = key
+        .chars()
+        .filter(|ch| !is_ascii_tab_or_newline(*ch))
+        .collect();
+    percent_decode(&stripped.replace('+', " ")).to_lowercase()
+}
+
+/// A query key whose value is a credential. `state` and `code` are named
+/// outright: the key-name net does not match either OAuth parameter.
+fn credential_query_key(decoded: &str) -> bool {
+    matches!(decoded, "token" | "ticket" | "internal" | "state" | "code")
+        || is_suspicious_key(decoded)
 }
 
 fn percent_decode(text: &str) -> String {
@@ -656,10 +770,6 @@ static SCAN_RULES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     .collect()
 });
 
-static SECRET_QUERY: LazyLock<Regex> = LazyLock::new(|| {
-    compile(r#"(?i)[?&](token|ticket|internal|api_key|apikey|access_token|password)=([^&#\s"']*)"#)
-});
-
 /// The lines of `text`, numbered from 1, without their line endings.
 fn numbered_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
     text.split('\n')
@@ -680,18 +790,14 @@ pub fn scan_for_secrets(text: &str) -> Vec<ScanHit> {
                 hits.push(ScanHit { line, rule });
             }
         }
-        let live_query = SECRET_QUERY.captures_iter(content).any(|capture| {
-            let value = capture.get(2).map_or("", |value| value.as_str());
-            !value.is_empty() && value != URL_MARK && value != REDACTED
-        });
-        if live_query {
+        if line_holds_url_secret(content) {
             hits.push(ScanHit {
                 line,
                 rule: "url-secret-query",
             });
         }
         if let Ok(value) = serde_json::from_str::<Value>(content)
-            && holds_live_suspicious_key(&value)
+            && holds_live_suspicious_key(&value, 0)
         {
             hits.push(ScanHit {
                 line,
@@ -702,17 +808,205 @@ pub fn scan_for_secrets(text: &str) -> Vec<ScanHit> {
     hits
 }
 
-fn holds_live_suspicious_key(value: &Value) -> bool {
+/// A credential in a parsed query or fragment, including one hidden by a JSON escape.
+fn line_holds_url_secret(content: &str) -> bool {
+    if text_holds_url_secret(content) {
+        return true;
+    }
+    serde_json::from_str::<Value>(content)
+        .ok()
+        .is_some_and(|value| value_holds_url_secret(&value, 0))
+}
+
+fn value_holds_url_secret(value: &Value, depth: usize) -> bool {
+    match value {
+        Value::Object(map) => map
+            .values()
+            .any(|inner| value_holds_url_secret(inner, depth)),
+        Value::Array(items) => items
+            .iter()
+            .any(|inner| value_holds_url_secret(inner, depth)),
+        Value::String(text) => {
+            text_holds_url_secret(text) || embedded_string_holds_url_secret(text, depth)
+        }
+        _ => false,
+    }
+}
+
+fn embedded_string_holds_url_secret(text: &str, depth: usize) -> bool {
+    if depth >= MAX_EMBEDDED_JSON_DEPTH || text.len() > MAX_EMBEDDED_JSON_BYTES {
+        return embedded_json_unreadable(text);
+    }
+    parse_embedded_json(text).is_some_and(|inner| value_holds_url_secret(&inner, depth + 1))
+}
+
+fn text_holds_url_secret(text: &str) -> bool {
+    const MAX_URL_CANDIDATES: usize = 64;
+
+    // Each candidate can span the rest of the text. Check the limit before parsing any of them.
+    if text.match_indices("://").nth(MAX_URL_CANDIDATES).is_some() {
+        return true;
+    }
+    if parsed_url_holds_live_secret(text) {
+        return true;
+    }
+    let mut rest = text;
+    while let Some(index) = rest.find("://") {
+        let candidate = url_candidate(&rest[scheme_start(rest, index)..]);
+        if !candidate.is_empty() && parsed_url_holds_live_secret(candidate) {
+            return true;
+        }
+        let next = index + 3;
+        if next >= rest.len() {
+            break;
+        }
+        rest = &rest[next..];
+    }
+    false
+}
+
+fn scheme_start(text: &str, scheme_sep: usize) -> usize {
+    text[..scheme_sep]
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || matches!(*ch, '+' | '-' | '.'))
+        .last()
+        .map(|(index, _)| index)
+        .unwrap_or(scheme_sep)
+}
+
+fn url_candidate(tail: &str) -> &str {
+    let end = tail
+        .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '<' | '>' | '`' | '\\'))
+        .unwrap_or(tail.len());
+    let mut candidate = &tail[..end];
+    while let Some(ch) = candidate.chars().next_back() {
+        if matches!(ch, '.' | ',' | ')' | ';') {
+            candidate = &candidate[..candidate.len() - ch.len_utf8()];
+        } else {
+            break;
+        }
+    }
+    candidate
+}
+
+/// True when a parsed absolute URL still carries a credential in its query or fragment.
+fn parsed_url_holds_live_secret(text: &str) -> bool {
+    let Ok(url) = url::Url::parse(text.trim()) else {
+        return false;
+    };
+    if url.host().is_none() {
+        return false;
+    }
+    pairs_hold_live_secret(url.query_pairs())
+        || url.fragment().is_some_and(fragment_holds_live_secret)
+}
+
+fn fragment_holds_live_secret(fragment: &str) -> bool {
+    const MAX_FRAGMENT_QUERIES: usize = 16;
+
+    if pairs_hold_live_secret(url::form_urlencoded::parse(fragment.as_bytes())) {
+        return true;
+    }
+    let mut rest = fragment;
+    let mut queries = 0;
+    while let Some((_, query)) = rest.split_once('?') {
+        queries += 1;
+        if queries > MAX_FRAGMENT_QUERIES {
+            return true;
+        }
+        if pairs_hold_live_secret(url::form_urlencoded::parse(query.as_bytes())) {
+            return true;
+        }
+        rest = query;
+    }
+    false
+}
+
+fn pairs_hold_live_secret<I, K, V>(pairs: I) -> bool
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    pairs
+        .into_iter()
+        .any(|(key, value)| decoded_pair_is_live(key.as_ref(), value.as_ref()))
+}
+
+fn decoded_pair_is_live(key: &str, value: &str) -> bool {
+    credential_query_key(&parser_query_name(key)) && !withheld_query_value(value)
+}
+
+/// A name already decoded by the URL parser. Tabs are stripped again so a value the parser
+/// folded into `state` or `code` cannot be missed.
+fn parser_query_name(key: &str) -> String {
+    key.chars()
+        .filter(|ch| !is_ascii_tab_or_newline(*ch))
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// Empty values and the redaction marker, including a percent-encoded spelling, are clean.
+fn withheld_query_value(value: &str) -> bool {
+    if value.is_empty() {
+        return true;
+    }
+    let mut current = value.to_owned();
+    for _ in 0..3 {
+        if current == REDACTED {
+            return true;
+        }
+        let decoded = percent_decode(&current);
+        if decoded == current {
+            break;
+        }
+        current = decoded;
+    }
+    current == REDACTED
+}
+
+fn holds_live_suspicious_key(value: &Value, depth: usize) -> bool {
     match value {
         Value::Object(map) => map.iter().any(|(key, inner)| {
             let live = inner
                 .as_str()
                 .is_some_and(|text| !text.is_empty() && text != REDACTED);
-            (live && is_suspicious_key(key)) || holds_live_suspicious_key(inner)
+            (live && is_suspicious_key(key)) || holds_live_suspicious_key(inner, depth)
         }),
-        Value::Array(items) => items.iter().any(holds_live_suspicious_key),
+        Value::Array(items) => items
+            .iter()
+            .any(|inner| holds_live_suspicious_key(inner, depth)),
+        Value::String(text) => {
+            if depth >= MAX_EMBEDDED_JSON_DEPTH || text.len() > MAX_EMBEDDED_JSON_BYTES {
+                return false;
+            }
+            parse_embedded_json(text)
+                .is_some_and(|inner| holds_live_suspicious_key(&inner, depth + 1))
+        }
         _ => false,
     }
+}
+
+fn parse_embedded_json(text: &str) -> Option<Value> {
+    if text.len() > MAX_EMBEDDED_JSON_BYTES {
+        return None;
+    }
+    let trimmed = text.trim();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[') || trimmed.starts_with('"')) {
+        return None;
+    }
+    match serde_json::from_str::<Value>(trimmed).ok()? {
+        value @ (Value::Object(_) | Value::Array(_) | Value::String(_)) => Some(value),
+        _ => None,
+    }
+}
+
+fn embedded_json_unreadable(text: &str) -> bool {
+    let trimmed = text.trim();
+    (trimmed.starts_with('{') || trimmed.starts_with('[') || trimmed.starts_with('"'))
+        && text.contains("://")
+        && (text.contains("auth_url") || text.contains("state=") || text.contains("code="))
 }
 
 /// Every line holding one of `forbidden`, with rule `forbidden-literal`.

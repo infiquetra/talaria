@@ -35,6 +35,27 @@ launch folder without a second check in the opened session's workspace.
 machine-checkable property the list samples and assert the list against that
 property.
 
+## 2026-11-19 — A passive channel never answers a server request
+
+**Evidence.** A workflow progress link that matched `Inbound::ServerRequest` with `_ => vec![]`
+wrote `{"code":-32603,"message":"request dropped by client"}`. The side and fleet links wrote
+`-32601` from `responder.fail`. The channel itself also wrote `-32601` for an unknown method and
+for a closed inbound reader, and `-32603` for undecodable request params, before any handler ran.
+A same-profile workflow reused the foreground client, and that dispatcher wrote `-32601` for the
+workflow session. Hermes treats either error as a skip for every viewer.
+
+**Mechanism.** `ServerRequestPolicy::IgnoreAll` is applied where the frame is decoded. The channel
+does not allocate a responder, does not enqueue one, and does not write `-32601` or `-32603`.
+Dropping the reader or the queue therefore has nothing left that can answer. App-level `ignore`
+stays in place for a request that still reaches a handler. The foreground answers a request only
+when its session id is absent or identifies an opened or retained session. A peek that is showing
+a masked request, headless print mode, and the configuration session remain owners of their own
+sessions.
+
+**Generalizable rule.** A connection that is not the session's prompt owner is opened with
+`ServerRequestPolicy::IgnoreAll`. The foreground prompt owner ignores a server request whose
+session id is some other session.
+
 ## 2026-11-19 — One neutralized-character table for literal text
 
 **Evidence.** Issue #667. An approval card drew `rm` plus U+00A0 plus `-rf` as `rm -rf` on a `TestBackend`, while the gateway still held the original bytes. Five local tables disagreed on U+00AD, U+200B–U+200F and U+2060. `unicode-general-category` 1.1.0 (Unicode 16.0) reports 170 `Cf` characters. The checked-in snapshot is 549 codepoints: those controls and format characters, the tag block, every variation selector except U+FE0E and U+FE0F (including the Mongolian free variation selectors), the default-ignorable marks U+034F and U+17B4..=U+17B5, the Hangul fillers, and the blank-width spaces.

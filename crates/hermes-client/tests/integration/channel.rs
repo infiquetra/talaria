@@ -7,7 +7,7 @@ use std::time::Duration;
 use hermes_client::{
     CallError, CallOptions, Client, ClientClosed, CloseReason, ClosedConnection, Generation,
     Inbound, InboundEvent, InboundStream, MalformedFrame, MalformedKind, RespondError,
-    ServerRequest,
+    ServerRequest, ServerRequestPolicy,
 };
 use hermes_contract::events::{EventFrame, Notification};
 use hermes_contract::methods::canonical::{approval_respond, runtime_describe, session_info};
@@ -1201,6 +1201,42 @@ async fn dropped_inbound_stream_answers_requests_method_not_found() {
         peer.reply_ok(request["id"].clone(), json!({"ok": true}))
             .await;
         assert!(call.await.expect("call task ended").is_ok());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn passive_channel_writes_nothing_for_server_requests() {
+    guard(async {
+        let (parts, peer) = Peer::pair().await;
+        let (client, mut inbound) =
+            Client::start_with_policy(parts, ServerRequestPolicy::IgnoreAll);
+        let _valid = peer
+            .server_request("sudo", "s1", json!({"command": "apt list"}))
+            .await;
+        let _unknown = peer.server_request("future.kind", "s1", json!({})).await;
+        let _malformed = peer
+            .server_request("sudo", "s1", json!({"command": 1}))
+            .await;
+        wait_stats(&client, |stats| stats.frames_received >= 3).await;
+        assert_eq!(
+            peer.json_frames(),
+            0,
+            "a passive channel wrote a server-request reply"
+        );
+        assert_quiet(&mut inbound).await;
+
+        drop(inbound);
+        let _during_teardown = peer
+            .server_request("approval", "s1", json!({"command": "true"}))
+            .await;
+        wait_stats(&client, |stats| stats.frames_received >= 4).await;
+        drop(client);
+        assert_eq!(
+            peer.json_frames(),
+            0,
+            "tearing down a passive channel wrote a server-request reply"
+        );
     })
     .await;
 }

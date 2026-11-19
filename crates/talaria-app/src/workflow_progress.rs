@@ -117,7 +117,12 @@ impl ProgressService {
                     .progress
                     .agents
                     .iter()
-                    .filter_map(|a| Some((a.session_id.clone()?, a.key.clone())))
+                    .flat_map(|a| {
+                        [a.session_id.clone(), a.stored_session_id.clone()]
+                            .into_iter()
+                            .flatten()
+                            .map(|id| (id, a.key.clone()))
+                    })
                     .collect();
                 let inputs = perform(
                     &self.run_dir,
@@ -289,10 +294,17 @@ async fn perform(
                 .and_then(|v| serde_json::to_value(v).map_err(|_| CallError::Encode));
             match reply {
                 Ok(snapshot) => {
-                    let runtime_id = snapshot["session_id"]
-                        .as_str()
-                        .unwrap_or(&session_id)
-                        .to_string();
+                    let Some(runtime_id) = accepted_runtime_id(&session_id, &snapshot, keys) else {
+                        return vec![ProgressInput::GatewayResponse {
+                            session_id: session.clone(),
+                            key,
+                            result: Err(GatewayFailure {
+                                reason: crate::sessions::DIFFERENT_SESSION.into(),
+                                stale_generation: false,
+                                disconnected: false,
+                            }),
+                        }];
+                    };
                     let mut inputs = vec![ProgressInput::Attached {
                         session_id,
                         runtime_id: runtime_id.clone(),
@@ -397,6 +409,28 @@ async fn perform(
         }
     }
 }
+/// The runtime id of a resume, when it names the attempt that was requested.
+///
+/// A returned id that differs from the requested id is accepted only when the journal
+/// already binds it to the same agent.
+fn accepted_runtime_id(
+    requested_id: &str,
+    snapshot: &Value,
+    keys: &HashMap<String, String>,
+) -> Option<String> {
+    let returned = snapshot["session_id"].as_str().unwrap_or("");
+    if crate::sessions::requested_session_matches(requested_id, returned) {
+        return Some(returned.to_string());
+    }
+    let requested = requested_id.trim();
+    let stored = snapshot["stored_session_id"].as_str().unwrap_or("");
+    if requested.is_empty() || returned.trim().is_empty() || stored != requested {
+        return None;
+    }
+    let agent = keys.get(requested)?;
+    (keys.get(returned) == Some(agent)).then(|| returned.to_string())
+}
+
 fn failure(error: CallError) -> GatewayFailure {
     let stale_generation = matches!(&error,CallError::Rpc(e) if e.code==4001&&e.reason.as_deref()==Some("stale_generation"));
     let disconnected = matches!(error, CallError::NotConnected | CallError::Unknown { .. });
@@ -560,16 +594,13 @@ pub(crate) struct WorkflowConnections {
 }
 struct ScopedConnection {
     client: Client,
+    /// Kept until the connection is dropped so the reader is not detached early.
+    /// Dropping the handle detaches the reader; it is not aborted. Aborting it would drop
+    /// a queued server request and write `-32603`.
     inbound: tokio::task::JoinHandle<()>,
-}
-impl Drop for ScopedConnection {
-    fn drop(&mut self) {
-        self.inbound.abort();
-    }
 }
 pub(crate) struct WorkflowConnection {
     pub home: PathBuf,
-    pub foreground_profile: String,
     pub fallback: Option<Client>,
     pub cache: Arc<WorkflowConnections>,
 }
@@ -580,7 +611,10 @@ impl WorkflowConnection {
         sender: &UnboundedSender<AppMessage>,
     ) -> Result<Option<Client>, String> {
         let profile = &dir.manifest().profile;
-        if profile.is_empty() || profile == &self.foreground_profile {
+        // A same-profile run used to borrow the foreground client. That client is the prompt
+        // owner, so a workflow session request was answered there. Every named profile opens
+        // its own passive link instead.
+        if profile.is_empty() {
             return Ok(self.fallback.clone());
         }
         let mut runs = self.cache.runs.lock().await;
@@ -626,7 +660,10 @@ impl WorkflowConnection {
         hermes_client::handshake(&mut connection)
             .await
             .map_err(|e| e.to_string())?;
-        let (client, mut inbound) = Client::start(connection.into_parts());
+        let (client, inbound) = Client::start_with_policy(
+            connection.into_parts(),
+            hermes_client::ServerRequestPolicy::IgnoreAll,
+        );
         let run = dir.path().to_path_buf();
         let _ = sender.send(AppMessage::WorkflowScoped(run.clone()));
         let _ = sender.send(AppMessage::WorkflowProgress {
@@ -635,6 +672,9 @@ impl WorkflowConnection {
         });
         let tx = sender.clone();
         let task = tokio::spawn(async move {
+            // Keep reading after the app channel closes. Returning would drop queued
+            // server requests and write `-32603` while this client is still connected.
+            let mut inbound = crate::passive_inbound::PassiveInbound::new(inbound);
             while let Some(item) = inbound.next().await {
                 for input in workflow_inbound(item) {
                     if tx
@@ -644,7 +684,7 @@ impl WorkflowConnection {
                         })
                         .is_err()
                     {
-                        return;
+                        break;
                     }
                 }
             }
@@ -687,7 +727,12 @@ fn workflow_inbound(item: hermes_client::Inbound) -> Vec<ProgressInput> {
             inputs
         }
         hermes_client::Inbound::Closed(_) => vec![ProgressInput::Connected(false)],
-        _ => vec![],
+        // A dropped responder writes `-32603`, which Hermes reads as a skip for every viewer.
+        hermes_client::Inbound::ServerRequest(request) => {
+            request.responder.ignore();
+            vec![]
+        }
+        hermes_client::Inbound::Malformed(_) => vec![],
     }
 }
 
@@ -721,7 +766,6 @@ mod connection_tests {
         gateway.block_on(async {
             let binding = WorkflowConnection {
                 home: home.path().to_path_buf(),
-                foreground_profile: "default".into(),
                 fallback: None,
                 cache: Arc::default(),
             };
@@ -805,7 +849,6 @@ mod connection_tests {
         let home = tempfile::tempdir().unwrap();
         let binding = WorkflowConnection {
             home: home.path().to_path_buf(),
-            foreground_profile: "default".into(),
             fallback: Some(client),
             cache: Arc::default(),
         };
@@ -834,12 +877,81 @@ mod connection_tests {
                 progress_mock_gateway::MockGateway::start().await;
             let binding = WorkflowConnection {
                 home: home.path().to_path_buf(),
-                foreground_profile: "default".into(),
                 fallback: Some(fallback),
                 cache: Arc::default(),
             };
             let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
             assert!(binding.client(&dir, &tx).await.is_err());
+        });
+    }
+
+    #[test]
+    fn same_profile_workflow_link_ignores_server_requests() {
+        let home = tempfile::tempdir().unwrap();
+        let runs = tempfile::tempdir().unwrap();
+        let dir = run(runs.path());
+        let gateway = StandaloneGateway::start(home.path());
+        gateway.block_on(async {
+            let (_other, fallback, _inbound) = progress_mock_gateway::MockGateway::start().await;
+            let binding = WorkflowConnection {
+                home: home.path().to_path_buf(),
+                fallback: Some(fallback),
+                cache: Arc::default(),
+            };
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let client = binding
+                .client(&dir, &tx)
+                .await
+                .unwrap()
+                .expect("same-profile monitoring opens its own link");
+            assert_eq!(gateway.tickets_issued(), 1);
+            let id = gateway.server_request("sudo").await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let answers = gateway.answers_for(&id);
+            assert!(
+                answers.is_empty(),
+                "the same-profile workflow link wrote an answer: {answers:?}"
+            );
+            drop(client);
+            drop(binding);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let answers = gateway.answers_for(&id);
+            assert!(
+                answers.is_empty(),
+                "closing the same-profile workflow link wrote an answer: {answers:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn workflow_scoped_link_ignores_server_requests() {
+        let home = tempfile::tempdir().unwrap();
+        let runs = tempfile::tempdir().unwrap();
+        let dir = run(runs.path());
+        let gateway = StandaloneGateway::start(home.path());
+        gateway.block_on(async {
+            let binding = WorkflowConnection {
+                home: home.path().to_path_buf(),
+                fallback: None,
+                cache: Arc::default(),
+            };
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let client = binding.client(&dir, &tx).await.unwrap().unwrap();
+            let id = gateway.server_request("sudo").await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let answers = gateway.answers_for(&id);
+            assert!(
+                answers.is_empty(),
+                "the workflow link wrote an answer: {answers:?}"
+            );
+            drop(client);
+            drop(binding);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let answers = gateway.answers_for(&id);
+            assert!(
+                answers.is_empty(),
+                "closing the workflow link wrote an answer: {answers:?}"
+            );
         });
     }
 }

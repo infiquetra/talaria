@@ -287,11 +287,22 @@ impl PeekService {
             )
             .await;
         match result {
-            Ok(value) => serde_json::from_value::<CanonicalSnapshot>(value)
-                .map(OpenedSession::from_snapshot)
-                .map_err(|_| PeekError::Refused {
+            Ok(value) => match serde_json::from_value::<CanonicalSnapshot>(value) {
+                Ok(snapshot)
+                    if crate::sessions::requested_session_matches(
+                        session_id,
+                        &snapshot.session_id,
+                    ) =>
+                {
+                    Ok(OpenedSession::from_snapshot(snapshot))
+                }
+                Ok(_) => Err(PeekError::Refused {
+                    reason: crate::sessions::DIFFERENT_SESSION.to_owned(),
+                }),
+                Err(_) => Err(PeekError::Refused {
                     reason: "the session reply did not decode".to_owned(),
                 }),
+            },
             Err(CallError::Rpc(error)) if error.reason.as_deref() == Some("not_found") => {
                 Err(PeekError::NotFound)
             }
