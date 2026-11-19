@@ -1,32 +1,26 @@
 //! Grapheme caret, words, and the kill buffer.
 
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::wrap::{Row, cluster_width, wrap};
+use crate::history::is_neutralized;
 
-/// Characters dropped when they stand alone, whatever the width table says.
+/// A zero-width character, including neutralized format characters.
 fn invisible_char(c: char) -> bool {
-    matches!(
-        c,
-        '\u{200B}'
-            | '\u{200C}'
-            | '\u{200D}'
-            | '\u{200E}'
-            | '\u{200F}'
-            | '\u{2060}'
-            | '\u{FEFF}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2066}'..='\u{2069}'
-    )
+    is_neutralized(c) || UnicodeWidthChar::width(c).unwrap_or(0) == 0
 }
 
-/// A cluster that would draw nothing: width 0, or only characters of the list above.
+/// A cluster that would draw nothing. A printable neutralized character, such as
+/// NBSP or an ideographic space, stays in the draft; display shows its stand-in.
 pub(crate) fn invisible_cluster(cluster: &str) -> bool {
     if cluster == "\n" || cluster == "\t" {
         return false;
     }
-    UnicodeWidthStr::width(cluster) == 0 || cluster.chars().all(invisible_char)
+    if UnicodeWidthStr::width(cluster) > 0 {
+        return false;
+    }
+    cluster.chars().all(invisible_char)
 }
 
 /// A control character the buffer may not hold. Line break and tab are allowed.
@@ -573,5 +567,12 @@ mod tests {
         assert_eq!(draft.caret(), "aaaa\nbb".len());
         draft.move_down();
         assert_eq!(draft.caret(), "aaaa\nbb\ncccc".len());
+    }
+
+    #[test]
+    fn printable_neutralized_characters_stay_when_typed() {
+        let mut draft = Draft::new();
+        draft.insert("a\u{00A0}b\u{3000}c");
+        assert_eq!(draft.text(), "a\u{00A0}b\u{3000}c");
     }
 }

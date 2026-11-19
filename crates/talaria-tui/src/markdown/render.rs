@@ -346,10 +346,10 @@ impl Renderer<'_> {
         for node in children {
             match node {
                 Node::Leaf(Event::Text(text) | Event::Html(text) | Event::InlineHtml(text)) => {
-                    output.push(Piece::new(text.as_ref(), self.style(style), false))
+                    output.push(Piece::new(visible_text(text), self.style(style), false))
                 }
                 Node::Leaf(Event::Code(text)) => output.push(Piece::new(
-                    text.as_ref(),
+                    visible_text(text),
                     self.style(style.patch(self.options.theme.inline_code)),
                     true,
                 )),
@@ -369,7 +369,7 @@ impl Renderer<'_> {
                         && plain_text(children) != dest_url.as_ref()
                     {
                         output.push(Piece::new(
-                            format!(" ({dest_url})"),
+                            format!(" ({})", visible_text(dest_url)),
                             self.style(style.patch(self.options.theme.link_destination)),
                             false,
                         ));
@@ -377,12 +377,12 @@ impl Renderer<'_> {
                 }
                 Node::Branch(Tag::Image { dest_url, .. }, children) => {
                     output.push(Piece::new(
-                        format!("[image: {}]", plain_text(children)),
+                        format!("[image: {}]", visible_text(&plain_text(children))),
                         self.style(style.patch(self.options.theme.image_alt)),
                         false,
                     ));
                     output.push(Piece::new(
-                        format!(" ({dest_url})"),
+                        format!(" ({})", visible_text(dest_url)),
                         self.style(style.patch(self.options.theme.link_destination)),
                         false,
                     ));
@@ -424,6 +424,10 @@ fn task(children: &[Node<'_>]) -> Option<bool> {
         Node::Branch(Tag::Paragraph, children) => task(children),
         _ => None,
     })
+}
+
+fn visible_text(text: &str) -> String {
+    talaria_core::text::sanitize(text).into_owned()
 }
 
 fn plain_text(children: &[Node<'_>]) -> String {

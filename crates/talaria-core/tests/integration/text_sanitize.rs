@@ -49,8 +49,9 @@ fn scrub_text_redacts_paths_after_line_separators() {
 }
 
 #[test]
-fn sanitize_with_options_keeps_display_joiners_and_layout_newlines() {
-    assert_eq!(sanitize("a\u{200B}b").as_ref(), "a\u{200B}b");
+fn sanitize_with_options_shares_zero_width_policy_and_keeps_layout_newlines() {
+    assert_eq!(SanitizeOptions::DISPLAY, SanitizeOptions::CLI);
+    assert_eq!(sanitize("a\u{200B}b").as_ref(), "a‹U+200B›b");
     assert_eq!(sanitize("\n").as_ref(), "\u{240a}");
     assert_eq!(
         sanitize_with_options(

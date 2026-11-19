@@ -32,7 +32,7 @@ use talaria_app::context::ContextBlock;
 use talaria_app::failure::{self, LaunchFailure};
 use talaria_app::launch::{Launch, StartMode, new_launch_id};
 use talaria_app::peek::CardAnswer;
-use talaria_app::prompts::{MaskedKind, MaskedRequestInfo};
+use talaria_app::prompts::{LiveMaskedTarget, MaskedKind, MaskedRequestInfo, MaskedTarget};
 use talaria_app::subagents::SubagentAction;
 use talaria_app::theme_file::BorderPreset;
 use talaria_core::SeatState;
@@ -90,7 +90,10 @@ use talaria_tui::palette::PaletteSection;
 use talaria_tui::profiles::{
     ProfilesRenderer, cursor_position as profiles_cursor, key_action as profiles_key,
 };
-use talaria_tui::prompts::{KeyOutcome, MaskedView, PromptIntent, PromptStack};
+use talaria_tui::prompts::{
+    KeyOutcome, LiveMaskedTarget as ShownTarget, MaskedTarget as ShownMasked, MaskedView,
+    PromptIntent, PromptStack,
+};
 use talaria_tui::queue::{composer_title, handle_selection_key, render_preview};
 use talaria_tui::review_view::draw_review_themed;
 use talaria_tui::rewind::{RewindTheme, draw_rewind, key_to_rewind, visible_rows};
@@ -706,14 +709,31 @@ fn fleet_action(action: Action) -> Option<FleetAction> {
     })
 }
 
-/// A card intent in the peek's terms.
-fn card_answer(intent: PromptIntent) -> Option<CardAnswer> {
+fn app_target(target: ShownMasked) -> MaskedTarget {
+    match target {
+        ShownMasked::Live(target) => MaskedTarget::Live(LiveMaskedTarget {
+            token: target.token,
+            session_id: target.session_id,
+            generation: target.generation,
+            instance_id: target.instance_id,
+            service_id: target.service_id,
+        }),
+        ShownMasked::Recovered { request_id } => MaskedTarget::Recovered { request_id },
+    }
+}
+
+/// A card intent in the peek's terms. A masked answer names the row that was open.
+fn card_answer(
+    intent: PromptIntent,
+    row: Option<&talaria_core::directory::rows::RowKey>,
+) -> Option<CardAnswer> {
     Some(match intent {
         PromptIntent::Connect { .. } => return None,
         PromptIntent::Approve { key, choice, note } => CardAnswer::Approve { key, choice, note },
         PromptIntent::Clarify { key, answer } => CardAnswer::Clarify { key, answer },
-        PromptIntent::Masked { request_id, value } => CardAnswer::Masked {
-            request_id,
+        PromptIntent::Masked { target, value } => CardAnswer::Masked {
+            row: row?.clone(),
+            target: app_target(target),
             value: value.into_inner().to_string(),
         },
     })
@@ -732,6 +752,7 @@ fn fleet_paste(
     foreground: bool,
     prompts: &mut PromptStack,
     peek_prompts: &mut PromptStack,
+    row: Option<&talaria_core::directory::rows::RowKey>,
     text: String,
     now: Instant,
 ) -> Vec<UserAction> {
@@ -741,13 +762,16 @@ fn fleet_paste(
         }
         FleetFocus::Answer => {
             let stack = if foreground { prompts } else { peek_prompts };
-            fleet_card_actions(stack.handle_paste(&text, now))
+            fleet_card_actions(stack.handle_paste(&text, now), row)
         }
         _ => Vec::new(),
     }
 }
 
-fn fleet_card_actions(outcome: KeyOutcome) -> Vec<UserAction> {
+fn fleet_card_actions(
+    outcome: KeyOutcome,
+    row: Option<&talaria_core::directory::rows::RowKey>,
+) -> Vec<UserAction> {
     let KeyOutcome::Consumed {
         intent,
         interrupt_requested,
@@ -757,7 +781,7 @@ fn fleet_card_actions(outcome: KeyOutcome) -> Vec<UserAction> {
         return Vec::new();
     };
     let mut actions = vec![UserAction::FleetAnswerEdited];
-    if let Some(answer) = intent.and_then(card_answer) {
+    if let Some(answer) = intent.and_then(|intent| card_answer(intent, row)) {
         actions.push(UserAction::FleetAnswer(answer));
     }
     if interrupt_requested {
@@ -1117,7 +1141,7 @@ fn masked_views(masked: &[MaskedRequestInfo]) -> Vec<MaskedView> {
     masked
         .iter()
         .map(|info| MaskedView {
-            request_id: info.id.clone(),
+            request_id: info.token.clone(),
             session_id: info.session_id.clone(),
             method: masked_method(info.kind).to_string(),
             fields: info
@@ -1125,6 +1149,13 @@ fn masked_views(masked: &[MaskedRequestInfo]) -> Vec<MaskedView> {
                 .iter()
                 .map(|(name, value)| ((*name).to_string(), value.clone()))
                 .collect(),
+            target: ShownTarget {
+                token: info.token.clone(),
+                session_id: info.session_id.clone(),
+                generation: info.generation,
+                instance_id: info.instance_id,
+                service_id: info.service_id,
+            },
         })
         .collect()
 }
@@ -1491,7 +1522,8 @@ impl TuiScreen {
                 } else {
                     self.peek_prompts.handle_key(key, now)
                 };
-                fleet_card_actions(outcome)
+                let row = fleet.peek().map(|(key, _)| key.clone());
+                fleet_card_actions(outcome, row.as_ref())
             }
             FleetFocus::Reply | FleetFocus::Filter => {
                 if is_escape(&key) {
@@ -2036,8 +2068,8 @@ impl TuiScreen {
             Some(PromptIntent::Clarify { key, answer }) => {
                 actions.push(UserAction::Clarify { key, answer });
             }
-            Some(PromptIntent::Masked { request_id, value }) => actions.push(UserAction::Masked {
-                request_id,
+            Some(PromptIntent::Masked { target, value }) => actions.push(UserAction::Masked {
+                target: app_target(target),
                 value: value.into_inner(),
             }),
             None => {}
@@ -3069,11 +3101,13 @@ impl TuiScreen {
                     let foreground = fleet.peek().is_some_and(|(peeked, _)| {
                         fleet_peek_is_foreground(peeked, view.profile, view.session_id)
                     });
+                    let row = fleet.peek().map(|(key, _)| key.clone());
                     return fleet_paste(
                         fleet.focus(),
                         foreground,
                         &mut self.prompts,
                         &mut self.peek_prompts,
+                        row.as_ref(),
                         text,
                         now,
                     );
@@ -6211,6 +6245,7 @@ mod tests {
                 foreground,
                 &mut prompts,
                 &mut peek,
+                None,
                 "pasted answer".into(),
                 ready,
             );
@@ -6225,7 +6260,7 @@ mod tests {
                 (&mut peek, &mut prompts)
             };
             let enter = Key::from(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-            let actions = super::fleet_card_actions(selected.handle_key(enter, ready));
+            let actions = super::fleet_card_actions(selected.handle_key(enter, ready), None);
             assert!(actions.iter().any(|action| matches!(action,
                 UserAction::FleetAnswer(super::CardAnswer::Clarify { key, answer })
                 if answer == "pasted answer" && key.session_id.as_str() == if foreground { "main" } else { "background" }

@@ -247,23 +247,30 @@ pub fn count_noun(count: u64, singular: &str) -> String {
     }
 }
 
-/// Display columns of one character. A small table; wide characters count two.
+/// Display columns of one character. Combining marks stay at width 0. Neutralized
+/// characters take none, from the shared table. Wide characters count two.
 fn char_columns(ch: char) -> usize {
     let code = u32::from(ch);
     if code < 0x20 || (0x7f..0xa0).contains(&code) {
         return 0;
     }
-    const ZERO: [(u32, u32); 9] = [
+    // Combining marks, and the two presentation selectors, which stay out of the
+    // neutralized set and still occupy no column on their own.
+    const MARKS: [(u32, u32); 6] = [
         (0x0300, 0x036f),
         (0x1ab0, 0x1aff),
         (0x1dc0, 0x1dff),
-        (0x200b, 0x200f),
-        (0x2060, 0x2064),
         (0x20d0, 0x20ff),
-        (0xfe00, 0xfe0f),
+        (0xfe0e, 0xfe0f),
         (0xfe20, 0xfe2f),
-        (0xfeff, 0xfeff),
     ];
+    if crate::text::is_neutralized(ch)
+        || MARKS
+            .iter()
+            .any(|(low, high)| (*low..=*high).contains(&code))
+    {
+        return 0;
+    }
     const WIDE: [(u32, u32); 14] = [
         (0x1100, 0x115f),
         (0x2e80, 0x303e),
@@ -280,12 +287,7 @@ fn char_columns(ch: char) -> usize {
         (0x1f680, 0x1f9ff),
         (0x20000, 0x3fffd),
     ];
-    if ZERO
-        .iter()
-        .any(|(low, high)| (*low..=*high).contains(&code))
-    {
-        0
-    } else if WIDE
+    if WIDE
         .iter()
         .any(|(low, high)| (*low..=*high).contains(&code))
     {
