@@ -376,6 +376,9 @@ mod side_replay;
 #[path = "integration/side_service.rs"]
 mod side_service;
 
+#[path = "integration/secondary_ignore.rs"]
+mod secondary_ignore;
+
 #[path = "integration/status_effort.rs"]
 mod status_effort;
 

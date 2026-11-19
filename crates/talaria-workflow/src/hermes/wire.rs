@@ -115,6 +115,30 @@ enum Connection {
     Failed(String),
     Closed,
 }
+/// Ignores server requests still queued when the workflow reader stops.
+/// Dropping them would write `-32603` and skip the prompt for every viewer.
+struct ReleaseQueue(mpsc::Receiver<LinkEvent>);
+
+impl ReleaseQueue {
+    async fn recv(&mut self) -> Option<LinkEvent> {
+        self.0.recv().await
+    }
+}
+
+impl Drop for ReleaseQueue {
+    fn drop(&mut self) {
+        while let Ok(event) = self.0.try_recv() {
+            if let LinkEvent::Inbound {
+                item: Inbound::ServerRequest(request),
+                ..
+            } = event
+            {
+                request.responder.ignore();
+            }
+        }
+    }
+}
+
 pub struct LinkWire {
     client: hermes_client::Client,
     control: mpsc::UnboundedSender<Control>,
@@ -124,7 +148,7 @@ pub struct LinkWire {
     events: Mutex<Option<mpsc::Receiver<WireEvent>>>,
 }
 impl LinkWire {
-    pub fn new(link: Link, mut inbound: mpsc::Receiver<LinkEvent>) -> Self {
+    pub fn new(link: Link, inbound: mpsc::Receiver<LinkEvent>) -> Self {
         let client = link.client();
         let (control, mut commands) = mpsc::unbounded_channel();
         let (events, rx) = mpsc::channel(16_384);
@@ -133,6 +157,7 @@ impl LinkWire {
         let dropped = Arc::new(AtomicU64::new(0));
         let epoch = generation.clone();
         let bad = dropped.clone();
+        let mut inbound = ReleaseQueue(inbound);
         tokio::spawn(async move {
             loop {
                 tokio::select! {

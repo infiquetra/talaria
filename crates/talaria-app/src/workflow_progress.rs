@@ -560,12 +560,10 @@ pub(crate) struct WorkflowConnections {
 }
 struct ScopedConnection {
     client: Client,
+    /// Kept until the connection is dropped so the reader is not detached early.
+    /// Dropping the handle detaches the reader; it is not aborted. Aborting it would drop
+    /// a queued server request and write `-32603`.
     inbound: tokio::task::JoinHandle<()>,
-}
-impl Drop for ScopedConnection {
-    fn drop(&mut self) {
-        self.inbound.abort();
-    }
 }
 pub(crate) struct WorkflowConnection {
     pub home: PathBuf,
@@ -626,7 +624,7 @@ impl WorkflowConnection {
         hermes_client::handshake(&mut connection)
             .await
             .map_err(|e| e.to_string())?;
-        let (client, mut inbound) = Client::start(connection.into_parts());
+        let (client, inbound) = Client::start(connection.into_parts());
         let run = dir.path().to_path_buf();
         let _ = sender.send(AppMessage::WorkflowScoped(run.clone()));
         let _ = sender.send(AppMessage::WorkflowProgress {
@@ -635,6 +633,9 @@ impl WorkflowConnection {
         });
         let tx = sender.clone();
         let task = tokio::spawn(async move {
+            // Keep reading after the app channel closes. Returning would drop queued
+            // server requests and write `-32603` while this client is still connected.
+            let mut inbound = crate::passive_inbound::PassiveInbound::new(inbound);
             while let Some(item) = inbound.next().await {
                 for input in workflow_inbound(item) {
                     if tx
@@ -644,7 +645,7 @@ impl WorkflowConnection {
                         })
                         .is_err()
                     {
-                        return;
+                        break;
                     }
                 }
             }
@@ -687,7 +688,12 @@ fn workflow_inbound(item: hermes_client::Inbound) -> Vec<ProgressInput> {
             inputs
         }
         hermes_client::Inbound::Closed(_) => vec![ProgressInput::Connected(false)],
-        _ => vec![],
+        // A dropped responder writes `-32603`, which Hermes reads as a skip for every viewer.
+        hermes_client::Inbound::ServerRequest(request) => {
+            request.responder.ignore();
+            vec![]
+        }
+        hermes_client::Inbound::Malformed(_) => vec![],
     }
 }
 
@@ -840,6 +846,39 @@ mod connection_tests {
             };
             let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
             assert!(binding.client(&dir, &tx).await.is_err());
+        });
+    }
+
+    #[test]
+    fn workflow_scoped_link_ignores_server_requests() {
+        let home = tempfile::tempdir().unwrap();
+        let runs = tempfile::tempdir().unwrap();
+        let dir = run(runs.path());
+        let gateway = StandaloneGateway::start(home.path());
+        gateway.block_on(async {
+            let binding = WorkflowConnection {
+                home: home.path().to_path_buf(),
+                foreground_profile: "default".into(),
+                fallback: None,
+                cache: Arc::default(),
+            };
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let client = binding.client(&dir, &tx).await.unwrap().unwrap();
+            let id = gateway.server_request("sudo").await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let answers = gateway.answers_for(&id);
+            assert!(
+                answers.is_empty(),
+                "the workflow link wrote an answer: {answers:?}"
+            );
+            drop(client);
+            drop(binding);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let answers = gateway.answers_for(&id);
+            assert!(
+                answers.is_empty(),
+                "closing the workflow link wrote an answer: {answers:?}"
+            );
         });
     }
 }

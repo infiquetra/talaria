@@ -32,6 +32,7 @@ pub mod models;
 pub mod models_file;
 pub mod mutation;
 pub mod panes;
+mod passive_inbound;
 pub mod peek;
 pub mod permissions;
 pub mod profiles;

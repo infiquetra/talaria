@@ -504,6 +504,21 @@ impl InboundStream {
         }
         Some(item)
     }
+
+    /// Ignore server requests already queued, and discard the other queued items.
+    ///
+    /// Dropping a queued [`ServerRequest`] would write `-32603` while the connection is current.
+    /// A reader that is going away calls this before it drops the stream.
+    pub fn ignore_queued_requests(&mut self) {
+        while let Ok(item) = self.receiver.try_recv() {
+            if let Inbound::ServerRequest(request) = item {
+                request.responder.ignore();
+            }
+            if let Some(sender) = self.sender.upgrade() {
+                let _ = sender.send(Command::Taken);
+            }
+        }
+    }
 }
 
 /// Write one text frame. This is the only function that sends text on the socket.

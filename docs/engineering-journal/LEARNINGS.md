@@ -2,6 +2,22 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-19 — Dropping a secondary responder is an answer
+
+**Evidence.** A workflow progress link that matched `Inbound::ServerRequest` with `_ => vec![]`
+wrote `{"code":-32603,"message":"request dropped by client"}`. The side and fleet links wrote
+`-32601` from `responder.fail`. Hermes treats either error as a skip for every viewer.
+`peek_link_never_refuses_server_requests` already required zero answer frames.
+
+**Mechanism.** `Responder`'s drop sends `Command::DropResponder` while the connection is current,
+and `ChannelState::drop_undecided` writes `-32603`. A queue of `Inbound::ServerRequest` or
+`LinkEvent` values does the same when it is dropped on cancel, abort, or a closed app channel.
+`ignore` writes nothing. The foreground prompt owner, a peek that is showing a masked request,
+headless print mode, and the configuration session are the viewers that may answer or refuse.
+
+**Generalizable rule.** A connection that is not the session's prompt owner calls `ignore` on
+every server request, including requests still queued when that reader is dropped.
+
 ## 2026-11-19 — Talaria-owned files are owner-only
 
 **Evidence.** The background client log created `~/.talaria`, `~/.talaria/logs`, and

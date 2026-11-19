@@ -94,21 +94,15 @@ async fn host_scope_lists_every_profile_in_parallel() {
     let generation = service.start_list(tx);
     assert_eq!(generation, 1);
 
-    // A server request on the side connection is refused at once, before the
-    // delayed lists complete.
+    // A server request on the side connection is left for the foreground viewer.
+    // An error answer would settle it as a skip for every window.
     let kinds = mock_gateway::contract_server_request_kinds();
     let id = gateway.server_request(&kinds[0]).await;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while gateway.answers_for(&id).is_empty() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the refusal arrives before the lists complete"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let answers = gateway.answers_for(&id);
     assert!(
-        gateway.answers_for(&id)[0].is_error,
-        "a side request is refused"
+        answers.is_empty(),
+        "the side connection wrote an answer before the lists completed: {answers:?}"
     );
 
     let mut listed = 0;

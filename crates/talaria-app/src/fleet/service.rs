@@ -549,7 +549,7 @@ struct FleetTask {
     liveness_gap: Duration,
     commands: mpsc::UnboundedReceiver<Command>,
     link: Option<Link>,
-    events: Option<mpsc::Receiver<LinkEvent>>,
+    events: Option<crate::passive_inbound::PassiveEvents>,
     reports: Arc<Mutex<Option<DialReport>>>,
     link_epoch: u64,
     tag: Option<Tag>,
@@ -571,7 +571,6 @@ struct FleetTask {
     next_cold: Instant,
     cold_cursor: usize,
     next_backstop: Instant,
-    refused_noted: bool,
     discovering: bool,
     closing: bool,
 }
@@ -613,7 +612,6 @@ impl FleetTask {
             next_cold: now + cfg.cold_poll,
             cold_cursor: 0,
             next_backstop: now + cfg.backstop,
-            refused_noted: false,
             discovering: false,
             closing: false,
             cfg,
@@ -671,7 +669,7 @@ impl FleetTask {
                     return Some(started.map(|(link, events)| {
                         self.link_epoch += 1;
                         self.link = Some(link);
-                        self.events = Some(events);
+                        self.events = Some(crate::passive_inbound::PassiveEvents::new(events));
                     }));
                 }
                 command = self.commands.recv() => match command {
@@ -800,7 +798,6 @@ impl FleetTask {
         self.probes.clear();
         self.deferred.clear();
         self.schedule.forget(|_| false);
-        self.refused_noted = false;
         let _ = self
             .hub
             .apply(FleetInput::ConnectionLost { at: now_secs() });
@@ -845,7 +842,6 @@ impl FleetTask {
         let tag = (self.link_epoch, generation);
         self.tag = Some(tag);
         self.client = self.link.as_ref().map(Link::client);
-        self.refused_noted = false;
         let report = lock(&self.reports).clone();
         let (scope, served, parked) = match report {
             Some(report) => (report.scope, report.served, report.parked),
@@ -928,23 +924,9 @@ impl FleetTask {
                 }
             }
             Inbound::ServerRequest(request) => {
-                // The fleet link attaches to no session, so Hermes sends it no server request.
-                // One that arrives anyway is refused at once, whatever its kind.
-                let kind = serde_json::to_value(&request.request)
-                    .ok()
-                    .and_then(|value| value.as_object()?.keys().next().cloned())
-                    .unwrap_or_else(|| "unknown".to_owned());
-                let responder = request.responder;
-                let message = format!("talaria does not support server request: {kind}");
-                tokio::spawn(async move {
-                    let _ = responder.fail(-32601, &message).await;
-                });
-                if !self.refused_noted {
-                    self.refused_noted = true;
-                    self.hub.note(format!(
-                        "the gateway sent a {kind} server request to the fleet link; it was refused"
-                    ));
-                }
+                // The fleet link attaches to no session. An error answer would skip the
+                // prompt for every viewer, so leave it for the foreground.
+                request.responder.ignore();
             }
             Inbound::Malformed(_) | Inbound::Closed(_) => {}
         }
