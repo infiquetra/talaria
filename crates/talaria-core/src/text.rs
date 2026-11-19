@@ -82,21 +82,90 @@ fn stand_in(c: char) -> Option<StandIn> {
     }
 }
 
+/// Which layout characters [`sanitize_with_options`] preserves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SanitizeOptions {
+    /// Leave U+000A and U+0009 unchanged.
+    pub keep_layout: bool,
+    /// Leave U+2028 and U+2029 unchanged so a later scan can still see them as separators.
+    pub keep_separators: bool,
+}
+
+impl SanitizeOptions {
+    /// Replace every character in the shared neutralized set.
+    pub const DISPLAY: Self = Self {
+        keep_layout: false,
+        keep_separators: false,
+    };
+
+    /// Apply the display policy to command-line output.
+    pub const CLI: Self = Self::DISPLAY;
+
+    /// Keep newline and tab.
+    pub const LAYOUT: Self = Self {
+        keep_layout: true,
+        keep_separators: false,
+    };
+}
+
+/// How an unsafe character is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Replacement {
+    /// Control pictures and `‹U+XXXX›` brackets.
+    StandIn,
+    /// One visible character.
+    Char(char),
+    /// Remove the character.
+    Drop,
+}
+
+fn classified(c: char, options: SanitizeOptions) -> Option<StandIn> {
+    if options.keep_layout && matches!(c, '\n' | '\t') {
+        return None;
+    }
+    if options.keep_separators && matches!(c, '\u{2028}' | '\u{2029}') {
+        return None;
+    }
+    stand_in(c)
+}
+
+fn push_replacement(out: &mut String, found: StandIn, replacement: Replacement) {
+    match replacement {
+        Replacement::Drop => {}
+        Replacement::Char(picture) => out.push(picture),
+        Replacement::StandIn => match found {
+            StandIn::Char(picture) => out.push(picture),
+            StandIn::Spaces => out.push_str("    "),
+            StandIn::Code(code) => out.push_str(&format!("\u{2039}U+{code:04X}\u{203a}")),
+        },
+    }
+}
+
 /// Replace controls and other neutralized characters with visible stand-ins. Clean text is borrowed.
 pub fn sanitize(text: &str) -> Cow<'_, str> {
-    let Some(first) = text.char_indices().find(|(_, c)| stand_in(*c).is_some()) else {
+    sanitize_with_options(text, SanitizeOptions::DISPLAY, Replacement::StandIn)
+}
+
+/// Replace characters from the shared neutralized set. Clean text is borrowed.
+///
+/// The options can preserve newline and tab or the Unicode line and paragraph separators.
+pub fn sanitize_with_options<'a>(
+    text: &'a str,
+    options: SanitizeOptions,
+    replacement: Replacement,
+) -> Cow<'a, str> {
+    let Some((at, _)) = text
+        .char_indices()
+        .find(|(_, c)| classified(*c, options).is_some())
+    else {
         return Cow::Borrowed(text);
     };
     let mut clean = String::with_capacity(text.len() + 8);
-    clean.push_str(&text[..first.0]);
-    for c in text[first.0..].chars() {
-        match stand_in(c) {
+    clean.push_str(&text[..at]);
+    for c in text[at..].chars() {
+        match classified(c, options) {
             None => clean.push(c),
-            Some(StandIn::Char(picture)) => clean.push(picture),
-            Some(StandIn::Spaces) => clean.push_str("    "),
-            Some(StandIn::Code(code)) => {
-                clean.push_str(&format!("\u{2039}U+{code:04X}\u{203a}"));
-            }
+            Some(found) => push_replacement(&mut clean, found, replacement),
         }
     }
     Cow::Owned(clean)

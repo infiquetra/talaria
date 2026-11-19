@@ -183,13 +183,15 @@ fn expiry(expires: i64) -> String {
         format!("in {} hours", (seconds + 1800) / 3600)
     }
 }
-fn visible(text: &str) -> String {
-    text.chars()
-        .filter(|c| {
-            !c.is_control() && !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-        })
-        .take(256)
-        .collect()
+pub fn visible(text: &str) -> String {
+    talaria_core::text::sanitize_with_options(
+        text,
+        talaria_core::text::SanitizeOptions::CLI,
+        talaria_core::text::Replacement::Drop,
+    )
+    .chars()
+    .take(256)
+    .collect()
 }
 fn auth_failure(error: RemoteError, name: &str) -> String {
     match error {
