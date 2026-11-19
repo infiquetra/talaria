@@ -19,3 +19,24 @@ pub mod run;
 pub mod workflow;
 pub mod workflow_roster;
 pub mod workflow_skill;
+
+/// Show untrusted text at the terminal without letting it change the screen.
+///
+/// Newlines and tabs stay so multi-line diagnostics remain readable. Carriage
+/// return, escapes, and the other controls `talaria_core::text::sanitize`
+/// replaces become visible stand-ins. Callers keep the original values.
+pub(crate) fn terminal_text(text: &str) -> String {
+    let mut clean = String::with_capacity(text.len());
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            clean.push('\n');
+        }
+        for (field, part) in line.split('\t').enumerate() {
+            if field > 0 {
+                clean.push('\t');
+            }
+            clean.push_str(&talaria_core::text::sanitize(part));
+        }
+    }
+    clean
+}

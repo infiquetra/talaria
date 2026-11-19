@@ -1,710 +1,614 @@
-#![cfg(feature = "workflow-mock")]
-#[allow(dead_code)]
-#[path = "../../../talaria-workflow/tests/runner_support/mod.rs"]
-mod folders;
-use crate::mock_gateway;
-use crate::support;
+#[cfg(feature = "workflow-mock")]
+include!("workflow_cli_mock.rs");
 
-use serde_json::{Value, json};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
-    thread,
-    time::{Duration, Instant},
-};
+mod diagnostics {
+    use serde_json::{Value, json};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, UnixListener};
 
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data/runner")
-        .join(name)
-}
-fn command(home: &Path, wire: &str) -> Command {
-    fs::create_dir_all(home.join("empty-hermes")).unwrap();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_talaria"));
-    cmd.env_clear()
-        .env("HOME", home)
-        .env("HERMES_HOME", home.join("empty-hermes"))
-        .env("TALARIA_CONFIG_DIR", home.join("config"))
-        .env("TALARIA_WORKFLOW_MOCK", "1")
-        .env("TALARIA_WORKFLOW_MOCK_WIRE", fixture(wire))
-        .env("TALARIA_WORKFLOW_MOCK_ROSTER", fixture("roster.json"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    cmd
-}
-fn output(cmd: &mut Command) -> Output {
-    cmd.output().unwrap()
-}
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8(bytes.to_vec()).unwrap()
-}
-fn wait_for(mut condition: impl FnMut() -> bool) {
-    let until = Instant::now() + Duration::from_secs(20);
-    while !condition() {
-        assert!(Instant::now() < until, "condition timed out");
-        thread::sleep(Duration::from_millis(20));
+    const INSTANCE: &str = "0123456789abcdef0123456789abcdef";
+
+    fn hostile() -> String {
+        format!(
+            "alpha\n{esc}[2J\n{esc}]52;c;dGVzdA==\u{7}\n\u{9b}2J\nbefore\rafter\n\u{2028}line\u{2029}sep",
+            esc = '\u{1b}'
+        )
     }
-}
-fn records(dir: &Path) -> Vec<Value> {
-    fs::read_to_string(dir.join("journal.jsonl"))
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
-}
 
-#[test]
-fn detach_outlives_parent() {
-    let temp = tempfile::tempdir().unwrap();
-    let runs = temp.path().join("runs");
-    let source = fixture("scripts/slow.js");
-    let started = Instant::now();
-    let out = output(
-        command(temp.path(), "slow-wire.json")
-            .args([
-                "workflow",
-                "run",
-                "--detach",
-                "--json",
-                "--profile",
-                "fixture",
-                "--runs-dir",
-            ])
-            .arg(&runs)
-            .arg(&source),
-    );
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    assert!(started.elapsed() < Duration::from_secs(3));
-    let row: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(row["detached"], true);
-    let id = row["run_id"].as_str().unwrap();
-    assert_eq!(id.len(), 26);
-    let folder = PathBuf::from(row["run_dir"].as_str().unwrap());
-    assert!(folder.starts_with(&runs));
-    wait_for(|| {
-        records(&folder)
-            .iter()
-            .any(|r| r["t"] == "run_finished" && r["outcome"] == "completed")
-    });
-    let out = output(
-        command(temp.path(), "slow-wire.json")
-            .args(["workflow", "list", "--json", "--runs-dir"])
-            .arg(&runs),
-    );
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(rows[0]["run_id"], id);
-    assert_eq!(rows[0]["status"], "completed");
-    assert_eq!(
-        fs::read_dir(temp.path().join("empty-hermes"))
-            .unwrap()
-            .count(),
-        0
-    );
-    let foreground_runs = temp.path().join("foreground-runs");
-    let foreground = output(
-        command(temp.path(), "foreground-wire.json")
-            .args([
-                "workflow",
-                "run",
-                "--json",
-                "--profile",
-                "fixture",
-                "--runs-dir",
-            ])
-            .arg(&foreground_runs)
-            .arg(&source),
-    );
-    assert!(foreground.status.success(), "{}", text(&foreground.stderr));
-    let stdout = text(&foreground.stdout);
-    let line = stdout
-        .lines()
-        .find(|line| {
-            serde_json::from_str::<Value>(line)
-                .ok()
-                .is_some_and(|v| v["event"] == "run_finished")
-        })
-        .unwrap();
-    let event: Value = serde_json::from_str(line).unwrap();
-    let id = event["run_id"].as_str().unwrap();
-    let normalized = format!("{}\n", line.replace(id, "<RUN_ID>"));
-    assert_eq!(
-        normalized,
-        include_str!("../data/runner/golden/finished.jsonl")
-    );
-    let event_runs = temp.path().join("event-runs");
-    let event_output = output(
-        command(temp.path(), "events-wire.json")
-            .args([
-                "workflow",
-                "run",
-                "--json",
-                "--profile",
-                "fixture",
-                "--runs-dir",
-            ])
-            .arg(&event_runs)
-            .arg(fixture("scripts/events.js")),
-    );
-    assert!(
-        event_output.status.success(),
-        "{}",
-        text(&event_output.stderr)
-    );
-    let stream = text(&event_output.stdout);
-    let event_lines: Vec<_> = stream
-        .lines()
-        .filter_map(|line| {
-            let value: Value = serde_json::from_str(line).ok()?;
-            if value.get("event").is_some() {
-                Some((line, value))
-            } else {
-                None
-            }
-        })
-        .collect();
-    let started = event_lines
-        .iter()
-        .find(|(_, value)| value["event"] == "run_started")
-        .unwrap();
-    let event_id = started.1["run_id"].as_str().unwrap();
-    let run_dir = started.1["run_dir"]
-        .as_str()
-        .unwrap()
-        .replace(event_id, "<RUN_ID>");
-    let actual = event_lines
-        .iter()
-        .map(|(line, _)| line.replace(event_id, "<RUN_ID>") + "\n")
-        .collect::<String>();
-    let expected = include_str!("../data/runner/golden/events.jsonl")
-        .replace("\"<RUN_DIR>\"", &serde_json::to_string(&run_dir).unwrap());
-    assert_eq!(actual, expected);
-}
-
-#[test]
-fn list_output_shapes() {
-    let temp = tempfile::tempdir().unwrap();
-    let runs = temp.path().join("runs");
-    fs::create_dir(&runs).unwrap();
-    let older = folders::id(1);
-    let newer = folders::id(2);
-    folders::folder(
-        &runs,
-        &older,
-        0,
-        &[folders::started(&older), folders::finished("failed")],
-    );
-    folders::folder(
-        &runs,
-        &newer,
-        1000,
-        &[folders::started(&newer), folders::finished("completed")],
-    );
-    let out = output(
-        command(temp.path(), "slow-wire.json")
-            .args(["workflow", "list", "--runs-dir"])
-            .arg(&runs),
-    );
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let actual = text(&out.stdout)
-        .replace(&older, "<RUN_ID>")
-        .replace(&newer, "<RUN_ID>")
-        .replace("1970-01-01T00:00:00Z", "<TIME>")
-        .replace("1970-01-01T00:00:01Z", "<TIME>");
-    let expected = include_str!("../data/runner/golden/list.txt")
-        .replace("{runs_dir}", &runs.to_string_lossy());
-    assert_eq!(actual, expected);
-    let out = output(
-        command(temp.path(), "slow-wire.json")
-            .args(["workflow", "list", "--json", "--runs-dir"])
-            .arg(&runs),
-    );
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(rows.as_array().unwrap().len(), 2);
-    assert_eq!(rows[0]["run_id"], newer);
-    assert_eq!(rows[1]["run_id"], older);
-    for row in rows.as_array().unwrap() {
-        let object = row.as_object().unwrap();
-        let fields = [
-            "run_id",
-            "name",
-            "profile",
-            "started_at_ms",
-            "status",
-            "agents_finished",
-            "agents_total_known",
-            "parked",
-            "tokens_spent",
-            "money_spent_usd",
-            "run_dir",
-            "warning",
-        ];
-        assert_eq!(object.len(), fields.len());
-        assert!(fields.iter().all(|field| object.contains_key(*field)));
-        assert_eq!(row["warning"], Value::Null);
-    }
-    let out = output(
-        command(temp.path(), "slow-wire.json")
-            .args(["workflow", "list", "--json", "--limit", "1", "--runs-dir"])
-            .arg(&runs),
-    );
-    assert!(out.status.success());
-    let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(rows.as_array().unwrap().len(), 1);
-    assert_eq!(rows[0]["run_id"], newer);
-    let missing = temp.path().join("missing");
-    let out = output(
-        command(temp.path(), "slow-wire.json")
-            .args(["workflow", "list", "--runs-dir"])
-            .arg(&missing),
-    );
-    assert!(out.status.success());
-    assert_eq!(text(&out.stdout), "No workflow runs found.\n");
-    assert!(!missing.exists());
-    let rejected = temp.path().join("rejected");
-    let out = output(
-        command(temp.path(), "slow-wire.json")
-            .args([
-                "workflow",
-                "run",
-                "--profile",
-                "fixture",
-                "--args",
-                "{invalid",
-                "--runs-dir",
-            ])
-            .arg(&rejected)
-            .arg(fixture("scripts/slow.js")),
-    );
-    assert_eq!(out.status.code(), Some(2));
-    assert!(!rejected.exists());
-    assert!(text(&out.stderr).to_lowercase().contains("json"));
-    let out = output(
-        command(temp.path(), "slow-wire.json")
-            .args(["workflow", "list", "--json", "--limit", "0", "--runs-dir"])
-            .arg(&runs),
-    );
-    assert!(out.status.success());
-    assert_eq!(
-        serde_json::from_slice::<Value>(&out.stdout).unwrap(),
-        json!([])
-    );
-    assert_eq!(
-        fs::read_dir(temp.path().join("empty-hermes"))
-            .unwrap()
-            .count(),
-        0
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn ctrl_c_graceful_then_resume_and_hard_kill() {
-    use rustix::process::{Pid, Signal, kill_process};
-    struct ChildGuard(std::process::Child);
-    impl Drop for ChildGuard {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    for graceful in [true, false] {
-        let temp = tempfile::tempdir().unwrap();
-        let runs = temp.path().join("runs");
-        let source = fixture("scripts/two.js");
-        let child = command(temp.path(), "signal-wire.json")
-            .args([
-                "workflow",
-                "run",
-                "--json",
-                "--profile",
-                "fixture",
-                "--runs-dir",
-            ])
-            .arg(&runs)
-            .arg(&source)
-            .spawn()
-            .unwrap();
-        let mut child = ChildGuard(child);
-        let mut folder = PathBuf::new();
-        wait_for(|| {
-            if let Some(status) = child.0.try_wait().unwrap() {
-                panic!("runner exited before journal checkpoint: {status}");
-            }
-            let Ok(mut entries) = fs::read_dir(&runs) else {
-                return false;
-            };
-            let Some(Ok(entry)) = entries.next() else {
-                return false;
-            };
-            folder = entry.path();
-            let lines = records(&folder);
-            let first = lines
-                .iter()
-                .find(|r| r["t"] == "call_intent" && r["label"] == "first");
-            let second = lines
-                .iter()
-                .find(|r| r["t"] == "call_intent" && r["label"] == "second");
-            first.zip(second).is_some_and(|(a, b)| {
-                lines
-                    .iter()
-                    .any(|r| r["t"] == "call_finished" && r["key"] == a["key"])
-                    && lines
-                        .iter()
-                        .any(|r| r["t"] == "turn_admitted" && r["key"] == b["key"])
-            })
-        });
-        let before = records(&folder);
-        let first = before
-            .iter()
-            .find(|r| r["t"] == "call_intent" && r["label"] == "first")
-            .unwrap()["key"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let pid = Pid::from_raw(i32::try_from(child.0.id()).unwrap()).unwrap();
-        kill_process(pid, if graceful { Signal::INT } else { Signal::KILL }).unwrap();
-        let status = child.0.wait().unwrap();
-        if graceful {
-            assert_eq!(status.code(), Some(3));
-            assert!(
-                records(&folder)
-                    .iter()
-                    .any(|r| r["t"] == "run_finished" && r["outcome"] == "aborted")
-            );
-            let outcome: Value =
-                serde_json::from_slice(&fs::read(folder.join("outcome.json")).unwrap()).unwrap();
-            assert_eq!(outcome["reason"], "stopped");
-        } else {
-            assert!(!status.success());
-            assert!(!records(&folder).iter().any(|r| r["t"] == "run_finished"));
-            let listed = output(
-                command(temp.path(), "resume-wire.json")
-                    .args(["workflow", "list", "--json", "--runs-dir"])
-                    .arg(&runs),
-            );
-            assert!(listed.status.success());
-            let rows: Value = serde_json::from_slice(&listed.stdout).unwrap();
-            assert_eq!(rows[0]["status"], "interrupted");
-        }
-        let target = folder.file_name().unwrap();
-        let resumed = output(
-            command(temp.path(), "resume-wire.json")
-                .args(["workflow", "resume", "--json", "--runs-dir"])
-                .arg(&runs)
-                .arg(target),
-        );
-        assert!(resumed.status.success(), "{}", text(&resumed.stderr));
-        let after = records(&folder);
-        assert_eq!(
-            after
-                .iter()
-                .filter(|r| r["t"] == "call_intent" && r["key"] == first)
-                .count(),
-            1
+    fn assert_sanitized(text: &str) {
+        assert!(
+            text.contains("alpha\n"),
+            "intentional newline was not preserved: {text:?}"
         );
         assert!(
-            after
-                .iter()
-                .any(|r| r["t"] == "run_finished" && r["outcome"] == "completed")
+            text.contains("\u{241b}[2J"),
+            "ESC stand-in missing: {text:?}"
         );
-        assert_eq!(
-            fs::read_dir(temp.path().join("empty-hermes"))
-                .unwrap()
-                .count(),
-            0
+        assert!(
+            text.contains("\u{241b}]52;c;dGVzdA==\u{2407}"),
+            "OSC 52 stand-in missing: {text:?}"
         );
+        assert!(
+            text.contains("\u{2039}U+009B\u{203a}2J"),
+            "C1 stand-in missing: {text:?}"
+        );
+        assert!(
+            text.contains("before\u{240d}after"),
+            "CR stand-in missing: {text:?}"
+        );
+        assert!(
+            text.contains("\u{2039}U+2028\u{203a}line\u{2039}U+2029\u{203a}sep"),
+            "Zl/Zp stand-in missing: {text:?}"
+        );
+        assert!(
+            !text.contains('\u{240a}'),
+            "newline was replaced with a stand-in: {text:?}"
+        );
+        for character in text.chars() {
+            let code = u32::from(character);
+            if character == '\n' || character == '\t' {
+                continue;
+            }
+            assert!(
+                code > 0x1f
+                    && code != 0x7f
+                    && !(0x80..=0x9f).contains(&code)
+                    && character != '\u{2028}'
+                    && character != '\u{2029}',
+                "raw control U+{code:04X} in {text:?}"
+            );
+        }
     }
-}
 
-struct DetachedGuard(PathBuf);
-impl Drop for DetachedGuard {
-    fn drop(&mut self) {
-        let Ok(bytes) = fs::read(self.0.join("runner.json")) else {
-            return;
-        };
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-            return;
-        };
-        let Some(pid) = value["pid"].as_u64() else {
-            return;
-        };
-        let _ = Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .status();
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Detail,
+        Warning,
     }
-}
 
-fn terminal_submit(terminal: &mut support::Terminal, text: &str) {
-    terminal.type_keys(text);
-    thread::sleep(Duration::from_millis(300));
-    terminal.type_keys("\r");
-}
+    struct Gateway {
+        home: PathBuf,
+        log: Arc<Mutex<Vec<String>>>,
+        _dir: tempfile::TempDir,
+        shutdown: Option<tokio::sync::watch::Sender<bool>>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
 
-#[test]
-fn progress_detach_keeps_runner_alive() {
-    use mock_gateway::{HeadlessScenario, StandaloneGateway};
-    use talaria_workflow::{
-        journal::JournalReader,
-        progress::{RunProgress, RunState},
-        runner::{RunStatus, discover_runs},
-    };
+    impl Drop for Gateway {
+        fn drop(&mut self) {
+            if let Some(shutdown) = self.shutdown.take() {
+                let _ = shutdown.send(true);
+            }
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
 
-    let temp = tempfile::tempdir().unwrap();
-    let gateway_home = temp.path().join("gateway");
-    let runs = temp.path().join("runs");
-    let config = temp.path().join("config");
-    fs::create_dir(&gateway_home).unwrap();
-    let gateway = StandaloneGateway::start(&gateway_home);
-    gateway.configure_headless(HeadlessScenario::StartedStop);
-    gateway.set_session_create_descriptor(
-        &["tool", "tui", "cli"],
-        &[
-            "request_id",
-            "source",
-            "model",
-            "provider",
-            "reasoning",
-            "cwd",
-            "cwd_explicit",
-            "toolsets",
-            "skills",
-            "max_turns",
-        ],
-    );
-    let roster: Value = serde_json::from_slice(&fs::read(fixture("roster.json")).unwrap()).unwrap();
-    gateway.set_model_options(roster.clone(), roster);
-    gateway.set_silent("prompt.receipt", true);
+    impl Gateway {
+        fn start(mode: Mode) -> Self {
+            let dir = tempfile::Builder::new()
+                .prefix("t")
+                .rand_bytes(4)
+                .tempdir_in("/tmp")
+                .expect("temp home");
+            let home = dir.path().canonicalize().expect("canonical home");
+            std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))
+                .expect("home mode");
+            let socket = home.join("gateway.sock");
+            assert!(
+                socket.as_os_str().len() < 100,
+                "control socket path is too long"
+            );
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let server_log = Arc::clone(&log);
+            let server_home = home.clone();
+            let thread = std::thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("runtime");
+                runtime.block_on(serve(
+                    server_home,
+                    socket,
+                    mode,
+                    server_log,
+                    shutdown_rx,
+                    ready_tx,
+                ));
+            });
+            let _port = ready_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("gateway ready");
+            Self {
+                home,
+                log,
+                _dir: dir,
+                shutdown: Some(shutdown_tx),
+                thread: Some(thread),
+            }
+        }
 
-    let mut start = Command::new(env!("CARGO_BIN_EXE_talaria"));
-    start
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("HOME", temp.path())
-        .env("HERMES_HOME", &gateway_home)
-        .env("TALARIA_CONFIG_DIR", &config)
-        .env("TALARIA_RUNS_DIR", &runs)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let result = output(
-        start
+        fn requests(&self) -> Vec<String> {
+            self.log
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone()
+        }
+    }
+
+    async fn serve(
+        home: PathBuf,
+        socket: PathBuf,
+        mode: Mode,
+        log: Arc<Mutex<Vec<String>>>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+        ready: std::sync::mpsc::Sender<u16>,
+    ) {
+        let tcp = TcpListener::bind("127.0.0.1:0").await.expect("tcp bind");
+        let port = tcp.local_addr().expect("tcp port").port();
+        let _ = std::fs::remove_file(&socket);
+        let control = UnixListener::bind(&socket).expect("control bind");
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))
+            .expect("socket mode");
+        let origin = format!("http://127.0.0.1:{port}");
+        let _ = ready.send(port);
+        let tasks = Arc::new(AtomicU64::new(0));
+        let http_shutdown = shutdown.clone();
+        let control_shutdown = shutdown.clone();
+        let http_log = Arc::clone(&log);
+        let http_home = home.clone();
+        tokio::select! {
+            _ = shutdown_changed(shutdown) => {}
+            _ = async {
+                tokio::join!(
+                    accept_http(tcp, mode, tasks, http_log, http_home, http_shutdown),
+                    accept_control(control, origin, home, control_shutdown),
+                );
+            } => {}
+        }
+    }
+
+    async fn shutdown_changed(mut shutdown: tokio::sync::watch::Receiver<bool>) {
+        let _ = shutdown.changed().await;
+    }
+
+    async fn accept_http(
+        listener: TcpListener,
+        mode: Mode,
+        tasks: Arc<AtomicU64>,
+        log: Arc<Mutex<Vec<String>>>,
+        profile: PathBuf,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) {
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => break,
+                accepted = listener.accept() => {
+                    let Ok((stream, _)) = accepted else { break };
+                    let tasks = Arc::clone(&tasks);
+                    let log = Arc::clone(&log);
+                    let profile = profile.display().to_string();
+                    tokio::spawn(async move {
+                        if let Err(error) = dispatch_tcp(stream, mode, &tasks, &log, profile).await {
+                            push(&log, format!("tcp: {error}"));
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    async fn accept_control(
+        listener: UnixListener,
+        origin: String,
+        home: PathBuf,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) {
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => break,
+                accepted = listener.accept() => {
+                    let Ok((stream, _)) = accepted else { break };
+                    let origin = origin.clone();
+                    let home = home.display().to_string();
+                    tokio::spawn(async move {
+                        let _ = handle_control(stream, origin, home).await;
+                    });
+                }
+            }
+        }
+    }
+
+    fn push(log: &Mutex<Vec<String>>, line: String) {
+        log.lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(line);
+    }
+
+    async fn dispatch_tcp(
+        stream: tokio::net::TcpStream,
+        mode: Mode,
+        tasks: &AtomicU64,
+        log: &Mutex<Vec<String>>,
+        profile: String,
+    ) -> std::io::Result<()> {
+        let mut peeked = [0u8; 4096];
+        let count = stream.peek(&mut peeked).await?;
+        let preview = String::from_utf8_lossy(&peeked[..count]);
+        if preview.contains("/api/ws") {
+            push(log, "WS /api/ws".into());
+            serve_ws(stream, profile)
+                .await
+                .map_err(std::io::Error::other)?;
+            return Ok(());
+        }
+        serve_http(stream, mode, tasks, log).await
+    }
+
+    async fn serve_http(
+        mut stream: tokio::net::TcpStream,
+        mode: Mode,
+        tasks: &AtomicU64,
+        log: &Mutex<Vec<String>>,
+    ) -> std::io::Result<()> {
+        let header = read_headers(&mut stream).await?;
+        let length = content_length(&header);
+        let mut body = vec![0u8; length];
+        if length > 0 {
+            stream.read_exact(&mut body).await?;
+        }
+        let request = header.lines().next().unwrap_or("").to_string();
+        push(log, request.clone());
+        let mut parts = request.split_whitespace();
+        let method = parts.next().unwrap_or("");
+        let path = parts.next().unwrap_or("");
+        stream
+            .write_all(&http_reply(method, path, mode, tasks))
+            .await
+    }
+
+    async fn read_headers(stream: &mut tokio::net::TcpStream) -> std::io::Result<String> {
+        let mut bytes = Vec::new();
+        let mut one = [0u8; 1];
+        let marker = b"\r\n\r\n";
+        let mut matched = 0usize;
+        while bytes.len() < 65_536 {
+            let count = stream.read(&mut one).await?;
+            if count == 0 {
+                break;
+            }
+            bytes.push(one[0]);
+            if one[0] == marker[matched] {
+                matched += 1;
+                if matched == marker.len() {
+                    break;
+                }
+            } else {
+                matched = usize::from(one[0] == marker[0]);
+            }
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn content_length(header: &str) -> usize {
+        header
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().ok())
+                    .flatten()
+            })
+            .unwrap_or(0)
+    }
+
+    fn http_reply(method: &str, path: &str, mode: Mode, tasks: &AtomicU64) -> Vec<u8> {
+        let route = path.split('?').next().unwrap_or(path);
+        if route.ends_with("/orchestration") {
+            return match mode {
+                Mode::Detail => json_bytes(400, &json!({"detail": hostile()})),
+                Mode::Warning => json_bytes(
+                    200,
+                    &json!({
+                        "default_assignee": "",
+                        "resolved_default_assignee": "default",
+                        "active_profile": "default"
+                    }),
+                ),
+            };
+        }
+        if route.ends_with("/board") {
+            return json_bytes(
+                200,
+                &json!({
+                    "columns": [],
+                    "tenants": [],
+                    "assignees": [],
+                    "latest_event_id": 0
+                }),
+            );
+        }
+        if route.ends_with("/dispatch") || route.contains("/comments") || route.ends_with("/link") {
+            return json_bytes(200, &json!({"ok": true}));
+        }
+        if route.contains("/tasks") {
+            let id = route
+                .rsplit('/')
+                .next()
+                .filter(|part| {
+                    part.starts_with('t') && part[1..].chars().all(|c| c.is_ascii_digit())
+                })
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("t{}", tasks.fetch_add(1, Ordering::SeqCst) + 1));
+            let task = task_json(&id, if method == "PATCH" { "done" } else { "ready" });
+            return if method == "POST" {
+                json_bytes(200, &json!({"task": task, "warning": hostile()}))
+            } else if method == "GET" && route.contains("/tasks/") {
+                json_bytes(
+                    200,
+                    &json!({
+                        "task": task,
+                        "comments": [],
+                        "events": [],
+                        "attachments": [],
+                        "links": {"parents": [], "children": []},
+                        "link_tasks": [],
+                        "child_results": [],
+                        "runs": []
+                    }),
+                )
+            } else {
+                json_bytes(200, &json!({"task": task}))
+            };
+        }
+        json_bytes(
+            404,
+            &json!({"detail": format!("unhandled {method} {path}")}),
+        )
+    }
+
+    fn task_json(id: &str, status: &str) -> Value {
+        json!({
+            "id": id,
+            "title": "card",
+            "body": "",
+            "status": status,
+            "priority": 0,
+            "skills": [],
+            "link_counts": {"parents": 0, "children": 0},
+            "comment_count": 0,
+            "progress": {"done": 0, "total": 0}
+        })
+    }
+
+    fn json_bytes(status: u16, body: &Value) -> Vec<u8> {
+        let payload = serde_json::to_vec(body).unwrap_or_else(|_| b"{}".to_vec());
+        let reason = if status == 200 { "OK" } else { "Error" };
+        let header = format!(
+            "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            payload.len()
+        );
+        let mut bytes = header.into_bytes();
+        bytes.extend(payload);
+        bytes
+    }
+
+    async fn handle_control(
+        stream: tokio::net::UnixStream,
+        origin: String,
+        home: String,
+    ) -> std::io::Result<()> {
+        let mut reader = tokio::io::BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).await?;
+        let request: Value = serde_json::from_str(line.trim()).unwrap_or_else(|_| json!({}));
+        let id = request.get("id").cloned().unwrap_or_else(|| json!(1));
+        let reply = if request["verb"] == "session-ticket" {
+            static TICKETS: AtomicU64 = AtomicU64::new(1);
+            json!({
+                "ok": true,
+                "protocol": 1,
+                "id": id,
+                "result": {
+                    "ticket": format!("tkt{}", TICKETS.fetch_add(1, Ordering::SeqCst)),
+                    "expires_in_seconds": 30,
+                    "instance_id": INSTANCE,
+                    "profile_id": request["params"]["profile_id"].as_str().unwrap_or(""),
+                    "runtime_protocol": 1
+                }
+            })
+        } else {
+            json!({
+                "ok": true,
+                "protocol": 1,
+                "id": id,
+                "result": {
+                    "runtime_protocol": 1,
+                    "state": "ready",
+                    "supervisor": "none",
+                    "authority_epoch": 3,
+                    "instance_id": INSTANCE,
+                    "api_origin": origin,
+                    "capabilities": ["session-authority-v1"],
+                    "served_profiles": [{"profile_id": home, "home": home}],
+                    "parked_profiles": {}
+                }
+            })
+        };
+        let mut bytes = serde_json::to_vec(&reply).unwrap_or_default();
+        bytes.push(b'\n');
+        reader.get_mut().write_all(&bytes).await
+    }
+
+    async fn serve_ws(stream: tokio::net::TcpStream, profile: String) -> Result<(), String> {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+
+        #[allow(clippy::result_large_err)]
+        let callback = |_request: &Request, mut response: Response| {
+            response.headers_mut().insert(
+                http::header::SEC_WEBSOCKET_PROTOCOL,
+                http::HeaderValue::from_static("hermes-gateway-v1"),
+            );
+            Ok(response)
+        };
+        let mut socket = tokio_tungstenite::accept_hdr_async(stream, callback)
+            .await
+            .map_err(|error| error.to_string())?;
+        let ready = json!({
+            "jsonrpc": "2.0",
+            "method": "event",
+            "params": {
+                "type": "gateway.ready",
+                "payload": {
+                    "skin": {"name": "default"},
+                    "change_events": true,
+                    "replay_epoch": "0123abcd",
+                    "session_authority": true
+                }
+            }
+        });
+        socket
+            .send(Message::Text(ready.to_string().into()))
+            .await
+            .map_err(|error| error.to_string())?;
+        while let Some(message) = socket.next().await {
+            let message = message.map_err(|error| error.to_string())?;
+            let Message::Text(text) = message else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            let Some(id) = value.get("id").cloned() else {
+                continue;
+            };
+            let method = value["method"].as_str().unwrap_or("");
+            let result = match method {
+                "runtime.describe" => json!({
+                    "instance_id": INSTANCE,
+                    "profile_id": profile,
+                    "authority_epoch": 3,
+                    "capabilities": [
+                        "session-authority-v1",
+                        "durable-admission-v1",
+                        "event-replay-v1"
+                    ],
+                    "session_create": {"sources": ["local"], "parameters": ["text"]}
+                }),
+                "model.options" => json!({
+                    "model": "m-small",
+                    "provider": "alpha",
+                    "providers": [{
+                        "slug": "alpha",
+                        "name": "Alpha",
+                        "authenticated": true,
+                        "models": ["m-small"]
+                    }]
+                }),
+                _ => json!({"server_requests": [], "declines_not_shown": true}),
+            };
+            let reply = json!({"jsonrpc": "2.0", "id": id, "result": result});
+            socket
+                .send(Message::Text(reply.to_string().into()))
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn compile(home: &Path, script: &Path) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_talaria"))
             .args([
                 "workflow",
-                "run",
-                "--detach",
-                "--json",
+                "compile",
+                "--board",
+                "lab",
                 "--profile",
-                "fixture",
-                "--runs-dir",
+                "default",
+                "--no-dispatch",
             ])
-            .arg(&runs)
-            .arg(fixture("scripts/slow.js")),
-    );
-    assert!(result.status.success(), "{}", text(&result.stderr));
-    let started: Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(started["detached"], true);
-    let id = started["run_id"].as_str().unwrap().to_owned();
-    let folder = PathBuf::from(started["run_dir"].as_str().unwrap());
-    let _guard = DetachedGuard(folder.clone());
-    assert!(folder.starts_with(&runs));
-    wait_for(|| records(&folder).iter().any(|r| r["t"] == "turn_admitted"));
-    assert!(folder.join("runner.json").is_file());
+            .arg(script)
+            .env("HERMES_HOME", home)
+            .env("TALARIA_CONFIG_DIR", home)
+            .env("HOME", home)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("compile command")
+    }
 
-    let mut terminal = support::Launch::new(temp.path())
-        .hermes_home(&gateway_home)
-        .answer_queries()
-        .size(32, 120)
-        .env("TALARIA_CONFIG_DIR", &config.to_string_lossy())
-        .env("TALARIA_RUNS_DIR", &runs.to_string_lossy())
-        .args(&["--no-ensure", "--profile", "fixture"])
-        .spawn();
-    assert!(
-        terminal.wait_for_text("Type a message", Duration::from_secs(10)),
-        "{}",
-        terminal.screen_text()
-    );
-    wait_for(|| {
-        gateway
-            .requests("session.create")
-            .iter()
-            .any(|frame| frame.params["source"] != "tool")
-    });
-    let creates = gateway.requests("session.create").len();
-    let submits = gateway.requests("prompt.submit").len();
-    terminal_submit(&mut terminal, "/workflows");
-    assert!(
-        terminal.wait_for_text(&id, Duration::from_secs(10)),
-        "{}",
-        terminal.screen_text()
-    );
-    terminal.type_keys("\r");
-    assert!(
-        terminal.wait_for_text("review", Duration::from_secs(10)),
-        "{}",
-        terminal.screen_text()
-    );
-    terminal.type_keys("\x1b");
-    assert!(
-        terminal.wait_for_text("Type a message", Duration::from_secs(10)),
-        "{}",
-        terminal.screen_text()
-    );
-    assert!(!records(&folder).iter().any(|r| r["t"] == "run_finished"));
-    assert!(folder.join("runner.json").exists());
-    let discovered = discover_runs(&runs);
-    assert_eq!(discovered.len(), 1);
-    assert_eq!(discovered[0].run_id, id);
-    assert_eq!(discovered[0].status, RunStatus::Running);
-    let listed = output(
-        command(temp.path(), "slow-wire.json")
-            .args(["workflow", "list", "--json", "--runs-dir"])
-            .arg(&runs),
-    );
-    assert!(listed.status.success(), "{}", text(&listed.stderr));
-    let listed: Value = serde_json::from_slice(&listed.stdout).unwrap();
-    assert_eq!(listed[0]["run_id"], id);
-    assert_eq!(listed[0]["status"], "running");
-    let (journal, _) = JournalReader::read_from(&folder, 0).unwrap();
-    let dir = talaria_workflow::journal::RunDir::open(&folder).unwrap();
-    assert_eq!(
-        RunProgress::from_records(dir.manifest(), &journal)
-            .run()
-            .state,
-        RunState::Running
-    );
+    fn script(home: &Path) -> PathBuf {
+        let path = home.join("hostile.js");
+        std::fs::write(
+            &path,
+            "export const meta = {name: 'hostile', description: 'one call'};\nawait agent('read the source', {label: 'read'});\n",
+        )
+        .expect("script");
+        path
+    }
 
-    terminal_submit(&mut terminal, "/workflows");
-    assert!(
-        terminal.wait_for_text(&id, Duration::from_secs(10)),
-        "{}",
-        terminal.screen_text()
-    );
-    terminal.type_keys("\r");
-    assert!(
-        terminal.wait_for_text("review", Duration::from_secs(10)),
-        "{}",
-        terminal.screen_text()
-    );
-    assert_eq!(gateway.requests("session.create").len(), creates);
-    assert_eq!(gateway.requests("prompt.submit").len(), submits);
-    terminal.type_keys("p");
-    wait_for(|| folder.join("control/pause.json").exists());
-    assert!(!records(&folder).iter().any(|r| r["t"] == "run_finished"));
-    terminal.type_keys("p");
-    wait_for(|| !folder.join("control/pause.json").exists());
-    terminal.type_keys("X");
-    assert!(
-        terminal.wait_for_text("confirm", Duration::from_secs(5)),
-        "{}",
-        terminal.screen_text()
-    );
-    terminal.type_keys("y");
-    gateway
-        .wait_request("session.interrupt", 0, Duration::from_secs(10))
-        .expect("the reopened viewer did not stop the active session");
-    gateway.set_silent("prompt.receipt", false);
-    wait_for(|| folder.join("outcome.json").exists());
-    let outcome: Value =
-        serde_json::from_slice(&fs::read(folder.join("outcome.json")).unwrap()).unwrap();
-    assert_eq!(outcome["outcome"], "aborted");
-    assert_eq!(outcome["reason"], "stopped");
-    assert!(
-        records(&folder)
-            .iter()
-            .any(|r| r["t"] == "run_finished" && r["outcome"] == "aborted")
-    );
-    let discovered = discover_runs(&runs);
-    assert_eq!(discovered[0].run_id, id);
-    assert_eq!(discovered[0].status, RunStatus::Aborted);
-    assert!(
-        terminal.wait_for_text("aborted", Duration::from_secs(10)),
-        "{}",
-        terminal.screen_text()
-    );
-    terminal.type_keys("\x1b");
-    assert!(
-        terminal.wait_for_text("Type a message", Duration::from_secs(10)),
-        "{}",
-        terminal.screen_text()
-    );
-    terminal_submit(&mut terminal, "/quit");
-    let ended = terminal.wait_exit(Duration::from_secs(5));
-    assert!(!ended.timed_out);
+    #[test]
+    fn workflow_cli_sanitizes_gateway_compile_diagnostics() {
+        let detail = Gateway::start(Mode::Detail);
+        let source = script(&detail.home);
+        let failed = compile(&detail.home, &source);
+        let stderr = String::from_utf8_lossy(&failed.stderr).into_owned();
+        let stdout = String::from_utf8_lossy(&failed.stdout).into_owned();
+        assert!(
+            stderr.contains("cannot read orchestration settings"),
+            "stderr={stderr:?} requests={:?}",
+            detail.requests()
+        );
+        assert_sanitized(&stderr);
+        assert_sanitized_or_empty(&stdout);
+
+        let warning = Gateway::start(Mode::Warning);
+        let source = script(&warning.home);
+        let compiled = compile(&warning.home, &source);
+        let stdout = String::from_utf8_lossy(&compiled.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&compiled.stderr).into_owned();
+        assert!(
+            compiled.status.success(),
+            "stdout={stdout:?} stderr={stderr:?} requests={:?}",
+            warning.requests()
+        );
+        assert!(
+            stdout.contains("compiled "),
+            "compile report missing: {stdout:?}"
+        );
+        assert_sanitized(&stdout);
+        assert_sanitized_or_empty(&stderr);
+    }
+
+    fn assert_sanitized_or_empty(text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        for character in text.chars() {
+            let code = u32::from(character);
+            if character == '\n' || character == '\t' {
+                continue;
+            }
+            assert!(
+                code > 0x1f
+                    && code != 0x7f
+                    && !(0x80..=0x9f).contains(&code)
+                    && character != '\u{2028}'
+                    && character != '\u{2029}',
+                "raw control U+{code:04X} in {text:?}"
+            );
+        }
+    }
 }
-
-#[test]
-fn completed_replay_records_only_a_header_with_no_gateway() {
-    let temp = tempfile::tempdir().unwrap();
-    let runs = temp.path().join("runs");
-    let out = output(
-        command(temp.path(), "foreground-wire.json")
-            .args([
-                "workflow",
-                "run",
-                "--json",
-                "--profile",
-                "fixture",
-                "--runs-dir",
-            ])
-            .arg(&runs)
-            .arg(fixture("scripts/slow.js")),
-    );
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let finished: Value = text(&out.stdout)
-        .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .find(|v| v["event"] == "run_finished")
-        .unwrap();
-    let record = temp.path().join("replay.jsonl");
-    let replay = output(
-        command(temp.path(), "foreground-wire.json")
-            .env_remove("TALARIA_WORKFLOW_MOCK")
-            .args(["workflow", "resume", "--json", "--record"])
-            .arg(&record)
-            .arg("--runs-dir")
-            .arg(&runs)
-            .arg(finished["run_id"].as_str().unwrap()),
-    );
-    assert!(replay.status.success(), "{}", text(&replay.stderr));
-    let rows: Vec<Value> = fs::read_to_string(&record)
-        .expect("replay recording missing")
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["kind"], "header");
-    assert_eq!(
-        fs::read_dir(temp.path().join("empty-hermes"))
-            .unwrap()
-            .count(),
-        0
-    );
-}
-
-#[test]
-fn empty_gateway_home_reports_one_plain_gateway_not_found_line() {
-    let temp = tempfile::tempdir().unwrap();
-    let runs = temp.path().join("runs");
-    let out = output(
-        command(temp.path(), "foreground-wire.json")
-            .env_remove("TALARIA_WORKFLOW_MOCK")
-            .args(["workflow", "run", "--runs-dir"])
-            .arg(&runs)
-            .arg(fixture("scripts/slow.js")),
-    );
-    assert_eq!(out.status.code(), Some(1));
-    assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
-    let error = text(&out.stderr);
-    assert_eq!(error.lines().count(), 1, "{error}");
-    assert!(error.contains("gateway not found"), "{error}");
-    assert!(!error.contains('\u{1b}'));
-    assert!(!runs.exists());
-}
-
-#[path = "../workflow_builtins_cli.rs"]
-mod builtins_contract;
