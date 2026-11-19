@@ -11670,6 +11670,49 @@ async fn profiles_without_client(
     })
 }
 
+/// Open `home/.talaria/logs/client.log` for append.
+///
+/// On Unix, `.talaria` and `.talaria/logs` are owner-only (`0700`) and `client.log`
+/// is owner-only (`0600`), including when the file already exists.
+fn open_background_client_log(home: &Path) -> std::io::Result<std::fs::File> {
+    let talaria = home.join(".talaria");
+    let logs = talaria.join("logs");
+    ensure_owner_directory(&talaria)?;
+    ensure_owner_directory(&logs)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(logs.join("client.log"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
+}
+
+fn ensure_owner_directory(path: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)?.permissions().mode() & 0o700;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+    }
+    Ok(())
+}
+
 /// Apply one message and run its effects. Returns whether the screen needs a draw.
 #[inline(never)]
 fn apply<S: Screen>(
@@ -12358,16 +12401,8 @@ fn apply<S: Screen>(
                 if let Some(home) = state.home.clone() {
                     tokio::task::spawn_blocking(move || {
                         use std::io::Write;
-                        let folder = home.join(".talaria/logs");
-                        if std::fs::create_dir_all(&folder).is_err() {
-                            return;
-                        }
                         let text: String = talaria_core::side::clean_output(&text).chars().filter(|ch| !ch.is_control() && !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect();
-                        if let Ok(mut log) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(folder.join("client.log"))
-                        {
+                        if let Ok(mut log) = open_background_client_log(&home) {
                             let _ = writeln!(log, "{text}");
                         }
                     });
@@ -17572,5 +17607,35 @@ mod voice_ownership_tests {
 
         let sudo = make_state("sudo");
         assert_eq!(foreground_open(&sudo), 1);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod background_client_log_tests {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    use super::open_background_client_log;
+
+    fn mode(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode()
+    }
+
+    #[test]
+    fn background_client_log_is_owner_only() {
+        let home = tempfile::tempdir().unwrap();
+        open_background_client_log(home.path()).unwrap();
+        let talaria = home.path().join(".talaria");
+        let logs = talaria.join("logs");
+        let file = logs.join("client.log");
+        assert_eq!(mode(&talaria) & 0o777, 0o700, "log parent directory");
+        assert_eq!(mode(&logs) & 0o777, 0o700, "log directory");
+        assert_eq!(mode(&file) & 0o077, 0, "new client log");
+
+        std::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        open_background_client_log(home.path()).unwrap();
+        assert_eq!(mode(&logs) & 0o777, 0o700, "existing log directory");
+        assert_eq!(mode(&file) & 0o777, 0o600, "existing client log");
     }
 }

@@ -6,6 +6,7 @@ pub use tail::KanbanTail;
 use crate::rest::{Method, RequestOpts, RestClient, RestError, RestOptions, TicketMinter};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::path::Path;
 use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -359,6 +360,27 @@ pub struct LiveCards {
     pub bodies: Vec<String>,
     pub statuses: Vec<String>,
 }
+/// Create the live-compile workflow input, refusing any path that already exists.
+///
+/// On Unix the new file is owner-only (`0600`). `create_new` refuses a pre-existing
+/// path or a planted symlink.
+fn create_live_compile_input(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut open = std::fs::OpenOptions::new();
+    open.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600);
+    }
+    let file = open.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
+}
+
 /// Drive the installed command, then observe completion through the board API.
 pub async fn live_compile_and_complete(
     board: &str,
@@ -386,10 +408,7 @@ pub async fn live_compile_and_complete(
     ));
     let client = KanbanClient::new(endpoint.api_origin(), board, minter)?;
     let path = std::env::temp_dir().join(format!("talaria-live-compile-{}.js", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
+    let mut file = create_live_compile_input(&path)
         .map_err(|_| KanbanError::Message("cannot create live workflow input".into()))?;
     use std::io::Write;
     file.write_all(source.as_bytes())
@@ -475,5 +494,38 @@ pub async fn live_compile_and_complete(
             )));
         }
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::create_live_compile_input;
+
+    #[test]
+    fn live_compile_input_is_owner_only_and_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("talaria-live-compile-1.js");
+        create_live_compile_input(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o077, 0, "new live-compile input");
+
+        let again = create_live_compile_input(&path).unwrap_err();
+        assert_eq!(again.kind(), std::io::ErrorKind::AlreadyExists);
+
+        let target = dir.path().join("planted-target.js");
+        std::fs::write(&target, b"planted").unwrap();
+        let link = dir.path().join("talaria-live-compile-link.js");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let planted = create_live_compile_input(&link).unwrap_err();
+        assert_eq!(planted.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"planted");
     }
 }
