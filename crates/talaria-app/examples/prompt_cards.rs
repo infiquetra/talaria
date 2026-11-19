@@ -224,8 +224,19 @@ async fn run(scenario: String, log: String) -> DemoResult<()> {
                         if let Some(notice) = notice { output.line(&format!("notice: {notice}"))?; }
                         let mut effects = Vec::new();
                         if let Some(intent) = intent {
-                            if let PromptIntent::Masked { request_id, value } = intent {
-                                if let Err(error) = service.answer_masked(&request_id, value.into_inner()).await {
+                            if let PromptIntent::Masked { target, value } = intent {
+                                let talaria_tui::prompts::MaskedTarget::Live(shown) = target else {
+                                    output.line("notice: recovered cards are answered by the session")?;
+                                    continue;
+                                };
+                                let target = talaria_app::prompts::LiveMaskedTarget {
+                                    token: shown.token,
+                                    session_id: shown.session_id,
+                                    generation: shown.generation,
+                                    instance_id: shown.instance_id,
+                                    service_id: shown.service_id,
+                                };
+                                if let Err(error) = service.answer_masked(&target, value.into_inner()).await {
                                     output.line(&format!("notice: could not answer masked request: {error}"))?;
                                 }
                             } else {
@@ -345,7 +356,7 @@ fn masked_view(info: &MaskedRequestInfo) -> MaskedView {
         MaskedKind::VaultUnlockPrompt => "vault.unlock_prompt",
     };
     MaskedView {
-        request_id: info.id.clone(),
+        request_id: info.token.clone(),
         session_id: info.session_id.clone(),
         method: method.to_owned(),
         fields: info
@@ -353,6 +364,13 @@ fn masked_view(info: &MaskedRequestInfo) -> MaskedView {
             .iter()
             .map(|(key, value)| ((*key).to_owned(), value.clone()))
             .collect(),
+        target: talaria_tui::prompts::LiveMaskedTarget {
+            token: info.token.clone(),
+            session_id: info.session_id.clone(),
+            generation: info.generation,
+            instance_id: info.instance_id,
+            service_id: info.service_id,
+        },
     }
 }
 

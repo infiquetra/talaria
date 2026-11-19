@@ -284,3 +284,42 @@ fn nested_fence_commits_with_container() {
     );
     assert_dump(&closed.tail, &["||", "|text|"]);
 }
+
+fn assert_decoded_stand_ins(rendered: &str) {
+    for (raw, stand_in) in [
+        ('\u{202e}', "\u{2039}U+202E\u{203a}"),
+        ('\u{00a0}', "\u{2039}U+00A0\u{203a}"),
+        ('\u{200d}', "\u{2039}U+200D\u{203a}"),
+        ('\u{180b}', "\u{2039}U+180B\u{203a}"),
+    ] {
+        assert!(
+            rendered.contains(stand_in),
+            "missing {stand_in} in {rendered}"
+        );
+        assert!(
+            !rendered.contains(raw),
+            "raw U+{:04X} reached the frame: {rendered}",
+            u32::from(raw)
+        );
+    }
+}
+
+#[test]
+fn decoded_character_references_are_sanitized_before_display() {
+    let source = "a&#x202E;b &#x00A0; &#x200D; [go](https://example.invalid/&#x180B;z)";
+    assert_decoded_stand_ins(&dump(&render_markdown(source, &options(80))));
+
+    let mut live = stream(80);
+    let update = live.push(source);
+    assert_decoded_stand_ins(&dump(&update.tail));
+
+    let mut split = stream(80);
+    split.push("a&#x20");
+    let second = split.push("2E;b");
+    let joined = dump(&second.tail);
+    assert!(
+        joined.contains("\u{2039}U+202E\u{203a}"),
+        "a reference split across pushes must be sanitized: {joined}"
+    );
+    assert!(!joined.contains('\u{202e}'), "{joined}");
+}

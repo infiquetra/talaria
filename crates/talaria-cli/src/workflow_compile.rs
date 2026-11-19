@@ -17,14 +17,14 @@ impl TicketMinter for NoTicket {
 pub async fn execute(args: CompileArgs) -> u8 {
     match run(args).await {
         Ok(report) => {
-            print!("{}", report.stdout);
+            print!("{}", crate::terminal_text(&report.stdout));
             if !report.stderr.is_empty() {
-                eprintln!("{}", report.stderr);
+                eprintln!("{}", crate::terminal_text(&report.stderr));
             }
             report.exit_code
         }
         Err(error) => {
-            eprintln!("{}", error.stderr);
+            eprintln!("{}", crate::terminal_text(&error.stderr));
             error.exit_code
         }
     }

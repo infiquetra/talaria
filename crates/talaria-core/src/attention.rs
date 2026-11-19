@@ -391,8 +391,11 @@ fn summary_text(summary: &NeedSummary) -> String {
     }
 }
 
-/// Remove terminal controls and invisible direction-changing characters from alert fields.
+/// Drop neutralized characters from alert fields, then cut to `limit`.
 pub fn sanitize_alert_field(text: &str, limit: usize) -> String {
-    let clean: String = text.chars().filter(|c| !c.is_control() && !matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}')).collect();
+    let clean: String = text
+        .chars()
+        .filter(|c| !crate::text::is_neutralized(*c))
+        .collect();
     cut(&clean, limit)
 }

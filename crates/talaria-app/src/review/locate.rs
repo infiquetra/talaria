@@ -4,16 +4,16 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::time::Duration;
 
 use talaria_core::directory::rows::RowKey;
 use talaria_core::review::{RecordView, ReviewTarget};
 
-use crate::worktree::record::review_worktree_path;
+use crate::worktree::record::review_tree_is_contained;
 use crate::worktree::{GitRunner, WorktreeRecord, main_root_of, records_in};
 
 const NO_FOLDER: &str = "Talaria cannot find this session's folder.";
 const SESSION_GONE: &str = "This session no longer exists on the gateway.";
-const GIT_READ: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A folder lookup answered.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,15 +31,12 @@ pub enum Located {
 pub async fn locate(row: &RowKey, ctx: &LocateContext<'_>) -> Located {
     for root in ctx.known_roots.roots() {
         let records = records_in(ctx.git, &root).await;
-        for record in records {
-            if record.session_id.as_deref() != Some(row.session_id.as_str())
-                || record.profile != row.profile
-            {
-                continue;
-            }
-            if let Some(located) = open_contained_record(ctx, row, &record).await {
-                return located;
-            }
+        if let Some(record) = records.into_iter().find(|record| {
+            record.session_id.as_deref() == Some(row.session_id.as_str())
+                && record.profile == row.profile
+                && review_tree_is_contained(&record.main_root, &record.path)
+        }) {
+            return open_contained_record(ctx.git, row, record).await;
         }
     }
     let title_row = Some(row.clone());
@@ -77,10 +74,16 @@ async fn open_trusted(ctx: &LocateContext<'_>, cwd: &str, session: Option<RowKey
     let Some(main) = trusted_canonical(&main, ctx.known_roots) else {
         return Located::NotFound(NO_FOLDER.to_owned());
     };
-    let Some(toplevel) = git_toplevel(ctx.git, &folder).await else {
+    let Some(toplevel) = git_text(
+        ctx.git,
+        &folder,
+        &["-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"],
+    )
+    .await
+    else {
         return Located::NotFound(NO_FOLDER.to_owned());
     };
-    let Some(toplevel) = trusted_canonical(&toplevel, ctx.known_roots) else {
+    let Some(toplevel) = trusted_canonical(Path::new(&toplevel), ctx.known_roots) else {
         return Located::NotFound(NO_FOLDER.to_owned());
     };
     if toplevel != folder && !folder.starts_with(&toplevel) {
@@ -116,49 +119,26 @@ fn is_own_folder(folder: &Path) -> bool {
     std::fs::canonicalize(own).is_ok_and(|own| own == folder)
 }
 
-/// A recorded tree opens only when its canonical path is a linked worktree of
-/// the trusted main checkout. Anything else is skipped so a later folder can
-/// still answer. A contained tree that is gone from disk keeps its own message.
-async fn open_contained_record(
-    ctx: &LocateContext<'_>,
-    row: &RowKey,
-    record: &WorktreeRecord,
-) -> Option<Located> {
-    if !record.path.is_dir() {
-        if missing_recorded_worktree(&record.main_root, &record.path) {
-            let name = record
-                .path
-                .file_name()
-                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-            return Some(Located::NotFound(format!(
-                "The worktree {} is gone. Hermes may have archived it: run hermes worktree restore {name} in {}, then press r.",
-                record.path.to_string_lossy(),
-                record.main_root.to_string_lossy(),
-            )));
-        }
-        return None;
+/// A recorded tree opens only when Git's linked worktree is that directory.
+async fn open_contained_record(git: &GitRunner, row: &RowKey, record: WorktreeRecord) -> Located {
+    if validated_worktree_root(git, &record.main_root, &record.path)
+        .await
+        .is_none()
+    {
+        return Located::NotFound(format!(
+            "The worktree {} is not a linked worktree of {}.",
+            record.path.to_string_lossy(),
+            record.main_root.to_string_lossy(),
+        ));
     }
-    let canon = review_worktree_path(&record.main_root, &record.path)?;
-    if !canon_inside(&canon, ctx.known_roots) {
-        return None;
-    }
-    let main = std::fs::canonicalize(&record.main_root).ok()?;
-    if !canon_inside(&main, ctx.known_roots) {
-        return None;
-    }
-    if !linked_worktree_belongs(ctx.git, &main, &canon).await {
-        return None;
-    }
-    let view = record_view(record);
-    Some(open_folder(ctx.git, &canon, Some(row.clone()), Some((main, Some(view)))).await)
-}
-
-/// A missing tree whose parent is exactly `<main>/.worktrees`, without following links.
-fn missing_recorded_worktree(main_root: &Path, path: &Path) -> bool {
-    let Ok(root) = std::fs::canonicalize(main_root) else {
-        return false;
-    };
-    path.parent() == Some(root.join(".worktrees").as_path())
+    let view = record_view(&record);
+    open_folder(
+        git,
+        &record.path,
+        Some(row.clone()),
+        Some((record.main_root, Some(view))),
+    )
+    .await
 }
 
 fn record_view(record: &WorktreeRecord) -> RecordView {
@@ -171,9 +151,7 @@ fn record_view(record: &WorktreeRecord) -> RecordView {
 
 /// Check a folder holds a work tree and build the review target for it.
 ///
-/// `known` carries a main checkout that already passed containment, and a record
-/// view when the record lookup already proved that checkout. `folder` is the
-/// path to keep; it is not resolved again.
+/// `known` carries an already identified main checkout and any record view.
 async fn open_folder(
     git: &GitRunner,
     folder: &Path,
@@ -186,7 +164,7 @@ async fn open_folder(
             folder.to_string_lossy()
         ));
     }
-    let (main_root, preset) = match known {
+    let (mut main_root, preset) = match known {
         Some((main_root, record)) => (main_root, record),
         None => match main_root_of(git, folder).await {
             Ok(root) => (root, None),
@@ -197,12 +175,28 @@ async fn open_folder(
         Some(view) => Some(view),
         None => record_at(git, &main_root, folder).await,
     };
+    let folder = if record.is_some() {
+        let Some(validated) = validated_worktree_root(git, &main_root, folder).await else {
+            return Located::NotFound(format!(
+                "The worktree {} is not a linked worktree of {}.",
+                folder.to_string_lossy(),
+                main_root.to_string_lossy(),
+            ));
+        };
+        match std::fs::canonicalize(&main_root) {
+            Ok(root) => main_root = root,
+            Err(_) => return Located::NotFound(NO_FOLDER.to_owned()),
+        }
+        validated
+    } else {
+        folder.to_path_buf()
+    };
     let title = folder
         .file_name()
         .or_else(|| main_root.file_name())
         .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
     Located::Found(ReviewTarget {
-        folder: folder.to_path_buf(),
+        folder,
         main_root,
         session,
         record,
@@ -210,62 +204,112 @@ async fn open_folder(
     })
 }
 
-/// Attach a record only when its one canonical path is `folder` and that path
-/// is a linked worktree of `main_root`.
+/// The record of the tree whose folder this is, when it is one Talaria launched.
+///
+/// An out-of-scope record is not attached: its base commit would otherwise
+/// become the branch diff.
 async fn record_at(git: &GitRunner, main_root: &Path, folder: &Path) -> Option<RecordView> {
-    let main = std::fs::canonicalize(main_root).ok()?;
-    for record in records_in(git, &main).await {
-        let Some(canon) = review_worktree_path(&main, &record.path) else {
-            continue;
-        };
-        if canon != folder {
-            continue;
-        }
-        if linked_worktree_belongs(git, &main, &canon).await {
-            return Some(record_view(&record));
-        }
-    }
-    None
-}
-
-/// The linked checkout's toplevel is `canon`, and its common git dir is `main`'s.
-async fn linked_worktree_belongs(git: &GitRunner, main: &Path, canon: &Path) -> bool {
-    let Some(top) = git_toplevel(git, canon).await else {
-        return false;
-    };
-    let Ok(top) = std::fs::canonicalize(&top) else {
-        return false;
-    };
-    if top != canon {
-        return false;
-    }
-    let Some(common) = git_line(git, canon, &["rev-parse", "--git-common-dir"]).await else {
-        return false;
-    };
-    let common = PathBuf::from(common);
-    let common = if common.is_absolute() {
-        common
-    } else {
-        canon.join(common)
-    };
-    let Ok(common) = std::fs::canonicalize(&common) else {
-        return false;
-    };
-    common == main.join(".git")
-}
-
-async fn git_toplevel(git: &GitRunner, cwd: &Path) -> Option<PathBuf> {
-    git_line(git, cwd, &["rev-parse", "--show-toplevel"])
+    let folder = std::fs::canonicalize(folder).ok()?;
+    let record = records_in(git, main_root)
         .await
-        .map(PathBuf::from)
+        .into_iter()
+        .find(|record| {
+            review_tree_is_contained(&record.main_root, &record.path)
+                && std::fs::canonicalize(&record.path).is_ok_and(|path| path == folder)
+        })?;
+    let validated = validated_worktree_root(git, main_root, &folder).await?;
+    (validated == folder).then(|| record_view(&record))
 }
 
-async fn git_line(git: &GitRunner, cwd: &Path, args: &[&str]) -> Option<String> {
-    let mut full = vec!["-c", "core.fsmonitor=false"];
-    full.extend_from_slice(args);
-    let output = git.run_read_only(cwd, &full, GIT_READ).await.ok()?;
-    let line = output.stdout.trim_end_matches('\n').trim();
-    (output.status == 0 && !line.is_empty()).then(|| line.to_owned())
+const GIT_READ: Duration = Duration::from_secs(10);
+
+/// The canonical root of `path` when it is `main_root`'s linked worktree there.
+///
+/// Git must report that directory as the work tree root and as a worktree of
+/// `main_root`. The check fails closed when the path is missing, is only a
+/// directory inside the main checkout, or belongs to another repository.
+pub(crate) async fn validated_worktree_root(
+    git: &GitRunner,
+    main_root: &Path,
+    path: &Path,
+) -> Option<PathBuf> {
+    let folder = std::fs::canonicalize(path).ok()?;
+    let main = std::fs::canonicalize(main_root).ok()?;
+    if folder.parent() != Some(main.join(".worktrees").as_path()) {
+        return None;
+    }
+    let toplevel = git_text(git, &folder, &["rev-parse", "--show-toplevel"]).await?;
+    if std::fs::canonicalize(toplevel).ok()? != folder {
+        return None;
+    }
+    let main_git = git_text(git, &main, &["rev-parse", "--absolute-git-dir"]).await?;
+    let tree_git = git_text(git, &folder, &["rev-parse", "--absolute-git-dir"]).await?;
+    let main_git = std::fs::canonicalize(main_git).ok()?;
+    let tree_git = std::fs::canonicalize(tree_git).ok()?;
+    if !worktree_admin_matches(&main_git, &tree_git, &folder) {
+        return None;
+    }
+    let listing = git_stdout(git, &main, &["worktree", "list", "--porcelain"]).await?;
+    listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .any(|listed| {
+            let listed = Path::new(listed.trim());
+            let listed = if listed.is_absolute() {
+                listed.to_path_buf()
+            } else {
+                main.join(listed)
+            };
+            std::fs::canonicalize(listed).is_ok_and(|listed| listed == folder)
+        })
+        .then_some(folder)
+}
+
+/// `tree_git` is the per-worktree admin directory of `main_git`, and its
+/// `gitdir` file points back at `folder`'s `.git`.
+fn worktree_admin_matches(main_git: &Path, tree_git: &Path, folder: &Path) -> bool {
+    let Some(parent) = tree_git.parent() else {
+        return false;
+    };
+    let Ok(expected) = std::fs::canonicalize(main_git.join("worktrees")) else {
+        return false;
+    };
+    if parent != expected {
+        return false;
+    }
+    let Ok(pointer) = std::fs::read_to_string(tree_git.join("gitdir")) else {
+        return false;
+    };
+    let Ok(pointed) = std::fs::canonicalize(pointer.trim()) else {
+        return false;
+    };
+    let Ok(dot_git) = std::fs::canonicalize(folder.join(".git")) else {
+        return false;
+    };
+    if pointed != dot_git {
+        return false;
+    }
+    let Ok(common_raw) = std::fs::read_to_string(tree_git.join("commondir")) else {
+        return false;
+    };
+    let common_raw = common_raw.trim();
+    let common = if Path::new(common_raw).is_absolute() {
+        PathBuf::from(common_raw)
+    } else {
+        tree_git.join(common_raw)
+    };
+    std::fs::canonicalize(common).is_ok_and(|common| common == main_git)
+}
+
+async fn git_text(git: &GitRunner, cwd: &Path, args: &[&str]) -> Option<String> {
+    let stdout = git_stdout(git, cwd, args).await?;
+    let text = stdout.trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+async fn git_stdout(git: &GitRunner, cwd: &Path, args: &[&str]) -> Option<String> {
+    let out = git.run_read_only(cwd, args, GIT_READ).await.ok()?;
+    (out.status == 0).then_some(out.stdout)
 }
 
 /// What a lookup needs.

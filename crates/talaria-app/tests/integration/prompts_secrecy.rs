@@ -219,7 +219,7 @@ async fn exercise(entry: Entry) {
     assert_eq!(infos[0].kind, MaskedKind::Sudo);
     observed.add("the masked request info (debug)", format!("{infos:?}"));
     let view = MaskedView {
-        request_id: infos[0].id.clone(),
+        request_id: infos[0].token.clone(),
         session_id: infos[0].session_id.clone(),
         method: "sudo".to_owned(),
         fields: infos[0]
@@ -227,6 +227,13 @@ async fn exercise(entry: Entry) {
             .iter()
             .map(|(name, value)| ((*name).to_owned(), value.clone()))
             .collect(),
+        target: talaria_tui::prompts::LiveMaskedTarget {
+            token: infos[0].token.clone(),
+            session_id: infos[0].session_id.clone(),
+            generation: infos[0].generation,
+            instance_id: infos[0].instance_id,
+            service_id: infos[0].service_id,
+        },
     };
 
     // The card is drawn before anything is typed.
@@ -285,17 +292,31 @@ async fn exercise(entry: Entry) {
         observed.add("a card notice on Enter", text);
     }
     observed.add("the masked intent (debug)", format!("{intent:?}"));
-    let PromptIntent::Masked { request_id, value } = intent else {
+    let PromptIntent::Masked { target, value } = intent else {
         panic!("the intent should be a masked answer");
     };
-    assert_eq!(request_id, id);
+    let talaria_tui::prompts::MaskedTarget::Live(target) = target else {
+        panic!("the intent should name the live card");
+    };
+    assert_eq!(target.token, infos[0].token);
     assert_eq!(value.len_chars(), marker_len);
     if stack.section().is_some() {
         observed.add_drawn("the card after Enter", &draw(&stack));
     }
 
     // The intent goes straight to the service, which writes the response frame.
-    let result = service.answer_masked(&request_id, value.into_inner()).await;
+    let result = service
+        .answer_masked(
+            &talaria_app::prompts::LiveMaskedTarget {
+                token: target.token,
+                session_id: target.session_id,
+                generation: target.generation,
+                instance_id: target.instance_id,
+                service_id: target.service_id,
+            },
+            value.into_inner(),
+        )
+        .await;
     assert!(result.is_ok(), "the masked answer was not written");
 
     // The card leaves once the open request is gone.

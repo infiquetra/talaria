@@ -35,18 +35,6 @@ pub struct WorktreeRecord {
     pub created_at: i64,
 }
 
-/// Canonical path of a linked worktree that sits directly in `<main>/.worktrees`.
-///
-/// `main_root` is canonicalized. `.worktrees` is not, so a symlink at that name
-/// cannot become the expected parent. `path` is canonicalized once; a missing
-/// path or any other I/O error fails closed.
-pub(crate) fn review_worktree_path(main_root: &Path, path: &Path) -> Option<PathBuf> {
-    let root = std::fs::canonicalize(main_root).ok()?;
-    let expected = root.join(".worktrees");
-    let canon = std::fs::canonicalize(path).ok()?;
-    (canon.parent() == Some(expected.as_path())).then_some(canon)
-}
-
 /// Whether the tree folder really sits in `<main root>/.worktrees`, after resolving links.
 ///
 /// A parent that does not exist counts as contained: there is nothing to delete through it.
@@ -61,6 +49,23 @@ pub(crate) fn tree_is_contained(record: &WorktreeRecord) -> bool {
         Ok(resolved) => resolved == root.join(".worktrees"),
         Err(error) => error.kind() == std::io::ErrorKind::NotFound,
     }
+}
+
+/// Whether a review may open `path` as a worktree of `main_root`.
+///
+/// The expected parent is the canonical main root joined with `.worktrees`.
+/// `.worktrees` itself is not resolved, so a link there cannot move the
+/// comparison onto another directory. `path` is fully resolved and must be a
+/// direct child of that parent. A missing path or any resolution error refuses.
+pub(crate) fn review_tree_is_contained(main_root: &Path, path: &Path) -> bool {
+    let Ok(root) = std::fs::canonicalize(main_root) else {
+        return false;
+    };
+    let expected_worktrees = root.join(".worktrees");
+    let Ok(canon_path) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    canon_path.parent() == Some(expected_worktrees.as_path())
 }
 
 fn key(branch: &str, name: &str) -> String {
