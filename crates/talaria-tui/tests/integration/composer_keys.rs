@@ -67,6 +67,19 @@ fn sanitized_clusters_and_following_text_remain_visible() {
     }
 }
 
+#[test]
+fn printable_neutralized_characters_stay_in_the_draft() {
+    let text = "a\u{00A0}b\u{3000}c";
+    let mut rig = Rig::new();
+    rig.composer.load(text.to_owned());
+    assert_eq!(rig.composer.text(), text);
+    let section = rig.composer.section(20, 8);
+    let rendered = composer_support::rows(&section, 20, 8).join("\n");
+    assert!(rendered.contains('�'), "{rendered:?}");
+    assert!(!rendered.contains('\u{00A0}'), "{rendered:?}");
+    assert!(!rendered.contains('\u{3000}'), "{rendered:?}");
+}
+
 fn labels(map: &KeyMap, action: Action) -> Vec<String> {
     map.chords(action)
         .iter()

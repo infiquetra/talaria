@@ -315,10 +315,21 @@ fn wide_chars_wrap_by_columns() {
     let cjk = render("漢字漢字漢字漢字", 8);
     assert_dump(&cjk, &["|漢字漢字|", "|漢字漢字|"]);
 
-    // The family emoji and the variation-selector heart are one grapheme of width 2.
-    // A seven-letter prefix fills seven columns and leaves each of them whole on the next line.
+    // A joiner is a visible stand-in, so a family sequence is no longer one grapheme.
+    // A seven-letter prefix fills seven columns. The stand-in then wraps at width 8.
     let family = render("abcdefg👨‍👩‍👧‍👦", 8);
-    assert_dump(&family, &["|abcdefg|", "|👨‍👩‍👧‍👦|"]);
+    assert_dump(
+        &family,
+        &[
+            "|abcdefg|",
+            "|👨‹U+200|",
+            "|D›👩‹U+2|",
+            "|00D›👧‹U|",
+            "|+200D›👦|",
+        ],
+    );
+    // The variation-selector heart is still one grapheme of width 2. The same prefix
+    // leaves it whole on the next line.
     let heart = render("abcdefg❤️", 8);
     assert_dump(&heart, &["|abcdefg|", "|❤️|"]);
 
