@@ -10,6 +10,80 @@
 
 **Generalizable rule.** A security list is a sample of a property. Pin the property to category data and pin the exact set to a snapshot, so a Unicode release and a quiet deletion both fail the suite. Decode before the last sanitize, or a character reference puts the character back.
 
+## 2026-11-19 — Dependency advisories need a pin or a named waiver
+
+**Evidence.** On the origin/main lock at `85890d4f`, `cargo deny check advisories`
+(`cargo-deny` 0.20.2) exited 1 with six findings, and `cargo audit` 0.23.0
+exited 1 with `2 vulnerabilities found` plus four warnings. The same advisory
+database (1550 advisories) reported no other vulnerability or unsound ID.
+crates.io lists `pulldown-cmark` 0.13.6 and `rustix` 1.1.6 as the newest
+non-yanked releases in those minor lines (`rustix` 1.1.0 is yanked). After
+those two pins, `cargo deny check advisories` exited 0 (`0 errors, 0 warnings,
+6 notes`) and `cargo audit` exited 0 with three unmaintained warnings and no
+vulnerability or unsound finding.
+
+**Reachability.**
+
+- `RUSTSEC-2026-0414` and `RUSTSEC-2026-0433` (`pulldown-cmark` 0.13.4) both
+  require `Options::ENABLE_WIKILINKS`. The advisory text says that option is
+  off by default, 0414 is fixed in 0.13.5, and 0433 is fixed in 0.13.6. The
+  workspace pin had `default-features = false`. The two parsers set only
+  `ENABLE_TABLES | ENABLE_STRIKETHROUGH | ENABLE_TASKLISTS`
+  (`crates/talaria-tui/src/markdown/render.rs`, `crates/talaria-tui/src/markdown/blocks.rs`).
+  A search of `crates/` found no `ENABLE_WIKILINKS` and no `Options::all()`.
+  The pin is now `=0.13.6`.
+- `RUSTSEC-2026-0486` (`rustix` 1.1.5) is the unsound zero-length xattr buffer
+  path in `getxattr`, `lgetxattr`, `fgetxattr`, `listxattr`, `llistxattr`, and
+  `flistxattr`. A search of `crates/` found none of those names. Talaria's own
+  `rustix` calls are `fs`, `process`, `termios`, `event`, `io`, and `pipe`.
+  The same crate also arrives through `crossterm`, `gethostname`, `tempfile`,
+  `alacritty_terminal`, `polling`, and `rustix-openpty`. The advisory's fix is
+  `>=1.1.6`, and the pin is now `=1.1.6`.
+- `RUSTSEC-2025-0141` (`bincode` 1.3.3, unmaintained) is only a dependency of
+  `syntect` 5.3.0, which `talaria-tui` uses for syntax highlighting. `crates/`
+  does not name `bincode`. No patched upgrade exists. The waiver stands until
+  `syntect` drops `bincode` 1.x.
+- `RUSTSEC-2025-0134` (`rustls-pemfile` 2.2.0, unmaintained) is a
+  dev-dependency of `hermes-client` and is used by the TLS mock fixture
+  (`crates/hermes-client/tests/support/mock_gated.rs`). The waiver stands until
+  those tests move to `rustls_pki_types::pem::PemObject`.
+- `RUSTSEC-2026-0543` (`chrono` 0.4.45, unmaintained, all versions) is a normal
+  dependency of `talaria-app`, `talaria-cli`, and `talaria-workflow`. Replacing
+  it with `jiff` or `time` is outside this gate. The waiver stands until a
+  dedicated migration.
+
+**Gate.** `deny.toml` uses cargo-deny schema version 2, denies yanked crates,
+sets `unsound = "all"` so an unsound advisory fails for every crate in the
+graph, denies every unmaintained advisory, and ignores only the three IDs
+above. cargo-deny 0.20.2's default `unsound = "workspace"` reports an unsound
+advisory only when a workspace member depends on that crate directly.
+`vulnerability` stays unset, and every vulnerability remains an error. Ubuntu
+CI runs `cargo deny check advisories` with `cargo-deny` 0.20.2 unless the
+change is docs-only. Dependabot watches the `cargo` ecosystem on the same
+monthly schedule as GitHub Actions.
+
+**Generalizable rule.** Ship a patched release for a vulnerability or unsound
+advisory, and keep an unmaintained advisory only with an explicit revisit.
+
+## 2026-11-19 — Talaria-owned files are owner-only
+
+**Evidence.** The background client log created `~/.talaria`, `~/.talaria/logs`, and
+`client.log` with the process umask, and the kanban live-compile input
+`talaria-live-compile-<pid>.js` was created the same way. Prompt history, the
+recorder, the remote token store, and workflow run directories already use
+`0700` directories and `0600` files.
+
+**Mechanism.** Log directories are created and opened from the home directory
+with `NOFOLLOW`, and a handle is chmodded only after `fstat` shows an owned
+directory. A log other users can read is copied to a new `0600` file and
+renamed into place under an exclusive lock, so an existing reader keeps the old
+inode. The live-compile input is created inside an owner-only temporary
+directory that stays alive until the compiler exits, and `create_new` still
+refuses a pre-existing path or symlink.
+
+**Generalizable rule.** Every Talaria-owned state or temp file is owner-only
+unless a recorded decision says otherwise.
+
 ## 2026-11-15 — Keep compatibility and exact-pin release evidence separate
 
 **Evidence.** The release catalogue's existing live command uses the supported
@@ -7396,3 +7470,11 @@ can fail when a different machine checks or releases the build.
 **Generalizable rule.** Register each release acceptance directory explicitly and
 scrub runner host suffixes to `t70-c1-<host>` when assembling transcripts,
 regardless of which machine will check or release the build.
+
+## 2026-11-19 — Launch git children take the review path's config hardening
+
+**Evidence.** On git 2.43.0, `git status` ran a repository `core.fsmonitor` program until `-c core.fsmonitor=false` was present, and `git config --get core.sshCommand` inside the repository returned the worktree or local value ahead of global. `GIT_SSH_COMMAND` overrode that value. `GIT_SSH` and a global or system `core.sshCommand` did not: the repository command ran instead. `git config --global` and `git config --system` from `/`, with `GIT_DIR` unset, did not read `.git/config`. Tests `launch_git_fsmonitor_never_runs`, `launch_git_repo_ssh_command_cannot_run`, `launch_git_ssh_command_env_is_preserved`, `launch_git_global_ssh_command_is_preserved`, `launch_git_system_ssh_command_is_preserved`, `launch_git_ssh_program_is_preserved`, `launch_git_ssh_program_path_with_spaces_is_one_word`, `launch_git_included_global_ssh_command_is_preserved`, `launch_git_home_gitconfig_overrides_xdg`, `launch_git_nosystem_ignores_system_ssh_command`, `launch_git_fsmonitor_override_ignores_positional_pair`, and `launch_git_probe_ignores_parent_git_dir` in `crates/talaria-app/tests/integration/worktree_git.rs`.
+
+**Mechanism.** The review path already prefixes every child with `-c core.fsmonitor=false`. The launch runner did not, and it treated any hit from `git config --get core.sshCommand` as the operator's ssh command, so a repository value suppressed `BatchMode` and executed on `fetch` and `ls-remote`. `Command::envs` does not erase inherited `GIT_DIR`, and `git config --global` skips includes and reads only one of the two global files. The probe therefore clears the child environment, rebuilds it without repository-selection or command-scope variables, and runs one `git config --includes --show-scope --null --get-all` outside any repository. The last `system` or `global` value is pinned with `-c`. `GIT_SSH` is shell-quoted first because it is an executable path, not shell syntax. `GIT_SSH_COMMAND` is left untouched because it already wins over config. A positional `-c core.fsmonitor=false` after the subcommand does not count as the override.
+
+**Generalizable rule.** Every git child that can see a repository's config carries `-c core.fsmonitor=false` before the subcommand, and a network git child pins `core.sshCommand` from the operator's environment or from system and global config only, read with includes from a cleared environment.

@@ -35,4 +35,6 @@ pub struct MaskedView {
     pub method: String,
     /// `command`, `env_var`, `prompt`, `site`, `hint`, `backend`, `display_name`.
     pub fields: Vec<(String, String)>,
+    /// The live request this card answers.
+    pub target: super::LiveMaskedTarget,
 }
