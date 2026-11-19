@@ -45,13 +45,14 @@ vulnerability or unsound finding.
   dedicated migration.
 
 **Gate.** `deny.toml` uses cargo-deny schema version 2, denies yanked crates,
-denies every unmaintained advisory, and ignores only the three IDs above.
-`vulnerability` and `unsound` are left unset. cargo-deny 0.20.2 then keeps
-every vulnerability an error, and reports an unsound advisory when a workspace
-member depends on that crate directly. Ubuntu CI runs `cargo deny check
-advisories` with `cargo-deny` 0.20.2 unless the change is docs-only.
-Dependabot watches the `cargo` ecosystem on the same monthly schedule as
-GitHub Actions.
+sets `unsound = "all"` so an unsound advisory fails for every crate in the
+graph, denies every unmaintained advisory, and ignores only the three IDs
+above. cargo-deny 0.20.2's default `unsound = "workspace"` reports an unsound
+advisory only when a workspace member depends on that crate directly.
+`vulnerability` stays unset, and every vulnerability remains an error. Ubuntu
+CI runs `cargo deny check advisories` with `cargo-deny` 0.20.2 unless the
+change is docs-only. Dependabot watches the `cargo` ecosystem on the same
+monthly schedule as GitHub Actions.
 
 **Generalizable rule.** Ship a patched release for a vulnerability or unsound
 advisory, and keep an unmaintained advisory only with an explicit revisit.
