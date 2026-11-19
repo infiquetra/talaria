@@ -895,12 +895,10 @@ impl PromptSection<'_> {
             Content::Prompt(cell) if cell.kind == PromptKind::Approval => {
                 if let Some(command) = cell.command.as_deref().filter(|s| !s.is_empty()) {
                     let mut command_rows = Vec::new();
-                    for source in command.replace("\r\n", "\n").split('\n') {
-                        let text = sanitize(source);
-                        let wrapped = wrap_lines(
-                            vec![Line::from(text.into_owned())],
-                            width.saturating_sub(2).max(1),
-                        );
+                    for source in command.split('\n') {
+                        let text = approval_command_row(source);
+                        let wrapped =
+                            wrap_lines(vec![Line::from(text)], width.saturating_sub(2).max(1));
                         for line in wrapped {
                             let prefix = if command_rows.is_empty() { "$ " } else { "  " };
                             command_rows.push(Line::from(format!("{prefix}{line}")));
@@ -1027,6 +1025,20 @@ impl PromptSection<'_> {
         add(&mut rows, &hint, width);
         rows
     }
+}
+
+/// One approval-command row. CR and tab stay visible, unlike a line feed or four spaces.
+fn approval_command_row(source: &str) -> String {
+    let mut out = String::new();
+    let mut buf = [0; 4];
+    for c in source.chars() {
+        match c {
+            '\t' => out.push('\u{2409}'),
+            '\r' => out.push('\u{240d}'),
+            other => out.push_str(&sanitize(other.encode_utf8(&mut buf))),
+        }
+    }
+    out
 }
 
 fn add(rows: &mut Vec<Line<'static>>, text: &str, width: u16) {

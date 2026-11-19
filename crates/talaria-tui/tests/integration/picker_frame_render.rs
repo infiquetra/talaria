@@ -656,12 +656,13 @@ mod independent {
                     assert!(prefix.ends_with('…'), "{row}");
                 }
                 let kept = prefix.trim_end_matches('…');
+                let visible = talaria_core::text::sanitize(&label);
                 assert!(
-                    label
+                    visible
                         .grapheme_indices(true)
                         .map(|(i, _)| i)
-                        .chain([label.len()])
-                        .any(|i| &label[..i] == kept),
+                        .chain([visible.len()])
+                        .any(|i| &visible[..i] == kept),
                     "split a grapheme: {row}"
                 );
             }
