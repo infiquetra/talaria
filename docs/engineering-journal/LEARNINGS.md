@@ -22,11 +22,14 @@ when a component-wise ASCII-case-insensitive prefix matches `Library/Keychains`,
 `.password-store`, `.config/op`, `.config/1password`, `.local/share/keyrings`,
 `.config/age`, `.config/sops`, or `.config/git/credentials`, or when the whole
 path matches `.git-credentials` the same way. The check also runs on the
-canonical path. `file.attach` sends that canonical path only when Hermes's
-strip, quote removal, and `~` / `$` expansion would still name it and would not
-name a credential. Accepted `@file` completions and submitted drafts use the
-same check against the active workspace. `HERMES_HOME` and the inode check stay
-as they were.
+canonical path. Before `file.attach`, Talaria checks how local stripping,
+quote removal, and common `~` and `$` expansions affect that path. The guard
+checks dropped and pasted paths, completion acceptance, and `@file:` references
+visible in the submitted draft. It does not check references inside collapsed
+pastes, references followed by punctuation or a line range, or gateway-side
+path fallbacks. Drafts held before a session opens are checked against the
+launch folder without a second check in the opened session's workspace.
+`HERMES_HOME` and the inode check stay as they were.
 
 **Generalizable rule.** When a security control is a list, state the
 machine-checkable property the list samples and assert the list against that

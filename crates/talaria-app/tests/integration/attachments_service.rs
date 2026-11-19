@@ -3,8 +3,6 @@
 use crate::mock_gateway;
 
 use std::collections::BTreeSet;
-use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -1001,7 +999,7 @@ async fn credential_denylist_matches_stores_keys_and_env_names() {
         home.join(".Local/Share/Keyrings/login.keyring"),
         home.join(".CONFIG/age/keys.txt"),
         home.join(".Config/Sops/age/keys.txt"),
-        home.join(".Config/Git/Credentials/nested/token"),
+        home.join(".Config/Git/Credentials"),
         home.join(".GIT-CREDENTIALS"),
         folder.join(".env.prod.local"),
         folder.join("server.pem"),
@@ -1102,11 +1100,18 @@ async fn credential_denylist_matches_stores_keys_and_env_names() {
     );
 
     std::fs::remove_file(home.join(".config/git/credentials")).expect("remove credentials file");
+    let _ = std::fs::remove_file(home.join(".Config/Git/Credentials"));
     let nested_git = home.join(".config/git/credentials/nested/token");
     plant(&nested_git);
     assert_credential(
         &dropped(&attachment, &log, &session, folder, nested_git).await,
         "nested git credentials",
+    );
+    let nested_alias = home.join(".Config/Git/Credentials/nested/token");
+    plant(&nested_alias);
+    assert_credential(
+        &dropped(&attachment, &log, &session, folder, nested_alias).await,
+        "nested git credentials, alternate case",
     );
 
     let outside = tempfile::tempdir().expect("outside store");
@@ -1128,29 +1133,36 @@ async fn credential_denylist_matches_stores_keys_and_env_names() {
         "canonical target of a symlinked store",
     );
 
-    let mut env_bytes = b".env.prod".to_vec();
-    env_bytes.push(0xff);
-    let raw_env = folder.join(OsString::from_vec(env_bytes));
-    plant(&raw_env);
-    assert_credential(
-        &dropped(&attachment, &log, &session, folder, raw_env.clone()).await,
-        "non-utf8 dotenv name",
-    );
-    let mut key_bytes = b"key".to_vec();
-    key_bytes.push(0xff);
-    key_bytes.extend_from_slice(b".pem");
-    let raw_key = folder.join(OsString::from_vec(key_bytes));
-    plant(&raw_key);
-    assert_credential(
-        &dropped(&attachment, &log, &session, folder, raw_key).await,
-        "non-utf8 private-key suffix",
-    );
-    let alias = folder.join("utf8-alias.txt");
-    symlink(&raw_env, &alias).expect("utf8 alias");
-    assert_credential(
-        &dropped(&attachment, &log, &session, folder, alias).await,
-        "utf8 symlink to a non-utf8 credential",
-    );
+    // APFS refuses file names that are not valid UTF-8.
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let mut env_bytes = b".env.prod".to_vec();
+        env_bytes.push(0xff);
+        let raw_env = folder.join(OsString::from_vec(env_bytes));
+        plant(&raw_env);
+        assert_credential(
+            &dropped(&attachment, &log, &session, folder, raw_env.clone()).await,
+            "non-utf8 dotenv name",
+        );
+        let mut key_bytes = b"key".to_vec();
+        key_bytes.push(0xff);
+        key_bytes.extend_from_slice(b".pem");
+        let raw_key = folder.join(OsString::from_vec(key_bytes));
+        plant(&raw_key);
+        assert_credential(
+            &dropped(&attachment, &log, &session, folder, raw_key).await,
+            "non-utf8 private-key suffix",
+        );
+        let alias = folder.join("utf8-alias.txt");
+        symlink(&raw_env, &alias).expect("utf8 alias");
+        assert_credential(
+            &dropped(&attachment, &log, &session, folder, alias).await,
+            "utf8 symlink to a non-utf8 credential",
+        );
+    }
 }
 
 /// Hermes reparses `file.attach` paths, so a local name that would change meaning is refused.
