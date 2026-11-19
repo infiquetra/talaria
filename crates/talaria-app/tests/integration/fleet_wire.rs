@@ -693,20 +693,30 @@ async fn reconnect_marks_stale_then_refreshes() {
 }
 
 #[tokio::test]
-async fn server_requests_are_refused() {
+async fn server_requests_are_ignored() {
     let home = home();
     let (gateway, handle) = start(home.path(), FleetConfig::scaled_for_tests());
     let _ = wait_connected(&handle, Duration::from_secs(2)).await;
     let mock = MockGateway::clone(&gateway);
-    mock.server_request("approval").await;
+    let id = mock.server_request("approval").await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let refused = gateway.answers().iter().any(|seen| {
-        seen.params
-            .to_string()
-            .contains("does not support server request")
-    });
-    assert!(refused, "the server request is refused at once");
-    assert_eq!(handle.snapshot().diagnostics.len(), 1, "one diagnostic");
+    let answers = gateway.answers_for(&id);
+    assert!(
+        answers.is_empty(),
+        "the fleet link wrote an answer: {answers:?}"
+    );
+    assert!(
+        handle.snapshot().diagnostics.is_empty(),
+        "ignoring a server request is silent: {:?}",
+        handle.snapshot().diagnostics
+    );
+    handle.close().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let answers = gateway.answers_for(&id);
+    assert!(
+        answers.is_empty(),
+        "closing the fleet link wrote an answer: {answers:?}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

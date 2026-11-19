@@ -8901,6 +8901,21 @@ fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     effects
 }
 
+/// The foreground owns requests for its opened and retained sessions, as well as requests
+/// without a session id.
+fn foreground_owns_request(state: &AppState, session_id: Option<&str>) -> bool {
+    match session_id.map(str::trim).filter(|id| !id.is_empty()) {
+        None => true,
+        Some(id) => {
+            state
+                .opened
+                .as_ref()
+                .is_some_and(|opened| opened.session_id == id)
+                || retained_key(state, id).is_some()
+        }
+    }
+}
+
 /// The `skin.changed` event in this link event, as `(params, replayed)`.
 fn skin_event(event: &LinkEvent) -> Option<(&Value, bool)> {
     let LinkEvent::Inbound {
@@ -9352,6 +9367,12 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         None,
                     );
                 }
+                // A same-profile workflow reuses this socket. Answering its request, including
+                // with `-32601`, settles the prompt for every viewer.
+                if !foreground_owns_request(state, request.session_id.as_deref()) {
+                    request.responder.ignore();
+                    return Vec::new();
+                }
                 vec![AppEffect::ServerRequest(request)]
             }
             Inbound::Malformed(_) | Inbound::Closed(_) => Vec::new(),
@@ -9402,6 +9423,64 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             effects.append(&mut closing);
             effects
         }
+    }
+}
+
+#[cfg(test)]
+mod link_event_prompt_tests {
+    use super::*;
+    use hermes_client::{Generation, Responder};
+    use hermes_contract::{schemas::SudoRequestParams, server_requests};
+
+    fn state_with_retained_session() -> AppState {
+        let open = |id: &str| {
+            let mut snapshot: hermes_contract::schemas::CanonicalSnapshot =
+                serde_json::from_str(include_str!("../tests/data/running_turn.json"))
+                    .expect("snapshot");
+            snapshot.session_id = id.into();
+            snapshot.stored_session_id = id.into();
+            OpenedSession::from_snapshot(snapshot)
+        };
+        let mut state = AppState::new("prompt-owner");
+        state.opened = Some(open("s2"));
+        state.retained_sessions.insert(
+            RowKey {
+                profile: state.profile.clone(),
+                session_id: "s1".into(),
+            },
+            open("s1"),
+        );
+        state
+    }
+
+    fn sudo_request(session_id: &str) -> LinkEvent {
+        LinkEvent::Inbound {
+            item: Inbound::ServerRequest(ServerRequest {
+                generation: Generation(0),
+                id: "srq-1".into(),
+                session_id: Some(session_id.into()),
+                request: server_requests::ServerRequest::Sudo(SudoRequestParams {
+                    command: "true".into(),
+                    session_id: session_id.into(),
+                }),
+                responder: Responder::detached(Arc::default()),
+            }),
+            replayed: false,
+        }
+    }
+
+    #[test]
+    fn retained_session_request_reaches_the_prompt_service() {
+        let effects = link_event(&mut state_with_retained_session(), sudo_request("s1"));
+        assert!(
+            matches!(effects.as_slice(), [AppEffect::ServerRequest(request)] if request.session_id.as_deref() == Some("s1"))
+        );
+    }
+
+    #[test]
+    fn request_for_an_unknown_session_is_still_ignored() {
+        let effects = link_event(&mut state_with_retained_session(), sudo_request("s9"));
+        assert!(effects.is_empty());
     }
 }
 
@@ -12595,7 +12674,6 @@ fn apply<S: Screen>(
                     run,
                     crate::workflow_progress::WorkflowConnection {
                         home: state.hermes_home.clone(),
-                        foreground_profile: state.profile.clone(),
                         fallback: client,
                         cache: executor.workflow_connections.clone(),
                     },
@@ -13080,11 +13158,19 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::ServerRequest(request) => {
+                if !foreground_owns_request(state, request.session_id.as_deref()) {
+                    request.responder.ignore();
+                    continue;
+                }
                 let Some(prompts) = &state.prompts else {
                     continue;
                 };
                 executor.prompt_task(prompts, move |prompts| async move {
-                    let notices = prompts.lock().await.on_server_request(request).await;
+                    let notices = prompts
+                        .lock()
+                        .await
+                        .on_server_request_for_session(request, None)
+                        .await;
                     (Vec::new(), notice_texts(notices))
                 });
             }
