@@ -68,15 +68,18 @@ fn sanitize_replaces_controls_with_visible_stand_ins() {
             "HOSTILE \u{1b}[2J\u{1b}[H\u{7}\u{202e} END",
             "HOSTILE \u{241b}[2J\u{241b}[H\u{2407}\u{2039}U+202E\u{203a} END",
         ),
+        // Blank-width spaces and format characters are visible stand-ins.
+        ("\u{a0}", "\u{2039}U+00A0\u{203a}"),
+        ("\u{200b}", "\u{2039}U+200B\u{203a}"),
+        ("\u{200d}", "\u{2039}U+200D\u{203a}"),
+        ("\u{202f}", "\u{2039}U+202F\u{203a}"),
+        ("\u{206a}", "\u{2039}U+206A\u{203a}"),
         // Characters next to the replaced ranges are left alone.
-        ("\u{a0}", "\u{a0}"),
         ("\u{ff}", "\u{ff}"),
-        ("\u{200b}", "\u{200b}"),
-        ("\u{200d}", "\u{200d}"),
         ("\u{2027}", "\u{2027}"),
-        ("\u{202f}", "\u{202f}"),
         ("\u{2065}", "\u{2065}"),
-        ("\u{206a}", "\u{206a}"),
+        ("\u{fe0e}", "\u{fe0e}"),
+        ("\u{fe0f}", "\u{fe0f}"),
         ("\u{dffff}", "\u{dffff}"),
         ("\u{e0080}", "\u{e0080}"),
         ("\u{ffff}", "\u{ffff}"),
@@ -104,14 +107,20 @@ fn sanitize_replaces_controls_with_visible_stand_ins() {
         "caf\u{e9} \u{754c} \u{1f642}",
         "e\u{301}",
         "\u{2764}\u{fe0f}",
-        "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}",
-        "\u{a0}\u{2027}\u{202f}",
+        "\u{fe0e}",
+        "\u{2027}",
     ] {
         assert!(
             matches!(sanitize(clean), Cow::Borrowed(text) if text == clean),
             "clean text must be borrowed: {clean:?}"
         );
     }
+
+    let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}";
+    let joined = sanitize(family);
+    assert!(matches!(joined, Cow::Owned(_)));
+    assert!(!joined.contains('\u{200d}'));
+    assert!(joined.contains("\u{2039}U+200D\u{203a}"));
 }
 
 /// The row text and the style of every character, for rows made of any number of spans.

@@ -6,7 +6,7 @@ use ratatui::buffer::CellWidth;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use talaria_core::session::{Cell, PromptCell, PromptState, Settlement, ToolCell, ToolStatus};
-pub use talaria_core::text::sanitize;
+pub use talaria_core::text::{is_neutralized, sanitize};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Turns one cell into lines for the given width.
