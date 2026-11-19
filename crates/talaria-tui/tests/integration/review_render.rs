@@ -124,6 +124,87 @@ fn contents(parser: &vt100::Parser) -> String {
     parser.screen().contents()
 }
 
+/// The header names the repository path next to the session title, and a hostile
+/// path cannot inject terminal controls.
+#[test]
+fn review_header_renders_sanitized_repository_path() {
+    let (state, _) = ReviewState::open(
+        ReviewTarget {
+            folder: PathBuf::from("/tmp/not-the-repo"),
+            main_root: PathBuf::from("/tmp/not-the-repo"),
+            session: None,
+            record: None,
+            title: "planned-session".to_owned(),
+        },
+        1.0,
+    );
+    let text = contents(&render(&state.view(), 120, 40));
+    assert!(
+        text.contains("planned-session"),
+        "the session title stays in the header: {text}"
+    );
+    assert!(
+        text.contains("/tmp/not-the-repo"),
+        "the header shows the repository path: {text}"
+    );
+
+    let hostile = "/tmp/not-the-repo/\u{1b}[2J\u{2028}drop";
+    let (state, _) = ReviewState::open(
+        ReviewTarget {
+            folder: PathBuf::from(hostile),
+            main_root: PathBuf::from(hostile),
+            session: None,
+            record: None,
+            title: "planned-session".to_owned(),
+        },
+        1.0,
+    );
+    let text = contents(&render(&state.view(), 160, 40));
+    assert!(
+        text.contains("planned-session"),
+        "the title survives a hostile path: {text}"
+    );
+    assert!(
+        text.contains("/tmp/not-the-repo/"),
+        "the repository path is visible: {text}"
+    );
+    assert!(
+        text.contains('\u{241b}'),
+        "escape is a visible stand-in: {text}"
+    );
+    assert!(
+        text.contains("U+2028"),
+        "a line separator is a visible stand-in: {text}"
+    );
+    assert!(
+        !text
+            .chars()
+            .any(|c| c == '\u{1b}' || c == '\u{2028}' || c == '\u{2029}'),
+        "the header keeps no raw terminal controls: {text:?}"
+    );
+}
+
+/// A long title on a narrow header still shows the repository path.
+#[test]
+fn review_header_keeps_repository_path_when_narrow() {
+    let folder = "/tmp/not-the-repo/group/trusted-evil";
+    let (state, _) = ReviewState::open(
+        ReviewTarget {
+            folder: PathBuf::from(folder),
+            main_root: PathBuf::from(folder),
+            session: None,
+            record: None,
+            title: "planned-session-with-a-very-long-name-that-fills-the-header".to_owned(),
+        },
+        1.0,
+    );
+    let text = contents(&render(&state.view(), 60, 12));
+    assert!(
+        text.contains("trusted-evil"),
+        "the distinguishing end of the repository path stays visible: {text}"
+    );
+}
+
 /// Header, rows, marks, diff and footer at 120x40.
 #[test]
 fn list_and_diff_120x40() {
@@ -140,7 +221,7 @@ fn list_and_diff_120x40() {
     let screen = render(&state.view(), 120, 40);
     let text = contents(&screen);
     assert!(
-        text.contains("Review · repo · talaria/work · 3 files · +12 −3"),
+        text.contains("Review · repo · repo · talaria/work · 3 files · +12 −3"),
         "the header names the review: {text}"
     );
     assert!(text.contains("↑1 ↓0"), "ahead and behind show: {text}");
