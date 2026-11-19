@@ -599,10 +599,266 @@ fn launch_git_ssh_program_is_preserved() {
         "repository core.sshCommand replaced GIT_SSH"
     );
     let network = network_argv(&log);
-    let pinned = format!("core.sshCommand={operator}");
+    let pinned = format!("core.sshCommand='{operator}'");
     assert!(
         has_pair(&network, "-c", &pinned),
         "GIT_SSH was not pinned over repository config: {network:?}"
+    );
+}
+
+/// `GIT_SSH` is one executable path. A space must stay inside one shell word.
+#[test]
+fn launch_git_ssh_program_path_with_spaces_is_one_word() {
+    git_fixture::require_git();
+    let fixture = IsolatedRepo::new();
+    let operator_marker = fixture.root.join("operator-ran");
+    let hostile_marker = fixture.root.join("hostile-ran");
+    let dir = fixture.root.join("ssh dir");
+    std::fs::create_dir(&dir).expect("spaced directory");
+    let operator = fixture.script_at(&dir.join("ssh.sh"), &operator_marker);
+    let hostile = fixture.script("ssh-hostile.sh", &hostile_marker);
+    fixture.config(
+        &fixture.repo,
+        &["config", "--local", "core.sshCommand", &hostile],
+    );
+    let (program, log) = logging_git(&fixture.root);
+    let runner = GitRunner::with_program(program)
+        .with_environment(fixture.env(&[("GIT_SSH", operator.clone())]));
+
+    let _ = block(runner.run(&fixture.repo, &["ls-remote", SSH_URL], GIT_LIMIT));
+    assert!(operator_marker.exists(), "spaced GIT_SSH path did not run");
+    assert!(
+        !hostile_marker.exists(),
+        "repository core.sshCommand replaced GIT_SSH"
+    );
+    let network = network_argv(&log);
+    let pinned = format!("core.sshCommand='{operator}'");
+    assert!(
+        has_pair(&network, "-c", &pinned),
+        "GIT_SSH was split or left unquoted: {network:?}"
+    );
+}
+
+/// An included global `core.sshCommand` is the operator command.
+#[test]
+fn launch_git_included_global_ssh_command_is_preserved() {
+    git_fixture::require_git();
+    let fixture = IsolatedRepo::new();
+    let operator_marker = fixture.root.join("operator-ran");
+    let hostile_marker = fixture.root.join("hostile-ran");
+    let operator = fixture.script("ssh-operator.sh", &operator_marker);
+    let hostile = fixture.script("ssh-hostile.sh", &hostile_marker);
+    fixture.config(
+        &fixture.repo,
+        &["config", "--local", "core.sshCommand", &hostile],
+    );
+    let included = fixture.root.join("included.gitconfig");
+    std::fs::write(&included, format!("[core]\n\tsshCommand = {operator}\n")).expect("include");
+    std::fs::write(
+        fixture.root.join("global-gitconfig"),
+        format!("[include]\n\tpath = {}\n", included.display()),
+    )
+    .expect("global include");
+    let (program, log) = logging_git(&fixture.root);
+    let runner = GitRunner::with_program(program).with_environment(fixture.env(&[]));
+
+    let _ = block(runner.run(&fixture.repo, &["ls-remote", SSH_URL], GIT_LIMIT));
+    assert!(
+        operator_marker.exists(),
+        "included global core.sshCommand did not run"
+    );
+    assert!(
+        !hostile_marker.exists(),
+        "repository command replaced include"
+    );
+    let network = network_argv(&log);
+    let pinned = format!("core.sshCommand={operator}");
+    assert!(
+        has_pair(&network, "-c", &pinned),
+        "included command was not pinned: {network:?}"
+    );
+}
+
+/// `~/.gitconfig` overrides `$XDG_CONFIG_HOME/git/config` when both set ssh.
+#[test]
+fn launch_git_home_gitconfig_overrides_xdg() {
+    git_fixture::require_git();
+    let fixture = IsolatedRepo::new();
+    let home_marker = fixture.root.join("home-ran");
+    let xdg_marker = fixture.root.join("xdg-ran");
+    let hostile_marker = fixture.root.join("hostile-ran");
+    let home_script = fixture.script("ssh-home.sh", &home_marker);
+    let xdg_script = fixture.script("ssh-xdg.sh", &xdg_marker);
+    let hostile = fixture.script("ssh-hostile.sh", &hostile_marker);
+    fixture.config(
+        &fixture.repo,
+        &["config", "--local", "core.sshCommand", &hostile],
+    );
+    let xdg = fixture.root.join("xdg");
+    std::fs::create_dir_all(xdg.join("git")).expect("xdg git config dir");
+    std::fs::write(
+        fixture.root.join("home").join(".gitconfig"),
+        format!("[core]\n\tsshCommand = {home_script}\n"),
+    )
+    .expect("home gitconfig");
+    std::fs::write(
+        xdg.join("git").join("config"),
+        format!("[core]\n\tsshCommand = {xdg_script}\n"),
+    )
+    .expect("xdg gitconfig");
+    let mut env = fixture.env(&[]);
+    env.remove("GIT_CONFIG_GLOBAL");
+    env.insert(
+        "XDG_CONFIG_HOME".to_owned(),
+        xdg.to_string_lossy().into_owned(),
+    );
+    let (program, log) = logging_git(&fixture.root);
+    let runner = GitRunner::with_program(program).with_environment(env);
+
+    let _ = block(runner.run(&fixture.repo, &["ls-remote", SSH_URL], GIT_LIMIT));
+    assert!(
+        home_marker.exists(),
+        "home gitconfig ssh command did not run"
+    );
+    assert!(
+        !xdg_marker.exists(),
+        "XDG git config overrode the home file"
+    );
+    assert!(!hostile_marker.exists(), "repository command replaced home");
+    let network = network_argv(&log);
+    let pinned = format!("core.sshCommand={home_script}");
+    assert!(
+        has_pair(&network, "-c", &pinned),
+        "home ssh command was not pinned: {network:?}"
+    );
+}
+
+/// `GIT_CONFIG_NOSYSTEM` drops the system ssh command.
+#[test]
+fn launch_git_nosystem_ignores_system_ssh_command() {
+    git_fixture::require_git();
+    let fixture = IsolatedRepo::new();
+    let system_marker = fixture.root.join("system-ran");
+    let hostile_marker = fixture.root.join("hostile-ran");
+    let system_script = fixture.script("ssh-system.sh", &system_marker);
+    let hostile = fixture.script("ssh-hostile.sh", &hostile_marker);
+    fixture.config(
+        &fixture.repo,
+        &["config", "--local", "core.sshCommand", &hostile],
+    );
+    std::fs::write(
+        fixture.root.join("system-gitconfig"),
+        format!("[core]\n\tsshCommand = {system_script}\n"),
+    )
+    .expect("system config");
+    let (program, log) = logging_git(&fixture.root);
+    let runner = GitRunner::with_program(program).with_environment(fixture.env(&[]));
+
+    let _ = block(runner.run(&fixture.repo, &["ls-remote", SSH_URL], GIT_LIMIT));
+    assert!(
+        !system_marker.exists(),
+        "GIT_CONFIG_NOSYSTEM still ran the system ssh command"
+    );
+    assert!(
+        !hostile_marker.exists(),
+        "repository command ran when system config was disabled"
+    );
+    let network = network_argv(&log);
+    assert!(
+        has_pair(&network, "-c", "core.sshCommand=ssh -o BatchMode=yes"),
+        "BatchMode was not forced with system config disabled: {network:?}"
+    );
+}
+
+/// A positional `-c core.fsmonitor=false` must not suppress the leading override.
+#[test]
+fn launch_git_fsmonitor_override_ignores_positional_pair() {
+    git_fixture::require_git();
+    let fixture = IsolatedRepo::new();
+    let marker = fixture.root.join("fsmonitor-ran");
+    let script = fixture.script("fsmonitor.sh", &marker);
+    fixture.config(
+        &fixture.repo,
+        &["config", "--local", "core.fsmonitor", &script],
+    );
+    let (program, log) = logging_git(&fixture.root);
+    let runner = GitRunner::with_program(program).with_environment(fixture.env(&[]));
+
+    let _ = block(runner.run_read_only(
+        &fixture.repo,
+        &["status", "--porcelain", "--", "-c", "core.fsmonitor=false"],
+        GIT_LIMIT,
+    ));
+    assert!(
+        !marker.exists(),
+        "positional fsmonitor pair suppressed the override"
+    );
+    let status = command_argv(&log, "status");
+    assert_eq!(
+        status.first().map(String::as_str),
+        Some("-c"),
+        "fsmonitor override was not leading: {status:?}"
+    );
+    assert_eq!(
+        status.get(1).map(String::as_str),
+        Some("core.fsmonitor=false"),
+        "fsmonitor override was not leading: {status:?}"
+    );
+}
+
+/// A parent `GIT_DIR` must not make the ssh probe read that repository.
+#[test]
+fn launch_git_probe_ignores_parent_git_dir() {
+    if std::env::var_os("TALARIA_PROBE_INNER").is_some() {
+        probe_with_parent_git_dir();
+        return;
+    }
+    git_fixture::require_git();
+    let fixture = IsolatedRepo::new();
+    let hostile_marker = fixture.root.join("hostile-ran");
+    let hostile = fixture.script("ssh-hostile.sh", &hostile_marker);
+    fixture.config(
+        &fixture.repo,
+        &["config", "--local", "core.sshCommand", &hostile],
+    );
+    let (program, _log) = logging_git_probe(&fixture.root);
+    let output = Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--exact",
+            "worktree_git::launch_git_probe_ignores_parent_git_dir",
+        ])
+        .env("TALARIA_PROBE_INNER", "1")
+        .env("GIT_DIR", fixture.repo.join(".git"))
+        .env("TALARIA_PROBE_ROOT", &fixture.root)
+        .env("TALARIA_PROBE_REPO", &fixture.repo)
+        .env("TALARIA_PROBE_PROGRAM", &program)
+        .output()
+        .expect("re-exec probe test");
+    assert!(
+        output.status.success(),
+        "inner probe test failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn probe_with_parent_git_dir() {
+    let root = PathBuf::from(std::env::var("TALARIA_PROBE_ROOT").expect("root"));
+    let repo = PathBuf::from(std::env::var("TALARIA_PROBE_REPO").expect("repo"));
+    let program = PathBuf::from(std::env::var("TALARIA_PROBE_PROGRAM").expect("program"));
+    let runner = GitRunner::with_program(program).with_environment(isolated_env(&root, &[]));
+    let _ = block(runner.run(&repo, &["ls-remote", SSH_URL], GIT_LIMIT));
+    let recorded = std::fs::read_to_string(root.join("git-args").join("probe-git-dir"))
+        .expect("ssh probe did not run");
+    assert_eq!(recorded, "UNSET", "probe inherited GIT_DIR: {recorded}");
+    assert!(
+        !root.join("hostile-ran").exists(),
+        "probe adopted the repository ssh command"
+    );
+    let network = network_argv(&root.join("git-args"));
+    assert!(
+        has_pair(&network, "-c", "core.sshCommand=ssh -o BatchMode=yes"),
+        "BatchMode was not forced when GIT_DIR pointed at a repository: {network:?}"
     );
 }
 
@@ -681,43 +937,21 @@ impl IsolatedRepo {
     }
 
     fn env(&self, extra: &[(&str, String)]) -> BTreeMap<String, String> {
-        let mut env = BTreeMap::new();
-        env.insert("PATH".to_owned(), std::env::var("PATH").expect("PATH"));
-        env.insert(
-            "HOME".to_owned(),
-            self.root.join("home").to_string_lossy().into_owned(),
-        );
-        env.insert(
-            "GIT_CONFIG_GLOBAL".to_owned(),
-            self.root
-                .join("global-gitconfig")
-                .to_string_lossy()
-                .into_owned(),
-        );
-        env.insert(
-            "GIT_CONFIG_SYSTEM".to_owned(),
-            self.root
-                .join("system-gitconfig")
-                .to_string_lossy()
-                .into_owned(),
-        );
-        env.insert("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned());
-        env.insert("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned());
-        for (key, value) in extra {
-            env.insert((*key).to_owned(), value.clone());
-        }
-        env
+        isolated_env(&self.root, extra)
     }
 
     fn script(&self, name: &str, marker: &Path) -> String {
-        let path = self.root.join(name);
+        self.script_at(&self.root.join(name), marker)
+    }
+
+    fn script_at(&self, path: &Path, marker: &Path) -> String {
         let marker = marker.to_string_lossy().replace('\'', "'\\''");
-        std::fs::write(&path, format!("#!/bin/sh\ntouch '{marker}'\nexit 1\n")).expect("script");
-        let mut permissions = std::fs::metadata(&path)
+        std::fs::write(path, format!("#!/bin/sh\ntouch '{marker}'\nexit 1\n")).expect("script");
+        let mut permissions = std::fs::metadata(path)
             .expect("script metadata")
             .permissions();
         permissions.set_mode(0o755);
-        std::fs::set_permissions(&path, permissions).expect("script mode");
+        std::fs::set_permissions(path, permissions).expect("script mode");
         path.to_string_lossy().into_owned()
     }
 
@@ -738,11 +972,48 @@ impl IsolatedRepo {
     }
 }
 
+fn isolated_env(root: &Path, extra: &[(&str, String)]) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    env.insert("PATH".to_owned(), std::env::var("PATH").expect("PATH"));
+    env.insert(
+        "HOME".to_owned(),
+        root.join("home").to_string_lossy().into_owned(),
+    );
+    env.insert(
+        "GIT_CONFIG_GLOBAL".to_owned(),
+        root.join("global-gitconfig").to_string_lossy().into_owned(),
+    );
+    env.insert(
+        "GIT_CONFIG_SYSTEM".to_owned(),
+        root.join("system-gitconfig").to_string_lossy().into_owned(),
+    );
+    env.insert("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned());
+    env.insert("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned());
+    for (key, value) in extra {
+        env.insert((*key).to_owned(), value.clone());
+    }
+    env
+}
+
 fn logging_git(dir: &Path) -> (PathBuf, PathBuf) {
+    write_logging_git(dir, false)
+}
+
+/// Like [`logging_git`], and records `GIT_DIR` for the ssh config probe.
+fn logging_git_probe(dir: &Path) -> (PathBuf, PathBuf) {
+    write_logging_git(dir, true)
+}
+
+fn write_logging_git(dir: &Path, record_probe_git_dir: bool) -> (PathBuf, PathBuf) {
     let log = dir.join("git-args");
     std::fs::create_dir(&log).expect("argument log");
+    let record = if record_probe_git_dir {
+        "probe=0\nfor arg in \"$@\"; do\n  if [ \"$arg\" = --show-scope ]; then\n    probe=1\n  fi\ndone\nif [ \"$probe\" = 1 ]; then\n  if [ -n \"${GIT_DIR+set}\" ]; then\n    printf '%s' \"$GIT_DIR\" > \"$log_dir/probe-git-dir\"\n  else\n    printf '%s' UNSET > \"$log_dir/probe-git-dir\"\n  fi\nfi\n"
+    } else {
+        ""
+    };
     let body = format!(
-        "#!/bin/sh\nlog_dir='{}'\nlog=$(mktemp \"$log_dir/call.XXXXXXXX\") || exit 1\nfirst=1\nfor arg in \"$@\"; do\n  if [ \"$first\" = 1 ]; then\n    first=0\n  else\n    printf '\\037' >> \"$log\"\n  fi\n  printf '%s' \"$arg\" >> \"$log\"\ndone\nprintf '\\n' >> \"$log\"\nexec git \"$@\"\n",
+        "#!/bin/sh\nlog_dir='{}'\n{record}log=$(mktemp \"$log_dir/call.XXXXXXXX\") || exit 1\nfirst=1\nfor arg in \"$@\"; do\n  if [ \"$first\" = 1 ]; then\n    first=0\n  else\n    printf '\\037' >> \"$log\"\n  fi\n  printf '%s' \"$arg\" >> \"$log\"\ndone\nprintf '\\n' >> \"$log\"\nexec git \"$@\"\n",
         log.to_string_lossy().replace('\'', "'\\''")
     );
     let path = dir.join("logging-git");
@@ -755,22 +1026,36 @@ fn logging_git(dir: &Path) -> (PathBuf, PathBuf) {
     (path, log)
 }
 
-fn network_argv(log: &Path) -> Vec<String> {
-    let calls = std::fs::read_dir(log)
-        .expect("read argument log")
-        .map(|entry| {
-            let text = std::fs::read_to_string(entry.expect("log entry").path()).expect("log text");
-            text.strip_suffix('\n')
-                .unwrap_or(&text)
-                .split('\x1f')
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    calls
+fn command_argv(log: &Path, command: &str) -> Vec<String> {
+    read_arg_log(log)
         .into_iter()
-        .find(|argv| argv.iter().any(|arg| arg == "ls-remote"))
-        .expect("one ls-remote")
+        .find(|argv| argv.iter().any(|arg| arg == command))
+        .unwrap_or_else(|| panic!("one {command}"))
+}
+
+fn network_argv(log: &Path) -> Vec<String> {
+    command_argv(log, "ls-remote")
+}
+
+fn read_arg_log(log: &Path) -> Vec<Vec<String>> {
+    std::fs::read_dir(log)
+        .expect("read argument log")
+        .filter_map(|entry| {
+            let path = entry.expect("log entry").path();
+            let name = path.file_name()?.to_string_lossy();
+            if !name.starts_with("call.") {
+                return None;
+            }
+            let text = std::fs::read_to_string(&path).expect("log text");
+            Some(
+                text.strip_suffix('\n')
+                    .unwrap_or(&text)
+                    .split('\x1f')
+                    .map(str::to_owned)
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 fn has_pair(argv: &[String], left: &str, right: &str) -> bool {
