@@ -51,15 +51,6 @@ const MARKS_MAX: usize = 512;
 /// The most alerted need ids kept at once. The oldest leaves first.
 const ALERTED_MAX: usize = 512;
 
-/// The characters a title must not carry: the ones that move the cursor or the reading
-/// order. The same set the terminal writer drops.
-fn is_invisible(character: char) -> bool {
-    matches!(
-        character,
-        '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}'
-    )
-}
-
 /// The quiet window, while it is open.
 struct QuietWindow {
     /// When the window opened.
@@ -415,7 +406,7 @@ impl FleetAttention {
 pub fn row_label(key: &RowKey, title: &str, foreground_profile: &str) -> String {
     let clean: String = title
         .chars()
-        .filter(|character| !character.is_control() && !is_invisible(*character))
+        .filter(|character| !crate::text::is_neutralized(*character))
         .collect();
     let name = clean.trim();
     let name = if name.is_empty() {

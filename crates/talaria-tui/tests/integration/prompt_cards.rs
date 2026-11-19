@@ -6,6 +6,8 @@
 
 use std::time::{Duration, Instant};
 
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use serde_json::json;
@@ -442,6 +444,35 @@ fn approval_card_snapshot_80_and_160_cols() {
         48,
         snapshot!("approval_hostile_160"),
         "approval_hostile_160",
+    );
+}
+
+#[test]
+fn approval_card_shows_nbsp_as_a_visible_stand_in() {
+    let cell = approval("rm\u{00A0}-rf", &["once", "deny"]);
+    let mut stack = PromptStack::new();
+    stack.sync(Some(MAIN), &[&cell], &[], true, Instant::now());
+    let section = stack.section().expect("the approval card is on screen");
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    terminal
+        .draw(|frame| section.render(frame.area(), frame.buffer_mut()))
+        .expect("draw");
+    let buffer = terminal.backend().buffer();
+    let mut screen = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            screen.push_str(buffer[(x, y)].symbol());
+        }
+        screen.push('\n');
+    }
+    let stand_in = "\u{2039}U+00A0\u{203a}";
+    assert!(
+        screen.contains(stand_in),
+        "the approval card must show a visible stand-in for U+00A0: {screen:?}"
+    );
+    assert!(
+        !screen.contains('\u{00A0}'),
+        "the approval card must not draw raw U+00A0: {screen:?}"
     );
 }
 

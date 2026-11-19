@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-19 — One neutralized-character table for every rendered path
+
+**Evidence.** Issue #667. An approval card drew `rm` plus U+00A0 plus `-rf` as `rm -rf` on a `TestBackend`, while the gateway still held the original bytes. Five local tables disagreed on U+00AD, U+200B–U+200F and U+2060. `unicode-general-category` 1.1.0 (Unicode 16.0) reports 170 `Cf` characters; the checked-in snapshot in `shared_text_seam` is 542 codepoints once controls, the tag block, variation selectors except U+FE0E and U+FE0F, the Hangul fillers and the blank-width spaces are included.
+
+**Mechanism.** `talaria_core::text::is_neutralized` is the only set. `sanitize` writes a visible stand-in. Alert fields, fleet titles, rewind columns and the composer consult that predicate. Stored transcript bytes stay as the gateway sent them. U+FE0E and U+FE0F still pass through, because they change the picture.
+
+**Generalizable rule.** A security list is a sample of a property. Pin the property to category data and pin the exact set to a snapshot, so a Unicode release and a quiet deletion both fail the suite.
+
 ## 2026-11-15 — Keep compatibility and exact-pin release evidence separate
 
 **Evidence.** The release catalogue's existing live command uses the supported

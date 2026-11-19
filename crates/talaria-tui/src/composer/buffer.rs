@@ -4,21 +4,11 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::wrap::{Row, cluster_width, wrap};
+use crate::history::is_neutralized;
 
-/// Characters dropped when they stand alone, whatever the width table says.
+/// A neutralized character. A cluster made only of these is dropped, whatever its width.
 fn invisible_char(c: char) -> bool {
-    matches!(
-        c,
-        '\u{200B}'
-            | '\u{200C}'
-            | '\u{200D}'
-            | '\u{200E}'
-            | '\u{200F}'
-            | '\u{2060}'
-            | '\u{FEFF}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2066}'..='\u{2069}'
-    )
+    is_neutralized(c)
 }
 
 /// A cluster that would draw nothing: width 0, or only characters of the list above.
