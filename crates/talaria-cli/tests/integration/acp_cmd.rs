@@ -147,16 +147,21 @@ fn probe_failure_diagnostics_are_sanitized() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().expect("temporary directory");
     let child = tmp.path().join("child.py");
+    let child_payload = diagnostic("child-stderr");
+    let child_literal =
+        serde_json::to_string(&format!("{child_payload}\n")).expect("child literal");
     std::fs::write(
         &child,
-        "#!/usr/bin/env python3\nimport sys\nsys.stderr.write('alpha\\n\\u001b[2J\\n\\u001b]52;c;dGVzdA==\\u0007\\n\\u009b2J\\nbefore\\rafter\\n\\u2028line\\u2029sep\\n')\nsys.stderr.flush()\nraise SystemExit(1)\n",
+        format!(
+            "#!/usr/bin/env python3\nimport sys\nsys.stderr.write({child_literal})\nsys.stderr.flush()\nraise SystemExit(1)\n"
+        ),
     )
     .expect("child script");
     std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o755)).expect("child mode");
     let broken = tmp.path().join("broken");
     std::fs::write(&broken, "#!/no/such/talaria-interp\n").expect("broken script");
     std::fs::set_permissions(&broken, std::fs::Permissions::from_mode(0o755)).expect("broken mode");
-    let hostile = "alpha\n\u{1b}[2J\n\u{1b}]52;c;dGVzdA==\u{7}\n\u{9b}2J\nbefore\rafter\n\u{2028}line\u{2029}sep";
+    let spawn_payload = diagnostic("spawn-error");
     #[derive(serde::Serialize)]
     struct Root {
         acp: Agents,
@@ -181,7 +186,7 @@ fn probe_failure_diagnostics_are_sanitized() {
                 },
                 Agent {
                     id: "spawn",
-                    display_name: hostile.into(),
+                    display_name: spawn_payload,
                     command: broken.display().to_string(),
                 },
             ],
@@ -204,48 +209,46 @@ fn probe_failure_diagnostics_are_sanitized() {
         stderr.contains("probe failed"),
         "diagnostic missing: {stderr:?}"
     );
-    assert!(
-        stderr.contains("alpha\n"),
-        "intentional newline was not preserved: {stderr:?}"
-    );
-    assert!(
-        stderr.contains("\u{241b}[2J"),
-        "ESC stand-in missing: {stderr:?}"
-    );
-    assert!(
-        stderr.contains("\u{241b}]52;c;dGVzdA==\u{2407}"),
-        "OSC 52 stand-in missing: {stderr:?}"
-    );
-    assert!(
-        stderr.contains("\u{2039}U+009B\u{203a}2J"),
-        "C1 stand-in missing: {stderr:?}"
-    );
-    assert!(
-        stderr.contains("before\u{240d}after"),
-        "CR stand-in missing: {stderr:?}"
-    );
-    assert!(
-        stderr.contains("\u{2039}U+2028\u{203a}line\u{2039}U+2029\u{203a}sep"),
-        "Zl/Zp stand-in missing: {stderr:?}"
-    );
+    assert_marked(&stderr, "child-stderr");
+    assert_marked(&stderr, "spawn-error");
     assert!(
         !stderr.contains('\u{240a}'),
         "newline was replaced with a stand-in: {stderr:?}"
     );
     for character in stderr.chars() {
         let code = u32::from(character);
-        if character == '\n' || character == '\t' {
+        if character == '\n' {
             continue;
         }
         assert!(
             code > 0x1f
                 && code != 0x7f
                 && !(0x80..=0x9f).contains(&code)
-                && character != '\u{2028}'
-                && character != '\u{2029}',
+                && !matches!(
+                    character,
+                    '\u{2028}' | '\u{2029}' | '\u{200b}' | '\u{200d}' | '\u{2060}' | '\u{2800}'
+                ),
             "raw control U+{code:04X} in {stderr:?}"
         );
     }
+    assert!(!stderr.contains('\t'), "raw tab in {stderr:?}");
+}
+
+fn diagnostic(marker: &str) -> String {
+    format!(
+        "{marker}\u{200b}\u{200d}\u{2060}\u{2800}\tstop\n{esc}[2J\n{esc}]52;c;dGVzdA==\u{7}\n\u{9b}2J\nbefore\rafter\n\u{2028}line\u{2029}sep",
+        esc = '\u{1b}'
+    )
+}
+
+fn assert_marked(stderr: &str, marker: &str) {
+    let expected = format!(
+        "{marker}\u{2039}U+200B\u{203a}\u{2039}U+200D\u{203a}\u{2039}U+2060\u{203a}\u{2039}U+2800\u{203a}    stop\n\u{241b}[2J\n\u{241b}]52;c;dGVzdA==\u{2407}\n\u{2039}U+009B\u{203a}2J\nbefore\u{240d}after\n\u{2039}U+2028\u{203a}line\u{2039}U+2029\u{203a}sep"
+    );
+    assert!(
+        stderr.contains(&expected),
+        "{marker} diagnostic was not sanitized on its own: {stderr:?}"
+    );
 }
 
 #[test]

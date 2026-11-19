@@ -16,7 +16,7 @@ mod diagnostics {
 
     fn hostile() -> String {
         format!(
-            "alpha\n{esc}[2J\n{esc}]52;c;dGVzdA==\u{7}\n\u{9b}2J\nbefore\rafter\n\u{2028}line\u{2029}sep",
+            "alpha\n{esc}[2J\n{esc}]52;c;dGVzdA==\u{7}\n\u{9b}2J\nbefore\rafter\n\u{2028}line\u{2029}sep\nleft\tright\u{200b}\u{200d}\u{2060}\u{2800}",
             esc = '\u{1b}'
         )
     }
@@ -47,23 +47,16 @@ mod diagnostics {
             "Zl/Zp stand-in missing: {text:?}"
         );
         assert!(
+            text.contains(
+                "left    right\u{2039}U+200B\u{203a}\u{2039}U+200D\u{203a}\u{2039}U+2060\u{203a}\u{2039}U+2800\u{203a}"
+            ),
+            "tab or invisible stand-in missing: {text:?}"
+        );
+        assert!(
             !text.contains('\u{240a}'),
             "newline was replaced with a stand-in: {text:?}"
         );
-        for character in text.chars() {
-            let code = u32::from(character);
-            if character == '\n' || character == '\t' {
-                continue;
-            }
-            assert!(
-                code > 0x1f
-                    && code != 0x7f
-                    && !(0x80..=0x9f).contains(&code)
-                    && character != '\u{2028}'
-                    && character != '\u{2029}',
-                "raw control U+{code:04X} in {text:?}"
-            );
-        }
+        assert_no_raw_controls(text);
     }
 
     #[derive(Clone, Copy)]
@@ -596,19 +589,26 @@ mod diagnostics {
         if text.is_empty() {
             return;
         }
+        assert_no_raw_controls(text);
+    }
+
+    fn assert_no_raw_controls(text: &str) {
         for character in text.chars() {
             let code = u32::from(character);
-            if character == '\n' || character == '\t' {
+            if character == '\n' {
                 continue;
             }
             assert!(
                 code > 0x1f
                     && code != 0x7f
                     && !(0x80..=0x9f).contains(&code)
-                    && character != '\u{2028}'
-                    && character != '\u{2029}',
+                    && !matches!(
+                        character,
+                        '\u{2028}' | '\u{2029}' | '\u{200b}' | '\u{200d}' | '\u{2060}' | '\u{2800}'
+                    ),
                 "raw control U+{code:04X} in {text:?}"
             );
         }
+        assert!(!text.contains('\t'), "raw tab in {text:?}");
     }
 }
