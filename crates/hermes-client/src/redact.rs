@@ -593,13 +593,18 @@ fn clean_pair(pair: &str) -> String {
     };
     let (key, value) = (&pair[..eq], &pair[eq + 1..]);
     let decoded = percent_decode(key).to_lowercase();
-    let credential =
-        matches!(decoded.as_str(), "token" | "ticket" | "internal") || is_suspicious_key(&decoded);
-    if credential && !value.is_empty() {
+    if credential_query_key(&decoded) && !value.is_empty() {
         format!("{key}={URL_MARK}")
     } else {
         pair.to_owned()
     }
+}
+
+/// A query key whose value is a credential. `state` and `code` are named
+/// outright: the key-name net does not match either OAuth parameter.
+fn credential_query_key(decoded: &str) -> bool {
+    matches!(decoded, "token" | "ticket" | "internal" | "state" | "code")
+        || is_suspicious_key(decoded)
 }
 
 fn percent_decode(text: &str) -> String {
@@ -656,10 +661,6 @@ static SCAN_RULES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     .collect()
 });
 
-static SECRET_QUERY: LazyLock<Regex> = LazyLock::new(|| {
-    compile(r#"(?i)[?&](token|ticket|internal|api_key|apikey|access_token|password)=([^&#\s"']*)"#)
-});
-
 /// The lines of `text`, numbered from 1, without their line endings.
 fn numbered_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
     text.split('\n')
@@ -680,11 +681,7 @@ pub fn scan_for_secrets(text: &str) -> Vec<ScanHit> {
                 hits.push(ScanHit { line, rule });
             }
         }
-        let live_query = SECRET_QUERY.captures_iter(content).any(|capture| {
-            let value = capture.get(2).map_or("", |value| value.as_str());
-            !value.is_empty() && value != URL_MARK && value != REDACTED
-        });
-        if live_query {
+        if query_holds_live_secret(content) {
             hits.push(ScanHit {
                 line,
                 rule: "url-secret-query",
@@ -700,6 +697,38 @@ pub fn scan_for_secrets(text: &str) -> Vec<ScanHit> {
         }
     }
     hits
+}
+
+/// True when a query or fragment pair still carries a credential value.
+///
+/// Keys are percent-decoded, so `st%61te` is `state`. An empty value and either
+/// redaction marker are clean. `#` starts a fragment pair, the same way `?` and
+/// `&` start a query pair.
+fn query_holds_live_secret(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(start) = rest.find(['?', '&', '#']) {
+        rest = &rest[start + 1..];
+        let end = rest
+            .find(|ch: char| matches!(ch, '&' | '#' | '"' | '\'') || ch.is_whitespace())
+            .unwrap_or(rest.len());
+        if pair_is_live_secret(&rest[..end]) {
+            return true;
+        }
+        if end == 0 {
+            continue;
+        }
+        rest = &rest[end..];
+    }
+    false
+}
+
+fn pair_is_live_secret(pair: &str) -> bool {
+    let Some(eq) = pair.find('=') else {
+        return false;
+    };
+    let key = percent_decode(&pair[..eq]).to_lowercase();
+    let value = &pair[eq + 1..];
+    credential_query_key(&key) && !value.is_empty() && value != URL_MARK && value != REDACTED
 }
 
 fn holds_live_suspicious_key(value: &Value) -> bool {

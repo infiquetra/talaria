@@ -4,7 +4,7 @@
 //! bytes below are part of the contract. The userinfo, query and fragment values are fake
 //! placeholders, not credentials.
 
-use hermes_client::{REDACTED, redact_url};
+use hermes_client::{REDACTED, Redactor, redact_url, scan_for_secrets};
 
 /// The percent-encoded marker that stands where a URL part was withheld.
 const MARK: &str = "%5Bredacted%5D";
@@ -146,6 +146,117 @@ fn clean_url_is_byte_identical() {
             redact_url(url),
             url,
             "redact_url({url:?}) must be unchanged"
+        );
+    }
+}
+
+#[test]
+fn oauth_code_and_state_are_redacted() {
+    check(&[
+        (
+            "https://example.invalid/callback?code=abc&state=def",
+            "https://example.invalid/callback?code=%5Bredacted%5D&state=%5Bredacted%5D",
+        ),
+        (
+            "https://example.invalid/callback?State=Nonce&CODE=Abc&mode=1",
+            "https://example.invalid/callback?State=%5Bredacted%5D&CODE=%5Bredacted%5D&mode=1",
+        ),
+        (
+            "https://example.invalid/callback?st%61te=nonce&c%6Fde=abc",
+            "https://example.invalid/callback?st%61te=%5Bredacted%5D&c%6Fde=%5Bredacted%5D",
+        ),
+        (
+            "https://example.invalid/callback?state=secr%65t&code=a%62c&keep=1",
+            "https://example.invalid/callback?state=%5Bredacted%5D&code=%5Bredacted%5D&keep=1",
+        ),
+        (
+            "https://example.invalid/callback?state=&code=&mode=1",
+            "https://example.invalid/callback?state=&code=&mode=1",
+        ),
+        (
+            "https://example.invalid/callback#code=abc&state=def",
+            "https://example.invalid/callback#%5Bredacted%5D",
+        ),
+        (
+            "https://example.invalid/callback?code=abc&state=def#code=zzz&state=yyy",
+            "https://example.invalid/callback?code=%5Bredacted%5D&state=%5Bredacted%5D#%5Bredacted%5D",
+        ),
+    ]);
+}
+
+#[test]
+fn recorded_oauth_start_drops_auth_url_state_and_code() {
+    let raw = "secret_nonce";
+    let url = format!("https://example.invalid/authorize?state={raw}&code=abc");
+    let frame = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+            "auth_url": url,
+            "method": "mcp.oauth.start"
+        }
+    });
+    let mut redactor = Redactor::new(Vec::new()).expect("redactor");
+    let redacted = redactor.redact_inbound(&frame.to_string());
+    let recorded = redacted
+        .frame
+        .as_ref()
+        .map(serde_json::Value::to_string)
+        .unwrap_or_default();
+    assert!(
+        !recorded.contains(raw),
+        "the recorded auth_url still holds the oauth state"
+    );
+    assert!(
+        !recorded.contains("code=abc"),
+        "the recorded auth_url still holds the oauth code"
+    );
+    assert!(
+        recorded.contains("state=%5Bredacted%5D"),
+        "state was not replaced with the marker"
+    );
+    assert!(
+        recorded.contains("code=%5Bredacted%5D"),
+        "code was not replaced with the marker"
+    );
+}
+
+#[test]
+fn unredacted_oauth_query_is_flagged_until_redacted() {
+    let live = [
+        "https://example.invalid/callback?state=secret_nonce",
+        "https://example.invalid/callback?code=abc&state=def",
+        "https://example.invalid/callback?State=Nonce&CODE=Abc",
+        "https://example.invalid/callback?st%61te=secret_nonce&c%6Fde=abc",
+        "https://example.invalid/callback?mode=1&code=abc&state=def",
+        "https://example.invalid/callback#code=abc&state=secret_nonce",
+        "https://example.invalid/callback?keep=1#state=secret_nonce",
+    ];
+    for url in live {
+        let hits = scan_for_secrets(url);
+        assert!(
+            hits.iter().any(|hit| hit.rule == "url-secret-query"),
+            "a live oauth query was not flagged: {url}"
+        );
+        let cleaned = redact_url(url);
+        assert!(
+            scan_for_secrets(&cleaned).is_empty(),
+            "the redacted oauth url was still flagged: {cleaned}"
+        );
+    }
+
+    let clean = [
+        "https://example.invalid/callback?state=&code=",
+        "https://example.invalid/callback?state=%5Bredacted%5D&code=%5Bredacted%5D",
+        "https://example.invalid/callback?state=[redacted]&code=[redacted]",
+        "https://example.invalid/callback#",
+        "https://example.invalid/callback#%5Bredacted%5D",
+        "https://example.invalid/callback?mode=1&keep=yes",
+    ];
+    for url in clean {
+        assert!(
+            scan_for_secrets(url).is_empty(),
+            "a clean oauth url was flagged: {url}"
         );
     }
 }
