@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use hermes_client::{
-    Client, DiscoverOptions, EnsurePolicy, Inbound, InboundStream, Purpose, Scope, TicketError,
-    connect, discover_with, handshake, mint_ticket,
+    Client, DiscoverOptions, EnsurePolicy, Inbound, Purpose, Scope, TicketError, connect,
+    discover_with, handshake, mint_ticket,
 };
 use tokio::task::JoinHandle;
 
@@ -97,13 +97,16 @@ impl LaunchLink {
             sources: handshake.describe.session_create.sources.clone(),
             parameters: handshake.describe.session_create.parameters.clone(),
         };
-        let (client, inbound) = Client::start(connection.into_parts());
+        let (client, inbound) = Client::start_with_policy(
+            connection.into_parts(),
+            hermes_client::ServerRequestPolicy::IgnoreAll,
+        );
         Ok(Self {
             scope,
             profile: foreground_profile.to_owned(),
             client,
             describe,
-            drain: tokio::spawn(drain(inbound)),
+            drain: tokio::spawn(drain(crate::passive_inbound::PassiveInbound::new(inbound))),
         })
     }
 
@@ -136,7 +139,9 @@ impl LaunchLink {
 
 /// Drop events and leave every server request alone: a refusal would read as "skip" to an
 /// agent waiting on the answer, and the launch is never the one to answer it.
-async fn drain(mut inbound: InboundStream) {
+///
+/// The stream wrapper ignores anything still queued if this task is aborted.
+async fn drain(mut inbound: crate::passive_inbound::PassiveInbound) {
     while let Some(item) = inbound.next().await {
         if let Inbound::ServerRequest(request) = item {
             request.responder.ignore();

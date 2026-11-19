@@ -3,8 +3,10 @@
 use crate::drive;
 use crate::events;
 
-use serde_json::json;
-use talaria_core::session::{Cell, Effect, Event, PromptState, update};
+use std::collections::HashSet;
+
+use serde_json::{Value, json};
+use talaria_core::session::{Cell, Effect, Event, NoticeKind, PromptState, SessionState, update};
 
 use events::{SESSION, approval_request, ev, key};
 
@@ -98,6 +100,70 @@ fn open_prompt_cells_are_not_pruned_to_make_room() {
     assert_eq!(open.first().map(String::as_str), Some("open-0"));
     assert_eq!(open.last().map(String::as_str), Some("open-63"));
     assert!(!open.iter().any(|id| id == "open-64"));
+}
+
+#[test]
+fn cell_ids_stay_unique_after_pruning() {
+    let mut events = Vec::new();
+    for n in 0..257 {
+        let id = format!("p{n}");
+        events.push(ev(
+            2 * n + 1,
+            "approval.request",
+            approval_request(&id, 1, &["deny"]),
+        ));
+        events.push(ev(
+            2 * n + 2,
+            "approval.settled",
+            json!({"prompt_id": id, "execution_generation": 1}),
+        ));
+    }
+    events.push(ev(
+        515,
+        "approval.request",
+        approval_request("open", 1, &["deny"]),
+    ));
+    let (mut state, _) = drive::reduce(SESSION, events);
+    let _ = update(
+        &mut state,
+        Event::Notice {
+            kind: NoticeKind::System,
+            text: "after pruning".into(),
+        },
+    );
+    let ids: HashSet<_> = state
+        .cells()
+        .iter()
+        .map(|cell| match cell {
+            Cell::Prompt(prompt) => prompt.id,
+            Cell::Notice(notice) => notice.id,
+            _ => panic!("unexpected cell"),
+        })
+        .collect();
+    assert_eq!(ids.len(), state.cells().len());
+}
+
+#[test]
+fn overlong_prompt_id_is_not_admitted() {
+    let payload = approval_request(&"p".repeat(300_000), 1, &["deny"]);
+    let resumed = resume_prompt(payload.clone());
+    let (live, _) = drive::reduce(SESSION, vec![ev(1, "approval.request", payload)]);
+    for state in [live, resumed] {
+        assert!(prompt_ids(&state).is_empty());
+        assert_eq!(state.open_prompts().count(), 0);
+    }
+}
+
+#[test]
+fn edit_object_is_kept_as_presence_only() {
+    let mut payload = approval_request("edit", 1, &["deny"]);
+    payload["edit"] = json!({"blob": "x".repeat(1_000_000)});
+    let resumed = resume_prompt(payload.clone());
+    let (live, _) = drive::reduce(SESSION, vec![ev(1, "approval.request", payload)]);
+    for state in [live, resumed] {
+        let prompt = state.open_prompts().next().expect("open edit approval");
+        assert_eq!(prompt.edit, Some(json!({})));
+    }
 }
 
 #[test]
@@ -232,6 +298,23 @@ fn pruning_a_committed_prompt_leaves_the_new_final_cell_past_the_cursor() {
 fn resumed_prompt_fields_keep_exact_choices_and_a_bounded_label() {
     let wide = "é".repeat(3000);
     let huge = "B".repeat(8 * 1024 * 1024);
+    let state = resume_prompt(json!({
+        "kind": "clarify",
+        "prompt_id": "q-resume",
+        "execution_generation": 1,
+        "question": huge,
+        "choices": [wide.clone(), "B".repeat(20 * 1024)]
+    }));
+    let Cell::Prompt(prompt) = &state.cells()[0] else {
+        panic!("the resumed prompt was dropped");
+    };
+    let question = prompt.question.as_deref().expect("question");
+    assert!(question.len() <= TEXT_CAP);
+    assert!(question.ends_with(SUFFIX));
+    assert_eq!(prompt.choices, vec![wide]);
+}
+
+fn resume_prompt(prompt: Value) -> SessionState {
     let raw = json!({
         "session_id": SESSION,
         "stored_session_id": SESSION,
@@ -245,25 +328,12 @@ fn resumed_prompt_fields_keep_exact_choices_and_a_bounded_label() {
         "revision": 1,
         "execution_generation": 1,
         "pending": [],
-        "prompts": [{
-            "kind": "clarify",
-            "prompt_id": "q-resume",
-            "execution_generation": 1,
-            "question": huge,
-            "choices": [wide.clone(), "B".repeat(20 * 1024)]
-        }],
+        "prompts": [prompt],
         "info": {"cwd": "/work", "desktop_protocol": "hermes-gateway-v1"}
     });
     let snapshot = serde_json::from_value::<hermes_contract::schemas::CanonicalSnapshot>(raw)
         .expect("snapshot");
-    let state = talaria_core::session::SessionState::from_snapshot(snapshot);
-    let Cell::Prompt(prompt) = &state.cells()[0] else {
-        panic!("the resumed prompt was dropped");
-    };
-    let question = prompt.question.as_deref().expect("question");
-    assert!(question.len() <= TEXT_CAP);
-    assert!(question.ends_with(SUFFIX));
-    assert_eq!(prompt.choices, vec![wide]);
+    SessionState::from_snapshot(snapshot)
 }
 
 #[test]

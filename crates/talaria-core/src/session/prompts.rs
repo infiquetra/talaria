@@ -165,8 +165,8 @@ pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
                 choices: bounded_choices(payload.get("choices")),
                 multi_select: payload["multi_select"].as_bool().unwrap_or(false),
                 edit: payload["edit"]
-                    .as_object()
-                    .map(|value| Value::Object(value.clone())),
+                    .is_object()
+                    .then(|| Value::Object(serde_json::Map::new())),
                 timeout_s: payload["timeout_s"].as_f64(),
                 state: PromptState::Open,
                 sealed: false,
@@ -180,6 +180,9 @@ pub(crate) fn insert(state: &mut SessionState, mut cell: PromptCell) {
         return;
     }
     let live = matches!(cell.state, PromptState::Open | PromptState::Answering(_));
+    if cell.key.prompt_id.len() > 256 {
+        return;
+    }
     if live && state.open_prompt_count >= MAX_OPEN_PROMPTS {
         return;
     }
@@ -238,6 +241,7 @@ fn prune_settled(state: &mut SessionState) {
         new_index[index] = index - removed_before;
         kept.push(cell);
     }
+    state.removed_cells = state.removed_cells.saturating_add(removed_before as u64);
     state.cells = kept;
     for key in removed_keys {
         state.prompts.remove(&key);

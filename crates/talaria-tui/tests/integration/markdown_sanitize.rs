@@ -46,35 +46,29 @@ fn newline_tab_kept_crlf_is_one() {
 }
 
 #[test]
+fn blank_width_and_format_characters_become_hex() {
+    assert_eq!(sanitize_untrusted("\u{00A0}").as_ref(), "‹U+00A0›");
+    assert_eq!(sanitize_untrusted("\u{200B}").as_ref(), "‹U+200B›");
+    assert_eq!(sanitize_untrusted("a\u{200D}b").as_ref(), "a‹U+200D›b");
+    assert_eq!(sanitize_untrusted("\u{FEFF}").as_ref(), "‹U+FEFF›");
+    assert_eq!(sanitize_untrusted("\u{2060}").as_ref(), "‹U+2060›");
+    assert_eq!(sanitize_untrusted("\u{FE0E}").as_ref(), "\u{FE0E}");
+    assert_eq!(sanitize_untrusted("\u{FE0F}").as_ref(), "\u{FE0F}");
+}
+
+#[test]
 fn clean_text_is_borrowed() {
-    for text in [
-        "",
-        "hello",
-        "a\nb",
-        "a\tb",
-        "a\u{200D}b",
-        "\u{FEFF}",
-        "\u{200B}",
-        "\u{2060}",
-        "\u{FE0F}",
-    ] {
+    for text in ["", "hello", "a\nb", "a\tb", "\u{FE0E}", "\u{FE0F}"] {
         let out = sanitize_untrusted(text);
         assert!(matches!(out, Cow::Borrowed(same) if std::ptr::eq(same, text)));
     }
 }
 
 fn forbidden(ch: char) -> bool {
-    let code = u32::from(ch);
     if ch == '\n' || ch == '\t' {
         return false;
     }
-    code <= 0x1F
-        || code == 0x7F
-        || (0x80..=0x9F).contains(&code)
-        || matches!(code, 0x061C | 0x200E | 0x200F | 0x2028 | 0x2029)
-        || (0x202A..=0x202E).contains(&code)
-        || (0x2066..=0x2069).contains(&code)
-        || (0xE0000..=0xE007F).contains(&code)
+    talaria_core::text::is_neutralized(ch)
 }
 
 fn is_hex_stand_in(text: &str) -> bool {

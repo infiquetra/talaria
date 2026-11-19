@@ -32,7 +32,9 @@ impl LaunchConn {
     pub fn opened(mut open: OpenConnection) -> Self {
         let (_closed, empty) = mpsc::channel(1);
         let inbound = std::mem::replace(&mut open.inbound, empty);
-        tokio::spawn(drain_link(inbound));
+        tokio::spawn(drain_link(crate::passive_inbound::PassiveEvents::new(
+            inbound,
+        )));
         Self::Opened(open)
     }
 
@@ -115,7 +117,9 @@ impl LaunchConn {
 }
 
 /// Drop events and leave every server request alone.
-async fn drain_link(mut inbound: mpsc::Receiver<LinkEvent>) {
+///
+/// The queue wrapper ignores anything still queued if this task is dropped.
+async fn drain_link(mut inbound: crate::passive_inbound::PassiveEvents) {
     while let Some(event) = inbound.recv().await {
         if let LinkEvent::Inbound {
             item: Inbound::ServerRequest(request),

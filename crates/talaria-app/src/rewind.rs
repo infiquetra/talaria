@@ -81,9 +81,17 @@ impl RewindService {
             .call_raw("session.resume", params, CallOptions::default())
             .await
         {
-            Ok(raw) => session_read(raw).map_or(Reply::Failed(CallFailure::Unreadable), |read| {
-                Reply::SessionRead(read)
-            }),
+            Ok(raw) => match session_read(&self.session_id, raw) {
+                SessionParse::Ready(read) => Reply::SessionRead(read),
+                SessionParse::Mismatch => Reply::Failed(CallFailure::Refused {
+                    reason: "session_mismatch".to_string(),
+                    field: None,
+                    detail: Some(crate::sessions::DIFFERENT_SESSION.to_string()),
+                    revision: None,
+                    execution_generation: None,
+                }),
+                SessionParse::Unreadable => Reply::Failed(CallFailure::Unreadable),
+            },
             Err(error) => Reply::Failed(failure_from(&error)),
         }
     }
@@ -193,13 +201,32 @@ fn diff_options() -> CallOptions {
     }
 }
 
-/// Read the fences, the idle check and the rows from a resume result. `None` when the value
-/// is not a snapshot, so a rebuild from it could not decode either.
-fn session_read(raw: Value) -> Option<SessionRead> {
-    serde_json::from_value::<CanonicalSnapshot>(raw.clone()).ok()?;
-    let revision = raw.get("revision").and_then(Value::as_i64)?;
-    let execution_generation = raw.get("execution_generation").and_then(Value::as_i64)?;
-    let running = raw.get("running").and_then(Value::as_bool)?;
+/// A resume result, after the requested id has been checked.
+enum SessionParse {
+    Ready(SessionRead),
+    /// The snapshot named a different session, so its rows are not usable.
+    Mismatch,
+    Unreadable,
+}
+
+/// Read the fences, the idle check and the rows from a resume result. A snapshot for another
+/// session is refused before its rows can rebuild the foreground.
+fn session_read(requested_id: &str, raw: Value) -> SessionParse {
+    let Some(snapshot) = serde_json::from_value::<CanonicalSnapshot>(raw.clone()).ok() else {
+        return SessionParse::Unreadable;
+    };
+    if !crate::sessions::requested_session_matches(requested_id, &snapshot.session_id) {
+        return SessionParse::Mismatch;
+    }
+    let Some(revision) = raw.get("revision").and_then(Value::as_i64) else {
+        return SessionParse::Unreadable;
+    };
+    let Some(execution_generation) = raw.get("execution_generation").and_then(Value::as_i64) else {
+        return SessionParse::Unreadable;
+    };
+    let Some(running) = raw.get("running").and_then(Value::as_bool) else {
+        return SessionParse::Unreadable;
+    };
     let pending = raw
         .get("pending")
         .and_then(Value::as_array)
@@ -219,7 +246,7 @@ fn session_read(raw: Value) -> Option<SessionRead> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    Some(SessionRead {
+    SessionParse::Ready(SessionRead {
         raw,
         revision,
         execution_generation,

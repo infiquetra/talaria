@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use talaria_core::session::{CellId, PromptCell, PromptKey, PromptKind, PromptState};
 use talaria_tui::live::LiveSection;
-use talaria_tui::prompts::{MaskedView, PromptStack};
+use talaria_tui::prompts::{LiveMaskedTarget, MaskedView, PromptStack};
 
 const MAIN: &str = "sess-main";
 const WIDTH: u16 = 40;
@@ -56,16 +56,20 @@ fn clarify(question: &str, choices: &[&str]) -> PromptCell {
 }
 
 fn draw(stack: &PromptStack) -> (u16, Vec<String>, Duration) {
+    draw_at(stack, WIDTH)
+}
+
+fn draw_at(stack: &PromptStack, width: u16) -> (u16, Vec<String>, Duration) {
     let started = Instant::now();
     let section = stack.section().expect("a card should be drawn");
-    let height = section.height(WIDTH);
+    let height = section.height(width);
     let rows = height.min(LINE_BUDGET);
-    let mut buf = Buffer::empty(Rect::new(0, 0, WIDTH, rows.max(1)));
-    section.render(Rect::new(0, 0, WIDTH, rows.max(1)), &mut buf);
+    let mut buf = Buffer::empty(Rect::new(0, 0, width, rows.max(1)));
+    section.render(Rect::new(0, 0, width, rows.max(1)), &mut buf);
     let elapsed = started.elapsed();
     let lines = (0..rows)
         .map(|y| {
-            (0..WIDTH)
+            (0..width)
                 .map(|x| buf[(x, y)].symbol())
                 .collect::<String>()
                 .trim_end()
@@ -74,6 +78,50 @@ fn draw(stack: &PromptStack) -> (u16, Vec<String>, Duration) {
         .filter(|line| !line.is_empty())
         .collect();
     (height, lines, elapsed)
+}
+
+#[test]
+fn c1_controls_stay_within_drawn_cap() {
+    let controls = "\u{0085}".repeat(2_000);
+    for cell in [
+        approval("", &controls),
+        clarify(&controls, &["yes"]),
+        clarify("Which file?", &[&controls]),
+    ] {
+        let mut stack = PromptStack::new();
+        stack.sync(Some(MAIN), &[&cell], &[], true, Instant::now());
+        let (height, lines, _) = draw_at(&stack, 80);
+        assert!(height <= LINE_BUDGET, "card drew {height} lines");
+        let shown: Vec<_> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.contains("U+0085"))
+            .map(|(index, _)| index)
+            .collect();
+        assert!(!shown.is_empty());
+        assert!(shown.len() <= 10, "field drew {} lines", shown.len());
+        let marker = lines
+            .get(shown[shown.len() - 1] + 1)
+            .expect("truncation marker");
+        assert!(
+            marker.contains("more lines"),
+            "expected truncation marker, got {marker:?}"
+        );
+    }
+}
+
+#[test]
+fn approval_renders_a_presence_only_edit() {
+    let mut cell = approval("true", "");
+    cell.edit = Some(serde_json::json!({}));
+    let mut stack = PromptStack::new();
+    stack.sync(Some(MAIN), &[&cell], &[], true, Instant::now());
+    let (_, lines, _) = draw_at(&stack, 80);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("This approval carries a proposed edit."))
+    );
 }
 
 fn assert_bounded(label: &str, stack: &PromptStack) {
@@ -96,6 +144,13 @@ fn prompt_cards_render_oversized_fields_with_a_line_cap() {
         session_id: Some(MAIN.to_owned()),
         method: "sudo".to_owned(),
         fields: vec![("command".to_owned(), huge.clone())],
+        target: LiveMaskedTarget {
+            token: "srq-huge".to_owned(),
+            session_id: Some(MAIN.to_owned()),
+            generation: 1,
+            instance_id: 1,
+            service_id: 1,
+        },
     };
     let mut masked = PromptStack::new();
     masked.sync(Some(MAIN), &[], &[view], true, now);

@@ -11,7 +11,8 @@ use talaria_core::session::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    KeyOutcome, MaskedValue, MaskedView, PromptIntent, display_choices, multi_select_answer,
+    KeyOutcome, MaskedTarget, MaskedValue, MaskedView, PromptIntent, display_choices,
+    multi_select_answer,
 };
 use crate::history::{sanitize, wrap_lines};
 use crate::keys::{Key, KeyCode, KeyKind};
@@ -28,12 +29,14 @@ enum Identity {
     Masked(String),
 }
 
+#[derive(Clone)]
 enum Content {
     Connection(ConnectionContent),
     Prompt(PromptCell),
     Masked(MaskedView),
 }
 
+#[derive(Clone)]
 struct ConnectionContent {
     card: ConnectionCard,
     session_id: String,
@@ -115,16 +118,18 @@ impl Card {
     fn masked_answer(&mut self, decline: bool) -> Option<PromptIntent> {
         let value = std::mem::replace(&mut self.secret, MaskedValue::new());
         self.secret_chars = 0;
-        let request_id = match &self.content {
+        let target = match &self.content {
             Content::Connection(_) => return None,
             Content::Masked(view) => {
                 self.sent = true;
-                view.request_id.clone()
+                MaskedTarget::Live(view.target.clone())
             }
-            Content::Prompt(cell) => cell.key.prompt_id.clone(),
+            Content::Prompt(cell) => MaskedTarget::Recovered {
+                request_id: cell.key.prompt_id.clone(),
+            },
         };
         Some(PromptIntent::Masked {
-            request_id,
+            target,
             value: if decline {
                 drop(value);
                 MaskedValue::new()
@@ -202,6 +207,47 @@ pub struct PromptStack {
     draft_empty: bool,
     focused_at: Option<Instant>,
     stopping: HashSet<Option<String>>,
+}
+
+/// The fields that decide whether the top card is still the same prompt.
+fn same_focus(left: &Content, right: &Content) -> bool {
+    match (left, right) {
+        (Content::Masked(before), Content::Masked(after)) => {
+            before.request_id == after.request_id
+                && before.session_id == after.session_id
+                && before.method == after.method
+                && before.fields == after.fields
+                && before.target == after.target
+        }
+        (Content::Prompt(before), Content::Prompt(after)) => {
+            before.key == after.key
+                && before.kind == after.kind
+                && before.command == after.command
+                && before.description == after.description
+                && before.question == after.question
+                && before.choices == after.choices
+                && before.state == after.state
+        }
+        (Content::Connection(before), Content::Connection(after)) => {
+            before.session_id == after.session_id && before.card == after.card
+        }
+        _ => false,
+    }
+}
+
+/// A failed answer reopening the same prompt keeps what was typed.
+fn same_draft(left: &Content, right: &Content) -> bool {
+    match (left, right) {
+        (Content::Prompt(before), Content::Prompt(after)) => {
+            before.key == after.key
+                && before.kind == after.kind
+                && before.command == after.command
+                && before.description == after.description
+                && before.question == after.question
+                && before.choices == after.choices
+        }
+        _ => same_focus(left, right),
+    }
 }
 
 impl Default for PromptStack {
@@ -357,6 +403,7 @@ impl PromptStack {
         now: Instant,
     ) {
         let old_first = self.cards.first().map(|card| card.id.clone());
+        let old_top = self.cards.first().map(|card| card.content.clone());
         self.hidden
             .retain(|key| prompts.iter().any(|cell| cell.key == *key));
         let mut old = std::mem::take(&mut self.cards);
@@ -388,10 +435,17 @@ impl PromptStack {
         for (id, content) in incoming {
             let card = if let Some(index) = old.iter().position(|card| card.id == id) {
                 let mut card = old.remove(index);
-                // A failed answer reopens the same card without discarding typed state.
-                if matches!((&card.content, &content), (Content::Prompt(before), Content::Prompt(after))
+                if !same_draft(&card.content, &content) {
+                    card.secret = MaskedValue::new();
+                    card.secret_chars = 0;
+                    card.text.clear();
+                    card.ticks.clear();
+                    card.sent = false;
+                    card.too_long = None;
+                } else if matches!((&card.content, &content), (Content::Prompt(before), Content::Prompt(after))
                     if matches!(before.state, PromptState::Answering(_)) && after.state == PromptState::Open)
                 {
+                    // A failed answer reopens the same card without discarding typed state.
                     card.sent = false;
                 }
                 card.content = content;
@@ -401,9 +455,15 @@ impl PromptStack {
             };
             self.cards.push(card);
         }
-        if draft_empty
-            && (!self.draft_empty || old_first != self.cards.first().map(|card| card.id.clone()))
-        {
+        let new_first = self.cards.first().map(|card| card.id.clone());
+        let new_top = self.cards.first().map(|card| card.content.clone());
+        let content_changed = old_first.is_some()
+            && old_first == new_first
+            && match (&old_top, &new_top) {
+                (Some(before), Some(after)) => !same_focus(before, after),
+                _ => false,
+            };
+        if draft_empty && (!self.draft_empty || old_first != new_first || content_changed) {
             self.focused_at = Some(now);
         }
         self.draft_empty = draft_empty;
@@ -998,6 +1058,20 @@ impl PromptSection<'_> {
     }
 }
 
+/// One approval-command row. CR and tab stay visible, unlike a line feed or four spaces.
+fn approval_command_row(source: &str) -> String {
+    let mut out = String::new();
+    let mut buf = [0; 4];
+    for c in source.chars() {
+        match c {
+            '\t' => out.push('\u{2409}'),
+            '\r' => out.push('\u{240d}'),
+            other => out.push_str(&sanitize(other.encode_utf8(&mut buf))),
+        }
+    }
+    out
+}
+
 fn add(rows: &mut Vec<Line<'static>>, text: &str, width: u16) {
     if !text.is_empty() {
         rows.extend(wrap_lines(
@@ -1068,13 +1142,12 @@ fn append_approval_command(rows: &mut Vec<Line<'static>>, command: &str, width: 
     let inner = width.saturating_sub(2).max(1);
     let mut shown = Vec::new();
     let mut hidden = 0usize;
-    for source in logical_lines(command) {
+    for source in command.split('\n') {
         let room = DRAWN_LINE_CAP.saturating_sub(shown.len());
         let (wrapped, extra) = if is_plain_ascii(source) {
             capped_ascii(source, inner, room)
         } else {
-            let clean = sanitize(source);
-            capped_wrap(clean.as_ref(), inner, room)
+            capped_wrap(&approval_command_row(source), inner, room)
         };
         for line in wrapped {
             let prefix = if shown.is_empty() { "$ " } else { "  " };
@@ -1156,18 +1229,16 @@ fn capped_wrap(text: &str, width: u16, limit: usize) -> (Vec<Line<'static>>, usi
     if is_plain_ascii(text) {
         return capped_ascii(text, width, limit);
     }
-    let (total, end) = grapheme_rows(text, width, limit);
-    let visible = if end == 0 {
-        String::new()
-    } else {
-        sanitize(&text[..end]).into_owned()
-    };
-    let shown = if visible.is_empty() {
+    let clean = sanitize(text);
+    let (total, end) = grapheme_rows(&clean, width, limit);
+    let mut shown = if end == 0 {
         Vec::new()
     } else {
-        wrap_lines(vec![Line::from(visible)], width)
+        wrap_lines(vec![Line::from(clean[..end].to_owned())], width)
     };
-    let hidden = total.saturating_sub(shown.len());
+    let cut = shown.len() > limit || end < clean.len();
+    shown.truncate(limit);
+    let hidden = total.saturating_sub(shown.len()).max(usize::from(cut));
     (shown, hidden)
 }
 

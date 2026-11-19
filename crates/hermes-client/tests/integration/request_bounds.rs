@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use hermes_client::{Client, Inbound, InboundStream, ServerRequest};
+use hermes_client::{Client, Inbound, InboundStream, RespondError, ServerRequest};
 use serde_json::{Value, json};
 
 use crate::support::peer::Peer;
@@ -116,9 +116,9 @@ async fn open_server_request_flood_stays_bounded_and_never_evicts() {
 }
 
 #[tokio::test]
-async fn duplicate_open_server_request_keeps_one_clean_frame() {
+async fn duplicate_open_server_request_cancels_the_original_slot() {
     guard(async {
-        let (parts, mut peer) = Peer::pair().await;
+        let (parts, peer) = Peer::pair().await;
         let (_client, mut inbound) = Client::start(parts);
         let id = peer
             .server_request("sudo", "s1", json!({"command": "true"}))
@@ -138,20 +138,13 @@ async fn duplicate_open_server_request_keeps_one_clean_frame() {
             .to_string(),
         )
         .await;
-        let second = tokio::time::timeout(Duration::from_millis(400), inbound.next()).await;
-        assert!(second.is_err(), "a duplicate id was delivered");
+        assert!(matches!(inbound.next().await, Some(Inbound::Malformed(_))));
         assert_eq!(peer.json_frames(), before, "a duplicate id wrote a frame");
-        request
-            .responder
-            .respond(&json!({"value": "still-open"}))
-            .await
-            .expect("the original request is still answerable");
-        let answer = peer.recv_json().await;
-        assert_eq!(answer["id"], id);
-        assert_eq!(
-            answer.pointer("/result/value").and_then(Value::as_str),
-            Some("still-open")
-        );
+        assert!(matches!(
+            request.responder.respond(&json!({"value": "later"})).await,
+            Err(RespondError::Cancelled)
+        ));
+        assert_eq!(peer.json_frames(), before);
     })
     .await;
 }

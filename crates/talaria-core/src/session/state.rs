@@ -135,6 +135,8 @@ pub struct SessionState {
     pub(crate) connection_card: Option<ConnectionCard>,
     pub(crate) session_id: SessionId,
     pub(crate) cells: Vec<Cell>,
+    /// Cells pruned from the transcript. Their ids stay allocated.
+    pub(crate) removed_cells: u64,
     pub(crate) final_prefix: usize,
     pub(crate) turn: TurnState,
     pub(crate) turn_start: usize,
@@ -191,6 +193,7 @@ impl SessionState {
             connection_card: None,
             session_id,
             cells: Vec::new(),
+            removed_cells: 0,
             final_prefix: 0,
             turn: TurnState::Idle,
             turn_start: 0,
@@ -416,6 +419,7 @@ impl SessionState {
         CellId::new(
             u64::try_from(self.cells.len())
                 .unwrap_or(u64::MAX)
+                .saturating_add(self.removed_cells)
                 .saturating_add(1),
         )
     }

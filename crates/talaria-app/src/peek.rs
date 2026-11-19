@@ -97,7 +97,8 @@ pub enum CardAnswer {
     },
     /// An empty value means declined.
     Masked {
-        request_id: String,
+        row: RowKey,
+        target: crate::prompts::MaskedTarget,
         value: String,
     },
 }
@@ -286,11 +287,22 @@ impl PeekService {
             )
             .await;
         match result {
-            Ok(value) => serde_json::from_value::<CanonicalSnapshot>(value)
-                .map(OpenedSession::from_snapshot)
-                .map_err(|_| PeekError::Refused {
+            Ok(value) => match serde_json::from_value::<CanonicalSnapshot>(value) {
+                Ok(snapshot)
+                    if crate::sessions::requested_session_matches(
+                        session_id,
+                        &snapshot.session_id,
+                    ) =>
+                {
+                    Ok(OpenedSession::from_snapshot(snapshot))
+                }
+                Ok(_) => Err(PeekError::Refused {
+                    reason: crate::sessions::DIFFERENT_SESSION.to_owned(),
+                }),
+                Err(_) => Err(PeekError::Refused {
                     reason: "the session reply did not decode".to_owned(),
                 }),
+            },
             Err(CallError::Rpc(error)) if error.reason.as_deref() == Some("not_found") => {
                 Err(PeekError::NotFound)
             }
@@ -760,10 +772,30 @@ impl PeekService {
             return Vec::new();
         };
         let event = match intent {
-            CardAnswer::Masked { request_id, value } => {
+            CardAnswer::Masked { row, target, value } => {
+                if session.key != row {
+                    return vec![PromptNotice {
+                        session_id: Some(row.session_id),
+                        text: "could not answer: the request is no longer open".to_owned(),
+                    }];
+                }
+                let crate::prompts::MaskedTarget::Live(target) = target else {
+                    return vec![PromptNotice {
+                        session_id: Some(session.key.session_id.clone()),
+                        text: "could not answer: the request is no longer open".to_owned(),
+                    }];
+                };
+                if target.session_id.as_deref() != Some(session.key.session_id.as_str())
+                    && target.session_id.is_some()
+                {
+                    return vec![PromptNotice {
+                        session_id: Some(session.key.session_id.clone()),
+                        text: "could not answer: the request is no longer open".to_owned(),
+                    }];
+                }
                 return match session
                     .prompts
-                    .answer_masked(&request_id, Zeroizing::new(value))
+                    .answer_masked(&target, Zeroizing::new(value))
                     .await
                 {
                     Ok(()) => {

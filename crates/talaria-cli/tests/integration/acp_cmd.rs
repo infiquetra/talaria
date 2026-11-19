@@ -143,6 +143,115 @@ fn probe_wrong_version_exits_one() {
 }
 
 #[test]
+fn probe_failure_diagnostics_are_sanitized() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("temporary directory");
+    let child = tmp.path().join("child.py");
+    let child_payload = diagnostic("child-stderr");
+    let child_literal =
+        serde_json::to_string(&format!("{child_payload}\n")).expect("child literal");
+    std::fs::write(
+        &child,
+        format!(
+            "#!/usr/bin/env python3\nimport sys\nsys.stderr.write({child_literal})\nsys.stderr.flush()\nraise SystemExit(1)\n"
+        ),
+    )
+    .expect("child script");
+    std::fs::set_permissions(&child, std::fs::Permissions::from_mode(0o755)).expect("child mode");
+    let broken = tmp.path().join("broken");
+    std::fs::write(&broken, "#!/no/such/talaria-interp\n").expect("broken script");
+    std::fs::set_permissions(&broken, std::fs::Permissions::from_mode(0o755)).expect("broken mode");
+    let spawn_payload = diagnostic("spawn-error");
+    #[derive(serde::Serialize)]
+    struct Root {
+        acp: Agents,
+    }
+    #[derive(serde::Serialize)]
+    struct Agents {
+        agents: Vec<Agent>,
+    }
+    #[derive(serde::Serialize)]
+    struct Agent {
+        id: &'static str,
+        display_name: String,
+        command: String,
+    }
+    let document = toml::to_string(&Root {
+        acp: Agents {
+            agents: vec![
+                Agent {
+                    id: "child",
+                    display_name: "Child".into(),
+                    command: child.display().to_string(),
+                },
+                Agent {
+                    id: "spawn",
+                    display_name: spawn_payload,
+                    command: broken.display().to_string(),
+                },
+            ],
+        },
+    })
+    .expect("configuration text");
+    config(tmp.path(), &document);
+    let out = Command::new(env!("CARGO_BIN_EXE_talaria"))
+        .args(["acp", "agents", "--probe"])
+        .env("HOME", tmp.path())
+        .env("HERMES_HOME", tmp.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("probe command");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("probe failed"),
+        "diagnostic missing: {stderr:?}"
+    );
+    assert_marked(&stderr, "child-stderr");
+    assert_marked(&stderr, "spawn-error");
+    assert!(
+        !stderr.contains('\u{240a}'),
+        "newline was replaced with a stand-in: {stderr:?}"
+    );
+    for character in stderr.chars() {
+        let code = u32::from(character);
+        if character == '\n' {
+            continue;
+        }
+        assert!(
+            code > 0x1f
+                && code != 0x7f
+                && !(0x80..=0x9f).contains(&code)
+                && !matches!(
+                    character,
+                    '\u{2028}' | '\u{2029}' | '\u{200b}' | '\u{200d}' | '\u{2060}' | '\u{2800}'
+                ),
+            "raw control U+{code:04X} in {stderr:?}"
+        );
+    }
+    assert!(!stderr.contains('\t'), "raw tab in {stderr:?}");
+}
+
+fn diagnostic(marker: &str) -> String {
+    format!(
+        "{marker}\u{200b}\u{200d}\u{2060}\u{2800}\tstop\n{esc}[2J\n{esc}]52;c;dGVzdA==\u{7}\n\u{9b}2J\nbefore\rafter\n\u{2028}line\u{2029}sep",
+        esc = '\u{1b}'
+    )
+}
+
+fn assert_marked(stderr: &str, marker: &str) {
+    let expected = format!(
+        "{marker}\u{2039}U+200B\u{203a}\u{2039}U+200D\u{203a}\u{2039}U+2060\u{203a}\u{2039}U+2800\u{203a}    stop\n\u{241b}[2J\n\u{241b}]52;c;dGVzdA==\u{2407}\n\u{2039}U+009B\u{203a}2J\nbefore\u{240d}after\n\u{2039}U+2028\u{203a}line\u{2039}U+2029\u{203a}sep"
+    );
+    assert!(
+        stderr.contains(&expected),
+        "{marker} diagnostic was not sanitized on its own: {stderr:?}"
+    );
+}
+
+#[test]
 fn unreadable_config_exits_two() {
     let tmp = tempfile::tempdir().expect("temporary directory");
     config(tmp.path(), "[acp\n");

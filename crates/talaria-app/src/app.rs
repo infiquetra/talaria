@@ -118,7 +118,10 @@ use crate::mutation::MutationClient;
 use crate::panes::{CommandRunner, PaneEnv, PaneOutcome, PaneSettings};
 use crate::peek::FleetSink;
 use crate::permissions::PermissionsService;
-use crate::prompts::{MaskedRequestInfo, PromptService, ServerRequestPolicy, policy_for};
+use crate::prompts::{
+    LiveMaskedTarget, MaskedRequestInfo, MaskedTarget, PromptService, ServerRequestPolicy,
+    policy_for,
+};
 use crate::queue::{QueueCommand, QueueService, queue_command, steer_command};
 pub use crate::rebuild::{RebuildMode, rebuild_foreground};
 use crate::rebuild::{final_prefix, recover_retained, recovered};
@@ -321,7 +324,7 @@ pub enum UserAction {
     },
     /// A masked card was answered; an empty value declines it.
     Masked {
-        request_id: String,
+        target: MaskedTarget,
         value: Zeroizing<String>,
     },
     /// A line the screen wants shown.
@@ -2270,7 +2273,7 @@ pub enum AppEffect {
         note: Option<(PromptKey, String)>,
     },
     AnswerMasked {
-        request_id: String,
+        target: LiveMaskedTarget,
         value: Zeroizing<String>,
     },
     AnswerRecovered {
@@ -6963,19 +6966,22 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             route(state, produced, note)
         }
         UserAction::Clarify { key, answer } => reduce(state, Event::AnswerClarify { key, answer }),
-        UserAction::Masked { request_id, value } => {
-            if state.opened.as_ref().is_some_and(|opened| {
-                opened.state.open_prompts().any(|prompt| {
-                    prompt.kind == PromptKind::ServerRequest
-                        && prompt.state == PromptState::Open
-                        && prompt.key.prompt_id == request_id
-                })
-            }) {
-                vec![PromptService::answer_recovered(&request_id, value)]
-            } else {
-                vec![AppEffect::AnswerMasked { request_id, value }]
+        UserAction::Masked { target, value } => match target {
+            MaskedTarget::Recovered { request_id } => {
+                if state.opened.as_ref().is_some_and(|opened| {
+                    opened.state.open_prompts().any(|prompt| {
+                        prompt.kind == PromptKind::ServerRequest
+                            && prompt.state == PromptState::Open
+                            && prompt.key.prompt_id == request_id
+                    })
+                }) {
+                    vec![PromptService::answer_recovered(&request_id, value)]
+                } else {
+                    Vec::new()
+                }
             }
-        }
+            MaskedTarget::Live(target) => vec![AppEffect::AnswerMasked { target, value }],
+        },
         UserAction::Notice(text) => vec![notice_lines(&text)],
         UserAction::Queue(intent) => queue_intent(state, intent),
         UserAction::Palette(input) => palette_input(state, input),
@@ -8895,6 +8901,21 @@ fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     effects
 }
 
+/// The foreground owns requests for its opened and retained sessions, as well as requests
+/// without a session id.
+fn foreground_owns_request(state: &AppState, session_id: Option<&str>) -> bool {
+    match session_id.map(str::trim).filter(|id| !id.is_empty()) {
+        None => true,
+        Some(id) => {
+            state
+                .opened
+                .as_ref()
+                .is_some_and(|opened| opened.session_id == id)
+                || retained_key(state, id).is_some()
+        }
+    }
+}
+
 /// The `skin.changed` event in this link event, as `(params, replayed)`.
 fn skin_event(event: &LinkEvent) -> Option<(&Value, bool)> {
     let LinkEvent::Inbound {
@@ -9346,6 +9367,12 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         None,
                     );
                 }
+                // A same-profile workflow reuses this socket. Answering its request, including
+                // with `-32601`, settles the prompt for every viewer.
+                if !foreground_owns_request(state, request.session_id.as_deref()) {
+                    request.responder.ignore();
+                    return Vec::new();
+                }
                 vec![AppEffect::ServerRequest(request)]
             }
             Inbound::Malformed(_) | Inbound::Closed(_) => Vec::new(),
@@ -9396,6 +9423,64 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             effects.append(&mut closing);
             effects
         }
+    }
+}
+
+#[cfg(test)]
+mod link_event_prompt_tests {
+    use super::*;
+    use hermes_client::{Generation, Responder};
+    use hermes_contract::{schemas::SudoRequestParams, server_requests};
+
+    fn state_with_retained_session() -> AppState {
+        let open = |id: &str| {
+            let mut snapshot: hermes_contract::schemas::CanonicalSnapshot =
+                serde_json::from_str(include_str!("../tests/data/running_turn.json"))
+                    .expect("snapshot");
+            snapshot.session_id = id.into();
+            snapshot.stored_session_id = id.into();
+            OpenedSession::from_snapshot(snapshot)
+        };
+        let mut state = AppState::new("prompt-owner");
+        state.opened = Some(open("s2"));
+        state.retained_sessions.insert(
+            RowKey {
+                profile: state.profile.clone(),
+                session_id: "s1".into(),
+            },
+            open("s1"),
+        );
+        state
+    }
+
+    fn sudo_request(session_id: &str) -> LinkEvent {
+        LinkEvent::Inbound {
+            item: Inbound::ServerRequest(ServerRequest {
+                generation: Generation(0),
+                id: "srq-1".into(),
+                session_id: Some(session_id.into()),
+                request: server_requests::ServerRequest::Sudo(SudoRequestParams {
+                    command: "true".into(),
+                    session_id: session_id.into(),
+                }),
+                responder: Responder::detached(Arc::default()),
+            }),
+            replayed: false,
+        }
+    }
+
+    #[test]
+    fn retained_session_request_reaches_the_prompt_service() {
+        let effects = link_event(&mut state_with_retained_session(), sudo_request("s1"));
+        assert!(
+            matches!(effects.as_slice(), [AppEffect::ServerRequest(request)] if request.session_id.as_deref() == Some("s1"))
+        );
+    }
+
+    #[test]
+    fn request_for_an_unknown_session_is_still_ignored() {
+        let effects = link_event(&mut state_with_retained_session(), sudo_request("s9"));
+        assert!(effects.is_empty());
     }
 }
 
@@ -10862,6 +10947,9 @@ fn open_failure(error: OpenError, launch: &Launch) -> LaunchFailure {
         (OpenError::NotInFolder { .. }, _) => failure::nothing_to_continue(),
         (OpenError::FolderUnknown, _) => failure::folder_unknown(),
         (OpenError::Refused { reason }, _) => failure::refusal(&reason),
+        (OpenError::MismatchedSession { .. }, _) => {
+            failure::link_failure("the gateway returned a snapshot for a different session")
+        }
         (OpenError::Unknown, StartMode::New) => failure::create_lost_twice(),
         (OpenError::Unknown, _) => {
             failure::link_failure("the connection dropped before Hermes answered")
@@ -12589,7 +12677,6 @@ fn apply<S: Screen>(
                     run,
                     crate::workflow_progress::WorkflowConnection {
                         home: state.hermes_home.clone(),
-                        foreground_profile: state.profile.clone(),
                         fallback: client,
                         cache: executor.workflow_connections.clone(),
                     },
@@ -13011,12 +13098,12 @@ fn apply<S: Screen>(
                 };
                 executor.queue_call(client, SessionId::new(&opened.session_id), effect);
             }
-            AppEffect::AnswerMasked { request_id, value } => {
+            AppEffect::AnswerMasked { target, value } => {
                 let Some(prompts) = &state.prompts else {
                     continue;
                 };
                 executor.prompt_task(prompts, move |prompts| async move {
-                    let result = prompts.lock().await.answer_masked(&request_id, value).await;
+                    let result = prompts.lock().await.answer_masked(&target, value).await;
                     let notices = match result {
                         Ok(()) => Vec::new(),
                         Err(_) => vec![
@@ -13074,11 +13161,19 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::ServerRequest(request) => {
+                if !foreground_owns_request(state, request.session_id.as_deref()) {
+                    request.responder.ignore();
+                    continue;
+                }
                 let Some(prompts) = &state.prompts else {
                     continue;
                 };
                 executor.prompt_task(prompts, move |prompts| async move {
-                    let notices = prompts.lock().await.on_server_request(request).await;
+                    let notices = prompts
+                        .lock()
+                        .await
+                        .on_server_request_for_session(request, None)
+                        .await;
                     (Vec::new(), notice_texts(notices))
                 });
             }
