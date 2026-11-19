@@ -209,6 +209,7 @@ pub struct AttachmentsState {
     clipboard_started: Option<Instant>,
     clipboard_hint_shown: bool,
     home: PathBuf,
+    workspace: PathBuf,
 }
 
 impl AttachmentsState {
@@ -225,12 +226,18 @@ impl AttachmentsState {
             clipboard_started: None,
             clipboard_hint_shown: false,
             home: PathBuf::from("~"),
+            workspace: PathBuf::new(),
         }
     }
 
     /// Supply the operating-system home from application startup.
     pub fn set_home(&mut self, home: PathBuf) {
         self.home = home;
+    }
+
+    /// Supply the folder `@file` references are resolved against.
+    pub fn set_workspace(&mut self, workspace: PathBuf) {
+        self.workspace = workspace;
     }
 
     /// The configured collapse thresholds.
@@ -277,6 +284,16 @@ impl AttachmentsState {
                 Action::CompletionPrev => self.mention.prev(),
                 Action::CompletionClose | Action::Interrupt => self.mention.dismiss(),
                 Action::CompletionAccept | Action::Submit if self.mention.has_items() => {
+                    let selected = self.mention.selected().map(|item| item.text.clone());
+                    let refused = selected.is_some_and(|text| {
+                        file_reference_is_credential(&text, &self.workspace, &self.home)
+                    });
+                    if refused {
+                        self.mention.close();
+                        return KeyRoute::Consumed(vec![AttachmentEffect::Notice(
+                            CREDENTIAL_FILE.to_owned(),
+                        )]);
+                    }
                     if let (Some(query), Some(item)) =
                         (self.mention.query(), self.mention.selected())
                     {
@@ -670,6 +687,9 @@ impl AttachmentsState {
 
     /// Expand the draft. The error is the notice and the draft stays.
     pub fn on_submit(&mut self, draft: &str) -> Result<Expanded, String> {
+        if file_reference_is_credential(draft, &self.workspace, &self.home) {
+            return Err(CREDENTIAL_FILE.to_owned());
+        }
         let expanded = self.chips.expand(draft).map_err(|error| match error {
             ExpandError::Pending { .. } => "An attachment is still uploading; press Enter again when it finishes.".into(),
             ExpandError::MissingPaste { label } => {
@@ -1137,9 +1157,7 @@ fn check_file_for_attach(path: &Path, home: &Path) -> Result<String, String> {
         return Err("Talaria attaches files up to 50 MiB.".to_owned());
     }
     verify_target(path, &target, home)?;
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| unreadable(path))
+    gateway_attach_path(&target, home)
 }
 
 fn inspect_file(
@@ -1226,17 +1244,17 @@ fn credential_path(path: &Path, home: &Path) -> bool {
 
 /// Env files and private-key material are credential names in any directory.
 fn env_or_private_key_name(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+    let Some(name) = path.file_name() else {
         return false;
     };
-    if name == ".env" || name == ".envrc" || name.starts_with(".env.") {
+    let name = ascii_lower(name.as_encoded_bytes());
+    if name.as_slice() == b".env" || name.as_slice() == b".envrc" || name.starts_with(b".env.") {
         return true;
     }
-    let name = name.to_ascii_lowercase();
     matches!(
-        name.as_str(),
-        "id_rsa" | "id_ed25519" | "id_ecdsa" | "id_dsa"
-    ) || [".pem", ".key", ".p12", ".pfx"]
+        name.as_slice(),
+        b"id_rsa" | b"id_ed25519" | b"id_ecdsa" | b"id_dsa"
+    ) || [b".pem".as_slice(), b".key", b".p12", b".pfx"]
         .iter()
         .any(|extension| name.ends_with(extension))
 }
@@ -1279,13 +1297,225 @@ fn home_credential(path: &Path, home: &Path) -> bool {
         .any(|directory| under_directory(path, &home.join(directory)))
         || FILES.iter().any(|file| {
             let denied = home.join(file);
-            path == denied || std::fs::canonicalize(&denied).is_ok_and(|denied| path == denied)
+            path_eq_ci(path, &normalize_path(&denied))
+                || std::fs::canonicalize(&denied).is_ok_and(|denied| path_eq_ci(path, &denied))
         })
 }
 
 fn under_directory(path: &Path, directory: &Path) -> bool {
-    path.starts_with(normalize_path(directory))
-        || std::fs::canonicalize(directory).is_ok_and(|directory| path.starts_with(directory))
+    let directory = normalize_path(directory);
+    path_has_prefix_ci(path, &directory)
+        || std::fs::canonicalize(&directory)
+            .is_ok_and(|directory| path_has_prefix_ci(path, &directory))
+}
+
+fn ascii_lower(bytes: &[u8]) -> Vec<u8> {
+    bytes.iter().map(u8::to_ascii_lowercase).collect()
+}
+
+fn component_key(component: std::path::Component<'_>) -> Vec<u8> {
+    ascii_lower(component.as_os_str().as_encoded_bytes())
+}
+
+fn path_has_prefix_ci(path: &Path, prefix: &Path) -> bool {
+    let prefix: Vec<Vec<u8>> = prefix.components().map(component_key).collect();
+    if prefix.is_empty() {
+        return false;
+    }
+    let path: Vec<Vec<u8>> = path.components().map(component_key).collect();
+    path.len() >= prefix.len()
+        && path
+            .iter()
+            .zip(prefix.iter())
+            .all(|(left, right)| left == right)
+}
+
+fn path_eq_ci(path: &Path, other: &Path) -> bool {
+    let path: Vec<Vec<u8>> = path.components().map(component_key).collect();
+    let other: Vec<Vec<u8>> = other.components().map(component_key).collect();
+    path == other
+}
+
+fn file_reference_is_credential(text: &str, workspace: &Path, home: &Path) -> bool {
+    file_reference_values(text)
+        .iter()
+        .any(|value| credential_reference(Path::new(value), workspace, home))
+}
+
+fn credential_reference(path: &Path, workspace: &Path, home: &Path) -> bool {
+    let lexical = absolute_path(path, workspace, home);
+    credential_path(&lexical, home)
+        || std::fs::canonicalize(&lexical).is_ok_and(|target| credential_path(&target, home))
+}
+
+fn file_reference_values(text: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut consumed = 0;
+    for (at, ch) in text.char_indices() {
+        if at < consumed || ch != '@' {
+            continue;
+        }
+        if text[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '/')
+        {
+            continue;
+        }
+        let tail = &text[at + 1..];
+        let Some(value) = tail.strip_prefix("file:") else {
+            continue;
+        };
+        if value.is_empty() || value.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let (raw, len) = take_reference_value(value);
+        values.push(unquote_reference(raw).to_owned());
+        consumed = at + "file:".len() + 1 + len;
+    }
+    values
+}
+
+fn take_reference_value(value: &str) -> (&str, usize) {
+    let mut value_len = value.find(char::is_whitespace).unwrap_or(value.len());
+    if let Some(quote) = value
+        .chars()
+        .next()
+        .filter(|ch| ['`', '"', '\''].contains(ch))
+        && let Some(end) = value[1..]
+            .find(quote)
+            .map(|end| end + 1)
+            .filter(|end| *end > 1 && !value[1..*end].contains('\n'))
+    {
+        value_len = end + 1;
+    }
+    (&value[..value_len], value_len)
+}
+
+fn unquote_reference(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2 {
+        let quote = bytes[0];
+        if matches!(quote, b'`' | b'"' | b'\'') && bytes[bytes.len() - 1] == quote {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
+}
+
+/// The pathname Hermes `file.attach` will open after strip, quote removal, and expansion.
+fn gateway_attach_path(target: &Path, home: &Path) -> Result<String, String> {
+    let Some(serialized) = target.to_str() else {
+        return Err(unreadable(target));
+    };
+    let reinterpreted = hermes_reinterpreted_path(serialized, home);
+    if hermes_pathname_unstable(serialized)
+        || reinterpreted != serialized
+        || credential_path(Path::new(&reinterpreted), home)
+    {
+        return Err(CREDENTIAL_FILE.to_owned());
+    }
+    Ok(serialized.to_owned())
+}
+
+fn hermes_pathname_unstable(path: &str) -> bool {
+    path != path.trim()
+        || path.chars().any(char::is_control)
+        || path.chars().any(|ch| matches!(ch, '"' | '\'' | '`' | '\\'))
+        || path.split('/').any(|segment| segment.starts_with('~'))
+        || has_env_syntax(path)
+}
+
+fn has_env_syntax(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.iter().enumerate().any(|(index, byte)| {
+        if *byte != b'$' {
+            return false;
+        }
+        match bytes.get(index + 1).copied() {
+            Some(b'{') => true,
+            Some(next) => next.is_ascii_alphabetic() || next == b'_',
+            None => false,
+        }
+    })
+}
+
+fn hermes_reinterpreted_path(raw: &str, home: &Path) -> String {
+    let mut token = raw.trim().to_owned();
+    if token.len() >= 2 {
+        let bytes = token.as_bytes();
+        let quote = bytes[0];
+        if matches!(quote, b'"' | b'\'') && bytes[token.len() - 1] == quote {
+            token = token[1..token.len() - 1].trim().to_owned();
+        }
+    }
+    token = token.replace("\\ ", " ");
+    token = expand_user(&token, home);
+    expand_shell_vars(&token)
+}
+
+fn expand_user(token: &str, home: &Path) -> String {
+    if token == "~" {
+        return home.to_str().unwrap_or("").to_owned();
+    }
+    if let Some(rest) = token.strip_prefix("~/") {
+        return home.join(rest).to_str().unwrap_or("").to_owned();
+    }
+    token.to_owned()
+}
+
+fn expand_shell_vars(token: &str) -> String {
+    let mut out = String::new();
+    let mut rest = token;
+    while let Some(dollar) = rest.find('$') {
+        out.push_str(&rest[..dollar]);
+        let after = &rest[dollar + 1..];
+        if let Some(body) = after.strip_prefix('{')
+            && let Some((name, tail)) = body.split_once('}')
+            && env_name(name)
+        {
+            match std::env::var(name) {
+                Ok(value) => out.push_str(&value),
+                Err(_) => {
+                    out.push_str("${");
+                    out.push_str(name);
+                    out.push('}');
+                }
+            }
+            rest = tail;
+            continue;
+        }
+        let ident_len = after
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .map(char::len_utf8)
+            .sum::<usize>();
+        let name = &after[..ident_len];
+        if env_name(name) {
+            match std::env::var(name) {
+                Ok(value) => out.push_str(&value),
+                Err(_) => {
+                    out.push('$');
+                    out.push_str(name);
+                }
+            }
+            rest = &after[ident_len..];
+            continue;
+        }
+        out.push('$');
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn normalize_path(path: &Path) -> PathBuf {

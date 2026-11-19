@@ -9,16 +9,24 @@ Dropping `Library/Keychains/login.keychain-db` attached it as an ordinary file.
 `attachments_service::credential_denylist_matches_stores_keys_and_env_names`
 then refused that path, each nested store path, case-insensitive `.pem`, `.key`,
 `.p12` and `.pfx` names, the generated `.env.<name>[.local]` matrix, and a
-symlink whose canonical target sits in a store.
+symlink whose canonical target sits in a store. A follow-up review still
+attached `.ENV.PROD`, a non-UTF-8 `.env.prod` byte, `library/keychains`, a
+UTF-8 symlink onto that byte name, a trailing-space path Hermes would strip,
+and an accepted `@file:.env.prod` completion. Those rows now refuse as well.
 
-**Mechanism.** A basename is credential material when it is `.env`, `.envrc`, or
-starts with `.env.`, or when its lowercased name is `id_rsa`, `id_ed25519`,
-`id_ecdsa`, `id_dsa`, or ends in `.pem`, `.key`, `.p12`, or `.pfx`. A home path
-is a store when it is inside `Library/Keychains`, `.password-store`,
-`.config/op`, `.config/1password`, `.local/share/keyrings`, `.config/age`,
-`.config/sops`, or `.config/git/credentials`, or when it is `.git-credentials`.
-The check also runs on the canonical path. `HERMES_HOME` and the inode check
-stay as they were.
+**Mechanism.** A basename is credential material, in any directory and on the
+raw filename bytes, when its ASCII-lowercased bytes are `.env`, `.envrc`, or
+start with `.env.`, or when they are `id_rsa`, `id_ed25519`, `id_ecdsa`,
+`id_dsa`, or end in `.pem`, `.key`, `.p12`, or `.pfx`. A home path is a store
+when a component-wise ASCII-case-insensitive prefix matches `Library/Keychains`,
+`.password-store`, `.config/op`, `.config/1password`, `.local/share/keyrings`,
+`.config/age`, `.config/sops`, or `.config/git/credentials`, or when the whole
+path matches `.git-credentials` the same way. The check also runs on the
+canonical path. `file.attach` sends that canonical path only when Hermes's
+strip, quote removal, and `~` / `$` expansion would still name it and would not
+name a credential. Accepted `@file` completions and submitted drafts use the
+same check against the active workspace. `HERMES_HOME` and the inode check stay
+as they were.
 
 **Generalizable rule.** When a security control is a list, state the
 machine-checkable property the list samples and assert the list against that

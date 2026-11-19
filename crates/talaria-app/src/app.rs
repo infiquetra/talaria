@@ -7022,6 +7022,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 turn_running: state.view().turn_running(),
                 palette_open: state.palette.open,
             };
+            state
+                .attachments
+                .set_workspace(active_attachment_workspace(state));
             match state
                 .attachments
                 .on_key(Some(action), &state.draft, caret, ctx, now)
@@ -8796,20 +8799,25 @@ fn submit_prose(state: &mut AppState, text: String) -> Vec<AppEffect> {
     }
     if state.opened.is_none() {
         return match hold_prompt(state, &text) {
-            Ok(()) => match state.attachments.on_submit(&text) {
-                Ok(expanded) => {
-                    let media = state.attachments.chips.take_draft_payloads(&text);
-                    state
-                        .held_attachments
-                        .push_back(SubmittedAttachments { expanded, media });
-                    clear_submitted_draft(state);
-                    Vec::new()
+            Ok(()) => {
+                state
+                    .attachments
+                    .set_workspace(active_attachment_workspace(state));
+                match state.attachments.on_submit(&text) {
+                    Ok(expanded) => {
+                        let media = state.attachments.chips.take_draft_payloads(&text);
+                        state
+                            .held_attachments
+                            .push_back(SubmittedAttachments { expanded, media });
+                        clear_submitted_draft(state);
+                        Vec::new()
+                    }
+                    Err(notice) => {
+                        state.held.pop_back();
+                        vec![notice_lines(&notice), AppEffect::LoadDraft(text)]
+                    }
                 }
-                Err(notice) => {
-                    state.held.pop_back();
-                    vec![notice_lines(&notice), AppEffect::LoadDraft(text)]
-                }
-            },
+            }
             Err(notice) => vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
         };
     }
@@ -8836,7 +8844,25 @@ fn side_request(state: &mut AppState, draft: String, event: Event) -> Vec<AppEff
     reduce(state, event)
 }
 
+fn active_attachment_workspace(state: &AppState) -> PathBuf {
+    state
+        .folder
+        .cwd
+        .as_deref()
+        .or_else(|| {
+            state
+                .opened
+                .as_ref()
+                .and_then(|opened| opened.info.cwd.as_deref())
+        })
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.attachment_folder.clone())
+}
+
 fn send_text(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    state
+        .attachments
+        .set_workspace(active_attachment_workspace(state));
     let expanded = match state.attachments.on_submit(&text) {
         Ok(expanded) => expanded,
         Err(notice) => return vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
@@ -15026,6 +15052,9 @@ async fn run_inner<S: Screen>(
         .unwrap_or_default();
     state.attachments.set_home(state.attachment_home.clone());
     state.attachment_folder = launch.folder.clone();
+    state
+        .attachments
+        .set_workspace(state.attachment_folder.clone());
     state.key_bindings = setup.keys.clone();
     state.toggle_label = screen.toggle_label();
     state.interrupt_label = screen.interrupt_label();
