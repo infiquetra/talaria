@@ -173,6 +173,8 @@ fn masked_request_opens_and_closes_a_need() {
         id: "masked-1".to_owned(),
         token: "masked-1".to_owned(),
         generation: 1,
+        instance_id: 1,
+        service_id: 1,
         session_id: Some("local-session-1".to_owned()),
         kind: MaskedKind::Sudo,
         fields: vec![("command", "ls".to_owned())],
@@ -221,6 +223,8 @@ fn local_masked_answer_closes_need_through_update() {
         id: "masked-1".to_owned(),
         token: "masked-1".to_owned(),
         generation: 1,
+        instance_id: 1,
+        service_id: 1,
         session_id: Some(mock_gateway::SESSION_ID.to_owned()),
         kind: MaskedKind::Sudo,
         fields: vec![("command", command)],
@@ -240,7 +244,15 @@ fn local_masked_answer_closes_need_through_update() {
     let effects = update(
         &mut state,
         AppMessage::User(UserAction::Masked {
-            request_id: "masked-1".to_owned(),
+            target: talaria_app::prompts::MaskedTarget::Live(
+                talaria_app::prompts::LiveMaskedTarget {
+                    token: "masked-1".to_owned(),
+                    session_id: Some(mock_gateway::SESSION_ID.to_owned()),
+                    generation: 1,
+                    instance_id: 1,
+                    service_id: 1,
+                },
+            ),
             value: Zeroizing::new(String::new()),
         }),
     );

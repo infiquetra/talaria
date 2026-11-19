@@ -6,10 +6,8 @@
 //! in-process gateway. The sequence always ends by declining every masked request that is still
 //! open. Then every request id is checked against the response frames the gateway read.
 //!
-//! The client does not cancel open server requests when a connection is replaced, and a
-//! responder that is dropped while it is still undecided makes the client write an error answer
-//! on the new connection. So a masked request orphaned by a replaced connection must be given
-//! up without a frame, and that is part of what this test pins.
+//! A masked request orphaned by a replaced connection is given up without a frame, and that is
+//! part of what this test pins.
 
 use crate::mock_gateway;
 
@@ -19,7 +17,7 @@ use hermes_client::{Inbound, InboundStream, ServerRequest};
 use mock_gateway::{KNOWN_SERVER_REQUEST_KINDS, MockGateway};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRunner};
-use talaria_app::prompts::PromptService;
+use talaria_app::prompts::{LiveMaskedTarget, PromptService};
 use zeroize::Zeroizing;
 
 /// The four kinds that become masked cards. Written out here so the test does not depend on the
@@ -73,6 +71,7 @@ struct Tracked {
     id: String,
     kind: &'static str,
     fate: Fate,
+    target: Option<LiveMaskedTarget>,
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {
@@ -188,7 +187,17 @@ async fn drive(ops: Vec<Op>) {
                 } else {
                     Fate::Refused
                 };
-                tracked.push(Tracked { id, kind, fate });
+                let target = service
+                    .masked_requests()
+                    .into_iter()
+                    .find(|info| info.id == id)
+                    .map(|info| info.target());
+                tracked.push(Tracked {
+                    id,
+                    kind,
+                    fate,
+                    target,
+                });
             }
             Op::Cancel { pick, reason } => {
                 let chosen = choose(&tracked, &[Fate::Open], pick).or_else(|| {
@@ -216,22 +225,27 @@ async fn drive(ops: Vec<Op>) {
                     } else {
                         Zeroizing::new(format!("typed-value-{index}"))
                     };
-                    let result = service.answer_masked(&tracked[index].id, value).await;
+                    let target = tracked[index].target.clone().expect("open card");
+                    let result = service.answer_masked(&target, value).await;
                     assert!(result.is_ok(), "answering an open masked request failed");
                     tracked[index].fate = Fate::Answered;
                 }
             }
             Op::AnswerAgain { pick } => {
-                if let Some(index) = choose(&tracked, &[Fate::Answered, Fate::Refused], pick) {
+                if let Some(index) = choose(&tracked, &[Fate::Answered, Fate::Refused], pick)
+                    && let Some(target) = tracked[index].target.clone()
+                {
                     let _result = service
-                        .answer_masked(&tracked[index].id, Zeroizing::new("again".to_owned()))
+                        .answer_masked(&target, Zeroizing::new("again".to_owned()))
                         .await;
                 }
             }
             Op::AnswerStale { pick } => {
-                if let Some(index) = choose(&tracked, &[Fate::Withdrawn, Fate::Orphaned], pick) {
+                if let Some(index) = choose(&tracked, &[Fate::Withdrawn, Fate::Orphaned], pick)
+                    && let Some(target) = tracked[index].target.clone()
+                {
                     let _result = service
-                        .answer_masked(&tracked[index].id, Zeroizing::new("late".to_owned()))
+                        .answer_masked(&target, Zeroizing::new("late".to_owned()))
                         .await;
                 }
             }
@@ -251,8 +265,9 @@ async fn drive(ops: Vec<Op>) {
     // The drain: decline every masked request that is still open.
     for entry in &mut tracked {
         if entry.fate == Fate::Open {
+            let target = entry.target.clone().expect("open card");
             let result = service
-                .answer_masked(&entry.id, Zeroizing::new(String::new()))
+                .answer_masked(&target, Zeroizing::new(String::new()))
                 .await;
             assert!(result.is_ok(), "declining an open masked request failed");
             entry.fate = Fate::Answered;

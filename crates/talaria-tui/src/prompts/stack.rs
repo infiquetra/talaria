@@ -10,7 +10,8 @@ use talaria_core::session::{
 };
 
 use super::{
-    KeyOutcome, MaskedValue, MaskedView, PromptIntent, display_choices, multi_select_answer,
+    KeyOutcome, MaskedTarget, MaskedValue, MaskedView, PromptIntent, display_choices,
+    multi_select_answer,
 };
 use crate::history::{sanitize, wrap_lines};
 use crate::keys::{Key, KeyCode, KeyKind};
@@ -25,12 +26,14 @@ enum Identity {
     Masked(String),
 }
 
+#[derive(Clone)]
 enum Content {
     Connection(ConnectionContent),
     Prompt(PromptCell),
     Masked(MaskedView),
 }
 
+#[derive(Clone)]
 struct ConnectionContent {
     card: ConnectionCard,
     session_id: String,
@@ -112,16 +115,18 @@ impl Card {
     fn masked_answer(&mut self, decline: bool) -> Option<PromptIntent> {
         let value = std::mem::replace(&mut self.secret, MaskedValue::new());
         self.secret_chars = 0;
-        let request_id = match &self.content {
+        let target = match &self.content {
             Content::Connection(_) => return None,
             Content::Masked(view) => {
                 self.sent = true;
-                view.request_id.clone()
+                MaskedTarget::Live(view.target.clone())
             }
-            Content::Prompt(cell) => cell.key.prompt_id.clone(),
+            Content::Prompt(cell) => MaskedTarget::Recovered {
+                request_id: cell.key.prompt_id.clone(),
+            },
         };
         Some(PromptIntent::Masked {
-            request_id,
+            target,
             value: if decline {
                 drop(value);
                 MaskedValue::new()
@@ -201,39 +206,44 @@ pub struct PromptStack {
     stopping: HashSet<Option<String>>,
 }
 
-fn content_fingerprint(content: &Content) -> String {
-    match content {
-        Content::Masked(view) => {
-            let mut text = format!(
-                "masked\u{1f}{}\u{1f}{}\u{1f}{}",
-                view.request_id,
-                view.session_id.as_deref().unwrap_or(""),
-                view.method
-            );
-            for (name, value) in &view.fields {
-                text.push('\u{1e}');
-                text.push_str(name);
-                text.push('\u{1f}');
-                text.push_str(value);
-            }
-            text
+/// The fields that decide whether the top card is still the same prompt.
+fn same_focus(left: &Content, right: &Content) -> bool {
+    match (left, right) {
+        (Content::Masked(before), Content::Masked(after)) => {
+            before.request_id == after.request_id
+                && before.session_id == after.session_id
+                && before.method == after.method
+                && before.fields == after.fields
+                && before.target == after.target
         }
-        Content::Prompt(cell) => format!(
-            "prompt\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{:?}",
-            cell.key.session_id.as_str(),
-            cell.key.prompt_id,
-            cell.key.execution_generation,
-            cell.kind,
-            cell.command.as_deref().unwrap_or(""),
-            cell.description.as_deref().unwrap_or(""),
-            cell.question.as_deref().unwrap_or(""),
-            cell.choices.join("\u{1f}"),
-            cell.state
-        ),
-        Content::Connection(connection) => format!(
-            "connection\u{1f}{}\u{1f}{}\u{1f}{:?}",
-            connection.card.op_id, connection.session_id, connection.card
-        ),
+        (Content::Prompt(before), Content::Prompt(after)) => {
+            before.key == after.key
+                && before.kind == after.kind
+                && before.command == after.command
+                && before.description == after.description
+                && before.question == after.question
+                && before.choices == after.choices
+                && before.state == after.state
+        }
+        (Content::Connection(before), Content::Connection(after)) => {
+            before.session_id == after.session_id && before.card == after.card
+        }
+        _ => false,
+    }
+}
+
+/// A failed answer reopening the same prompt keeps what was typed.
+fn same_draft(left: &Content, right: &Content) -> bool {
+    match (left, right) {
+        (Content::Prompt(before), Content::Prompt(after)) => {
+            before.key == after.key
+                && before.kind == after.kind
+                && before.command == after.command
+                && before.description == after.description
+                && before.question == after.question
+                && before.choices == after.choices
+        }
+        _ => same_focus(left, right),
     }
 }
 
@@ -390,10 +400,7 @@ impl PromptStack {
         now: Instant,
     ) {
         let old_first = self.cards.first().map(|card| card.id.clone());
-        let old_top = self
-            .cards
-            .first()
-            .map(|card| content_fingerprint(&card.content));
+        let old_top = self.cards.first().map(|card| card.content.clone());
         self.hidden
             .retain(|key| prompts.iter().any(|cell| cell.key == *key));
         let mut old = std::mem::take(&mut self.cards);
@@ -425,10 +432,17 @@ impl PromptStack {
         for (id, content) in incoming {
             let card = if let Some(index) = old.iter().position(|card| card.id == id) {
                 let mut card = old.remove(index);
-                // A failed answer reopens the same card without discarding typed state.
-                if matches!((&card.content, &content), (Content::Prompt(before), Content::Prompt(after))
+                if !same_draft(&card.content, &content) {
+                    card.secret = MaskedValue::new();
+                    card.secret_chars = 0;
+                    card.text.clear();
+                    card.ticks.clear();
+                    card.sent = false;
+                    card.too_long = None;
+                } else if matches!((&card.content, &content), (Content::Prompt(before), Content::Prompt(after))
                     if matches!(before.state, PromptState::Answering(_)) && after.state == PromptState::Open)
                 {
+                    // A failed answer reopens the same card without discarding typed state.
                     card.sent = false;
                 }
                 card.content = content;
@@ -439,11 +453,13 @@ impl PromptStack {
             self.cards.push(card);
         }
         let new_first = self.cards.first().map(|card| card.id.clone());
-        let new_top = self
-            .cards
-            .first()
-            .map(|card| content_fingerprint(&card.content));
-        let content_changed = old_first.is_some() && old_first == new_first && old_top != new_top;
+        let new_top = self.cards.first().map(|card| card.content.clone());
+        let content_changed = old_first.is_some()
+            && old_first == new_first
+            && match (&old_top, &new_top) {
+                (Some(before), Some(after)) => !same_focus(before, after),
+                _ => false,
+            };
         if draft_empty && (!self.draft_empty || old_first != new_first || content_changed) {
             self.focused_at = Some(now);
         }
