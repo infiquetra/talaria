@@ -411,8 +411,8 @@ async fn perform(
 }
 /// The runtime id of a resume, when it names the attempt that was requested.
 ///
-/// A journaled stored id may resolve to that attempt's established runtime id. Any other
-/// returned id is refused before binding, hydration, or Open Agent.
+/// A returned id that differs from the requested id is accepted only when the journal
+/// already binds it to the same agent.
 fn accepted_runtime_id(
     requested_id: &str,
     snapshot: &Value,
@@ -428,17 +428,7 @@ fn accepted_runtime_id(
         return None;
     }
     let agent = keys.get(requested)?;
-    if keys.get(returned).is_some_and(|owner| owner != agent) {
-        return None;
-    }
-    let established = keys.get(returned).is_some_and(|owner| owner == agent);
-    if established {
-        return Some(returned.to_string());
-    }
-    let other_identity = keys
-        .iter()
-        .any(|(id, key)| key == agent && !id.is_empty() && id.as_str() != requested);
-    (!other_identity).then(|| returned.to_string())
+    (keys.get(returned) == Some(agent)).then(|| returned.to_string())
 }
 
 fn failure(error: CallError) -> GatewayFailure {

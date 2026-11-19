@@ -34,7 +34,7 @@ fn resume_as(session_id: &str, stored: &str) -> Value {
     snapshot
 }
 
-async fn open_stored(snapshot: Value) -> ProgressState {
+async fn open_stored(runtime: &str, stored: &str, snapshot: Value) -> ProgressState {
     let (mock, client, _inbound) = MockGateway::start().await;
     mock.queue_resume_snapshot(snapshot);
     let temp = tempfile::tempdir().expect("run directory");
@@ -57,7 +57,7 @@ async fn open_stored(snapshot: Value) -> ProgressState {
     .expect("create run");
     let mut state = ProgressState::new(RunProgress::from_records(
         &lines::manifest(),
-        &journal("runtime-a", "stored-a"),
+        &journal(runtime, stored),
     ));
     let mut service = ProgressService::new(run);
     let (sender, mut receiver) = unbounded_channel();
@@ -66,7 +66,7 @@ async fn open_stored(snapshot: Value) -> ProgressState {
         .execute(
             &mut state,
             vec![ProgressEffect::OpenSession {
-                session_id: "stored-a".into(),
+                session_id: stored.into(),
             }],
         )
         .await
@@ -99,7 +99,7 @@ async fn open_stored(snapshot: Value) -> ProgressState {
 
 #[tokio::test]
 async fn open_agent_rejects_a_snapshot_for_another_session() {
-    let state = open_stored(resume_as("session-b", "stored-a")).await;
+    let state = open_stored("runtime-a", "stored-a", resume_as("session-b", "stored-a")).await;
     assert!(
         state.opened_session.is_none(),
         "a substituted runtime id is not the switch target"
@@ -116,6 +116,35 @@ async fn open_agent_rejects_a_snapshot_for_another_session() {
 
 #[tokio::test]
 async fn open_agent_accepts_the_attempts_runtime_id() {
-    let state = open_stored(resume_as("runtime-a", "stored-a")).await;
+    let state = open_stored("runtime-a", "stored-a", resume_as("runtime-a", "stored-a")).await;
     assert_eq!(state.opened_session.as_deref(), Some("runtime-a"));
+}
+
+#[tokio::test]
+async fn open_agent_rejects_an_unknown_runtime_id_when_ids_coincide() {
+    let state = open_stored(
+        "session-a",
+        "session-a",
+        resume_as("session-b", "session-a"),
+    )
+    .await;
+    assert!(state.opened_session.is_none());
+    assert_eq!(
+        state
+            .progress
+            .agent(lines::KEY_RUNNING)
+            .and_then(|agent| agent.session_id.as_deref()),
+        Some("session-a")
+    );
+}
+
+#[tokio::test]
+async fn open_agent_accepts_a_matching_snapshot_when_ids_coincide() {
+    let state = open_stored(
+        "session-a",
+        "session-a",
+        resume_as("session-a", "session-a"),
+    )
+    .await;
+    assert_eq!(state.opened_session.as_deref(), Some("session-a"));
 }
