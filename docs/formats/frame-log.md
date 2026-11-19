@@ -132,10 +132,11 @@ Every string value then passes two more rules:
 
 4. **Ticket.** A string that contains `hermes-gateway-ticket.` is withheld whole.
 5. **URLs, by position.** A string that contains `://` and parses as an absolute URL with a host is
-   cleaned by editing the original text, never by re-serializing it: any non-empty userinfo
-   becomes `%5Bredacted%5D`; a query value whose percent-decoded, lower-cased key is `token`,
-   `ticket`, `internal` or credential shaped becomes `%5Bredacted%5D`; a non-empty fragment becomes
-   `#%5Bredacted%5D`. A URL with none of these is left byte for byte.
+   cleaned by editing the original text. Non-empty userinfo and query values whose percent-decoded,
+   lower-cased keys are `token`, `ticket`, `internal`, `state`, `code` or credential shaped become
+   `%5Bredacted%5D`. Secret scanning recognises the same keys in fragment parameters. A non-empty
+   fragment becomes `#%5Bredacted%5D`. A URL that cannot be rewritten safely is withheld whole. A URL
+   that needs no redaction is left byte for byte.
 
 **Answers to server requests.** Hermes asks the client questions (`sudo`, `secret`, `clarify`,
 `approval` and others) as JSON-RPC requests. The recorder remembers the method of each request it

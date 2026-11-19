@@ -677,7 +677,7 @@ fn url_rewrite_still_live(original: &str, edited: &str) -> bool {
     if parsed_url_holds_live_secret(edited) {
         return true;
     }
-    parsed_url_holds_live_secret(original) && !parses_with_host(edited)
+    !parses_with_host(edited) && parsed_url_holds_live_secret(original)
 }
 
 fn parses_with_host(text: &str) -> bool {
@@ -841,6 +841,12 @@ fn embedded_string_holds_url_secret(text: &str, depth: usize) -> bool {
 }
 
 fn text_holds_url_secret(text: &str) -> bool {
+    const MAX_URL_CANDIDATES: usize = 64;
+
+    // Each candidate can span the rest of the text. Check the limit before parsing any of them.
+    if text.match_indices("://").nth(MAX_URL_CANDIDATES).is_some() {
+        return true;
+    }
     if parsed_url_holds_live_secret(text) {
         return true;
     }
@@ -897,11 +903,18 @@ fn parsed_url_holds_live_secret(text: &str) -> bool {
 }
 
 fn fragment_holds_live_secret(fragment: &str) -> bool {
+    const MAX_FRAGMENT_QUERIES: usize = 16;
+
     if pairs_hold_live_secret(url::form_urlencoded::parse(fragment.as_bytes())) {
         return true;
     }
     let mut rest = fragment;
+    let mut queries = 0;
     while let Some((_, query)) = rest.split_once('?') {
+        queries += 1;
+        if queries > MAX_FRAGMENT_QUERIES {
+            return true;
+        }
         if pairs_hold_live_secret(url::form_urlencoded::parse(query.as_bytes())) {
             return true;
         }

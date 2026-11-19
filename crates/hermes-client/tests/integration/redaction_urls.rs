@@ -6,6 +6,7 @@
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use hermes_client::{REDACTED, Recorder, RecorderOptions, Redactor, redact_url, scan_for_secrets};
 use hermes_contract::schemas::McpOauthStartResult;
@@ -399,6 +400,38 @@ fn oauth_scan_ignores_prose_paths_and_encoded_markers() {
             .any(|hit| hit.rule == "url-secret-query"),
         "a code parameter in a routed fragment was not flagged"
     );
+}
+
+fn assert_url_processing_is_bounded(text: &str) {
+    let limit = Duration::from_secs(2);
+    let start = Instant::now();
+    let hits = scan_for_secrets(text);
+    assert!(start.elapsed() < limit, "URL scan took over two seconds");
+    assert!(
+        hits.iter().any(|hit| hit.rule == "url-secret-query"),
+        "URL scan did not flag input that exceeded its limit"
+    );
+
+    let frame = serde_json::json!({ "jsonrpc": "2.0", "id": 7, "result": text }).to_string();
+    let mut redactor = Redactor::new(Vec::new()).expect("redactor");
+    let start = Instant::now();
+    let redacted = redactor.redact_inbound(&frame);
+    assert!(
+        start.elapsed() < limit,
+        "URL redaction took over two seconds"
+    );
+    assert!(redacted.frame.is_some());
+}
+
+#[test]
+fn fragment_with_many_question_marks_is_bounded() {
+    let url = format!("https://example.invalid/#{}", "?".repeat(200_000));
+    assert_url_processing_is_bounded(&url);
+}
+
+#[test]
+fn text_with_many_url_candidates_is_bounded() {
+    assert_url_processing_is_bounded(&"a://".repeat(50_000));
 }
 
 #[test]
