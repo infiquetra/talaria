@@ -176,15 +176,17 @@ fn files_text(count: usize) -> String {
 
 fn header_line(view: &ReviewView<'_>, theme: &ToolTheme, width: u16) -> Line<'static> {
     let title = sanitize(view.title);
+    let folder_text = view.folder.display().to_string();
+    let folder = talaria_core::text::sanitize(&folder_text);
     let left = match view.head {
         Some(head) => format!(
-            "Review \u{b7} {title} \u{b7} {} \u{b7} {} \u{b7} +{} \u{2212}{}",
+            "Review \u{b7} {title} \u{b7} {folder} \u{b7} {} \u{b7} {} \u{b7} +{} \u{2212}{}",
             sanitize(&branch_text(head)),
             files_text(view.total),
             view.added,
             view.removed
         ),
-        None => format!("Review \u{b7} {title}"),
+        None => format!("Review \u{b7} {title} \u{b7} {folder}"),
     };
     let right = view.head.map(|head| {
         if head.upstream.is_some() {

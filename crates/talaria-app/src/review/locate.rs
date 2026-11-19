@@ -23,7 +23,9 @@ pub enum Located {
 }
 
 /// Find a row's folder: the worktree record, else the foreground row's own
-/// folder, else `session.info`. Never Talaria's own folder.
+/// folder, else `session.info`. A gateway folder opens only when its canonical
+/// path sits inside a root this process already holds. Talaria's own process
+/// folder stays closed unless that folder is itself one of those roots.
 pub async fn locate(row: &RowKey, ctx: &LocateContext<'_>) -> Located {
     for root in ctx.known_roots.roots() {
         let records = records_in(ctx.git, &root).await;
@@ -39,20 +41,52 @@ pub async fn locate(row: &RowKey, ctx: &LocateContext<'_>) -> Located {
         && foreground == row
         && !cwd.is_empty()
     {
-        return open_folder(ctx.git, Path::new(cwd), title_row, None).await;
+        return open_trusted(ctx, cwd, title_row).await;
     }
     match ctx.info.info(row).await {
         Ok(SessionInfoReply { cwd: Some(cwd), .. }) if !cwd.is_empty() => {
-            if is_own_folder(Path::new(&cwd)) {
-                return Located::NotFound(NO_FOLDER.to_owned());
-            }
-            open_folder(ctx.git, Path::new(&cwd), title_row, None).await
+            open_trusted(ctx, &cwd, title_row).await
         }
         Ok(_) | Err(SessionInfoError::Refused(_) | SessionInfoError::Other(_)) => {
             Located::NotFound(NO_FOLDER.to_owned())
         }
         Err(SessionInfoError::NotFound) => Located::NotFound(SESSION_GONE.to_owned()),
     }
+}
+
+/// Open `cwd` only when its canonical path is equal to or contained in a
+/// locally trusted root. The review target keeps that canonical path.
+async fn open_trusted(ctx: &LocateContext<'_>, cwd: &str, session: Option<RowKey>) -> Located {
+    let Some(folder) = trusted_canonical(Path::new(cwd), ctx.known_roots) else {
+        return Located::NotFound(NO_FOLDER.to_owned());
+    };
+    if is_own_folder(&folder) && !explicit_root(&folder, ctx.known_roots) {
+        return Located::NotFound(NO_FOLDER.to_owned());
+    }
+    open_folder(ctx.git, &folder, session, None).await
+}
+
+/// Canonical path of `folder` when it is equal to or inside a trusted root.
+///
+/// Both sides are canonicalized and compared by path component, so a sibling
+/// such as `trusted-evil` and a symlink that resolves outside the root are refused.
+fn trusted_canonical(folder: &Path, roots: &KnownRepos) -> Option<PathBuf> {
+    let canon = std::fs::canonicalize(folder).ok()?;
+    let trusted = roots.roots().iter().any(|root| {
+        let Ok(root) = std::fs::canonicalize(root) else {
+            return false;
+        };
+        canon == root || canon.starts_with(&root)
+    });
+    trusted.then_some(canon)
+}
+
+/// Whether `canon` is itself a trusted root, not merely inside one.
+fn explicit_root(canon: &Path, roots: &KnownRepos) -> bool {
+    roots
+        .roots()
+        .iter()
+        .any(|root| std::fs::canonicalize(root).is_ok_and(|root| root == canon))
 }
 
 /// Talaria's own working folder is never a session's folder by default.
@@ -133,6 +167,10 @@ async fn open_folder(
 }
 
 /// The record of the tree whose folder this is, when it is one Talaria launched.
+///
+/// The record is metadata for `folder`. A record path that does not canonicalize
+/// to that same directory is ignored, so this lookup cannot switch the review
+/// onto a different tree.
 async fn record_at(git: &GitRunner, main_root: &Path, folder: &Path) -> Option<RecordView> {
     let folder = std::fs::canonicalize(folder).ok()?;
     records_in(git, main_root)

@@ -15665,8 +15665,9 @@ fn review_locate_job(state: &AppState, row: RowKey, origin: ReviewOrigin) -> Rev
         .opened
         .as_ref()
         .and_then(|opened| opened.info.cwd.clone());
-    let mut folders = vec![state.launch_folder.clone()];
-    folders.extend(foreground_cwd.clone().map(PathBuf::from));
+    // Roots come from folders the operator already holds. The gateway cwd is a
+    // candidate to check against those roots, never a root of its own.
+    let folders = vec![state.launch_folder.clone()];
     ReviewLocateJob {
         row,
         origin,
@@ -15691,6 +15692,10 @@ impl ReviewLocateJob {
             known.insert(root);
         }
         for folder in &self.folders {
+            if folder.as_os_str().is_empty() {
+                continue;
+            }
+            known.insert(folder.clone());
             if let Ok(root) = crate::worktree::main_root_of(&git, folder).await {
                 known.insert(root);
             }
@@ -15726,6 +15731,85 @@ impl ReviewLocateJob {
             origin: self.origin,
             info,
         }
+    }
+}
+
+#[cfg(test)]
+mod review_cwd_trust_tests {
+    use super::*;
+
+    fn opened_with_cwd(cwd: &str) -> AppState {
+        let mut state = AppState::new("review-trust");
+        state.profile = "fixture".into();
+        state.launch_folder = PathBuf::from("/operator/launch");
+        state
+            .review_repos
+            .push(PathBuf::from("/operator/known-root"));
+        state.opened = Some(OpenedSession {
+            state: SessionState::empty(SessionId::new("session")),
+            session_id: "session".into(),
+            stored_session_id: "session".into(),
+            subscription_id: "subscription".into(),
+            title: None,
+            revision: 0,
+            execution_generation: 0,
+            launch_notices: Vec::new(),
+            effort: None,
+            info: SessionInfoSummary {
+                model: None,
+                provider: None,
+                cwd: Some(cwd.to_owned()),
+                branch: None,
+            },
+            cursor: Cursor {
+                replay_epoch: "epoch".into(),
+                last_sequence: 0,
+            },
+        });
+        state
+    }
+
+    #[test]
+    fn review_locate_job_never_seeds_gateway_cwd() {
+        let state = opened_with_cwd("/hostile/repo");
+        let job = review_locate_job(
+            &state,
+            RowKey {
+                profile: "fixture".into(),
+                session_id: "session".into(),
+            },
+            ReviewOrigin::Changes,
+        );
+        assert!(
+            job.folders
+                .iter()
+                .all(|folder| folder != Path::new("/hostile/repo")),
+            "gateway cwd must not be seeded as a trusted folder: {:?}",
+            job.folders
+        );
+        assert!(
+            job.roots
+                .iter()
+                .all(|root| root != Path::new("/hostile/repo")),
+            "gateway cwd must not be seeded as a known root: {:?}",
+            job.roots
+        );
+        assert!(
+            job.folders
+                .iter()
+                .any(|folder| folder == Path::new("/operator/launch")),
+            "the launch folder stays trusted: {:?}",
+            job.folders
+        );
+        assert!(
+            job.roots
+                .iter()
+                .any(|root| root == Path::new("/operator/known-root")),
+            "review repos stay trusted: {:?}",
+            job.roots
+        );
+        let (_, cwd) = job.foreground.expect("the foreground candidate");
+        assert_eq!(cwd.as_deref(), Some("/hostile/repo"));
     }
 }
 
