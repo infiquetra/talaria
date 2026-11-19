@@ -459,13 +459,23 @@ fn snapshot_from(value: Value) -> Result<OpenedSession, OpenError> {
         .map_err(|_| OpenError::Link("the session reply did not decode".to_string()))
 }
 
+/// The operator-facing reason a resume named a different session.
+pub(crate) const DIFFERENT_SESSION: &str =
+    "the gateway returned a snapshot for a different session";
+
+/// A resume for one id matches only when both ids are present and equal.
+pub(crate) fn requested_session_matches(requested_id: &str, returned_id: &str) -> bool {
+    let requested = requested_id.trim();
+    !requested.is_empty() && !returned_id.is_empty() && returned_id == requested
+}
+
 /// Keep a resume only when the snapshot names the id that was requested.
 fn accept_requested_session(
     opened: OpenedSession,
     requested_id: &str,
 ) -> Result<OpenedSession, OpenError> {
     let requested = requested_id.trim();
-    if opened.session_id == requested {
+    if requested_session_matches(requested, &opened.session_id) {
         Ok(opened)
     } else {
         Err(OpenError::MismatchedSession {

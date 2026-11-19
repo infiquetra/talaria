@@ -949,6 +949,51 @@ async fn recover_rejects_a_snapshot_for_another_session() {
             .any(|id| id == "session-b"),
         "recovery does not resync the tracker to the substituted session"
     );
+    let notice = committed_lines(&effects).join("\n");
+    assert!(
+        notice.contains("could not be refreshed"),
+        "recovery still says the refresh failed: {notice}"
+    );
+    assert!(
+        notice.contains("different session"),
+        "recovery names the mismatched snapshot: {notice}"
+    );
+}
+
+#[tokio::test]
+async fn resume_by_id_rejects_an_empty_session_id() {
+    let rig = in_process().await;
+    rig.mock.queue_resume_snapshot(snapshot_named(""));
+    let empty_reply = rig.open(by_id("session-a")).await;
+    assert_eq!(
+        session_ids(&empty_reply),
+        Err(OpenError::MismatchedSession {
+            requested: "session-a".to_string(),
+            returned: String::new(),
+        })
+    );
+
+    let rig = in_process().await;
+    rig.mock.queue_resume_snapshot(snapshot_named(""));
+    let empty_request = rig.open(by_id("")).await;
+    assert_eq!(
+        session_ids(&empty_request),
+        Err(OpenError::MismatchedSession {
+            requested: String::new(),
+            returned: String::new(),
+        })
+    );
+
+    let rig = in_process().await;
+    rig.mock.queue_resume_snapshot(snapshot_named("session-a"));
+    let blank_request = rig.open(by_id("   ")).await;
+    assert_eq!(
+        session_ids(&blank_request),
+        Err(OpenError::MismatchedSession {
+            requested: String::new(),
+            returned: "session-a".to_string(),
+        })
+    );
 }
 
 #[tokio::test]

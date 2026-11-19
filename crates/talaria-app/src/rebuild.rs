@@ -177,6 +177,7 @@ pub(crate) fn recovered(
             effects.extend(automation_event(state, AutomationEvent::Detached));
             return effects;
         }
+        Err(OpenError::MismatchedSession { .. }) => return vec![notice_lines(&mismatch_notice())],
         Err(_) => return vec![notice_lines(REFRESH_FAILED_NOTICE)],
     };
     let Some(mut old) = state.opened.take() else {
@@ -299,6 +300,7 @@ pub(crate) fn recover_retained(
             state.retained_sessions.remove(&key);
             return Vec::new();
         }
+        Err(OpenError::MismatchedSession { .. }) => return vec![notice_lines(&mismatch_notice())],
         Err(_) => return Vec::new(),
     };
     let Some(mut old) = state.retained_sessions.remove(&key) else {
@@ -328,6 +330,10 @@ pub(crate) fn recover_retained(
         BackgroundEvent::Attached { now_ms },
     ));
     effects
+}
+
+fn mismatch_notice() -> String {
+    format!("{REFRESH_FAILED_NOTICE} The gateway returned a snapshot for a different session.")
 }
 
 pub(crate) fn final_prefix(cells: &[Cell]) -> usize {
