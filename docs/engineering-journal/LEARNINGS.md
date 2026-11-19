@@ -15,8 +15,9 @@ workflow session. Hermes treats either error as a skip for every viewer.
 does not allocate a responder, does not enqueue one, and does not write `-32601` or `-32603`.
 Dropping the reader or the queue therefore has nothing left that can answer. App-level `ignore`
 stays in place for a request that still reaches a handler. The foreground answers a request only
-when its session id is absent or is the opened session. A peek that is showing a masked request,
-headless print mode, and the configuration session remain owners of their own sessions.
+when its session id is absent or identifies an opened or retained session. A peek that is showing
+a masked request, headless print mode, and the configuration session remain owners of their own
+sessions.
 
 **Generalizable rule.** A connection that is not the session's prompt owner is opened with
 `ServerRequestPolicy::IgnoreAll`. The foreground prompt owner ignores a server request whose
