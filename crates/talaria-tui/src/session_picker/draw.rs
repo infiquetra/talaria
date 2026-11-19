@@ -230,7 +230,7 @@ impl RowColumns {
         let profile = if width >= PROFILE_MIN_WIDTH && profile_count(rows) > 1 {
             let widest = rows
                 .iter()
-                .map(|row| columns(&row.key.profile))
+                .map(|row| columns(&sanitize(&row.key.profile)))
                 .max()
                 .unwrap_or(0);
             Some(widest.min(PROFILE_CAP))
@@ -240,7 +240,7 @@ impl RowColumns {
         let model = if width >= MODEL_MIN_WIDTH {
             let widest = rows
                 .iter()
-                .map(|row| columns(short_model_text(row.model.as_deref())))
+                .map(|row| columns(&sanitize(short_model_text(row.model.as_deref()))))
                 .max()
                 .unwrap_or(0);
             (widest > 0).then_some(widest.min(MODEL_CAP))
@@ -252,7 +252,7 @@ impl RowColumns {
             let widest = rows
                 .iter()
                 .filter_map(|row| source_tag(row.source.as_deref()))
-                .map(columns)
+                .map(|tag| columns(&sanitize(tag)))
                 .max()
                 .unwrap_or(0);
             (widest > 0).then_some(widest.min(SOURCE_CAP))
@@ -458,8 +458,12 @@ fn draw_header(
     buf.set_stringn(area.x, area.y, left, width - 1, theme.header);
     if let Some(right) = right {
         let right_width = columns(&right);
-        let x = area.x + area.width - u16::try_from(right_width).unwrap_or(0);
-        buf.set_stringn(x, area.y, right, right_width, theme.header);
+        let right_cols = u16::try_from(right_width).unwrap_or(area.width);
+        let x = area
+            .x
+            .saturating_add(area.width.saturating_sub(right_cols.min(area.width)));
+        let room = usize::from(area.right().saturating_sub(x));
+        buf.set_stringn(x, area.y, right, right_width.min(room), theme.header);
     }
 }
 
@@ -507,20 +511,25 @@ fn notice_line(state: &PickerState) -> Option<String> {
 }
 
 /// The rename editor: the old title, then the text with the caret in it.
+///
+/// The caret is a character index into the raw editor text. Each side is
+/// sanitized on its own so a stand-in that is wider than one character cannot
+/// leave the caret in the middle of that stand-in.
 fn rename_line(editor: &LineEditor) -> String {
-    let text = sanitize(&editor.text);
-    let caret = editor.caret.min(text.chars().count());
-    let at = text
+    let caret = editor.caret.min(editor.text.chars().count());
+    let at = editor
+        .text
         .char_indices()
         .nth(caret)
         .map(|(index, _)| index)
-        .unwrap_or(text.len());
+        .unwrap_or(editor.text.len());
+    let (head, tail) = editor.text.split_at(at);
     format!(
         "New title for \"{}\": {}{}{}",
         sanitize(&editor.original_title),
-        &text[..at],
+        sanitize(head),
         CARET,
-        &text[at..]
+        sanitize(tail)
     )
 }
 
@@ -683,7 +692,12 @@ fn columns(text: &str) -> usize {
 
 /// The text cut to `width` columns: the longest prefix of whole characters that
 /// fits in `width - 1` columns, then the ellipsis. Text that fits is padded.
+///
+/// Sanitized first, so the column count is the stand-in width and no control,
+/// line separator, or paragraph separator is copied into the result.
 fn cut(text: &str, width: usize) -> String {
+    let clean = sanitize(text);
+    let text = clean.as_ref();
     let used = columns(text);
     if used <= width {
         let mut out = text.to_owned();
@@ -769,9 +783,9 @@ fn foreground_key(state: &PickerState) -> Option<RowKey> {
     state.foreground().cloned()
 }
 
-/// The search text.
+/// The search text, with controls and separators already replaced by stand-ins.
 fn query_text(state: &PickerState) -> String {
-    state.query().to_owned()
+    sanitize(state.query()).into_owned()
 }
 
 /// The profile the filter holds, as the header shows it.
