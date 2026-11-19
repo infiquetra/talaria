@@ -178,11 +178,11 @@ pub(crate) async fn validated_worktree_root(
     main_root: &Path,
     path: &Path,
 ) -> Option<PathBuf> {
-    if !review_tree_is_contained(main_root, path) {
-        return None;
-    }
     let folder = std::fs::canonicalize(path).ok()?;
     let main = std::fs::canonicalize(main_root).ok()?;
+    if folder.parent() != Some(main.join(".worktrees").as_path()) {
+        return None;
+    }
     let toplevel = git_text(git, &folder, &["rev-parse", "--show-toplevel"]).await?;
     if std::fs::canonicalize(toplevel).ok()? != folder {
         return None;

@@ -941,12 +941,7 @@ async fn status_rows(git: &GitRunner, root: &Path) -> Result<Vec<ChangedFile>, S
 /// operation stops when Git no longer reports the same linked worktree of the
 /// same repository.
 async fn review_root(git: &GitRunner, target: &ReviewTarget) -> Result<PathBuf, String> {
-    if target.record.is_some()
-        && target
-            .folder
-            .parent()
-            .is_some_and(|parent| parent == target.main_root.join(".worktrees"))
-    {
+    if target.record.is_some() {
         return validated_worktree_root(git, &target.main_root, &target.folder)
             .await
             .filter(|root| root == &target.folder)

@@ -24,7 +24,7 @@ use talaria_app::review::locate::{
 };
 use talaria_app::worktree::GitRunner;
 use talaria_core::directory::rows::RowKey;
-use talaria_core::review::Scope;
+use talaria_core::review::{RecordView, ReviewTarget, Scope};
 
 fn frames_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames")
@@ -632,6 +632,38 @@ async fn fallback_lookup_ignores_an_uncontained_record() {
         panic!("an explicit folder still opens: {via_folder:?}");
     };
     assert!(via_folder.record.is_none());
+}
+
+#[tokio::test]
+async fn record_backed_target_outside_worktrees_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let outside = git.path().join("outside");
+    git.ok(
+        &git.repo,
+        &[
+            "worktree",
+            "add",
+            outside.to_str().expect("path"),
+            "-b",
+            "outside",
+        ],
+    );
+    let runner = GitRunner::from_env();
+    let target = ReviewTarget {
+        folder: outside.canonicalize().expect("outside worktree"),
+        main_root: git.repo.canonicalize().expect("main worktree"),
+        session: None,
+        record: Some(RecordView {
+            branch: "outside".into(),
+            base_ref: "origin/main".into(),
+            base_commit: "a".repeat(40),
+        }),
+        title: "outside".into(),
+    };
+    assert!(list(&runner, &target, Scope::Uncommitted).await.is_err());
 }
 
 /// Replacing the linked worktree after it opens stops later git operations.
