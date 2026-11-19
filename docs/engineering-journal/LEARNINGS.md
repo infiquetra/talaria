@@ -10,10 +10,13 @@
 recorder, the remote token store, and workflow run directories already use
 `0700` directories and `0600` files.
 
-**Mechanism.** New directories are created mode `0700` and then stripped of group
-and other bits, including when they already exist. New and existing files are
-opened mode `0600` and then set to `0600`. The live-compile input still uses
-`create_new`, so a pre-existing path or symlink is refused.
+**Mechanism.** Log directories are created and opened from the home directory
+with `NOFOLLOW`, and a handle is chmodded only after `fstat` shows an owned
+directory. A log other users can read is copied to a new `0600` file and
+renamed into place under an exclusive lock, so an existing reader keeps the old
+inode. The live-compile input is created inside an owner-only temporary
+directory that stays alive until the compiler exits, and `create_new` still
+refuses a pre-existing path or symlink.
 
 **Generalizable rule.** Every Talaria-owned state or temp file is owner-only
 unless a recorded decision says otherwise.

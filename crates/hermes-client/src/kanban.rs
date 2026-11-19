@@ -360,6 +360,44 @@ pub struct LiveCards {
     pub bodies: Vec<String>,
     pub statuses: Vec<String>,
 }
+/// Owner-only directory that holds the live-compile input until the caller drops it.
+fn live_compile_dir() -> std::io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("talaria-live-compile-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    let dir = builder.tempdir()?;
+    #[cfg(unix)]
+    tighten_live_compile_dir(dir.path())?;
+    Ok(dir)
+}
+
+#[cfg(unix)]
+fn tighten_live_compile_dir(path: &Path) -> std::io::Result<()> {
+    let fd = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::DIRECTORY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )?;
+    let stat = rustix::fs::fstat(&fd)?;
+    if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::Directory
+        || stat.st_uid != rustix::process::getuid().as_raw()
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "live compile directory is not an owned directory",
+        ));
+    }
+    rustix::fs::fchmod(&fd, rustix::fs::Mode::RWXU)?;
+    Ok(())
+}
+
 /// Create the live-compile workflow input, refusing any path that already exists.
 ///
 /// On Unix the new file is owner-only (`0600`). `create_new` refuses a pre-existing
@@ -407,12 +445,15 @@ pub async fn live_compile_and_complete(
         profile,
     ));
     let client = KanbanClient::new(endpoint.api_origin(), board, minter)?;
-    let path = std::env::temp_dir().join(format!("talaria-live-compile-{}.js", std::process::id()));
+    let dir = live_compile_dir()
+        .map_err(|_| KanbanError::Message("cannot create live workflow input".into()))?;
+    let path = dir.path().join("workflow.js");
     let mut file = create_live_compile_input(&path)
         .map_err(|_| KanbanError::Message("cannot create live workflow input".into()))?;
     use std::io::Write;
     file.write_all(source.as_bytes())
         .map_err(|_| KanbanError::Message("cannot write live workflow input".into()))?;
+    drop(file);
     let result = tokio::process::Command::new(
         std::env::var_os("TALARIA_BIN").unwrap_or_else(|| "talaria".into()),
     )
@@ -426,7 +467,7 @@ pub async fn live_compile_and_complete(
     ])
     .output()
     .await;
-    let _ = std::fs::remove_file(&path);
+    drop(dir);
     let output =
         result.map_err(|_| KanbanError::Message("cannot run live compile command".into()))?;
     if !output.status.success() {
@@ -527,5 +568,21 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(std::fs::read(&target).unwrap(), b"planted");
+    }
+
+    #[test]
+    fn live_compile_dir_is_owner_only_until_dropped() {
+        let dir = super::live_compile_dir().unwrap();
+        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let path = dir.path().join("workflow.js");
+        create_live_compile_input(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+            0
+        );
+        let kept = path.clone();
+        drop(dir);
+        assert!(!kept.exists());
     }
 }
