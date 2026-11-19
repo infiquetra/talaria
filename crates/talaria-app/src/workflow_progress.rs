@@ -117,7 +117,12 @@ impl ProgressService {
                     .progress
                     .agents
                     .iter()
-                    .filter_map(|a| Some((a.session_id.clone()?, a.key.clone())))
+                    .flat_map(|a| {
+                        [a.session_id.clone(), a.stored_session_id.clone()]
+                            .into_iter()
+                            .flatten()
+                            .map(|id| (id, a.key.clone()))
+                    })
                     .collect();
                 let inputs = perform(
                     &self.run_dir,
@@ -289,10 +294,17 @@ async fn perform(
                 .and_then(|v| serde_json::to_value(v).map_err(|_| CallError::Encode));
             match reply {
                 Ok(snapshot) => {
-                    let runtime_id = snapshot["session_id"]
-                        .as_str()
-                        .unwrap_or(&session_id)
-                        .to_string();
+                    let Some(runtime_id) = accepted_runtime_id(&session_id, &snapshot, keys) else {
+                        return vec![ProgressInput::GatewayResponse {
+                            session_id: session.clone(),
+                            key,
+                            result: Err(GatewayFailure {
+                                reason: crate::sessions::DIFFERENT_SESSION.into(),
+                                stale_generation: false,
+                                disconnected: false,
+                            }),
+                        }];
+                    };
                     let mut inputs = vec![ProgressInput::Attached {
                         session_id,
                         runtime_id: runtime_id.clone(),
@@ -397,6 +409,28 @@ async fn perform(
         }
     }
 }
+/// The runtime id of a resume, when it names the attempt that was requested.
+///
+/// A returned id that differs from the requested id is accepted only when the journal
+/// already binds it to the same agent.
+fn accepted_runtime_id(
+    requested_id: &str,
+    snapshot: &Value,
+    keys: &HashMap<String, String>,
+) -> Option<String> {
+    let returned = snapshot["session_id"].as_str().unwrap_or("");
+    if crate::sessions::requested_session_matches(requested_id, returned) {
+        return Some(returned.to_string());
+    }
+    let requested = requested_id.trim();
+    let stored = snapshot["stored_session_id"].as_str().unwrap_or("");
+    if requested.is_empty() || returned.trim().is_empty() || stored != requested {
+        return None;
+    }
+    let agent = keys.get(requested)?;
+    (keys.get(returned) == Some(agent)).then(|| returned.to_string())
+}
+
 fn failure(error: CallError) -> GatewayFailure {
     let stale_generation = matches!(&error,CallError::Rpc(e) if e.code==4001&&e.reason.as_deref()==Some("stale_generation"));
     let disconnected = matches!(error, CallError::NotConnected | CallError::Unknown { .. });

@@ -10865,6 +10865,9 @@ fn open_failure(error: OpenError, launch: &Launch) -> LaunchFailure {
         (OpenError::NotInFolder { .. }, _) => failure::nothing_to_continue(),
         (OpenError::FolderUnknown, _) => failure::folder_unknown(),
         (OpenError::Refused { reason }, _) => failure::refusal(&reason),
+        (OpenError::MismatchedSession { .. }, _) => {
+            failure::link_failure("the gateway returned a snapshot for a different session")
+        }
         (OpenError::Unknown, StartMode::New) => failure::create_lost_twice(),
         (OpenError::Unknown, _) => {
             failure::link_failure("the connection dropped before Hermes answered")

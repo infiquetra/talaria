@@ -331,6 +331,9 @@ fn open_failure(error: OpenError, launch: &Launch) -> LaunchFailure {
         }
         (OpenError::FolderUnknown, _) => failure::folder_unknown(),
         (OpenError::Refused { reason }, _) => failure::refusal(&reason),
+        (OpenError::MismatchedSession { .. }, _) => {
+            failure::link_failure("the gateway returned a snapshot for a different session")
+        }
         (OpenError::Unknown, StartMode::New) => failure::create_lost_twice(),
         (OpenError::Link(what), _) => failure::link_failure(&what),
         _ => failure::link_failure("the session could not be opened"),
@@ -643,6 +646,12 @@ impl Engine {
                 self.feed(input);
             }
             JobReply::RecoveryFailed(OpenError::NotFound) => self.feed(HeadlessInput::SessionGone),
+            JobReply::RecoveryFailed(OpenError::MismatchedSession { .. }) => {
+                self.feed(HeadlessInput::LinkFailed {
+                    reason: crate::sessions::DIFFERENT_SESSION.into(),
+                    next_step: "Check the session before sending it again.".into(),
+                });
+            }
             JobReply::RecoveryFailed(_) => self.feed(HeadlessInput::LinkFailed {
                 reason: "the session could not be recovered".into(),
                 next_step: "Check the session before sending it again.".into(),

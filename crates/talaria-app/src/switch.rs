@@ -163,6 +163,7 @@ pub(crate) fn refusal_reason(error: &OpenError) -> String {
     match error {
         OpenError::NotFound => "not_found".to_owned(),
         OpenError::Refused { reason } => reason.clone(),
+        OpenError::MismatchedSession { .. } => "session_mismatch".to_owned(),
         OpenError::NotInFolder { .. } => "not_in_folder".to_owned(),
         OpenError::FolderUnknown => "folder_unknown".to_owned(),
         OpenError::Unknown => "the connection dropped before Hermes answered".to_owned(),

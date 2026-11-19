@@ -138,6 +138,32 @@ async fn peek_opens_profile_link_and_resumes_exactly() {
 }
 
 #[tokio::test]
+async fn peek_refuses_a_snapshot_for_another_session() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "session-a", false, false);
+    gateway.queue_resume_snapshot(snapshot("session-b", false, false));
+    let (mut peek, sink) = service(home.path());
+    let opened = peek.open(key("fixture", "session-a")).await;
+    assert_eq!(
+        opened,
+        Err(PeekError::Refused {
+            reason: "the gateway returned a snapshot for a different session".to_owned(),
+        })
+    );
+    assert!(
+        peek.state().is_none(),
+        "a substituted session is not adopted"
+    );
+    assert!(
+        !sink
+            .calls()
+            .iter()
+            .any(|call| matches!(call, FleetCall::Subscribed(_))),
+        "a substituted session is not published"
+    );
+}
+
+#[tokio::test]
 async fn peek_moves_detach_without_end_reason() {
     let (home, gateway) = home_and_gateway();
     seed(&gateway, "s-a", false, false);
