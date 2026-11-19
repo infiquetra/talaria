@@ -2,6 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-19 — Talaria-owned files are owner-only
+
+**Evidence.** The background client log created `~/.talaria`, `~/.talaria/logs`, and
+`client.log` with the process umask, and the kanban live-compile input
+`talaria-live-compile-<pid>.js` was created the same way. Prompt history, the
+recorder, the remote token store, and workflow run directories already use
+`0700` directories and `0600` files.
+
+**Mechanism.** Log directories are created and opened from the home directory
+with `NOFOLLOW`, and a handle is chmodded only after `fstat` shows an owned
+directory. A log other users can read is copied to a new `0600` file and
+renamed into place under an exclusive lock, so an existing reader keeps the old
+inode. The live-compile input is created inside an owner-only temporary
+directory that stays alive until the compiler exits, and `create_new` still
+refuses a pre-existing path or symlink.
+
+**Generalizable rule.** Every Talaria-owned state or temp file is owner-only
+unless a recorded decision says otherwise.
+
 ## 2026-11-15 — Keep compatibility and exact-pin release evidence separate
 
 **Evidence.** The release catalogue's existing live command uses the supported

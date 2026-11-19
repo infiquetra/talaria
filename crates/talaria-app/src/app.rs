@@ -11670,6 +11670,253 @@ async fn profiles_without_client(
     })
 }
 
+/// Append one line to `home/.talaria/logs/client.log`.
+///
+/// On Unix the home directory is the anchor. `.talaria`, `logs`, and `client.log`
+/// are opened with `NOFOLLOW`. Each handle must be an owned directory or regular
+/// file before its mode changes. A log that other users can read is replaced by
+/// a new `0600` inode under an exclusive lock before the line is written.
+fn append_background_client_log(home: &Path, text: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        append_background_client_log_unix(home, text)
+    }
+    #[cfg(not(unix))]
+    {
+        let logs = home.join(".talaria").join("logs");
+        std::fs::create_dir_all(&logs)?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(logs.join("client.log"))?;
+        use std::io::Write;
+        writeln!(file, "{text}")?;
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn append_background_client_log_unix(home: &Path, text: &str) -> std::io::Result<()> {
+    let home = open_owned_directory(home)?;
+    let talaria = ensure_owned_directory(&home, ".talaria")?;
+    let logs = ensure_owned_directory(&talaria, "logs")?;
+    rustix::fs::flock(&logs, rustix::fs::FlockOperation::LockExclusive)?;
+    let _lock = LogDirLock(&logs);
+    let mut file = open_client_log(&logs)?;
+    use std::io::Write;
+    writeln!(file, "{text}")?;
+    Ok(())
+}
+
+#[cfg(unix)]
+struct LogDirLock<'a>(&'a rustix::fd::OwnedFd);
+
+#[cfg(unix)]
+impl Drop for LogDirLock<'_> {
+    fn drop(&mut self) {
+        let _ = rustix::fs::flock(self.0, rustix::fs::FlockOperation::Unlock);
+    }
+}
+
+#[cfg(unix)]
+fn directory_flags() -> rustix::fs::OFlags {
+    rustix::fs::OFlags::RDONLY
+        | rustix::fs::OFlags::DIRECTORY
+        | rustix::fs::OFlags::NOFOLLOW
+        | rustix::fs::OFlags::CLOEXEC
+}
+
+#[cfg(unix)]
+fn open_owned_directory(path: &Path) -> std::io::Result<rustix::fd::OwnedFd> {
+    let fd = rustix::fs::open(path, directory_flags(), rustix::fs::Mode::empty())?;
+    require_owned_directory(&fd)?;
+    Ok(fd)
+}
+
+#[cfg(unix)]
+fn ensure_owned_directory(
+    parent: &rustix::fd::OwnedFd,
+    name: &str,
+) -> std::io::Result<rustix::fd::OwnedFd> {
+    match open_directory_at(parent, name) {
+        Ok(fd) => return tighten_directory(fd),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    match rustix::fs::mkdirat(parent, name, rustix::fs::Mode::RWXU) {
+        Ok(()) => {}
+        Err(rustix::io::Errno::EXIST) => {}
+        Err(errno) => return Err(errno.into()),
+    }
+    tighten_directory(open_directory_at(parent, name)?)
+}
+
+#[cfg(unix)]
+fn open_directory_at(
+    parent: &rustix::fd::OwnedFd,
+    name: &str,
+) -> std::io::Result<rustix::fd::OwnedFd> {
+    Ok(rustix::fs::openat(
+        parent,
+        name,
+        directory_flags(),
+        rustix::fs::Mode::empty(),
+    )?)
+}
+
+#[cfg(unix)]
+fn tighten_directory(fd: rustix::fd::OwnedFd) -> std::io::Result<rustix::fd::OwnedFd> {
+    require_owned_directory(&fd)?;
+    rustix::fs::fchmod(&fd, rustix::fs::Mode::RWXU)?;
+    Ok(fd)
+}
+
+#[cfg(unix)]
+fn require_owned_directory(fd: &rustix::fd::OwnedFd) -> std::io::Result<()> {
+    let stat = rustix::fs::fstat(fd)?;
+    if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::Directory
+        || stat.st_uid != rustix::process::getuid().as_raw()
+    {
+        return Err(refused_log_path());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn require_owned_file(fd: &rustix::fd::OwnedFd) -> std::io::Result<rustix::fs::Stat> {
+    let stat = rustix::fs::fstat(fd)?;
+    if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::RegularFile
+        || stat.st_uid != rustix::process::getuid().as_raw()
+    {
+        return Err(refused_log_path());
+    }
+    Ok(stat)
+}
+
+#[cfg(unix)]
+fn exposes_group_or_other(stat: &rustix::fs::Stat) -> bool {
+    rustix::fs::Mode::from_raw_mode(stat.st_mode).as_raw_mode() & 0o077 != 0
+}
+
+#[cfg(unix)]
+fn refused_log_path() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "background log path is not an owned directory or regular file",
+    )
+}
+
+#[cfg(unix)]
+fn open_client_log(logs: &rustix::fd::OwnedFd) -> std::io::Result<std::fs::File> {
+    const NAME: &str = "client.log";
+    match rustix::fs::openat(
+        logs,
+        NAME,
+        rustix::fs::OFlags::RDWR
+            | rustix::fs::OFlags::APPEND
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    ) {
+        Ok(fd) => {
+            let stat = require_owned_file(&fd)?;
+            if exposes_group_or_other(&stat) {
+                replace_readable_log(logs, fd)
+            } else {
+                rustix::fs::fchmod(&fd, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR)?;
+                Ok(std::fs::File::from(fd))
+            }
+        }
+        Err(rustix::io::Errno::NOENT) => create_client_log(logs),
+        Err(errno) => Err(errno.into()),
+    }
+}
+
+#[cfg(unix)]
+fn create_client_log(logs: &rustix::fd::OwnedFd) -> std::io::Result<std::fs::File> {
+    let fd = create_private_file(logs, "client.log")?;
+    Ok(std::fs::File::from(fd))
+}
+
+#[cfg(unix)]
+fn create_private_file(
+    logs: &rustix::fd::OwnedFd,
+    name: &str,
+) -> std::io::Result<rustix::fd::OwnedFd> {
+    let fd = rustix::fs::openat(
+        logs,
+        name,
+        rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::CREATE
+            | rustix::fs::OFlags::EXCL
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+    )?;
+    require_owned_file(&fd)?;
+    rustix::fs::fchmod(&fd, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR)?;
+    Ok(fd)
+}
+
+#[cfg(unix)]
+fn replace_readable_log(
+    logs: &rustix::fd::OwnedFd,
+    old: rustix::fd::OwnedFd,
+) -> std::io::Result<std::fs::File> {
+    let mut bytes = Vec::new();
+    {
+        let mut old = std::fs::File::from(old);
+        use std::io::Read;
+        old.read_to_end(&mut bytes)?;
+    }
+    let mut created = None;
+    for n in 0..32 {
+        let name = format!(".client.log.{}.{}", std::process::id(), n);
+        match create_private_file(logs, &name) {
+            Ok(fd) => {
+                created = Some((name, fd));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let Some((name, fd)) = created else {
+        return Err(std::io::Error::other(
+            "could not create a private replacement for the background log",
+        ));
+    };
+    let copied = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::from(fd);
+        use std::io::Write;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        Ok(())
+    })();
+    if let Err(error) = copied {
+        let _ = rustix::fs::unlinkat(logs, &name, rustix::fs::AtFlags::empty());
+        return Err(error);
+    }
+    if let Err(errno) = rustix::fs::renameat(logs, &name, logs, "client.log") {
+        let _ = rustix::fs::unlinkat(logs, &name, rustix::fs::AtFlags::empty());
+        return Err(errno.into());
+    }
+    let fd = rustix::fs::openat(
+        logs,
+        "client.log",
+        rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::APPEND
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )?;
+    let stat = require_owned_file(&fd)?;
+    if exposes_group_or_other(&stat) {
+        return Err(refused_log_path());
+    }
+    Ok(std::fs::File::from(fd))
+}
+
 /// Apply one message and run its effects. Returns whether the screen needs a draw.
 #[inline(never)]
 fn apply<S: Screen>(
@@ -12357,19 +12604,8 @@ fn apply<S: Screen>(
                 let _ = session_id;
                 if let Some(home) = state.home.clone() {
                     tokio::task::spawn_blocking(move || {
-                        use std::io::Write;
-                        let folder = home.join(".talaria/logs");
-                        if std::fs::create_dir_all(&folder).is_err() {
-                            return;
-                        }
                         let text: String = talaria_core::side::clean_output(&text).chars().filter(|ch| !ch.is_control() && !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect();
-                        if let Ok(mut log) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(folder.join("client.log"))
-                        {
-                            let _ = writeln!(log, "{text}");
-                        }
+                        let _ = append_background_client_log(&home, &text);
                     });
                 }
             }
@@ -17572,5 +17808,131 @@ mod voice_ownership_tests {
 
         let sudo = make_state("sudo");
         assert_eq!(foreground_open(&sudo), 1);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod background_client_log_tests {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::path::Path;
+
+    use super::append_background_client_log;
+
+    fn mode(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode()
+    }
+
+    #[test]
+    fn background_client_log_is_owner_only() {
+        let home = tempfile::tempdir().unwrap();
+        append_background_client_log(home.path(), "status").unwrap();
+        let talaria = home.path().join(".talaria");
+        let logs = talaria.join("logs");
+        let file = logs.join("client.log");
+        assert_eq!(mode(&talaria) & 0o777, 0o700, "log parent directory");
+        assert_eq!(mode(&logs) & 0o777, 0o700, "log directory");
+        assert_eq!(mode(&file) & 0o077, 0, "new client log");
+
+        std::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        append_background_client_log(home.path(), "again").unwrap();
+        assert_eq!(mode(&logs) & 0o777, 0o700, "existing log directory");
+        assert_eq!(mode(&file) & 0o777, 0o600, "existing client log");
+    }
+
+    #[test]
+    fn background_client_log_refuses_symlinked_talaria() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let marker = outside.path().join("marker");
+        std::fs::write(&marker, b"keep").unwrap();
+        let before = mode(outside.path());
+        std::os::unix::fs::symlink(outside.path(), home.path().join(".talaria")).unwrap();
+        assert!(append_background_client_log(home.path(), "nope").is_err());
+        assert_eq!(std::fs::read(&marker).unwrap(), b"keep");
+        assert_eq!(mode(outside.path()), before);
+        assert!(!outside.path().join("logs").exists());
+        assert!(
+            home.path()
+                .join(".talaria")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn background_client_log_refuses_symlinked_logs() {
+        let home = tempfile::tempdir().unwrap();
+        let talaria = home.path().join(".talaria");
+        std::fs::create_dir(&talaria).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("client.log"), b"keep").unwrap();
+        let before = mode(outside.path());
+        std::os::unix::fs::symlink(outside.path(), talaria.join("logs")).unwrap();
+        assert!(append_background_client_log(home.path(), "nope").is_err());
+        assert_eq!(
+            std::fs::read(outside.path().join("client.log")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(mode(outside.path()), before);
+        assert!(
+            talaria
+                .join("logs")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn background_client_log_refuses_symlinked_client_log() {
+        let home = tempfile::tempdir().unwrap();
+        let logs = home.path().join(".talaria/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let target = logs.join("elsewhere.log");
+        std::fs::write(&target, b"keep").unwrap();
+        let before = mode(&target);
+        std::os::unix::fs::symlink(&target, logs.join("client.log")).unwrap();
+        assert!(append_background_client_log(home.path(), "nope").is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        assert_eq!(mode(&target), before);
+        assert!(
+            logs.join("client.log")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn background_client_log_migration_hides_new_bytes_from_old_reader() {
+        let home = tempfile::tempdir().unwrap();
+        let logs = home.path().join(".talaria/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let path = logs.join("client.log");
+        std::fs::write(&path, b"legacy\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let mut old = std::fs::File::open(&path).unwrap();
+        let old_ino = old.metadata().unwrap().ino();
+        let mut before = String::new();
+        old.read_to_string(&mut before).unwrap();
+        assert_eq!(before, "legacy\n");
+
+        append_background_client_log(home.path(), "secret").unwrap();
+
+        let mut extra = String::new();
+        old.read_to_string(&mut extra).unwrap();
+        assert_eq!(extra, "");
+        let mut disk = std::fs::File::open(&path).unwrap();
+        let mut seen = String::new();
+        disk.read_to_string(&mut seen).unwrap();
+        assert_eq!(seen, "legacy\nsecret\n");
+        assert_ne!(disk.metadata().unwrap().ino(), old_ino);
+        assert_eq!(mode(&path) & 0o777, 0o600);
     }
 }
