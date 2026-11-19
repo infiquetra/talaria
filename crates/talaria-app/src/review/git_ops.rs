@@ -44,7 +44,7 @@ const NO_BASE: &str = "No base to compare with: origin has no default branch her
 
 /// Read a listing for a scope.
 pub async fn list(git: &GitRunner, target: &ReviewTarget, scope: Scope) -> Result<Listing, String> {
-    let root = work_tree_root(git, &target.folder).await?;
+    let root = bound_checkout(git, target).await?;
     let status_args: &[&str] = match scope {
         Scope::Uncommitted => &[
             "status",
@@ -283,7 +283,7 @@ pub async fn file_diff(
     if file.is_dir {
         return Ok("Untracked folder: stage it to see its files.".to_owned());
     }
-    let root = work_tree_root(git, &target.folder).await?;
+    let root = bound_checkout(git, target).await?;
     if let Some(size) = oversized(git, &root, scope, base, file).await {
         return Ok(format!(
             "File too large to show here ({}). Run git diff in a shell.",
@@ -418,7 +418,7 @@ pub async fn run_action(
     target: &ReviewTarget,
     action: &GitAction,
 ) -> Result<String, String> {
-    let root = work_tree_root(git, &target.folder).await?;
+    let root = bound_checkout(git, target).await?;
     let done = match action {
         GitAction::Stage(paths) => stage(git, &root, paths).await,
         GitAction::Unstage(paths) => unstage(git, &root, paths).await,
@@ -679,7 +679,7 @@ pub async fn commit_context(
     git: &GitRunner,
     target: &ReviewTarget,
 ) -> Result<(String, String), String> {
-    let root = work_tree_root(git, &target.folder).await?;
+    let root = bound_checkout(git, target).await?;
     let unborn = !has_head(git, &root).await;
     let rows = status_rows(git, &root).await?;
     let untracked: Vec<&str> = rows
@@ -934,9 +934,63 @@ async fn status_rows(git: &GitRunner, root: &Path) -> Result<Vec<ChangedFile>, S
     Ok(files)
 }
 
-/// The work tree root holding the folder.
+/// The checkout `target` was authorized to use.
+///
+/// The folder must still be the canonical path that was stored. Git's toplevel
+/// and main checkout are read from that path and must still be the ones authorized.
+async fn bound_checkout(git: &GitRunner, target: &ReviewTarget) -> Result<PathBuf, String> {
+    let toplevel = work_tree_root(git, &target.folder).await?;
+    let discovered = crate::worktree::main_root_of(git, &toplevel)
+        .await
+        .map_err(|error| error.what)?;
+    let discovered = std::fs::canonicalize(&discovered).map_err(|_| {
+        format!(
+            "{} is not the authorized checkout.",
+            target.folder.to_string_lossy()
+        )
+    })?;
+    let authorized = std::fs::canonicalize(&target.main_root).map_err(|_| {
+        format!(
+            "{} is not the authorized checkout.",
+            target.folder.to_string_lossy()
+        )
+    })?;
+    if discovered != authorized {
+        return Err(format!(
+            "{} is not the authorized checkout.",
+            target.folder.to_string_lossy()
+        ));
+    }
+    Ok(toplevel)
+}
+
+/// The work tree root holding the folder, when the path is still the authorized one.
 async fn work_tree_root(git: &GitRunner, folder: &Path) -> Result<PathBuf, String> {
-    let out = read(git, folder, &["rev-parse", "--show-toplevel"]).await?;
+    let meta = std::fs::symlink_metadata(folder).map_err(|_| {
+        format!(
+            "{} is not inside a git repository.",
+            folder.to_string_lossy()
+        )
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(format!(
+            "{} is not the authorized checkout.",
+            folder.to_string_lossy()
+        ));
+    }
+    let authorized = std::fs::canonicalize(folder).map_err(|_| {
+        format!(
+            "{} is not inside a git repository.",
+            folder.to_string_lossy()
+        )
+    })?;
+    if authorized != folder {
+        return Err(format!(
+            "{} is not the authorized checkout.",
+            folder.to_string_lossy()
+        ));
+    }
+    let out = read(git, &authorized, &["rev-parse", "--show-toplevel"]).await?;
     let line = out.stdout.trim_end_matches('\n');
     if out.status != 0 || line.is_empty() {
         return Err(format!(
@@ -944,7 +998,19 @@ async fn work_tree_root(git: &GitRunner, folder: &Path) -> Result<PathBuf, Strin
             folder.to_string_lossy()
         ));
     }
-    Ok(PathBuf::from(line))
+    let toplevel = std::fs::canonicalize(line).map_err(|_| {
+        format!(
+            "{} is not the authorized checkout.",
+            folder.to_string_lossy()
+        )
+    })?;
+    if toplevel != authorized && !authorized.starts_with(&toplevel) {
+        return Err(format!(
+            "{} is not the authorized checkout.",
+            folder.to_string_lossy()
+        ));
+    }
+    Ok(toplevel)
 }
 
 /// A path as a literal pathspec, so `*` and `?` are never patterns.

@@ -15606,9 +15606,8 @@ fn review_located(
         return Vec::new();
     };
     let root = target.main_root.clone();
-    if !state.review_repos.contains(&root) {
-        state.review_repos.push(root.clone());
-    }
+    // A checkout Git discovered is not enrolled. review_repos holds only folders
+    // the operator selected.
     pr.know(&root);
     pr.want(crate::review::PrDemand::Review(root.clone(), true));
     if let Some(record) = &target.record {
@@ -15689,16 +15688,13 @@ impl ReviewLocateJob {
         let git = crate::worktree::GitRunner::from_env();
         let mut known = KnownRepos::new();
         for root in self.roots {
-            known.insert(root);
+            known.insert_explicit(root);
         }
         for folder in &self.folders {
             if folder.as_os_str().is_empty() {
                 continue;
             }
-            known.insert(folder.clone());
-            if let Ok(root) = crate::worktree::main_root_of(&git, folder).await {
-                known.insert(root);
-            }
+            known.insert_explicit(folder.clone());
         }
         let source = LinkInfoSource::new(self.home, self.profile);
         let ctx = LocateContext {
@@ -15810,6 +15806,37 @@ mod review_cwd_trust_tests {
         );
         let (_, cwd) = job.foreground.expect("the foreground candidate");
         assert_eq!(cwd.as_deref(), Some("/hostile/repo"));
+    }
+
+    #[test]
+    fn review_located_does_not_enroll_a_discovered_main_root() {
+        let mut state = opened_with_cwd("/operator/launch/linked");
+        let (sender, _received) = mpsc::unbounded_channel();
+        state.sender = Some(sender);
+        let before = state.review_repos.clone();
+        let target = talaria_core::review::ReviewTarget {
+            folder: PathBuf::from("/operator/launch/linked"),
+            main_root: PathBuf::from("/outside/main"),
+            session: None,
+            record: None,
+            title: "linked".to_owned(),
+        };
+        let _ = review_located(
+            &mut state,
+            crate::review::Located::Found(target),
+            ReviewOrigin::Changes,
+            None,
+        );
+        assert_eq!(
+            state.review_repos, before,
+            "a discovered main checkout must not join the trust set"
+        );
+        assert!(
+            state
+                .review_repos
+                .iter()
+                .all(|root| root != Path::new("/outside/main"))
+        );
     }
 }
 

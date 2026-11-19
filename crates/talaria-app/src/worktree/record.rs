@@ -35,6 +35,18 @@ pub struct WorktreeRecord {
     pub created_at: i64,
 }
 
+/// Canonical path of a linked worktree that sits directly in `<main>/.worktrees`.
+///
+/// `main_root` is canonicalized. `.worktrees` is not, so a symlink at that name
+/// cannot become the expected parent. `path` is canonicalized once; a missing
+/// path or any other I/O error fails closed.
+pub(crate) fn review_worktree_path(main_root: &Path, path: &Path) -> Option<PathBuf> {
+    let root = std::fs::canonicalize(main_root).ok()?;
+    let expected = root.join(".worktrees");
+    let canon = std::fs::canonicalize(path).ok()?;
+    (canon.parent() == Some(expected.as_path())).then_some(canon)
+}
+
 /// Whether the tree folder really sits in `<main root>/.worktrees`, after resolving links.
 ///
 /// A parent that does not exist counts as contained: there is nothing to delete through it.

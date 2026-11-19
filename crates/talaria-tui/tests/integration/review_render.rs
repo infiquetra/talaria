@@ -184,6 +184,27 @@ fn review_header_renders_sanitized_repository_path() {
     );
 }
 
+/// A long title on a narrow header still shows the repository path.
+#[test]
+fn review_header_keeps_repository_path_when_narrow() {
+    let folder = "/tmp/not-the-repo/group/trusted-evil";
+    let (state, _) = ReviewState::open(
+        ReviewTarget {
+            folder: PathBuf::from(folder),
+            main_root: PathBuf::from(folder),
+            session: None,
+            record: None,
+            title: "planned-session-with-a-very-long-name-that-fills-the-header".to_owned(),
+        },
+        1.0,
+    );
+    let text = contents(&render(&state.view(), 60, 12));
+    assert!(
+        text.contains("trusted-evil"),
+        "the distinguishing end of the repository path stays visible: {text}"
+    );
+}
+
 /// Header, rows, marks, diff and footer at 120x40.
 #[test]
 fn list_and_diff_120x40() {
