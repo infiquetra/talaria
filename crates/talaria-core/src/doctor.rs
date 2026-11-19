@@ -261,9 +261,14 @@ fn path_start(c: char) -> bool {
 }
 
 pub fn scrub_text(text: &str, home: Option<&str>) -> String {
+    // Line and paragraph separators stay in place until paths and secrets are
+    // redacted: they are whitespace boundaries, and a question mark is not.
     let mut clean = crate::text::sanitize_with_options(
         text,
-        crate::text::SanitizeOptions::CLI,
+        crate::text::SanitizeOptions {
+            keep_separators: true,
+            ..crate::text::SanitizeOptions::CLI
+        },
         crate::text::Replacement::Char('?'),
     )
     .into_owned();
@@ -296,6 +301,11 @@ pub fn scrub_text(text: &str, home: Option<&str>) -> String {
         previous = Some(c);
     }
     let replaced = redact_tokens(&replaced);
+    let replaced = crate::text::sanitize_with_options(
+        &replaced,
+        crate::text::SanitizeOptions::CLI,
+        crate::text::Replacement::Char('?'),
+    );
     let collapsed = replaced.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = collapsed.chars();
     let mut result: String = chars.by_ref().take(200).collect();

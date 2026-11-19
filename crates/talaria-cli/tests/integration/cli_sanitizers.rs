@@ -53,3 +53,24 @@ fn neutralise_hostile_text_is_neutralised() {
         "escape must not survive"
     );
 }
+
+#[test]
+fn neutralise_keeps_layout_past_the_quote_limit() {
+    let sixty_four = "a".repeat(64);
+    assert_eq!(
+        neutralise(&format!("`{sixty_four}\nhidden`")),
+        format!("`{sixty_four}\n`\n")
+    );
+    assert_eq!(
+        neutralise(&format!("'{sixty_four}\thidden'")),
+        format!("'{sixty_four}\t'\n")
+    );
+    let long = "b".repeat(80);
+    assert_eq!(
+        neutralise(&format!("`{long}\n\tsecret`")),
+        format!("`{}\n\t`\n", "b".repeat(64))
+    );
+    let plain = neutralise(&format!("`{}`", "c".repeat(80)));
+    assert_eq!(plain, format!("`{}`\n", "c".repeat(64)));
+    assert!(!plain.contains(&"c".repeat(65)));
+}

@@ -214,7 +214,7 @@ fn cut_quoted(text: &str) -> String {
                 inner.push(next);
             }
             if inner.chars().count() > 64 {
-                inner = inner.chars().take(64).collect();
+                inner = truncate_quote(&inner);
             }
             out.push(character);
             out.push_str(&inner);
@@ -224,6 +224,17 @@ fn cut_quoted(text: &str) -> String {
         }
     }
     out
+}
+
+/// Keep the first 64 characters, and every newline and tab after that.
+fn truncate_quote(text: &str) -> String {
+    let mut kept = String::new();
+    for (index, character) in text.chars().enumerate() {
+        if index < 64 || character == '\n' || character == '\t' {
+            kept.push(character);
+        }
+    }
+    kept
 }
 
 /// Why the print options are unusable.

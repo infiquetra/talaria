@@ -31,6 +31,24 @@ fn scrub_text_hostile_text_is_neutralised() {
 }
 
 #[test]
+fn scrub_text_redacts_paths_after_line_separators() {
+    for separator in ['\u{2028}', '\u{2029}'] {
+        for path in ["/Users/alice/secret", "~/secret"] {
+            let out = scrub_text(&format!("note{separator}{path}"), None);
+            assert!(
+                out.contains("<path>"),
+                "U+{:04X} before {path} -> {out}",
+                u32::from(separator)
+            );
+            assert!(!out.contains(path), "{out}");
+            assert!(!out.contains("secret"), "{out}");
+            assert!(!out.contains(separator), "{out}");
+            assert!(out.contains('?'), "{out}");
+        }
+    }
+}
+
+#[test]
 fn sanitize_with_options_keeps_display_joiners_and_layout_newlines() {
     assert_eq!(sanitize("a\u{200B}b").as_ref(), "a\u{200B}b");
     assert_eq!(sanitize("\n").as_ref(), "\u{240a}");

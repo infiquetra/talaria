@@ -14,6 +14,8 @@ enum StandIn {
 pub struct SanitizeOptions {
     /// Leave U+000A and U+0009 unchanged.
     pub keep_layout: bool,
+    /// Leave U+2028 and U+2029 unchanged so a later scan can still see them as separators.
+    pub keep_separators: bool,
     /// Also replace U+200B, U+200C, U+200D, U+2060, and U+FEFF.
     ///
     /// The display sanitizer leaves these alone so a zero-width joiner inside
@@ -25,18 +27,21 @@ impl SanitizeOptions {
     /// Control pictures for controls. Zero-width characters stay.
     pub const DISPLAY: Self = Self {
         keep_layout: false,
+        keep_separators: false,
         zero_width: false,
     };
 
     /// Replace newline and tab as well, and replace zero-width characters.
     pub const CLI: Self = Self {
         keep_layout: false,
+        keep_separators: false,
         zero_width: true,
     };
 
     /// Keep newline and tab, and replace zero-width characters.
     pub const LAYOUT: Self = Self {
         keep_layout: true,
+        keep_separators: false,
         zero_width: true,
     };
 }
@@ -80,6 +85,9 @@ fn zero_width(c: char) -> bool {
 
 fn classified(c: char, options: SanitizeOptions) -> Option<StandIn> {
     if options.keep_layout && matches!(c, '\n' | '\t') {
+        return None;
+    }
+    if options.keep_separators && matches!(c, '\u{2028}' | '\u{2029}') {
         return None;
     }
     if let Some(found) = stand_in(c) {
