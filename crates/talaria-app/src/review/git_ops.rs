@@ -16,6 +16,7 @@ use talaria_core::review::{
     parse_status_v2,
 };
 
+use crate::review::locate::validated_worktree_root;
 use crate::worktree::git::{error_line, safe_text};
 use crate::worktree::{GitError, GitOutput, GitRunner, git_env, git_prefix_args};
 
@@ -44,7 +45,7 @@ const NO_BASE: &str = "No base to compare with: origin has no default branch her
 
 /// Read a listing for a scope.
 pub async fn list(git: &GitRunner, target: &ReviewTarget, scope: Scope) -> Result<Listing, String> {
-    let root = work_tree_root(git, &target.folder).await?;
+    let root = review_root(git, target).await?;
     let status_args: &[&str] = match scope {
         Scope::Uncommitted => &[
             "status",
@@ -283,7 +284,7 @@ pub async fn file_diff(
     if file.is_dir {
         return Ok("Untracked folder: stage it to see its files.".to_owned());
     }
-    let root = work_tree_root(git, &target.folder).await?;
+    let root = review_root(git, target).await?;
     if let Some(size) = oversized(git, &root, scope, base, file).await {
         return Ok(format!(
             "File too large to show here ({}). Run git diff in a shell.",
@@ -418,7 +419,7 @@ pub async fn run_action(
     target: &ReviewTarget,
     action: &GitAction,
 ) -> Result<String, String> {
-    let root = work_tree_root(git, &target.folder).await?;
+    let root = review_root(git, target).await?;
     let done = match action {
         GitAction::Stage(paths) => stage(git, &root, paths).await,
         GitAction::Unstage(paths) => unstage(git, &root, paths).await,
@@ -679,7 +680,7 @@ pub async fn commit_context(
     git: &GitRunner,
     target: &ReviewTarget,
 ) -> Result<(String, String), String> {
-    let root = work_tree_root(git, &target.folder).await?;
+    let root = review_root(git, target).await?;
     let unborn = !has_head(git, &root).await;
     let rows = status_rows(git, &root).await?;
     let untracked: Vec<&str> = rows
@@ -932,6 +933,29 @@ async fn status_rows(git: &GitRunner, root: &Path) -> Result<Vec<ChangedFile>, S
     let (_head, files): (BranchHead, Vec<ChangedFile>) =
         parse_status_v2(out.stdout.as_bytes()).map_err(|e| e.0)?;
     Ok(files)
+}
+
+/// The directory a review reads and writes.
+///
+/// A target opened on a linked worktree keeps that canonical directory. The
+/// operation stops when Git no longer reports the same linked worktree of the
+/// same repository.
+async fn review_root(git: &GitRunner, target: &ReviewTarget) -> Result<PathBuf, String> {
+    if target.record.is_some()
+        && target
+            .folder
+            .parent()
+            .is_some_and(|parent| parent == target.main_root.join(".worktrees"))
+    {
+        return validated_worktree_root(git, &target.main_root, &target.folder)
+            .await
+            .filter(|root| root == &target.folder)
+            .ok_or_else(|| {
+                "This review's worktree no longer matches the linked worktree that was opened."
+                    .to_owned()
+            });
+    }
+    work_tree_root(git, &target.folder).await
 }
 
 /// The work tree root holding the folder.

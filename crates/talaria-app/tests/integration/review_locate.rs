@@ -17,12 +17,14 @@ use git_fixture::{GitRepo, git_available};
 use mock_gateway::{Behavior, StandaloneGateway};
 use serde_json::{Value, json};
 use talaria_app::bg::{CallFailure, LaunchConn, LaunchLink};
+use talaria_app::review::git_ops::list;
 use talaria_app::review::locate::{
     KnownRepos, LocateContext, Located, SessionInfoError, SessionInfoReply, SessionInfoSource,
     locate, locate_folder,
 };
 use talaria_app::worktree::GitRunner;
 use talaria_core::directory::rows::RowKey;
+use talaria_core::review::Scope;
 
 fn frames_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/frames")
@@ -495,20 +497,181 @@ async fn symlinked_worktrees_directory_is_refused() {
     );
 }
 
-/// A real directory directly under `<main>/.worktrees` still opens.
+/// A git linked worktree directly under `<main>/.worktrees` still opens.
 #[tokio::test]
 async fn legitimate_worktree_record_opens_review() {
     if skip_unless_git() {
         return;
     }
     let git = GitRepo::new();
-    let tree = git.repo.join(".worktrees/talaria-ok");
-    std::fs::create_dir_all(&tree).expect("worktree");
+    let repo = git.repo.clone();
+    git.ok(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "--no-track",
+            "-b",
+            "talaria/ok",
+            ".worktrees/talaria-ok",
+            "main",
+        ],
+    );
+    let tree = repo.join(".worktrees/talaria-ok");
     write_record(&git, "talaria/ok", ".worktrees/talaria-ok", "local-ok");
     let found = locate_recorded(&git, "local-ok").await;
     let Located::Found(target) = found else {
-        panic!("a real worktree record opens: {found:?}");
+        panic!("a linked worktree record opens: {found:?}");
     };
-    assert_eq!(target.folder, tree);
-    assert_eq!(target.main_root, git.repo);
+    assert_eq!(target.folder, std::fs::canonicalize(&tree).expect("tree"));
+    assert_eq!(target.main_root, repo);
+    let record = target.record.as_ref().expect("the linked worktree record");
+    assert_eq!(record.branch, "talaria/ok");
+    list(&GitRunner::from_env(), &target, Scope::Uncommitted)
+        .await
+        .expect("the linked worktree lists");
+
+    let via_folder = locate_folder(&GitRunner::from_env(), &tree, None, String::new()).await;
+    let Located::Found(via_folder) = via_folder else {
+        panic!("the same linked worktree opened by folder keeps its record: {via_folder:?}");
+    };
+    assert_eq!(
+        via_folder
+            .record
+            .as_ref()
+            .map(|record| record.branch.as_str()),
+        Some("talaria/ok")
+    );
+}
+
+/// A plain directory under `.worktrees` is not a linked worktree.
+#[tokio::test]
+async fn plain_directory_under_worktrees_is_refused() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let plain = git.repo.join(".worktrees/plain");
+    std::fs::create_dir_all(&plain).expect("plain directory");
+    write_record(&git, "talaria/plain", ".worktrees/plain", "local-plain");
+    let found = locate_recorded(&git, "local-plain").await;
+    assert_eq!(
+        found,
+        Located::NotFound(format!(
+            "The worktree {} is not a linked worktree of {}.",
+            git.repo.join(".worktrees/plain").to_string_lossy(),
+            git.repo.to_string_lossy(),
+        )),
+        "a plain directory must not open as the worktree record"
+    );
+
+    let via_folder = locate_folder(&GitRunner::from_env(), &plain, None, String::new()).await;
+    let Located::Found(via_folder) = via_folder else {
+        panic!("the caller can still open the folder: {via_folder:?}");
+    };
+    assert!(
+        via_folder.record.is_none(),
+        "a plain directory must not keep the record's base commit: {via_folder:?}"
+    );
+}
+
+/// An out-of-scope record is not attached when the folder is chosen another way.
+#[tokio::test]
+async fn fallback_lookup_ignores_an_uncontained_record() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let repo = git.repo.clone();
+    let attacker = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let outside = repo.to_string_lossy().into_owned();
+    for (key, value) in [
+        ("path", outside.as_str()),
+        ("base", "origin/main"),
+        ("base-commit", attacker),
+        ("profile", "fixture"),
+        ("session", "local-fallback"),
+    ] {
+        git.ok(
+            &repo,
+            &[
+                "config",
+                "--local",
+                &format!("branch.talaria/fallback.talaria-{key}"),
+                value,
+            ],
+        );
+    }
+    let runner = GitRunner::from_env();
+    let mut repos = KnownRepos::new();
+    repos.insert(repo.clone());
+    let asked = row("fixture", "local-fallback");
+    let launch = repo.to_string_lossy();
+    let ctx = LocateContext {
+        git: &runner,
+        known_roots: &repos,
+        foreground: Some((&asked, Some(launch.as_ref()))),
+        info: &NeverAsked,
+    };
+    let found = locate(&asked, &ctx).await;
+    let Located::Found(target) = found else {
+        panic!("the foreground folder still opens: {found:?}");
+    };
+    assert_eq!(target.folder, repo);
+    assert!(
+        target.record.is_none(),
+        "an absolute record must not supply the branch base: {target:?}"
+    );
+    let listing = list(&runner, &target, Scope::Branch)
+        .await
+        .expect("the foreground folder lists");
+    assert_ne!(listing.base.as_deref(), Some(attacker));
+
+    let via_folder = locate_folder(&runner, &repo, None, String::new()).await;
+    let Located::Found(via_folder) = via_folder else {
+        panic!("an explicit folder still opens: {via_folder:?}");
+    };
+    assert!(via_folder.record.is_none());
+}
+
+/// Replacing the linked worktree after it opens stops later git operations.
+#[tokio::test]
+async fn record_backed_review_stops_when_the_worktree_changes() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let repo = git.repo.clone();
+    git.ok(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "--no-track",
+            "-b",
+            "talaria/bound",
+            ".worktrees/talaria-bound",
+            "main",
+        ],
+    );
+    write_record(
+        &git,
+        "talaria/bound",
+        ".worktrees/talaria-bound",
+        "local-bound",
+    );
+    let found = locate_recorded(&git, "local-bound").await;
+    let Located::Found(target) = found else {
+        panic!("the linked worktree opens: {found:?}");
+    };
+    git.ok(
+        &repo,
+        &["worktree", "remove", "--force", ".worktrees/talaria-bound"],
+    );
+    std::os::unix::fs::symlink(&repo, repo.join(".worktrees/talaria-bound")).expect("symlink");
+    let listed = list(&GitRunner::from_env(), &target, Scope::Uncommitted).await;
+    assert!(
+        listed.is_err(),
+        "a replaced worktree must not be read: {listed:?}"
+    );
 }
