@@ -162,6 +162,8 @@ mod probe;
 mod profiles_keys;
 #[path = "integration/profiles_render.rs"]
 mod profiles_render;
+#[path = "integration/prompt_bounds.rs"]
+mod prompt_bounds;
 #[path = "integration/prompt_cards.rs"]
 mod prompt_cards;
 #[path = "integration/providers_details_key.rs"]

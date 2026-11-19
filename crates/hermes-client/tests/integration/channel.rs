@@ -996,11 +996,21 @@ async fn unanswerable_responder_survives_replace() {
         );
 
         let before_drop = client.stats().await.dropped_without_decision;
-        let id2 = peer
-            .server_request("sudo", "s1", json!({"command": "apt list"}))
-            .await;
+        // A new peer numbers server-request ids from zero. That would replay the
+        // id just answered, which stays blocked until it leaves the tombstone ring.
+        let id2 = "srq-0000000000aa";
+        peer.send_text(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": id2,
+                "method": "sudo",
+                "params": {"command": "apt list", "session_id": "s1"}
+            })
+            .to_string(),
+        )
+        .await;
         let second = take_server(&mut inbound).await;
-        let _ = id2;
+        assert_eq!(second.id, id2);
         peer.kill().await;
         let _closed = take_socket_close(&mut inbound).await;
         let sent = peer.json_frames();

@@ -28,6 +28,7 @@ pub(crate) fn apply(state: &mut SessionState, event: &Event) -> Vec<Effect> {
                 prompt.state = PromptState::Settled(settlement);
                 prompt.sealed = true;
             }
+            prune_settled(state);
             return Vec::new();
         }
         Event::AnswerApproval { key, choice } => (key, PromptKind::Approval, choice),
@@ -55,6 +56,7 @@ pub(crate) fn apply(state: &mut SessionState, event: &Event) -> Vec<Effect> {
                     _ => {}
                 }
             }
+            prune_settled(state);
             return Vec::new();
         }
         _ => return Vec::new(),
@@ -130,6 +132,7 @@ pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
                 }
                 PromptState::Settled(_) => {}
             }
+            prune_settled(state);
         }
     } else if !state.prompts.contains_key(&key) {
         insert(
@@ -151,7 +154,7 @@ pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
                         items
                             .iter()
                             .filter_map(Value::as_str)
-                            .map(str::to_owned)
+                            .map(bounded_text)
                             .collect()
                     })
                     .unwrap_or_default(),
@@ -171,9 +174,93 @@ pub(crate) fn insert(state: &mut SessionState, cell: PromptCell) {
     if !state.prompts.contains_key(&cell.key) {
         state.prompts.insert(cell.key.clone(), state.cells.len());
         state.cells.push(super::Cell::Prompt(cell));
+        prune_settled(state);
     }
 }
 
+const MAX_SETTLED_PROMPTS: usize = 256;
+const MAX_PROMPT_TEXT: usize = 4096;
+const PROMPT_TEXT_SUFFIX: &str = "… (truncated)";
+
+fn prune_settled(state: &mut SessionState) {
+    let settled: Vec<usize> = state
+        .cells
+        .iter()
+        .enumerate()
+        .filter_map(|(index, cell)| match cell {
+            super::Cell::Prompt(prompt) if matches!(prompt.state, PromptState::Settled(_)) => {
+                Some(index)
+            }
+            _ => None,
+        })
+        .collect();
+    if settled.len() <= MAX_SETTLED_PROMPTS {
+        return;
+    }
+    let drop_count = settled.len() - MAX_SETTLED_PROMPTS;
+    let mut remove = vec![false; state.cells.len()];
+    for index in settled.into_iter().take(drop_count) {
+        remove[index] = true;
+    }
+    let mut removed_keys = Vec::new();
+    let mut new_index = vec![0; remove.len()];
+    let mut kept = Vec::with_capacity(state.cells.len() - drop_count);
+    let mut removed_before = 0usize;
+    for (index, cell) in state.cells.drain(..).enumerate() {
+        if remove[index] {
+            if let super::Cell::Prompt(prompt) = cell {
+                removed_keys.push(prompt.key);
+            }
+            removed_before += 1;
+            continue;
+        }
+        new_index[index] = index - removed_before;
+        kept.push(cell);
+    }
+    state.cells = kept;
+    for key in removed_keys {
+        state.prompts.remove(&key);
+    }
+    for index in state.prompts.values_mut() {
+        *index = new_index[*index];
+    }
+    for index in state.tools.values_mut() {
+        *index = new_index[*index];
+    }
+    if let Some(index) = state.assistant.as_mut() {
+        *index = new_index[*index];
+    }
+    if let Some(index) = state.reasoning.as_mut() {
+        *index = new_index[*index];
+    }
+    let removed_strictly_before = |position: usize| {
+        remove[..position.min(remove.len())]
+            .iter()
+            .filter(|flag| **flag)
+            .count()
+    };
+    state.final_prefix = state
+        .final_prefix
+        .saturating_sub(removed_strictly_before(state.final_prefix));
+    state.turn_start = state
+        .turn_start
+        .saturating_sub(removed_strictly_before(state.turn_start));
+}
+
 fn string(payload: &Value, key: &str) -> Option<String> {
-    payload[key].as_str().map(str::to_owned)
+    payload[key].as_str().map(bounded_text)
+}
+
+fn bounded_text(value: &str) -> String {
+    if value.len() <= MAX_PROMPT_TEXT {
+        return value.to_owned();
+    }
+    let mut end = MAX_PROMPT_TEXT - PROMPT_TEXT_SUFFIX.len();
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = String::with_capacity(end + PROMPT_TEXT_SUFFIX.len());
+    out.push_str(&value[..end]);
+    out.push_str(PROMPT_TEXT_SUFFIX);
+    out
 }

@@ -25,7 +25,7 @@
 
 use crate::rpc::{CallError, FrameClass, RpcError, classify, encode_request};
 use futures_util::{SinkExt, StreamExt};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -646,8 +646,16 @@ pub(crate) struct ChannelState {
     generation_closed: bool,
     calls: HashMap<u64, String>,
     requests: HashMap<String, Arc<AtomicU8>>,
-    unknown_methods: HashSet<String>,
+    /// Answered ids, oldest first. A full ring drops the oldest id.
+    tombstones: VecDeque<String>,
+    /// Truncated unknown method names, oldest first.
+    unknown_methods: VecDeque<String>,
 }
+
+const MAX_OPEN_SERVER_REQUESTS: usize = 64;
+const MAX_UNKNOWN_METHODS: usize = 64;
+const MAX_ECHOED_METHOD_CHARS: usize = 128;
+const TOMBSTONE_LIMIT: usize = 256;
 
 impl ChannelState {
     pub(crate) fn new(next_request_id: u64) -> Self {
@@ -659,7 +667,8 @@ impl ChannelState {
             generation_closed: true,
             calls: HashMap::new(),
             requests: HashMap::new(),
-            unknown_methods: HashSet::new(),
+            tombstones: VecDeque::new(),
+            unknown_methods: VecDeque::new(),
         }
     }
 
@@ -730,18 +739,19 @@ impl ChannelState {
                 if matches!(request.request, ContractServerRequest::Unknown(_)) {
                     let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
                     let method = value["method"].as_str().unwrap_or_default();
+                    let shown = truncate_chars(method, MAX_ECHOED_METHOD_CHARS);
                     let mut effects = vec![Effect::Write {
                         generation,
                         text: answer_text(
                             &request.id,
                             Answer::Error {
                                 code: -32601,
-                                message: format!("no handler for server request: {method}"),
+                                message: format!("no handler for server request: {shown}"),
                             },
                         ),
                     }];
                     self.stats.malformed_frames += 1;
-                    if self.unknown_methods.insert(method.to_owned()) {
+                    if self.remember_unknown(shown) {
                         effects.push(Effect::Deliver(Inbound::Malformed(MalformedFrame {
                             generation,
                             kind: MalformedKind::UnknownServerRequest,
@@ -750,6 +760,19 @@ impl ChannelState {
                         })));
                     }
                     effects
+                } else if self.request_blocked(&request.id) {
+                    Vec::new()
+                } else if self.requests.len() >= MAX_OPEN_SERVER_REQUESTS {
+                    vec![Effect::Write {
+                        generation,
+                        text: answer_text(
+                            &request.id,
+                            Answer::Error {
+                                code: -32000,
+                                message: "too many open server requests".to_owned(),
+                            },
+                        ),
+                    }]
                 } else {
                     self.requests
                         .insert(request.id.clone(), request.responder.state.clone());
@@ -771,6 +794,7 @@ impl ChannelState {
                     let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
                     let id = value["id"].as_str().unwrap_or_default();
                     let method = value["method"].as_str().unwrap_or_default();
+                    let shown = truncate_chars(method, MAX_ECHOED_METHOD_CHARS);
                     effects.push(Effect::Write {
                         generation,
                         text: answer_text(
@@ -778,7 +802,7 @@ impl ChannelState {
                             Answer::Error {
                                 code: -32603,
                                 message: format!(
-                                    "server request params could not be read: {method}"
+                                    "server request params could not be read: {shown}"
                                 ),
                             },
                         ),
@@ -824,10 +848,13 @@ impl ChannelState {
         request_id: &str,
         answer: Answer,
     ) -> Result<Effect, RespondError> {
-        let state = self
-            .requests
-            .get(request_id)
-            .ok_or(RespondError::Cancelled)?;
+        let Some(state) = self.requests.get(request_id).cloned() else {
+            return Err(if self.tombstones.iter().any(|id| id == request_id) {
+                RespondError::AlreadyAnswered
+            } else {
+                RespondError::Cancelled
+            });
+        };
         match state.load(Ordering::SeqCst) {
             ANSWERED => return Err(RespondError::AlreadyAnswered),
             CANCELLED | ANSWERED_CANCELLED => return Err(RespondError::Cancelled),
@@ -918,6 +945,37 @@ impl ChannelState {
         stats.inbound_backlog = inbound_backlog;
         stats
     }
+
+    fn request_blocked(&self, id: &str) -> bool {
+        self.requests.contains_key(id) || self.tombstones.iter().any(|seen| seen == id)
+    }
+
+    fn remember_unknown(&mut self, method: String) -> bool {
+        if self.unknown_methods.iter().any(|seen| seen == &method) {
+            return false;
+        }
+        if self.unknown_methods.len() == MAX_UNKNOWN_METHODS {
+            self.unknown_methods.pop_front();
+        }
+        self.unknown_methods.push_back(method);
+        true
+    }
+
+    fn retire_answered(&mut self, id: &str) {
+        if self.requests.remove(id).is_some() {
+            self.push_tombstone(id);
+        }
+    }
+
+    fn push_tombstone(&mut self, id: &str) {
+        if id.is_empty() || self.tombstones.iter().any(|seen| seen == id) {
+            return;
+        }
+        if self.tombstones.len() == TOMBSTONE_LIMIT {
+            self.tombstones.pop_front();
+        }
+        self.tombstones.push_back(id.to_owned());
+    }
 }
 
 const OPEN: u8 = 0;
@@ -945,6 +1003,17 @@ fn mark_written(state: &AtomicU8) {
             ANSWERED
         })
     });
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (index, ch) in text.chars().enumerate() {
+        if index == max_chars {
+            return out;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn answer_text(id: &str, answer: Answer) -> String {
@@ -1453,6 +1522,9 @@ impl Actor {
                             Ordering::SeqCst,
                             Ordering::SeqCst,
                         );
+                    }
+                    if outcome.is_ok() {
+                        self.state.retire_answered(&id);
                     }
                     let _ = result.send(if cancelled {
                         Err(RespondError::Cancelled)
@@ -1969,6 +2041,163 @@ mod tests {
         assert_eq!(closed.open_server_requests, 0);
         assert_eq!(closed.pending_calls, 0);
         assert_eq!(closed.dropped_without_decision, kept_dropped);
+    }
+
+    fn method_frame(id: &str, method: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": {"session_id": "s1"}
+        }))
+        .expect("method frame")
+    }
+
+    fn write_text(effects: &[Effect]) -> Option<&str> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Write { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn open_server_requests_stay_bounded_and_an_open_request_is_never_evicted() {
+        let mut state = ChannelState::new(1);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let first = "srq-000000000000".to_owned();
+        let _ = state.on_frame(Generation(1), &sudo_frame(&first), now);
+        let kept = Arc::clone(&state.requests[&first]);
+        let mut overflow = Vec::new();
+        for n in 1..70 {
+            let id = format!("srq-{n:012x}");
+            let effects = state.on_frame(Generation(1), &sudo_frame(&id), now);
+            if n < 64 {
+                assert!(
+                    effects
+                        .iter()
+                        .any(|effect| matches!(effect, Effect::Deliver(_))),
+                    "request {n} was not delivered"
+                );
+                assert!(
+                    write_text(&effects).is_none(),
+                    "an accepted request was also refused"
+                );
+            } else {
+                assert!(
+                    !state.requests.contains_key(&id),
+                    "overflow request {id} was stored"
+                );
+                let text = write_text(&effects).expect("overflow writes one refusal");
+                assert_eq!(
+                    effects
+                        .iter()
+                        .filter(|effect| matches!(effect, Effect::Write { .. }))
+                        .count(),
+                    1
+                );
+                assert!(
+                    !effects
+                        .iter()
+                        .any(|effect| matches!(effect, Effect::Deliver(_)))
+                );
+                assert!(!text.contains('\n'), "refusal frame is not one line");
+                let value: Value = serde_json::from_str(text).expect("refusal is one JSON value");
+                assert_eq!(value["jsonrpc"], "2.0");
+                assert_eq!(value["id"], id);
+                assert!(value.get("result").is_none());
+                assert_eq!(value["error"]["code"], -32000);
+                assert_eq!(value["error"]["message"], "too many open server requests");
+                overflow.push(id);
+            }
+        }
+        assert_eq!(state.requests.len(), 64);
+        assert_eq!(state.stats(0).open_server_requests, 64);
+        assert!(
+            Arc::ptr_eq(&kept, &state.requests[&first]),
+            "the first open request was replaced"
+        );
+        assert!(overflow.iter().all(|id| !state.requests.contains_key(id)));
+
+        let duplicate = state.on_frame(Generation(1), &sudo_frame(&first), now);
+        assert!(duplicate.is_empty(), "a duplicate id wrote or replaced");
+        assert!(Arc::ptr_eq(&kept, &state.requests[&first]));
+        assert_eq!(state.requests.len(), 64);
+    }
+
+    #[test]
+    fn unknown_method_flood_stays_bounded_and_the_echo_is_truncated() {
+        let mut state = ChannelState::new(1);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let long = "m".repeat(200);
+        let effects = state.on_frame(Generation(1), &method_frame("srq-long", &long), now);
+        let text = write_text(&effects).expect("unknown method is refused");
+        assert!(!text.contains('\n'));
+        let value: Value = serde_json::from_str(text).expect("refusal is one JSON value");
+        assert_eq!(value["error"]["code"], -32601);
+        let message = value["error"]["message"].as_str().expect("message");
+        let echoed = message
+            .strip_prefix("no handler for server request: ")
+            .expect("prefix");
+        assert_eq!(echoed.chars().count(), 128);
+        assert!(long.starts_with(echoed));
+        assert!(!message.contains(&"m".repeat(129)));
+
+        let tricky = "say \"hi\"\nnow";
+        let effects = state.on_frame(Generation(1), &method_frame("srq-tricky", tricky), now);
+        let text = write_text(&effects).expect("tricky method is refused");
+        assert!(!text.contains('\n'), "a raw newline would break the frame");
+        let value: Value = serde_json::from_str(text).expect("tricky refusal parses");
+        assert_eq!(
+            value["error"]["message"],
+            format!("no handler for server request: {tricky}")
+        );
+
+        let wide = "é".repeat(160);
+        let effects = state.on_frame(Generation(1), &method_frame("srq-wide", &wide), now);
+        let text = write_text(&effects).expect("wide method is refused");
+        let value: Value = serde_json::from_str(text).expect("wide refusal parses");
+        let echoed = value["error"]["message"]
+            .as_str()
+            .and_then(|message| message.strip_prefix("no handler for server request: "))
+            .expect("echo");
+        assert_eq!(echoed.chars().count(), 128);
+        assert!(wide.starts_with(echoed));
+
+        for n in 0..70 {
+            let method = format!("custom.method.{n:03}");
+            let _ = state.on_frame(
+                Generation(1),
+                &method_frame(&format!("srq-u-{n:03}"), &method),
+                now,
+            );
+        }
+        assert_eq!(state.unknown_methods.len(), 64);
+
+        let oldest = state.on_frame(
+            Generation(1),
+            &method_frame("srq-again", "custom.method.000"),
+            now,
+        );
+        assert!(
+            oldest
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "the evicted oldest method was still remembered"
+        );
+        let newest = state.on_frame(
+            Generation(1),
+            &method_frame("srq-newest", "custom.method.069"),
+            now,
+        );
+        assert!(
+            !newest
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "a method still in the bounded set notified twice"
+        );
+        assert_eq!(state.unknown_methods.len(), 64);
     }
 }
 

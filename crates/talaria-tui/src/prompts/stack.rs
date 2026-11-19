@@ -8,6 +8,7 @@ use talaria_core::session::{
     ConnectionCard, ConnectionChoice, PromptCell, PromptKey, PromptKind, PromptState,
     is_answerable, recovered_limit_seconds,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
     KeyOutcome, MaskedValue, MaskedView, PromptIntent, display_choices, multi_select_answer,
@@ -17,6 +18,7 @@ use crate::keys::{Key, KeyCode, KeyKind};
 use crate::live::LiveSection;
 
 const LIMIT: usize = 16_384;
+const DRAWN_LINE_CAP: usize = 10;
 
 #[derive(Clone, PartialEq, Eq)]
 enum Identity {
@@ -740,15 +742,11 @@ impl PromptSection<'_> {
                 let (title, detail) = match view.method.as_str() {
                     "sudo" => (
                         "sudo password".into(),
-                        if field("command").is_empty() {
-                            String::new()
-                        } else {
-                            format!("$ {}", field("command"))
-                        },
+                        (!field("command").is_empty()).then(|| ("$ ", field("command"))),
                     ),
                     "secret" => (
                         format!("Secret for {}", field("env_var")),
-                        field("prompt").into(),
+                        Some(("", field("prompt"))),
                     ),
                     "vault.code" => (
                         if field("site").is_empty() {
@@ -756,14 +754,14 @@ impl PromptSection<'_> {
                         } else {
                             format!("One-time code for {}", field("site"))
                         },
-                        field("hint").into(),
+                        Some(("", field("hint"))),
                     ),
                     _ => (
                         format!("Unlock {}", field("display_name")),
-                        field("backend").into(),
+                        Some(("", field("backend"))),
                     ),
                 };
-                (title, Some(detail))
+                (title, detail)
             }
         };
         let mut header = title;
@@ -779,7 +777,7 @@ impl PromptSection<'_> {
                 session.chars().take(8).collect::<String>()
             ));
         }
-        add(&mut rows, &header, width);
+        add_capped(&mut rows, &header, width);
         let hint = match &card.content {
             Content::Connection(_) => return stack.connection_lines(width),
             Content::Prompt(cell) if cell.kind == PromptKind::ServerRequest => {
@@ -808,8 +806,12 @@ impl PromptSection<'_> {
                 }
             }
             Content::Masked(view) => {
-                if let Some(detail) = masked_detail {
-                    add(&mut rows, &detail, width);
+                if let Some((prefix, detail)) = masked_detail {
+                    if prefix.is_empty() {
+                        add_capped(&mut rows, detail, width);
+                    } else {
+                        add_capped_prefixed(&mut rows, prefix, detail, width);
+                    }
                 }
                 if view.method == "secret" {
                     add(
@@ -834,26 +836,10 @@ impl PromptSection<'_> {
             }
             Content::Prompt(cell) if cell.kind == PromptKind::Approval => {
                 if let Some(command) = cell.command.as_deref().filter(|s| !s.is_empty()) {
-                    let mut command_rows = Vec::new();
-                    for source in command.replace("\r\n", "\n").split('\n') {
-                        let text = sanitize(source);
-                        let wrapped = wrap_lines(
-                            vec![Line::from(text.into_owned())],
-                            width.saturating_sub(2).max(1),
-                        );
-                        for line in wrapped {
-                            let prefix = if command_rows.is_empty() { "$ " } else { "  " };
-                            command_rows.push(Line::from(format!("{prefix}{line}")));
-                        }
-                    }
-                    let hidden = command_rows.len().saturating_sub(10);
-                    rows.extend(command_rows.into_iter().take(10));
-                    if hidden > 0 {
-                        add(&mut rows, &format!("… {hidden} more lines"), width);
-                    }
+                    append_approval_command(&mut rows, command, width);
                 }
                 if let Some(description) = &cell.description {
-                    add(&mut rows, description, width);
+                    add_capped(&mut rows, description, width);
                 }
                 if cell.edit.is_some() {
                     add(&mut rows, "This approval carries a proposed edit.", width);
@@ -887,7 +873,7 @@ impl PromptSection<'_> {
             }
             Content::Prompt(cell) => {
                 if let Some(question) = &cell.question {
-                    add(&mut rows, question, width);
+                    add_capped(&mut rows, question, width);
                 }
                 if let Some(seconds) = cell.timeout_s {
                     add(
@@ -978,6 +964,213 @@ fn add(rows: &mut Vec<Line<'static>>, text: &str, width: u16) {
     }
 }
 
+fn add_capped(rows: &mut Vec<Line<'static>>, text: &str, width: u16) {
+    if text.is_empty() {
+        return;
+    }
+    let (wrapped, hidden) = if is_plain_ascii(text) {
+        capped_ascii(text, width.max(1), DRAWN_LINE_CAP)
+    } else {
+        let clean = sanitize(text);
+        capped_wrap(clean.as_ref(), width, DRAWN_LINE_CAP)
+    };
+    rows.extend(wrapped);
+    if hidden > 0 {
+        add(rows, &format!("… ({hidden} more lines)"), width);
+    }
+}
+
+fn add_capped_prefixed(rows: &mut Vec<Line<'static>>, prefix: &str, body: &str, width: u16) {
+    if body.is_empty() {
+        add_capped(rows, prefix, width);
+        return;
+    }
+    if !prefix.contains('\n') && is_plain_ascii_lines(body) {
+        let width = width.max(1);
+        let mut shown = Vec::new();
+        let mut hidden = 0usize;
+        let mut first = true;
+        for line in logical_lines(body) {
+            let room = DRAWN_LINE_CAP.saturating_sub(shown.len());
+            let (wrapped, extra) = if first {
+                first = false;
+                capped_ascii_prefixed(prefix, line, width, room)
+            } else {
+                capped_wrap(line, width, room)
+            };
+            shown.extend(wrapped);
+            hidden += extra;
+        }
+        rows.extend(shown);
+        if hidden > 0 {
+            add(rows, &format!("… ({hidden} more lines)"), width);
+        }
+        return;
+    }
+    let mut combined = String::with_capacity(prefix.len() + body.len());
+    combined.push_str(prefix);
+    combined.push_str(body);
+    add_capped(rows, &combined, width);
+}
+
+fn append_approval_command(rows: &mut Vec<Line<'static>>, command: &str, width: u16) {
+    let inner = width.saturating_sub(2).max(1);
+    let mut shown = Vec::new();
+    let mut hidden = 0usize;
+    for source in logical_lines(command) {
+        let room = DRAWN_LINE_CAP.saturating_sub(shown.len());
+        let (wrapped, extra) = if is_plain_ascii(source) {
+            capped_ascii(source, inner, room)
+        } else {
+            let clean = sanitize(source);
+            capped_wrap(clean.as_ref(), inner, room)
+        };
+        for line in wrapped {
+            let prefix = if shown.is_empty() { "$ " } else { "  " };
+            shown.push(Line::from(format!("{prefix}{line}")));
+        }
+        hidden += extra;
+    }
+    rows.extend(shown);
+    if hidden > 0 {
+        add(rows, &format!("… {hidden} more lines"), width);
+    }
+}
+
+fn logical_lines(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = Some(text);
+    std::iter::from_fn(move || {
+        let current = rest?;
+        if let Some(pos) = current.find('\n') {
+            let mut line = &current[..pos];
+            rest = Some(&current[pos + 1..]);
+            if let Some(stripped) = line.strip_suffix('\r') {
+                line = stripped;
+            }
+            Some(line)
+        } else {
+            rest = None;
+            let mut line = current;
+            if let Some(stripped) = line.strip_suffix('\r') {
+                line = stripped;
+            }
+            Some(line)
+        }
+    })
+}
+
+fn is_plain_ascii(text: &str) -> bool {
+    text.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+}
+
+fn is_plain_ascii_lines(text: &str) -> bool {
+    text.bytes()
+        .all(|byte| byte == b'\n' || byte == b'\r' || (0x20..=0x7e).contains(&byte))
+}
+
+fn capped_wrap(text: &str, width: u16, limit: usize) -> (Vec<Line<'static>>, usize) {
+    let width = width.max(1);
+    if text.is_empty() {
+        let shown = if limit == 0 {
+            Vec::new()
+        } else {
+            vec![Line::from("")]
+        };
+        return (shown, usize::from(limit == 0));
+    }
+    if is_plain_ascii(text) {
+        return capped_ascii(text, width, limit);
+    }
+    let (total, end) = grapheme_rows(text, width, limit);
+    let shown = if end == 0 {
+        Vec::new()
+    } else {
+        wrap_lines(vec![Line::from(text[..end].to_owned())], width)
+    };
+    let hidden = total.saturating_sub(shown.len());
+    (shown, hidden)
+}
+
+fn capped_ascii(text: &str, width: u16, limit: usize) -> (Vec<Line<'static>>, usize) {
+    let width_us = usize::from(width.max(1));
+    if text.is_empty() {
+        let shown = if limit == 0 {
+            Vec::new()
+        } else {
+            vec![Line::from("")]
+        };
+        return (shown, usize::from(limit == 0));
+    }
+    let total = text.len().div_ceil(width_us);
+    let take = total.min(limit);
+    let mut lines = Vec::with_capacity(take);
+    for row in 0..take {
+        let start = row * width_us;
+        let end = (start + width_us).min(text.len());
+        lines.push(Line::from(text[start..end].to_owned()));
+    }
+    (lines, total - take)
+}
+
+fn capped_ascii_prefixed(
+    prefix: &str,
+    line: &str,
+    width: u16,
+    limit: usize,
+) -> (Vec<Line<'static>>, usize) {
+    let width = width.max(1);
+    let prefix_cols = display_columns(prefix);
+    if prefix_cols >= width || !is_plain_ascii(line) {
+        let mut combined = String::with_capacity(prefix.len() + line.len());
+        combined.push_str(prefix);
+        combined.push_str(line);
+        return capped_wrap(&combined, width, limit);
+    }
+    let first_room = usize::from(width - prefix_cols);
+    let width_us = usize::from(width);
+    let extra_rows = line.len().saturating_sub(first_room).div_ceil(width_us);
+    let total = 1 + extra_rows;
+    let take = total.min(limit);
+    let mut lines = Vec::with_capacity(take);
+    if take > 0 {
+        let first_end = first_room.min(line.len());
+        lines.push(Line::from(format!("{prefix}{}", &line[..first_end])));
+    }
+    let mut offset = first_room.min(line.len());
+    for _ in 1..take {
+        let end = (offset + width_us).min(line.len());
+        lines.push(Line::from(line[offset..end].to_owned()));
+        offset = end;
+    }
+    (lines, total - take)
+}
+
+fn display_columns(text: &str) -> u16 {
+    text.graphemes(true)
+        .map(crate::history::grapheme_width)
+        .fold(0, |used, columns| used.saturating_add(columns))
+}
+
+fn grapheme_rows(text: &str, width: u16, limit: usize) -> (usize, usize) {
+    let mut rows = 1usize;
+    let mut used = 0u16;
+    let mut cut = if limit == 0 { 0 } else { text.len() };
+    let mut cut_set = limit == 0;
+    for (offset, grapheme) in text.grapheme_indices(true) {
+        let columns = crate::history::grapheme_width(grapheme);
+        if used > 0 && used.saturating_add(columns) > width {
+            rows += 1;
+            used = 0;
+            if !cut_set && rows > limit {
+                cut = offset;
+                cut_set = true;
+            }
+        }
+        used = used.saturating_add(columns);
+    }
+    (rows, cut)
+}
+
 fn add_choice(
     rows: &mut Vec<Line<'static>>,
     selected: usize,
@@ -985,15 +1178,8 @@ fn add_choice(
     label: &str,
     width: u16,
 ) {
-    add(
-        rows,
-        &format!(
-            "{} {}. {label}",
-            if selected == index { "›" } else { " " },
-            index + 1
-        ),
-        width,
-    );
+    let marker = if selected == index { "› " } else { "  " };
+    add_capped_prefixed(rows, &format!("{marker}{}. ", index + 1), label, width);
 }
 
 fn add_field(rows: &mut Vec<Line<'static>>, prefix: &str, text: &str, width: u16) {
