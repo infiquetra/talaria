@@ -428,8 +428,10 @@ const CHECKED_PLACES: &[&str] = &[
 ];
 
 const TRUSTED_CLASSIFY: &[&str] = &[
-    r#"git show "origin/$BASE_REF:tools/ci/change-scope.sh" > "$RUNNER_TEMP/change-scope.sh""#,
-    r#"sh "$RUNNER_TEMP/change-scope.sh" "origin/$BASE_REF" >> "$GITHUB_OUTPUT""#,
+    r#"BASE_SHA=$(git show-ref --verify --hash "refs/remotes/origin/$BASE_REF")"#,
+    r#"classifier="$RUNNER_TEMP/change-scope.sh""#,
+    r#"git show "${BASE_SHA}:tools/ci/change-scope.sh" > "$classifier""#,
+    r#"sh "$classifier" "$BASE_SHA" >> "$GITHUB_OUTPUT""#,
 ];
 
 #[test]
@@ -475,6 +477,10 @@ fn docs_only_fast_path_keeps_the_required_checks_reporting() {
         assert!(
             !text.contains(r#"sh tools/ci/change-scope.sh"#),
             "{workflow} must not execute change-scope.sh from the checkout"
+        );
+        assert!(
+            !text.contains(r#"origin/$BASE_REF:"#) && !text.contains(r#""origin/$BASE_REF""#),
+            "{workflow} must not pass the short ref origin/$BASE_REF to git"
         );
         // A path filter stops the workflow from running, and a required check that never
         // reports blocks the pull request for good.

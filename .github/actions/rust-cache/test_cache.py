@@ -1108,17 +1108,25 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
+def _git_text(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 class ChangeScopeTrustTests(unittest.TestCase):
     """The docs-only classifier must be the base branch's blob, not the PR tree."""
 
     checkout_invocation = 'sh tools/ci/change-scope.sh'
-    trusted_extract = (
-        'git show "origin/$BASE_REF:tools/ci/change-scope.sh" > '
-        '"$RUNNER_TEMP/change-scope.sh"'
+    trusted_resolve = (
+        'BASE_SHA=$(git show-ref --verify --hash "refs/remotes/origin/$BASE_REF")'
     )
-    trusted_run = (
-        'sh "$RUNNER_TEMP/change-scope.sh" "origin/$BASE_REF" >> "$GITHUB_OUTPUT"'
-    )
+    trusted_extract = 'git show "${BASE_SHA}:tools/ci/change-scope.sh" > "$classifier"'
+    trusted_run = 'sh "$classifier" "$BASE_SHA" >> "$GITHUB_OUTPUT"'
 
     def test_workflows_extract_change_scope_from_the_base_branch(self) -> None:
         scripts = []
@@ -1128,8 +1136,11 @@ class ChangeScopeTrustTests(unittest.TestCase):
             scripts.append(script)
             with self.subTest(workflow=name):
                 self.assertNotIn(self.checkout_invocation, source)
+                self.assertIn(self.trusted_resolve, script)
                 self.assertIn(self.trusted_extract, script)
                 self.assertIn(self.trusted_run, script)
+                self.assertNotIn('"origin/$BASE_REF"', script)
+                self.assertNotIn("origin/$BASE_REF:", script)
                 self.assertIn("set -euo pipefail", script)
                 self.assertNotIn("docs_only=true", script)
                 self.assertNotRegex(script, r"\|\|\s*(true|printf)")
@@ -1231,6 +1242,87 @@ class ChangeScopeTrustTests(unittest.TestCase):
             status, recorded = self._run_classifier(
                 repo, temp / "missing", script, "missing-base"
             )
+            self.assertNotEqual(status, 0)
+            self.assertNotIn("docs_only=true", recorded)
+
+    def _repo_with_colliding_origin_main_tag(self, temp: Path) -> tuple[Path, str, str]:
+        """Remote-tracking main stays on the real classifier; tag origin/main is poison."""
+        real_script = (_repo_root() / "tools/ci/change-scope.sh").read_text()
+        poison = "#!/bin/sh\nprintf 'docs_only=true\\n'\n"
+        repo = temp / "repo"
+        subprocess.run(
+            ["git", "init", "-b", "main", str(repo)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        scope = repo / "tools/ci/change-scope.sh"
+        scope.parent.mkdir(parents=True)
+        scope.write_text(real_script)
+        rust = repo / "src/lib.rs"
+        rust.parent.mkdir()
+        rust.write_text("pub fn kept() {}\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "base")
+        _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        _git(repo, "checkout", "-b", "tag-source")
+        scope.write_text(poison)
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "tag supplies a classifier that skips checks")
+        _git(repo, "update-ref", "refs/tags/origin/main", "HEAD")
+        _git(repo, "checkout", "main")
+        _git(repo, "checkout", "-b", "pr")
+        rust.write_text("pub fn changed() {}\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "edit Rust")
+        return repo, real_script, poison
+
+    def test_colliding_tag_cannot_shadow_the_remote_tracking_branch(self) -> None:
+        script = _classify_script(_workflow_source("ci.yml"))
+        self.assertEqual(script, _classify_script(_workflow_source("bench.yml")))
+        with tempfile.TemporaryDirectory() as temp_name:
+            temp = Path(temp_name)
+            repo, real_script, poison = self._repo_with_colliding_origin_main_tag(temp)
+            tag = _git_text(repo, "rev-parse", "refs/tags/origin/main")
+            branch = _git_text(repo, "rev-parse", "refs/remotes/origin/main")
+            self.assertNotEqual(tag, branch)
+            self.assertEqual(_git_text(repo, "rev-parse", "origin/main"), tag)
+            status, recorded = self._run_classifier(repo, temp, script, "main")
+            self.assertEqual(status, 0, "the remote-tracking branch exists")
+            self.assertEqual(recorded.splitlines(), ["docs_only=false"])
+            extracted = (temp / "runner-main" / "change-scope.sh").read_text()
+            self.assertEqual(extracted, real_script)
+            self.assertNotEqual(extracted, poison)
+
+    def test_missing_remote_tracking_branch_fails_when_only_the_tag_exists(
+        self,
+    ) -> None:
+        script = _classify_script(_workflow_source("ci.yml"))
+        with tempfile.TemporaryDirectory() as temp_name:
+            temp = Path(temp_name)
+            repo, _real_script, _poison = self._repo_with_colliding_origin_main_tag(
+                temp
+            )
+            _git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+            self.assertEqual(
+                _git_text(repo, "rev-parse", "--verify", "refs/tags/origin/main"),
+                _git_text(repo, "rev-parse", "origin/main"),
+            )
+            missing = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "show-ref",
+                    "--verify",
+                    "refs/remotes/origin/main",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(missing.returncode, 0)
+            status, recorded = self._run_classifier(repo, temp / "tag-only", script, "main")
             self.assertNotEqual(status, 0)
             self.assertNotIn("docs_only=true", recorded)
 
