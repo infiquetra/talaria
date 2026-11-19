@@ -12,6 +12,7 @@ const NEUTRALIZED_SNAPSHOT: &[(u32, u32)] = &[
     (0x0000, 0x001F),
     (0x007F, 0x00A0),
     (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
     (0x0600, 0x0605),
     (0x061C, 0x061C),
     (0x06DD, 0x06DD),
@@ -19,7 +20,8 @@ const NEUTRALIZED_SNAPSHOT: &[(u32, u32)] = &[
     (0x0890, 0x0891),
     (0x08E2, 0x08E2),
     (0x115F, 0x1160),
-    (0x180E, 0x180E),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
     (0x2000, 0x200F),
     (0x2028, 0x202F),
     (0x205F, 0x2064),
@@ -65,7 +67,7 @@ fn neutralized_set_matches_the_category_pin_and_snapshot() {
         snapshot, expected,
         "the checked-in snapshot drifted from the Cf pin and the named ranges"
     );
-    assert_eq!(snapshot.len(), 542);
+    assert_eq!(snapshot.len(), 549);
 
     for code in 0..=0x10FFFF {
         let Some(c) = char::from_u32(code) else {
@@ -189,8 +191,9 @@ fn expand(ranges: &[(u32, u32)]) -> BTreeSet<u32> {
     set
 }
 
-/// C0/C1, U+2028/U+2029, the tag block, every `Cf`, variation selectors except
-/// U+FE0E and U+FE0F, the Hangul fillers, and the blank-width spaces.
+/// C0/C1, U+2028/U+2029, the tag block, every `Cf`, every variation selector except
+/// U+FE0E and U+FE0F, the default-ignorable marks U+034F and U+17B4..=U+17B5, the
+/// Hangul fillers, and the blank-width spaces.
 fn expected_neutralized() -> BTreeSet<u32> {
     let mut set = BTreeSet::new();
     for code in 0x00..=0x1F {
@@ -208,9 +211,15 @@ fn expected_neutralized() -> BTreeSet<u32> {
     for code in 0xFE00..=0xFE0D {
         set.insert(code);
     }
+    for code in 0x180B..=0x180F {
+        set.insert(code);
+    }
     for code in 0xE0100..=0xE01EF {
         set.insert(code);
     }
+    set.insert(0x034F);
+    set.insert(0x17B4);
+    set.insert(0x17B5);
     for code in [0x115F, 0x1160, 0x3164, 0xFFA0] {
         set.insert(code);
     }

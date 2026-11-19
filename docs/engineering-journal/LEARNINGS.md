@@ -2,13 +2,13 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
-## 2026-11-19 — One neutralized-character table for every rendered path
+## 2026-11-19 — One neutralized-character table for literal text
 
-**Evidence.** Issue #667. An approval card drew `rm` plus U+00A0 plus `-rf` as `rm -rf` on a `TestBackend`, while the gateway still held the original bytes. Five local tables disagreed on U+00AD, U+200B–U+200F and U+2060. `unicode-general-category` 1.1.0 (Unicode 16.0) reports 170 `Cf` characters; the checked-in snapshot in `shared_text_seam` is 542 codepoints once controls, the tag block, variation selectors except U+FE0E and U+FE0F, the Hangul fillers and the blank-width spaces are included.
+**Evidence.** Issue #667. An approval card drew `rm` plus U+00A0 plus `-rf` as `rm -rf` on a `TestBackend`, while the gateway still held the original bytes. Five local tables disagreed on U+00AD, U+200B–U+200F and U+2060. `unicode-general-category` 1.1.0 (Unicode 16.0) reports 170 `Cf` characters. The checked-in snapshot is 549 codepoints: those controls and format characters, the tag block, every variation selector except U+FE0E and U+FE0F (including the Mongolian free variation selectors), the default-ignorable marks U+034F and U+17B4..=U+17B5, the Hangul fillers, and the blank-width spaces.
 
-**Mechanism.** `talaria_core::text::is_neutralized` is the only set. `sanitize` writes a visible stand-in. Alert fields, fleet titles, rewind columns and the composer consult that predicate. Stored transcript bytes stay as the gateway sent them. U+FE0E and U+FE0F still pass through, because they change the picture.
+**Mechanism.** `talaria_core::text::is_neutralized` is the shared set. `sanitize` writes a visible stand-in. Alert fields, fleet titles, rewind columns, and the composer consult it. Markdown sanitizes decoded text and link destinations again after the parser expands character references, on both the one-shot and streaming paths. Approval cards draw CR and tab as control pictures so those bytes are not mistaken for a line feed or four spaces. Stored transcript bytes and the submitted command stay as the gateway sent them. U+FE0E and U+FE0F still pass through, because they change the picture.
 
-**Generalizable rule.** A security list is a sample of a property. Pin the property to category data and pin the exact set to a snapshot, so a Unicode release and a quiet deletion both fail the suite.
+**Generalizable rule.** A security list is a sample of a property. Pin the property to category data and pin the exact set to a snapshot, so a Unicode release and a quiet deletion both fail the suite. Decode before the last sanitize, or a character reference puts the character back.
 
 ## 2026-11-15 — Keep compatibility and exact-pin release evidence separate
 

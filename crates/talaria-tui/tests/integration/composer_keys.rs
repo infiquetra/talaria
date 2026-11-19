@@ -56,24 +56,28 @@ fn wrapped_vertical_motion_uses_the_visual_column_after_edits_and_resize() {
 #[test]
 fn sanitized_clusters_and_following_text_remain_visible() {
     let flag = "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}";
-    let mut rig = Rig::new();
-    let flagged = format!("{flag}X");
-    rig.composer.load(flagged.clone());
-    let section = rig.composer.section(20, 8);
-    let rendered = composer_support::rows(&section, 20, 8).join("\n");
-    assert!(rendered.contains('X'), "{rendered:?}");
-    assert!(rendered.contains('�'), "{rendered:?}");
-    assert_eq!(rig.composer.text(), flagged);
+    for text in [format!("{flag}X"), "abcdefghij\u{2028}X".to_owned()] {
+        let mut rig = Rig::new();
+        rig.composer.load(text.clone());
+        let section = rig.composer.section(20, 8);
+        let rendered = composer_support::rows(&section, 20, 8).join("\n");
+        assert!(rendered.contains('X'), "{rendered:?}");
+        assert!(rendered.contains('�'), "{rendered:?}");
+        assert_eq!(rig.composer.text(), text);
+    }
+}
 
-    // A standalone line separator is neutralized, so the draft drops it and the
-    // following text stays.
+#[test]
+fn printable_neutralized_characters_stay_in_the_draft() {
+    let text = "a\u{00A0}b\u{3000}c";
     let mut rig = Rig::new();
-    rig.composer.load("abcdefghij\u{2028}X".to_owned());
+    rig.composer.load(text.to_owned());
+    assert_eq!(rig.composer.text(), text);
     let section = rig.composer.section(20, 8);
     let rendered = composer_support::rows(&section, 20, 8).join("\n");
-    assert!(rendered.contains('X'), "{rendered:?}");
-    assert!(!rendered.contains('\u{2028}'), "{rendered:?}");
-    assert_eq!(rig.composer.text(), "abcdefghijX");
+    assert!(rendered.contains('�'), "{rendered:?}");
+    assert!(!rendered.contains('\u{00A0}'), "{rendered:?}");
+    assert!(!rendered.contains('\u{3000}'), "{rendered:?}");
 }
 
 fn labels(map: &KeyMap, action: Action) -> Vec<String> {

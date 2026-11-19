@@ -6,12 +6,14 @@ use std::cmp::Ordering;
 /// Inclusive ranges of characters [`sanitize`] replaces. Sorted and non-overlapping.
 ///
 /// The set is C0 and C1 controls, every Unicode format character (`Cf`), U+2028 and
-/// U+2029, the tag block, variation selectors except U+FE0E and U+FE0F, the Hangul
-/// fillers, and the blank-width spaces. The integration test pins the exact codepoints.
+/// U+2029, the tag block, every variation selector except U+FE0E and U+FE0F, the
+/// default-ignorable marks U+034F and U+17B4..=U+17B5, the Hangul fillers, and the
+/// blank-width spaces. The integration test pins the exact codepoints.
 const NEUTRALIZED: &[(u32, u32)] = &[
     (0x0000, 0x001F),
     (0x007F, 0x00A0),
     (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
     (0x0600, 0x0605),
     (0x061C, 0x061C),
     (0x06DD, 0x06DD),
@@ -19,7 +21,8 @@ const NEUTRALIZED: &[(u32, u32)] = &[
     (0x0890, 0x0891),
     (0x08E2, 0x08E2),
     (0x115F, 0x1160),
-    (0x180E, 0x180E),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
     (0x2000, 0x200F),
     (0x2028, 0x202F),
     (0x205F, 0x2064),
