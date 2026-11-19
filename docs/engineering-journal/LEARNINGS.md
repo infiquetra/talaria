@@ -2,6 +2,28 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-19 — The attachment denylist is the credential-path property
+
+**Evidence.** `credential_path` named seven env files and nine home directories.
+Dropping `Library/Keychains/login.keychain-db` attached it as an ordinary file.
+`attachments_service::credential_denylist_matches_stores_keys_and_env_names`
+then refused that path, each nested store path, case-insensitive `.pem`, `.key`,
+`.p12` and `.pfx` names, the generated `.env.<name>[.local]` matrix, and a
+symlink whose canonical target sits in a store.
+
+**Mechanism.** A basename is credential material when it is `.env`, `.envrc`, or
+starts with `.env.`, or when its lowercased name is `id_rsa`, `id_ed25519`,
+`id_ecdsa`, `id_dsa`, or ends in `.pem`, `.key`, `.p12`, or `.pfx`. A home path
+is a store when it is inside `Library/Keychains`, `.password-store`,
+`.config/op`, `.config/1password`, `.local/share/keyrings`, `.config/age`,
+`.config/sops`, or `.config/git/credentials`, or when it is `.git-credentials`.
+The check also runs on the canonical path. `HERMES_HOME` and the inode check
+stay as they were.
+
+**Generalizable rule.** When a security control is a list, state the
+machine-checkable property the list samples and assert the list against that
+property.
+
 ## 2026-11-15 — Keep compatibility and exact-pin release evidence separate
 
 **Evidence.** The release catalogue's existing live command uses the supported

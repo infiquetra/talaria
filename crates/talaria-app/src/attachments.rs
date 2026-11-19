@@ -1202,22 +1202,7 @@ fn absolute_path(path: &Path, folder: &Path, home: &Path) -> PathBuf {
 
 fn credential_path(path: &Path, home: &Path) -> bool {
     let path = normalize_path(path);
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            matches!(
-                name,
-                ".env"
-                    | ".env.local"
-                    | ".env.development"
-                    | ".env.production"
-                    | ".env.test"
-                    | ".env.staging"
-                    | ".envrc"
-            )
-        })
-    {
+    if env_or_private_key_name(&path) {
         return true;
     }
     let home = normalize_path(home);
@@ -1233,40 +1218,69 @@ fn credential_path(path: &Path, home: &Path) -> bool {
             .unwrap_or(hermes)
     };
     let homes = [home, canonical_home];
-    if homes.iter().any(|home| {
-        [
-            ".ssh",
-            ".aws",
-            ".gnupg",
-            ".kube",
-            ".docker",
-            ".azure",
-            ".config/gh",
-            ".config/gcloud",
-            ".talaria",
-        ]
-        .iter()
-        .any(|directory| under_directory(&path, &home.join(directory)))
-            || [
-                ".bashrc",
-                ".zshrc",
-                ".profile",
-                ".bash_profile",
-                ".zprofile",
-                ".netrc",
-                ".pgpass",
-                ".npmrc",
-                ".pypirc",
-            ]
-            .iter()
-            .any(|file| {
-                let denied = home.join(file);
-                path == denied || std::fs::canonicalize(denied).is_ok_and(|denied| path == denied)
-            })
-    }) {
+    if homes.iter().any(|home| home_credential(&path, home)) {
         return true;
     }
     under_directory(&path, &hermes)
+}
+
+/// Env files and private-key material are credential names in any directory.
+fn env_or_private_key_name(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if name == ".env" || name == ".envrc" || name.starts_with(".env.") {
+        return true;
+    }
+    let name = name.to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "id_rsa" | "id_ed25519" | "id_ecdsa" | "id_dsa"
+    ) || [".pem", ".key", ".p12", ".pfx"]
+        .iter()
+        .any(|extension| name.ends_with(extension))
+}
+
+/// Home stores include nested paths and the canonical target of a symlinked store.
+fn home_credential(path: &Path, home: &Path) -> bool {
+    const STORES: &[&str] = &[
+        ".ssh",
+        ".aws",
+        ".gnupg",
+        ".kube",
+        ".docker",
+        ".azure",
+        ".config/gh",
+        ".config/gcloud",
+        ".talaria",
+        "Library/Keychains",
+        ".password-store",
+        ".config/op",
+        ".config/1password",
+        ".local/share/keyrings",
+        ".config/age",
+        ".config/sops",
+        ".config/git/credentials",
+    ];
+    const FILES: &[&str] = &[
+        ".bashrc",
+        ".zshrc",
+        ".profile",
+        ".bash_profile",
+        ".zprofile",
+        ".netrc",
+        ".pgpass",
+        ".npmrc",
+        ".pypirc",
+        ".git-credentials",
+    ];
+    STORES
+        .iter()
+        .any(|directory| under_directory(path, &home.join(directory)))
+        || FILES.iter().any(|file| {
+            let denied = home.join(file);
+            path == denied || std::fs::canonicalize(&denied).is_ok_and(|denied| path == denied)
+        })
 }
 
 fn under_directory(path: &Path, directory: &Path) -> bool {
