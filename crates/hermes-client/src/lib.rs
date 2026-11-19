@@ -43,7 +43,7 @@ pub mod voice_api;
 pub use channel::{
     ChannelStats, Client, ClientClosed, CloseReason, ClosedConnection, Decoded, Generation,
     Inbound, InboundEvent, InboundStream, MalformedFrame, MalformedKind, ReplyFrame, RespondError,
-    Responder, ServerRequest, decode_frame, write_frame,
+    Responder, ServerRequest, ServerRequestPolicy, decode_frame, write_frame,
 };
 pub use config_api::{
     ConfigField, ConfigSchema, FieldKind, config_defaults, config_read, config_schema, config_write,

@@ -96,9 +96,15 @@ impl WireFactory for LinkWireFactory {
             if let Some(hook) = hook {
                 dial = dial.on_connect(hook);
             }
-            let (link, events) = Link::start(dial, LinkConfig::default())
-                .await
-                .map_err(|e| WireError::NotServed(e.reason().into()))?;
+            let (link, events) = Link::start(
+                dial,
+                LinkConfig {
+                    server_requests: hermes_client::ServerRequestPolicy::IgnoreAll,
+                    ..LinkConfig::default()
+                },
+            )
+            .await
+            .map_err(|e| WireError::NotServed(e.reason().into()))?;
             Ok(Arc::new(LinkWire::new(link, events)) as Arc<dyn Wire>)
         })
     }

@@ -229,7 +229,10 @@ async fn connect_over(
     handshake(&mut connection)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(Client::start(connection.into_parts()))
+    Ok(Client::start_with_policy(
+        connection.into_parts(),
+        hermes_client::ServerRequestPolicy::IgnoreAll,
+    ))
 }
 
 /// Leave every question for the foreground viewer, and note how the connection ended.

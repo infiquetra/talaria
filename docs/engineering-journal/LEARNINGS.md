@@ -2,21 +2,25 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
-## 2026-11-19 — Dropping a secondary responder is an answer
+## 2026-11-19 — A passive channel never answers a server request
 
 **Evidence.** A workflow progress link that matched `Inbound::ServerRequest` with `_ => vec![]`
 wrote `{"code":-32603,"message":"request dropped by client"}`. The side and fleet links wrote
-`-32601` from `responder.fail`. Hermes treats either error as a skip for every viewer.
-`peek_link_never_refuses_server_requests` already required zero answer frames.
+`-32601` from `responder.fail`. The channel itself also wrote `-32601` for an unknown method and
+for a closed inbound reader, and `-32603` for undecodable request params, before any handler ran.
+A same-profile workflow reused the foreground client, and that dispatcher wrote `-32601` for the
+workflow session. Hermes treats either error as a skip for every viewer.
 
-**Mechanism.** `Responder`'s drop sends `Command::DropResponder` while the connection is current,
-and `ChannelState::drop_undecided` writes `-32603`. A queue of `Inbound::ServerRequest` or
-`LinkEvent` values does the same when it is dropped on cancel, abort, or a closed app channel.
-`ignore` writes nothing. The foreground prompt owner, a peek that is showing a masked request,
-headless print mode, and the configuration session are the viewers that may answer or refuse.
+**Mechanism.** `ServerRequestPolicy::IgnoreAll` is applied where the frame is decoded. The channel
+does not allocate a responder, does not enqueue one, and does not write `-32601` or `-32603`.
+Dropping the reader or the queue therefore has nothing left that can answer. App-level `ignore`
+stays in place for a request that still reaches a handler. The foreground answers a request only
+when its session id is absent or is the opened session. A peek that is showing a masked request,
+headless print mode, and the configuration session remain owners of their own sessions.
 
-**Generalizable rule.** A connection that is not the session's prompt owner calls `ignore` on
-every server request, including requests still queued when that reader is dropped.
+**Generalizable rule.** A connection that is not the session's prompt owner is opened with
+`ServerRequestPolicy::IgnoreAll`. The foreground prompt owner ignores a server request whose
+session id is some other session.
 
 ## 2026-11-19 — Talaria-owned files are owner-only
 

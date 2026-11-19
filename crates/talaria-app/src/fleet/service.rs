@@ -661,7 +661,13 @@ impl FleetTask {
     async fn dial(&mut self) -> Option<Result<(), DialFailure>> {
         let dial = HostDial::new(self.home.clone(), self.foreground.clone());
         self.reports = dial.reports();
-        let start = Link::start(dial, LinkConfig::default());
+        let start = Link::start(
+            dial,
+            LinkConfig {
+                server_requests: hermes_client::ServerRequestPolicy::IgnoreAll,
+                ..LinkConfig::default()
+            },
+        );
         tokio::pin!(start);
         loop {
             tokio::select! {

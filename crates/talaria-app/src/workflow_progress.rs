@@ -567,7 +567,6 @@ struct ScopedConnection {
 }
 pub(crate) struct WorkflowConnection {
     pub home: PathBuf,
-    pub foreground_profile: String,
     pub fallback: Option<Client>,
     pub cache: Arc<WorkflowConnections>,
 }
@@ -578,7 +577,10 @@ impl WorkflowConnection {
         sender: &UnboundedSender<AppMessage>,
     ) -> Result<Option<Client>, String> {
         let profile = &dir.manifest().profile;
-        if profile.is_empty() || profile == &self.foreground_profile {
+        // A same-profile run used to borrow the foreground client. That client is the prompt
+        // owner, so a workflow session request was answered there. Every named profile opens
+        // its own passive link instead.
+        if profile.is_empty() {
             return Ok(self.fallback.clone());
         }
         let mut runs = self.cache.runs.lock().await;
@@ -624,7 +626,10 @@ impl WorkflowConnection {
         hermes_client::handshake(&mut connection)
             .await
             .map_err(|e| e.to_string())?;
-        let (client, inbound) = Client::start(connection.into_parts());
+        let (client, inbound) = Client::start_with_policy(
+            connection.into_parts(),
+            hermes_client::ServerRequestPolicy::IgnoreAll,
+        );
         let run = dir.path().to_path_buf();
         let _ = sender.send(AppMessage::WorkflowScoped(run.clone()));
         let _ = sender.send(AppMessage::WorkflowProgress {
@@ -727,7 +732,6 @@ mod connection_tests {
         gateway.block_on(async {
             let binding = WorkflowConnection {
                 home: home.path().to_path_buf(),
-                foreground_profile: "default".into(),
                 fallback: None,
                 cache: Arc::default(),
             };
@@ -811,7 +815,6 @@ mod connection_tests {
         let home = tempfile::tempdir().unwrap();
         let binding = WorkflowConnection {
             home: home.path().to_path_buf(),
-            foreground_profile: "default".into(),
             fallback: Some(client),
             cache: Arc::default(),
         };
@@ -840,12 +843,49 @@ mod connection_tests {
                 progress_mock_gateway::MockGateway::start().await;
             let binding = WorkflowConnection {
                 home: home.path().to_path_buf(),
-                foreground_profile: "default".into(),
                 fallback: Some(fallback),
                 cache: Arc::default(),
             };
             let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
             assert!(binding.client(&dir, &tx).await.is_err());
+        });
+    }
+
+    #[test]
+    fn same_profile_workflow_link_ignores_server_requests() {
+        let home = tempfile::tempdir().unwrap();
+        let runs = tempfile::tempdir().unwrap();
+        let dir = run(runs.path());
+        let gateway = StandaloneGateway::start(home.path());
+        gateway.block_on(async {
+            let (_other, fallback, _inbound) = progress_mock_gateway::MockGateway::start().await;
+            let binding = WorkflowConnection {
+                home: home.path().to_path_buf(),
+                fallback: Some(fallback),
+                cache: Arc::default(),
+            };
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let client = binding
+                .client(&dir, &tx)
+                .await
+                .unwrap()
+                .expect("same-profile monitoring opens its own link");
+            assert_eq!(gateway.tickets_issued(), 1);
+            let id = gateway.server_request("sudo").await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let answers = gateway.answers_for(&id);
+            assert!(
+                answers.is_empty(),
+                "the same-profile workflow link wrote an answer: {answers:?}"
+            );
+            drop(client);
+            drop(binding);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let answers = gateway.answers_for(&id);
+            assert!(
+                answers.is_empty(),
+                "closing the same-profile workflow link wrote an answer: {answers:?}"
+            );
         });
     }
 
@@ -858,7 +898,6 @@ mod connection_tests {
         gateway.block_on(async {
             let binding = WorkflowConnection {
                 home: home.path().to_path_buf(),
-                foreground_profile: "default".into(),
                 fallback: None,
                 cache: Arc::default(),
             };

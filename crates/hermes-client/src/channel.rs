@@ -392,6 +392,20 @@ impl std::fmt::Debug for ReplyFrame {
     }
 }
 
+/// Whether this connection may answer a server request.
+///
+/// [`ServerRequestPolicy::Interactive`] is the foreground viewer. [`ServerRequestPolicy::IgnoreAll`]
+/// is a connection that is not that session's prompt owner: the channel writes no server-request
+/// reply and does not queue a responder.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ServerRequestPolicy {
+    /// Unknown methods, undecodable params, a closed reader, and a dropped responder are answered.
+    #[default]
+    Interactive,
+    /// Consume every server-request frame. Write nothing and queue no responder.
+    IgnoreAll,
+}
+
 /// The typed channel. Cheap to clone. One actor serves every clone.
 #[derive(Clone)]
 pub struct Client {
@@ -412,7 +426,19 @@ impl Client {
         let _ = self.handle.sender.send(Command::SetInjector(injector));
     }
     /// Start the actor on `parts`. The generation is 1. The id counter starts at `parts.next_request_id`.
+    ///
+    /// Server requests use [`ServerRequestPolicy::Interactive`].
     pub fn start(parts: ConnectionParts) -> (Self, InboundStream) {
+        Self::start_with_policy(parts, ServerRequestPolicy::Interactive)
+    }
+
+    /// Start the actor on `parts` with an explicit server-request policy.
+    ///
+    /// The policy stays with this client across [`Client::replace_connection`].
+    pub fn start_with_policy(
+        parts: ConnectionParts,
+        policy: ServerRequestPolicy,
+    ) -> (Self, InboundStream) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let (inbound, inbound_rx) = mpsc::unbounded_channel();
         let generation = Arc::new(AtomicU64::new(1));
@@ -427,6 +453,7 @@ impl Client {
             inbound,
             generation,
             handle.sender.downgrade(),
+            policy,
         ));
         let stream = InboundStream {
             receiver: inbound_rx,
@@ -662,10 +689,11 @@ pub(crate) struct ChannelState {
     calls: HashMap<u64, String>,
     requests: HashMap<String, Arc<AtomicU8>>,
     unknown_methods: HashSet<String>,
+    server_requests: ServerRequestPolicy,
 }
 
 impl ChannelState {
-    pub(crate) fn new(next_request_id: u64) -> Self {
+    pub(crate) fn with_policy(next_request_id: u64, policy: ServerRequestPolicy) -> Self {
         Self {
             stats: ChannelStats::default(),
             next_id: next_request_id,
@@ -675,6 +703,7 @@ impl ChannelState {
             calls: HashMap::new(),
             requests: HashMap::new(),
             unknown_methods: HashSet::new(),
+            server_requests: policy,
         }
     }
 
@@ -721,6 +750,13 @@ impl ChannelState {
         }
         self.stats.frames_received += 1;
         self.stats.last_frame_at = Some(now);
+        // A passive connection must not allocate a responder. Doing so here would let a later
+        // queue drop write `-32603`, and the branches below would answer before any handler runs.
+        if self.server_requests == ServerRequestPolicy::IgnoreAll
+            && classify(raw) == FrameClass::ServerRequest
+        {
+            return Vec::new();
+        }
         let decoded = decode_frame(generation, raw, &mut |id| {
             let mut responder = Responder::detached(Arc::new(AtomicU64::new(0)));
             responder.id = id.to_owned();
@@ -1250,6 +1286,7 @@ struct Actor {
     answer_queue: HashMap<String, QueuedAnswers>,
     transport: Option<Transport>,
     inbound: mpsc::UnboundedSender<Inbound>,
+    server_requests: ServerRequestPolicy,
     stream_alive: bool,
     backlog: usize,
     generation: Arc<AtomicU64>,
@@ -1265,16 +1302,18 @@ impl Actor {
         inbound: mpsc::UnboundedSender<Inbound>,
         generation: Arc<AtomicU64>,
         sender: mpsc::WeakUnboundedSender<Command>,
+        policy: ServerRequestPolicy,
     ) {
         let (events, mut event_rx) = mpsc::unbounded_channel();
         let mut actor = Self {
-            state: ChannelState::new(parts.next_request_id),
+            state: ChannelState::with_policy(parts.next_request_id, policy),
             pending: HashMap::new(),
             tokens: HashMap::new(),
             answers: HashMap::new(),
             answer_queue: HashMap::new(),
             transport: None,
             inbound,
+            server_requests: policy,
             stream_alive: true,
             backlog: 0,
             generation,
@@ -1521,6 +1560,14 @@ impl Actor {
                     }
                 }
                 Effect::Deliver(mut item) => {
+                    if self.server_requests == ServerRequestPolicy::IgnoreAll
+                        && matches!(item, Inbound::ServerRequest(_))
+                    {
+                        if let Inbound::ServerRequest(request) = item {
+                            request.responder.ignore();
+                        }
+                        continue;
+                    }
                     if let Inbound::ServerRequest(request) = &mut item {
                         request.responder.swallowed = None;
                         request.responder.sender = Some(self.commands.clone());
@@ -1642,7 +1689,7 @@ mod tests {
 
     #[test]
     fn closure_time_is_recorded_once_and_cleared_for_the_next_generation() {
-        let mut state = ChannelState::new(1);
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         assert!(state.stats(0).closed_at.is_none());
         let _ = state.on_closed(Generation(1), CloseReason::RemoteClosed { code: None });
@@ -1658,7 +1705,7 @@ mod tests {
     }
 
     fn pending_answer() -> (Actor, String, oneshot::Receiver<Result<(), RespondError>>) {
-        let mut state = ChannelState::new(3);
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         let id = "srq-000000000005".to_owned();
         let _ = state.on_frame(Generation(1), &sudo_frame(&id), Instant::now());
@@ -1674,6 +1721,7 @@ mod tests {
             answer_queue: HashMap::new(),
             transport: None,
             inbound,
+            server_requests: ServerRequestPolicy::Interactive,
             stream_alive: true,
             backlog: 0,
             generation: Arc::new(AtomicU64::new(1)),
@@ -1815,7 +1863,7 @@ mod tests {
 
     #[test]
     fn stale_generation_frame_is_discarded_and_counted() {
-        let mut state = ChannelState::new(3);
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         let entered = state.begin_generation(Generation(2));
         assert!(entered.iter().any(|effect| matches!(
@@ -1850,7 +1898,7 @@ mod tests {
 
     #[tokio::test]
     async fn responder_first_answer_wins() {
-        let mut state = ChannelState::new(3);
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         let id = "srq-0123456789ab";
         let _ = state.on_frame(Generation(1), &sudo_frame(id), Instant::now());
@@ -1910,7 +1958,7 @@ mod tests {
 
     #[test]
     fn stats_counters_follow_their_rules() {
-        let mut state = ChannelState::new(3);
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         let now = Instant::now();
         let before = state.stats(0);

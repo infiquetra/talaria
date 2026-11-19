@@ -143,6 +143,8 @@ pub struct LinkConfig {
     pub hold_limit: usize,
     /// Capacity of the event channel returned by [`Link::start`].
     pub event_buffer: usize,
+    /// Who may answer a server request on this link. The default is the interactive viewer.
+    pub server_requests: crate::ServerRequestPolicy,
 }
 
 impl Default for LinkConfig {
@@ -160,6 +162,7 @@ impl Default for LinkConfig {
             jitter: Jitter::Random,
             hold_limit: 10_000,
             event_buffer: 1_024,
+            server_requests: crate::ServerRequestPolicy::Interactive,
         }
     }
 }
@@ -181,6 +184,7 @@ impl LinkConfig {
             jitter: Jitter::Fixed(1.0),
             hold_limit: base.hold_limit,
             event_buffer: base.event_buffer,
+            server_requests: base.server_requests,
         }
     }
 }
@@ -500,7 +504,7 @@ impl Link {
         let first = tokio::time::timeout(cfg.dial_timeout, dial.dial(1))
             .await
             .unwrap_or_else(|_| Err(dial_timeout()))?;
-        let (client, inbound) = Client::start(first.parts);
+        let (client, inbound) = Client::start_with_policy(first.parts, cfg.server_requests);
         let (commands, receiver) = mpsc::unbounded_channel();
         let (events, rx) = mpsc::channel(cfg.event_buffer.max(1));
         let (stop, cancel) = watch::channel(false);

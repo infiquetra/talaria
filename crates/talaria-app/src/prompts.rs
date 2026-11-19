@@ -98,6 +98,26 @@ impl PromptService {
     }
 
     pub async fn on_server_request(&mut self, req: ServerRequest) -> Vec<PromptNotice> {
+        self.on_server_request_for_session(req, None).await
+    }
+
+    /// Answer `req` when it belongs to `owned_session`.
+    ///
+    /// A request that names a different session is left unanswered. `None` keeps the
+    /// caller responsible for that check.
+    pub async fn on_server_request_for_session(
+        &mut self,
+        req: ServerRequest,
+        owned_session: Option<&str>,
+    ) -> Vec<PromptNotice> {
+        if let (Some(owned), Some(session)) = (
+            owned_session.filter(|id| !id.is_empty()),
+            req.session_id.as_deref().filter(|id| !id.is_empty()),
+        ) && session != owned
+        {
+            req.responder.ignore();
+            return Vec::new();
+        }
         if self
             .generation
             .is_some_and(|generation| req.generation.0 < generation)

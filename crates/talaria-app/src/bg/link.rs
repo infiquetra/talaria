@@ -97,7 +97,10 @@ impl LaunchLink {
             sources: handshake.describe.session_create.sources.clone(),
             parameters: handshake.describe.session_create.parameters.clone(),
         };
-        let (client, inbound) = Client::start(connection.into_parts());
+        let (client, inbound) = Client::start_with_policy(
+            connection.into_parts(),
+            hermes_client::ServerRequestPolicy::IgnoreAll,
+        );
         Ok(Self {
             scope,
             profile: foreground_profile.to_owned(),

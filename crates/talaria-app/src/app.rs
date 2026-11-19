@@ -8895,6 +8895,17 @@ fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     effects
 }
 
+/// The foreground prompt owner is the opened session. A request with no session id stays here.
+fn foreground_owns_request(state: &AppState, session_id: Option<&str>) -> bool {
+    match session_id.map(str::trim).filter(|id| !id.is_empty()) {
+        None => true,
+        Some(id) => state
+            .opened
+            .as_ref()
+            .is_some_and(|opened| opened.session_id == id),
+    }
+}
+
 /// The `skin.changed` event in this link event, as `(params, replayed)`.
 fn skin_event(event: &LinkEvent) -> Option<(&Value, bool)> {
     let LinkEvent::Inbound {
@@ -9345,6 +9356,12 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         },
                         None,
                     );
+                }
+                // A same-profile workflow reuses this socket. Answering its request, including
+                // with `-32601`, settles the prompt for every viewer.
+                if !foreground_owns_request(state, request.session_id.as_deref()) {
+                    request.responder.ignore();
+                    return Vec::new();
                 }
                 vec![AppEffect::ServerRequest(request)]
             }
@@ -12586,7 +12603,6 @@ fn apply<S: Screen>(
                     run,
                     crate::workflow_progress::WorkflowConnection {
                         home: state.hermes_home.clone(),
-                        foreground_profile: state.profile.clone(),
                         fallback: client,
                         cache: executor.workflow_connections.clone(),
                     },
@@ -13071,11 +13087,23 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::ServerRequest(request) => {
+                if !foreground_owns_request(state, request.session_id.as_deref()) {
+                    request.responder.ignore();
+                    continue;
+                }
                 let Some(prompts) = &state.prompts else {
                     continue;
                 };
+                let owned = state
+                    .opened
+                    .as_ref()
+                    .map(|opened| opened.session_id.clone());
                 executor.prompt_task(prompts, move |prompts| async move {
-                    let notices = prompts.lock().await.on_server_request(request).await;
+                    let notices = prompts
+                        .lock()
+                        .await
+                        .on_server_request_for_session(request, owned.as_deref())
+                        .await;
                     (Vec::new(), notice_texts(notices))
                 });
             }
