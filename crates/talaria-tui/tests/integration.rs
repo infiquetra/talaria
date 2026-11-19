@@ -148,6 +148,8 @@ mod pager_render;
 mod pager_replay;
 #[path = "integration/pager_search.rs"]
 mod pager_search;
+#[path = "integration/pager_session_picker_escape.rs"]
+mod pager_session_picker_escape;
 #[path = "integration/palette_render.rs"]
 mod palette_render;
 #[path = "integration/picker_frame_render.rs"]

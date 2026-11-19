@@ -118,7 +118,10 @@ use crate::mutation::MutationClient;
 use crate::panes::{CommandRunner, PaneEnv, PaneOutcome, PaneSettings};
 use crate::peek::FleetSink;
 use crate::permissions::PermissionsService;
-use crate::prompts::{MaskedRequestInfo, PromptService, ServerRequestPolicy, policy_for};
+use crate::prompts::{
+    LiveMaskedTarget, MaskedRequestInfo, MaskedTarget, PromptService, ServerRequestPolicy,
+    policy_for,
+};
 use crate::queue::{QueueCommand, QueueService, queue_command, steer_command};
 pub use crate::rebuild::{RebuildMode, rebuild_foreground};
 use crate::rebuild::{final_prefix, recover_retained, recovered};
@@ -321,7 +324,7 @@ pub enum UserAction {
     },
     /// A masked card was answered; an empty value declines it.
     Masked {
-        request_id: String,
+        target: MaskedTarget,
         value: Zeroizing<String>,
     },
     /// A line the screen wants shown.
@@ -2270,7 +2273,7 @@ pub enum AppEffect {
         note: Option<(PromptKey, String)>,
     },
     AnswerMasked {
-        request_id: String,
+        target: LiveMaskedTarget,
         value: Zeroizing<String>,
     },
     AnswerRecovered {
@@ -6963,19 +6966,22 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             route(state, produced, note)
         }
         UserAction::Clarify { key, answer } => reduce(state, Event::AnswerClarify { key, answer }),
-        UserAction::Masked { request_id, value } => {
-            if state.opened.as_ref().is_some_and(|opened| {
-                opened.state.open_prompts().any(|prompt| {
-                    prompt.kind == PromptKind::ServerRequest
-                        && prompt.state == PromptState::Open
-                        && prompt.key.prompt_id == request_id
-                })
-            }) {
-                vec![PromptService::answer_recovered(&request_id, value)]
-            } else {
-                vec![AppEffect::AnswerMasked { request_id, value }]
+        UserAction::Masked { target, value } => match target {
+            MaskedTarget::Recovered { request_id } => {
+                if state.opened.as_ref().is_some_and(|opened| {
+                    opened.state.open_prompts().any(|prompt| {
+                        prompt.kind == PromptKind::ServerRequest
+                            && prompt.state == PromptState::Open
+                            && prompt.key.prompt_id == request_id
+                    })
+                }) {
+                    vec![PromptService::answer_recovered(&request_id, value)]
+                } else {
+                    Vec::new()
+                }
             }
-        }
+            MaskedTarget::Live(target) => vec![AppEffect::AnswerMasked { target, value }],
+        },
         UserAction::Notice(text) => vec![notice_lines(&text)],
         UserAction::Queue(intent) => queue_intent(state, intent),
         UserAction::Palette(input) => palette_input(state, input),
@@ -13024,12 +13030,12 @@ fn apply<S: Screen>(
                 };
                 executor.queue_call(client, SessionId::new(&opened.session_id), effect);
             }
-            AppEffect::AnswerMasked { request_id, value } => {
+            AppEffect::AnswerMasked { target, value } => {
                 let Some(prompts) = &state.prompts else {
                     continue;
                 };
                 executor.prompt_task(prompts, move |prompts| async move {
-                    let result = prompts.lock().await.answer_masked(&request_id, value).await;
+                    let result = prompts.lock().await.answer_masked(&target, value).await;
                     let notices = match result {
                         Ok(()) => Vec::new(),
                         Err(_) => vec![

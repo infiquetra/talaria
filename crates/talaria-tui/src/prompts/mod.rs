@@ -15,6 +15,23 @@ pub use clarify::multi_select_answer;
 pub use masked::{MaskedValue, MaskedView};
 pub use stack::{PromptSection, PromptStack};
 
+/// A live masked card, bound to the service and request that opened it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveMaskedTarget {
+    pub token: String,
+    pub session_id: Option<String>,
+    pub generation: u64,
+    pub instance_id: u64,
+    pub service_id: u64,
+}
+
+/// A masked answer is either a live card or a recovered prompt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MaskedTarget {
+    Live(LiveMaskedTarget),
+    Recovered { request_id: String },
+}
+
 /// What a key press asks the application to do.
 pub enum PromptIntent {
     Connect {
@@ -33,7 +50,7 @@ pub enum PromptIntent {
     },
     /// An empty value means declined.
     Masked {
-        request_id: String,
+        target: MaskedTarget,
         value: MaskedValue,
     },
 }
