@@ -558,6 +558,28 @@ pub fn submission_id(launch_id: &str, n: u64) -> String {
     format!("talaria-{launch_id}-{n}")
 }
 
+/// Point an `approval.cancelled` broadcast at the session named in its payload.
+///
+/// Pinned Hermes leaves the envelope `session_id` empty and puts the target in
+/// `payload.session_id`. An empty payload id leaves the envelope unchanged.
+pub(crate) fn bind_approval_cancelled_session(raw: &mut Value) {
+    if raw.get("type").and_then(Value::as_str) != Some("approval.cancelled") {
+        return;
+    }
+    let Some(target) = raw
+        .pointer("/payload/session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    if let Some(object) = raw.as_object_mut() {
+        object.insert("session_id".to_owned(), Value::String(target));
+    }
+}
+
 /// Keep an event whose epoch differs, or whose sequence is above the cursor.
 #[must_use]
 pub fn accept_event(cursor: &Cursor, replay_epoch: Option<&str>, seq: Option<u64>) -> bool {

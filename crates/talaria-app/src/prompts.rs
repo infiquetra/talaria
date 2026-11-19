@@ -1,6 +1,6 @@
 //! The protocol side of prompt cards: answering server requests and respond calls.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use hermes_client::{CallError, Client, RespondError, Responder, ServerRequest};
@@ -14,6 +14,9 @@ use talaria_core::session::{
 use zeroize::Zeroizing;
 
 use crate::app::AppEffect;
+
+/// Cancelled request ids kept so a late register cannot restore the card.
+const CANCELLED_REQUEST_LIMIT: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaskedKind {
@@ -88,6 +91,8 @@ pub struct PromptService {
     next_submission_id: Box<dyn FnMut() -> String + Send>,
     generation: Option<u64>,
     masked: Vec<(MaskedRequestInfo, Responder)>,
+    /// Request ids whose cancel arrived, including ones that had no card yet.
+    cancelled_requests: VecDeque<String>,
     answered_requests: HashMap<String, (Option<String>, &'static str)>,
     notified_kinds: HashSet<&'static str>,
     open_prompts: Vec<PromptKey>,
@@ -101,6 +106,7 @@ impl PromptService {
             next_submission_id,
             generation: None,
             masked: Vec::new(),
+            cancelled_requests: VecDeque::new(),
             answered_requests: HashMap::new(),
             notified_kinds: HashSet::new(),
             open_prompts: Vec::new(),
@@ -117,7 +123,12 @@ impl PromptService {
             req.responder.ignore();
             return Vec::new();
         }
+        let cancelled = self.was_cancelled(&req.id);
         let mut notices = self.on_connection_replaced(req.generation.0);
+        if cancelled || self.was_cancelled(&req.id) {
+            req.responder.ignore();
+            return notices;
+        }
         let method = request_method(&req.request);
         let session_id = present_session_id(req.session_id);
         let (kind, fields) = match req.request {
@@ -173,6 +184,7 @@ impl PromptService {
     }
 
     pub fn on_request_cancel(&mut self, id: &str, method: &str, reason: &str) -> Vec<PromptNotice> {
+        self.remember_cancelled(id);
         if let Some(index) = self.masked.iter().position(|(info, _)| info.id == id) {
             let (info, responder) = self.masked.remove(index);
             responder.ignore();
@@ -196,12 +208,28 @@ impl PromptService {
         Vec::new()
     }
 
+    /// Remember a cancelled id so a register that arrives afterwards is not shown.
+    fn remember_cancelled(&mut self, id: &str) {
+        if id.is_empty() || self.was_cancelled(id) {
+            return;
+        }
+        if self.cancelled_requests.len() == CANCELLED_REQUEST_LIMIT {
+            self.cancelled_requests.pop_front();
+        }
+        self.cancelled_requests.push_back(id.to_owned());
+    }
+
+    fn was_cancelled(&self, id: &str) -> bool {
+        self.cancelled_requests.iter().any(|kept| kept == id)
+    }
+
     pub fn on_connection_replaced(&mut self, generation: u64) -> Vec<PromptNotice> {
         if self.generation.is_some_and(|current| generation <= current) {
             return Vec::new();
         }
         self.generation = Some(generation);
         self.answered_requests.clear();
+        self.cancelled_requests.clear();
         self.notified_kinds.clear();
         self.masked
             .drain(..)

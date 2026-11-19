@@ -311,7 +311,11 @@ impl PromptStack {
             return Vec::new();
         };
         let mut rows = Vec::new();
-        add(&mut rows, "Connection request", width);
+        add(
+            &mut rows,
+            &card_header("Connection request", card, self),
+            width,
+        );
         for target in &connection.card.targets {
             let suffix = if target
                 .required_env
@@ -778,12 +782,7 @@ impl PromptSection<'_> {
                 (title, Some(detail))
             }
         };
-        let mut header = title;
-        if stack.cards.len() > 1 {
-            header.push_str(&format!(" (1 of {})", stack.cards.len()));
-        }
-        append_card_attribution(&mut header, card, stack);
-        add(&mut rows, &header, width);
+        add(&mut rows, &card_header(&title, card, stack), width);
         let hint = match &card.content {
             Content::Connection(_) => return stack.connection_lines(width),
             Content::Prompt(cell) if cell.kind == PromptKind::ServerRequest => {
@@ -971,6 +970,15 @@ impl PromptSection<'_> {
         add(&mut rows, &hint, width);
         rows
     }
+}
+
+fn card_header(title: &str, card: &Card, stack: &PromptStack) -> String {
+    let mut header = title.to_owned();
+    if stack.cards.len() > 1 {
+        header.push_str(&format!(" (1 of {})", stack.cards.len()));
+    }
+    append_card_attribution(&mut header, card, stack);
+    header
 }
 
 fn append_card_attribution(header: &mut String, card: &Card, stack: &PromptStack) {

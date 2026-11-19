@@ -1456,6 +1456,35 @@ fn prompt_card_blank_session_shows_unknown_and_names_the_gateway() {
     assert!(header.contains("host gateway.example"), "{header}");
 }
 
+#[test]
+fn connection_card_uses_the_attributed_header() {
+    use hermes_contract::schemas::ConnectionOperationTarget;
+    use talaria_core::session::ConnectionCard;
+
+    let target: ConnectionOperationTarget = serde_json::from_value(json!({
+        "action": "connect",
+        "kind": "connector",
+        "name": "github",
+        "state": "pending",
+    }))
+    .expect("target");
+    let card = ConnectionCard {
+        op_id: "op-attr".into(),
+        seq: 1,
+        deadline_at: 1_700_000_090.0,
+        targets: vec![target],
+    };
+    let mut stack = PromptStack::new();
+    stack.set_gateway("work\u{202e}", Some("gateway.example\u{202e}"));
+    stack.show_connection(Some(&card), MAIN, true, Instant::now(), 1_700_000_000.0);
+    let header = draw(&stack, 120, 24).first().cloned().unwrap_or_default();
+    assert!(header.starts_with("Connection request"), "{header}");
+    assert!(header.contains("profile work"), "{header}");
+    assert!(header.contains("host gateway.example"), "{header}");
+    assert!(header.contains("‹U+202E›"), "{header}");
+    assert!(!header.contains('\u{202e}'), "{header}");
+}
+
 /// Shift+Tab is the approvals toggle's key (#237): a focused card takes it and keeps its state, so
 /// it never opens or closes the note field.
 #[test]
