@@ -34,12 +34,16 @@ jobs:
           fetch-depth: 0
       # A pull request that changes only documents no check reads skips the measurements.
       # The job still runs and reports under its name. Any doubt runs everything.
+      # The script is the base branch's blob, so the pull request cannot replace it.
       - name: Classify the change
         id: scope
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: sh tools/ci/change-scope.sh "origin/$BASE_REF" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          git show "origin/$BASE_REF:tools/ci/change-scope.sh" > "$RUNNER_TEMP/change-scope.sh"
+          sh "$RUNNER_TEMP/change-scope.sh" "origin/$BASE_REF" >> "$GITHUB_OUTPUT"
       - name: Install the pinned toolchain
         if: steps.scope.outputs.docs_only != 'true'
         run: |

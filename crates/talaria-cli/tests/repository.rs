@@ -427,8 +427,10 @@ const CHECKED_PLACES: &[&str] = &[
     ":(exclude)crates/talaria-cli/tests/repository.rs",
 ];
 
-const CLASSIFY_COMMAND: &str =
-    r#"sh tools/ci/change-scope.sh "origin/$BASE_REF" >> "$GITHUB_OUTPUT""#;
+const TRUSTED_CLASSIFY: &[&str] = &[
+    r#"git show "origin/$BASE_REF:tools/ci/change-scope.sh" > "$RUNNER_TEMP/change-scope.sh""#,
+    r#"sh "$RUNNER_TEMP/change-scope.sh" "origin/$BASE_REF" >> "$GITHUB_OUTPUT""#,
+];
 
 #[test]
 fn docs_only_fast_path_keeps_the_required_checks_reporting() {
@@ -464,9 +466,15 @@ fn docs_only_fast_path_keeps_the_required_checks_reporting() {
 
     for workflow in [".github/workflows/ci.yml", ".github/workflows/bench.yml"] {
         let text = read_repo_file(&root, workflow);
+        for command in TRUSTED_CLASSIFY {
+            assert!(
+                text.contains(command),
+                "{workflow} must classify the change from the base branch blob"
+            );
+        }
         assert!(
-            text.contains(CLASSIFY_COMMAND),
-            "{workflow} must classify the change with tools/ci/change-scope.sh"
+            !text.contains(r#"sh tools/ci/change-scope.sh"#),
+            "{workflow} must not execute change-scope.sh from the checkout"
         );
         // A path filter stops the workflow from running, and a required check that never
         // reports blocks the pull request for good.
