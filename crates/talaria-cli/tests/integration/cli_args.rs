@@ -112,6 +112,27 @@ fn flags_help_and_neutralised_errors() {
         assert!(help.contains(flag), "{flag} missing from help:\n{help}");
     }
 
+    let sentence = "Resume a session by its identifier. `talaria -c` reopens the most recent session for this folder.";
+    let trimmed = help.trim_end();
+    assert!(
+        trimmed.ends_with(sentence),
+        "help does not end with the resume sentence:\n{trimmed}"
+    );
+    let head = trimmed
+        .strip_suffix(sentence)
+        .expect("help ends with the resume sentence")
+        .trim_end();
+    assert!(
+        !head.ends_with(sentence),
+        "the resume sentence appears twice at the end:\n{head}"
+    );
+    let collapsed = head.split_whitespace().collect::<Vec<_>>().join(" ");
+    let copies = collapsed.matches(sentence).count();
+    assert_eq!(
+        copies, 1,
+        "the resume sentence appears {copies} times beside --resume"
+    );
+
     let output = Command::new(env!("CARGO_BIN_EXE_talaria"))
         .arg("--bo\u{1b}[31mgus")
         .env_clear()
