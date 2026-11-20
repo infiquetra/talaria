@@ -221,6 +221,43 @@ async fn unmatched_and_undecodable_replies_are_reported() {
 }
 
 #[tokio::test]
+async fn runtime_describe_typed_call_drops_null_skin_colours() {
+    guard(async {
+        let (parts, mut peer) = Peer::pair().await;
+        let (client, _inbound) = Client::start(parts);
+        let skin = json!({
+            "name": "nullcolour",
+            "colors": {"accent": "#00ff00", "prompt": null},
+            "light_colors": {"ui_ok": null},
+            "dark_colors": {"ui_warn": null},
+        });
+        let mut body = recorded_result(101);
+        body["skin"] = skin;
+        let caller = client.clone();
+        let describe = tokio::spawn(async move {
+            caller
+                .call::<runtime_describe::Marker>(RuntimeDescribeParams(serde_json::Map::new()))
+                .await
+        });
+        let request = peer.recv_json().await;
+        peer.reply_ok(request["id"].clone(), body).await;
+        let describe = describe
+            .await
+            .expect("call task ended")
+            .expect("describe with a null skin colour");
+        let skin = describe.skin.expect("describe skin");
+        assert_eq!(
+            skin.colors.get("accent").map(String::as_str),
+            Some("#00ff00")
+        );
+        assert!(!skin.colors.contains_key("prompt"));
+        assert!(!skin.light_colors.contains_key("ui_ok"));
+        assert!(!skin.dark_colors.contains_key("ui_warn"));
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn caller_drop_removes_the_entry() {
     guard(async {
         let (parts, mut peer) = Peer::pair().await;

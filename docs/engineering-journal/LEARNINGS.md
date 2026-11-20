@@ -2,6 +2,19 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-20 — Normalize skin colours before every typed runtime description
+
+**Evidence.** The typed `runtime.describe` regression returned `BadResult` for null
+entries in `colors`, `light_colors`, and `dark_colors`, while the handshake already
+dropped those entries before decoding.
+
+**Mechanism.** `Client::call_with` and the workflow port actor's `HermesPort::wire`
+now apply the existing `skin_payload_lenient` override to `runtime.describe`
+results before deserialization, retaining valid colour strings and matching the
+handshake and application connection paths.
+
+**Generalizable rule.** Apply a wire normalization rule at every decoding path for the same payload.
+
 ## 2026-11-19 — `approval.cancelled` ids can be shorter than the count
 
 **Evidence.** The vendored `ApprovalCancelledPayload` description says `cancelled_count` is the number of dropped entries and `request_ids` omits empty or missing ids, so the two can disagree. A live broadcast leaves the envelope `session_id` empty and names the session in the payload. The generated contract rejects an omitted `request_ids` before the reducer. Before this change the reducer ignored the event, and a following answer emitted `RespondApproval`. The queue id is not shown to be the same field as a legacy `prompt_id`.

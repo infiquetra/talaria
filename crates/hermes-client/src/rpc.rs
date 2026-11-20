@@ -342,7 +342,10 @@ impl Client {
         if !params.is_null() && !params.is_object() {
             return Err(CallError::Encode);
         }
-        let result = self.execute_call(M::NAME, params, timeout, started).await?;
+        let mut result = self.execute_call(M::NAME, params, timeout, started).await?;
+        if M::NAME == hermes_contract::methods::canonical::runtime_describe::NAME {
+            hermes_contract::overrides::skin_payload_lenient(&mut result);
+        }
         serde_json::from_value(result).map_err(|_| CallError::BadResult {
             method: M::NAME.into(),
             reason: "result did not decode",

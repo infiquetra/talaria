@@ -326,7 +326,7 @@ impl HermesPort {
                     .open(&profile)
                     .await
                     .map_err(|e| map_wire_error("connect", e))?;
-                let described = self
+                let mut described = self
                     .call(
                         &wire,
                         "runtime.describe",
@@ -334,6 +334,7 @@ impl HermesPort {
                         self.inner.cfg.timeouts.describe,
                     )
                     .await?;
+                hermes_contract::overrides::skin_payload_lenient(&mut described);
                 let described: RuntimeDescribeResult = decode("runtime.describe", described)?;
                 let missing = required(&described);
                 if !missing.is_empty() {
