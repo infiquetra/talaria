@@ -108,6 +108,77 @@ fn prompt_mut<'a>(state: &'a mut SessionState, key: &PromptKey) -> Option<&'a mu
     }
 }
 
+/// Seal listed approvals, and when `cancelled_count` is larger than that list, withdraw
+/// every approval still open in this session.
+///
+/// `ApprovalCancelledPayload` says `request_ids` omits entries that have no id, so the
+/// count and the list can disagree. A payload whose `session_id` is not this session
+/// changes nothing. `stored_session_id` does not select a different session.
+pub(crate) fn cancel_approvals(state: &mut SessionState, payload: &Value) {
+    let Some(session_id) = payload["session_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    else {
+        return;
+    };
+    if session_id != state.session_id.as_str() {
+        return;
+    }
+    let ids: Vec<&str> = payload["request_ids"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut matched = 0i64;
+    for key in open_approval_keys(state) {
+        if ids.iter().any(|id| *id == key.prompt_id) {
+            withdraw_approval(state, &key);
+            matched += 1;
+        }
+    }
+    let cancelled_count = payload["cancelled_count"].as_i64().unwrap_or(0);
+    if cancelled_count > matched {
+        for key in open_approval_keys(state) {
+            withdraw_approval(state, &key);
+        }
+    }
+}
+
+fn open_approval_keys(state: &SessionState) -> Vec<super::PromptKey> {
+    state
+        .cells
+        .iter()
+        .filter_map(|cell| match cell {
+            super::Cell::Prompt(prompt)
+                if prompt.kind == PromptKind::Approval
+                    && matches!(prompt.state, PromptState::Open | PromptState::Answering(_)) =>
+            {
+                Some(prompt.key.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn withdraw_approval(state: &mut SessionState, key: &super::PromptKey) {
+    let Some(prompt) = prompt_mut(state, key) else {
+        return;
+    };
+    if prompt.kind != PromptKind::Approval || matches!(prompt.state, PromptState::Settled(_)) {
+        return;
+    }
+    prompt.state = PromptState::Settled(Settlement::Elsewhere);
+    prompt.sealed = true;
+    note_left_open(state, key);
+}
+
 pub(crate) fn session(state: &mut SessionState, name: &str, payload: &Value) {
     let key = payload["prompt_id"]
         .as_str()

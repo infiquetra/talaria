@@ -321,6 +321,9 @@ mod prompts_replay;
 #[path = "integration/prompts_respond.rs"]
 mod prompts_respond;
 
+#[path = "integration/approval_cancelled_broadcast.rs"]
+mod approval_cancelled_broadcast;
+
 #[path = "integration/prompts_secrecy.rs"]
 mod prompts_secrecy;
 

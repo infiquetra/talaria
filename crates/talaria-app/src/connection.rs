@@ -74,6 +74,8 @@ fn ensure_policy(no_ensure: bool) -> EnsurePolicy {
 
 pub struct OpenConnection {
     pub(crate) gateway_version: Option<String>,
+    /// Host from the dialed endpoint, including a port when the origin has one.
+    pub(crate) gateway_host: Option<String>,
     pub link: Link,
     pub inbound: mpsc::Receiver<LinkEvent>,
     pub describe: RuntimeDescribeResult,
@@ -177,6 +179,7 @@ impl ConnectionService {
         match describe {
             Ok(describe) => Ok(OpenConnection {
                 gateway_version: None,
+                gateway_host: None,
                 link,
                 inbound,
                 describe,
@@ -202,6 +205,7 @@ impl ConnectionService {
         };
         let endpoint = hermes_client::discover_with(home, &options).await?;
         let gateway_version = endpoint.code_version().map(str::to_owned);
+        let gateway_host = origin_host(endpoint.api_origin());
         let profile = endpoint.resolve_profile(&launch.profile)?;
         let describe = Arc::new(Mutex::new(None));
         let dial = LaunchDial {
@@ -221,12 +225,20 @@ impl ConnectionService {
             })?;
         Ok(OpenConnection {
             gateway_version,
+            gateway_host,
             link,
             inbound,
             describe,
             profile_name: launch.profile.trim().to_lowercase(),
         })
     }
+}
+
+/// The host of an API origin, including a port when the origin has one.
+fn origin_host(origin: &str) -> Option<String> {
+    let rest = origin.split_once("://").map_or(origin, |(_, rest)| rest);
+    let host = rest.split(['/', '?', '#']).next()?.trim();
+    (!host.is_empty()).then(|| host.to_owned())
 }
 
 #[cfg(test)]

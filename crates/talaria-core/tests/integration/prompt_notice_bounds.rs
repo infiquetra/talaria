@@ -103,6 +103,43 @@ fn open_prompt_cells_are_not_pruned_to_make_room() {
 }
 
 #[test]
+fn withdrawn_approvals_free_their_open_slots() {
+    let withdrawals = 65;
+    let mut events = Vec::new();
+    for n in 0..withdrawals {
+        let id = format!("withdrawn-{n}");
+        let seq = n * 2 + 1;
+        events.push(ev(
+            seq,
+            "approval.request",
+            approval_request(&id, 1, &["once"]),
+        ));
+        events.push(ev(
+            seq + 1,
+            "approval.cancelled",
+            json!({
+                "cancelled_count": 1,
+                "reason": "superseded",
+                "request_ids": [id],
+                "session_id": SESSION,
+                "stored_session_id": "stored-1",
+            }),
+        ));
+    }
+    events.push(ev(
+        withdrawals * 2 + 1,
+        "approval.request",
+        approval_request("after-withdrawals", 1, &["once"]),
+    ));
+    let (state, _) = drive::reduce(SESSION, events);
+    let open: Vec<_> = state
+        .open_prompts()
+        .map(|prompt| prompt.key.prompt_id.as_str())
+        .collect();
+    assert_eq!(open, ["after-withdrawals"]);
+}
+
+#[test]
 fn cell_ids_stay_unique_after_pruning() {
     let mut events = Vec::new();
     for n in 0..257 {

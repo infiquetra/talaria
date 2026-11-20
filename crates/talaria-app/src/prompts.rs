@@ -16,6 +16,9 @@ use zeroize::Zeroizing;
 
 use crate::app::AppEffect;
 
+/// Cancelled request ids kept so a late register cannot restore the card.
+const CANCELLED_REQUEST_LIMIT: usize = 64;
+
 static NEXT_SERVICE: AtomicU64 = AtomicU64::new(1);
 
 /// A live masked card, bound to the service and request that opened it.
@@ -61,6 +64,18 @@ pub fn policy_for(method: &str) -> ServerRequestPolicy {
         "vault.unlock_prompt" => ServerRequestPolicy::Masked(MaskedKind::VaultUnlockPrompt),
         _ => ServerRequestPolicy::Refuse,
     }
+}
+
+/// A blank id is not a session. Storing it would let a card look like the foreground one.
+fn present_session_id(session_id: Option<String>) -> Option<String> {
+    session_id.and_then(|id| {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    })
 }
 
 pub(crate) fn cancel_reason_notice(reason: &str) -> String {
@@ -118,6 +133,8 @@ pub struct PromptService {
     next_token: u64,
     generation: Option<u64>,
     masked: Vec<(MaskedRequestInfo, Responder)>,
+    /// Request ids whose cancel arrived, including ones that had no card yet.
+    cancelled_requests: VecDeque<String>,
     answered_requests: HashMap<String, (Option<String>, &'static str)>,
     answered_order: VecDeque<String>,
     notified_kinds: HashSet<&'static str>,
@@ -134,6 +151,7 @@ impl PromptService {
             next_token: 0,
             generation: None,
             masked: Vec::new(),
+            cancelled_requests: VecDeque::new(),
             answered_requests: HashMap::new(),
             answered_order: VecDeque::new(),
             notified_kinds: HashSet::new(),
@@ -171,9 +189,14 @@ impl PromptService {
             req.responder.ignore();
             return Vec::new();
         }
+        let cancelled = self.was_cancelled(&req.id);
         let mut notices = self.on_connection_replaced(req.generation.0);
+        if cancelled || self.was_cancelled(&req.id) {
+            req.responder.ignore();
+            return notices;
+        }
         let method = request_method(&req.request);
-        let session_id = req.session_id.filter(|id| !id.is_empty());
+        let session_id = present_session_id(req.session_id);
         let (kind, fields) = match req.request {
             ContractRequest::Sudo(params) => (MaskedKind::Sudo, vec![("command", params.command)]),
             ContractRequest::Secret(params) => (
@@ -248,6 +271,7 @@ impl PromptService {
     }
 
     pub fn on_request_cancel(&mut self, id: &str, method: &str, reason: &str) -> Vec<PromptNotice> {
+        self.remember_cancelled(id);
         if let Some(index) = self
             .masked
             .iter()
@@ -276,12 +300,28 @@ impl PromptService {
         Vec::new()
     }
 
+    /// Remember a cancelled id so a register that arrives afterwards is not shown.
+    fn remember_cancelled(&mut self, id: &str) {
+        if id.is_empty() || self.was_cancelled(id) {
+            return;
+        }
+        if self.cancelled_requests.len() == CANCELLED_REQUEST_LIMIT {
+            self.cancelled_requests.pop_front();
+        }
+        self.cancelled_requests.push_back(id.to_owned());
+    }
+
+    fn was_cancelled(&self, id: &str) -> bool {
+        self.cancelled_requests.iter().any(|kept| kept == id)
+    }
+
     pub fn on_connection_replaced(&mut self, generation: u64) -> Vec<PromptNotice> {
         if self.generation.is_some_and(|current| generation <= current) {
             return Vec::new();
         }
         self.generation = Some(generation);
         self.answered_requests.clear();
+        self.cancelled_requests.clear();
         self.answered_order.clear();
         self.notified_kinds.clear();
         self.masked
@@ -732,5 +772,47 @@ mod tests {
             super::cancel_reason_notice("timeout"),
             "timed out; the agent continued without it"
         );
+    }
+
+    #[test]
+    fn blank_session_id_is_not_stored_as_the_foreground_session() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            for session_id in [
+                Some(String::new()),
+                Some("   ".to_owned()),
+                Some("\t".to_owned()),
+                None,
+            ] {
+                let mut service =
+                    super::PromptService::new(Box::new(|| "talaria-blank-1".to_owned()));
+                service
+                    .on_server_request(hermes_client::ServerRequest {
+                        generation: hermes_client::Generation(1),
+                        id: "srq-blank".into(),
+                        session_id: session_id.clone(),
+                        request: hermes_contract::server_requests::ServerRequest::Sudo(
+                            hermes_contract::schemas::SudoRequestParams {
+                                command: "id".into(),
+                                session_id: "   ".into(),
+                            },
+                        ),
+                        responder: hermes_client::Responder::detached(std::sync::Arc::new(
+                            std::sync::atomic::AtomicU64::new(0),
+                        )),
+                    })
+                    .await;
+                let stored = service.masked_requests();
+                assert_eq!(stored.len(), 1);
+                assert_eq!(
+                    stored[0].session_id, None,
+                    "blank session id {:?} must not be stored as a named session",
+                    session_id
+                );
+            }
+        });
     }
 }

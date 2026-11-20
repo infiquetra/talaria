@@ -247,6 +247,7 @@ where
     let number = LAUNCHES.fetch_add(1, Ordering::Relaxed) + 1;
     let setup = RunSetup {
         remote_gateway: false,
+        remote_host: None,
         herdr: None,
         home: hermes_home(),
         launch_id: format!("live-picker-{}-{number}", run_suffix()),

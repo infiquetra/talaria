@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-19 — `approval.cancelled` ids can be shorter than the count
+
+**Evidence.** The vendored `ApprovalCancelledPayload` description says `cancelled_count` is the number of dropped entries and `request_ids` omits empty or missing ids, so the two can disagree. A live broadcast leaves the envelope `session_id` empty and names the session in the payload. The generated contract rejects an omitted `request_ids` before the reducer. Before this change the reducer ignored the event, and a following answer emitted `RespondApproval`. The queue id is not shown to be the same field as a legacy `prompt_id`.
+
+**Mechanism.** Decode fills an omitted or null `request_ids` with an empty list. The broadcast is routed by `payload.session_id`. Exact `prompt_id` matches are sealed, and a count larger than that number withdraws the rest of that session's open approvals. Another session's cells are not in that state.
+
+**Generalizable rule.** When a withdrawal list can omit ids, seal exact matches and treat the surplus count as the rest of that session's open approvals. Do not treat the match as proof the two id fields are one.
+
 ## 2026-11-19 — Prompt limits apply to retained data and rendered rows
 
 **Evidence.** Before the repair, the prompt bounds tests admitted an oversized id, retained a

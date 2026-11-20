@@ -1137,6 +1137,23 @@ fn masked_method(kind: MaskedKind) -> &'static str {
     }
 }
 
+/// Draw the peeked row with that row's profile and gateway, not the foreground's.
+fn sync_peek_cards(
+    stack: &mut PromptStack,
+    frame: &talaria_app::fleet_actions::PeekFrame,
+    now: Instant,
+) {
+    let open: Vec<&PromptCell> = frame.state.open_prompts().collect();
+    stack.set_gateway(frame.key.profile.as_str(), frame.gateway_host.as_deref());
+    stack.sync(
+        Some(frame.key.session_id.as_str()),
+        &open,
+        &masked_views(&frame.masked),
+        true,
+        now,
+    );
+}
+
 fn masked_views(masked: &[MaskedRequestInfo]) -> Vec<MaskedView> {
     masked
         .iter()
@@ -1985,6 +2002,7 @@ impl TuiScreen {
             (Some(state), Some(session_id)) => (state.connection_card(), session_id),
             _ => (None, ""),
         };
+        self.prompts.set_gateway(view.profile, view.gateway_host);
         self.prompts.show_connection(
             connection,
             session_id,
@@ -2011,6 +2029,8 @@ impl TuiScreen {
             .map(|session| session.open_prompts().collect())
             .unwrap_or_default();
         let session = open.first().map(|prompt| prompt.key.session_id.as_str());
+        self.configure_prompts
+            .set_gateway(view.profile, view.gateway_host);
         self.configure_prompts.sync(session, &open, &[], true, now);
     }
 
@@ -3804,14 +3824,7 @@ impl Screen for TuiScreen {
             .peek
             .filter(|frame| peeked.as_ref() == Some(&frame.key))
         {
-            let open: Vec<&PromptCell> = frame.state.open_prompts().collect();
-            self.peek_prompts.sync(
-                Some(frame.key.session_id.as_str()),
-                &open,
-                &masked_views(&frame.masked),
-                true,
-                now,
-            );
+            sync_peek_cards(&mut self.peek_prompts, frame, now);
         }
         let foreground = peeked
             .as_ref()
@@ -5091,8 +5104,16 @@ fn run_selected(
     };
     let home = hermes_client::default_home();
     let launch_id = new_launch_id();
+    let remote_host = remote.as_ref().and_then(|(cfg, _)| {
+        let host = cfg.base_url.host_str()?;
+        Some(match cfg.base_url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_owned(),
+        })
+    });
     let mut setup = RunSetup {
         remote_gateway: remote.is_some(),
+        remote_host,
         herdr: loaded
             .config
             .herdr
@@ -6280,5 +6301,62 @@ mod tests {
         };
         assert!(!super::fleet_peek_is_foreground(&key, "main", Some("same")));
         assert!(super::fleet_peek_is_foreground(&key, "other", Some("same")));
+    }
+
+    #[test]
+    fn peek_cards_name_the_row_profile_and_gateway() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use talaria_app::fleet_actions::PeekFrame;
+        use talaria_app::sessions::OpenedSession;
+        use talaria_core::directory::rows::RowKey;
+        use talaria_tui::live::LiveSection;
+
+        let snapshot: hermes_contract::schemas::CanonicalSnapshot = serde_json::from_value(json!({
+            "session_id": "peek-session",
+            "stored_session_id": "stored-peek",
+            "messages": [],
+            "message_count": 0,
+            "running": false,
+            "authority_epoch": 1,
+            "replay_epoch": "epoch-1",
+            "last_sequence": 1,
+            "subscription_id": "sub-peek",
+            "revision": 1,
+            "execution_generation": 1,
+            "pending": [],
+            "prompts": [{
+                "kind": "approval",
+                "prompt_id": "peek-prompt",
+                "execution_generation": 1,
+                "choices": ["once", "deny"],
+                "command": "ls"
+            }],
+            "info": {"desktop_protocol": "1"},
+        }))
+        .expect("snapshot");
+        let opened = OpenedSession::from_snapshot(snapshot);
+        let frame = PeekFrame {
+            key: RowKey {
+                profile: "other\u{202e}".into(),
+                session_id: "peek-session".into(),
+            },
+            state: opened.state,
+            masked: Vec::new(),
+            gateway_host: Some("peek.example\u{202e}".into()),
+        };
+        let mut stack = talaria_tui::prompts::PromptStack::new();
+        stack.set_gateway("foreground", Some("foreground.example"));
+        super::sync_peek_cards(&mut stack, &frame, Instant::now());
+        let section = stack.section().expect("the peeked card");
+        let width = 120u16;
+        let mut buf = Buffer::empty(Rect::new(0, 0, width, 8));
+        section.render(Rect::new(0, 0, width, 8), &mut buf);
+        let header: String = (0..width).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(header.contains("profile other"), "{header}");
+        assert!(header.contains("host peek.example"), "{header}");
+        assert!(header.contains("‹U+202E›"), "{header}");
+        assert!(!header.contains("foreground"), "{header}");
+        assert!(!header.contains('\u{202e}'), "{header}");
     }
 }

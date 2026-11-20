@@ -36,7 +36,9 @@ use crate::launch::Launch;
 use crate::prompts::{
     MaskedKind, MaskedRequestInfo, PromptNotice, PromptService, ServerRequestPolicy, policy_for,
 };
-use crate::sessions::{OpenedSession, detach_params, resume_params_id};
+use crate::sessions::{
+    OpenedSession, bind_approval_cancelled_session, detach_params, resume_params_id,
+};
 
 /// Why a peek did not open.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -179,6 +181,8 @@ struct PeekLink {
     profile: String,
     connection: OpenConnection,
     client: Client,
+    /// Host of this profile's gateway, when the dial recorded one.
+    gateway_host: Option<String>,
     /// The link's events went to the app's pump.
     events_taken: bool,
 }
@@ -227,6 +231,15 @@ impl PeekService {
             unconfirmed: HashMap::new(),
             notices: Vec::new(),
         }
+    }
+
+    /// Host of the attached profile's gateway. Local hosts stay in the value;
+    /// the card header drops them.
+    #[must_use]
+    pub fn gateway_host(&self) -> Option<&str> {
+        self.link
+            .as_ref()
+            .and_then(|link| link.gateway_host.as_deref())
     }
 
     /// The key of the attached session.
@@ -430,25 +443,34 @@ impl PeekService {
     pub fn on_link_event(&mut self, ev: LinkEvent) -> PeekUpdate {
         match ev {
             LinkEvent::Inbound {
-                item: Inbound::Event(event),
+                item: Inbound::Event(mut event),
                 ..
             } => {
                 let Some(session) = &mut self.session else {
                     return PeekUpdate::Unchanged;
                 };
+                bind_approval_cancelled_session(&mut event.raw);
                 let id = event.raw["session_id"].as_str().unwrap_or_default();
                 if id != session.opened.session_id {
                     return PeekUpdate::Unchanged;
                 }
+                let cancelled =
+                    if let Notification::RequestCancel(payload) = &event.frame.notification {
+                        let _ = session.prompts.on_request_cancel(
+                            &payload.id,
+                            &payload.method,
+                            &payload.reason,
+                        );
+                        true
+                    } else {
+                        false
+                    };
                 if !accept(&mut session.opened.cursor, &event.raw) {
-                    return PeekUpdate::Unchanged;
-                }
-                if let Notification::RequestCancel(payload) = &event.frame.notification {
-                    let _ = session.prompts.on_request_cancel(
-                        &payload.id,
-                        &payload.method,
-                        &payload.reason,
-                    );
+                    return if cancelled {
+                        self.changed()
+                    } else {
+                        PeekUpdate::Unchanged
+                    };
                 }
                 let _ = session::update(
                     &mut session.state,
@@ -630,10 +652,12 @@ async fn connect(
         .map_err(|_| PeekError::Timeout)?
         .map_err(|failure| PeekError::Connect(failure.what))?;
     let client = opened.link.client();
+    let gateway_host = opened.gateway_host.clone();
     Ok(PeekLink {
         profile,
         connection: opened,
         client,
+        gateway_host,
         events_taken: false,
     })
 }

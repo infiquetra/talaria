@@ -54,7 +54,12 @@ impl EventFrame {
             notification: Notification::Unknown(params.clone()),
         };
         if let Some(required) = required_fields(crate::generated::events::REQUIRED_FIELDS, name) {
-            let payload = object_payload(object.get("payload"), name, required)?;
+            let payload = match object.get("payload") {
+                None | Some(Value::Null) => Value::Object(Map::new()),
+                Some(value) => value.clone(),
+            };
+            let payload = default_omitted_approval_ids(name, payload);
+            let payload = object_payload(Some(&payload), name, required)?;
             frame.notification = decode_notification(name, &payload, params)
                 .map_err(|failure| error(name, failure.to_string()))?;
         }
@@ -125,6 +130,22 @@ fn envelope_field<T: DeserializeOwned>(
             .map(Some)
             .map_err(|failure| error(name, format!("invalid envelope field {key}: {failure}"))),
     }
+}
+
+/// Live `approval.cancelled` frames omit `request_ids` when every dropped entry
+/// lacked an id. The generated contract lists the field as required, so an
+/// omitted or null list becomes empty before that check.
+fn default_omitted_approval_ids(name: &str, payload: Value) -> Value {
+    if name != "approval.cancelled" {
+        return payload;
+    }
+    let Value::Object(mut object) = payload else {
+        return payload;
+    };
+    if matches!(object.get("request_ids"), None | Some(Value::Null)) {
+        object.insert("request_ids".into(), Value::Array(Vec::new()));
+    }
+    Value::Object(object)
 }
 
 fn object_payload(

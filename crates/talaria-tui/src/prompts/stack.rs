@@ -204,6 +204,8 @@ pub struct PromptStack {
     cards: Vec<Card>,
     hidden: HashSet<PromptKey>,
     foreground: Option<String>,
+    profile: String,
+    remote_host: Option<String>,
     draft_empty: bool,
     focused_at: Option<Instant>,
     stopping: HashSet<Option<String>>,
@@ -262,10 +264,20 @@ impl PromptStack {
             cards: Vec::new(),
             hidden: HashSet::new(),
             foreground: None,
+            profile: String::new(),
+            remote_host: None,
             draft_empty: false,
             focused_at: None,
             stopping: HashSet::new(),
         }
+    }
+
+    /// Remember the profile, and a non-local gateway host, for prompt card headers.
+    ///
+    /// A loopback host is omitted. The header sanitizes both values when it draws.
+    pub fn set_gateway(&mut self, profile: &str, remote_host: Option<&str>) {
+        self.profile = profile.trim().to_owned();
+        self.remote_host = remote_host.and_then(displayed_host);
     }
 
     pub fn show_connection(
@@ -348,7 +360,11 @@ impl PromptStack {
             return Vec::new();
         };
         let mut rows = Vec::new();
-        add(&mut rows, "Connection request", width);
+        add(
+            &mut rows,
+            &card_header("Connection request", card, self),
+            width,
+        );
         for target in &connection.card.targets {
             let suffix = if target
                 .required_env
@@ -853,20 +869,7 @@ impl PromptSection<'_> {
                 (title, detail)
             }
         };
-        let mut header = title;
-        if stack.cards.len() > 1 {
-            header.push_str(&format!(" (1 of {})", stack.cards.len()));
-        }
-        if let Some(session) = card
-            .session()
-            .filter(|session| Some(*session) != stack.foreground.as_deref())
-        {
-            header.push_str(&format!(
-                " · session {}",
-                session.chars().take(8).collect::<String>()
-            ));
-        }
-        add_capped(&mut rows, &header, width);
+        add_capped(&mut rows, &card_header(&title, card, stack), width);
         let hint = match &card.content {
             Content::Connection(_) => return stack.connection_lines(width),
             Content::Prompt(cell) if cell.kind == PromptKind::ServerRequest => {
@@ -1056,6 +1059,99 @@ impl PromptSection<'_> {
         add(&mut rows, &hint, width);
         rows
     }
+}
+
+fn card_header(title: &str, card: &Card, stack: &PromptStack) -> String {
+    let mut header = title.to_owned();
+    if stack.cards.len() > 1 {
+        header.push_str(&format!(" (1 of {})", stack.cards.len()));
+    }
+    append_card_attribution(&mut header, card, stack);
+    header
+}
+
+fn append_card_attribution(header: &mut String, card: &Card, stack: &PromptStack) {
+    if let Some(label) = session_label(card, stack) {
+        header.push_str(" · ");
+        header.push_str(&label);
+    }
+    if let Some(label) = gateway_label(stack) {
+        header.push_str(" · ");
+        header.push_str(&label);
+    }
+}
+
+fn session_label(card: &Card, stack: &PromptStack) -> Option<String> {
+    let session = card.session().map(str::trim).filter(|id| !id.is_empty());
+    let masked = matches!(card.content, Content::Masked(_));
+    match session {
+        None if masked => Some("session unknown".to_owned()),
+        Some(session)
+            if Some(session)
+                != stack
+                    .foreground
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty()) =>
+        {
+            Some(format!(
+                "session {}",
+                session.chars().take(8).collect::<String>()
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn gateway_label(stack: &PromptStack) -> Option<String> {
+    let profile = stack.profile.trim();
+    let host = stack
+        .remote_host
+        .as_deref()
+        .map(str::trim)
+        .filter(|host| !host.is_empty());
+    if profile.is_empty() && host.is_none() {
+        return None;
+    }
+    let mut label = String::new();
+    if !profile.is_empty() {
+        label.push_str("profile ");
+        label.push_str(profile);
+    }
+    if let Some(host) = host {
+        if !label.is_empty() {
+            label.push_str(" · ");
+        }
+        label.push_str("host ");
+        label.push_str(host);
+    }
+    Some(label)
+}
+
+fn displayed_host(host: &str) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty() || is_local_host(host) {
+        None
+    } else {
+        Some(host.to_owned())
+    }
+}
+
+fn is_local_host(host: &str) -> bool {
+    let host = host.trim();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(host);
+    let name = if host.matches(':').count() == 1
+        && let Some((name, port)) = host.rsplit_once(':')
+        && port.chars().all(|ch| ch.is_ascii_digit())
+    {
+        name
+    } else {
+        host
+    };
+    name.eq_ignore_ascii_case("localhost") || matches!(name, "127.0.0.1" | "::1" | "0.0.0.0")
 }
 
 /// One approval-command row. CR and tab stay visible, unlike a line feed or four spaces.

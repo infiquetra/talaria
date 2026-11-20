@@ -127,7 +127,7 @@ pub use crate::rebuild::{RebuildMode, rebuild_foreground};
 use crate::rebuild::{final_prefix, recover_retained, recovered};
 use crate::sessions::{
     DetachOutcome, ExecuteOutcome, OpenError, OpenedSession, SessionInfoSummary, SessionService,
-    accept_event, submission_id,
+    accept_event, bind_approval_cancelled_session, submission_id,
 };
 use crate::side::{self, SideService};
 use crate::side_connection::SideScope;
@@ -418,6 +418,8 @@ pub struct View<'a> {
     pub info: Option<&'a SessionInfoSummary>,
     pub link: LinkView,
     pub profile: &'a str,
+    /// Host of a non-local gateway. Prompt cards name it so a remote question is visible.
+    pub gateway_host: Option<&'a str>,
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
     /// The provider-adjusted effort, when known.
@@ -783,6 +785,8 @@ pub struct AppState {
     voice_config_pending: bool,
     /// The launch dialed a remote gateway. Voice must not ask that gateway to record or speak.
     remote_gateway: bool,
+    /// Host of that gateway, when it is not a loopback address.
+    remote_host: Option<String>,
     remote_voice_noticed: BTreeSet<(String, String)>,
     voice_submissions: BTreeMap<String, String>,
     remembered_notes: BTreeMap<String, String>,
@@ -1093,6 +1097,7 @@ impl AppState {
             voice_submit_mode: None,
             voice_config_pending: false,
             remote_gateway: false,
+            remote_host: None,
             remote_voice_noticed: BTreeSet::new(),
             voice_submissions: BTreeMap::new(),
             remembered_notes: BTreeMap::new(),
@@ -1396,6 +1401,7 @@ impl AppState {
             info: opened.map(|opened| &opened.info),
             link: self.link_state,
             profile: &self.profile,
+            gateway_host: self.remote_host.as_deref(),
             model: self
                 .model
                 .as_deref()
@@ -1498,6 +1504,7 @@ impl AppState {
         copy.client_voice_config = self.client_voice_config.clone();
         copy.client_voice_worker = self.client_voice_worker.clone();
         copy.remote_gateway = self.remote_gateway;
+        copy.remote_host = self.remote_host.clone();
         copy.connection_generation = self.connection_generation;
         copy.opened = self.opened.clone();
         copy.profile = self.profile.clone();
@@ -8987,6 +8994,88 @@ fn event_position(raw: &Value) -> (Option<&str>, Option<u64>) {
     )
 }
 
+fn enqueue_server_request(state: &AppState, executor: &Executor, request: ServerRequest) {
+    if !foreground_owns_request(state, request.session_id.as_deref()) {
+        request.responder.ignore();
+        return;
+    }
+    let Some(prompts) = &state.prompts else {
+        return;
+    };
+    executor.prompt_task(prompts, move |prompts| async move {
+        let notices = prompts
+            .lock()
+            .await
+            .on_server_request_for_session(request, None)
+            .await;
+        (Vec::new(), notice_texts(notices))
+    });
+}
+
+fn enqueue_cancel_request(
+    state: &AppState,
+    executor: &Executor,
+    id: String,
+    method: String,
+    reason: String,
+) {
+    let recovered = state.opened.as_ref().is_some_and(|opened| {
+        opened.state.open_prompts().any(|prompt| {
+            prompt.kind == PromptKind::ServerRequest
+                && prompt.state == PromptState::Open
+                && prompt.key.prompt_id == id
+        })
+    });
+    if recovered {
+        let id = id.clone();
+        let reason = reason.clone();
+        executor.send_later(async move {
+            AppMessage::PromptDone {
+                events: vec![Event::ServerRequestCancelled { id }],
+                notices: vec![crate::prompts::cancel_reason_notice(&reason)],
+                masked: None,
+            }
+        });
+    }
+    let Some(prompts) = &state.prompts else {
+        return;
+    };
+    executor.prompt_task(prompts, move |prompts| async move {
+        let notices = prompts
+            .lock()
+            .await
+            .on_request_cancel(&id, &method, &reason);
+        (Vec::new(), notice_texts(notices))
+    });
+}
+
+fn finish_request_cancel(
+    mut effects: Vec<AppEffect>,
+    cancel: &mut Option<AppEffect>,
+) -> Vec<AppEffect> {
+    if let Some(cancel) = cancel.take()
+        && !effects
+            .iter()
+            .any(|effect| matches!(effect, AppEffect::CancelRequest { .. }))
+    {
+        effects.insert(0, cancel);
+    }
+    effects
+}
+
+fn request_cancel_effect(frame: &hermes_contract::events::EventFrame) -> Option<AppEffect> {
+    match &frame.notification {
+        hermes_contract::events::Notification::RequestCancel(payload) => {
+            Some(AppEffect::CancelRequest {
+                id: payload.id.clone(),
+                method: payload.method.clone(),
+                reason: payload.reason.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
 fn is_open_session(state: &AppState, session_id: &str) -> bool {
     state
         .opened
@@ -9149,7 +9238,9 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 effects.extend(capabilities_input(state, CapInput::SkillsChanged));
                 effects
             }
-            Inbound::Event(inbound) => {
+            Inbound::Event(mut inbound) => {
+                bind_approval_cancelled_session(&mut inbound.raw);
+                let mut request_cancel = request_cancel_effect(&inbound.frame);
                 if state.pending_switch.as_ref().is_some_and(|target| {
                     target.profile == state.profile
                         && inbound.raw.get("session_id").and_then(Value::as_str)
@@ -9157,7 +9248,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         && !is_open_session(state, &target.session_id)
                 }) {
                     state.pending_switch_events.push(inbound);
-                    return Vec::new();
+                    return finish_request_cancel(Vec::new(), &mut request_cancel);
                 }
                 if inbound
                     .raw
@@ -9185,10 +9276,13 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     if let Some(service) = &state.configure_service {
                         service.observe(&event);
                     }
-                    return configure_input(
-                        state,
-                        talaria_core::configure::ConfigureInput::Session(event),
-                        None,
+                    return finish_request_cancel(
+                        configure_input(
+                            state,
+                            talaria_core::configure::ConfigureInput::Session(event),
+                            None,
+                        ),
+                        &mut request_cancel,
                     );
                 }
                 if let Some(opened) = state.opened.as_ref()
@@ -9200,7 +9294,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         inbound.raw.get("seq").and_then(Value::as_u64),
                     )
                 {
-                    return Vec::new();
+                    return finish_request_cancel(Vec::new(), &mut request_cancel);
                 }
                 // Child events remain independent of the parent's interrupt latch.
                 let key = inbound
@@ -9233,10 +9327,10 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                     let key = retained_key(state, &session_id);
                     let Some(opened) = key.and_then(|key| state.retained_sessions.get_mut(&key))
                     else {
-                        return hub_effects;
+                        return finish_request_cancel(hub_effects, &mut request_cancel);
                     };
                     if !accept_event(&opened.cursor, epoch, seq) {
-                        return hub_effects;
+                        return finish_request_cancel(hub_effects, &mut request_cancel);
                     }
                     if let Some(sequence) = seq {
                         opened.cursor.last_sequence = opened.cursor.last_sequence.max(sequence);
@@ -9257,15 +9351,15 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         background,
                         false,
                     ));
-                    return hub_effects;
+                    return finish_request_cancel(hub_effects, &mut request_cancel);
                 }
                 let Some(opened) = state.opened.as_mut() else {
-                    return hub_effects;
+                    return finish_request_cancel(hub_effects, &mut request_cancel);
                 };
                 if session != Some(opened.session_id.as_str())
                     || !accept_event(&opened.cursor, epoch, seq)
                 {
-                    return hub_effects;
+                    return finish_request_cancel(hub_effects, &mut request_cancel);
                 }
                 if let hermes_contract::events::Notification::SessionUsage(payload) =
                     &inbound.frame.notification
@@ -9281,20 +9375,11 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 let session_id = opened.session_id.clone();
                 let mut effects = Vec::new();
                 effects.append(&mut hub_effects);
-                match &inbound.frame.notification {
-                    hermes_contract::events::Notification::RequestCancel(payload) => {
-                        effects.push(AppEffect::CancelRequest {
-                            id: payload.id.clone(),
-                            method: payload.method.clone(),
-                            reason: payload.reason.clone(),
-                        })
-                    }
-                    hermes_contract::events::Notification::SessionTitle(payload)
-                        if payload.session_id == opened.session_id.as_str() =>
-                    {
-                        opened.title = Some(payload.title.clone())
-                    }
-                    _ => {}
+                if let hermes_contract::events::Notification::SessionTitle(payload) =
+                    &inbound.frame.notification
+                    && payload.session_id == opened.session_id.as_str()
+                {
+                    opened.title = Some(payload.title.clone());
                 }
                 effects.extend(automation_from_frame(
                     state,
@@ -9311,7 +9396,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                 let payload = inbound.raw.get("payload").cloned().unwrap_or(Value::Null);
                 let completed = type_name == "message.complete";
                 let Some(opened) = state.opened.as_mut() else {
-                    return effects;
+                    return finish_request_cancel(effects, &mut request_cancel);
                 };
                 if let Some(sequence) = seq {
                     opened.cursor.last_sequence = opened.cursor.last_sequence.max(sequence);
@@ -9370,7 +9455,7 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         PermissionsInput::TurnCompleted { session_id },
                     ));
                 }
-                effects
+                finish_request_cancel(effects, &mut request_cancel)
             }
             Inbound::ServerRequest(request) => {
                 if request.session_id.as_deref().is_some_and(|id| {
@@ -11092,6 +11177,8 @@ pub struct RunSetup {
     pub herdr: Option<crate::herdr::HerdrConfig>,
     /// Whether the launch uses a remote gateway.
     pub remote_gateway: bool,
+    /// Host of the remote gateway. Prompt cards include it when it is not local.
+    pub remote_host: Option<String>,
 }
 
 fn held_text(held: &VecDeque<String>) -> String {
@@ -13187,49 +13274,10 @@ fn apply<S: Screen>(
                 });
             }
             AppEffect::ServerRequest(request) => {
-                if !foreground_owns_request(state, request.session_id.as_deref()) {
-                    request.responder.ignore();
-                    continue;
-                }
-                let Some(prompts) = &state.prompts else {
-                    continue;
-                };
-                executor.prompt_task(prompts, move |prompts| async move {
-                    let notices = prompts
-                        .lock()
-                        .await
-                        .on_server_request_for_session(request, None)
-                        .await;
-                    (Vec::new(), notice_texts(notices))
-                });
+                enqueue_server_request(state, executor, request);
             }
             AppEffect::CancelRequest { id, method, reason } => {
-                if state.opened.as_ref().is_some_and(|opened| {
-                    opened.state.open_prompts().any(|prompt| {
-                        prompt.kind == PromptKind::ServerRequest
-                            && prompt.state == PromptState::Open
-                            && prompt.key.prompt_id == id
-                    })
-                }) {
-                    executor.send_later(async move {
-                        AppMessage::PromptDone {
-                            events: vec![Event::ServerRequestCancelled { id }],
-                            notices: vec![crate::prompts::cancel_reason_notice(&reason)],
-                            masked: None,
-                        }
-                    });
-                    continue;
-                }
-                let Some(prompts) = &state.prompts else {
-                    continue;
-                };
-                executor.prompt_task(prompts, move |prompts| async move {
-                    let notices = prompts
-                        .lock()
-                        .await
-                        .on_request_cancel(&id, &method, &reason);
-                    (Vec::new(), notice_texts(notices))
-                });
+                enqueue_cancel_request(state, executor, id, method, reason);
             }
             AppEffect::Voice { session_id, effect } => {
                 run_voice_effect(state, executor, session_id, effect)
@@ -15352,6 +15400,12 @@ async fn run_inner<S: Screen>(
     if setup.remote_gateway {
         state.attached_to_remote_gateway();
     }
+    state.remote_host = setup
+        .remote_host
+        .as_deref()
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .map(str::to_owned);
     state.ultracode = crate::ultracode::UltracodeService::new(default_ultracode);
     if setup.remote_gateway {
         state.ultracode.set_remote(true);
@@ -16491,6 +16545,439 @@ mod comfort_event_tests {
                 at: now + Duration::from_secs(25),
             });
         assert_eq!(output.alert.unwrap().text, "done: Current session title");
+    }
+
+    #[test]
+    fn retained_request_cancel_removes_the_masked_card_and_cancels_the_responder() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let mut state = state();
+            let foreground = state.opened.as_ref().unwrap().session_id.clone();
+            let background = "retained-session-1".to_owned();
+            let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+                serde_json::from_value(json!({
+                    "session_id": background,
+                    "stored_session_id": "stored-retained",
+                    "messages": [],
+                    "message_count": 0,
+                    "running": false,
+                    "authority_epoch": 1,
+                    "replay_epoch": "epoch-1",
+                    "last_sequence": 0,
+                    "subscription_id": "sub-retained",
+                    "revision": 1,
+                    "execution_generation": 1,
+                    "pending": [],
+                    "prompts": [],
+                    "info": {"desktop_protocol": "1"},
+                }))
+                .expect("snapshot");
+            state.retained_sessions.insert(
+                RowKey {
+                    profile: state.profile.clone(),
+                    session_id: background.clone(),
+                },
+                OpenedSession::from_snapshot(snapshot),
+            );
+            let prompts = Arc::new(Mutex::new(PromptService::new(Box::new(|| {
+                "talaria-retained-1".to_owned()
+            }))));
+            state.prompts = Some(Arc::clone(&prompts));
+            let (sender, mut receiver) = mpsc::unbounded_channel();
+            let executor = Executor::new(sender);
+            let effects = link_event(
+                &mut state,
+                LinkEvent::Inbound {
+                    item: Inbound::ServerRequest(sudo_request("srq-retained", &background)),
+                    replayed: false,
+                },
+            );
+            let Ok([AppEffect::ServerRequest(request)]) = <[_; 1]>::try_from(effects) else {
+                panic!("a retained session's request must reach the prompt service");
+            };
+            enqueue_server_request(&state, &executor, request);
+            let AppMessage::PromptDone {
+                masked: Some(cards),
+                ..
+            } = prompt_done(&mut receiver).await
+            else {
+                panic!("the prompt service must publish masked cards");
+            };
+            let [card] = cards.as_slice() else {
+                panic!("the retained session's request must open one masked card");
+            };
+            assert_eq!(card.session_id.as_deref(), Some(background.as_str()));
+            let target = card.target();
+            let raw = json!({
+                "session_id": background,
+                "replay_epoch": "epoch-1",
+                "seq": 1,
+                "type": "request.cancel",
+                "payload": {"id": "srq-retained", "method": "sudo", "reason": "timeout"},
+            });
+            let effects = update(
+                &mut state,
+                AppMessage::Link(LinkEvent::Inbound {
+                    item: Inbound::Event(hermes_client::channel::InboundEvent {
+                        generation: hermes_client::Generation(1),
+                        frame: EventFrame::from_params(&raw).unwrap(),
+                        raw,
+                    }),
+                    replayed: false,
+                }),
+            );
+            let (id, method, reason) = effects
+                .iter()
+                .find_map(|effect| match effect {
+                    AppEffect::CancelRequest { id, method, reason } => {
+                        Some((id.clone(), method.clone(), reason.clone()))
+                    }
+                    _ => None,
+                })
+                .expect("request.cancel for a retained session must reach the prompt service");
+            assert_ne!(background, foreground);
+            let mut prompts = prompts.lock().await;
+            let notices = prompts.on_request_cancel(&id, &method, &reason);
+            assert!(
+                prompts.masked_requests().is_empty(),
+                "the retained session's masked card is still open"
+            );
+            assert_eq!(
+                notices.len(),
+                1,
+                "cancelling the responder must record the withdrawal"
+            );
+            let error = prompts
+                .answer_masked(&target, Zeroizing::new("secret".into()))
+                .await
+                .expect_err("a cancelled responder must refuse a late answer");
+            assert_eq!(error, hermes_client::RespondError::Cancelled);
+        });
+    }
+
+    fn cancel_message(session: &str, epoch: &str, seq: u64, id: &str) -> AppMessage {
+        let raw = json!({
+            "session_id": session,
+            "replay_epoch": epoch,
+            "seq": seq,
+            "type": "request.cancel",
+            "payload": {"id": id, "method": "sudo", "reason": "timeout"},
+        });
+        AppMessage::Link(LinkEvent::Inbound {
+            item: Inbound::Event(hermes_client::channel::InboundEvent {
+                generation: hermes_client::Generation(1),
+                frame: EventFrame::from_params(&raw).expect("cancel frame"),
+                raw,
+            }),
+            replayed: false,
+        })
+    }
+
+    fn sudo_request(id: &str, session: &str) -> ServerRequest {
+        ServerRequest {
+            generation: hermes_client::Generation(1),
+            id: id.into(),
+            session_id: Some(session.into()),
+            request: hermes_contract::server_requests::ServerRequest::Sudo(
+                hermes_contract::schemas::SudoRequestParams {
+                    command: "sudo true".into(),
+                    session_id: session.into(),
+                },
+            ),
+            responder: hermes_client::Responder::detached(Arc::new(AtomicU64::new(0))),
+        }
+    }
+
+    fn configure_context() -> talaria_core::configure::Context {
+        use talaria_core::configure::Section;
+        talaria_core::configure::Context {
+            profile: "default".into(),
+            hermes_version: None,
+            schema: talaria_core::settings::ConfigSchemaView {
+                fields: vec![],
+                category_order: vec![],
+            },
+            effective: json!({}),
+            raw: json!({}),
+            defaults: json!({}),
+            inventory: talaria_core::configure::Inventory {
+                mcp_servers: Section::Unavailable("not gathered".into()),
+                mcp_catalogue: Section::Unavailable("not gathered".into()),
+                skills: Section::Unavailable("not gathered".into()),
+                toolsets: Section::Unavailable("not gathered".into()),
+                plugins: Section::Unavailable("not gathered".into()),
+                cron_jobs: Section::Unavailable("not gathered".into()),
+                providers: Section::Unavailable("not gathered".into()),
+                main_model: Section::Unavailable("not gathered".into()),
+                routes: Section::Unavailable("not gathered".into()),
+                profiles: Section::Unavailable("not gathered".into()),
+                connectors: Section::Unavailable("not gathered".into()),
+            },
+        }
+    }
+
+    async fn prompt_done(rx: &mut mpsc::UnboundedReceiver<AppMessage>) -> AppMessage {
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("the prompt task should finish")
+            .expect("the prompt channel stays open")
+    }
+
+    #[test]
+    fn request_cancel_reaches_the_executor_on_cursor_configure_and_retained_paths() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let mut state = state();
+            let foreground = state.opened.as_ref().unwrap().session_id.clone();
+            let epoch = state.opened.as_ref().unwrap().cursor.replay_epoch.clone();
+            let stale = state.opened.as_ref().unwrap().cursor.last_sequence;
+            let (sender, mut receiver) = mpsc::unbounded_channel();
+            let executor = Executor::new(sender);
+            let prompts = Arc::new(Mutex::new(PromptService::new(Box::new(|| {
+                "talaria-cancel-1".into()
+            }))));
+            state.prompts = Some(Arc::clone(&prompts));
+
+            enqueue_server_request(&state, &executor, sudo_request("srq-cursor", &foreground));
+            prompt_done(&mut receiver).await;
+            assert_eq!(prompts.lock().await.masked_requests().len(), 1);
+            let effects = update(
+                &mut state,
+                cancel_message(&foreground, &epoch, stale, "srq-cursor"),
+            );
+            let cancel = effects.iter().find_map(|effect| match effect {
+                AppEffect::CancelRequest { id, method, reason } if id == "srq-cursor" => {
+                    Some((id.clone(), method.clone(), reason.clone()))
+                }
+                _ => None,
+            });
+            let (id, method, reason) =
+                cancel.expect("a cursor-rejected cancel still reaches the prompt service");
+            enqueue_cancel_request(&state, &executor, id, method, reason);
+            prompt_done(&mut receiver).await;
+            assert!(prompts.lock().await.masked_requests().is_empty());
+
+            let background = "retained-session-1".to_owned();
+            let snapshot: hermes_contract::schemas::CanonicalSnapshot =
+                serde_json::from_value(json!({
+                    "session_id": background,
+                    "stored_session_id": "stored-retained",
+                    "messages": [],
+                    "message_count": 0,
+                    "running": false,
+                    "authority_epoch": 1,
+                    "replay_epoch": "epoch-1",
+                    "last_sequence": 4,
+                    "subscription_id": "sub-retained",
+                    "revision": 1,
+                    "execution_generation": 1,
+                    "pending": [],
+                    "prompts": [],
+                    "info": {"desktop_protocol": "1"},
+                }))
+                .expect("snapshot");
+            state.retained_sessions.insert(
+                RowKey {
+                    profile: state.profile.clone(),
+                    session_id: background.clone(),
+                },
+                OpenedSession::from_snapshot(snapshot),
+            );
+            enqueue_server_request(&state, &executor, sudo_request("srq-retained", &background));
+            prompt_done(&mut receiver).await;
+            let effects = update(
+                &mut state,
+                cancel_message(&background, "epoch-1", 4, "srq-retained"),
+            );
+            let (id, method, reason) = effects
+                .iter()
+                .find_map(|effect| match effect {
+                    AppEffect::CancelRequest { id, method, reason } if id == "srq-retained" => {
+                        Some((id.clone(), method.clone(), reason.clone()))
+                    }
+                    _ => None,
+                })
+                .expect("a cursor-rejected retained cancel still reaches the prompt service");
+            enqueue_cancel_request(&state, &executor, id, method, reason);
+            prompt_done(&mut receiver).await;
+            assert!(prompts.lock().await.masked_requests().is_empty());
+
+            state.link_state = LinkView::Connected;
+            configure_command(
+                &mut state,
+                "turn on the bell".into(),
+                "turn on the bell".into(),
+            );
+            configure_input(
+                &mut state,
+                talaria_core::configure::ConfigureInput::Gathered(Box::new(configure_context())),
+                None,
+            );
+            let created: hermes_contract::schemas::CanonicalSnapshot =
+                serde_json::from_value(json!({
+                    "session_id": "configure-session",
+                    "stored_session_id": "stored-configure",
+                    "messages": [],
+                    "message_count": 0,
+                    "running": false,
+                    "authority_epoch": 1,
+                    "replay_epoch": "epoch-1",
+                    "last_sequence": 0,
+                    "subscription_id": "sub-configure",
+                    "revision": 1,
+                    "execution_generation": 1,
+                    "pending": [],
+                    "prompts": [],
+                    "info": {"desktop_protocol": "1"},
+                }))
+                .expect("configure snapshot");
+            configure_input(
+                &mut state,
+                talaria_core::configure::ConfigureInput::Created(Box::new(created)),
+                None,
+            );
+            let hidden = state
+                .configure
+                .as_ref()
+                .and_then(|configure| configure.hidden_session_id())
+                .expect("the configure session id")
+                .to_owned();
+            prompts
+                .lock()
+                .await
+                .on_server_request_for_session(
+                    sudo_request("srq-configure", &hidden),
+                    Some(&hidden),
+                )
+                .await;
+            assert_eq!(prompts.lock().await.masked_requests().len(), 1);
+            let effects = update(
+                &mut state,
+                cancel_message(&hidden, "epoch-1", 1, "srq-configure"),
+            );
+            assert!(
+                effects.iter().any(|effect| {
+                    matches!(effect, AppEffect::CancelRequest { id, .. } if id == "srq-configure")
+                }),
+                "configure routing must not swallow request.cancel"
+            );
+            enqueue_cancel_request(
+                &state,
+                &executor,
+                "srq-configure".into(),
+                "sudo".into(),
+                "timeout".into(),
+            );
+            prompt_done(&mut receiver).await;
+            assert!(prompts.lock().await.masked_requests().is_empty());
+
+            enqueue_cancel_request(
+                &state,
+                &executor,
+                "srq-race".into(),
+                "sudo".into(),
+                "timeout".into(),
+            );
+            prompt_done(&mut receiver).await;
+            enqueue_server_request(&state, &executor, sudo_request("srq-race", &foreground));
+            prompt_done(&mut receiver).await;
+            assert!(
+                prompts.lock().await.masked_requests().is_empty(),
+                "a register that loses the race to cancel must not restore the card"
+            );
+        });
+    }
+
+    #[test]
+    fn approval_cancelled_omitted_request_ids_withdraws_only_the_named_session() {
+        let mut state = state();
+        let other: hermes_contract::schemas::CanonicalSnapshot = serde_json::from_value(json!({
+            "session_id": "other-session",
+            "stored_session_id": "stored-other",
+            "messages": [],
+            "message_count": 0,
+            "running": false,
+            "authority_epoch": 1,
+            "replay_epoch": "epoch-1",
+            "last_sequence": 1,
+            "subscription_id": "sub-other",
+            "revision": 1,
+            "execution_generation": 1,
+            "pending": [],
+            "prompts": [{
+                "kind": "approval",
+                "prompt_id": "prompt-other",
+                "execution_generation": 1,
+                "choices": ["once", "deny"],
+                "command": "ls"
+            }],
+            "info": {"desktop_protocol": "1"},
+        }))
+        .expect("snapshot");
+        state.retained_sessions.insert(
+            RowKey {
+                profile: state.profile.clone(),
+                session_id: "other-session".into(),
+            },
+            OpenedSession::from_snapshot(other),
+        );
+        let params = json!({
+            "session_id": "",
+            "replay_epoch": "epoch-1",
+            "seq": 5,
+            "type": "approval.cancelled",
+            "payload": {
+                "session_id": "local-session-1",
+                "stored_session_id": "stored-1",
+                "reason": "reap",
+                "cancelled_count": 1
+            }
+        });
+        let bytes = json!({"jsonrpc":"2.0","method":"event","params": params}).to_string();
+        let decoded = hermes_client::decode_frame(
+            hermes_client::Generation(1),
+            bytes.as_bytes(),
+            &mut |_| panic!("not a server request"),
+        );
+        let hermes_client::Decoded::Inbound(hermes_client::Inbound::Event(event)) = decoded else {
+            panic!("an omitted request_ids list was rejected");
+        };
+        update(
+            &mut state,
+            AppMessage::Link(LinkEvent::Inbound {
+                item: Inbound::Event(event),
+                replayed: false,
+            }),
+        );
+        assert!(
+            !state
+                .opened
+                .as_ref()
+                .unwrap()
+                .state
+                .open_prompts()
+                .any(|prompt| prompt.key.prompt_id == "prompt-1")
+        );
+        let other = state
+            .retained_sessions
+            .get(&RowKey {
+                profile: state.profile.clone(),
+                session_id: "other-session".into(),
+            })
+            .unwrap();
+        assert!(
+            other
+                .state
+                .open_prompts()
+                .any(|prompt| prompt.key.prompt_id == "prompt-other"),
+            "the unnamed session was withdrawn"
+        );
     }
 }
 

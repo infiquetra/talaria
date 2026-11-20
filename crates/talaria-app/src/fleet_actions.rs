@@ -33,6 +33,8 @@ pub struct PeekFrame {
     pub key: RowKey,
     pub state: SessionState,
     pub masked: Vec<MaskedRequestInfo>,
+    /// Host of the peeked profile's gateway. The card header drops a local host.
+    pub gateway_host: Option<String>,
 }
 
 /// What the worker tells the app between effect results.
@@ -167,6 +169,7 @@ async fn work(
                         key: key.clone(),
                         state: state.clone(),
                         masked: peek.masked_requests(),
+                        gateway_host: peek.gateway_host().map(str::to_owned),
                     })),
                 );
             }
