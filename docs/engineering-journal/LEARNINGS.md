@@ -2,6 +2,14 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-20 — The long help explains `--resume` in two copies
+
+**Evidence.** `flags_help_and_neutralised_errors` locks the sentence "Resume a session by its identifier. `talaria -c` reopens the most recent session for this folder." at the end of the long help, and one collapsed copy beside `--resume`.
+
+**Mechanism.** Clap's derive macro strips the trailing period from a doc-comment short help, so the sentence beside `--resume` lost its final character unless the arg carries `verbatim_doc_comment`. The trailing copy is one line, so the test keeps it whole and collapses whitespace only for the text above it, where the verbatim flag copy appears once.
+
+**Rule.** Do not accept one copy of the sentence, do not drop the backticks, and mark a doc comment `verbatim_doc_comment` when its trailing period must survive rendering.
+
 ## 2026-11-20 — Normalize skin colours before every typed runtime description
 
 **Evidence.** The typed `runtime.describe` regression returned `BadResult` for null

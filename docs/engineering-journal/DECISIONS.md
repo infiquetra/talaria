@@ -2,6 +2,14 @@
 
 > Repo-scoped tactical decisions with rationale and revisit conditions.
 
+## 2026-11-20 — Explain `--resume` in the long help
+
+**Context.** `--resume` already selects a session, while the long help is silent about it.
+
+**Decision.** Put the same sentence in two places: a documentation comment on the `resume` field (marked `verbatim_doc_comment` so the trailing period survives rendering), and one sentence at the end of the long help — "Resume a session by its identifier. `talaria -c` reopens the most recent session for this folder." — with no change to parsing.
+
+**Revisit when.** The first-session commands in the guide change.
+
 ## 2026-11-19 — Withdraw `approval.cancelled` by prompt id, then by count
 
 **Context.** `ApprovalCancelledPayload` (`gateway-contract.openrpc.json`, `ApprovalCancelledPayload`) is the broadcast from `session_lifecycle._announce_cancelled_gateway_approvals`. Its description says one frame is sent for pending approvals dropped by an interrupt, reap, or teardown, and that `cancelled_count` is the number of dropped entries while `request_ids` omits empty or missing ids, so the two can disagree. The reducer previously ignored the event, which left the card open and able to send a late `approval.respond`. No live recording of the event is in the tree. The pinned producer confirms that queue and its count. The live approval path sends a typed server request whose RPC envelope id is a separate value, and nothing here shows that a queue `request_id` is the same field as a legacy approval cell's `prompt_id`. Exact string equality is a compatibility rule, followed by the count fallback. `payload.session_id` names the session; a live broadcast leaves the envelope `session_id` empty. `stored_session_id` is a second identity and is not used to choose cards. An omitted or null `request_ids` is an empty list.
