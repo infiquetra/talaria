@@ -150,7 +150,8 @@ async fn delayed_shell_reply_does_not_complete_the_new_sessions_command() {
                 "the delayed result must not commit B's pending command"
             );
             driver.submit("/resume local-session-1");
-            settle_short().await;
+            driver.session("local-session-1").await;
+            driver.cell("shell: old_command").await;
             driver.quit();
             driver.finished().await;
         })
