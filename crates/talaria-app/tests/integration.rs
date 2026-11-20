@@ -324,6 +324,8 @@ mod prompts_respond;
 #[path = "integration/prompts_secrecy.rs"]
 mod prompts_secrecy;
 
+#[path = "integration/prompt_bounds.rs"]
+mod prompt_bounds;
 #[path = "integration/prompts_server_requests.rs"]
 mod prompts_server_requests;
 

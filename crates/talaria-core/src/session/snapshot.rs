@@ -130,7 +130,7 @@ pub(crate) fn from_snapshot(snapshot: CanonicalSnapshot) -> SessionState {
             question: prompt.question,
             choices: prompt.choices,
             multi_select: prompt.multi_select.unwrap_or(false),
-            edit: prompt.edit.map(Value::Object),
+            edit: prompt.edit.map(|_| Value::Object(serde_json::Map::new())),
             timeout_s: prompt
                 .timeout_s
                 .and_then(|value| Value::from(value).as_f64()),

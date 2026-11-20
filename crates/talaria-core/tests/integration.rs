@@ -241,6 +241,8 @@ mod profile_names;
 mod profile_roster;
 #[path = "integration/profiles_state.rs"]
 mod profiles_state;
+#[path = "integration/prompt_notice_bounds.rs"]
+mod prompt_notice_bounds;
 #[path = "integration/providers_browse.rs"]
 mod providers_browse;
 #[path = "integration/providers_endpoints.rs"]

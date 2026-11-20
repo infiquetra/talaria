@@ -1,6 +1,6 @@
 //! The protocol side of prompt cards: answering server requests and respond calls.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -119,6 +119,7 @@ pub struct PromptService {
     generation: Option<u64>,
     masked: Vec<(MaskedRequestInfo, Responder)>,
     answered_requests: HashMap<String, (Option<String>, &'static str)>,
+    answered_order: VecDeque<String>,
     notified_kinds: HashSet<&'static str>,
     open_prompts: Vec<PromptKey>,
     answered_prompts: HashSet<PromptKey>,
@@ -134,6 +135,7 @@ impl PromptService {
             generation: None,
             masked: Vec::new(),
             answered_requests: HashMap::new(),
+            answered_order: VecDeque::new(),
             notified_kinds: HashSet::new(),
             open_prompts: Vec::new(),
             answered_prompts: HashSet::new(),
@@ -195,8 +197,7 @@ impl PromptService {
             _ => {
                 let message = format!("talaria does not support server request: {method}");
                 if req.responder.fail(-32601, &message).await.is_ok() {
-                    self.answered_requests
-                        .insert(req.id, (session_id.clone(), method));
+                    self.remember_answered(req.id, session_id.clone(), method);
                 } else {
                     req.responder.ignore();
                 }
@@ -212,6 +213,21 @@ impl PromptService {
                 return notices;
             }
         };
+        let fields = fields
+            .into_iter()
+            .map(|(name, value)| (name, bounded_field(value)))
+            .collect();
+        if self.masked.len() >= MAX_OPEN_MASKED {
+            if req
+                .responder
+                .fail(-32000, "too many open masked requests")
+                .await
+                .is_err()
+            {
+                req.responder.ignore();
+            }
+            return notices;
+        }
         self.next_token = self.next_token.saturating_add(1);
         let token = format!("masked-{}", self.next_token);
         let generation = req.generation.0;
@@ -245,16 +261,17 @@ impl PromptService {
                 text,
             }];
         }
-        if let Some((session_id, _)) = self.answered_requests.remove(id)
-            && matches!(reason, "timeout" | "interrupted")
-        {
-            return vec![PromptNotice {
-                session_id,
-                text: format!(
-                    "Hermes did not accept the answer to {}; the agent continued without it",
-                    sanitize(method)
-                ),
-            }];
+        if let Some((session_id, _)) = self.answered_requests.remove(id) {
+            self.answered_order.retain(|existing| existing != id);
+            if matches!(reason, "timeout" | "interrupted") {
+                return vec![PromptNotice {
+                    session_id,
+                    text: format!(
+                        "Hermes did not accept the answer to {}; the agent continued without it",
+                        sanitize(method)
+                    ),
+                }];
+            }
         }
         Vec::new()
     }
@@ -265,6 +282,7 @@ impl PromptService {
         }
         self.generation = Some(generation);
         self.answered_requests.clear();
+        self.answered_order.clear();
         self.notified_kinds.clear();
         self.masked
             .drain(..)
@@ -323,8 +341,7 @@ impl PromptService {
             .await;
         if result.is_ok() {
             let (info, responder) = self.masked.remove(index);
-            self.answered_requests
-                .insert(info.id, (info.session_id, masked_method(info.kind)));
+            self.remember_answered(info.id, info.session_id, masked_method(info.kind));
             drop(responder);
         } else if matches!(
             result,
@@ -557,6 +574,49 @@ fn call_reason(error: &CallError) -> String {
         CallError::Rpc(error) => error.reason.clone().unwrap_or_else(|| error.to_string()),
         _ => error.to_string(),
     }
+}
+
+const MAX_OPEN_MASKED: usize = 64;
+const MAX_ANSWERED_REQUESTS: usize = 256;
+const MAX_MASKED_FIELD_BYTES: usize = 4096;
+const FIELD_SUFFIX: &str = "… (truncated)";
+
+impl PromptService {
+    fn remember_answered(&mut self, id: String, session_id: Option<String>, method: &'static str) {
+        if let Some(stored) = self.answered_requests.get_mut(&id) {
+            *stored = (session_id, method);
+            return;
+        }
+        while self.answered_requests.len() >= MAX_ANSWERED_REQUESTS {
+            let Some(old) = self.answered_order.pop_front() else {
+                break;
+            };
+            self.answered_requests.remove(&old);
+        }
+        self.answered_order.push_back(id.clone());
+        self.answered_requests.insert(id, (session_id, method));
+    }
+}
+
+fn bounded_field(value: String) -> String {
+    if value.len() <= MAX_MASKED_FIELD_BYTES {
+        return value;
+    }
+    let end = floor_char_boundary(&value, MAX_MASKED_FIELD_BYTES - FIELD_SUFFIX.len());
+    let mut out = String::with_capacity(end + FIELD_SUFFIX.len());
+    out.push_str(&value[..end]);
+    out.push_str(FIELD_SUFFIX);
+    out
+}
+
+fn floor_char_boundary(value: &str, mut index: usize) -> usize {
+    if index > value.len() {
+        return value.len();
+    }
+    while index > 0 && !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 fn masked_method(kind: MaskedKind) -> &'static str {

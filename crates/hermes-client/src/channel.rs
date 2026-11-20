@@ -25,7 +25,7 @@
 
 use crate::rpc::{CallError, FrameClass, RpcError, classify, encode_request};
 use futures_util::{SinkExt, StreamExt};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -678,6 +678,8 @@ pub(crate) enum Effect {
     Write {
         generation: Generation,
         text: String,
+        /// Automatic replies count against the socket's refusal budget.
+        refusal: bool,
     },
     Complete {
         id: u64,
@@ -702,14 +704,20 @@ struct RequestSlot {
 }
 
 /// An id that was answered or cancelled on one connection generation.
-struct SettledId {
-    id: String,
+struct Tombstone {
+    digest: u64,
     generation: Generation,
     answered: bool,
 }
 
 /// How many answered or cancelled ids are remembered. Older ids fall out of the ring.
 const TOMBSTONE_LIMIT: usize = 256;
+const MAX_OPEN_SERVER_REQUESTS: usize = 64;
+const MAX_UNKNOWN_METHODS: usize = 64;
+const MAX_ECHOED_METHOD_CHARS: usize = 128;
+const MAX_REQUEST_ID_BYTES: usize = 256;
+const MAX_REFUSAL_QUEUE: usize = 64;
+const MAX_REFUSAL_BYTES: usize = 256 * 1024;
 
 /// The actor's data, with no socket, task, or clock.
 pub(crate) struct ChannelState {
@@ -721,8 +729,8 @@ pub(crate) struct ChannelState {
     generation_closed: bool,
     calls: HashMap<u64, String>,
     requests: HashMap<String, RequestSlot>,
-    tombstones: VecDeque<SettledId>,
-    unknown_methods: HashSet<String>,
+    tombstones: VecDeque<Tombstone>,
+    unknown_methods: VecDeque<String>,
     server_requests: ServerRequestPolicy,
 }
 
@@ -738,7 +746,7 @@ impl ChannelState {
             calls: HashMap::new(),
             requests: HashMap::new(),
             tombstones: VecDeque::new(),
-            unknown_methods: HashSet::new(),
+            unknown_methods: VecDeque::new(),
             server_requests: policy,
         }
     }
@@ -816,25 +824,27 @@ impl ChannelState {
                 }
             }
             Decoded::Inbound(Inbound::ServerRequest(mut request)) => {
+                if request.id.len() > MAX_REQUEST_ID_BYTES {
+                    return self
+                        .oversized_id_refusal(generation, &request.id)
+                        .into_iter()
+                        .collect();
+                }
                 if self.id_blocked(&request.id) {
                     return self.invalidate_ambiguous(&request.id);
                 }
                 if matches!(request.request, ContractServerRequest::Unknown(_)) {
                     let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
-                    let method = value["method"].as_str().unwrap_or_default();
-                    let mut effects = vec![Effect::Write {
+                    let method = truncate_method(value["method"].as_str().unwrap_or_default());
+                    let mut effects = vec![refusal(
                         generation,
-                        text: answer_text(
-                            &request.id,
-                            Answer::Error {
-                                code: -32601,
-                                message: format!("no handler for server request: {method}"),
-                            },
-                        ),
-                    }];
+                        &request.id,
+                        -32601,
+                        format!("no handler for server request: {method}"),
+                    )];
                     self.tombstone(&request.id, true);
                     self.stats.malformed_frames += 1;
-                    if self.unknown_methods.insert(method.to_owned()) {
+                    if self.remember_unknown(method) {
                         effects.push(Effect::Deliver(Inbound::Malformed(MalformedFrame {
                             generation,
                             kind: MalformedKind::UnknownServerRequest,
@@ -843,6 +853,14 @@ impl ChannelState {
                         })));
                     }
                     effects
+                } else if self.requests.len() >= MAX_OPEN_SERVER_REQUESTS {
+                    self.tombstone(&request.id, true);
+                    vec![refusal(
+                        generation,
+                        &request.id,
+                        -32000,
+                        "too many open server requests".into(),
+                    )]
                 } else {
                     self.track_request(&mut request);
                     vec![Effect::Deliver(Inbound::ServerRequest(request))]
@@ -867,25 +885,21 @@ impl ChannelState {
                 if classify(raw) == FrameClass::ServerRequest {
                     let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
                     let id = value["id"].as_str().unwrap_or_default();
-                    let method = value["method"].as_str().unwrap_or_default();
-                    if self.id_blocked(id) {
+                    if id.len() > MAX_REQUEST_ID_BYTES {
+                        effects.extend(self.oversized_id_refusal(generation, id));
+                    } else if self.id_blocked(id) {
                         if let Some(slot) = self.requests.remove(id) {
                             cancel_state(&slot.state);
                         }
                         self.tombstone(id, false);
-                    } else {
-                        effects.push(Effect::Write {
+                    } else if !id.is_empty() {
+                        let method = truncate_method(value["method"].as_str().unwrap_or_default());
+                        effects.push(refusal(
                             generation,
-                            text: answer_text(
-                                id,
-                                Answer::Error {
-                                    code: -32603,
-                                    message: format!(
-                                        "server request params could not be read: {method}"
-                                    ),
-                                },
-                            ),
-                        });
+                            id,
+                            -32603,
+                            format!("server request params could not be read: {method}"),
+                        ));
                         self.tombstone(id, true);
                     }
                 }
@@ -935,11 +949,11 @@ impl ChannelState {
         generation: Generation,
         answer: Answer,
     ) -> Result<Effect, RespondError> {
+        if generation != self.stats.generation {
+            return Err(RespondError::Cancelled);
+        }
         let Some(slot) = self.requests.get(request_id) else {
-            let settled = self.tombstones.iter().find(|settled| {
-                settled.id == request_id && settled.generation == self.stats.generation
-            });
-            return Err(match settled {
+            return Err(match self.settled(request_id) {
                 Some(settled) if settled.answered => RespondError::AlreadyAnswered,
                 _ => RespondError::Cancelled,
             });
@@ -966,6 +980,7 @@ impl ChannelState {
         Ok(Effect::Write {
             generation: self.stats.generation,
             text: answer_text(request_id, answer),
+            refusal: false,
         })
     }
 
@@ -1012,16 +1027,12 @@ impl ChannelState {
             self.tombstone(request_id, true);
         }
         if self.connected && current {
-            vec![Effect::Write {
-                generation: self.stats.generation,
-                text: answer_text(
-                    request_id,
-                    Answer::Error {
-                        code: -32603,
-                        message: "request dropped by client".to_owned(),
-                    },
-                ),
-            }]
+            vec![refusal(
+                self.stats.generation,
+                request_id,
+                -32603,
+                "request dropped by client".into(),
+            )]
         } else {
             Vec::new()
         }
@@ -1029,8 +1040,7 @@ impl ChannelState {
 
     /// `request.cancel`, or the same transition without a frame.
     ///
-    /// The entry stays until a later drop or ignore so an in-flight write can still see the
-    /// cancelled state. The id is tombstoned immediately, so a new frame cannot bind it.
+    /// The id is tombstoned immediately. An in-flight write keeps its slot until completion.
     pub(crate) fn cancel(&mut self, request_id: &str, method: &str, session_id: Option<&str>) {
         let Some(slot) = self.requests.get(request_id) else {
             return;
@@ -1046,9 +1056,11 @@ impl ChannelState {
         if !session_matches {
             return;
         }
-        if let Some(slot) = self.requests.get(request_id) {
-            cancel_state(&slot.state);
-            self.tombstone(request_id, false);
+        let writing = slot.state.load(Ordering::SeqCst) == WRITING;
+        cancel_state(&slot.state);
+        self.tombstone(request_id, false);
+        if !writing {
+            self.requests.remove(request_id);
         }
     }
 
@@ -1098,39 +1110,68 @@ impl ChannelState {
     }
 
     fn id_blocked(&self, id: &str) -> bool {
-        self.requests.contains_key(id)
-            || self
-                .tombstones
-                .iter()
-                .any(|settled| settled.id == id && settled.generation == self.stats.generation)
+        self.requests.contains_key(id) || self.settled(id).is_some()
+    }
+
+    fn settled(&self, id: &str) -> Option<&Tombstone> {
+        let digest = id_digest(id);
+        self.tombstones
+            .iter()
+            .find(|settled| settled.digest == digest && settled.generation == self.stats.generation)
     }
 
     fn tombstone(&mut self, id: &str, answered: bool) {
-        if self
-            .tombstones
-            .iter()
-            .any(|settled| settled.id == id && settled.generation == self.stats.generation)
-        {
+        if self.settled(id).is_some() {
             return;
         }
         if self.tombstones.len() == TOMBSTONE_LIMIT {
             self.tombstones.pop_front();
         }
-        self.tombstones.push_back(SettledId {
-            id: id.to_owned(),
+        self.tombstones.push_back(Tombstone {
+            digest: id_digest(id),
             generation: self.stats.generation,
             answered,
         });
     }
 
+    fn oversized_id_refusal(&mut self, generation: Generation, id: &str) -> Option<Effect> {
+        if self.settled(id).is_some() {
+            return None;
+        }
+        self.tombstone(id, true);
+        Some(refusal(
+            generation,
+            id,
+            -32600,
+            "request id is too long".into(),
+        ))
+    }
+
+    fn remember_unknown(&mut self, method: String) -> bool {
+        if self.unknown_methods.contains(&method) {
+            return false;
+        }
+        if self.unknown_methods.len() == MAX_UNKNOWN_METHODS {
+            self.unknown_methods.pop_front();
+        }
+        self.unknown_methods.push_back(method);
+        true
+    }
+
     /// The write finished for this instance. A reused id is left in place.
-    fn complete_answer(&mut self, id: &str, instance_id: u64, generation: Generation) {
+    fn complete_answer(
+        &mut self,
+        id: &str,
+        instance_id: u64,
+        generation: Generation,
+        answered: bool,
+    ) {
         let matches = self
             .requests
             .get(id)
             .is_some_and(|slot| slot.instance_id == instance_id && slot.generation == generation);
         if matches && self.requests.remove(id).is_some() {
-            self.tombstone(id, true);
+            self.tombstone(id, answered);
         }
     }
 
@@ -1164,6 +1205,31 @@ impl ChannelState {
         stats.inbound_backlog = inbound_backlog;
         stats
     }
+}
+
+fn id_digest(id: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn refusal(generation: Generation, id: &str, code: i64, message: String) -> Effect {
+    Effect::Write {
+        generation,
+        text: answer_text(id, Answer::Error { code, message }),
+        refusal: true,
+    }
+}
+
+fn truncate_method(method: &str) -> String {
+    method.chars().take(MAX_ECHOED_METHOD_CHARS).collect()
+}
+
+fn refusal_backlog_admits(queued: usize, queued_bytes: usize, frame_bytes: usize) -> bool {
+    queued < MAX_REFUSAL_QUEUE && queued_bytes.saturating_add(frame_bytes) <= MAX_REFUSAL_BYTES
 }
 
 const OPEN: u8 = 0;
@@ -1361,12 +1427,14 @@ enum SocketEvent {
     CloseFrame(Generation, CloseReason),
     Closed(Generation, CloseReason),
     Written(Generation, String, Result<(), RespondError>),
+    RefusalDone(usize),
 }
 
 struct WriteJob {
     text: String,
     request: Option<String>,
     state: Option<Arc<AtomicU8>>,
+    refusal: bool,
 }
 struct Transport {
     writer: mpsc::UnboundedSender<WriteJob>,
@@ -1428,8 +1496,10 @@ impl Transport {
                 text,
                 request,
                 state,
+                refusal,
             }) = jobs.recv().await
             {
+                let refusal_bytes = text.len();
                 if state.as_ref().is_some_and(|state| {
                     matches!(state.load(Ordering::SeqCst), CANCELLED | ANSWERED_CANCELLED)
                 }) {
@@ -1439,6 +1509,9 @@ impl Transport {
                             request,
                             Err(RespondError::Cancelled),
                         ));
+                    }
+                    if refusal {
+                        let _ = events.send(SocketEvent::RefusalDone(refusal_bytes));
                     }
                     continue;
                 }
@@ -1462,6 +1535,9 @@ impl Transport {
                             Err(RespondError::NotConnected)
                         },
                     ));
+                }
+                if refusal {
+                    let _ = events.send(SocketEvent::RefusalDone(refusal_bytes));
                 }
                 if let Err(error) = result {
                     let _ = events.send(SocketEvent::Closed(
@@ -1510,6 +1586,8 @@ struct Actor {
     commands: mpsc::WeakUnboundedSender<Command>,
     recorder: Option<Recorder>,
     param_injector: Option<crate::remote::ParamInjector>,
+    refusal_queued: usize,
+    refusal_bytes: usize,
 }
 
 impl Actor {
@@ -1537,6 +1615,8 @@ impl Actor {
             commands: sender,
             recorder: None,
             param_injector: None,
+            refusal_queued: 0,
+            refusal_bytes: 0,
         };
         actor.install(parts, &events).await;
         loop {
@@ -1582,7 +1662,9 @@ impl Actor {
     }
 
     fn finish_answers(&mut self) {
-        for (_id, pending) in self.answers.drain() {
+        self.refusal_queued = 0;
+        self.refusal_bytes = 0;
+        for (id, pending) in self.answers.drain() {
             let _ =
                 pending
                     .state
@@ -1590,6 +1672,14 @@ impl Actor {
             let state = pending.state.load(Ordering::SeqCst);
             let cancelled = matches!(state, CANCELLED | ANSWERED_CANCELLED);
             let written = matches!(state, ANSWERED | ANSWERED_CANCELLED);
+            if written || cancelled {
+                self.state.complete_answer(
+                    &id,
+                    pending.instance_id,
+                    pending.generation,
+                    !cancelled,
+                );
+            }
             let _ = pending.result.send(if written {
                 Ok(())
             } else {
@@ -1610,10 +1700,22 @@ impl Actor {
                 Some(CANCELLED | ANSWERED_CANCELLED) => RespondError::Cancelled,
                 Some(ANSWERED) => RespondError::AlreadyAnswered,
                 _ if self.state.closed => RespondError::Cancelled,
+                _ if let Some(slot) = self.state.settled(&id) => {
+                    if slot.answered {
+                        RespondError::AlreadyAnswered
+                    } else {
+                        RespondError::Cancelled
+                    }
+                }
                 _ => RespondError::NotConnected,
             };
-            for (_, _, _, result) in answers {
-                let _ = result.send(Err(outcome));
+            for (_, generation, _, result) in answers {
+                let error = if generation == self.state.stats.generation {
+                    outcome
+                } else {
+                    RespondError::Cancelled
+                };
+                let _ = result.send(Err(error));
             }
         }
     }
@@ -1645,7 +1747,7 @@ impl Actor {
                     Ok(text) => {
                         self.pending.insert(id, PendingCall { token, result });
                         self.tokens.insert(token, id);
-                        self.write(text, None);
+                        self.write(text, None, false);
                     }
                     Err(error) => {
                         self.state.forget_call(id);
@@ -1710,11 +1812,13 @@ impl Actor {
                 self.end_connection(generation, reason).await;
             }
             SocketEvent::Written(generation, id, outcome) => {
+                if generation != self.state.stats.generation {
+                    return;
+                }
                 let Some(pending) = self.answers.remove(&id) else {
                     return;
                 };
                 let same_instance = pending.generation == generation
-                    && generation == self.state.stats.generation
                     && self.state.requests.get(&id).is_some_and(|slot| {
                         slot.instance_id == pending.instance_id
                             && slot.generation == pending.generation
@@ -1737,15 +1841,23 @@ impl Actor {
                 } else {
                     outcome
                 });
-                if succeeded {
-                    self.state
-                        .complete_answer(&id, pending.instance_id, pending.generation);
+                if succeeded || (same_instance && cancelled) {
+                    self.state.complete_answer(
+                        &id,
+                        pending.instance_id,
+                        pending.generation,
+                        succeeded,
+                    );
                 }
                 if let Some(mut queue) = self.answer_queue.remove(&id) {
                     while let Some((instance_id, generation, answer, result)) = queue.pop_front() {
                         self.answer(id.clone(), instance_id, generation, answer, result);
                     }
                 }
+            }
+            SocketEvent::RefusalDone(bytes) => {
+                self.refusal_queued = self.refusal_queued.saturating_sub(1);
+                self.refusal_bytes = self.refusal_bytes.saturating_sub(bytes);
             }
         }
     }
@@ -1781,9 +1893,13 @@ impl Actor {
                         let _ = call.result.send(outcome);
                     }
                 }
-                Effect::Write { generation, text } => {
+                Effect::Write {
+                    generation,
+                    text,
+                    refusal,
+                } => {
                     if generation == self.state.stats.generation {
-                        self.write(text, None);
+                        self.write(text, None, refusal);
                     }
                 }
                 Effect::Deliver(mut item) => {
@@ -1817,6 +1933,7 @@ impl Actor {
                                     },
                                 ),
                                 None,
+                                true,
                             );
                             continue;
                         }
@@ -1832,7 +1949,11 @@ impl Actor {
         }
     }
 
-    fn write(&mut self, text: String, request: Option<String>) {
+    fn write(&mut self, text: String, request: Option<String>, refusal: bool) {
+        let bytes = text.len();
+        if refusal && !refusal_backlog_admits(self.refusal_queued, self.refusal_bytes, bytes) {
+            return;
+        }
         let state = request
             .as_ref()
             .and_then(|id| self.state.requests.get(id))
@@ -1844,10 +1965,14 @@ impl Actor {
                     text,
                     request,
                     state,
+                    refusal,
                 })
                 .is_ok()
         });
-        if !sent && self.state.connected {
+        if sent && refusal {
+            self.refusal_queued += 1;
+            self.refusal_bytes += bytes;
+        } else if !sent && self.state.connected {
             let effects = self.state.on_closed(
                 self.state.stats.generation,
                 CloseReason::Error(std::io::ErrorKind::BrokenPipe),
@@ -1865,6 +1990,10 @@ impl Actor {
         answer: Answer,
         result: oneshot::Sender<Result<(), RespondError>>,
     ) {
+        if generation != self.state.stats.generation {
+            let _ = result.send(Err(RespondError::Cancelled));
+            return;
+        }
         if self.answers.contains_key(&id) {
             self.answer_queue.entry(id).or_default().push_back((
                 instance_id,
@@ -1891,7 +2020,7 @@ impl Actor {
                         result,
                     },
                 );
-                self.write(text, Some(id));
+                self.write(text, Some(id), false);
             }
             Ok(_) => unreachable!("answer produces a write"),
             Err(error) => {
@@ -1986,6 +2115,8 @@ mod tests {
             commands: sender.downgrade(),
             recorder: None,
             param_injector: None,
+            refusal_queued: 0,
+            refusal_bytes: 0,
         };
         (actor, id, receiver)
     }
@@ -2002,6 +2133,19 @@ mod tests {
             Err(RespondError::Cancelled)
         );
         assert_eq!(actor.state.stats(0).open_server_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn stale_write_confirmation_leaves_the_current_answer_pending() {
+        let (mut actor, id, result) = pending_answer();
+        actor
+            .socket_event(SocketEvent::Written(Generation(0), id.clone(), Ok(())))
+            .await;
+        assert!(actor.answers.contains_key(&id));
+        actor
+            .socket_event(SocketEvent::Written(Generation(1), id, Ok(())))
+            .await;
+        assert_eq!(result.await.expect("answer completion"), Ok(()));
     }
 
     #[tokio::test]
@@ -2036,6 +2180,7 @@ mod tests {
     #[tokio::test]
     async fn completed_answer_is_not_reopened_when_replacing_its_writer() {
         let (mut actor, id, result) = pending_answer();
+        let instance_id = actor.answers[&id].instance_id;
         actor
             .state
             .requests
@@ -2046,7 +2191,12 @@ mod tests {
         actor.disconnect_writer().await;
         assert_eq!(result.await.expect("answer completion"), Ok(()));
         assert!(matches!(
-            answer_open(&mut actor.state, &id, Answer::Result(json!({"value":""}))),
+            actor.state.answer(
+                &id,
+                instance_id,
+                Generation(1),
+                Answer::Result(json!({"value":""}))
+            ),
             Err(RespondError::AlreadyAnswered)
         ));
     }
@@ -2055,6 +2205,7 @@ mod tests {
     async fn completed_answer_stays_successful_when_close_precedes_its_acknowledgement() {
         for cancel_first in [false, true] {
             let (mut actor, id, result) = pending_answer();
+            let instance_id = actor.answers[&id].instance_id;
             if cancel_first {
                 actor.state.cancel(&id, "sudo", Some("s1"));
             }
@@ -2062,7 +2213,12 @@ mod tests {
             actor.shutdown().await;
             assert_eq!(result.await.expect("answer completion"), Ok(()));
             assert!(matches!(
-                answer_open(&mut actor.state, &id, Answer::Result(json!({"value":""}))),
+                actor.state.answer(
+                    &id,
+                    instance_id,
+                    Generation(1),
+                    Answer::Result(json!({"value":""}))
+                ),
                 Err(RespondError::Cancelled)
             ));
         }
@@ -2314,6 +2470,240 @@ mod tests {
         assert_eq!(closed.open_server_requests, 0);
         assert_eq!(closed.pending_calls, 0);
         assert_eq!(closed.dropped_without_decision, kept_dropped);
+    }
+    fn method_frame(id: &str, method: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": {"session_id": "s1"}
+        }))
+        .expect("method frame")
+    }
+
+    fn write_text(effects: &[Effect]) -> Option<&str> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Write { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn open_server_requests_stay_bounded_and_an_open_request_is_never_evicted() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let first = "srq-000000000000".to_owned();
+        let _ = state.on_frame(Generation(1), &sudo_frame(&first), now);
+        let kept = Arc::clone(&state.requests[&first].state);
+        let mut overflow = Vec::new();
+        for n in 1..70 {
+            let id = format!("srq-{n:012x}");
+            let effects = state.on_frame(Generation(1), &sudo_frame(&id), now);
+            if n < 64 {
+                assert!(
+                    effects
+                        .iter()
+                        .any(|effect| matches!(effect, Effect::Deliver(_))),
+                    "request {n} was not delivered"
+                );
+                assert!(
+                    write_text(&effects).is_none(),
+                    "an accepted request was also refused"
+                );
+            } else {
+                assert!(
+                    !state.requests.contains_key(&id),
+                    "overflow request {id} was stored"
+                );
+                let text = write_text(&effects).expect("overflow writes one refusal");
+                assert_eq!(
+                    effects
+                        .iter()
+                        .filter(|effect| matches!(effect, Effect::Write { .. }))
+                        .count(),
+                    1
+                );
+                assert!(
+                    !effects
+                        .iter()
+                        .any(|effect| matches!(effect, Effect::Deliver(_)))
+                );
+                assert!(!text.contains('\n'), "refusal frame is not one line");
+                let value: Value = serde_json::from_str(text).expect("refusal is one JSON value");
+                assert_eq!(value["jsonrpc"], "2.0");
+                assert_eq!(value["id"], id);
+                assert!(value.get("result").is_none());
+                assert_eq!(value["error"]["code"], -32000);
+                assert_eq!(value["error"]["message"], "too many open server requests");
+                overflow.push(id);
+            }
+        }
+        assert_eq!(state.requests.len(), 64);
+        assert_eq!(state.stats(0).open_server_requests, 64);
+        assert!(
+            Arc::ptr_eq(&kept, &state.requests[&first].state),
+            "the first open request was replaced"
+        );
+        assert!(overflow.iter().all(|id| !state.requests.contains_key(id)));
+
+        let duplicate = state.on_frame(Generation(1), &sudo_frame(&first), now);
+        assert!(
+            write_text(&duplicate).is_none(),
+            "a duplicate id wrote a frame"
+        );
+        assert_eq!(kept.load(Ordering::SeqCst), CANCELLED);
+        assert_eq!(state.requests.len(), 63);
+    }
+
+    #[test]
+    fn unknown_method_flood_stays_bounded_and_the_echo_is_truncated() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let long = "m".repeat(200);
+        let effects = state.on_frame(Generation(1), &method_frame("srq-long", &long), now);
+        let text = write_text(&effects).expect("unknown method is refused");
+        assert!(!text.contains('\n'));
+        let value: Value = serde_json::from_str(text).expect("refusal is one JSON value");
+        assert_eq!(value["error"]["code"], -32601);
+        let message = value["error"]["message"].as_str().expect("message");
+        let echoed = message
+            .strip_prefix("no handler for server request: ")
+            .expect("prefix");
+        assert_eq!(echoed.chars().count(), 128);
+        assert!(long.starts_with(echoed));
+        assert!(!message.contains(&"m".repeat(129)));
+
+        let tricky = "say \"hi\"\nnow";
+        let effects = state.on_frame(Generation(1), &method_frame("srq-tricky", tricky), now);
+        let text = write_text(&effects).expect("tricky method is refused");
+        assert!(!text.contains('\n'), "a raw newline would break the frame");
+        let value: Value = serde_json::from_str(text).expect("tricky refusal parses");
+        assert_eq!(
+            value["error"]["message"],
+            format!("no handler for server request: {tricky}")
+        );
+
+        let wide = "é".repeat(160);
+        let effects = state.on_frame(Generation(1), &method_frame("srq-wide", &wide), now);
+        let text = write_text(&effects).expect("wide method is refused");
+        let value: Value = serde_json::from_str(text).expect("wide refusal parses");
+        let echoed = value["error"]["message"]
+            .as_str()
+            .and_then(|message| message.strip_prefix("no handler for server request: "))
+            .expect("echo");
+        assert_eq!(echoed.chars().count(), 128);
+        assert!(wide.starts_with(echoed));
+
+        for n in 0..70 {
+            let method = format!("custom.method.{n:03}");
+            let _ = state.on_frame(
+                Generation(1),
+                &method_frame(&format!("srq-u-{n:03}"), &method),
+                now,
+            );
+        }
+        assert_eq!(state.unknown_methods.len(), 64);
+
+        let oldest = state.on_frame(
+            Generation(1),
+            &method_frame("srq-again", "custom.method.000"),
+            now,
+        );
+        assert!(
+            oldest
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "the evicted oldest method was still remembered"
+        );
+        let newest = state.on_frame(
+            Generation(1),
+            &method_frame("srq-newest", "custom.method.069"),
+            now,
+        );
+        assert!(
+            !newest
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "a method still in the bounded set notified twice"
+        );
+        assert_eq!(state.unknown_methods.len(), 64);
+    }
+
+    #[test]
+    fn closed_generation_slots_do_not_block_a_reused_id() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let id = "srq-0000000000aa";
+        let _ = state.on_frame(Generation(1), &sudo_frame(id), now);
+        let (instance_id, generation) = {
+            let slot = &state.requests[id];
+            (slot.instance_id, slot.generation)
+        };
+        let _ = state.answer(
+            id,
+            instance_id,
+            generation,
+            Answer::Result(json!({"value": "one"})),
+        );
+        let _ = state.begin_generation(Generation(2));
+        let effects = state.on_frame(Generation(2), &sudo_frame(id), now);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "a replaced connection kept the previous tombstone"
+        );
+        assert!(
+            state.requests.contains_key(id),
+            "the reused id was not admitted"
+        );
+    }
+
+    #[test]
+    fn cancelled_slots_do_not_consume_the_open_cap() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        for n in 0..64 {
+            let id = format!("srq-{n:012x}");
+            let _ = state.on_frame(Generation(1), &sudo_frame(&id), now);
+            state.cancel(&id, "sudo", Some("s1"));
+        }
+        assert_eq!(state.requests.len(), 0, "cancelled ids stayed in the map");
+        let fresh = state.on_frame(Generation(1), &sudo_frame("srq-after-cancel"), now);
+        assert!(
+            fresh
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "cancelled entries caused a false overflow"
+        );
+        assert!(write_text(&fresh).is_none());
+    }
+
+    #[test]
+    fn oversized_request_id_is_not_retained_and_the_wire_id_is_exact() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let id = "x".repeat(MAX_REQUEST_ID_BYTES + 40);
+        let effects = state.on_frame(Generation(1), &sudo_frame(&id), Instant::now());
+        assert!(!state.requests.contains_key(&id));
+        assert_eq!(state.tombstones.len(), 1);
+        let text = write_text(&effects).expect("the refusal keeps the wire id");
+        let value: Value = serde_json::from_str(text).expect("refusal json");
+        assert_eq!(value["id"], id);
+        assert_eq!(value["error"]["code"], -32600);
+        let again = state.on_frame(Generation(1), &sudo_frame(&id), Instant::now());
+        assert!(
+            write_text(&again).is_none(),
+            "a repeated oversized id queued another refusal"
+        );
+        assert!(!refusal_backlog_admits(MAX_REFUSAL_QUEUE, 0, 1));
+        assert!(!refusal_backlog_admits(0, MAX_REFUSAL_BYTES, 1));
+        assert!(!refusal_backlog_admits(0, 0, MAX_REFUSAL_BYTES + 1));
+        assert!(refusal_backlog_admits(MAX_REFUSAL_QUEUE - 1, 0, 1));
     }
 }
 

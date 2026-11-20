@@ -34,6 +34,8 @@ struct StoredNotice {
 impl NoticeStore {
     /// Replace the matching key or keyless slot, making this show the newest.
     /// Even empty text is stored; payload text filtering belongs to the reducer.
+    ///
+    /// At most 64 rows are kept. A new row past that bound drops the oldest.
     pub fn apply_show(&mut self, row: NoticeRow) {
         self.rows
             .retain(|stored| stored.row.key.as_deref() != row.key.as_deref());
@@ -41,6 +43,11 @@ impl NoticeStore {
             row,
             started_at_ms: None,
         });
+        const MAX_NOTICES: usize = 64;
+        if self.rows.len() > MAX_NOTICES {
+            let overflow = self.rows.len() - MAX_NOTICES;
+            self.rows.drain(..overflow);
+        }
     }
 
     /// Remove only the named key. The keyless slot is never cleared here.

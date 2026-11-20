@@ -1177,6 +1177,47 @@ async fn unanswerable_responder_survives_replace() {
 }
 
 #[tokio::test]
+async fn reused_id_after_replace_is_a_new_slot() {
+    guard(async {
+        let (parts, peer) = Peer::pair().await;
+        let (client, mut inbound) = Client::start(parts);
+        let id = peer
+            .server_request("sudo", "s1", json!({"command": "true"}))
+            .await;
+        let old = take_server(&mut inbound).await;
+
+        let (parts, replacement) = Peer::pair().await;
+        assert!(client.replace_connection(parts).await.is_ok());
+        assert!(matches!(
+            inbound.next().await,
+            Some(Inbound::Closed(closed)) if closed.reason == CloseReason::Replaced
+        ));
+        replacement
+            .send_text(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "sudo",
+                    "params": {"session_id": "s1", "command": "true"}
+                })
+                .to_string(),
+            )
+            .await;
+        let current = take_server(&mut inbound).await;
+        assert_eq!(current.id, id);
+        assert_ne!(current.responder.instance_id(), old.responder.instance_id());
+        assert!(matches!(
+            old.responder.respond(&json!({"value": "later"})).await,
+            Err(RespondError::Cancelled)
+        ));
+        assert_eq!(replacement.json_frames(), 0);
+        assert_eq!(client.stats().await.open_server_requests, 1);
+        current.responder.ignore();
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn dropped_inbound_stream_answers_requests_method_not_found() {
     guard(async {
         let (parts, mut peer) = Peer::pair().await;

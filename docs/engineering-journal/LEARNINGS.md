@@ -2,6 +2,16 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-19 — Prompt limits apply to retained data and rendered rows
+
+**Evidence.** Before the repair, the prompt bounds tests admitted an oversized id, retained a
+large edit payload, and produced duplicate cell ids after pruning. An approval description made
+of C1 controls drew an 85-row card at width 80 because sanitization expanded each control after
+measurement.
+
+**Generalizable rule.** Bound prompt fields at admission, keep cell ids monotonic across pruning,
+and measure the sanitized text when enforcing a render limit.
+
 ## 2026-11-19 — The attachment denylist is the credential-path property
 
 **Evidence.** `credential_path` named seven env files and nine home directories.
