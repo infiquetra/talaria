@@ -169,12 +169,28 @@ impl Driver {
         .await;
     }
 
+    /// Wait until the loop has drawn this session.
+    pub async fn session(&self, id: &str) {
+        eventually(&format!("the session {id} to be drawn"), || {
+            locked(&self.log).session.as_deref() == Some(id)
+        })
+        .await;
+    }
+
     /// Wait until a committed line contains this text.
     pub async fn line(&self, text: &str) {
         let log = self.log.clone();
         let text = text.to_string();
         eventually(&format!("the line {text}"), move || {
             locked(&log).lines.iter().any(|line| line.contains(&text))
+        })
+        .await;
+    }
+
+    /// Wait until this exact cell text is committed.
+    pub async fn cell(&self, text: &str) {
+        eventually(&format!("the cell {text}"), || {
+            locked(&self.log).cells.iter().any(|cell| cell == text)
         })
         .await;
     }
