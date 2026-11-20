@@ -50,6 +50,37 @@ async fn preflight_requires_durable_admission() {
 }
 
 #[tokio::test]
+async fn runtime_describe_with_null_skin_colours_opens_profile() {
+    let mut describe = common::read_json("wire/describe_ok.json");
+    describe["skin"] = json!({
+        "name": "nullcolour",
+        "colors": {"accent": "#00ff00", "prompt": null},
+        "light_colors": {"ui_ok": null},
+        "dark_colors": {"ui_warn": null},
+    });
+    assert!(accept_wire_fixture("RuntimeDescribeResult", &describe).is_err());
+    let wire = Arc::new(
+        ScriptedWire::from_value(
+            &common::data(""),
+            json!({"steps": [
+                {"expect": "runtime.describe", "reply": describe},
+                {"expect": "session.create", "reply": "create_ok.json"}
+            ]}),
+        )
+        .unwrap(),
+    );
+    let (port, _feed) = HermesPort::with_wires(cfg(), wire.clone(), "fixture")
+        .await
+        .expect("workflow port accepts null skin colours");
+    port.create_session(session()).await.unwrap();
+    let frames = wire.outbound();
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[0].method, "runtime.describe");
+    assert_eq!(frames[1].method, "session.create");
+    assert!(frames.iter().all(|frame| frame.profile == "fixture"));
+}
+
+#[tokio::test]
 async fn frames_on_the_wire_have_closed_keys() {
     let wire = scripted("text_ok");
     let (port, _feed) = HermesPort::with_wires(cfg(), wire.clone(), "fixture")

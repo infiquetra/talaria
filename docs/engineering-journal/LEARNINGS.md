@@ -8,9 +8,10 @@
 entries in `colors`, `light_colors`, and `dark_colors`, while the handshake already
 dropped those entries before decoding.
 
-**Mechanism.** `Client::call_with` now applies the existing `skin_payload_lenient`
-override to `runtime.describe` results before deserialization, retaining valid
-colour strings and matching the handshake and application connection paths.
+**Mechanism.** `Client::call_with` and the workflow port actor's `HermesPort::wire`
+now apply the existing `skin_payload_lenient` override to `runtime.describe`
+results before deserialization, retaining valid colour strings and matching the
+handshake and application connection paths.
 
 **Generalizable rule.** Apply a wire normalization rule at every decoding path for the same payload.
 
