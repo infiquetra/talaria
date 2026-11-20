@@ -27,8 +27,11 @@ pub fn run(args: &[String]) -> u8 {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
         Err(error) => {
             eprintln!(
-                "Talaria could not read ~/.talaria/config.toml ({}). Using the default settings.",
-                error.kind()
+                "{}",
+                crate::terminal_text(&format!(
+                    "Talaria could not read ~/.talaria/config.toml ({}). Using the default settings.",
+                    error.kind()
+                ))
             );
             return 2;
         }
@@ -37,7 +40,7 @@ pub fn run(args: &[String]) -> u8 {
         Ok(config) => config,
         Err(_) => {
             for notice in talaria_app::config::parse(&text).notices {
-                eprintln!("{notice}");
+                eprintln!("{}", crate::terminal_text(&notice));
             }
             return 2;
         }
@@ -62,23 +65,34 @@ pub fn run(args: &[String]) -> u8 {
         let name = talaria_core::text::sanitize(&entry.display_name);
         if !command_exists(&entry.command) {
             let command = talaria_core::text::sanitize(&entry.command);
-            println!("{id}: {name} - missing: command \"{command}\" not found");
+            println!(
+                "{}",
+                crate::terminal_text(&format!(
+                    "{id}: {name} - missing: command \"{command}\" not found"
+                ))
+            );
             status = 1;
             continue;
         }
         if let Some(runtime) = &runtime {
             match runtime.block_on(probe_agent(entry)) {
                 Ok(report) => println!(
-                    "{id}: {name} - ok - {}, protocol {}",
-                    report.agent_name, report.protocol_version
+                    "{}",
+                    crate::terminal_text(&format!(
+                        "{id}: {name} - ok - {}, protocol {}",
+                        report.agent_name, report.protocol_version
+                    ))
                 ),
                 Err(error) => {
-                    eprintln!("{id}: probe failed: {error}");
+                    eprintln!(
+                        "{}",
+                        crate::terminal_text(&format!("{id}: probe failed: {error}"))
+                    );
                     status = 1;
                 }
             }
         } else {
-            println!("{id}: {name} - ok");
+            println!("{}", crate::terminal_text(&format!("{id}: {name} - ok")));
         }
     }
     status

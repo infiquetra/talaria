@@ -20,7 +20,7 @@ use proptest::prelude::*;
 
 use hermes_client::InboundStream;
 use hermes_client::liveness::{LinkEvent, LinkState};
-use hermes_client::replay::Cursor;
+use hermes_client::replay::{Cursor, GapReason, ReplayGap};
 use hermes_contract::events::EventFrame;
 use hermes_contract::schemas::CanonicalSnapshot;
 use mock_gateway::{Behavior, MockGateway, Reply, StandaloneGateway};
@@ -82,6 +82,42 @@ fn by_id(session_id: &str) -> SessionRequest {
     SessionRequest::ById {
         session_id: session_id.to_string(),
     }
+}
+
+/// The recorded resume snapshot, renamed so a test can ask for one id and receive another.
+fn snapshot_named(session_id: &str) -> Value {
+    let mut snapshot = resume_snapshot("/work/proj");
+    snapshot["session_id"] = json!(session_id);
+    snapshot["stored_session_id"] = json!(session_id);
+    snapshot
+}
+
+fn gap_for(session_id: &str) -> ReplayGap {
+    ReplayGap {
+        session_id: session_id.to_string(),
+        reason: GapReason::ServerOverflow,
+        latest_seq: Some(1),
+        replay_epoch: None,
+    }
+}
+
+fn session_ids(result: &Result<OpenedSession, OpenError>) -> Result<String, OpenError> {
+    match result {
+        Ok(opened) => Ok(opened.session_id.clone()),
+        Err(error) => Err(error.clone()),
+    }
+}
+
+fn tracked_or_resynced(effects: &[AppEffect]) -> Vec<String> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            AppEffect::Track { session_id, .. } | AppEffect::Resync { session_id, .. } => {
+                Some(session_id.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Wait for a future for this many seconds of real time, then fail the test.
@@ -263,6 +299,7 @@ struct ScreenLog {
     draws_after_restore: usize,
     session: Option<String>,
     restored: bool,
+    masked: Vec<talaria_app::prompts::LiveMaskedTarget>,
 }
 
 type Log = Arc<Mutex<ScreenLog>>;
@@ -311,6 +348,7 @@ impl Screen for Probe {
             log.draws_after_restore += 1;
         }
         log.session = view.session_id.map(str::to_string);
+        log.masked = view.masked.iter().map(|info| info.target()).collect();
     }
 
     fn commit_lines(&mut self, lines: Vec<String>) {
@@ -366,6 +404,15 @@ impl Driver {
             locked(&log).lines.iter().any(|line| line.contains(&text))
         })
         .await;
+    }
+
+    async fn masked_targets(&self, count: usize) -> Vec<talaria_app::prompts::LiveMaskedTarget> {
+        let log = self.log.clone();
+        eventually("the masked cards", move || {
+            locked(&log).masked.len() >= count
+        })
+        .await;
+        locked(&self.log).masked.clone()
     }
 
     /// Wait until the loop has given the terminal back, which is the last thing it does.
@@ -846,6 +893,169 @@ async fn resume_by_id_builds_the_same_cells_as_replay() {
     rig.mock.assert_no_violations();
     assert_eq!(user_lines(&opened.state), user_lines(&restored));
     assert_eq!(opened.state.cells(), restored.cells());
+}
+
+#[tokio::test]
+async fn resume_by_id_rejects_a_snapshot_for_another_session() {
+    let rig = in_process().await;
+    rig.mock.queue_resume_snapshot(snapshot_named("session-b"));
+    let result = rig.open(by_id("session-a")).await;
+
+    let mut state = AppState::new(LAUNCH_ID);
+    let effects = match result.clone() {
+        Ok(opened) => opened_effects(&mut state, opened),
+        Err(_) => Vec::new(),
+    };
+    assert_eq!(
+        session_ids(&result),
+        Err(OpenError::MismatchedSession {
+            requested: "session-a".to_string(),
+            returned: "session-b".to_string(),
+        })
+    );
+    assert!(
+        state.opened.is_none(),
+        "a substituted session is not installed"
+    );
+    assert!(
+        !tracked_or_resynced(&effects)
+            .iter()
+            .any(|id| id == "session-b"),
+        "a substituted session is not tracked"
+    );
+}
+
+#[tokio::test]
+async fn recover_rejects_a_snapshot_for_another_session() {
+    let rig = in_process().await;
+    let requested = snapshot_named("session-a");
+    rig.mock.queue_resume_snapshot(snapshot_named("session-b"));
+    let result = within(
+        15,
+        "the recovery resume",
+        rig.service.recover(gap_for("session-a")),
+    )
+    .await;
+
+    let mut state = AppState::new(LAUNCH_ID);
+    state.opened = Some(OpenedSession::from_snapshot(snapshot_of(&requested)));
+    let effects = update(&mut state, AppMessage::Recovered(result.clone()));
+    assert_eq!(
+        session_ids(&result),
+        Err(OpenError::MismatchedSession {
+            requested: "session-a".to_string(),
+            returned: "session-b".to_string(),
+        })
+    );
+    assert_eq!(
+        state
+            .opened
+            .as_ref()
+            .map(|opened| opened.session_id.as_str()),
+        Some("session-a"),
+        "recovery does not install the substituted session"
+    );
+    assert!(
+        !tracked_or_resynced(&effects)
+            .iter()
+            .any(|id| id == "session-b"),
+        "recovery does not resync the tracker to the substituted session"
+    );
+    let notice = committed_lines(&effects).join("\n");
+    assert!(
+        notice.contains("could not be refreshed"),
+        "recovery still says the refresh failed: {notice}"
+    );
+    assert!(
+        notice.contains("different session"),
+        "recovery names the mismatched snapshot: {notice}"
+    );
+}
+
+#[tokio::test]
+async fn resume_by_id_rejects_an_empty_session_id() {
+    let rig = in_process().await;
+    rig.mock.queue_resume_snapshot(snapshot_named(""));
+    let empty_reply = rig.open(by_id("session-a")).await;
+    assert_eq!(
+        session_ids(&empty_reply),
+        Err(OpenError::MismatchedSession {
+            requested: "session-a".to_string(),
+            returned: String::new(),
+        })
+    );
+
+    let rig = in_process().await;
+    rig.mock.queue_resume_snapshot(snapshot_named(""));
+    let empty_request = rig.open(by_id("")).await;
+    assert_eq!(
+        session_ids(&empty_request),
+        Err(OpenError::MismatchedSession {
+            requested: String::new(),
+            returned: String::new(),
+        })
+    );
+
+    let rig = in_process().await;
+    rig.mock.queue_resume_snapshot(snapshot_named("session-a"));
+    let blank_request = rig.open(by_id("   ")).await;
+    assert_eq!(
+        session_ids(&blank_request),
+        Err(OpenError::MismatchedSession {
+            requested: String::new(),
+            returned: "session-a".to_string(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn matching_snapshot_opens_the_requested_session() {
+    let rig = in_process().await;
+    let snapshot = snapshot_named("session-a");
+    rig.mock.set_resume_snapshot(snapshot.clone());
+    let opened = rig
+        .open(by_id("session-a"))
+        .await
+        .expect("a matching snapshot resumes");
+    assert_eq!(opened.session_id, "session-a");
+    let mut state = AppState::new(LAUNCH_ID);
+    let effects = opened_effects(&mut state, opened);
+    assert_eq!(
+        state
+            .opened
+            .as_ref()
+            .map(|opened| opened.session_id.as_str()),
+        Some("session-a")
+    );
+    assert_eq!(tracked_or_resynced(&effects), ["session-a".to_string()]);
+
+    rig.mock.queue_resume_snapshot(snapshot);
+    let recovered = within(
+        15,
+        "the matching recovery",
+        rig.service.recover(gap_for("session-a")),
+    )
+    .await
+    .expect("a matching snapshot recovers");
+    assert_eq!(recovered.session_id, "session-a");
+    let effects = update(&mut state, AppMessage::Recovered(Ok(recovered)));
+    assert_eq!(
+        state
+            .opened
+            .as_ref()
+            .map(|opened| opened.session_id.as_str()),
+        Some("session-a")
+    );
+    assert!(
+        tracked_or_resynced(&effects)
+            .iter()
+            .any(|id| id == "session-a")
+    );
+    assert!(
+        !tracked_or_resynced(&effects)
+            .iter()
+            .any(|id| id == "session-b")
+    );
 }
 
 #[tokio::test]
@@ -2059,9 +2269,10 @@ async fn every_server_request_gets_one_answer() {
             }
 
             // The masked kinds wait for the person; declining each one answers it.
-            for (_, id) in &masked {
+            let targets = driver.masked_targets(masked.len()).await;
+            for target in targets {
                 driver.send(UserAction::Masked {
-                    request_id: id.clone(),
+                    target: talaria_app::prompts::MaskedTarget::Live(target),
                     value: Zeroizing::new(String::new()),
                 });
             }

@@ -25,7 +25,7 @@
 
 use crate::rpc::{CallError, FrameClass, RpcError, classify, encode_request};
 use futures_util::{SinkExt, StreamExt};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -260,6 +260,8 @@ impl std::fmt::Display for ServerRequest {
 pub struct Responder {
     state: Arc<AtomicU8>,
     id: String,
+    instance_id: u64,
+    generation: Generation,
     sender: Option<mpsc::WeakUnboundedSender<Command>>,
     swallowed: Option<Arc<AtomicU64>>,
     ignored: bool,
@@ -283,6 +285,11 @@ impl Responder {
         .await
     }
 
+    /// The instance assigned when this request was accepted.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
+    }
+
     /// Leave the request for another viewer. Nothing is written.
     pub fn ignore(mut self) {
         self.ignored = true;
@@ -291,7 +298,11 @@ impl Responder {
             .as_ref()
             .and_then(mpsc::WeakUnboundedSender::upgrade)
         {
-            let _ = sender.send(Command::Ignore(self.id.clone()));
+            let _ = sender.send(Command::Ignore(
+                self.id.clone(),
+                self.instance_id,
+                self.generation,
+            ));
         }
         self.state
             .compare_exchange(OPEN, ANSWERED, Ordering::SeqCst, Ordering::SeqCst)
@@ -304,6 +315,8 @@ impl Responder {
         Self {
             state: Arc::new(AtomicU8::new(OPEN)),
             id: String::new(),
+            instance_id: 0,
+            generation: Generation(0),
             sender: None,
             swallowed: Some(swallowed),
             ignored: false,
@@ -392,6 +405,20 @@ impl std::fmt::Debug for ReplyFrame {
     }
 }
 
+/// Whether this connection may answer a server request.
+///
+/// [`ServerRequestPolicy::Interactive`] is the foreground viewer. [`ServerRequestPolicy::IgnoreAll`]
+/// is a connection that is not that session's prompt owner: the channel writes no server-request
+/// reply and does not queue a responder.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ServerRequestPolicy {
+    /// Unknown methods, undecodable params, a closed reader, and a dropped responder are answered.
+    #[default]
+    Interactive,
+    /// Consume every server-request frame. Write nothing and queue no responder.
+    IgnoreAll,
+}
+
 /// The typed channel. Cheap to clone. One actor serves every clone.
 #[derive(Clone)]
 pub struct Client {
@@ -412,7 +439,19 @@ impl Client {
         let _ = self.handle.sender.send(Command::SetInjector(injector));
     }
     /// Start the actor on `parts`. The generation is 1. The id counter starts at `parts.next_request_id`.
+    ///
+    /// Server requests use [`ServerRequestPolicy::Interactive`].
     pub fn start(parts: ConnectionParts) -> (Self, InboundStream) {
+        Self::start_with_policy(parts, ServerRequestPolicy::Interactive)
+    }
+
+    /// Start the actor on `parts` with an explicit server-request policy.
+    ///
+    /// The policy stays with this client across [`Client::replace_connection`].
+    pub fn start_with_policy(
+        parts: ConnectionParts,
+        policy: ServerRequestPolicy,
+    ) -> (Self, InboundStream) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let (inbound, inbound_rx) = mpsc::unbounded_channel();
         let generation = Arc::new(AtomicU64::new(1));
@@ -427,6 +466,7 @@ impl Client {
             inbound,
             generation,
             handle.sender.downgrade(),
+            policy,
         ));
         let stream = InboundStream {
             receiver: inbound_rx,
@@ -503,6 +543,21 @@ impl InboundStream {
             let _ = sender.send(Command::Taken);
         }
         Some(item)
+    }
+
+    /// Ignore server requests already queued, and discard the other queued items.
+    ///
+    /// Dropping a queued [`ServerRequest`] would write `-32603` while the connection is current.
+    /// A reader that is going away calls this before it drops the stream.
+    pub fn ignore_queued_requests(&mut self) {
+        while let Ok(item) = self.receiver.try_recv() {
+            if let Inbound::ServerRequest(request) = item {
+                request.responder.ignore();
+            }
+            if let Some(sender) = self.sender.upgrade() {
+                let _ = sender.send(Command::Taken);
+            }
+        }
     }
 }
 
@@ -623,6 +678,8 @@ pub(crate) enum Effect {
     Write {
         generation: Generation,
         text: String,
+        /// Automatic replies count against the socket's refusal budget.
+        refusal: bool,
     },
     Complete {
         id: u64,
@@ -637,29 +694,60 @@ pub(crate) enum Answer {
     Error { code: i64, message: String },
 }
 
+/// One open server request, bound to the client instance and connection that delivered it.
+struct RequestSlot {
+    state: Arc<AtomicU8>,
+    instance_id: u64,
+    generation: Generation,
+    method: String,
+    session_id: Option<String>,
+}
+
+/// An id that was answered or cancelled on one connection generation.
+struct Tombstone {
+    digest: u64,
+    generation: Generation,
+    answered: bool,
+}
+
+/// How many answered or cancelled ids are remembered. Older ids fall out of the ring.
+const TOMBSTONE_LIMIT: usize = 256;
+const MAX_OPEN_SERVER_REQUESTS: usize = 64;
+const MAX_UNKNOWN_METHODS: usize = 64;
+const MAX_ECHOED_METHOD_CHARS: usize = 128;
+const MAX_REQUEST_ID_BYTES: usize = 256;
+const MAX_REFUSAL_QUEUE: usize = 64;
+const MAX_REFUSAL_BYTES: usize = 256 * 1024;
+
 /// The actor's data, with no socket, task, or clock.
 pub(crate) struct ChannelState {
     stats: ChannelStats,
     next_id: u64,
+    next_instance: u64,
     connected: bool,
     closed: bool,
     generation_closed: bool,
     calls: HashMap<u64, String>,
-    requests: HashMap<String, Arc<AtomicU8>>,
-    unknown_methods: HashSet<String>,
+    requests: HashMap<String, RequestSlot>,
+    tombstones: VecDeque<Tombstone>,
+    unknown_methods: VecDeque<String>,
+    server_requests: ServerRequestPolicy,
 }
 
 impl ChannelState {
-    pub(crate) fn new(next_request_id: u64) -> Self {
+    pub(crate) fn with_policy(next_request_id: u64, policy: ServerRequestPolicy) -> Self {
         Self {
             stats: ChannelStats::default(),
             next_id: next_request_id,
+            next_instance: 1,
             connected: false,
             closed: false,
             generation_closed: true,
             calls: HashMap::new(),
             requests: HashMap::new(),
-            unknown_methods: HashSet::new(),
+            tombstones: VecDeque::new(),
+            unknown_methods: VecDeque::new(),
+            server_requests: policy,
         }
     }
 
@@ -667,6 +755,8 @@ impl ChannelState {
     /// when that generation had not already closed. `frames_received` and `last_frame_at` restart.
     pub(crate) fn begin_generation(&mut self, generation: Generation) -> Vec<Effect> {
         let effects = self.on_closed(self.stats.generation, CloseReason::Replaced);
+        self.retire_requests();
+        self.tombstones.clear();
         self.stats.generation = generation;
         self.stats.frames_received = 0;
         self.stats.last_frame_at = None;
@@ -706,6 +796,13 @@ impl ChannelState {
         }
         self.stats.frames_received += 1;
         self.stats.last_frame_at = Some(now);
+        // A passive connection must not allocate a responder. Doing so here would let a later
+        // queue drop write `-32603`, and the branches below would answer before any handler runs.
+        if self.server_requests == ServerRequestPolicy::IgnoreAll
+            && classify(raw) == FrameClass::ServerRequest
+        {
+            return Vec::new();
+        }
         let decoded = decode_frame(generation, raw, &mut |id| {
             let mut responder = Responder::detached(Arc::new(AtomicU64::new(0)));
             responder.id = id.to_owned();
@@ -726,22 +823,28 @@ impl ChannelState {
                     Vec::new()
                 }
             }
-            Decoded::Inbound(Inbound::ServerRequest(request)) => {
+            Decoded::Inbound(Inbound::ServerRequest(mut request)) => {
+                if request.id.len() > MAX_REQUEST_ID_BYTES {
+                    return self
+                        .oversized_id_refusal(generation, &request.id)
+                        .into_iter()
+                        .collect();
+                }
+                if self.id_blocked(&request.id) {
+                    return self.invalidate_ambiguous(&request.id);
+                }
                 if matches!(request.request, ContractServerRequest::Unknown(_)) {
                     let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
-                    let method = value["method"].as_str().unwrap_or_default();
-                    let mut effects = vec![Effect::Write {
+                    let method = truncate_method(value["method"].as_str().unwrap_or_default());
+                    let mut effects = vec![refusal(
                         generation,
-                        text: answer_text(
-                            &request.id,
-                            Answer::Error {
-                                code: -32601,
-                                message: format!("no handler for server request: {method}"),
-                            },
-                        ),
-                    }];
+                        &request.id,
+                        -32601,
+                        format!("no handler for server request: {method}"),
+                    )];
+                    self.tombstone(&request.id, true);
                     self.stats.malformed_frames += 1;
-                    if self.unknown_methods.insert(method.to_owned()) {
+                    if self.remember_unknown(method) {
                         effects.push(Effect::Deliver(Inbound::Malformed(MalformedFrame {
                             generation,
                             kind: MalformedKind::UnknownServerRequest,
@@ -750,9 +853,16 @@ impl ChannelState {
                         })));
                     }
                     effects
+                } else if self.requests.len() >= MAX_OPEN_SERVER_REQUESTS {
+                    self.tombstone(&request.id, true);
+                    vec![refusal(
+                        generation,
+                        &request.id,
+                        -32000,
+                        "too many open server requests".into(),
+                    )]
                 } else {
-                    self.requests
-                        .insert(request.id.clone(), request.responder.state.clone());
+                    self.track_request(&mut request);
                     vec![Effect::Deliver(Inbound::ServerRequest(request))]
                 }
             }
@@ -760,7 +870,12 @@ impl ChannelState {
                 if event.frame.type_name() == Some("request.cancel")
                     && let Some(id) = event.raw.pointer("/payload/id").and_then(Value::as_str)
                 {
-                    self.cancel(id);
+                    let method = event
+                        .raw
+                        .pointer("/payload/method")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    self.cancel(id, method, event.frame.session_id.as_deref());
                 }
                 vec![Effect::Deliver(Inbound::Event(event))]
             }
@@ -770,19 +885,23 @@ impl ChannelState {
                 if classify(raw) == FrameClass::ServerRequest {
                     let value: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
                     let id = value["id"].as_str().unwrap_or_default();
-                    let method = value["method"].as_str().unwrap_or_default();
-                    effects.push(Effect::Write {
-                        generation,
-                        text: answer_text(
+                    if id.len() > MAX_REQUEST_ID_BYTES {
+                        effects.extend(self.oversized_id_refusal(generation, id));
+                    } else if self.id_blocked(id) {
+                        if let Some(slot) = self.requests.remove(id) {
+                            cancel_state(&slot.state);
+                        }
+                        self.tombstone(id, false);
+                    } else if !id.is_empty() {
+                        let method = truncate_method(value["method"].as_str().unwrap_or_default());
+                        effects.push(refusal(
+                            generation,
                             id,
-                            Answer::Error {
-                                code: -32603,
-                                message: format!(
-                                    "server request params could not be read: {method}"
-                                ),
-                            },
-                        ),
-                    });
+                            -32603,
+                            format!("server request params could not be read: {method}"),
+                        ));
+                        self.tombstone(id, true);
+                    }
                 }
                 effects.push(Effect::Deliver(Inbound::Malformed(frame)));
                 effects
@@ -819,15 +938,33 @@ impl ChannelState {
     }
 
     /// The first successful answer wins. A second call is [`RespondError::AlreadyAnswered`].
+    ///
+    /// The instance and the generation must be the ones stored for this id, and that generation
+    /// must still be the connection the client is speaking on. A responder from a replaced
+    /// connection is [`RespondError::Cancelled`] and writes nothing.
     pub(crate) fn answer(
         &mut self,
         request_id: &str,
+        instance_id: u64,
+        generation: Generation,
         answer: Answer,
     ) -> Result<Effect, RespondError> {
-        let state = self
-            .requests
-            .get(request_id)
-            .ok_or(RespondError::Cancelled)?;
+        if generation != self.stats.generation {
+            return Err(RespondError::Cancelled);
+        }
+        let Some(slot) = self.requests.get(request_id) else {
+            return Err(match self.settled(request_id) {
+                Some(settled) if settled.answered => RespondError::AlreadyAnswered,
+                _ => RespondError::Cancelled,
+            });
+        };
+        if slot.instance_id != instance_id
+            || slot.generation != generation
+            || slot.generation != self.stats.generation
+        {
+            return Err(RespondError::Cancelled);
+        }
+        let state = Arc::clone(&slot.state);
         match state.load(Ordering::SeqCst) {
             ANSWERED => return Err(RespondError::AlreadyAnswered),
             CANCELLED | ANSWERED_CANCELLED => return Err(RespondError::Cancelled),
@@ -843,48 +980,198 @@ impl ChannelState {
         Ok(Effect::Write {
             generation: self.stats.generation,
             text: answer_text(request_id, answer),
+            refusal: false,
         })
     }
 
-    /// `ignore` writes nothing and closes the request.
-    pub(crate) fn ignore(&mut self, request_id: &str) {
-        if let Some(state) = self.requests.remove(request_id) {
-            state.store(ANSWERED, Ordering::SeqCst);
+    /// `ignore` writes nothing and closes the request when the instance still owns it.
+    /// The id stays reusable. A stale ignore leaves the current slot alone.
+    pub(crate) fn ignore(&mut self, request_id: &str, instance_id: u64, generation: Generation) {
+        let matches = self
+            .requests
+            .get(request_id)
+            .is_some_and(|slot| slot.instance_id == instance_id && slot.generation == generation);
+        if matches && let Some(slot) = self.requests.remove(request_id) {
+            slot.state.store(ANSWERED, Ordering::SeqCst);
         }
     }
 
     /// The responder was dropped. Counts [`ChannelStats::dropped_without_decision`].
     ///
-    /// With a current connection this emits the `-32603` answer. With none, it writes nothing.
-    pub(crate) fn drop_undecided(&mut self, request_id: &str) -> Vec<Effect> {
-        let Some(state) = self.requests.remove(request_id) else {
-            return Vec::new();
-        };
-        if state.load(Ordering::SeqCst) != OPEN {
+    /// With a current connection of the same generation this emits the `-32603` answer. With
+    /// none, or from a replaced connection, it writes nothing. A drop whose instance does not
+    /// own the slot writes nothing and leaves that slot in place.
+    pub(crate) fn drop_undecided(
+        &mut self,
+        request_id: &str,
+        instance_id: u64,
+        generation: Generation,
+    ) -> Vec<Effect> {
+        let matches = self
+            .requests
+            .get(request_id)
+            .is_some_and(|slot| slot.instance_id == instance_id && slot.generation == generation);
+        if !matches {
             return Vec::new();
         }
-        state.store(ANSWERED, Ordering::SeqCst);
+        let Some(slot) = self.requests.remove(request_id) else {
+            return Vec::new();
+        };
+        if slot.state.load(Ordering::SeqCst) != OPEN {
+            return Vec::new();
+        }
+        slot.state.store(ANSWERED, Ordering::SeqCst);
         self.stats.dropped_without_decision += 1;
-        if self.connected {
-            vec![Effect::Write {
-                generation: self.stats.generation,
-                text: answer_text(
-                    request_id,
-                    Answer::Error {
-                        code: -32603,
-                        message: "request dropped by client".to_owned(),
-                    },
-                ),
-            }]
+        let current = slot.generation == self.stats.generation;
+        if current {
+            self.tombstone(request_id, true);
+        }
+        if self.connected && current {
+            vec![refusal(
+                self.stats.generation,
+                request_id,
+                -32603,
+                "request dropped by client".into(),
+            )]
         } else {
             Vec::new()
         }
     }
 
     /// `request.cancel`, or the same transition without a frame.
-    pub(crate) fn cancel(&mut self, request_id: &str) {
-        if let Some(state) = self.requests.get(request_id) {
-            cancel_state(state);
+    ///
+    /// The id is tombstoned immediately. An in-flight write keeps its slot until completion.
+    pub(crate) fn cancel(&mut self, request_id: &str, method: &str, session_id: Option<&str>) {
+        let Some(slot) = self.requests.get(request_id) else {
+            return;
+        };
+        if slot.generation != self.stats.generation || slot.method != method {
+            return;
+        }
+        let session_matches = match (session_id, slot.session_id.as_deref()) {
+            (Some(expected), Some(actual)) => expected == actual,
+            (None, None) => true,
+            _ => false,
+        };
+        if !session_matches {
+            return;
+        }
+        let writing = slot.state.load(Ordering::SeqCst) == WRITING;
+        cancel_state(&slot.state);
+        self.tombstone(request_id, false);
+        if !writing {
+            self.requests.remove(request_id);
+        }
+    }
+
+    /// Remember a request the application may answer. A duplicate open or settled id is refused
+    /// before this runs.
+    fn track_request(&mut self, request: &mut ServerRequest) {
+        let instance_id = self.next_instance;
+        self.next_instance = self.next_instance.saturating_add(1);
+        request.responder.instance_id = instance_id;
+        request.responder.generation = request.generation;
+        let value = serde_json::to_value(&request.request).unwrap_or(Value::Null);
+        self.requests.insert(
+            request.id.clone(),
+            RequestSlot {
+                state: Arc::clone(&request.responder.state),
+                instance_id,
+                generation: request.generation,
+                method: request_kind(&value).to_owned(),
+                session_id: request.session_id.clone(),
+            },
+        );
+    }
+
+    /// A second frame for an id that is open or settled on this generation.
+    ///
+    /// The original responder is cancelled, so it cannot send. No reply is written: a reply
+    /// under the shared id would not say which request it settles.
+    fn invalidate_ambiguous(&mut self, id: &str) -> Vec<Effect> {
+        if let Some(slot) = self.requests.remove(id) {
+            cancel_state(&slot.state);
+        }
+        self.tombstone(id, false);
+        self.stats.malformed_frames += 1;
+        vec![Effect::Deliver(Inbound::Malformed(MalformedFrame {
+            generation: self.stats.generation,
+            kind: MalformedKind::UnexpectedRequest,
+            length: 0,
+            label: Some("duplicate server request".into()),
+        }))]
+    }
+
+    fn retire_requests(&mut self) {
+        for slot in self.requests.values() {
+            cancel_state(&slot.state);
+        }
+        self.requests.clear();
+    }
+
+    fn id_blocked(&self, id: &str) -> bool {
+        self.requests.contains_key(id) || self.settled(id).is_some()
+    }
+
+    fn settled(&self, id: &str) -> Option<&Tombstone> {
+        let digest = id_digest(id);
+        self.tombstones
+            .iter()
+            .find(|settled| settled.digest == digest && settled.generation == self.stats.generation)
+    }
+
+    fn tombstone(&mut self, id: &str, answered: bool) {
+        if self.settled(id).is_some() {
+            return;
+        }
+        if self.tombstones.len() == TOMBSTONE_LIMIT {
+            self.tombstones.pop_front();
+        }
+        self.tombstones.push_back(Tombstone {
+            digest: id_digest(id),
+            generation: self.stats.generation,
+            answered,
+        });
+    }
+
+    fn oversized_id_refusal(&mut self, generation: Generation, id: &str) -> Option<Effect> {
+        if self.settled(id).is_some() {
+            return None;
+        }
+        self.tombstone(id, true);
+        Some(refusal(
+            generation,
+            id,
+            -32600,
+            "request id is too long".into(),
+        ))
+    }
+
+    fn remember_unknown(&mut self, method: String) -> bool {
+        if self.unknown_methods.contains(&method) {
+            return false;
+        }
+        if self.unknown_methods.len() == MAX_UNKNOWN_METHODS {
+            self.unknown_methods.pop_front();
+        }
+        self.unknown_methods.push_back(method);
+        true
+    }
+
+    /// The write finished for this instance. A reused id is left in place.
+    fn complete_answer(
+        &mut self,
+        id: &str,
+        instance_id: u64,
+        generation: Generation,
+        answered: bool,
+    ) {
+        let matches = self
+            .requests
+            .get(id)
+            .is_some_and(|slot| slot.instance_id == instance_id && slot.generation == generation);
+        if matches && self.requests.remove(id).is_some() {
+            self.tombstone(id, answered);
         }
     }
 
@@ -894,8 +1181,8 @@ impl ChannelState {
             return Vec::new();
         }
         self.closed = true;
-        for state in self.requests.values() {
-            cancel_state(state);
+        for slot in self.requests.values() {
+            cancel_state(&slot.state);
         }
         let mut effects = self.on_closed(self.stats.generation, CloseReason::ClientClosed);
         if effects.is_empty() {
@@ -913,11 +1200,36 @@ impl ChannelState {
         stats.open_server_requests = self
             .requests
             .values()
-            .filter(|state| matches!(state.load(Ordering::SeqCst), OPEN | WRITING))
+            .filter(|slot| matches!(slot.state.load(Ordering::SeqCst), OPEN | WRITING))
             .count();
         stats.inbound_backlog = inbound_backlog;
         stats
     }
+}
+
+fn id_digest(id: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn refusal(generation: Generation, id: &str, code: i64, message: String) -> Effect {
+    Effect::Write {
+        generation,
+        text: answer_text(id, Answer::Error { code, message }),
+        refusal: true,
+    }
+}
+
+fn truncate_method(method: &str) -> String {
+    method.chars().take(MAX_ECHOED_METHOD_CHARS).collect()
+}
+
+fn refusal_backlog_admits(queued: usize, queued_bytes: usize, frame_bytes: usize) -> bool {
+    queued < MAX_REFUSAL_QUEUE && queued_bytes.saturating_add(frame_bytes) <= MAX_REFUSAL_BYTES
 }
 
 const OPEN: u8 = 0;
@@ -980,7 +1292,13 @@ impl Responder {
             .ok_or(RespondError::Cancelled)?;
         let (tx, rx) = oneshot::channel();
         sender
-            .send(Command::Answer(self.id.clone(), answer, tx))
+            .send(Command::Answer(
+                self.id.clone(),
+                self.instance_id,
+                self.generation,
+                answer,
+                tx,
+            ))
             .map_err(|_| RespondError::Cancelled)?;
         rx.await.unwrap_or(Err(RespondError::Cancelled))
     }
@@ -994,7 +1312,11 @@ impl Drop for Responder {
                 .as_ref()
                 .and_then(mpsc::WeakUnboundedSender::upgrade)
         {
-            let _ = sender.send(Command::DropResponder(self.id.clone()));
+            let _ = sender.send(Command::DropResponder(
+                self.id.clone(),
+                self.instance_id,
+                self.generation,
+            ));
         }
     }
 }
@@ -1044,9 +1366,15 @@ enum Command {
     Close(Option<oneshot::Sender<()>>),
     Gone,
     Stats(oneshot::Sender<ChannelStats>),
-    Answer(String, Answer, oneshot::Sender<Result<(), RespondError>>),
-    Ignore(String),
-    DropResponder(String),
+    Answer(
+        String,
+        u64,
+        Generation,
+        Answer,
+        oneshot::Sender<Result<(), RespondError>>,
+    ),
+    Ignore(String, u64, Generation),
+    DropResponder(String, u64, Generation),
     Taken,
     StreamDropped,
 }
@@ -1099,12 +1427,14 @@ enum SocketEvent {
     CloseFrame(Generation, CloseReason),
     Closed(Generation, CloseReason),
     Written(Generation, String, Result<(), RespondError>),
+    RefusalDone(usize),
 }
 
 struct WriteJob {
     text: String,
     request: Option<String>,
     state: Option<Arc<AtomicU8>>,
+    refusal: bool,
 }
 struct Transport {
     writer: mpsc::UnboundedSender<WriteJob>,
@@ -1166,8 +1496,10 @@ impl Transport {
                 text,
                 request,
                 state,
+                refusal,
             }) = jobs.recv().await
             {
+                let refusal_bytes = text.len();
                 if state.as_ref().is_some_and(|state| {
                     matches!(state.load(Ordering::SeqCst), CANCELLED | ANSWERED_CANCELLED)
                 }) {
@@ -1177,6 +1509,9 @@ impl Transport {
                             request,
                             Err(RespondError::Cancelled),
                         ));
+                    }
+                    if refusal {
+                        let _ = events.send(SocketEvent::RefusalDone(refusal_bytes));
                     }
                     continue;
                 }
@@ -1200,6 +1535,9 @@ impl Transport {
                             Err(RespondError::NotConnected)
                         },
                     ));
+                }
+                if refusal {
+                    let _ = events.send(SocketEvent::RefusalDone(refusal_bytes));
                 }
                 if let Err(error) = result {
                     let _ = events.send(SocketEvent::Closed(
@@ -1226,21 +1564,30 @@ struct PendingCall {
     result: oneshot::Sender<Result<Value, CallError>>,
 }
 type AnswerResult = oneshot::Sender<Result<(), RespondError>>;
-type QueuedAnswers = std::collections::VecDeque<(Answer, AnswerResult)>;
+type QueuedAnswers = std::collections::VecDeque<(u64, Generation, Answer, AnswerResult)>;
+struct PendingAnswer {
+    instance_id: u64,
+    generation: Generation,
+    state: Arc<AtomicU8>,
+    result: AnswerResult,
+}
 struct Actor {
     state: ChannelState,
     pending: HashMap<u64, PendingCall>,
     tokens: HashMap<u64, u64>,
-    answers: HashMap<String, oneshot::Sender<Result<(), RespondError>>>,
+    answers: HashMap<String, PendingAnswer>,
     answer_queue: HashMap<String, QueuedAnswers>,
     transport: Option<Transport>,
     inbound: mpsc::UnboundedSender<Inbound>,
+    server_requests: ServerRequestPolicy,
     stream_alive: bool,
     backlog: usize,
     generation: Arc<AtomicU64>,
     commands: mpsc::WeakUnboundedSender<Command>,
     recorder: Option<Recorder>,
     param_injector: Option<crate::remote::ParamInjector>,
+    refusal_queued: usize,
+    refusal_bytes: usize,
 }
 
 impl Actor {
@@ -1250,22 +1597,26 @@ impl Actor {
         inbound: mpsc::UnboundedSender<Inbound>,
         generation: Arc<AtomicU64>,
         sender: mpsc::WeakUnboundedSender<Command>,
+        policy: ServerRequestPolicy,
     ) {
         let (events, mut event_rx) = mpsc::unbounded_channel();
         let mut actor = Self {
-            state: ChannelState::new(parts.next_request_id),
+            state: ChannelState::with_policy(parts.next_request_id, policy),
             pending: HashMap::new(),
             tokens: HashMap::new(),
             answers: HashMap::new(),
             answer_queue: HashMap::new(),
             transport: None,
             inbound,
+            server_requests: policy,
             stream_alive: true,
             backlog: 0,
             generation,
             commands: sender,
             recorder: None,
             param_injector: None,
+            refusal_queued: 0,
+            refusal_bytes: 0,
         };
         actor.install(parts, &events).await;
         loop {
@@ -1311,17 +1662,25 @@ impl Actor {
     }
 
     fn finish_answers(&mut self) {
-        for (id, result) in self.answers.drain() {
-            if let Some(state) = self.state.requests.get(&id) {
-                let _ = state.compare_exchange(WRITING, OPEN, Ordering::SeqCst, Ordering::SeqCst);
+        self.refusal_queued = 0;
+        self.refusal_bytes = 0;
+        for (id, pending) in self.answers.drain() {
+            let _ =
+                pending
+                    .state
+                    .compare_exchange(WRITING, OPEN, Ordering::SeqCst, Ordering::SeqCst);
+            let state = pending.state.load(Ordering::SeqCst);
+            let cancelled = matches!(state, CANCELLED | ANSWERED_CANCELLED);
+            let written = matches!(state, ANSWERED | ANSWERED_CANCELLED);
+            if written || cancelled {
+                self.state.complete_answer(
+                    &id,
+                    pending.instance_id,
+                    pending.generation,
+                    !cancelled,
+                );
             }
-            let cancelled = self.state.requests.get(&id).is_some_and(|state| {
-                matches!(state.load(Ordering::SeqCst), CANCELLED | ANSWERED_CANCELLED)
-            });
-            let written = self.state.requests.get(&id).is_some_and(|state| {
-                matches!(state.load(Ordering::SeqCst), ANSWERED | ANSWERED_CANCELLED)
-            });
-            let _ = result.send(if written {
+            let _ = pending.result.send(if written {
                 Ok(())
             } else {
                 Err(if cancelled {
@@ -1336,15 +1695,27 @@ impl Actor {
                 .state
                 .requests
                 .get(&id)
-                .map(|state| state.load(Ordering::SeqCst))
+                .map(|slot| slot.state.load(Ordering::SeqCst))
             {
                 Some(CANCELLED | ANSWERED_CANCELLED) => RespondError::Cancelled,
                 Some(ANSWERED) => RespondError::AlreadyAnswered,
                 _ if self.state.closed => RespondError::Cancelled,
+                _ if let Some(slot) = self.state.settled(&id) => {
+                    if slot.answered {
+                        RespondError::AlreadyAnswered
+                    } else {
+                        RespondError::Cancelled
+                    }
+                }
                 _ => RespondError::NotConnected,
             };
-            for (_, result) in answers {
-                let _ = result.send(Err(outcome));
+            for (_, generation, _, result) in answers {
+                let error = if generation == self.state.stats.generation {
+                    outcome
+                } else {
+                    RespondError::Cancelled
+                };
+                let _ = result.send(Err(error));
             }
         }
     }
@@ -1376,7 +1747,7 @@ impl Actor {
                     Ok(text) => {
                         self.pending.insert(id, PendingCall { token, result });
                         self.tokens.insert(token, id);
-                        self.write(text, None);
+                        self.write(text, None, false);
                     }
                     Err(error) => {
                         self.state.forget_call(id);
@@ -1408,10 +1779,14 @@ impl Actor {
             Command::Stats(result) => {
                 let _ = result.send(self.state.stats(self.backlog));
             }
-            Command::Answer(id, answer, result) => self.answer(id, answer, result),
-            Command::Ignore(id) => self.state.ignore(&id),
-            Command::DropResponder(id) => {
-                let effects = self.state.drop_undecided(&id);
+            Command::Answer(id, instance_id, generation, answer, result) => {
+                self.answer(id, instance_id, generation, answer, result)
+            }
+            Command::Ignore(id, instance_id, generation) => {
+                self.state.ignore(&id, instance_id, generation)
+            }
+            Command::DropResponder(id, instance_id, generation) => {
+                let effects = self.state.drop_undecided(&id, instance_id, generation);
                 self.effects(effects);
             }
             Command::Taken => self.backlog = self.backlog.saturating_sub(1),
@@ -1440,31 +1815,49 @@ impl Actor {
                 if generation != self.state.stats.generation {
                     return;
                 }
-                if let Some(result) = self.answers.remove(&id) {
-                    let cancelled = self
-                        .state
-                        .requests
-                        .get(&id)
-                        .is_some_and(|state| state.load(Ordering::SeqCst) == CANCELLED);
-                    if let Some(state) = self.state.requests.get(&id) {
-                        let _ = state.compare_exchange(
-                            WRITING,
-                            if outcome.is_ok() { ANSWERED } else { OPEN },
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                        );
-                    }
-                    let _ = result.send(if cancelled {
-                        Err(RespondError::Cancelled)
-                    } else {
-                        outcome
+                let Some(pending) = self.answers.remove(&id) else {
+                    return;
+                };
+                let same_instance = pending.generation == generation
+                    && self.state.requests.get(&id).is_some_and(|slot| {
+                        slot.instance_id == pending.instance_id
+                            && slot.generation == pending.generation
                     });
-                    if let Some(mut queue) = self.answer_queue.remove(&id) {
-                        while let Some((answer, result)) = queue.pop_front() {
-                            self.answer(id.clone(), answer, result);
-                        }
+                let cancelled = matches!(
+                    pending.state.load(Ordering::SeqCst),
+                    CANCELLED | ANSWERED_CANCELLED
+                );
+                if same_instance && let Some(slot) = self.state.requests.get(&id) {
+                    let _ = slot.state.compare_exchange(
+                        WRITING,
+                        if outcome.is_ok() { ANSWERED } else { OPEN },
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
+                }
+                let succeeded = same_instance && outcome.is_ok() && !cancelled;
+                let _ = pending.result.send(if !same_instance || cancelled {
+                    Err(RespondError::Cancelled)
+                } else {
+                    outcome
+                });
+                if succeeded || (same_instance && cancelled) {
+                    self.state.complete_answer(
+                        &id,
+                        pending.instance_id,
+                        pending.generation,
+                        succeeded,
+                    );
+                }
+                if let Some(mut queue) = self.answer_queue.remove(&id) {
+                    while let Some((instance_id, generation, answer, result)) = queue.pop_front() {
+                        self.answer(id.clone(), instance_id, generation, answer, result);
                     }
                 }
+            }
+            SocketEvent::RefusalDone(bytes) => {
+                self.refusal_queued = self.refusal_queued.saturating_sub(1);
+                self.refusal_bytes = self.refusal_bytes.saturating_sub(bytes);
             }
         }
     }
@@ -1500,12 +1893,24 @@ impl Actor {
                         let _ = call.result.send(outcome);
                     }
                 }
-                Effect::Write { generation, text } => {
+                Effect::Write {
+                    generation,
+                    text,
+                    refusal,
+                } => {
                     if generation == self.state.stats.generation {
-                        self.write(text, None);
+                        self.write(text, None, refusal);
                     }
                 }
                 Effect::Deliver(mut item) => {
+                    if self.server_requests == ServerRequestPolicy::IgnoreAll
+                        && matches!(item, Inbound::ServerRequest(_))
+                    {
+                        if let Inbound::ServerRequest(request) = item {
+                            request.responder.ignore();
+                        }
+                        continue;
+                    }
                     if let Inbound::ServerRequest(request) = &mut item {
                         request.responder.swallowed = None;
                         request.responder.sender = Some(self.commands.clone());
@@ -1513,7 +1918,11 @@ impl Actor {
                             let value =
                                 serde_json::to_value(&request.request).unwrap_or(Value::Null);
                             let kind = request_kind(&value);
-                            self.state.ignore(&request.id);
+                            self.state.ignore(
+                                &request.id,
+                                request.responder.instance_id,
+                                request.responder.generation,
+                            );
                             request.responder.ignored = true;
                             self.write(
                                 answer_text(
@@ -1524,6 +1933,7 @@ impl Actor {
                                     },
                                 ),
                                 None,
+                                true,
                             );
                             continue;
                         }
@@ -1539,11 +1949,15 @@ impl Actor {
         }
     }
 
-    fn write(&mut self, text: String, request: Option<String>) {
+    fn write(&mut self, text: String, request: Option<String>, refusal: bool) {
+        let bytes = text.len();
+        if refusal && !refusal_backlog_admits(self.refusal_queued, self.refusal_bytes, bytes) {
+            return;
+        }
         let state = request
             .as_ref()
             .and_then(|id| self.state.requests.get(id))
-            .cloned();
+            .map(|slot| Arc::clone(&slot.state));
         let sent = self.transport.as_ref().is_some_and(|transport| {
             transport
                 .writer
@@ -1551,10 +1965,14 @@ impl Actor {
                     text,
                     request,
                     state,
+                    refusal,
                 })
                 .is_ok()
         });
-        if !sent && self.state.connected {
+        if sent && refusal {
+            self.refusal_queued += 1;
+            self.refusal_bytes += bytes;
+        } else if !sent && self.state.connected {
             let effects = self.state.on_closed(
                 self.state.stats.generation,
                 CloseReason::Error(std::io::ErrorKind::BrokenPipe),
@@ -1567,23 +1985,42 @@ impl Actor {
     fn answer(
         &mut self,
         id: String,
+        instance_id: u64,
+        generation: Generation,
         answer: Answer,
         result: oneshot::Sender<Result<(), RespondError>>,
     ) {
-        if self.answers.contains_key(&id) {
-            self.answer_queue
-                .entry(id)
-                .or_default()
-                .push_back((answer, result));
+        if generation != self.state.stats.generation {
+            let _ = result.send(Err(RespondError::Cancelled));
             return;
         }
-        match self.state.answer(&id, answer) {
+        if self.answers.contains_key(&id) {
+            self.answer_queue.entry(id).or_default().push_back((
+                instance_id,
+                generation,
+                answer,
+                result,
+            ));
+            return;
+        }
+        match self.state.answer(&id, instance_id, generation, answer) {
             Ok(Effect::Write { text, .. }) => {
-                if let Some(state) = self.state.requests.get(&id) {
-                    state.store(WRITING, Ordering::SeqCst);
-                }
-                self.answers.insert(id.clone(), result);
-                self.write(text, Some(id));
+                let Some(slot) = self.state.requests.get(&id) else {
+                    let _ = result.send(Err(RespondError::Cancelled));
+                    return;
+                };
+                let state = Arc::clone(&slot.state);
+                state.store(WRITING, Ordering::SeqCst);
+                self.answers.insert(
+                    id.clone(),
+                    PendingAnswer {
+                        instance_id,
+                        generation,
+                        state,
+                        result,
+                    },
+                );
+                self.write(text, Some(id), false);
             }
             Ok(_) => unreachable!("answer produces a write"),
             Err(error) => {
@@ -1627,7 +2064,7 @@ mod tests {
 
     #[test]
     fn closure_time_is_recorded_once_and_cleared_for_the_next_generation() {
-        let mut state = ChannelState::new(1);
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         assert!(state.stats(0).closed_at.is_none());
         let _ = state.on_closed(Generation(1), CloseReason::RemoteClosed { code: None });
@@ -1643,11 +2080,15 @@ mod tests {
     }
 
     fn pending_answer() -> (Actor, String, oneshot::Receiver<Result<(), RespondError>>) {
-        let mut state = ChannelState::new(3);
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         let id = "srq-000000000005".to_owned();
         let _ = state.on_frame(Generation(1), &sudo_frame(&id), Instant::now());
-        state.requests[&id].store(WRITING, Ordering::SeqCst);
+        let (instance_id, generation, answer_state) = {
+            let slot = state.requests.get(&id).expect("request");
+            slot.state.store(WRITING, Ordering::SeqCst);
+            (slot.instance_id, slot.generation, Arc::clone(&slot.state))
+        };
         let (sender, _) = mpsc::unbounded_channel();
         let (inbound, _) = mpsc::unbounded_channel();
         let (result, receiver) = oneshot::channel();
@@ -1655,16 +2096,27 @@ mod tests {
             state,
             pending: HashMap::new(),
             tokens: HashMap::new(),
-            answers: HashMap::from([(id.clone(), result)]),
+            answers: HashMap::from([(
+                id.clone(),
+                PendingAnswer {
+                    instance_id,
+                    generation,
+                    state: answer_state,
+                    result,
+                },
+            )]),
             answer_queue: HashMap::new(),
             transport: None,
             inbound,
+            server_requests: ServerRequestPolicy::Interactive,
             stream_alive: true,
             backlog: 0,
             generation: Arc::new(AtomicU64::new(1)),
             commands: sender.downgrade(),
             recorder: None,
             param_injector: None,
+            refusal_queued: 0,
+            refusal_bytes: 0,
         };
         (actor, id, receiver)
     }
@@ -1672,7 +2124,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_answer_does_not_report_a_successful_write() {
         let (mut actor, id, result) = pending_answer();
-        actor.state.cancel(&id);
+        actor.state.cancel(&id, "sudo", Some("s1"));
         actor
             .socket_event(SocketEvent::Written(Generation(1), id, Ok(())))
             .await;
@@ -1681,6 +2133,19 @@ mod tests {
             Err(RespondError::Cancelled)
         );
         assert_eq!(actor.state.stats(0).open_server_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn stale_write_confirmation_leaves_the_current_answer_pending() {
+        let (mut actor, id, result) = pending_answer();
+        actor
+            .socket_event(SocketEvent::Written(Generation(0), id.clone(), Ok(())))
+            .await;
+        assert!(actor.answers.contains_key(&id));
+        actor
+            .socket_event(SocketEvent::Written(Generation(1), id, Ok(())))
+            .await;
+        assert_eq!(result.await.expect("answer completion"), Ok(()));
     }
 
     #[tokio::test]
@@ -1698,12 +2163,7 @@ mod tests {
             Err(RespondError::NotConnected)
         );
         assert_eq!(actor.state.stats(0).open_server_requests, 1);
-        assert!(
-            actor
-                .state
-                .answer(&id, Answer::Result(json!({"value":""})))
-                .is_ok()
-        );
+        assert!(answer_open(&mut actor.state, &id, Answer::Result(json!({"value":""}))).is_ok());
     }
 
     #[tokio::test]
@@ -1720,11 +2180,23 @@ mod tests {
     #[tokio::test]
     async fn completed_answer_is_not_reopened_when_replacing_its_writer() {
         let (mut actor, id, result) = pending_answer();
-        actor.state.requests[&id].store(ANSWERED, Ordering::SeqCst);
+        let instance_id = actor.answers[&id].instance_id;
+        actor
+            .state
+            .requests
+            .get(&id)
+            .expect("request")
+            .state
+            .store(ANSWERED, Ordering::SeqCst);
         actor.disconnect_writer().await;
         assert_eq!(result.await.expect("answer completion"), Ok(()));
         assert!(matches!(
-            actor.state.answer(&id, Answer::Result(json!({"value":""}))),
+            actor.state.answer(
+                &id,
+                instance_id,
+                Generation(1),
+                Answer::Result(json!({"value":""}))
+            ),
             Err(RespondError::AlreadyAnswered)
         ));
     }
@@ -1733,14 +2205,20 @@ mod tests {
     async fn completed_answer_stays_successful_when_close_precedes_its_acknowledgement() {
         for cancel_first in [false, true] {
             let (mut actor, id, result) = pending_answer();
+            let instance_id = actor.answers[&id].instance_id;
             if cancel_first {
-                actor.state.cancel(&id);
+                actor.state.cancel(&id, "sudo", Some("s1"));
             }
-            mark_written(&actor.state.requests[&id]);
+            mark_written(&actor.state.requests.get(&id).expect("request").state);
             actor.shutdown().await;
             assert_eq!(result.await.expect("answer completion"), Ok(()));
             assert!(matches!(
-                actor.state.answer(&id, Answer::Result(json!({"value":""}))),
+                actor.state.answer(
+                    &id,
+                    instance_id,
+                    Generation(1),
+                    Answer::Result(json!({"value":""}))
+                ),
                 Err(RespondError::Cancelled)
             ));
         }
@@ -1788,6 +2266,18 @@ mod tests {
         );
     }
 
+    fn answer_open(
+        state: &mut ChannelState,
+        id: &str,
+        answer: Answer,
+    ) -> Result<Effect, RespondError> {
+        let (instance_id, generation) = {
+            let slot = &state.requests[id];
+            (slot.instance_id, slot.generation)
+        };
+        state.answer(id, instance_id, generation, answer)
+    }
+
     fn sudo_frame(id: &str) -> Vec<u8> {
         serde_json::to_vec(&json!({
             "jsonrpc": "2.0",
@@ -1800,7 +2290,7 @@ mod tests {
 
     #[test]
     fn stale_generation_frame_is_discarded_and_counted() {
-        let mut state = ChannelState::new(3);
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         let entered = state.begin_generation(Generation(2));
         assert!(entered.iter().any(|effect| matches!(
@@ -1835,12 +2325,11 @@ mod tests {
 
     #[tokio::test]
     async fn responder_first_answer_wins() {
-        let mut state = ChannelState::new(3);
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         let id = "srq-0123456789ab";
         let _ = state.on_frame(Generation(1), &sudo_frame(id), Instant::now());
-        let first = state
-            .answer(id, Answer::Result(json!({"value": "one"})))
+        let first = answer_open(&mut state, id, Answer::Result(json!({"value": "one"})))
             .expect("first answer");
         let text = match first {
             Effect::Write { text, .. } => text,
@@ -1853,7 +2342,7 @@ mod tests {
             parsed.pointer("/result/value").and_then(Value::as_str),
             Some("one")
         );
-        let second = state.answer(id, Answer::Result(json!({"value": "two"})));
+        let second = answer_open(&mut state, id, Answer::Result(json!({"value": "two"})));
         assert!(matches!(second, Err(RespondError::AlreadyAnswered)));
 
         let event = decode_frame(
@@ -1895,7 +2384,7 @@ mod tests {
 
     #[test]
     fn stats_counters_follow_their_rules() {
-        let mut state = ChannelState::new(3);
+        let mut state = ChannelState::with_policy(3, ServerRequestPolicy::Interactive);
         let _ = state.begin_generation(Generation(1));
         let now = Instant::now();
         let before = state.stats(0);
@@ -1913,15 +2402,27 @@ mod tests {
         assert_eq!(open.malformed_frames, 1);
         assert_eq!(open.open_server_requests, 1);
 
-        let _ = state.answer("srq-000000000001", Answer::Result(json!({"value": ""})));
+        let _ = answer_open(
+            &mut state,
+            "srq-000000000001",
+            Answer::Result(json!({"value": ""})),
+        );
         assert_eq!(state.stats(0).open_server_requests, 0);
 
         let _ = state.on_frame(Generation(1), &sudo_frame("srq-000000000002"), now);
-        state.ignore("srq-000000000002");
+        let (instance, generation) = {
+            let slot = &state.requests["srq-000000000002"];
+            (slot.instance_id, slot.generation)
+        };
+        state.ignore("srq-000000000002", instance, generation);
         assert_eq!(state.stats(0).open_server_requests, 0);
 
         let _ = state.on_frame(Generation(1), &sudo_frame("srq-000000000003"), now);
-        let dropped = state.drop_undecided("srq-000000000003");
+        let (instance, generation) = {
+            let slot = &state.requests["srq-000000000003"];
+            (slot.instance_id, slot.generation)
+        };
+        let dropped = state.drop_undecided("srq-000000000003", instance, generation);
         assert!(
             dropped
                 .iter()
@@ -1932,7 +2433,7 @@ mod tests {
         assert_eq!(after_drop.dropped_without_decision, 1);
 
         let _ = state.on_frame(Generation(1), &sudo_frame("srq-000000000004"), now);
-        state.cancel("srq-000000000004");
+        state.cancel("srq-000000000004", "sudo", Some("s1"));
         assert_eq!(state.stats(0).open_server_requests, 0);
 
         let stale_before = state.stats(0).stale_generation_frames;
@@ -1969,6 +2470,240 @@ mod tests {
         assert_eq!(closed.open_server_requests, 0);
         assert_eq!(closed.pending_calls, 0);
         assert_eq!(closed.dropped_without_decision, kept_dropped);
+    }
+    fn method_frame(id: &str, method: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": {"session_id": "s1"}
+        }))
+        .expect("method frame")
+    }
+
+    fn write_text(effects: &[Effect]) -> Option<&str> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Write { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn open_server_requests_stay_bounded_and_an_open_request_is_never_evicted() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let first = "srq-000000000000".to_owned();
+        let _ = state.on_frame(Generation(1), &sudo_frame(&first), now);
+        let kept = Arc::clone(&state.requests[&first].state);
+        let mut overflow = Vec::new();
+        for n in 1..70 {
+            let id = format!("srq-{n:012x}");
+            let effects = state.on_frame(Generation(1), &sudo_frame(&id), now);
+            if n < 64 {
+                assert!(
+                    effects
+                        .iter()
+                        .any(|effect| matches!(effect, Effect::Deliver(_))),
+                    "request {n} was not delivered"
+                );
+                assert!(
+                    write_text(&effects).is_none(),
+                    "an accepted request was also refused"
+                );
+            } else {
+                assert!(
+                    !state.requests.contains_key(&id),
+                    "overflow request {id} was stored"
+                );
+                let text = write_text(&effects).expect("overflow writes one refusal");
+                assert_eq!(
+                    effects
+                        .iter()
+                        .filter(|effect| matches!(effect, Effect::Write { .. }))
+                        .count(),
+                    1
+                );
+                assert!(
+                    !effects
+                        .iter()
+                        .any(|effect| matches!(effect, Effect::Deliver(_)))
+                );
+                assert!(!text.contains('\n'), "refusal frame is not one line");
+                let value: Value = serde_json::from_str(text).expect("refusal is one JSON value");
+                assert_eq!(value["jsonrpc"], "2.0");
+                assert_eq!(value["id"], id);
+                assert!(value.get("result").is_none());
+                assert_eq!(value["error"]["code"], -32000);
+                assert_eq!(value["error"]["message"], "too many open server requests");
+                overflow.push(id);
+            }
+        }
+        assert_eq!(state.requests.len(), 64);
+        assert_eq!(state.stats(0).open_server_requests, 64);
+        assert!(
+            Arc::ptr_eq(&kept, &state.requests[&first].state),
+            "the first open request was replaced"
+        );
+        assert!(overflow.iter().all(|id| !state.requests.contains_key(id)));
+
+        let duplicate = state.on_frame(Generation(1), &sudo_frame(&first), now);
+        assert!(
+            write_text(&duplicate).is_none(),
+            "a duplicate id wrote a frame"
+        );
+        assert_eq!(kept.load(Ordering::SeqCst), CANCELLED);
+        assert_eq!(state.requests.len(), 63);
+    }
+
+    #[test]
+    fn unknown_method_flood_stays_bounded_and_the_echo_is_truncated() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let long = "m".repeat(200);
+        let effects = state.on_frame(Generation(1), &method_frame("srq-long", &long), now);
+        let text = write_text(&effects).expect("unknown method is refused");
+        assert!(!text.contains('\n'));
+        let value: Value = serde_json::from_str(text).expect("refusal is one JSON value");
+        assert_eq!(value["error"]["code"], -32601);
+        let message = value["error"]["message"].as_str().expect("message");
+        let echoed = message
+            .strip_prefix("no handler for server request: ")
+            .expect("prefix");
+        assert_eq!(echoed.chars().count(), 128);
+        assert!(long.starts_with(echoed));
+        assert!(!message.contains(&"m".repeat(129)));
+
+        let tricky = "say \"hi\"\nnow";
+        let effects = state.on_frame(Generation(1), &method_frame("srq-tricky", tricky), now);
+        let text = write_text(&effects).expect("tricky method is refused");
+        assert!(!text.contains('\n'), "a raw newline would break the frame");
+        let value: Value = serde_json::from_str(text).expect("tricky refusal parses");
+        assert_eq!(
+            value["error"]["message"],
+            format!("no handler for server request: {tricky}")
+        );
+
+        let wide = "é".repeat(160);
+        let effects = state.on_frame(Generation(1), &method_frame("srq-wide", &wide), now);
+        let text = write_text(&effects).expect("wide method is refused");
+        let value: Value = serde_json::from_str(text).expect("wide refusal parses");
+        let echoed = value["error"]["message"]
+            .as_str()
+            .and_then(|message| message.strip_prefix("no handler for server request: "))
+            .expect("echo");
+        assert_eq!(echoed.chars().count(), 128);
+        assert!(wide.starts_with(echoed));
+
+        for n in 0..70 {
+            let method = format!("custom.method.{n:03}");
+            let _ = state.on_frame(
+                Generation(1),
+                &method_frame(&format!("srq-u-{n:03}"), &method),
+                now,
+            );
+        }
+        assert_eq!(state.unknown_methods.len(), 64);
+
+        let oldest = state.on_frame(
+            Generation(1),
+            &method_frame("srq-again", "custom.method.000"),
+            now,
+        );
+        assert!(
+            oldest
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "the evicted oldest method was still remembered"
+        );
+        let newest = state.on_frame(
+            Generation(1),
+            &method_frame("srq-newest", "custom.method.069"),
+            now,
+        );
+        assert!(
+            !newest
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "a method still in the bounded set notified twice"
+        );
+        assert_eq!(state.unknown_methods.len(), 64);
+    }
+
+    #[test]
+    fn closed_generation_slots_do_not_block_a_reused_id() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        let id = "srq-0000000000aa";
+        let _ = state.on_frame(Generation(1), &sudo_frame(id), now);
+        let (instance_id, generation) = {
+            let slot = &state.requests[id];
+            (slot.instance_id, slot.generation)
+        };
+        let _ = state.answer(
+            id,
+            instance_id,
+            generation,
+            Answer::Result(json!({"value": "one"})),
+        );
+        let _ = state.begin_generation(Generation(2));
+        let effects = state.on_frame(Generation(2), &sudo_frame(id), now);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "a replaced connection kept the previous tombstone"
+        );
+        assert!(
+            state.requests.contains_key(id),
+            "the reused id was not admitted"
+        );
+    }
+
+    #[test]
+    fn cancelled_slots_do_not_consume_the_open_cap() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let now = Instant::now();
+        for n in 0..64 {
+            let id = format!("srq-{n:012x}");
+            let _ = state.on_frame(Generation(1), &sudo_frame(&id), now);
+            state.cancel(&id, "sudo", Some("s1"));
+        }
+        assert_eq!(state.requests.len(), 0, "cancelled ids stayed in the map");
+        let fresh = state.on_frame(Generation(1), &sudo_frame("srq-after-cancel"), now);
+        assert!(
+            fresh
+                .iter()
+                .any(|effect| matches!(effect, Effect::Deliver(_))),
+            "cancelled entries caused a false overflow"
+        );
+        assert!(write_text(&fresh).is_none());
+    }
+
+    #[test]
+    fn oversized_request_id_is_not_retained_and_the_wire_id_is_exact() {
+        let mut state = ChannelState::with_policy(1, ServerRequestPolicy::Interactive);
+        let _ = state.begin_generation(Generation(1));
+        let id = "x".repeat(MAX_REQUEST_ID_BYTES + 40);
+        let effects = state.on_frame(Generation(1), &sudo_frame(&id), Instant::now());
+        assert!(!state.requests.contains_key(&id));
+        assert_eq!(state.tombstones.len(), 1);
+        let text = write_text(&effects).expect("the refusal keeps the wire id");
+        let value: Value = serde_json::from_str(text).expect("refusal json");
+        assert_eq!(value["id"], id);
+        assert_eq!(value["error"]["code"], -32600);
+        let again = state.on_frame(Generation(1), &sudo_frame(&id), Instant::now());
+        assert!(
+            write_text(&again).is_none(),
+            "a repeated oversized id queued another refusal"
+        );
+        assert!(!refusal_backlog_admits(MAX_REFUSAL_QUEUE, 0, 1));
+        assert!(!refusal_backlog_admits(0, MAX_REFUSAL_BYTES, 1));
+        assert!(!refusal_backlog_admits(0, 0, MAX_REFUSAL_BYTES + 1));
+        assert!(refusal_backlog_admits(MAX_REFUSAL_QUEUE - 1, 0, 1));
     }
 }
 

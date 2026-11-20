@@ -38,6 +38,26 @@ fn record(base_commit: &str) -> RecordView {
     }
 }
 
+fn recorded_target(git: &GitRepo, record: RecordView) -> ReviewTarget {
+    let path = ".worktrees/talaria-work";
+    git.ok(
+        &git.repo,
+        &[
+            "worktree",
+            "add",
+            "--no-track",
+            "-b",
+            &record.branch,
+            path,
+            "main",
+        ],
+    );
+    ReviewTarget {
+        folder: git.repo.join(path),
+        ..review_target(&git.repo, Some(record))
+    }
+}
+
 fn write(repo: &Path, name: &str, text: &str) {
     std::fs::write(repo.join(name), text).expect("write file");
 }
@@ -124,14 +144,12 @@ async fn lists_both_scopes_for_a_recorded_tree() {
         return;
     }
     let git = GitRepo::new();
-    let repo = git.repo.clone();
-    let base = git.ok(&repo, &["rev-parse", "main"]);
-    git.ok(&repo, &["checkout", "-q", "-b", "talaria/work"]);
-    write(&repo, "work.txt", "work\n");
-    git.ok(&repo, &["add", "work.txt"]);
+    let base = git.ok(&git.repo, &["rev-parse", "main"]);
+    let target = recorded_target(&git, record(&base));
+    write(&target.folder, "work.txt", "work\n");
+    git.ok(&target.folder, &["add", "work.txt"]);
 
     let runner = GitRunner::from_env();
-    let target = review_target(&repo, Some(record(&base)));
     let rows = list(&runner, &target, Scope::Uncommitted)
         .await
         .expect("uncommitted lists");
@@ -945,8 +963,7 @@ async fn default_branch_cache_tracks_the_current_origin_including_unknown_answer
         None,
         "a record from the previous origin cannot authorize a push to the new origin"
     );
-    git.ok(repo, &["checkout", "-q", "-b", "feature"]);
-    let target = review_target(repo, Some(old_record));
+    let target = recorded_target(&git, old_record);
     assert_eq!(
         run_action(&runner, &target, &GitAction::Push).await,
         Err("Talaria cannot tell origin's default branch, so it will not push.".into())
@@ -1041,5 +1058,32 @@ async fn listing_shares_one_origin_lookup_and_never_contacts_the_remote() {
         !calls
             .iter()
             .any(|args| args.iter().any(|arg| arg == "ls-remote"))
+    );
+}
+
+/// Git operations stay on the authorized checkout.
+#[tokio::test]
+async fn review_git_binds_to_the_authorized_checkout() {
+    if skip_unless_git() {
+        return;
+    }
+    let git = GitRepo::new();
+    let runner = GitRunner::from_env();
+    let link = git.path().join("swap");
+    std::os::unix::fs::symlink(&git.repo, &link).expect("symlink");
+    let mut swapped = review_target(&link, None);
+    swapped.main_root = git.repo.clone();
+    let listed = list(&runner, &swapped, Scope::Uncommitted).await;
+    assert!(
+        listed.is_err(),
+        "a symlink in place of the checkout is not listed: {listed:?}"
+    );
+
+    let mut mismatched = review_target(&git.repo, None);
+    mismatched.main_root = git.path().join("other");
+    let listed = list(&runner, &mismatched, Scope::Uncommitted).await;
+    assert!(
+        listed.is_err(),
+        "a different main checkout is not used: {listed:?}"
     );
 }

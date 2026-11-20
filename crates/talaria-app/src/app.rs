@@ -118,7 +118,10 @@ use crate::mutation::MutationClient;
 use crate::panes::{CommandRunner, PaneEnv, PaneOutcome, PaneSettings};
 use crate::peek::FleetSink;
 use crate::permissions::PermissionsService;
-use crate::prompts::{MaskedRequestInfo, PromptService, ServerRequestPolicy, policy_for};
+use crate::prompts::{
+    LiveMaskedTarget, MaskedRequestInfo, MaskedTarget, PromptService, ServerRequestPolicy,
+    policy_for,
+};
 use crate::queue::{QueueCommand, QueueService, queue_command, steer_command};
 pub use crate::rebuild::{RebuildMode, rebuild_foreground};
 use crate::rebuild::{final_prefix, recover_retained, recovered};
@@ -321,7 +324,7 @@ pub enum UserAction {
     },
     /// A masked card was answered; an empty value declines it.
     Masked {
-        request_id: String,
+        target: MaskedTarget,
         value: Zeroizing<String>,
     },
     /// A line the screen wants shown.
@@ -2277,7 +2280,7 @@ pub enum AppEffect {
         note: Option<(PromptKey, String)>,
     },
     AnswerMasked {
-        request_id: String,
+        target: LiveMaskedTarget,
         value: Zeroizing<String>,
     },
     AnswerRecovered {
@@ -6970,19 +6973,22 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
             route(state, produced, note)
         }
         UserAction::Clarify { key, answer } => reduce(state, Event::AnswerClarify { key, answer }),
-        UserAction::Masked { request_id, value } => {
-            if state.opened.as_ref().is_some_and(|opened| {
-                opened.state.open_prompts().any(|prompt| {
-                    prompt.kind == PromptKind::ServerRequest
-                        && prompt.state == PromptState::Open
-                        && prompt.key.prompt_id == request_id
-                })
-            }) {
-                vec![PromptService::answer_recovered(&request_id, value)]
-            } else {
-                vec![AppEffect::AnswerMasked { request_id, value }]
+        UserAction::Masked { target, value } => match target {
+            MaskedTarget::Recovered { request_id } => {
+                if state.opened.as_ref().is_some_and(|opened| {
+                    opened.state.open_prompts().any(|prompt| {
+                        prompt.kind == PromptKind::ServerRequest
+                            && prompt.state == PromptState::Open
+                            && prompt.key.prompt_id == request_id
+                    })
+                }) {
+                    vec![PromptService::answer_recovered(&request_id, value)]
+                } else {
+                    Vec::new()
+                }
             }
-        }
+            MaskedTarget::Live(target) => vec![AppEffect::AnswerMasked { target, value }],
+        },
         UserAction::Notice(text) => vec![notice_lines(&text)],
         UserAction::Queue(intent) => queue_intent(state, intent),
         UserAction::Palette(input) => palette_input(state, input),
@@ -7029,6 +7035,9 @@ fn user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
                 turn_running: state.view().turn_running(),
                 palette_open: state.palette.open,
             };
+            state
+                .attachments
+                .set_workspace(active_attachment_workspace(state));
             match state
                 .attachments
                 .on_key(Some(action), &state.draft, caret, ctx, now)
@@ -8803,20 +8812,25 @@ fn submit_prose(state: &mut AppState, text: String) -> Vec<AppEffect> {
     }
     if state.opened.is_none() {
         return match hold_prompt(state, &text) {
-            Ok(()) => match state.attachments.on_submit(&text) {
-                Ok(expanded) => {
-                    let media = state.attachments.chips.take_draft_payloads(&text);
-                    state
-                        .held_attachments
-                        .push_back(SubmittedAttachments { expanded, media });
-                    clear_submitted_draft(state);
-                    Vec::new()
+            Ok(()) => {
+                state
+                    .attachments
+                    .set_workspace(active_attachment_workspace(state));
+                match state.attachments.on_submit(&text) {
+                    Ok(expanded) => {
+                        let media = state.attachments.chips.take_draft_payloads(&text);
+                        state
+                            .held_attachments
+                            .push_back(SubmittedAttachments { expanded, media });
+                        clear_submitted_draft(state);
+                        Vec::new()
+                    }
+                    Err(notice) => {
+                        state.held.pop_back();
+                        vec![notice_lines(&notice), AppEffect::LoadDraft(text)]
+                    }
                 }
-                Err(notice) => {
-                    state.held.pop_back();
-                    vec![notice_lines(&notice), AppEffect::LoadDraft(text)]
-                }
-            },
+            }
             Err(notice) => vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
         };
     }
@@ -8843,7 +8857,25 @@ fn side_request(state: &mut AppState, draft: String, event: Event) -> Vec<AppEff
     reduce(state, event)
 }
 
+fn active_attachment_workspace(state: &AppState) -> PathBuf {
+    state
+        .folder
+        .cwd
+        .as_deref()
+        .or_else(|| {
+            state
+                .opened
+                .as_ref()
+                .and_then(|opened| opened.info.cwd.as_deref())
+        })
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.attachment_folder.clone())
+}
+
 fn send_text(state: &mut AppState, text: String) -> Vec<AppEffect> {
+    state
+        .attachments
+        .set_workspace(active_attachment_workspace(state));
     let expanded = match state.attachments.on_submit(&text) {
         Ok(expanded) => expanded,
         Err(notice) => return vec![notice_lines(&notice), AppEffect::LoadDraft(text)],
@@ -8902,6 +8934,21 @@ fn theme_command(state: &mut AppState, argument: &str) -> Vec<AppEffect> {
     effects
 }
 
+/// The foreground owns requests for its opened and retained sessions, as well as requests
+/// without a session id.
+fn foreground_owns_request(state: &AppState, session_id: Option<&str>) -> bool {
+    match session_id.map(str::trim).filter(|id| !id.is_empty()) {
+        None => true,
+        Some(id) => {
+            state
+                .opened
+                .as_ref()
+                .is_some_and(|opened| opened.session_id == id)
+                || retained_key(state, id).is_some()
+        }
+    }
+}
+
 /// The `skin.changed` event in this link event, as `(params, replayed)`.
 fn skin_event(event: &LinkEvent) -> Option<(&Value, bool)> {
     let LinkEvent::Inbound {
@@ -8948,11 +8995,19 @@ fn event_position(raw: &Value) -> (Option<&str>, Option<u64>) {
 }
 
 fn enqueue_server_request(state: &AppState, executor: &Executor, request: ServerRequest) {
+    if !foreground_owns_request(state, request.session_id.as_deref()) {
+        request.responder.ignore();
+        return;
+    }
     let Some(prompts) = &state.prompts else {
         return;
     };
     executor.prompt_task(prompts, move |prompts| async move {
-        let notices = prompts.lock().await.on_server_request(request).await;
+        let notices = prompts
+            .lock()
+            .await
+            .on_server_request_for_session(request, None)
+            .await;
         (Vec::new(), notice_texts(notices))
     });
 }
@@ -9423,6 +9478,12 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
                         None,
                     );
                 }
+                // A same-profile workflow reuses this socket. Answering its request, including
+                // with `-32601`, settles the prompt for every viewer.
+                if !foreground_owns_request(state, request.session_id.as_deref()) {
+                    request.responder.ignore();
+                    return Vec::new();
+                }
                 vec![AppEffect::ServerRequest(request)]
             }
             Inbound::Malformed(_) | Inbound::Closed(_) => Vec::new(),
@@ -9473,6 +9534,64 @@ fn link_event(state: &mut AppState, event: LinkEvent) -> Vec<AppEffect> {
             effects.append(&mut closing);
             effects
         }
+    }
+}
+
+#[cfg(test)]
+mod link_event_prompt_tests {
+    use super::*;
+    use hermes_client::{Generation, Responder};
+    use hermes_contract::{schemas::SudoRequestParams, server_requests};
+
+    fn state_with_retained_session() -> AppState {
+        let open = |id: &str| {
+            let mut snapshot: hermes_contract::schemas::CanonicalSnapshot =
+                serde_json::from_str(include_str!("../tests/data/running_turn.json"))
+                    .expect("snapshot");
+            snapshot.session_id = id.into();
+            snapshot.stored_session_id = id.into();
+            OpenedSession::from_snapshot(snapshot)
+        };
+        let mut state = AppState::new("prompt-owner");
+        state.opened = Some(open("s2"));
+        state.retained_sessions.insert(
+            RowKey {
+                profile: state.profile.clone(),
+                session_id: "s1".into(),
+            },
+            open("s1"),
+        );
+        state
+    }
+
+    fn sudo_request(session_id: &str) -> LinkEvent {
+        LinkEvent::Inbound {
+            item: Inbound::ServerRequest(ServerRequest {
+                generation: Generation(0),
+                id: "srq-1".into(),
+                session_id: Some(session_id.into()),
+                request: server_requests::ServerRequest::Sudo(SudoRequestParams {
+                    command: "true".into(),
+                    session_id: session_id.into(),
+                }),
+                responder: Responder::detached(Arc::default()),
+            }),
+            replayed: false,
+        }
+    }
+
+    #[test]
+    fn retained_session_request_reaches_the_prompt_service() {
+        let effects = link_event(&mut state_with_retained_session(), sudo_request("s1"));
+        assert!(
+            matches!(effects.as_slice(), [AppEffect::ServerRequest(request)] if request.session_id.as_deref() == Some("s1"))
+        );
+    }
+
+    #[test]
+    fn request_for_an_unknown_session_is_still_ignored() {
+        let effects = link_event(&mut state_with_retained_session(), sudo_request("s9"));
+        assert!(effects.is_empty());
     }
 }
 
@@ -9576,6 +9695,7 @@ fn opened_session(
             effects.push(AppEffect::CommitCells(range.clone()));
         }
     }
+    opened.state.publish_commit_cursor(range.end);
     state.committed_cells = range.end;
     effects.push(AppEffect::Track {
         session_id: opened.session_id.clone(),
@@ -9969,18 +10089,20 @@ fn interrupt_done(
 
 /// Commit cells that became final, and tell the prompt service when the open prompts changed.
 fn commit_ready(state: &mut AppState) -> Vec<AppEffect> {
-    let Some(opened) = state.opened.as_ref() else {
+    let Some(opened) = state.opened.as_mut() else {
         return Vec::new();
     };
     let mut effects = Vec::new();
     let ready = opened.state.final_prefix_len();
-    if ready > state.committed_cells {
-        effects.push(AppEffect::CommitCells(state.committed_cells..ready));
+    // Compaction moves this cursor with the cells, so a newly final cell that
+    // slid behind the old position is still committed.
+    let baseline = opened.state.commit_cursor();
+    if ready > baseline {
+        effects.push(AppEffect::CommitCells(baseline..ready));
     }
-    state.committed_cells = state
-        .committed_cells
-        .max(ready)
-        .min(opened.state.cells().len());
+    let committed = ready.min(opened.state.cells().len());
+    state.committed_cells = committed;
+    opened.state.publish_commit_cursor(committed);
     let open: Vec<PromptKey> = opened
         .state
         .open_prompts()
@@ -10936,6 +11058,9 @@ fn open_failure(error: OpenError, launch: &Launch) -> LaunchFailure {
         (OpenError::NotInFolder { .. }, _) => failure::nothing_to_continue(),
         (OpenError::FolderUnknown, _) => failure::folder_unknown(),
         (OpenError::Refused { reason }, _) => failure::refusal(&reason),
+        (OpenError::MismatchedSession { .. }, _) => {
+            failure::link_failure("the gateway returned a snapshot for a different session")
+        }
         (OpenError::Unknown, StartMode::New) => failure::create_lost_twice(),
         (OpenError::Unknown, _) => {
             failure::link_failure("the connection dropped before Hermes answered")
@@ -12665,7 +12790,6 @@ fn apply<S: Screen>(
                     run,
                     crate::workflow_progress::WorkflowConnection {
                         home: state.hermes_home.clone(),
-                        foreground_profile: state.profile.clone(),
                         fallback: client,
                         cache: executor.workflow_connections.clone(),
                     },
@@ -13087,12 +13211,12 @@ fn apply<S: Screen>(
                 };
                 executor.queue_call(client, SessionId::new(&opened.session_id), effect);
             }
-            AppEffect::AnswerMasked { request_id, value } => {
+            AppEffect::AnswerMasked { target, value } => {
                 let Some(prompts) = &state.prompts else {
                     continue;
                 };
                 executor.prompt_task(prompts, move |prompts| async move {
-                    let result = prompts.lock().await.answer_masked(&request_id, value).await;
+                    let result = prompts.lock().await.answer_masked(&target, value).await;
                     let notices = match result {
                         Ok(()) => Vec::new(),
                         Err(_) => vec![
@@ -15316,6 +15440,9 @@ async fn run_inner<S: Screen>(
         .unwrap_or_default();
     state.attachments.set_home(state.attachment_home.clone());
     state.attachment_folder = launch.folder.clone();
+    state
+        .attachments
+        .set_workspace(state.attachment_folder.clone());
     state.key_bindings = setup.keys.clone();
     state.toggle_label = screen.toggle_label();
     state.interrupt_label = screen.interrupt_label();
@@ -15896,9 +16023,8 @@ fn review_located(
         return Vec::new();
     };
     let root = target.main_root.clone();
-    if !state.review_repos.contains(&root) {
-        state.review_repos.push(root.clone());
-    }
+    // A checkout Git discovered is not enrolled. review_repos holds only folders
+    // the operator selected.
     pr.know(&root);
     pr.want(crate::review::PrDemand::Review(root.clone(), true));
     if let Some(record) = &target.record {
@@ -15955,8 +16081,9 @@ fn review_locate_job(state: &AppState, row: RowKey, origin: ReviewOrigin) -> Rev
         .opened
         .as_ref()
         .and_then(|opened| opened.info.cwd.clone());
-    let mut folders = vec![state.launch_folder.clone()];
-    folders.extend(foreground_cwd.clone().map(PathBuf::from));
+    // Roots come from folders the operator already holds. The gateway cwd is a
+    // candidate to check against those roots, never a root of its own.
+    let folders = vec![state.launch_folder.clone()];
     ReviewLocateJob {
         row,
         origin,
@@ -15978,12 +16105,13 @@ impl ReviewLocateJob {
         let git = crate::worktree::GitRunner::from_env();
         let mut known = KnownRepos::new();
         for root in self.roots {
-            known.insert(root);
+            known.insert_explicit(root);
         }
         for folder in &self.folders {
-            if let Ok(root) = crate::worktree::main_root_of(&git, folder).await {
-                known.insert(root);
+            if folder.as_os_str().is_empty() {
+                continue;
             }
+            known.insert_explicit(folder.clone());
         }
         let source = LinkInfoSource::new(self.home, self.profile);
         let ctx = LocateContext {
@@ -16016,6 +16144,116 @@ impl ReviewLocateJob {
             origin: self.origin,
             info,
         }
+    }
+}
+
+#[cfg(test)]
+mod review_cwd_trust_tests {
+    use super::*;
+
+    fn opened_with_cwd(cwd: &str) -> AppState {
+        let mut state = AppState::new("review-trust");
+        state.profile = "fixture".into();
+        state.launch_folder = PathBuf::from("/operator/launch");
+        state
+            .review_repos
+            .push(PathBuf::from("/operator/known-root"));
+        state.opened = Some(OpenedSession {
+            state: SessionState::empty(SessionId::new("session")),
+            session_id: "session".into(),
+            stored_session_id: "session".into(),
+            subscription_id: "subscription".into(),
+            title: None,
+            revision: 0,
+            execution_generation: 0,
+            launch_notices: Vec::new(),
+            effort: None,
+            info: SessionInfoSummary {
+                model: None,
+                provider: None,
+                cwd: Some(cwd.to_owned()),
+                branch: None,
+            },
+            cursor: Cursor {
+                replay_epoch: "epoch".into(),
+                last_sequence: 0,
+            },
+        });
+        state
+    }
+
+    #[test]
+    fn review_locate_job_never_seeds_gateway_cwd() {
+        let state = opened_with_cwd("/hostile/repo");
+        let job = review_locate_job(
+            &state,
+            RowKey {
+                profile: "fixture".into(),
+                session_id: "session".into(),
+            },
+            ReviewOrigin::Changes,
+        );
+        assert!(
+            job.folders
+                .iter()
+                .all(|folder| folder != Path::new("/hostile/repo")),
+            "gateway cwd must not be seeded as a trusted folder: {:?}",
+            job.folders
+        );
+        assert!(
+            job.roots
+                .iter()
+                .all(|root| root != Path::new("/hostile/repo")),
+            "gateway cwd must not be seeded as a known root: {:?}",
+            job.roots
+        );
+        assert!(
+            job.folders
+                .iter()
+                .any(|folder| folder == Path::new("/operator/launch")),
+            "the launch folder stays trusted: {:?}",
+            job.folders
+        );
+        assert!(
+            job.roots
+                .iter()
+                .any(|root| root == Path::new("/operator/known-root")),
+            "review repos stay trusted: {:?}",
+            job.roots
+        );
+        let (_, cwd) = job.foreground.expect("the foreground candidate");
+        assert_eq!(cwd.as_deref(), Some("/hostile/repo"));
+    }
+
+    #[test]
+    fn review_located_does_not_enroll_a_discovered_main_root() {
+        let mut state = opened_with_cwd("/operator/launch/linked");
+        let (sender, _received) = mpsc::unbounded_channel();
+        state.sender = Some(sender);
+        let before = state.review_repos.clone();
+        let target = talaria_core::review::ReviewTarget {
+            folder: PathBuf::from("/operator/launch/linked"),
+            main_root: PathBuf::from("/outside/main"),
+            session: None,
+            record: None,
+            title: "linked".to_owned(),
+        };
+        let _ = review_located(
+            &mut state,
+            crate::review::Located::Found(target),
+            ReviewOrigin::Changes,
+            None,
+        );
+        assert_eq!(
+            state.review_repos, before,
+            "a discovered main checkout must not join the trust set"
+        );
+        assert!(
+            state
+                .review_repos
+                .iter()
+                .all(|root| root != Path::new("/outside/main"))
+        );
     }
 }
 
@@ -16347,23 +16585,32 @@ mod comfort_event_tests {
             let prompts = Arc::new(Mutex::new(PromptService::new(Box::new(|| {
                 "talaria-retained-1".to_owned()
             }))));
-            prompts
-                .lock()
-                .await
-                .on_server_request(ServerRequest {
-                    generation: hermes_client::Generation(1),
-                    id: "srq-retained".into(),
-                    session_id: Some(background.clone()),
-                    request: hermes_contract::server_requests::ServerRequest::Sudo(
-                        hermes_contract::schemas::SudoRequestParams {
-                            command: "sudo true".into(),
-                            session_id: background.clone(),
-                        },
-                    ),
-                    responder: hermes_client::Responder::detached(Arc::new(AtomicU64::new(0))),
-                })
-                .await;
             state.prompts = Some(Arc::clone(&prompts));
+            let (sender, mut receiver) = mpsc::unbounded_channel();
+            let executor = Executor::new(sender);
+            let effects = link_event(
+                &mut state,
+                LinkEvent::Inbound {
+                    item: Inbound::ServerRequest(sudo_request("srq-retained", &background)),
+                    replayed: false,
+                },
+            );
+            let Ok([AppEffect::ServerRequest(request)]) = <[_; 1]>::try_from(effects) else {
+                panic!("a retained session's request must reach the prompt service");
+            };
+            enqueue_server_request(&state, &executor, request);
+            let AppMessage::PromptDone {
+                masked: Some(cards),
+                ..
+            } = prompt_done(&mut receiver).await
+            else {
+                panic!("the prompt service must publish masked cards");
+            };
+            let [card] = cards.as_slice() else {
+                panic!("the retained session's request must open one masked card");
+            };
+            assert_eq!(card.session_id.as_deref(), Some(background.as_str()));
+            let target = card.target();
             let raw = json!({
                 "session_id": background,
                 "replay_epoch": "epoch-1",
@@ -16404,7 +16651,7 @@ mod comfort_event_tests {
                 "cancelling the responder must record the withdrawal"
             );
             let error = prompts
-                .answer_masked("srq-retained", Zeroizing::new("secret".into()))
+                .answer_masked(&target, Zeroizing::new("secret".into()))
                 .await
                 .expect_err("a cancelled responder must refuse a late answer");
             assert_eq!(error, hermes_client::RespondError::Cancelled);
@@ -16601,8 +16848,15 @@ mod comfort_event_tests {
                 .and_then(|configure| configure.hidden_session_id())
                 .expect("the configure session id")
                 .to_owned();
-            enqueue_server_request(&state, &executor, sudo_request("srq-configure", &hidden));
-            prompt_done(&mut receiver).await;
+            prompts
+                .lock()
+                .await
+                .on_server_request_for_session(
+                    sudo_request("srq-configure", &hidden),
+                    Some(&hidden),
+                )
+                .await;
+            assert_eq!(prompts.lock().await.masked_requests().len(), 1);
             let effects = update(
                 &mut state,
                 cancel_message(&hidden, "epoch-1", 1, "srq-configure"),
@@ -16633,15 +16887,10 @@ mod comfort_event_tests {
             prompt_done(&mut receiver).await;
             enqueue_server_request(&state, &executor, sudo_request("srq-race", &foreground));
             prompt_done(&mut receiver).await;
-            let mut prompts = prompts.lock().await;
             assert!(
-                prompts.masked_requests().is_empty(),
+                prompts.lock().await.masked_requests().is_empty(),
                 "a register that loses the race to cancel must not restore the card"
             );
-            let error = prompts
-                .answer_masked("srq-race", Zeroizing::new("secret".into()))
-                .await;
-            assert_eq!(error, Err(hermes_client::RespondError::Cancelled));
         });
     }
 

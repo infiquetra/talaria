@@ -241,6 +241,8 @@ mod profile_names;
 mod profile_roster;
 #[path = "integration/profiles_state.rs"]
 mod profiles_state;
+#[path = "integration/prompt_notice_bounds.rs"]
+mod prompt_notice_bounds;
 #[path = "integration/providers_browse.rs"]
 mod providers_browse;
 #[path = "integration/providers_endpoints.rs"]
@@ -333,6 +335,8 @@ mod speakable_summary;
 mod subagent_batch;
 #[path = "integration/subagent_tree.rs"]
 mod subagent_tree;
+#[path = "integration/text_sanitize.rs"]
+mod text_sanitize;
 #[path = "integration/tool_generating.rs"]
 mod tool_generating;
 #[path = "integration/tool_view.rs"]

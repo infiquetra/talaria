@@ -1,6 +1,7 @@
 //! The protocol side of prompt cards: answering server requests and respond calls.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use hermes_client::{CallError, Client, RespondError, Responder, ServerRequest};
@@ -17,6 +18,25 @@ use crate::app::AppEffect;
 
 /// Cancelled request ids kept so a late register cannot restore the card.
 const CANCELLED_REQUEST_LIMIT: usize = 64;
+
+static NEXT_SERVICE: AtomicU64 = AtomicU64::new(1);
+
+/// A live masked card, bound to the service and request that opened it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveMaskedTarget {
+    pub token: String,
+    pub session_id: Option<String>,
+    pub generation: u64,
+    pub instance_id: u64,
+    pub service_id: u64,
+}
+
+/// A masked answer is either a live card or a recovered prompt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MaskedTarget {
+    Live(LiveMaskedTarget),
+    Recovered { request_id: String },
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaskedKind {
@@ -70,6 +90,14 @@ pub(crate) fn cancel_reason_notice(reason: &str) -> String {
 #[derive(Clone, Debug)]
 pub struct MaskedRequestInfo {
     pub id: String,
+    /// Client-generated identity for the card and for [`PromptService::answer_masked`].
+    pub token: String,
+    /// Connection generation that delivered the request.
+    pub generation: u64,
+    /// The responder instance on that connection.
+    pub instance_id: u64,
+    /// The [`PromptService`] that accepted the request.
+    pub service_id: u64,
     pub session_id: Option<String>,
     pub kind: MaskedKind,
     pub fields: Vec<(&'static str, String)>,
@@ -87,13 +115,28 @@ pub struct Executed {
     pub notices: Vec<PromptNotice>,
 }
 
+impl MaskedRequestInfo {
+    pub fn target(&self) -> LiveMaskedTarget {
+        LiveMaskedTarget {
+            token: self.token.clone(),
+            session_id: self.session_id.clone(),
+            generation: self.generation,
+            instance_id: self.instance_id,
+            service_id: self.service_id,
+        }
+    }
+}
+
 pub struct PromptService {
+    service_id: u64,
     next_submission_id: Box<dyn FnMut() -> String + Send>,
+    next_token: u64,
     generation: Option<u64>,
     masked: Vec<(MaskedRequestInfo, Responder)>,
     /// Request ids whose cancel arrived, including ones that had no card yet.
     cancelled_requests: VecDeque<String>,
     answered_requests: HashMap<String, (Option<String>, &'static str)>,
+    answered_order: VecDeque<String>,
     notified_kinds: HashSet<&'static str>,
     open_prompts: Vec<PromptKey>,
     answered_prompts: HashSet<PromptKey>,
@@ -103,11 +146,14 @@ pub struct PromptService {
 impl PromptService {
     pub fn new(next_submission_id: Box<dyn FnMut() -> String + Send>) -> Self {
         Self {
+            service_id: NEXT_SERVICE.fetch_add(1, Ordering::Relaxed),
             next_submission_id,
+            next_token: 0,
             generation: None,
             masked: Vec::new(),
             cancelled_requests: VecDeque::new(),
             answered_requests: HashMap::new(),
+            answered_order: VecDeque::new(),
             notified_kinds: HashSet::new(),
             open_prompts: Vec::new(),
             answered_prompts: HashSet::new(),
@@ -116,6 +162,26 @@ impl PromptService {
     }
 
     pub async fn on_server_request(&mut self, req: ServerRequest) -> Vec<PromptNotice> {
+        self.on_server_request_for_session(req, None).await
+    }
+
+    /// Answer `req` when it belongs to `owned_session`.
+    ///
+    /// A request that names a different session is left unanswered. `None` keeps the
+    /// caller responsible for that check.
+    pub async fn on_server_request_for_session(
+        &mut self,
+        req: ServerRequest,
+        owned_session: Option<&str>,
+    ) -> Vec<PromptNotice> {
+        if let (Some(owned), Some(session)) = (
+            owned_session.filter(|id| !id.is_empty()),
+            req.session_id.as_deref().filter(|id| !id.is_empty()),
+        ) && session != owned
+        {
+            req.responder.ignore();
+            return Vec::new();
+        }
         if self
             .generation
             .is_some_and(|generation| req.generation.0 < generation)
@@ -154,8 +220,7 @@ impl PromptService {
             _ => {
                 let message = format!("talaria does not support server request: {method}");
                 if req.responder.fail(-32601, &message).await.is_ok() {
-                    self.answered_requests
-                        .insert(req.id, (session_id.clone(), method));
+                    self.remember_answered(req.id, session_id.clone(), method);
                 } else {
                     req.responder.ignore();
                 }
@@ -171,9 +236,31 @@ impl PromptService {
                 return notices;
             }
         };
+        let fields = fields
+            .into_iter()
+            .map(|(name, value)| (name, bounded_field(value)))
+            .collect();
+        if self.masked.len() >= MAX_OPEN_MASKED {
+            if req
+                .responder
+                .fail(-32000, "too many open masked requests")
+                .await
+                .is_err()
+            {
+                req.responder.ignore();
+            }
+            return notices;
+        }
+        self.next_token = self.next_token.saturating_add(1);
+        let token = format!("masked-{}", self.next_token);
+        let generation = req.generation.0;
         self.masked.push((
             MaskedRequestInfo {
                 id: req.id,
+                token,
+                generation,
+                instance_id: req.responder.instance_id(),
+                service_id: self.service_id,
                 session_id,
                 kind,
                 fields,
@@ -185,7 +272,11 @@ impl PromptService {
 
     pub fn on_request_cancel(&mut self, id: &str, method: &str, reason: &str) -> Vec<PromptNotice> {
         self.remember_cancelled(id);
-        if let Some(index) = self.masked.iter().position(|(info, _)| info.id == id) {
+        if let Some(index) = self
+            .masked
+            .iter()
+            .position(|(info, _)| info.id == id && masked_method(info.kind) == method)
+        {
             let (info, responder) = self.masked.remove(index);
             responder.ignore();
             let text = cancel_reason_notice(reason);
@@ -194,16 +285,17 @@ impl PromptService {
                 text,
             }];
         }
-        if let Some((session_id, _)) = self.answered_requests.remove(id)
-            && matches!(reason, "timeout" | "interrupted")
-        {
-            return vec![PromptNotice {
-                session_id,
-                text: format!(
-                    "Hermes did not accept the answer to {}; the agent continued without it",
-                    sanitize(method)
-                ),
-            }];
+        if let Some((session_id, _)) = self.answered_requests.remove(id) {
+            self.answered_order.retain(|existing| existing != id);
+            if matches!(reason, "timeout" | "interrupted") {
+                return vec![PromptNotice {
+                    session_id,
+                    text: format!(
+                        "Hermes did not accept the answer to {}; the agent continued without it",
+                        sanitize(method)
+                    ),
+                }];
+            }
         }
         Vec::new()
     }
@@ -230,6 +322,7 @@ impl PromptService {
         self.generation = Some(generation);
         self.answered_requests.clear();
         self.cancelled_requests.clear();
+        self.answered_order.clear();
         self.notified_kinds.clear();
         self.masked
             .drain(..)
@@ -263,16 +356,24 @@ impl PromptService {
 
     pub async fn answer_masked(
         &mut self,
-        request_id: &str,
+        target: &LiveMaskedTarget,
         value: Zeroizing<String>,
     ) -> Result<(), RespondError> {
-        let Some(index) = self
-            .masked
-            .iter()
-            .position(|(info, _)| info.id == request_id)
-        else {
+        if target.service_id != self.service_id {
+            return Err(RespondError::Cancelled);
+        }
+        let Some(index) = self.masked_index(target) else {
             return Err(RespondError::Cancelled);
         };
+        if self
+            .generation
+            .is_some_and(|current| self.masked[index].0.generation != current)
+            || target.generation != self.masked[index].0.generation
+        {
+            let (_, responder) = self.masked.remove(index);
+            responder.ignore();
+            return Err(RespondError::Cancelled);
+        }
         // Borrow the zeroing buffer; the transport alone serializes the response value.
         let result = self.masked[index]
             .1
@@ -280,8 +381,7 @@ impl PromptService {
             .await;
         if result.is_ok() {
             let (info, responder) = self.masked.remove(index);
-            self.answered_requests
-                .insert(info.id, (info.session_id, masked_method(info.kind)));
+            self.remember_answered(info.id, info.session_id, masked_method(info.kind));
             drop(responder);
         } else if matches!(
             result,
@@ -291,6 +391,16 @@ impl PromptService {
             responder.ignore();
         }
         result
+    }
+
+    fn masked_index(&self, target: &LiveMaskedTarget) -> Option<usize> {
+        self.masked.iter().position(|(info, _)| {
+            info.service_id == target.service_id
+                && info.token == target.token
+                && info.instance_id == target.instance_id
+                && info.generation == target.generation
+                && info.session_id == target.session_id
+        })
     }
 
     pub fn masked_requests(&self) -> Vec<MaskedRequestInfo> {
@@ -504,6 +614,49 @@ fn call_reason(error: &CallError) -> String {
         CallError::Rpc(error) => error.reason.clone().unwrap_or_else(|| error.to_string()),
         _ => error.to_string(),
     }
+}
+
+const MAX_OPEN_MASKED: usize = 64;
+const MAX_ANSWERED_REQUESTS: usize = 256;
+const MAX_MASKED_FIELD_BYTES: usize = 4096;
+const FIELD_SUFFIX: &str = "… (truncated)";
+
+impl PromptService {
+    fn remember_answered(&mut self, id: String, session_id: Option<String>, method: &'static str) {
+        if let Some(stored) = self.answered_requests.get_mut(&id) {
+            *stored = (session_id, method);
+            return;
+        }
+        while self.answered_requests.len() >= MAX_ANSWERED_REQUESTS {
+            let Some(old) = self.answered_order.pop_front() else {
+                break;
+            };
+            self.answered_requests.remove(&old);
+        }
+        self.answered_order.push_back(id.clone());
+        self.answered_requests.insert(id, (session_id, method));
+    }
+}
+
+fn bounded_field(value: String) -> String {
+    if value.len() <= MAX_MASKED_FIELD_BYTES {
+        return value;
+    }
+    let end = floor_char_boundary(&value, MAX_MASKED_FIELD_BYTES - FIELD_SUFFIX.len());
+    let mut out = String::with_capacity(end + FIELD_SUFFIX.len());
+    out.push_str(&value[..end]);
+    out.push_str(FIELD_SUFFIX);
+    out
+}
+
+fn floor_char_boundary(value: &str, mut index: usize) -> usize {
+    if index > value.len() {
+        return value.len();
+    }
+    while index > 0 && !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 fn masked_method(kind: MaskedKind) -> &'static str {

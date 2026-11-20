@@ -135,6 +135,8 @@ pub struct SessionState {
     pub(crate) connection_card: Option<ConnectionCard>,
     pub(crate) session_id: SessionId,
     pub(crate) cells: Vec<Cell>,
+    /// Cells pruned from the transcript. Their ids stay allocated.
+    pub(crate) removed_cells: u64,
     pub(crate) final_prefix: usize,
     pub(crate) turn: TurnState,
     pub(crate) turn_start: usize,
@@ -143,6 +145,12 @@ pub struct SessionState {
     pub(crate) had_reasoning: bool,
     pub(crate) tools: HashMap<String, usize>,
     pub(crate) prompts: HashMap<PromptKey, usize>,
+    /// Prompts currently `Open` or `Answering`. Admission stops at 64.
+    pub(crate) open_prompt_count: usize,
+    /// Settled prompt keys, oldest first. Length is the settled count.
+    pub(crate) settled_order: VecDeque<PromptKey>,
+    /// Native-scrollback cells already handed to the terminal, in current cell order.
+    pub(crate) commit_cursor: usize,
     pub(crate) submissions: VecDeque<Submission>,
     pub(crate) interrupted: bool,
     pub(crate) interrupt_notice: bool,
@@ -185,6 +193,7 @@ impl SessionState {
             connection_card: None,
             session_id,
             cells: Vec::new(),
+            removed_cells: 0,
             final_prefix: 0,
             turn: TurnState::Idle,
             turn_start: 0,
@@ -193,6 +202,9 @@ impl SessionState {
             had_reasoning: false,
             tools: HashMap::new(),
             prompts: HashMap::new(),
+            open_prompt_count: 0,
+            settled_order: VecDeque::new(),
+            commit_cursor: 0,
             submissions: VecDeque::new(),
             interrupted: false,
             interrupt_notice: false,
@@ -300,6 +312,16 @@ impl SessionState {
         self.final_prefix
     }
 
+    /// Record how many cells the terminal has already committed, before this update.
+    pub fn publish_commit_cursor(&mut self, committed: usize) {
+        self.commit_cursor = committed;
+    }
+
+    /// Cells already committed, after compaction in this update.
+    pub fn commit_cursor(&self) -> usize {
+        self.commit_cursor
+    }
+
     /// Cells after [`Self::final_prefix_len`].
     pub fn live_tail(&self) -> &[Cell] {
         &self.cells[self.final_prefix..]
@@ -397,6 +419,7 @@ impl SessionState {
         CellId::new(
             u64::try_from(self.cells.len())
                 .unwrap_or(u64::MAX)
+                .saturating_add(self.removed_cells)
                 .saturating_add(1),
         )
     }

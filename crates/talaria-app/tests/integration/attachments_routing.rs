@@ -146,3 +146,111 @@ fn keys_paste_and_session_change() {
             if text == "  \n"
     )));
 }
+
+/// Accepting or submitting an `@file` completion uses the same credential-path guard.
+#[test]
+fn completion_refuses_credential_files() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let home = tempfile::tempdir().expect("home");
+    let root = workspace.path();
+    for name in [".env.prod", "server.pem", "id_ed25519", "notes.txt"] {
+        std::fs::write(root.join(name), b"x").expect(name);
+    }
+    let mut names = vec![".env.prod", "server.pem", "id_ed25519"];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join(".env.prod"), root.join("alias.txt")).expect("alias");
+        names.push("alias.txt");
+    }
+
+    let mut state = AttachmentsState::new(CollapseRule::HERMES_DEFAULT, 16 * 1024 * 1024);
+    state.set_home(home.path().to_path_buf());
+    state.set_workspace(root.to_path_buf());
+    let now = std::time::Instant::now();
+    let idle = RouteContext {
+        turn_running: false,
+        palette_open: false,
+    };
+
+    for name in names {
+        let draft = format!("read @{name}");
+        state.on_edit(&draft, draft.len(), true, now);
+        let request = state
+            .mention
+            .tick(now + Duration::from_millis(60))
+            .expect("request");
+        state.mention.on_items(
+            request.generation,
+            vec![CompletionItem {
+                text: format!("@file:{name}"),
+                display: name.to_owned(),
+                meta: String::new(),
+                kind: None,
+            }],
+        );
+        let route = state.on_key(
+            Some(Action::CompletionAccept),
+            &draft,
+            draft.len(),
+            idle,
+            now,
+        );
+        match route {
+            KeyRoute::Consumed(effects) => {
+                assert!(
+                    effects.iter().any(|effect| matches!(
+                        effect,
+                        AttachmentEffect::Notice(text)
+                            if text == "Talaria does not attach credential files."
+                    )),
+                    "{name} completion was accepted: {effects:?}"
+                );
+                assert!(
+                    effects
+                        .iter()
+                        .all(|effect| !matches!(effect, AttachmentEffect::EditDraft { .. })),
+                    "{name} completion changed the draft"
+                );
+            }
+            KeyRoute::PassToComposer => panic!("{name} completion was not consumed"),
+        }
+        let submitted = state.on_submit(&format!("please read @file:{name}"));
+        assert_eq!(
+            submitted.expect_err("credential reference"),
+            "Talaria does not attach credential files."
+        );
+    }
+
+    let draft = "read @notes";
+    state.on_edit(draft, draft.len(), true, now);
+    let request = state
+        .mention
+        .tick(now + Duration::from_millis(60))
+        .expect("request");
+    state.mention.on_items(
+        request.generation,
+        vec![CompletionItem {
+            text: "@file:notes.txt".to_owned(),
+            display: "notes.txt".to_owned(),
+            meta: String::new(),
+            kind: None,
+        }],
+    );
+    let route = state.on_key(
+        Some(Action::CompletionAccept),
+        draft,
+        draft.len(),
+        idle,
+        now,
+    );
+    match route {
+        KeyRoute::Consumed(effects) => assert!(effects.iter().any(|effect| matches!(
+            effect,
+            AttachmentEffect::EditDraft { text, .. } if text.contains("@file:notes.txt")
+        ))),
+        KeyRoute::PassToComposer => panic!("notes.txt completion was not accepted"),
+    }
+    state
+        .on_submit("please read @file:notes.txt")
+        .expect("ordinary file submits");
+}

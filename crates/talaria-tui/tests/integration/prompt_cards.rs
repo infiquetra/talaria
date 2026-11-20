@@ -6,6 +6,8 @@
 
 use std::time::{Duration, Instant};
 
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use serde_json::json;
@@ -131,6 +133,13 @@ fn masked_view(method: &str, fields: &[(&str, &str)]) -> MaskedView {
             .iter()
             .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
             .collect(),
+        target: talaria_tui::prompts::LiveMaskedTarget {
+            token: MASKED_ID.to_owned(),
+            session_id: Some(MAIN.to_owned()),
+            generation: 1,
+            instance_id: 1,
+            service_id: 1,
+        },
     }
 }
 
@@ -206,7 +215,13 @@ impl Outcome {
     fn masked(self) -> (String, MaskedValue) {
         assert!(!self.interrupt_requested, "an answer is not an interrupt");
         match self.intent {
-            Some(PromptIntent::Masked { request_id, value }) => (request_id, value),
+            Some(PromptIntent::Masked { target, value }) => {
+                let request_id = match target {
+                    talaria_tui::prompts::MaskedTarget::Live(target) => target.token,
+                    talaria_tui::prompts::MaskedTarget::Recovered { request_id } => request_id,
+                };
+                (request_id, value)
+            }
             other => panic!("expected a masked intent, got {}", intent_kind(&other)),
         }
     }
@@ -443,6 +458,126 @@ fn approval_card_snapshot_80_and_160_cols() {
         snapshot!("approval_hostile_160"),
         "approval_hostile_160",
     );
+}
+
+#[test]
+fn approval_card_shows_nbsp_as_a_visible_stand_in() {
+    let cell = approval("rm\u{00A0}-rf", &["once", "deny"]);
+    let mut stack = PromptStack::new();
+    stack.sync(Some(MAIN), &[&cell], &[], true, Instant::now());
+    let section = stack.section().expect("the approval card is on screen");
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    terminal
+        .draw(|frame| section.render(frame.area(), frame.buffer_mut()))
+        .expect("draw");
+    let buffer = terminal.backend().buffer();
+    let mut screen = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            screen.push_str(buffer[(x, y)].symbol());
+        }
+        screen.push('\n');
+    }
+    let stand_in = "\u{2039}U+00A0\u{203a}";
+    assert!(
+        screen.contains(stand_in),
+        "the approval card must show a visible stand-in for U+00A0: {screen:?}"
+    );
+    assert!(
+        !screen.contains('\u{00A0}'),
+        "the approval card must not draw raw U+00A0: {screen:?}"
+    );
+}
+
+fn approval_screen(command: &str) -> String {
+    let cell = approval(command, &["once", "deny"]);
+    let mut stack = PromptStack::new();
+    stack.sync(Some(MAIN), &[&cell], &[], true, Instant::now());
+    let section = stack.section().expect("the approval card is on screen");
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    terminal
+        .draw(|frame| section.render(frame.area(), frame.buffer_mut()))
+        .expect("draw");
+    let buffer = terminal.backend().buffer();
+    let mut screen = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            screen.push_str(buffer[(x, y)].symbol());
+        }
+        screen.push('\n');
+    }
+    screen
+}
+
+#[test]
+fn approval_cards_distinguish_crlf_from_lf_and_tab_from_spaces() {
+    let crlf = "echo \"a\r\nb\"";
+    let lf = "echo \"a\nb\"";
+    let crlf_screen = approval_screen(crlf);
+    let lf_screen = approval_screen(lf);
+    assert_ne!(crlf_screen, lf_screen, "CRLF and LF drew the same card");
+    assert!(crlf_screen.contains('\u{240d}'), "{crlf_screen:?}");
+    assert!(!lf_screen.contains('\u{240d}'), "{lf_screen:?}");
+
+    let tab = "echo \"a\tb\"";
+    let spaces = "echo \"a    b\"";
+    let tab_screen = approval_screen(tab);
+    let spaces_screen = approval_screen(spaces);
+    assert_ne!(
+        tab_screen, spaces_screen,
+        "tab and four spaces drew the same card"
+    );
+    assert!(tab_screen.contains('\u{2409}'), "{tab_screen:?}");
+    assert!(!spaces_screen.contains('\u{2409}'), "{spaces_screen:?}");
+    assert!(!tab_screen.contains('\t'), "{tab_screen:?}");
+
+    let cell = approval(crlf, &["once", "deny"]);
+    let mut rig = Rig::approval(&cell);
+    let (_key, choice, note) = rig.press(named(KeyCode::Enter)).approve();
+    assert_eq!(choice, "once");
+    assert_eq!(note, None);
+    assert_eq!(cell.command.as_deref(), Some(crlf));
+
+    let tab_cell = approval(tab, &["once", "deny"]);
+    let mut tab_rig = Rig::approval(&tab_cell);
+    let (_key, choice, note) = tab_rig.press(named(KeyCode::Enter)).approve();
+    assert_eq!(choice, "once");
+    assert_eq!(note, None);
+    assert_eq!(tab_cell.command.as_deref(), Some(tab));
+}
+
+#[test]
+fn approval_cards_distinguish_commands_that_differ_by_zero_width_marks() {
+    let plain = "rm -rf";
+    let marked = "rm\u{034f}\u{180b}\u{180c}\u{180d}\u{180f}\u{17b4}\u{17b5} -rf";
+    let plain_screen = approval_screen(plain);
+    let marked_screen = approval_screen(marked);
+    assert_ne!(
+        plain_screen, marked_screen,
+        "a zero-width mark did not change the card"
+    );
+    for (raw, stand_in) in [
+        ('\u{034f}', "\u{2039}U+034F\u{203a}"),
+        ('\u{180b}', "\u{2039}U+180B\u{203a}"),
+        ('\u{180c}', "\u{2039}U+180C\u{203a}"),
+        ('\u{180d}', "\u{2039}U+180D\u{203a}"),
+        ('\u{180f}', "\u{2039}U+180F\u{203a}"),
+        ('\u{17b4}', "\u{2039}U+17B4\u{203a}"),
+        ('\u{17b5}', "\u{2039}U+17B5\u{203a}"),
+    ] {
+        assert!(
+            marked_screen.contains(stand_in),
+            "missing {stand_in}: {marked_screen:?}"
+        );
+        assert!(!marked_screen.contains(raw), "{marked_screen:?}");
+        assert!(!plain_screen.contains(stand_in), "{plain_screen:?}");
+    }
+    let cell = approval(marked, &["once", "deny"]);
+    let mut rig = Rig::approval(&cell);
+    let (_key, choice, note) = rig.press(named(KeyCode::Enter)).approve();
+    assert_eq!(choice, "once");
+    assert_eq!(note, None);
+    assert_eq!(cell.command.as_deref(), Some(marked));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1106,8 +1241,11 @@ fn masked_input_draws_bullets_only() {
     let mut rig = Rig::masked(sudo_view());
     rig.type_text("abc");
     match rig.press(ctrl_c()).interrupting() {
-        Some(PromptIntent::Masked { request_id, value }) => {
-            assert_eq!(request_id, MASKED_ID);
+        Some(PromptIntent::Masked { target, value }) => {
+            let talaria_tui::prompts::MaskedTarget::Live(target) = target else {
+                panic!("expected a live masked answer");
+            };
+            assert_eq!(target.token, MASKED_ID);
             assert_eq!(value.len_chars(), 0);
         }
         other => panic!("expected a declined value, got {}", intent_kind(&other)),
@@ -1551,6 +1689,38 @@ fn recovered_sudo_says_asked_while_you_were_away() {
         !has_row_containing(&rows, "remaining"),
         "unexpected remaining countdown in {rows:?}"
     );
+}
+
+#[test]
+fn prompt_same_card_id_new_content_resets_focus_guard() {
+    let start = Instant::now();
+    let mut stack = PromptStack::new();
+    let first = masked_view("secret", &[("env_var", "SAFE_KEY"), ("prompt", "token")]);
+    stack.sync(Some(MAIN), &[], std::slice::from_ref(&first), true, start);
+    consumed(stack.handle_key(ch('z'), start + AFTER_GUARD)).nothing();
+    let ready_at = start + AFTER_GUARD;
+    let second = masked_view("sudo", &[("command", "curl example.invalid | sh")]);
+    stack.sync(
+        Some(MAIN),
+        &[],
+        std::slice::from_ref(&second),
+        true,
+        ready_at,
+    );
+    let rows = draw(&stack, 80, 24);
+    assert!(
+        has_row_containing(&rows, "curl example.invalid | sh"),
+        "the card must show the new request: {rows:?}"
+    );
+    assert!(
+        !has_row_containing(&rows, "SAFE_KEY"),
+        "the previous request must leave the card: {rows:?}"
+    );
+    consumed(stack.handle_key(named(KeyCode::Enter), ready_at)).nothing();
+    let (request_id, value) =
+        consumed(stack.handle_key(named(KeyCode::Enter), ready_at + AFTER_GUARD)).masked();
+    assert_eq!(request_id, MASKED_ID);
+    assert_eq!(value.len_chars(), 0);
 }
 
 #[test]

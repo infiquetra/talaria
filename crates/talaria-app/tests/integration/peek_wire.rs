@@ -138,6 +138,32 @@ async fn peek_opens_profile_link_and_resumes_exactly() {
 }
 
 #[tokio::test]
+async fn peek_refuses_a_snapshot_for_another_session() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "session-a", false, false);
+    gateway.queue_resume_snapshot(snapshot("session-b", false, false));
+    let (mut peek, sink) = service(home.path());
+    let opened = peek.open(key("fixture", "session-a")).await;
+    assert_eq!(
+        opened,
+        Err(PeekError::Refused {
+            reason: "the gateway returned a snapshot for a different session".to_owned(),
+        })
+    );
+    assert!(
+        peek.state().is_none(),
+        "a substituted session is not adopted"
+    );
+    assert!(
+        !sink
+            .calls()
+            .iter()
+            .any(|call| matches!(call, FleetCall::Subscribed(_))),
+        "a substituted session is not published"
+    );
+}
+
+#[tokio::test]
 async fn peek_moves_detach_without_end_reason() {
     let (home, gateway) = home_and_gateway();
     seed(&gateway, "s-a", false, false);
@@ -1379,4 +1405,58 @@ async fn peek_link_sends_only_allowed_methods() {
             "the run never sent {method}"
         );
     }
+}
+
+#[tokio::test]
+async fn peek_mismatched_masked_target_writes_nothing() {
+    let (home, gateway) = home_and_gateway();
+    seed(&gateway, "local-3f2a", true, false);
+    let (mut peek, _) = service(home.path());
+    peek.open(key("fixture", "local-3f2a")).await.expect("peek");
+    let mut events = peek.take_events().expect("link events");
+    let mock = MockGateway::clone(&gateway);
+    let sudo = mock
+        .server_request_with(
+            "sudo",
+            json!({"session_id": "local-3f2a", "command": "apt list"}),
+        )
+        .await;
+    assert!(
+        pump(&mut peek, &mut events, Duration::from_secs(2), |peek| {
+            !peek.masked_requests().is_empty()
+        })
+        .await,
+        "the sudo card did not open"
+    );
+    let info = peek.masked_requests().into_iter().next().expect("card");
+    let notices = peek
+        .answer(CardAnswer::Masked {
+            row: key("fixture", "other-session"),
+            target: talaria_app::prompts::MaskedTarget::Live(info.target()),
+            value: "secret".to_owned(),
+        })
+        .await;
+    assert!(
+        !notices.is_empty(),
+        "an answer for another row must be refused"
+    );
+    assert!(
+        gateway.answers_for(&sudo).is_empty(),
+        "the wrong row wrote a reply"
+    );
+
+    let mut stale = info.target();
+    stale.service_id = stale.service_id.wrapping_add(1);
+    let notices = peek
+        .answer(CardAnswer::Masked {
+            row: key("fixture", "local-3f2a"),
+            target: talaria_app::prompts::MaskedTarget::Live(stale),
+            value: "secret".to_owned(),
+        })
+        .await;
+    assert!(!notices.is_empty(), "a stale service must be refused");
+    assert!(
+        gateway.answers_for(&sudo).is_empty(),
+        "the stale target wrote a reply"
+    );
 }

@@ -229,31 +229,22 @@ async fn connect_over(
     handshake(&mut connection)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(Client::start(connection.into_parts()))
+    Ok(Client::start_with_policy(
+        connection.into_parts(),
+        hermes_client::ServerRequestPolicy::IgnoreAll,
+    ))
 }
 
-/// Refuse every question the gateway asks on the side connection, and note how it ended.
-fn watch(mut inbound: InboundStream) -> Arc<Ending> {
+/// Leave every question for the foreground viewer, and note how the connection ended.
+fn watch(inbound: InboundStream) -> Arc<Ending> {
     let ending = Arc::new(Ending::default());
     let seen = Arc::clone(&ending);
     tokio::spawn(async move {
+        let mut inbound = crate::passive_inbound::PassiveInbound::new(inbound);
         while let Some(item) = inbound.next().await {
             match item {
-                // Approvals and questions belong to the foreground connection; the side one
-                // gives the refusal the foreground gives a kind it does not support.
-                Inbound::ServerRequest(request) => {
-                    let kind = serde_json::to_value(&request.request)
-                        .ok()
-                        .and_then(|value| value.as_object()?.keys().next().cloned())
-                        .unwrap_or_else(|| "unknown".to_owned());
-                    let _ = request
-                        .responder
-                        .fail(
-                            -32601,
-                            &format!("talaria does not support server request: {kind}"),
-                        )
-                        .await;
-                }
+                // An error answer settles the request as a skip for every viewer.
+                Inbound::ServerRequest(request) => request.responder.ignore(),
                 Inbound::Closed(closed) => {
                     // A frame the client cannot read ends the connection this way.
                     if closed.reason == CloseReason::Error(std::io::ErrorKind::InvalidData) {

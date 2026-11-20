@@ -349,12 +349,13 @@ fn long_provider_names_keep_the_status_and_full_identity_in_details() {
         .expect("selection marker")
         .strip_suffix('…')
         .unwrap();
+    let visible = talaria_core::text::sanitize(&label);
     assert!(
-        label
+        visible
             .grapheme_indices(true)
             .map(|(i, _)| i)
-            .chain([label.len()])
-            .any(|i| &label[..i] == kept),
+            .chain([visible.len()])
+            .any(|i| &visible[..i] == kept),
         "label was split inside a grapheme: {line}"
     );
     view.browse.as_mut().unwrap().details_open = true;

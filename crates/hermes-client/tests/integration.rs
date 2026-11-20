@@ -90,6 +90,8 @@ mod remote_auth;
 mod remote_connect;
 #[path = "integration/replay_source.rs"]
 mod replay_source;
+#[path = "integration/request_bounds.rs"]
+mod request_bounds;
 #[path = "integration/rest_client.rs"]
 mod rest_client;
 #[path = "integration/rest_fixtures.rs"]

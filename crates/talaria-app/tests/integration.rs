@@ -189,6 +189,8 @@ mod fleet_wire;
 
 #[path = "integration/headless_flow.rs"]
 mod headless_flow;
+#[path = "integration/headless_sanitize.rs"]
+mod headless_sanitize;
 
 #[path = "integration/headless_stream.rs"]
 mod headless_stream;
@@ -325,6 +327,8 @@ mod approval_cancelled_broadcast;
 #[path = "integration/prompts_secrecy.rs"]
 mod prompts_secrecy;
 
+#[path = "integration/prompt_bounds.rs"]
+mod prompt_bounds;
 #[path = "integration/prompts_server_requests.rs"]
 mod prompts_server_requests;
 
@@ -378,6 +382,9 @@ mod side_replay;
 
 #[path = "integration/side_service.rs"]
 mod side_service;
+
+#[path = "integration/secondary_ignore.rs"]
+mod secondary_ignore;
 
 #[path = "integration/status_effort.rs"]
 mod status_effort;
@@ -444,6 +451,9 @@ mod wire_params;
 
 #[path = "integration/workflow_progress_live.rs"]
 mod workflow_progress_live;
+
+#[path = "integration/workflow_progress_resume.rs"]
+mod workflow_progress_resume;
 
 #[path = "integration/workflow_progress_settlement.rs"]
 mod workflow_progress_settlement;

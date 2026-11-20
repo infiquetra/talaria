@@ -136,6 +136,58 @@ async fn opened_app_with_service(
     (mock, app, service, client)
 }
 
+#[tokio::test]
+async fn rewind_read_rejects_a_snapshot_for_another_session() {
+    let mut snapshot = prompts_snapshot();
+    snapshot["running"] = json!(false);
+    let (mock, mut app, service, _) = opened_app_with_service(snapshot).await;
+    let foreground = app
+        .opened
+        .as_ref()
+        .expect("the foreground session is open")
+        .session_id
+        .clone();
+    let cells = app.opened.as_ref().expect("opened").state.cells().len();
+    let mut other = prompts_snapshot();
+    other["session_id"] = json!("session-b");
+    other["stored_session_id"] = json!("session-b");
+    other["messages"] = json!([{
+        "role": "user",
+        "row_id": 99,
+        "content": "substituted prompt",
+        "timestamp": 1.0
+    }]);
+    mock.queue_resume_snapshot(other);
+    let opened = update(
+        &mut app,
+        AppMessage::Rewind(talaria_core::rewind::RewindInput::Open {
+            turn_running: false,
+        }),
+    );
+    let effects = drive(&mut app, &service, opened).await;
+    assert_eq!(
+        app.opened.as_ref().map(|opened| opened.session_id.as_str()),
+        Some(foreground.as_str()),
+        "a mismatched rewind snapshot leaves the foreground session"
+    );
+    assert_eq!(
+        app.opened.as_ref().expect("opened").state.cells().len(),
+        cells,
+        "a mismatched rewind snapshot does not replace the transcript"
+    );
+    assert!(
+        !effects.iter().any(|effect| {
+            matches!(effect, AppEffect::Resync { session_id, .. } if session_id == "session-b")
+        }),
+        "a mismatched rewind snapshot does not rebuild"
+    );
+    let notice = committed_lines(&effects).join("\n");
+    assert!(
+        notice.contains("session_mismatch"),
+        "the refusal names the mismatch: {notice}"
+    );
+}
+
 /// Run each rewind call the app asks for through the service against the mock, feeding every
 /// reply back into `update`, until no call is left. Returns every effect, in order.
 async fn drive(

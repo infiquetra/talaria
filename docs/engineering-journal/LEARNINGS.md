@@ -10,6 +10,78 @@
 
 **Generalizable rule.** When a withdrawal list can omit ids, seal exact matches and treat the surplus count as the rest of that session's open approvals. Do not treat the match as proof the two id fields are one.
 
+## 2026-11-19 — Prompt limits apply to retained data and rendered rows
+
+**Evidence.** Before the repair, the prompt bounds tests admitted an oversized id, retained a
+large edit payload, and produced duplicate cell ids after pruning. An approval description made
+of C1 controls drew an 85-row card at width 80 because sanitization expanded each control after
+measurement.
+
+**Generalizable rule.** Bound prompt fields at admission, keep cell ids monotonic across pruning,
+and measure the sanitized text when enforcing a render limit.
+
+## 2026-11-19 — The attachment denylist is the credential-path property
+
+**Evidence.** `credential_path` named seven env files and nine home directories.
+Dropping `Library/Keychains/login.keychain-db` attached it as an ordinary file.
+`attachments_service::credential_denylist_matches_stores_keys_and_env_names`
+then refused that path, each nested store path, case-insensitive `.pem`, `.key`,
+`.p12` and `.pfx` names, the generated `.env.<name>[.local]` matrix, and a
+symlink whose canonical target sits in a store. A follow-up review still
+attached `.ENV.PROD`, a non-UTF-8 `.env.prod` byte, `library/keychains`, a
+UTF-8 symlink onto that byte name, a trailing-space path Hermes would strip,
+and an accepted `@file:.env.prod` completion. Those rows now refuse as well.
+
+**Mechanism.** A basename is credential material, in any directory and on the
+raw filename bytes, when its ASCII-lowercased bytes are `.env`, `.envrc`, or
+start with `.env.`, or when they are `id_rsa`, `id_ed25519`, `id_ecdsa`,
+`id_dsa`, or end in `.pem`, `.key`, `.p12`, or `.pfx`. A home path is a store
+when a component-wise ASCII-case-insensitive prefix matches `Library/Keychains`,
+`.password-store`, `.config/op`, `.config/1password`, `.local/share/keyrings`,
+`.config/age`, `.config/sops`, or `.config/git/credentials`, or when the whole
+path matches `.git-credentials` the same way. The check also runs on the
+canonical path. Before `file.attach`, Talaria checks how local stripping,
+quote removal, and common `~` and `$` expansions affect that path. The guard
+checks dropped and pasted paths, completion acceptance, and `@file:` references
+visible in the submitted draft. It does not check references inside collapsed
+pastes, references followed by punctuation or a line range, or gateway-side
+path fallbacks. Drafts held before a session opens are checked against the
+launch folder without a second check in the opened session's workspace.
+`HERMES_HOME` and the inode check stay as they were.
+
+**Generalizable rule.** When a security control is a list, state the
+machine-checkable property the list samples and assert the list against that
+property.
+
+## 2026-11-19 — A passive channel never answers a server request
+
+**Evidence.** A workflow progress link that matched `Inbound::ServerRequest` with `_ => vec![]`
+wrote `{"code":-32603,"message":"request dropped by client"}`. The side and fleet links wrote
+`-32601` from `responder.fail`. The channel itself also wrote `-32601` for an unknown method and
+for a closed inbound reader, and `-32603` for undecodable request params, before any handler ran.
+A same-profile workflow reused the foreground client, and that dispatcher wrote `-32601` for the
+workflow session. Hermes treats either error as a skip for every viewer.
+
+**Mechanism.** `ServerRequestPolicy::IgnoreAll` is applied where the frame is decoded. The channel
+does not allocate a responder, does not enqueue one, and does not write `-32601` or `-32603`.
+Dropping the reader or the queue therefore has nothing left that can answer. App-level `ignore`
+stays in place for a request that still reaches a handler. The foreground answers a request only
+when its session id is absent or identifies an opened or retained session. A peek that is showing
+a masked request, headless print mode, and the configuration session remain owners of their own
+sessions.
+
+**Generalizable rule.** A connection that is not the session's prompt owner is opened with
+`ServerRequestPolicy::IgnoreAll`. The foreground prompt owner ignores a server request whose
+session id is some other session.
+
+## 2026-11-19 — One neutralized-character table for literal text
+
+**Evidence.** Issue #667. An approval card drew `rm` plus U+00A0 plus `-rf` as `rm -rf` on a `TestBackend`, while the gateway still held the original bytes. Five local tables disagreed on U+00AD, U+200B–U+200F and U+2060. `unicode-general-category` 1.1.0 (Unicode 16.0) reports 170 `Cf` characters. The checked-in snapshot is 549 codepoints: those controls and format characters, the tag block, every variation selector except U+FE0E and U+FE0F (including the Mongolian free variation selectors), the default-ignorable marks U+034F and U+17B4..=U+17B5, the Hangul fillers, and the blank-width spaces.
+
+**Mechanism.** `talaria_core::text::is_neutralized` is the shared set. `sanitize` writes a visible stand-in. Alert fields, fleet titles, rewind columns, and the composer consult it. Markdown sanitizes decoded text and link destinations again after the parser expands character references, on both the one-shot and streaming paths. Approval cards draw CR and tab as control pictures so those bytes are not mistaken for a line feed or four spaces. Stored transcript bytes and the submitted command stay as the gateway sent them. U+FE0E and U+FE0F still pass through, because they change the picture.
+
+**Generalizable rule.** A security list is a sample of a property. Pin the property to category data and pin the exact set to a snapshot, so a Unicode release and a quiet deletion both fail the suite. Decode before the last sanitize, or a character reference puts the character back.
+
 ## 2026-11-19 — Dependency advisories need a pin or a named waiver
 
 **Evidence.** On the origin/main lock at `85890d4f`, `cargo deny check advisories`
@@ -7470,3 +7542,11 @@ can fail when a different machine checks or releases the build.
 **Generalizable rule.** Register each release acceptance directory explicitly and
 scrub runner host suffixes to `t70-c1-<host>` when assembling transcripts,
 regardless of which machine will check or release the build.
+
+## 2026-11-19 — Launch git children take the review path's config hardening
+
+**Evidence.** On git 2.43.0, `git status` ran a repository `core.fsmonitor` program until `-c core.fsmonitor=false` was present, and `git config --get core.sshCommand` inside the repository returned the worktree or local value ahead of global. `GIT_SSH_COMMAND` overrode that value. `GIT_SSH` and a global or system `core.sshCommand` did not: the repository command ran instead. `git config --global` and `git config --system` from `/`, with `GIT_DIR` unset, did not read `.git/config`. Tests `launch_git_fsmonitor_never_runs`, `launch_git_repo_ssh_command_cannot_run`, `launch_git_ssh_command_env_is_preserved`, `launch_git_global_ssh_command_is_preserved`, `launch_git_system_ssh_command_is_preserved`, `launch_git_ssh_program_is_preserved`, `launch_git_ssh_program_path_with_spaces_is_one_word`, `launch_git_included_global_ssh_command_is_preserved`, `launch_git_home_gitconfig_overrides_xdg`, `launch_git_nosystem_ignores_system_ssh_command`, `launch_git_fsmonitor_override_ignores_positional_pair`, and `launch_git_probe_ignores_parent_git_dir` in `crates/talaria-app/tests/integration/worktree_git.rs`.
+
+**Mechanism.** The review path already prefixes every child with `-c core.fsmonitor=false`. The launch runner did not, and it treated any hit from `git config --get core.sshCommand` as the operator's ssh command, so a repository value suppressed `BatchMode` and executed on `fetch` and `ls-remote`. `Command::envs` does not erase inherited `GIT_DIR`, and `git config --global` skips includes and reads only one of the two global files. The probe therefore clears the child environment, rebuilds it without repository-selection or command-scope variables, and runs one `git config --includes --show-scope --null --get-all` outside any repository. The last `system` or `global` value is pinned with `-c`. `GIT_SSH` is shell-quoted first because it is an executable path, not shell syntax. `GIT_SSH_COMMAND` is left untouched because it already wins over config. A positional `-c core.fsmonitor=false` after the subcommand does not count as the override.
+
+**Generalizable rule.** Every git child that can see a repository's config carries `-c core.fsmonitor=false` before the subcommand, and a network git child pins `core.sshCommand` from the operator's environment or from system and global config only, read with includes from a cleared environment.

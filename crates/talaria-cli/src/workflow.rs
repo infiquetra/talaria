@@ -180,8 +180,21 @@ fn absolute(path: PathBuf) -> io::Result<PathBuf> {
         Ok(std::env::current_dir()?.join(path))
     }
 }
-fn safe(text: &str) -> String {
-    text.chars().flat_map(|c|match c {'\n'=>"\\n".chars().collect::<Vec<_>>(),'\r'=>"\\r".chars().collect(),c if c.is_control()||matches!(c,'\u{061c}'|'\u{200e}'|'\u{200f}'|'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}')=>vec!['?'],c=>vec![c]}).collect()
+pub fn safe(text: &str) -> String {
+    let mut prepared = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '\n' => prepared.push_str("\\n"),
+            '\r' => prepared.push_str("\\r"),
+            other => prepared.push(other),
+        }
+    }
+    talaria_core::text::sanitize_with_options(
+        &prepared,
+        talaria_core::text::SanitizeOptions::CLI,
+        talaria_core::text::Replacement::Char('?'),
+    )
+    .into_owned()
 }
 fn fail(text: impl std::fmt::Display, code: u8) -> u8 {
     eprintln!("{}", safe(&text.to_string()));

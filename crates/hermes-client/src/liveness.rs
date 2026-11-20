@@ -143,6 +143,8 @@ pub struct LinkConfig {
     pub hold_limit: usize,
     /// Capacity of the event channel returned by [`Link::start`].
     pub event_buffer: usize,
+    /// Who may answer a server request on this link. The default is the interactive viewer.
+    pub server_requests: crate::ServerRequestPolicy,
 }
 
 impl Default for LinkConfig {
@@ -160,6 +162,7 @@ impl Default for LinkConfig {
             jitter: Jitter::Random,
             hold_limit: 10_000,
             event_buffer: 1_024,
+            server_requests: crate::ServerRequestPolicy::Interactive,
         }
     }
 }
@@ -181,6 +184,7 @@ impl LinkConfig {
             jitter: Jitter::Fixed(1.0),
             hold_limit: base.hold_limit,
             event_buffer: base.event_buffer,
+            server_requests: base.server_requests,
         }
     }
 }
@@ -500,7 +504,7 @@ impl Link {
         let first = tokio::time::timeout(cfg.dial_timeout, dial.dial(1))
             .await
             .unwrap_or_else(|_| Err(dial_timeout()))?;
-        let (client, inbound) = Client::start(first.parts);
+        let (client, inbound) = Client::start_with_policy(first.parts, cfg.server_requests);
         let (commands, receiver) = mpsc::unbounded_channel();
         let (events, rx) = mpsc::channel(cfg.event_buffer.max(1));
         let (stop, cancel) = watch::channel(false);
@@ -639,15 +643,40 @@ struct LinkTask {
     replay: JoinSet<ReplayReply>,
 }
 
+/// Dropping a server request writes `-32603` while a connection is current.
+fn release_inbound(item: Inbound) {
+    if let Inbound::ServerRequest(request) = item {
+        request.responder.ignore();
+    }
+}
+
+fn release_link_event(event: LinkEvent) {
+    if let LinkEvent::Inbound { item, .. } = event {
+        release_inbound(item);
+    }
+}
+
+fn release_out(output: Out<Inbound>) {
+    if let Out::Deliver { item, .. } = output {
+        release_inbound(item);
+    }
+}
+
 impl LinkTask {
     async fn emit(&mut self, event: LinkEvent) {
-        if *self.cancel.borrow() {
+        if *self.cancel.borrow() || self.events.is_closed() {
+            release_link_event(event);
             return;
         }
+        // Reserve first so cancelling the wait does not drop a server request.
+        // Dropping the event would write `-32603` while this client is still connected.
         tokio::select! {
             biased;
-            _ = self.cancel.changed() => {},
-            _ = self.events.send(event) => {},
+            _ = self.cancel.changed() => release_link_event(event),
+            reserved = self.events.reserve() => match reserved {
+                Ok(permit) => permit.send(event),
+                Err(_) => release_link_event(event),
+            },
         }
     }
 
@@ -657,6 +686,10 @@ impl LinkTask {
             .expect("link stats poisoned")
             .duplicates_dropped = self.tracker.duplicates_dropped();
         for output in outputs {
+            if *self.cancel.borrow() || self.events.is_closed() {
+                release_out(output);
+                continue;
+            }
             let event = match output {
                 Out::Deliver { item, replayed } => {
                     if replayed {
@@ -680,9 +713,6 @@ impl LinkTask {
                 Out::Gone(session_id) => LinkEvent::SessionGone { session_id },
             };
             self.emit(event).await;
-            if *self.cancel.borrow() {
-                break;
-            }
         }
     }
 
@@ -866,7 +896,10 @@ impl LinkTask {
                             Inbound::Malformed(frame) => frame.generation,
                             Inbound::Closed(_) => unreachable!("closed handled above"),
                         };
-                        if generation != self.generation { continue; }
+                        if generation != self.generation {
+                            release_inbound(item);
+                            continue;
+                        }
                         let stamp = match &item {
                             Inbound::Event(event) => Stamp {
                                 session_id: event.frame.session_id.as_deref(), seq: event.frame.seq,
@@ -897,7 +930,7 @@ impl LinkTask {
                         }
                         self.outputs(outs).await;
                     }
-                    Some(_) => {},
+                    Some(item) => release_inbound(item),
                     None => break,
                 },
                 _ = self.ticks.tick(), if self.connected && self.heartbeat => {
@@ -973,6 +1006,8 @@ impl LinkTask {
         // Dropping the dial future and JoinSet cancels work, including a hung upgrade.
         drop(dialing);
         self.replay.abort_all();
+        // Ignore requests already queued. Closing afterwards writes nothing for the rest.
+        self.inbound.ignore_queued_requests();
         self.client.close().await;
         let _ = self.events.send(LinkEvent::State(LinkState::Closed)).await;
     }
