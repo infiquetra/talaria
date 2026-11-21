@@ -1556,6 +1556,7 @@ impl Run3<'_> {
                 .iter()
                 .any(|(name, _)| name == HEADER_NEEDS_YOU)
                 && screen.contains(PROBE_COMMAND)
+                && (!screen.contains("── peek ──") || deny_digit(screen).is_some())
         })? {
             return fail(format!(
                 "alt+a did not open the fleet view on the request (no \"{PROBE_COMMAND}\") within {} s",
@@ -1567,7 +1568,7 @@ impl Run3<'_> {
         self.typed("a")?;
         let mut digit = None;
         self.wait_changed(CARD, &before, |screen| {
-            digit = deny_digit(screen);
+            digit = deny_digit(screen).filter(|_| !screen.contains("ctrl+c close"));
             digit.is_some()
         })?;
         let Some(digit) = digit else {

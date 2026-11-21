@@ -467,6 +467,8 @@ fn missing_executable_is_not_found() {
             client.split_pane(&pane, dir.path()).map(|_| ()),
         ),
         ("run", client.run(&pane, "echo hi")),
+        ("send_text keys", client.send_text(&pane, "hi")),
+        ("send_text framed", client.send_text(&pane, "@!_:?")),
         ("foreground", client.foreground(&pane).map(|_| ())),
         ("pane_get", client.pane_get(&pane).map(|_| ())),
     ];
@@ -545,6 +547,7 @@ fn send_text_uses_the_key_table() {
         .reply("keys", "keys_ok.json", 0)
         .reply("keys", "keys_ok.json", 0)
         .reply("keys", "keys_ok.json", 0)
+        .reply("keys", "keys_ok.json", 0)
         .build();
     let client = HcCli::new(fake.executable());
     let pane = PaneId("term_x".to_owned());
@@ -552,11 +555,10 @@ fn send_text_uses_the_key_table() {
     client.send_text(&pane, "ab").expect("send ab");
     client.send_text(&pane, "a b").expect("send a b");
     client.send_text(&pane, "A").expect("send A");
+    client
+        .send_text(&pane, "',-./;=[\\]`")
+        .expect("send supported punctuation");
     assert_eq!(client.send_text(&pane, ""), Ok(()));
-    assert_eq!(
-        client.send_text(&pane, "!"),
-        Err(TermError::Parse("hc keys cannot type '!'".to_owned()))
-    );
 
     assert_eq!(
         fake.log(),
@@ -564,6 +566,9 @@ fn send_text_uses_the_key_table() {
             args(&["keys", "term_x", "a", "b"]),
             args(&["keys", "term_x", "a", "space", "b"]),
             args(&["keys", "term_x", "shift+a"]),
+            args(&[
+                "keys", "term_x", "'", ",", "-", ".", "/", ";", "=", "[", "\\", "]", "`"
+            ]),
         ]
     );
 }
@@ -586,4 +591,122 @@ fn child_drops_hc_identity() {
 
     assert_eq!(fake.log(), vec![args(&["ls"])]);
     assert_eq!(fake.env_log(), vec![Vec::<String>::new()]);
+}
+
+#[test]
+fn punctuation_and_utf8_use_framed_attach_without_enter() {
+    for automatic_input in [Some(true), Some(false), None] {
+        let fake = FakeHc::builder().build();
+        fs::write(
+            fake.state_dir.join("connect.json"),
+            json!({ "automatic_input": automatic_input }).to_string(),
+        )
+        .unwrap();
+        let client = HcCli::new(fake.executable());
+        let text = "ab @!_:? \"(c)\" café 日本語";
+        client
+            .send_text(&PaneId("term_x".to_owned()), text)
+            .expect("framed UTF-8 input");
+        assert_eq!(
+            fs::read(fake.state_dir.join("input.bin")).unwrap(),
+            text.as_bytes()
+        );
+        assert_eq!(fake.log(), vec![args(&["connect"])]);
+        assert!(
+            fake.state_dir.join("connect-exited").exists(),
+            "delivery must wait for EOF and child exit"
+        );
+    }
+}
+
+#[test]
+fn framed_input_rejects_failed_hello_attach_and_child_exit() {
+    for config in [
+        json!({ "hello_error": true }),
+        json!({ "framed": false }),
+        json!({ "attach_error": true }),
+        json!({ "exit_failure": true }),
+    ] {
+        let fake = FakeHc::builder().build();
+        fs::write(fake.state_dir.join("connect.json"), config.to_string()).unwrap();
+        let error = HcCli::new(fake.executable())
+            .send_text(&PaneId("term_x".to_owned()), "@!_:?")
+            .expect_err("failed connect must be reported");
+        assert!(
+            matches!(error, TermError::Parse(_) | TermError::Io(_)),
+            "{error:?}"
+        );
+        assert_eq!(fake.log(), vec![args(&["connect"])]);
+    }
+}
+
+#[test]
+fn framed_child_drops_hc_identity() {
+    let fake = FakeHc::builder().build();
+    let output = Command::new(env!("CARGO_BIN_EXE_hc-env-probe"))
+        .arg(fake.executable())
+        .arg("@!_:?")
+        .env("HC_TERMINAL_ID", "term_x")
+        .env("HC_SCOPE", "scope")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fake.env_log(), vec![Vec::<String>::new()]);
+    assert_eq!(
+        fs::read(fake.state_dir.join("input.bin")).unwrap(),
+        b"@!_:?"
+    );
+}
+
+#[test]
+fn read_strips_only_a_trailing_incomplete_footer() {
+    let footer = "[hc] incomplete: older output may be missing";
+    let cases = [
+        ("output\nprompt$\n".to_owned(), "output\nprompt$\n"),
+        ("output\nprompt$".to_owned(), "output\nprompt$"),
+        (format!("output\nprompt$\n{footer}\n"), "output\nprompt$\n"),
+        (format!("output\nprompt$\n{footer}"), "output\nprompt$\n"),
+        (
+            format!("output\r\nprompt$\r\n{footer}\r\n"),
+            "output\r\nprompt$\r\n",
+        ),
+        (
+            format!("{footer}\noutput\n"),
+            "[hc] incomplete: older output may be missing\noutput\n",
+        ),
+        (
+            format!("prompt$ {footer}\n"),
+            "prompt$ [hc] incomplete: older output may be missing\n",
+        ),
+        (format!("{footer}\n"), ""),
+        (String::new(), ""),
+    ];
+    let fake = FakeHc::builder().build();
+    let capture = fake.state_dir.join("read.txt");
+    let replies: Vec<_> = cases
+        .iter()
+        .map(|_| json!({"file": capture, "status": 0}))
+        .collect();
+    fs::write(
+        fake.state_dir.join("replies.json"),
+        json!({"read": replies}).to_string(),
+    )
+    .unwrap();
+    let client = HcCli::new(fake.executable());
+    for (output, expected) in cases {
+        fs::write(&capture, &output).unwrap();
+        assert_eq!(
+            client.read(
+                &PaneId("term_x".to_owned()),
+                ReadSource::RecentUnwrapped,
+                Some(3000)
+            ),
+            Ok(expected.to_owned()),
+            "capture: {output:?}"
+        );
+    }
 }

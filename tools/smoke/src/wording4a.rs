@@ -54,7 +54,7 @@ pub const PROFILES_UNKNOWN_FMT: &str = "talaria profiles: no profile named ";
 pub const PROFILES_DETAIL_LAUNCH: &str = "talaria --profile fixture";
 pub const PROFILES_DETAIL_SKILLS: &str = "Skills:";
 // Doctor: summary counts and JSON format.
-pub const DOCTOR_SUMMARY_RE: &str = r"Doctor: ([0-9]+) ok, ([0-9]+) warnings, ([0-9]+) failures";
+pub const DOCTOR_SUMMARY_RE: &str = r"Doctor: ([0-9]+) ok, ([0-9]+) warnings?, ([0-9]+) failures?";
 pub const DOCTOR_FORMAT: &str = "talaria-doctor-v1";
 // Doctor: gateway repair and unknown-profile messages.
 pub const DOCTOR_FIX_NO_GATEWAY: &str =

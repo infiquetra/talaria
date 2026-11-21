@@ -320,6 +320,7 @@ pub fn print_check(out: &str, err: &str, exit: Option<i32>) -> PrintCheck {
 }
 
 fn token_count(value: &str) -> bool {
+    let value = value.strip_prefix('~').unwrap_or(value);
     !value.is_empty()
         && value.chars().any(|character| character.is_ascii_digit())
         && value

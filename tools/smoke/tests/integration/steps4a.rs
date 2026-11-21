@@ -1148,3 +1148,22 @@ fn step_scale_leaves_quiet_periods() {
     }
     assert!(checked > 0);
 }
+
+#[test]
+fn models_page_accepts_eleven_helpers_without_skills_hub() {
+    let removed = "   Skills hub - Skill search  follows main model  effort: inherited\n";
+    let script = script_4a(&[("models-page-r3.txt", removed, "")]);
+    let exec = exec_4a(&script, false, false, 1.0, 900);
+    assert!(
+        exec.report.outcomes.iter().any(|outcome| matches!(
+            outcome,
+            StepOutcome::Pass {
+                step: "models-page",
+                ..
+            }
+        )),
+        "{}",
+        exec.lines()
+    );
+    assert_eq!(exec.report.exit_code(), 0, "{}", exec.lines());
+}

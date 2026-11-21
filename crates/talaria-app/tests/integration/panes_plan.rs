@@ -22,6 +22,7 @@ fn herdr_env() -> PaneEnv {
         herdr_env: Some("1".to_owned()),
         herdr_pane_id: Some("w1:p1".to_owned()),
         herdr_bin_path: Some("/bin/herdr".to_owned()),
+        hc_terminal_id: None,
         tmux: None,
         tmux_pane: None,
     }
@@ -32,6 +33,7 @@ fn tmux_env() -> PaneEnv {
         herdr_env: None,
         herdr_pane_id: None,
         herdr_bin_path: None,
+        hc_terminal_id: None,
         tmux: Some("/work/tmux-1/default,42,0".to_owned()),
         tmux_pane: Some("%1".to_owned()),
     }
@@ -90,6 +92,7 @@ fn detect_rules() {
         herdr_env: Some(String::new()),
         herdr_pane_id: Some(String::new()),
         herdr_bin_path: Some(String::new()),
+        hc_terminal_id: Some(String::new()),
         tmux: Some(String::new()),
         tmux_pane: Some(String::new()),
     };
@@ -409,4 +412,100 @@ fn outcome_texts() {
         outcome_text("build api", &PaneOutcome::Refused(PaneRefusal::BinaryGone)),
         "This Talaria binary is no longer on disk (it was rebuilt or moved). Restart Talaria, then try again."
     );
+}
+
+#[test]
+fn hc_detection_preserves_legacy_precedence_and_forced_settings() {
+    let env = PaneEnv {
+        hc_terminal_id: Some("parent".to_owned()),
+        ..tmux_env()
+    };
+    let expected = Multiplexer::Hc {
+        bin: "hc".into(),
+        terminal: "parent".to_owned(),
+    };
+    assert_eq!(expected.name(), "Herdr");
+    for setting in [MultiplexerSetting::Auto, MultiplexerSetting::Herdr] {
+        assert_eq!(detect(&env, setting), Some(expected.clone()));
+    }
+    assert!(matches!(
+        detect(&env, MultiplexerSetting::Tmux),
+        Some(Multiplexer::Tmux { .. })
+    ));
+    assert_eq!(detect(&env, MultiplexerSetting::Off), None);
+    let legacy = PaneEnv {
+        hc_terminal_id: env.hc_terminal_id.clone(),
+        ..herdr_env()
+    };
+    assert!(matches!(
+        detect(&legacy, MultiplexerSetting::Auto),
+        Some(Multiplexer::Herdr { .. })
+    ));
+    assert!(matches!(
+        detect(&legacy, MultiplexerSetting::Herdr),
+        Some(Multiplexer::Herdr { .. })
+    ));
+    let empty = PaneEnv {
+        hc_terminal_id: Some(String::new()),
+        ..tmux_env()
+    };
+    assert!(matches!(
+        detect(&empty, MultiplexerSetting::Auto),
+        Some(Multiplexer::Tmux { .. })
+    ));
+    assert_eq!(detect(&empty, MultiplexerSetting::Herdr), None);
+}
+
+#[test]
+fn hc_command_specs_keep_parent_for_run_and_remove_identity_for_send() {
+    let mux = Multiplexer::Hc {
+        bin: "/bin/hc".into(),
+        terminal: "parent".to_owned(),
+    };
+    let split = split_command(
+        &mux,
+        Direction::Right,
+        Some(Path::new("/work/project")),
+        false,
+    );
+    assert_eq!(split.program, PathBuf::from("/bin/hc"));
+    assert_eq!(
+        split.args,
+        args(&["run", "--bg", "--json", "--cwd", "/work/project"])
+    );
+    assert!(
+        split.env_remove.is_empty(),
+        "run must retain parent identity"
+    );
+    let split = split_command(&mux, Direction::Down, None, true);
+    assert_eq!(split.args, args(&["run", "--bg", "--json"]));
+    assert!(split.env_remove.is_empty());
+    let line = "'/t/talaria' attach 'local-ab' --profile 'fixture'";
+    let typed = type_commands(&mux, "child", line);
+    assert_eq!(typed.len(), 1);
+    assert_eq!(typed[0].program, PathBuf::from("/bin/hc"));
+    assert_eq!(typed[0].args, args(&["send", "child", "--", line]));
+    assert_eq!(typed[0].env_remove, args(&["HC_TERMINAL_ID", "HC_SCOPE"]));
+}
+
+#[test]
+fn hc_parse_new_pane_reads_nonempty_json_address() {
+    let mux = Multiplexer::Hc {
+        bin: "hc".into(),
+        terminal: "parent".to_owned(),
+    };
+    assert_eq!(
+        parse_new_pane(&mux, "{\"address\":\"child\"}\n"),
+        Some("child".to_owned())
+    );
+    for invalid in [
+        "",
+        "invalid",
+        "{}",
+        "{\"address\":null}",
+        "{\"address\":7}",
+        "{\"address\":\"\"}",
+    ] {
+        assert_eq!(parse_new_pane(&mux, invalid), None, "{invalid:?}");
+    }
 }

@@ -2,6 +2,64 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-20 — hc scrollback diagnostics are outside terminal output
+
+**Evidence.** After a TUI scrolled beyond the pane height, live `hc read` appended
+`[hc] incomplete: older output may be missing` after the shell prompt. The next
+command appeared before that footer, breaking command-output isolation.
+
+**Mechanism.** The footer describes capture completeness rather than PTY output.
+Remove only a final line beginning `[hc] incomplete:` in the hc adapter, preserving
+all earlier bytes and line endings, including identical lines inside output.
+
+**Generalizable rule.** Separate terminal capture diagnostics from terminal bytes
+before comparing successive snapshots.
+
+## 2026-11-20 — Nullable session info must preserve event sequencing
+
+**Evidence.** Live Hermes 0.23.2 sent `session.info` with `"title": null`.
+The decoder regression rejected it as a string type error; dropping that event
+skipped its sequence and made the following `message.complete` report `SeqJump`.
+
+**Mechanism.** The pinned v0.23.1 `SessionLiveInfo.title` defaults when omitted,
+but rejects explicit null. After a failed `session.info` decode, remove only
+null entries at the payload object's top level and retry with the same envelope.
+A successful retry keeps the sequence stamp; invalid payloads still fail.
+
+**Generalizable rule.** Normalize compatible null defaults before discarding a
+stamped event, so decoding drift does not create a false sequence gap.
+
+## 2026-11-20 — Terminal capture newlines can precede prompt input
+
+**Evidence.** Live `hc read` ended a shell prompt with a newline, while the next
+capture placed the typed command on that same prompt line. All three command
+output readers failed their prefix check; their focused regressions reproduced it.
+
+**Mechanism.** Trim trailing newlines from the earlier capture before comparing
+prefixes or whole-line overlaps. The prompt then anchors the appended command
+without accepting unrelated history or reusing an earlier completion marker.
+
+**Generalizable rule.** Account for capture-only trailing newlines while retaining
+an overlap with the prior terminal output.
+
+## 2026-11-20 — Framed hc input preserves text and pane ownership
+
+**Evidence.** hc 0.1.21 accepts punctuation and UTF-8 through framed
+`terminal.attach` when `hc keys` cannot name those characters. The smoke
+regressions cover exact bytes without Enter, automatic and legacy input,
+and opening a child pane followed by an untagged attach command.
+
+**Mechanism.** After a framed hello, each frame has a nine-byte little-endian
+header: channel (`u32`), kind (`u8`), payload length (`u32`). Attaching with
+`cols=0` and `rows=0` preserves the terminal size; negotiated `automatic_input`
+uses kind 6 (`AUTOMATIC_INPUT`). Flush, close stdin and wait for the connection
+process so the input reaches the terminal. Pane creation uses
+`hc run --bg --json` with the parent identity intact; `hc send` removes
+`HC_TERMINAL_ID` and `HC_SCOPE` so shell commands arrive without sender tags.
+
+**Rule.** Preserve parent identity when creating panes, remove sender identity
+when typing shell commands, and finish framed delivery before returning.
+
 ## 2026-11-20 — The long help explains `--resume` in two copies
 
 **Evidence.** `flags_help_and_neutralised_errors` locks the sentence "Resume a session by its identifier. `talaria -c` reopens the most recent session for this folder." at the end of the long help, and one collapsed copy beside `--resume`.

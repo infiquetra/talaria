@@ -1,8 +1,8 @@
 //! The terminal multiplexer seen through a trait, and its command line implementation.
 
-use std::io::ErrorKind;
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 use serde_json::Value;
@@ -334,6 +334,145 @@ impl HcCli {
             .map(str::to_owned)
             .ok_or_else(|| TermError::Parse("hc run: address is not a string".to_owned()))
     }
+
+    /// Attach without resizing and deliver bytes without submitting the composer.
+    fn send_text_framed(&self, pane: &PaneId, text: &str) -> Result<(), TermError> {
+        let mut child = Command::new(&self.executable)
+            .arg("connect")
+            .env_remove("HC_TERMINAL_ID")
+            .env_remove("HC_SCOPE")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| match error.kind() {
+                ErrorKind::NotFound => TermError::NotFound(format!(
+                    "the command line {} is not there: {error}",
+                    self.executable.display()
+                )),
+                _ => TermError::Io(format!("{}: {error}", self.executable.display())),
+            })?;
+        let delivered = (|| {
+            let mut input = child
+                .stdin
+                .take()
+                .ok_or_else(|| TermError::Io("hc connect: no stdin".to_owned()))?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| TermError::Io("hc connect: no stdout".to_owned()))?;
+            let mut output = BufReader::new(stdout);
+            writeln!(
+                input,
+                "{}",
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1, "method": "hello",
+                    "params": {"framed": true, "features": ["framed", "attach", "automatic_input"]}
+                })
+            )
+            .map_err(frame_io)?;
+            input.flush().map_err(frame_io)?;
+            let mut hello = String::new();
+            output.read_line(&mut hello).map_err(frame_io)?;
+            let hello: Value = serde_json::from_str(&hello)
+                .map_err(|error| TermError::Parse(format!("hc connect hello: {error}")))?;
+            if hello.get("error").is_some_and(|error| !error.is_null())
+                || hello["id"] != 1
+                || hello["result"]["framed"] != true
+            {
+                return Err(TermError::Parse(format!(
+                    "hc connect did not accept framed hello: {hello}"
+                )));
+            }
+            let attach = serde_json::json!({
+                "jsonrpc": "2.0", "id": 2, "method": "terminal.attach",
+                "params": {"terminal": pane.0, "cols": 0, "rows": 0, "history": 0}
+            });
+            write_hc_frame(&mut input, 0, 0, attach.to_string().as_bytes())?;
+            let result = loop {
+                let (channel, kind, payload) = read_hc_frame(&mut output)?;
+                if channel != 0 || kind != 0 {
+                    continue;
+                }
+                let reply: Value = serde_json::from_slice(&payload)
+                    .map_err(|error| TermError::Parse(format!("hc connect reply: {error}")))?;
+                if reply["id"] == 2 {
+                    if reply.get("error").is_some_and(|error| !error.is_null()) {
+                        return Err(TermError::Parse(format!("hc terminal.attach: {reply}")));
+                    }
+                    break reply["result"].clone();
+                }
+            };
+            let channel = result["channel"]
+                .as_u64()
+                .and_then(|channel| u32::try_from(channel).ok())
+                .filter(|&channel| channel != 0)
+                .ok_or_else(|| {
+                    TermError::Parse("hc terminal.attach: invalid input channel".to_owned())
+                })?;
+            let kind = if result["automatic_input"].as_bool().unwrap_or(false) {
+                6
+            } else {
+                0
+            };
+            write_hc_frame(&mut input, channel, kind, text.as_bytes())?;
+            // Let the connection forward the input before EOF ends the attach.
+            std::thread::sleep(std::time::Duration::from_millis(75));
+            drop(input);
+            child.stdout = Some(output.into_inner());
+            Ok(())
+        })();
+        if let Err(error) = delivered {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        let output = child.wait_with_output().map_err(frame_io)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(TermError::Io(format!(
+                "hc connect: {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )))
+        }
+    }
+}
+
+fn frame_io(error: std::io::Error) -> TermError {
+    TermError::Io(format!("hc connect: {error}"))
+}
+
+fn write_hc_frame(
+    output: &mut impl Write,
+    channel: u32,
+    kind: u8,
+    payload: &[u8],
+) -> Result<(), TermError> {
+    let length = u32::try_from(payload.len())
+        .map_err(|_| TermError::Parse("hc frame is too large".to_owned()))?;
+    output.write_all(&channel.to_le_bytes()).map_err(frame_io)?;
+    output.write_all(&[kind]).map_err(frame_io)?;
+    output.write_all(&length.to_le_bytes()).map_err(frame_io)?;
+    output.write_all(payload).map_err(frame_io)?;
+    output.flush().map_err(frame_io)
+}
+
+fn read_hc_frame(input: &mut impl Read) -> Result<(u32, u8, Vec<u8>), TermError> {
+    let mut channel = [0; 4];
+    let mut kind = [0; 1];
+    let mut length = [0; 4];
+    input.read_exact(&mut channel).map_err(frame_io)?;
+    input.read_exact(&mut kind).map_err(frame_io)?;
+    input.read_exact(&mut length).map_err(frame_io)?;
+    let length = usize::try_from(u32::from_le_bytes(length))
+        .ok()
+        .filter(|&length| length <= 16 * 1_024 * 1_024)
+        .ok_or_else(|| TermError::Parse("hc frame is too large".to_owned()))?;
+    let mut payload = vec![0; length];
+    input.read_exact(&mut payload).map_err(frame_io)?;
+    Ok((u32::from_le_bytes(channel), kind[0], payload))
 }
 
 impl Terminal for HcCli {
@@ -377,10 +516,10 @@ impl Terminal for HcCli {
         if text.is_empty() {
             return Ok(());
         }
-        let keys: Vec<String> = text
+        let keys: Option<Vec<String>> = text
             .chars()
             .map(|character| match character {
-                ' ' => Ok("space".to_owned()),
+                ' ' => Some("space".to_owned()),
                 'a'..='z'
                 | '0'..='9'
                 | '\''
@@ -393,13 +532,14 @@ impl Terminal for HcCli {
                 | '['
                 | '\\'
                 | ']'
-                | '`' => Ok(character.to_string()),
-                'A'..='Z' => Ok(format!("shift+{}", character.to_ascii_lowercase())),
-                _ => Err(TermError::Parse(format!(
-                    "hc keys cannot type '{character}'"
-                ))),
+                | '`' => Some(character.to_string()),
+                'A'..='Z' => Some(format!("shift+{}", character.to_ascii_lowercase())),
+                _ => None,
             })
-            .collect::<Result<_, _>>()?;
+            .collect();
+        let Some(keys) = keys else {
+            return self.send_text_framed(pane, text);
+        };
         let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
         self.send_keys(pane, &keys)
     }
@@ -421,7 +561,13 @@ impl Terminal for HcCli {
         if let Some(count) = &count {
             args.extend_from_slice(&["--lines", count]);
         }
-        self.call(&args)
+        let mut output = self.call(&args)?;
+        let last_line = output.strip_suffix('\n').unwrap_or(&output);
+        let start = last_line.rfind('\n').map_or(0, |index| index + 1);
+        if last_line[start..].starts_with("[hc] incomplete:") {
+            output.truncate(start);
+        }
+        Ok(output)
     }
 
     fn foreground(&self, pane: &PaneId) -> Result<Vec<String>, TermError> {

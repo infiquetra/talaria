@@ -422,9 +422,11 @@ fn screen_step_inner(run: &Run<'_>, name: &'static str) -> Result<Step, Abort> {
             if helpers
                 .first()
                 .is_none_or(|s| !s.starts_with(MODELS_HELPERS_FIRST))
-                || helpers
-                    .get(11)
-                    .is_none_or(|s| !s.starts_with(MODELS_HELPERS_TWELFTH))
+                || ![10, 11].iter().any(|index| {
+                    helpers
+                        .get(*index)
+                        .is_some_and(|s| s.starts_with(MODELS_HELPERS_TWELFTH))
+                })
             {
                 return fail("Helpers does not list Vision first and Curator twelfth");
             }

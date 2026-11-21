@@ -152,20 +152,6 @@ fn run(cli: &Cli) -> Result<u8, String> {
         }
     };
     let workspace = if use_hc {
-        let unsupported_suite = match suite {
-            Suite::Phase1 => None,
-            Suite::Phase2a => Some("phase2a"),
-            Suite::Phase2b => Some("phase2b"),
-            Suite::Phase3 => Some("phase3"),
-            Suite::Phase4a => Some("phase4a"),
-            Suite::Phase4b => Some("phase4b"),
-            Suite::Phase5 => Some("phase5"),
-        };
-        if let Some(name) = unsupported_suite {
-            return Err(format!(
-                "suite {name} does not run on hc yet: hc cannot type some of its text. Run it from an old Herdr pane with TALARIA_SMOKE_TERMINAL=herdr"
-            ));
-        }
         String::new()
     } else {
         if std::env::var("HERDR_ENV").as_deref() != Ok("1") {

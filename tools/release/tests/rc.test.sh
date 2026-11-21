@@ -783,6 +783,13 @@ case_gates_smoke() {
   for id in smoke-phase1 smoke-phase2a smoke-phase2b smoke-phase3 smoke-phase4a smoke-phase4b smoke-phase5; do
     need_id "$id" || return
   done
+  if ! awk -F '\t' '
+    $1 ~ /^smoke-phase/ && index($4, "TALARIA_SMOKE_TERMINAL=hc") == 0 { bad = 1 }
+    END { exit bad ? 1 : 0 }
+  ' "$GATES"; then
+    fail "a smoke suite does not select hc"
+    return
+  fi
   help=$(cd "$ROOT" && cargo run -q --locked -p smoke -- run --help 2>&1)
   suites=$(printf '%s\n' "$help" | grep -oE 'phase[0-9]+[a-z]*' | sort -u)
   if [ -z "$suites" ]; then

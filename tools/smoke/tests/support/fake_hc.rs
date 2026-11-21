@@ -6,7 +6,7 @@
 //! `tests/support/hc_recordings/`.
 
 use std::fs::{self, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -92,6 +92,9 @@ fn run() -> Result<ExitCode, String> {
     }
     append_line(&dir.join("env.log"), &json!(seen_env))?;
 
+    if command == Some("connect") {
+        return connect(&dir).map(|()| ExitCode::SUCCESS);
+    }
     let replies = load_replies(&dir.join("replies.json"))?;
     let Some((file_name, status)) = next_reply(&replies, command, call_index)? else {
         return Ok(ExitCode::SUCCESS);
@@ -133,4 +136,112 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn read_frame(input: &mut impl Read) -> Result<(u32, u8, Vec<u8>), String> {
+    let mut header = [0; 9];
+    input.read_exact(&mut header).map_err(|e| e.to_string())?;
+    let channel = u32::from_le_bytes(header[..4].try_into().unwrap());
+    let len = u32::from_le_bytes(header[5..].try_into().unwrap()) as usize;
+    if len > 1_048_576 {
+        return Err("unexpected frame size".to_owned());
+    }
+    let mut payload = vec![0; len];
+    input.read_exact(&mut payload).map_err(|e| e.to_string())?;
+    Ok((channel, header[4], payload))
+}
+
+fn write_frame(
+    output: &mut impl Write,
+    channel: u32,
+    kind: u8,
+    payload: &[u8],
+) -> Result<(), String> {
+    output
+        .write_all(&channel.to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    output.write_all(&[kind]).map_err(|e| e.to_string())?;
+    output
+        .write_all(&u32::try_from(payload.len()).unwrap().to_le_bytes())
+        .map_err(|e| e.to_string())?;
+    output.write_all(payload).map_err(|e| e.to_string())?;
+    output.flush().map_err(|e| e.to_string())
+}
+
+fn connect(dir: &Path) -> Result<(), String> {
+    let config = load_replies(&dir.join("connect.json"))?;
+    let mut input = BufReader::new(std::io::stdin().lock());
+    let mut output = std::io::stdout().lock();
+    let mut line = String::new();
+    input.read_line(&mut line).map_err(|e| e.to_string())?;
+    let hello: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+    if hello
+        != json!({"jsonrpc":"2.0","id":1,"method":"hello","params":{"framed":true,"features":["framed","attach","automatic_input"]}})
+    {
+        return Err("unexpected hello".to_owned());
+    }
+    let hello_reply = if config["hello_error"] == true {
+        json!({"id":1,"error":{"message":"hello refused"}})
+    } else {
+        json!({"id":1,"result":{"framed":config["framed"].as_bool().unwrap_or(true)}})
+    };
+    writeln!(output, "{hello_reply}").map_err(|e| e.to_string())?;
+    output.flush().map_err(|e| e.to_string())?;
+    if config["hello_error"] == true || config["framed"] == false {
+        return Ok(());
+    }
+    let (channel, kind, payload) = read_frame(&mut input)?;
+    let attach: Value = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
+    if channel != 0
+        || kind != 0
+        || attach
+            != json!({"jsonrpc":"2.0","id":2,"method":"terminal.attach","params":{"terminal":"term_x","cols":0,"rows":0,"history":0}})
+    {
+        return Err("unexpected terminal.attach or nonzero resize".to_owned());
+    }
+    if config["attach_error"] == true {
+        write_frame(
+            &mut output,
+            0,
+            0,
+            br#"{"id":2,"error":{"message":"attach refused"}}"#,
+        )?;
+        return Ok(());
+    }
+    let channel: u32 = 0x0102_0304;
+    let mut reply = json!({"id":2,"result":{"channel":channel}});
+    if let Some(automatic) = config["automatic_input"].as_bool() {
+        reply["result"]["automatic_input"] = json!(automatic);
+    }
+    write_frame(
+        &mut output,
+        channel,
+        1,
+        b"terminal output before attach reply",
+    )?;
+    write_frame(&mut output, 0, 0, br#"{"id":99,"result":{}}"#)?;
+    write_frame(&mut output, 0, 0, reply.to_string().as_bytes())?;
+    let (input_channel, kind, payload) = read_frame(&mut input)?;
+    let expected_kind = if config["automatic_input"] == true {
+        6
+    } else {
+        0
+    };
+    if input_channel != channel || kind != expected_kind {
+        return Err("unexpected input channel or kind".to_owned());
+    }
+    fs::write(dir.join("input.bin"), payload).map_err(|e| e.to_string())?;
+    let mut remaining = Vec::new();
+    input
+        .read_to_end(&mut remaining)
+        .map_err(|e| e.to_string())?;
+    if !remaining.is_empty() {
+        return Err("unexpected bytes after raw input".to_owned());
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(dir.join("connect-exited"), []).map_err(|e| e.to_string())?;
+    if config["exit_failure"] == true {
+        return Err("connect failed after input".to_owned());
+    }
+    Ok(())
 }

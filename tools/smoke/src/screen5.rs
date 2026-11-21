@@ -18,6 +18,11 @@ pub fn workflows_empty(text: &str) -> bool {
 }
 pub fn ultracode_status(text: &str) -> bool {
     text.contains(ULTRACODE_STATUS)
+        || text.lines().any(|line| {
+            line.split_once(ULTRACODE_STATUS_INSTALLED_PREFIX)
+                .and_then(|(_, rest)| rest.split_once(")."))
+                .is_some_and(|(origin, _)| !origin.trim().is_empty())
+        })
 }
 pub fn created_folder(text: &str) -> bool {
     text.lines().any(|l| l.trim().starts_with(CREATED_FOLDER))

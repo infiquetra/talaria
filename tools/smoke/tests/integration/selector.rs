@@ -57,12 +57,6 @@ fn run_phase1_with_hc(harness: &Harness, herdr_arg: &Path) -> Outcome {
     run_phase1_with_env(harness, herdr_arg, &[("TALARIA_SMOKE_TERMINAL", "hc")])
 }
 
-fn refusal_line(suite: &str) -> String {
-    format!(
-        "suite {suite} does not run on hc yet: hc cannot type some of its text. Run it from an old Herdr pane with TALARIA_SMOKE_TERMINAL=herdr"
-    )
-}
-
 fn read_log(path: &Path) -> Vec<Vec<String>> {
     let raw = fs::read_to_string(path)
         .unwrap_or_else(|err| panic!("failed to read log {}: {err}", path.display()));
@@ -222,68 +216,33 @@ fn hc_id_selects_phase1() {
 }
 
 #[test]
-fn hc_refuses_later_suites() {
-    let harness = Harness::plain();
-    let outcome = harness
-        .cmd()
-        .outside_herdr()
-        .env("HC_TERMINAL_ID", "term_x")
-        .args(["--suite", "phase2a"])
-        .run();
-
-    assert_eq!(
-        outcome.code,
-        Some(2),
-        "expected exit 2:\n{}",
-        explain(&outcome)
-    );
-    assert_eq!(
-        outcome.stderr.trim_end_matches('\n'),
-        refusal_line("phase2a"),
-        "expected phase2a refusal line in stderr:\n{}",
-        explain(&outcome)
-    );
-    assert!(
-        !outcome.stdout.contains("SMOKE_RESULT"),
-        "unexpected SMOKE_RESULT in stdout:\n{}",
-        explain(&outcome)
-    );
-    assert!(
-        !harness
-            .fake
-            .log()
-            .iter()
-            .any(|args| args.iter().any(|arg| arg == "tab")),
-        "unexpected tab invocation in fake herdr log: {:?}",
-        harness.fake.log()
-    );
-
-    let harness = Harness::plain();
-    let outcome = harness
-        .cmd()
-        .env("TALARIA_SMOKE_TERMINAL", "hc")
-        .args(["--suite", "phase2b"])
-        .run();
-
-    assert_eq!(
-        outcome.code,
-        Some(2),
-        "expected exit 2:\n{}",
-        explain(&outcome)
-    );
-    assert_eq!(
-        outcome.stderr.trim_end_matches('\n'),
-        refusal_line("phase2b"),
-        "expected phase2b refusal line in stderr:\n{}",
-        explain(&outcome)
-    );
-    assert!(
-        !harness
-            .fake
-            .log()
-            .iter()
-            .any(|args| args.iter().any(|arg| arg == "tab")),
-        "unexpected tab invocation in fake herdr log: {:?}",
-        harness.fake.log()
-    );
+fn hc_selects_every_suite() {
+    for suite in [
+        "phase1", "phase2a", "phase2b", "phase3", "phase4a", "phase4b", "phase5",
+    ] {
+        for automatic in [false, true] {
+            let harness = Harness::plain();
+            let bin = harness.root().join("bin");
+            write_executable(&bin.join("jq"), "#!/bin/sh\nexit 0\n");
+            let mut command = harness.cmd().outside_herdr().env("PATH", &bin).args([
+                "--suite",
+                suite,
+                "--step-scale",
+                "0",
+            ]);
+            command = if automatic {
+                command.env("HC_TERMINAL_ID", "term_x")
+            } else {
+                command.env("TALARIA_SMOKE_TERMINAL", "hc")
+            };
+            let outcome = command.run();
+            assert_eq!(outcome.code, Some(2), "{}", explain(&outcome));
+            assert_eq!(
+                outcome.stderr.trim(),
+                "--step-scale must be a finite number above 0.",
+                "{suite}: {}",
+                explain(&outcome)
+            );
+        }
+    }
 }
