@@ -10,6 +10,28 @@ with the usual caveat that a `0.x` line may break anything between releases.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-20
+
+See the [release notes](https://github.com/infiquetra/talaria/blob/v0.9.0/docs/release-notes/v0.9.0.md)
+and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.9.0/docs/migrating-from-0.6.5.md).
+
+### Added
+
+- Talaria runs on the latest Hermes release (#544).
+- Talaria stays in step with Hermes (#548, #549).
+- Talaria launches everywhere and its records match the code (#559, #560, #561, #562, #563, #565, #566, #646).
+- Cards and commands do what they say (#569, #571, #572).
+- A crew can build through Talaria workflows (#575, #576).
+- No Hermes signal that needs the operator is lost (#578, #579, #580, #581, #583, #584, #585).
+
+### Changed
+
+- Talaria is built against Hermes v0.23.1 and needs a gateway at Hermes v0.23.0 or later.
+
+### Removed
+
+- None.
+
 ## [0.8.1] — 2026-11-14
 
 Talaria 0.8.1 is a patch release on 0.8.0 that reports seat status to a Herdr terminal. See the [release notes](https://github.com/infiquetra/talaria/blob/v0.8.1/docs/release-notes/v0.8.1.md) and the [migration guide](https://github.com/infiquetra/talaria/blob/v0.8.1/docs/migrating-from-0.6.5.md).
@@ -668,7 +690,8 @@ Install from a release tag. The name `talaria` on PyPI belongs to an unrelated
 content management system whose last upload was 2010-06-19, so
 `uv tool install talaria` gets you that project rather than this one.
 
-[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/infiquetra/talaria/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/infiquetra/talaria/releases/tag/v0.9.0
 [0.8.1]: https://github.com/infiquetra/talaria/releases/tag/v0.8.1
 [0.8.0]: https://github.com/infiquetra/talaria/releases/tag/v0.8.0
 [0.7.1]: https://github.com/infiquetra/talaria/releases/tag/v0.7.1

@@ -36,9 +36,9 @@ fn workspace_version_has_one_source() {
     );
     assert_eq!(
         workspace_version(&root),
-        "0.8.1",
+        "0.9.0",
         "{}",
-        blame("Cargo.toml", 1, "workspace version is not 0.8.1")
+        blame("Cargo.toml", 1, "workspace version is not 0.9.0")
     );
     for manifest_path in member_manifests(&root) {
         let rel = rel_to(&root, &manifest_path);
