@@ -99,8 +99,13 @@ class LiveBuildTests(unittest.TestCase):
             )
             self.assertEqual(ran.returncode, 0, "no build command")
             base = version.split("-", 1)[0]
-            printed = ran.stdout.strip()
+            self.assertTrue(ran.stdout.endswith("\n"), "no build command")
+            printed = ran.stdout.splitlines()
+            self.assertIn(len(printed), (1, 2), "no build command")
             if "-" in version:
-                self.assertTrue(printed.startswith(f"talaria {base}"), "no build command")
+                self.assertTrue(printed[0].startswith(f"talaria {base}"), "no build command")
             else:
-                self.assertEqual(printed, f"talaria {version}", "no build command")
+                self.assertEqual(printed[0], f"talaria {version}", "no build command")
+            if len(printed) == 2:
+                self.assertTrue(printed[1].startswith("hermes: "), "no build command")
+                self.assertTrue(printed[1][len("hermes: "):].strip(), "no build command")

@@ -177,6 +177,7 @@ class BinaryTests(unittest.TestCase):
             with without("HOME"):
                 passed = package.check_version("ok.sh", "0.7.1")
             self.assertTrue(passed.ok, "no version check")
+            self.assertEqual(passed.message, "talaria 0.7.1")
             lang = Path("lang.txt").read_text(encoding="utf-8")
             self.assertEqual(lang, "C.UTF-8\n", "no version check")
             self.assertFalse(Path("pad.txt").exists(), "no version check")
@@ -208,11 +209,38 @@ class BinaryTests(unittest.TestCase):
                 "printf '%s\\n' 'talaria 0.7.1'\nprintf '%s\\n' 'extra'\n",
             )
             two = package.check_version("two.sh", "0.7.1")
+            self.assertFalse(two.ok)
             self.assertEqual(
                 two.message,
                 "--version printed 'talaria 0.7.1?extra?', expected 'talaria 0.7.1'",
                 "no version check",
             )
+
+            compatibility = (
+                "hermes: pinned v0.23.1 (3b421578), "
+                "supported from v0.23.0, tested to v0.23.1"
+            )
+            write_script(
+                "compat.sh",
+                f"printf '%s\\n' 'talaria 0.9.0' '{compatibility}'\n",
+            )
+            compatible = package.check_version("compat.sh", "0.9.0")
+            self.assertTrue(compatible.ok)
+            self.assertEqual(compatible.message, "talaria 0.9.0")
+            self.assertFalse(package.check_version("compat.sh", "0.9.1").ok)
+
+            invalid_outputs = (
+                "talaria 0.9.0\nhermes: ...\nextra\n",
+                "talaria 0.9.0\nhermes: \n",
+                "talaria 0.9.0\nhermes:    \n",
+                "talaria 0.9.0\n\n",
+                "talaria 0.9.0",
+                f"talaria 0.9.0\n{compatibility}",
+            )
+            for output in invalid_outputs:
+                with self.subTest(output=output):
+                    write_script("invalid.sh", f"printf '%s' '{output}'\n")
+                    self.assertFalse(package.check_version("invalid.sh", "0.9.0").ok)
 
             write_script("empty.sh", "exit 0\n")
             empty = package.check_version("empty.sh", "0.7.1")

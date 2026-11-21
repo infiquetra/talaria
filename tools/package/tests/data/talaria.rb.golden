@@ -38,6 +38,6 @@ class Talaria < Formula
   end
 
   test do
-    assert_equal "talaria #{version}", shell_output("#{bin}/talaria --version").strip
+    assert_equal "talaria #{version}", shell_output("#{bin}/talaria --version").lines.first&.strip
   end
 end
