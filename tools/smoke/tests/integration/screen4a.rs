@@ -165,3 +165,19 @@ fn doctor_summary_counts_parsed() {
         Some((7, 0, 0))
     );
 }
+
+#[test]
+fn doctor_summary_accepts_singular_and_plural_counts() {
+    assert_eq!(
+        doctor_summary("Doctor: 6 ok, 1 warning, 0 failures"),
+        Some((6, 1, 0))
+    );
+    assert_eq!(
+        doctor_summary("Doctor: 5 ok, 2 warnings, 1 failure"),
+        Some((5, 2, 1))
+    );
+    assert_eq!(
+        doctor_summary("Doctor: 4 ok, 2 warnings, 2 failures"),
+        Some((4, 2, 2))
+    );
+}

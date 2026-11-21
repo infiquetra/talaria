@@ -661,3 +661,52 @@ fn framed_child_drops_hc_identity() {
         b"@!_:?"
     );
 }
+
+#[test]
+fn read_strips_only_a_trailing_incomplete_footer() {
+    let footer = "[hc] incomplete: older output may be missing";
+    let cases = [
+        ("output\nprompt$\n".to_owned(), "output\nprompt$\n"),
+        ("output\nprompt$".to_owned(), "output\nprompt$"),
+        (format!("output\nprompt$\n{footer}\n"), "output\nprompt$\n"),
+        (format!("output\nprompt$\n{footer}"), "output\nprompt$\n"),
+        (
+            format!("output\r\nprompt$\r\n{footer}\r\n"),
+            "output\r\nprompt$\r\n",
+        ),
+        (
+            format!("{footer}\noutput\n"),
+            "[hc] incomplete: older output may be missing\noutput\n",
+        ),
+        (
+            format!("prompt$ {footer}\n"),
+            "prompt$ [hc] incomplete: older output may be missing\n",
+        ),
+        (format!("{footer}\n"), ""),
+        (String::new(), ""),
+    ];
+    let fake = FakeHc::builder().build();
+    let capture = fake.state_dir.join("read.txt");
+    let replies: Vec<_> = cases
+        .iter()
+        .map(|_| json!({"file": capture, "status": 0}))
+        .collect();
+    fs::write(
+        fake.state_dir.join("replies.json"),
+        json!({"read": replies}).to_string(),
+    )
+    .unwrap();
+    let client = HcCli::new(fake.executable());
+    for (output, expected) in cases {
+        fs::write(&capture, &output).unwrap();
+        assert_eq!(
+            client.read(
+                &PaneId("term_x".to_owned()),
+                ReadSource::RecentUnwrapped,
+                Some(3000)
+            ),
+            Ok(expected.to_owned()),
+            "capture: {output:?}"
+        );
+    }
+}

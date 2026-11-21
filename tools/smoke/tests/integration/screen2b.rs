@@ -355,3 +355,24 @@ fn print_check_rejects_two_json_lines() {
         "two JSON lines are not the not-started line"
     );
 }
+
+#[test]
+fn context_header_accepts_estimated_token_counts() {
+    assert_eq!(
+        context_header("Context · minimax-m3.1-flash · ~12,831 / 1,000,000 tokens (~1%)"),
+        Some(ContextHeader {
+            model: "minimax-m3.1-flash".to_owned(),
+            percent: true,
+            line_index: 0,
+        })
+    );
+    for invalid in ["~", "~,", "~~12", "~12x", "~１２"] {
+        assert_eq!(
+            context_header(&format!(
+                "Context · minimax-m3.1-flash · {invalid} / 1,000,000 tokens (~1%)"
+            )),
+            None,
+            "invalid token count: {invalid}"
+        );
+    }
+}

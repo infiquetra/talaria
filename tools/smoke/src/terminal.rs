@@ -561,7 +561,13 @@ impl Terminal for HcCli {
         if let Some(count) = &count {
             args.extend_from_slice(&["--lines", count]);
         }
-        self.call(&args)
+        let mut output = self.call(&args)?;
+        let last_line = output.strip_suffix('\n').unwrap_or(&output);
+        let start = last_line.rfind('\n').map_or(0, |index| index + 1);
+        if last_line[start..].starts_with("[hc] incomplete:") {
+            output.truncate(start);
+        }
+        Ok(output)
     }
 
     fn foreground(&self, pane: &PaneId) -> Result<Vec<String>, TermError> {

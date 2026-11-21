@@ -2,6 +2,19 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-20 — hc scrollback diagnostics are outside terminal output
+
+**Evidence.** After a TUI scrolled beyond the pane height, live `hc read` appended
+`[hc] incomplete: older output may be missing` after the shell prompt. The next
+command appeared before that footer, breaking command-output isolation.
+
+**Mechanism.** The footer describes capture completeness rather than PTY output.
+Remove only a final line beginning `[hc] incomplete:` in the hc adapter, preserving
+all earlier bytes and line endings, including identical lines inside output.
+
+**Generalizable rule.** Separate terminal capture diagnostics from terminal bytes
+before comparing successive snapshots.
+
 ## 2026-11-20 — Nullable session info must preserve event sequencing
 
 **Evidence.** Live Hermes 0.23.2 sent `session.info` with `"title": null`.
