@@ -181,10 +181,18 @@ def check_version(path, version):
     if completed.returncode:
         return _error(f"--version exited {completed.returncode}")
     output = completed.stdout.decode("utf-8", errors="replace")
-    line = output[:-1] if output.endswith("\n") and output.count("\n") == 1 else output
+    lines = output[:-1].split("\n")
+    valid_output = output.endswith("\n") and (
+        len(lines) == 1 or (
+            len(lines) == 2
+            and lines[1].startswith("hermes: ")
+            and bool(lines[1][len("hermes: "):].strip())
+        )
+    )
+    line = lines[0] if valid_output else output
     prefix = "talaria "
     actual = line[len(prefix):] if line.startswith(prefix) else ""
-    valid = _valid_version(actual) and (
+    valid = valid_output and _valid_version(actual) and (
         actual == version if "-" not in version else actual.split("-", 1)[0] == version.split("-", 1)[0]
     )
     if not valid:
@@ -367,7 +375,7 @@ def formula(version, sums_path, base_url=None):
         'class Talaria < Formula\n'
         '  desc "Terminal client for the Hermes agent gateway"\n'
         '  homepage "https://github.com/infiquetra/talaria"\n'
-        f'  version "{version}"\n'
+        + (f'  version "{version}"\n' if "-" in version else "") +
         '  license "MIT"\n\n'
         '  on_macos do\n    on_arm do\n' + stanza("aarch64-apple-darwin") +
         '    end\n    on_intel do\n' + stanza("x86_64-apple-darwin") +
@@ -380,7 +388,7 @@ def formula(version, sums_path, base_url=None):
         '      Run `talaria doctor` to check the connection and versions.\n'
         '    EOS\n  end\n\n'
         '  test do\n'
-        '    assert_equal "talaria #{version}", shell_output("#{bin}/talaria --version").strip\n'
+        '    assert_equal "talaria #{version}", shell_output("#{bin}/talaria --version").lines.first&.strip\n'
         '  end\nend\n'
     )
     return Result(ok=True, stdout=text)

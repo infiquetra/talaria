@@ -1,7 +1,6 @@
 class Talaria < Formula
   desc "Terminal client for the Hermes agent gateway"
   homepage "https://github.com/infiquetra/talaria"
-  version "0.7.1"
   license "MIT"
 
   on_macos do
@@ -38,6 +37,6 @@ class Talaria < Formula
   end
 
   test do
-    assert_equal "talaria #{version}", shell_output("#{bin}/talaria --version").strip
+    assert_equal "talaria #{version}", shell_output("#{bin}/talaria --version").lines.first&.strip
   end
 end
