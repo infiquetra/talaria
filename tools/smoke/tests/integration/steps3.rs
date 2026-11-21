@@ -1029,3 +1029,31 @@ fn step_limits_sum_below_the_deadline() {
         "the sum {sum} s is under the phase 3 deadline of {deadline} s"
     );
 }
+
+#[test]
+fn needs_you_waits_for_peek_to_finish_opening() {
+    let exec = play(
+        &Shapes {
+            needs_you: NeedsYou::AsyncPeek,
+            ..Shapes::default()
+        },
+        Step::NeedsYou,
+    );
+    assert_passes(&exec, "needs-you");
+    assert!(last_typed_at(&exec, "a") > last_keys_at(&exec, smoke::KEY_JUMP));
+    assert_one_close_tab(&exec);
+}
+
+#[test]
+fn needs_you_waits_for_answer_focus_before_typing_deny() {
+    let exec = play(
+        &Shapes {
+            needs_you: NeedsYou::AsyncCard,
+            ..Shapes::default()
+        },
+        Step::NeedsYou,
+    );
+    assert_passes(&exec, "needs-you");
+    assert!(last_typed_at(&exec, "1") > last_typed_at(&exec, "a") + Duration::from_millis(300));
+    assert_one_close_tab(&exec);
+}

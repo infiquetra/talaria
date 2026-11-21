@@ -2,6 +2,33 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-20 — Nullable session info must preserve event sequencing
+
+**Evidence.** Live Hermes 0.23.2 sent `session.info` with `"title": null`.
+The decoder regression rejected it as a string type error; dropping that event
+skipped its sequence and made the following `message.complete` report `SeqJump`.
+
+**Mechanism.** The pinned v0.23.1 `SessionLiveInfo.title` defaults when omitted,
+but rejects explicit null. After a failed `session.info` decode, remove only
+null entries at the payload object's top level and retry with the same envelope.
+A successful retry keeps the sequence stamp; invalid payloads still fail.
+
+**Generalizable rule.** Normalize compatible null defaults before discarding a
+stamped event, so decoding drift does not create a false sequence gap.
+
+## 2026-11-20 — Terminal capture newlines can precede prompt input
+
+**Evidence.** Live `hc read` ended a shell prompt with a newline, while the next
+capture placed the typed command on that same prompt line. All three command
+output readers failed their prefix check; their focused regressions reproduced it.
+
+**Mechanism.** Trim trailing newlines from the earlier capture before comparing
+prefixes or whole-line overlaps. The prompt then anchors the appended command
+without accepting unrelated history or reusing an earlier completion marker.
+
+**Generalizable rule.** Account for capture-only trailing newlines while retaining
+an overlap with the prior terminal output.
+
 ## 2026-11-20 — Framed hc input preserves text and pane ownership
 
 **Evidence.** hc 0.1.21 accepts punctuation and UTF-8 through framed

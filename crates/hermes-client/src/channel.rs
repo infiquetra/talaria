@@ -577,8 +577,8 @@ pub async fn write_frame(
         })
 }
 
-// Keep the stamped envelope and original payload even when a stream event's
-// typed payload cannot represent it. Other malformed frames remain errors.
+// Retry session info without null defaults; retain untyped stream payloads with
+// their stamped envelope. Other malformed frames remain errors.
 pub(crate) fn decode_event_params(
     params: &Value,
 ) -> Result<EventFrame, hermes_contract::events::DecodeError> {
@@ -586,6 +586,20 @@ pub(crate) fn decode_event_params(
         Ok(frame) => Ok(frame),
         Err(error) => {
             let kind = params.get("type").and_then(Value::as_str);
+            if kind == Some("session.info")
+                && params
+                    .get("payload")
+                    .and_then(Value::as_object)
+                    .is_some_and(|payload| payload.values().any(Value::is_null))
+            {
+                let mut sanitized = params.clone();
+                if let Some(payload) = sanitized.get_mut("payload").and_then(Value::as_object_mut) {
+                    payload.retain(|_, value| !value.is_null());
+                }
+                if let Ok(frame) = EventFrame::from_params(&sanitized) {
+                    return Ok(frame);
+                }
+            }
             if !matches!(kind, Some("message.delta" | "tool.start" | "tool.complete"))
                 || params.get("session_id").and_then(Value::as_str).is_none()
                 || params.get("admission_id").and_then(Value::as_str).is_none()
@@ -2061,6 +2075,40 @@ fn request_kind(value: &Value) -> &str {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn session_info_null_title_preserves_the_stamp_and_rejects_non_object_payloads() {
+        let mut params = json!({
+            "type": "session.info", "session_id": "local-session-1",
+            "seq": 42, "replay_epoch": "epoch-1", "authority_epoch": 1,
+            "execution_generation": 2, "admission_id": "admission-1",
+            "payload": {"title": null, "model": "fixture-model", "running": true}
+        });
+        let original = params.clone();
+        let frame = decode_event_params(&params).expect("null title uses the omitted default");
+        assert_eq!(frame.session_id.as_deref(), Some("local-session-1"));
+        assert_eq!(frame.seq, Some(42));
+        assert_eq!(frame.replay_epoch.as_deref(), Some("epoch-1"));
+        assert_eq!(frame.authority_epoch, Some(1));
+        assert_eq!(frame.execution_generation, Some(2));
+        assert_eq!(frame.admission_id.as_deref(), Some("admission-1"));
+        let hermes_contract::events::Notification::SessionInfo(info) = frame.notification else {
+            panic!("session.info must remain typed");
+        };
+        assert_eq!(info.title, "");
+        assert_eq!(info.model, "fixture-model");
+        assert!(info.running);
+        assert_eq!(params, original, "the original wire payload stays intact");
+        for payload in [json!("not an object"), json!([]), json!(42)] {
+            params["payload"] = payload;
+            assert!(decode_event_params(&params).is_err());
+        }
+        params["payload"] = json!({"title": null, "running": "invalid"});
+        assert!(decode_event_params(&params).is_err());
+        params["payload"] = json!({"title": null});
+        params["seq"] = json!("invalid");
+        assert!(decode_event_params(&params).is_err());
+    }
 
     #[test]
     fn closure_time_is_recorded_once_and_cleared_for_the_next_generation() {

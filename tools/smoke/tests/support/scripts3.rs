@@ -146,6 +146,8 @@ pub enum NeedsYou {
     Segment,
     Peek,
     NoDeny,
+    AsyncPeek,
+    AsyncCard,
     NotCleared,
     CommandRan,
     SegmentStays,
@@ -567,10 +569,29 @@ fn needs_you_rules(shape: NeedsYou) -> Vec<RuleBuilder> {
         }
         _ => rules.push(poll),
     }
+    let live_peek = format!("{peek}── peek ──\nOpening…\nctrl+c close\n");
+    let live_card = format!("{card}ctrl+c close\n");
+    let peek_rule = if shape == NeedsYou::AsyncPeek {
+        RuleBuilder::send_keys("^alt\\+a$")
+            .append(&live_peek)
+            .then(StageBuilder::new().after_polls(8).wipe().append(&live_card))
+    } else {
+        RuleBuilder::send_keys("^alt\\+a$").append(peek)
+    };
+    let card_rule = if shape == NeedsYou::AsyncCard {
+        RuleBuilder::send_text("^a$").append(&live_card).then(
+            StageBuilder::new()
+                .after_polls(8)
+                .wipe()
+                .append(&format!("{card}ctrl+c back to list\n")),
+        )
+    } else {
+        RuleBuilder::send_text("^a$").append(card)
+    };
     rules.extend([
         RuleBuilder::run(r"--provider ollama-cloud;").append(notice),
-        RuleBuilder::send_keys("^alt\\+a$").append(peek),
-        RuleBuilder::send_text("^a$").append(card),
+        peek_rule,
+        card_rule,
         RuleBuilder::send_text("^[0-9]$").append(cleared),
         RuleBuilder::send_keys("^esc$").append(cleared),
     ]);

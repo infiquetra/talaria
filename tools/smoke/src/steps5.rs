@@ -303,6 +303,7 @@ fn command_env(
     }
 }
 fn appended<'a>(before: &str, after: &'a str) -> Option<&'a str> {
+    let before = before.trim_end_matches('\n');
     if before.is_empty() {
         return Some(after);
     }
@@ -516,4 +517,23 @@ pub(crate) fn step(run: &mut Run<'_>, name: &str, cfg5: &Phase5Config) -> Result
         _ => return Err(error("unknown workflow smoke step")),
     }
     Ok(Step::Pass)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn appended_isolates_commands_on_a_prompt_with_a_capture_newline() {
+        let before = "prev\nuser@host:/tmp$\n";
+        let after = "prev\nuser@host:/tmp$ printf ...\nSMOKE_BEGIN_1\nok\n";
+        let delta = " printf ...\nSMOKE_BEGIN_1\nok\n";
+        assert_eq!(appended(before, after), Some(delta));
+        assert_eq!(appended(before, &after[5..]), Some(delta));
+        assert_eq!(
+            appended(before, "unrelated history\nSMOKE_BEGIN_1\nok\n"),
+            None
+        );
+        assert_eq!(appended("\n\n", after), Some(after));
+    }
 }

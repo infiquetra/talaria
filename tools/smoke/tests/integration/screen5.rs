@@ -63,6 +63,21 @@ fn ultracode_status() {
     assert!(smoke::screen5::ultracode_status(&screen(
         "ultracode-status.txt"
     )));
+    for origin in ["builtin", "profile", "shared (built-in)"] {
+        assert!(smoke::screen5::ultracode_status(&format!(
+            "notice\nUltracode is off for this session. Skill: installed ({origin}).\n> "
+        )));
+    }
+    for invalid in [
+        "Ultracode is on for this session. Skill: installed (builtin).",
+        "Ultracode is off for this session. Skill: installed ().",
+        "Ultracode is off for this session. Skill: installed (   ).",
+        "Ultracode is off for this session. Skill: installed (builtin)",
+        "Ultracode is off for this session. Skill: installed (\nbuiltin).",
+        "Ultracode is off for this session. Skill: unknown",
+    ] {
+        assert!(!smoke::screen5::ultracode_status(invalid), "{invalid}");
+    }
     assert!(!smoke::screen5::ultracode_status(&screen("idle.txt")));
     assert!(!smoke::screen5::ultracode_status(
         "Ultracode is on for this session. Skill: not found in profile fixture."

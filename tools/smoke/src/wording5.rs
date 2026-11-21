@@ -5,6 +5,8 @@ pub const WORKFLOWS_EMPTY: &str = "no runs yet — talaria workflow run starts o
 // The status with no skill installed, specified by issue #272.
 pub const ULTRACODE_STATUS: &str =
     "Ultracode is off for this session. Skill: not found in profile fixture.";
+pub const ULTRACODE_STATUS_INSTALLED_PREFIX: &str =
+    "Ultracode is off for this session. Skill: installed (";
 // Built-in installation and listing, specified by issue #271.
 pub const CREATED_FOLDER: &str = "created folder ";
 pub const CREATED: &str = "created ";
