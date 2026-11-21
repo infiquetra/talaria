@@ -203,6 +203,7 @@ impl Endpoint {
             profiles.push(ServedProfile {
                 name,
                 id: ProfileId(id.to_owned()),
+                home: ProfileHome(path.to_path_buf()),
             });
         }
         Ok(Self {
@@ -238,6 +239,13 @@ impl Endpoint {
             });
         }
         Err(ProfileLookupError::NeverDiscovered { name: shown })
+    }
+
+    /// Return the home folder the gateway sent for a served profile, or `None` when the
+    /// gateway does not serve that name. The name is matched as `resolve_profile` matches it.
+    pub fn profile_home(&self, name: &str) -> Option<&ProfileHome> {
+        let _ = name;
+        todo!("return the served home for the profile")
     }
 
     /// Copy this endpoint with a different instance id. Live test 32 uses it.
@@ -304,6 +312,28 @@ pub fn home_hash(canonical_home: &str) -> String {
 pub struct ServedProfile {
     pub name: String,
     pub id: ProfileId,
+    /// The home folder the gateway sent for this profile, exactly as sent.
+    pub home: ProfileHome,
+}
+
+/// The exact `home` path the gateway sent for a served profile. Never canonicalised.
+///
+/// It has no `Display`, `Serialize` or `Deref`, and its `Debug` hides the path, so the folder
+/// reaches a caller only through [`ProfileHome::as_path`].
+#[derive(Clone)]
+pub struct ProfileHome(PathBuf);
+
+impl ProfileHome {
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for ProfileHome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let _ = &self.0;
+        f.write_str("ProfileHome(<path>)")
+    }
 }
 
 /// The exact `profile_id` string the gateway sent. Never normalised.

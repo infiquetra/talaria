@@ -1,7 +1,7 @@
 use std::{fs, path::Path, time::Duration};
 use talaria_workflow::skill::{
-    InstallAction, InstallOptions, InstallRecords, SkillState, SkillTarget, inspect, install,
-    normalise_profile, render, uninstall,
+    InstallAction, InstallOptions, InstallRecords, SkillError, SkillState, SkillTarget, inspect,
+    install, normalise_profile, render, report_text, target_from_endpoint, uninstall,
 };
 use tempfile::TempDir;
 struct Fixture {
@@ -409,16 +409,174 @@ fn profile_names_homes_and_roots() {
     let rooted = talaria_workflow::skill::hermes_root_of(&t.home, Path::new("/unused"));
     assert_eq!(rooted, f.home);
 }
+fn endpoint_serving(root: &Path, homes: &[&str]) -> hermes_client::Endpoint {
+    let root_text = root.to_str().unwrap();
+    let entries: Vec<serde_json::Value> = std::iter::once(root_text)
+        .chain(homes.iter().copied())
+        .map(|home| serde_json::json!({"profile_id": home, "home": home}))
+        .collect();
+    let identify = serde_json::json!({
+        "runtime_protocol": 1,
+        "state": "ready",
+        "capabilities": ["session-authority-v1"],
+        "authority_epoch": 1,
+        "instance_id": "inst-12345678",
+        "api_origin": "http://127.0.0.1:41234",
+        "supervisor": "none",
+        "served_profiles": entries,
+    });
+    hermes_client::Endpoint::from_identify(&identify, root).unwrap()
+}
 #[test]
-fn home_from_gateway_row() {
+fn target_from_endpoint_confirms_a_named_profile() {
     let f = Fixture::new();
-    let path = f.home.join("profiles/fixture");
-    let row = serde_json::json!({"name":"fixture","path":path});
-    let t = SkillTarget::from_profile_row("fixture", &row).unwrap();
-    assert_eq!(t.home, path);
-    assert_eq!(t.hermes_root, f.home);
+    let served = f.home.join("profiles/fixture");
+    let endpoint = endpoint_serving(&f.home, &[served.to_str().unwrap()]);
+    let t = target_from_endpoint("Fixture", &endpoint, &f.home)
+        .unwrap()
+        .unwrap();
+    assert_eq!(t.profile, "fixture");
+    assert_eq!(t.home, fs::canonicalize(&served).unwrap());
+    assert_eq!(t.hermes_root, fs::canonicalize(&f.home).unwrap());
     assert!(t.via_gateway);
-    assert!(SkillTarget::from_profile_row("default", &row).is_err());
+    let local = SkillTarget::resolve_local("fixture", &f.home).unwrap();
+    assert_eq!(t.home, local.home);
+    assert_eq!(t.hermes_root, local.hermes_root);
+    assert_eq!(t.dir, local.dir);
+    assert!(!local.via_gateway);
+}
+#[test]
+fn target_from_endpoint_confirms_the_default_profile() {
+    let f = Fixture::new();
+    let endpoint = endpoint_serving(&f.home, &[]);
+    let t = target_from_endpoint("default", &endpoint, &f.home)
+        .unwrap()
+        .unwrap();
+    assert_eq!(t.home, t.hermes_root);
+    assert_eq!(t.home, fs::canonicalize(&f.home).unwrap());
+    assert!(t.via_gateway);
+    let local = SkillTarget::resolve_local("default", &f.home).unwrap();
+    assert_eq!(t.dir, local.dir);
+}
+#[test]
+fn target_from_endpoint_returns_none_for_an_unserved_profile() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.home.join("profiles/unserved")).unwrap();
+    let served = f.home.join("profiles/fixture");
+    let endpoint = endpoint_serving(&f.home, &[served.to_str().unwrap()]);
+    assert!(
+        target_from_endpoint("unserved", &endpoint, &f.home)
+            .unwrap()
+            .is_none()
+    );
+    assert!(target_from_endpoint("../bad", &endpoint, &f.home).is_err());
+}
+#[cfg(unix)]
+#[test]
+fn target_from_endpoint_refuses_a_relative_home() {
+    let f = Fixture::new();
+    // A relative path that does reach the right folder from the working folder, so only the
+    // absolute-path rule can refuse it.
+    let cwd = fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+    let mut relative = std::path::PathBuf::new();
+    for _ in cwd.components().skip(1) {
+        relative.push("..");
+    }
+    relative.push(f.home.join("profiles/fixture").strip_prefix("/").unwrap());
+    assert_eq!(
+        fs::canonicalize(&relative).unwrap(),
+        fs::canonicalize(f.home.join("profiles/fixture")).unwrap()
+    );
+    let endpoint = endpoint_serving(&f.home, &[relative.to_str().unwrap()]);
+    let error = target_from_endpoint("fixture", &endpoint, &f.home).unwrap_err();
+    assert!(matches!(
+        error,
+        SkillError::GatewayFolderMismatch { ref profile } if profile == "fixture"
+    ));
+    assert_eq!(
+        error.to_string(),
+        "the gateway serves profile fixture from a different folder than this Hermes home gives; restart the gateway, then try again"
+    );
+    assert_eq!(error.exit_code(), 1);
+}
+#[test]
+fn report_text_prints_local_folder_notes_without_a_warning_prefix() {
+    let f = Fixture::new();
+    let target = f.target();
+    let mut report = install(
+        &target,
+        &InstallOptions {
+            dry_run: true,
+            ..f.opts()
+        },
+    )
+    .unwrap();
+    report.warnings = vec![
+        "gateway not running; using the local profile folder".into(),
+        "the gateway does not serve profile fixture; using the local profile folder".into(),
+        "the skill folder was repaired".into(),
+    ];
+    let text = report_text(&target, &report, true, false);
+    let lines: Vec<&str> = text.lines().take(3).collect();
+    assert_eq!(
+        lines,
+        [
+            "gateway not running; using the local profile folder",
+            "the gateway does not serve profile fixture; using the local profile folder",
+            "warning: the skill folder was repaired",
+        ]
+    );
+}
+#[test]
+fn target_from_endpoint_refuses_a_different_folder() {
+    let f = Fixture::new();
+    let other = f.home.join("other/profiles/fixture");
+    fs::create_dir_all(&other).unwrap();
+    let endpoint = endpoint_serving(&f.home, &[other.to_str().unwrap()]);
+    let error = target_from_endpoint("fixture", &endpoint, &f.home).unwrap_err();
+    assert!(matches!(error, SkillError::GatewayFolderMismatch { .. }));
+}
+#[test]
+fn target_from_endpoint_keeps_a_missing_folder_error() {
+    let f = Fixture::new();
+    let missing = f.home.join("profiles/gone");
+    let endpoint = endpoint_serving(&f.home, &[missing.to_str().unwrap()]);
+    let error = target_from_endpoint("gone", &endpoint, &f.home).unwrap_err();
+    assert!(matches!(error, SkillError::ProfileNotFound { .. }));
+}
+#[cfg(unix)]
+#[test]
+fn target_from_endpoint_accepts_an_evolved_generation_folder() {
+    let f = Fixture::new();
+    let generation = f.home.join("profiles/.gen/evolved/000002");
+    fs::create_dir_all(&generation).unwrap();
+    std::os::unix::fs::symlink(&generation, f.home.join("profiles/evolved")).unwrap();
+    let endpoint = endpoint_serving(&f.home, &[generation.to_str().unwrap()]);
+    let t = target_from_endpoint("evolved", &endpoint, &f.home)
+        .unwrap()
+        .unwrap();
+    assert_eq!(t.home, fs::canonicalize(&generation).unwrap());
+    assert_eq!(t.hermes_root, fs::canonicalize(&f.home).unwrap());
+    assert!(t.via_gateway);
+    let local = SkillTarget::resolve_local("evolved", &f.home).unwrap();
+    assert_eq!(t.home, local.home);
+    assert_eq!(t.dir, local.dir);
+}
+#[cfg(unix)]
+#[test]
+fn target_from_endpoint_refuses_a_stale_generation_folder() {
+    let f = Fixture::new();
+    let served = f.home.join("profiles/.gen/evolved/000002");
+    let current = f.home.join("profiles/.gen/evolved/000003");
+    fs::create_dir_all(&served).unwrap();
+    fs::create_dir_all(&current).unwrap();
+    std::os::unix::fs::symlink(&current, f.home.join("profiles/evolved")).unwrap();
+    let endpoint = endpoint_serving(&f.home, &[served.to_str().unwrap()]);
+    let error = target_from_endpoint("evolved", &endpoint, &f.home).unwrap_err();
+    assert!(matches!(
+        error,
+        SkillError::GatewayFolderMismatch { ref profile } if profile == "evolved"
+    ));
 }
 #[test]
 fn discovery_never_runs_ensure() {

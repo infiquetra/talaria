@@ -9,7 +9,7 @@ use std::{
 pub mod install;
 pub mod report;
 pub use install::*;
-pub use report::{report_text, resolve_target};
+pub use report::{report_text, resolve_target, resolve_target_in};
 pub const SKILL_NAME: &str = "talaria-workflows";
 pub const SKILL_VERSION: &str = "1.0.0";
 pub const SKILL_FILES: &[(&str, &str)] = &[
@@ -111,6 +111,16 @@ pub fn render(
             })
         })
         .collect()
+}
+/// Confirm with the gateway's served-profile entry that `profile` is served from the folder the
+/// local rule gives under `hermes_home`. `Ok(None)` means the gateway does not serve the profile.
+pub fn target_from_endpoint(
+    profile: &str,
+    endpoint: &hermes_client::Endpoint,
+    hermes_home: &Path,
+) -> Result<Option<SkillTarget>, SkillError> {
+    let _ = (profile, endpoint, hermes_home);
+    todo!("confirm the served folder against the local rule")
 }
 pub fn hermes_root_of(home: &Path, native_home: &Path) -> PathBuf {
     if home.starts_with(native_home) {
@@ -355,6 +365,10 @@ pub enum SkillError {
     ProfileNotFound { profile: String, home: PathBuf },
     #[error("gateway serves '{served}', not '{wanted}'")]
     GatewayMismatch { served: String, wanted: String },
+    #[error(
+        "the gateway serves profile {profile} from a different folder than this Hermes home gives; restart the gateway, then try again"
+    )]
+    GatewayFolderMismatch { profile: String },
     #[error("another talaria skill command is changing profile {profile}; try again")]
     LockTimeout { profile: String },
     #[error("cannot write {path}: {source}")]

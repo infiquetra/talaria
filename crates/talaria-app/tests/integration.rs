@@ -383,6 +383,9 @@ mod side_replay;
 #[path = "integration/side_service.rs"]
 mod side_service;
 
+#[path = "integration/skill_target_wire.rs"]
+mod skill_target_wire;
+
 #[path = "integration/secondary_ignore.rs"]
 mod secondary_ignore;
 

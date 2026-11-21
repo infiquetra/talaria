@@ -2972,3 +2972,62 @@ async fn null_skin_colour_does_not_fail_describe() {
     assert!(!describe_skin.light_colors.contains_key("ui_ok"));
     assert!(!describe_skin.dark_colors.contains_key("ui_warn"));
 }
+
+fn identify_with_homes(root: &str, entries: &[&str]) -> Value {
+    let mut result = ready_identify(root, "http://127.0.0.1:41234");
+    result["served_profiles"] = Value::Array(
+        std::iter::once(root)
+            .chain(entries.iter().copied())
+            .map(|home| json!({"profile_id": home, "home": home}))
+            .collect(),
+    );
+    result
+}
+
+#[test]
+fn served_profiles_keep_the_home_the_gateway_sent() {
+    let root = "/example-home/.hermes";
+    let regular = "/example-home/.hermes/profiles/fixture";
+    let evolved = "/example-home/.hermes/profiles/.gen/evolved/000002";
+    let result = identify_with_homes(root, &[regular, evolved]);
+    let endpoint = Endpoint::from_identify(&result, Path::new(root)).expect("identify succeeds");
+
+    let default_home = endpoint.profile_home("default").map(|home| home.as_path());
+    assert_eq!(default_home, Some(Path::new(root)));
+    let fixture_home = endpoint.profile_home("fixture").map(|home| home.as_path());
+    assert_eq!(fixture_home, Some(Path::new(regular)));
+    let evolved_home = endpoint.profile_home("evolved").map(|home| home.as_path());
+    assert_eq!(evolved_home, Some(Path::new(evolved)));
+    let typed = endpoint
+        .profile_home("  FIXTURE ")
+        .map(|home| home.as_path());
+    assert_eq!(
+        typed,
+        Some(Path::new(regular)),
+        "the name is trimmed and lower-cased"
+    );
+    assert!(endpoint.profile_home("nosuchprofile").is_none());
+    assert!(endpoint.profile_home("").is_none());
+}
+
+#[test]
+fn served_profile_debug_text_hides_the_home() {
+    let root = "/example-home/.hermes";
+    let regular = "/example-home/.hermes/profiles/fixture";
+    let result = identify_with_homes(root, &[regular]);
+    let endpoint = Endpoint::from_identify(&result, Path::new(root)).expect("identify succeeds");
+
+    let fixture = &endpoint.profiles()[1];
+    assert_eq!(fixture.name, "fixture");
+    assert_eq!(fixture.home.as_path(), Path::new(regular));
+    for blob in [
+        format!("{fixture:?}"),
+        format!("{fixture:#?}"),
+        format!("{:?}", fixture.home),
+        format!("{:#?}", fixture.home),
+        format!("{:?}", endpoint.profiles()),
+        format!("{:#?}", endpoint.profiles()),
+    ] {
+        no_home(&blob, "example-home");
+    }
+}

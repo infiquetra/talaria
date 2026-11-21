@@ -4,11 +4,18 @@ use super::{
 };
 use crate::hermes::{LinkWireFactory, WireError, WireFactory};
 use serde_json::Value;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 pub async fn resolve_target(profile: &str) -> Result<(SkillTarget, Vec<String>), SkillError> {
+    resolve_target_in(profile, &hermes_client::default_home()).await
+}
+
+pub async fn resolve_target_in(
+    profile: &str,
+    hermes_home: &Path,
+) -> Result<(SkillTarget, Vec<String>), SkillError> {
     let profile = skill::normalise_profile(profile)?;
-    let home = hermes_client::default_home();
+    let home = hermes_home.to_path_buf();
     let options = hermes_client::DiscoverOptions {
         ensure: hermes_client::EnsurePolicy::Never,
         ..Default::default()
