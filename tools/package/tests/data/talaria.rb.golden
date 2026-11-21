@@ -1,7 +1,6 @@
 class Talaria < Formula
   desc "Terminal client for the Hermes agent gateway"
   homepage "https://github.com/infiquetra/talaria"
-  version "0.7.1"
   license "MIT"
 
   on_macos do

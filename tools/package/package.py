@@ -375,7 +375,7 @@ def formula(version, sums_path, base_url=None):
         'class Talaria < Formula\n'
         '  desc "Terminal client for the Hermes agent gateway"\n'
         '  homepage "https://github.com/infiquetra/talaria"\n'
-        f'  version "{version}"\n'
+        + (f'  version "{version}"\n' if "-" in version else "") +
         '  license "MIT"\n\n'
         '  on_macos do\n    on_arm do\n' + stanza("aarch64-apple-darwin") +
         '    end\n    on_intel do\n' + stanza("x86_64-apple-darwin") +

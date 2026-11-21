@@ -37,6 +37,14 @@ class FormulaTests(unittest.TestCase):
             result = package.formula("0.7.1", "SHA256SUMS")
             golden = _GOLDEN.read_text(encoding="utf-8")
             self.assertEqual(result.stdout, golden, "no formula command")
+            self.assertNotIn('  version "0.7.1"\n', result.stdout)
+
+            for version in ("0.7.1-rc.1", "0.7.1-dev"):
+                with self.subTest(version=version):
+                    Path("SHA256SUMS").write_text(_sums(version), encoding="utf-8")
+                    prerelease = package.formula(version, "SHA256SUMS")
+                    self.assertTrue(prerelease.ok)
+                    self.assertIn(f'  version "{version}"\n', prerelease.stdout)
 
     def test_formula_refuses_bad_inputs(self):
         with scratch():

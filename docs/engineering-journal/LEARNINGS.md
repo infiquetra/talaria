@@ -6,7 +6,8 @@
 
 **Evidence.** The v0.9.0 release failed `package.py check-binary` after #548 added
 a `hermes: ` compatibility line to `talaria --version`. The generated Homebrew
-test made the same one-line assumption.
+test made the same one-line assumption. Homebrew `brew audit --strict` also
+rejects redundant `version` declarations when a final `X.Y.Z` is scanned from the URL.
 
 **Mechanism.** Validate the version on line one and allow only one optional,
 non-empty `hermes: ` line, with a final newline required. Return the first line
