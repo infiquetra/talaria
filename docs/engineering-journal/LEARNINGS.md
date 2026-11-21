@@ -2,6 +2,28 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-21 — The install target comes from the control socket, not a roster request
+
+**Evidence.** In the app, `/ultracode` followed by `y` to the install prompt, and
+`talaria workflow skill install --profile default --dry-run`, both ended in the bare notice
+`gateway timeout` after five seconds on a gateway whose `profiles.list` reply was not valid
+JSON. `resolve_target` in `crates/talaria-workflow/src/skill/report.rs` asked for that
+roster on a second connection. The regression tests are `skill_target_wire.rs` in
+`crates/talaria-app/tests/integration/` and `workflow_skill_cli.rs` in
+`crates/talaria-cli/tests/integration/`.
+
+**Mechanism.** The install target was built from the first row of a `profiles.list` reply
+on a second connection. The frame classifier drops a reply that is not valid JSON (the
+gateway's encoder had written a bare `Infinity` token into one profile's display
+metadata), so the pending call never completes and the caller sees only its own timeout.
+The control socket `identify` reply, which discovery had already parsed, carries every
+served profile's home folder and answers in milliseconds. `Endpoint::profile_home` now
+exposes it, and `target_from_endpoint` accepts it only when it names the same folder the
+local rule gives, so `skill install`, `skill status` and `workflow roster` read one folder.
+
+**Generalizable rule.** Take local folder facts from the control socket `identify` reply
+(or the local rule), and do not put a roster request in the path of a local file operation.
+
 ## 2026-11-21 — Package version checks allow compatibility metadata
 
 **Evidence.** The v0.9.0 release failed `package.py check-binary` after #548 added

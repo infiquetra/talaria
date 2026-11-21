@@ -55,8 +55,8 @@ pub use connect::{
 };
 pub use discovery::{
     DiscoverOptions, DiscoveryError, Endpoint, EnsureError, EnsurePolicy, ExitKind, GatewayState,
-    NodeKind, NodeProblem, PointerProblem, ProfileId, ProfileLookupError, ReadVerb, ReportedState,
-    ServedProfile, control_query, default_home, discover, discover_with, home_hash,
+    NodeKind, NodeProblem, PointerProblem, ProfileHome, ProfileId, ProfileLookupError, ReadVerb,
+    ReportedState, ServedProfile, control_query, default_home, discover, discover_with, home_hash,
 };
 pub use messaging_api::{
     ApproveReply, ApprovedWire, EnvWire, HomeChannelWire, PairingReply, PendingWire,

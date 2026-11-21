@@ -126,3 +126,45 @@ fn json_output_golden() {
     );
     assert!(!config.join("skills/installs.json").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn install_target_does_not_wait_for_the_profile_roster() {
+    use crate::mock_gateway::StandaloneGateway;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("talaria");
+    let hermes = tmp.path().join("hermes");
+    std::fs::create_dir_all(&hermes).unwrap();
+    let gateway = StandaloneGateway::start(&hermes);
+    gateway.set_silent("profiles.list", true);
+    // The home is passed as given, not canonicalised: on macOS a temp folder sits behind a link.
+    let output = Command::new(env!("CARGO_BIN_EXE_talaria"))
+        .args([
+            "workflow",
+            "skill",
+            "install",
+            "--profile",
+            "fixture",
+            "--dry-run",
+        ])
+        .env("HERMES_HOME", &hermes)
+        .env("TALARIA_CONFIG_DIR", &config)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let all = format!("{stdout}{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{all}");
+    let target = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("target: "))
+        .unwrap_or_else(|| panic!("no target line in: {all}"));
+    assert!(
+        target.ends_with("profiles/fixture/skills/talaria-workflows"),
+        "{target}"
+    );
+    assert!(!all.contains("gateway timeout"), "{all}");
+    assert!(!all.contains("gateway not running"), "{all}");
+    assert!(gateway.requests("profiles.list").is_empty());
+}
