@@ -145,6 +145,7 @@ fn herdr_test_env(dir: &tempfile::TempDir) -> PaneEnv {
         herdr_env: Some("1".to_owned()),
         herdr_pane_id: Some("w1:p1".to_owned()),
         herdr_bin_path: Some(herdr_test_bin(dir)),
+        hc_terminal_id: None,
         tmux: None,
         tmux_pane: None,
     }

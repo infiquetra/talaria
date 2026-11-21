@@ -10,24 +10,26 @@ use std::time::Duration;
 use talaria_core::directory::rows::RowKey;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-/// The process environment a multiplexer detection reads: five variables, nothing else.
+/// The process environment a multiplexer detection reads.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PaneEnv {
     pub herdr_env: Option<String>,
     pub herdr_pane_id: Option<String>,
     pub herdr_bin_path: Option<String>,
+    pub hc_terminal_id: Option<String>,
     pub tmux: Option<String>,
     pub tmux_pane: Option<String>,
 }
 
 impl PaneEnv {
-    /// Read the five variables from the process environment.
+    /// Read the multiplexer variables from the process environment.
     #[must_use]
     pub fn from_process() -> PaneEnv {
         PaneEnv {
             herdr_env: std::env::var("HERDR_ENV").ok(),
             herdr_pane_id: std::env::var("HERDR_PANE_ID").ok(),
             herdr_bin_path: std::env::var("HERDR_BIN_PATH").ok(),
+            hc_terminal_id: std::env::var("HC_TERMINAL_ID").ok(),
             tmux: std::env::var("TMUX").ok(),
             tmux_pane: std::env::var("TMUX_PANE").ok(),
         }
@@ -73,6 +75,7 @@ impl Default for PaneSettings {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Multiplexer {
     Herdr { bin: PathBuf, pane: String },
+    Hc { bin: PathBuf, terminal: String },
     Tmux { bin: PathBuf, pane: String },
 }
 
@@ -81,7 +84,7 @@ impl Multiplexer {
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
-            Multiplexer::Herdr { .. } => "Herdr",
+            Multiplexer::Herdr { .. } | Multiplexer::Hc { .. } => "Herdr",
             Multiplexer::Tmux { .. } => "tmux",
         }
     }
@@ -102,6 +105,16 @@ pub fn detect(env: &PaneEnv, setting: MultiplexerSetting) -> Option<Multiplexer>
         return Some(Multiplexer::Herdr {
             bin: bin.into(),
             pane: pane.into(),
+        });
+    }
+    if matches!(
+        setting,
+        MultiplexerSetting::Auto | MultiplexerSetting::Herdr
+    ) && let Some(terminal) = present(&env.hc_terminal_id)
+    {
+        return Some(Multiplexer::Hc {
+            bin: "hc".into(),
+            terminal: terminal.into(),
         });
     }
     if matches!(setting, MultiplexerSetting::Auto | MultiplexerSetting::Tmux)
@@ -183,6 +196,7 @@ pub fn attach_command_line(exe: &Path, key: &RowKey) -> Result<String, PaneRefus
 pub struct CommandSpec {
     pub program: PathBuf,
     pub args: Vec<OsString>,
+    pub env_remove: Vec<OsString>,
 }
 
 /// The split call for the multiplexer, direction, folder and focus flag.
@@ -210,6 +224,13 @@ pub fn split_command(
             .map(Into::into)
             .collect(),
         ),
+        Multiplexer::Hc { bin, .. } => (
+            bin.clone(),
+            ["run", "--bg", "--json"]
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        ),
         Multiplexer::Tmux { bin, pane } => {
             let mut args: Vec<OsString> = vec![
                 "split-window".into(),
@@ -228,7 +249,7 @@ pub fn split_command(
     };
     if let Some(cwd) = cwd {
         args.push(
-            if matches!(m, Multiplexer::Herdr { .. }) {
+            if matches!(m, Multiplexer::Herdr { .. } | Multiplexer::Hc { .. }) {
                 "--cwd"
             } else {
                 "-c"
@@ -239,9 +260,14 @@ pub fn split_command(
     }
     match m {
         Multiplexer::Herdr { .. } => args.push(if focus { "--focus" } else { "--no-focus" }.into()),
+        Multiplexer::Hc { .. } => {}
         Multiplexer::Tmux { .. } => args.extend(["-P", "-F", "#{pane_id}"].map(Into::into)),
     }
-    CommandSpec { program, args }
+    CommandSpec {
+        program,
+        args,
+        env_remove: Vec::new(),
+    }
 }
 
 /// Read the new pane id from split output: Herdr JSON or the tmux `%<n>` line.
@@ -256,6 +282,14 @@ pub fn parse_new_pane(m: &Multiplexer, stdout: &str) -> Option<String> {
                 .filter(|id| !id.is_empty())
                 .map(str::to_owned)
         }
+        Multiplexer::Hc { .. } => {
+            let value: serde_json::Value = serde_json::from_str(stdout).ok()?;
+            value
+                .get("address")?
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+        }
         Multiplexer::Tmux { .. } => {
             let id = stdout.trim();
             let digits = id.strip_prefix('%')?;
@@ -265,11 +299,12 @@ pub fn parse_new_pane(m: &Multiplexer, stdout: &str) -> Option<String> {
     }
 }
 
-/// The typing calls for the new pane: one for Herdr, two for tmux.
+/// The typing calls for the new pane: one for either Herdr CLI, two for tmux.
 #[must_use]
 pub fn type_commands(m: &Multiplexer, new_pane: &str, line: &str) -> Vec<CommandSpec> {
     let (bin, lists) = match m {
         Multiplexer::Herdr { bin, .. } => (bin, vec![vec!["pane", "run", new_pane, line]]),
+        Multiplexer::Hc { bin, .. } => (bin, vec![vec!["send", new_pane, "--", line]]),
         Multiplexer::Tmux { bin, .. } => (
             bin,
             vec![
@@ -283,6 +318,14 @@ pub fn type_commands(m: &Multiplexer, new_pane: &str, line: &str) -> Vec<Command
         .map(|args| CommandSpec {
             program: bin.clone(),
             args: args.into_iter().map(Into::into).collect(),
+            env_remove: if matches!(m, Multiplexer::Hc { .. }) {
+                ["HC_TERMINAL_ID", "HC_SCOPE"]
+                    .into_iter()
+                    .map(Into::into)
+                    .collect()
+            } else {
+                Vec::new()
+            },
         })
         .collect()
 }
@@ -305,7 +348,7 @@ pub trait CommandRunner: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = RunResult> + Send + '_>>;
 }
 
-/// The real runner: `tokio::process`, stdin null, output piped, env inherited.
+/// The real runner: stdin null, output piped, env inherited except explicit removals.
 pub struct SystemRunner;
 
 impl CommandRunner for SystemRunner {
@@ -316,16 +359,19 @@ impl CommandRunner for SystemRunner {
     ) -> Pin<Box<dyn Future<Output = RunResult> + Send + '_>> {
         let spec = spec.clone();
         Box::pin(async move {
+            let mut command = tokio::process::Command::new(&spec.program);
+            command
+                .args(&spec.args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            for name in &spec.env_remove {
+                command.env_remove(name);
+            }
             let mut attempts = 0_u8;
             let mut child = loop {
-                match tokio::process::Command::new(&spec.program)
-                    .args(&spec.args)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .kill_on_drop(true)
-                    .spawn()
-                {
+                match command.spawn() {
                     Ok(child) => break child,
                     Err(error) if error.raw_os_error() == Some(26) && attempts < 20 => {
                         attempts += 1;

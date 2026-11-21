@@ -29,6 +29,7 @@ fn herdr_env(bin: &Path) -> PaneEnv {
         herdr_env: Some("1".to_owned()),
         herdr_pane_id: Some("w1:p1".to_owned()),
         herdr_bin_path: Some(bin.to_string_lossy().into_owned()),
+        hc_terminal_id: None,
         tmux: None,
         tmux_pane: None,
     }
@@ -360,5 +361,79 @@ async fn binary_gone_refused() {
     assert!(
         std::fs::read_to_string(&log).unwrap_or_default().is_empty(),
         "nothing may run before the binary check"
+    );
+}
+
+#[tokio::test]
+async fn hc_open_in_pane_preserves_parent_and_sends_without_identity() {
+    const PROBE: &str = "TALARIA_HC_PANE_PROBE";
+    if let Some(root) = std::env::var_os(PROBE) {
+        let root = PathBuf::from(root);
+        let env = PaneEnv::from_process();
+        let outcome = open_in_pane(
+            &talaria_app::panes::SystemRunner,
+            &env,
+            &PaneSettings::default(),
+            &request(root.join("hc"), Some(root.clone())),
+        )
+        .await;
+        assert_eq!(
+            outcome,
+            PaneOutcome::Opened {
+                multiplexer: "Herdr"
+            }
+        );
+        let made = calls(&root.join("hc.log"));
+        assert_eq!(made.len(), 2);
+        assert_eq!(
+            made[0],
+            [
+                "terminal=parent",
+                "scope=scope",
+                "run",
+                "--bg",
+                "--json",
+                "--cwd",
+                root.to_str().unwrap()
+            ]
+        );
+        assert_eq!(
+            &made[1][..5],
+            ["terminal=unset", "scope=unset", "send", "child", "--"]
+        );
+        assert!(made[1][5].contains("attach 'local-ab' --profile 'fixture'"));
+        assert_eq!(made[1].len(), 6);
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    write_fake(
+        root.path(),
+        "hc",
+        r#"{"address":"child"}"#,
+        0,
+        "echo terminal=${HC_TERMINAL_ID-unset}\necho scope=${HC_SCOPE-unset}",
+    );
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "panes_exec::hc_open_in_pane_preserves_parent_and_sends_without_identity",
+            "--nocapture",
+        ])
+        .env(PROBE, root.path())
+        .env("HC_TERMINAL_ID", "parent")
+        .env("HC_SCOPE", "scope")
+        .env("PATH", root.path())
+        .env_remove("HERDR_ENV")
+        .env_remove("HERDR_PANE_ID")
+        .env_remove("HERDR_BIN_PATH")
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }

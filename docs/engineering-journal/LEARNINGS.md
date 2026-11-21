@@ -2,6 +2,24 @@
 
 > Empirical findings, mechanisms, fixes, validations, and generalizable rules. Keep newest entries first.
 
+## 2026-11-20 — Framed hc input preserves text and pane ownership
+
+**Evidence.** hc 0.1.21 accepts punctuation and UTF-8 through framed
+`terminal.attach` when `hc keys` cannot name those characters. The smoke
+regressions cover exact bytes without Enter, automatic and legacy input,
+and opening a child pane followed by an untagged attach command.
+
+**Mechanism.** After a framed hello, each frame has a nine-byte little-endian
+header: channel (`u32`), kind (`u8`), payload length (`u32`). Attaching with
+`cols=0` and `rows=0` preserves the terminal size; negotiated `automatic_input`
+uses kind 6 (`AUTOMATIC_INPUT`). Flush, close stdin and wait for the connection
+process so the input reaches the terminal. Pane creation uses
+`hc run --bg --json` with the parent identity intact; `hc send` removes
+`HC_TERMINAL_ID` and `HC_SCOPE` so shell commands arrive without sender tags.
+
+**Rule.** Preserve parent identity when creating panes, remove sender identity
+when typing shell commands, and finish framed delivery before returning.
+
 ## 2026-11-20 — The long help explains `--resume` in two copies
 
 **Evidence.** `flags_help_and_neutralised_errors` locks the sentence "Resume a session by its identifier. `talaria -c` reopens the most recent session for this folder." at the end of the long help, and one collapsed copy beside `--resume`.
